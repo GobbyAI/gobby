@@ -5,10 +5,13 @@ import pytest
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.sessions import create_session_messages_registry
+from gobby.mcp_proxy.tools.sessions._verification import register_verification_tools
 from gobby.sessions.transcript_reader import TranscriptReader
 from gobby.sessions.transcript_renderer import ContentBlock, RenderedMessage
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
+from gobby.workflows.state_manager import SessionVariableManager
+from gobby.workflows.verification_evidence import MAX_VERIFICATION_EVIDENCE_ITEMS
 
 pytestmark = pytest.mark.unit
 
@@ -47,6 +50,108 @@ def test_create_session_messages_registry_returns_registry(renderer_registry) ->
     """Test that create_session_messages_registry returns an InternalToolRegistry."""
     assert isinstance(renderer_registry, InternalToolRegistry)
     assert renderer_registry.name == "gobby-sessions"
+
+
+@pytest.mark.asyncio
+async def test_record_verification_evidence_dependency_guard_accepts_optional_inputs() -> None:
+    """Verification tools register with optional dependencies and fail cleanly at runtime."""
+    registry = InternalToolRegistry(name="test-sessions", description="test")
+    register_verification_tools(registry, None, None)
+
+    result = await registry.call(
+        "record_verification_evidence",
+        {
+            "session_id": "session-1",
+            "summary": "Reviewed diff",
+            "evidence_type": "manual",
+            "supports": "completion readiness",
+        },
+    )
+
+    assert result == {"success": False, "error": "Session manager and database are required"}
+
+
+@pytest.mark.asyncio
+async def test_record_verification_evidence_sets_readiness(
+    temp_db, session_manager, sample_project
+) -> None:
+    session = session_manager.register(
+        external_id="record-verification",
+        machine_id="machine-1",
+        source="codex",
+        project_id=sample_project["id"],
+        title="Record verification",
+    )
+    registry = create_session_messages_registry(session_manager=session_manager, db=temp_db)
+
+    result = await registry.call(
+        "record_verification_evidence",
+        {
+            "session_id": session.id,
+            "summary": "Read diff and verified touched rules",
+            "evidence_type": "manual_diff_review",
+            "supports": "completion readiness",
+            "task_id": "#15186",
+            "stage_name": "development",
+            "scope": "focused regression",
+        },
+    )
+
+    assert result["success"] is True
+    variables = SessionVariableManager(temp_db).get_variables(session.id)
+    assert variables["verification_evidence_recorded"] is True
+    assert (
+        variables["verification_evidence"][0]["summary"] == "Read diff and verified touched rules"
+    )
+    assert variables["verification_evidence"][0]["supports"] == "completion readiness"
+    assert variables["verification_evidence"][0]["task_id"] == "#15186"
+    assert variables["verification_evidence"][0]["stage_name"] == "development"
+    assert variables["verification_evidence"][0]["scope"] == "focused regression"
+    assert variables["verification_evidence"][0]["tool_name"] == "record_verification_evidence"
+
+
+@pytest.mark.asyncio
+async def test_record_verification_evidence_keeps_latest_50_items(
+    temp_db, session_manager, sample_project
+) -> None:
+    session = session_manager.register(
+        external_id="record-verification-bounded",
+        machine_id="machine-1",
+        source="codex",
+        project_id=sample_project["id"],
+        title="Record bounded verification",
+    )
+    SessionVariableManager(temp_db).merge_variables(
+        session.id,
+        {
+            "verification_evidence": [
+                {"summary": f"old evidence {index}", "success": True}
+                for index in range(MAX_VERIFICATION_EVIDENCE_ITEMS + 5)
+            ],
+        },
+    )
+    registry = create_session_messages_registry(session_manager=session_manager, db=temp_db)
+
+    result = await registry.call(
+        "record_verification_evidence",
+        {
+            "session_id": session.id,
+            "summary": "Verified bounded evidence behavior",
+            "evidence_type": "manual_diff_review",
+            "supports": "completion readiness",
+        },
+    )
+
+    assert result["success"] is True
+    assert result["evidence_count"] == MAX_VERIFICATION_EVIDENCE_ITEMS
+    variables = SessionVariableManager(temp_db).get_variables(session.id)
+    evidence = variables["verification_evidence"]
+    assert len(evidence) == MAX_VERIFICATION_EVIDENCE_ITEMS
+    expected_first_index = (
+        MAX_VERIFICATION_EVIDENCE_ITEMS + 5 + 1
+    ) - MAX_VERIFICATION_EVIDENCE_ITEMS
+    assert evidence[0]["summary"] == f"old evidence {expected_first_index}"
+    assert evidence[-1]["summary"] == "Verified bounded evidence behavior"
 
 
 @pytest.mark.asyncio
@@ -457,6 +562,9 @@ async def test_set_handoff_context_agent_authored(mock_session_manager, full_ses
     assert result["mode"] == "agent_authored"
     mock_session_manager.update_summary.assert_called_once_with(
         "sess-abc", summary_markdown="## My Summary"
+    )
+    mock_session_manager.update_last_turn_markdown.assert_called_once_with(
+        "sess-abc", "## My Summary"
     )
     mock_session_manager.update_status.assert_called_once_with("sess-abc", "handoff_ready")
 

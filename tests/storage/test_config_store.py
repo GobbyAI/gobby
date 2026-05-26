@@ -1,24 +1,25 @@
 """Tests for ConfigStore CRUD operations and flatten/unflatten utilities."""
 
+from contextlib import nullcontext
+
 import pytest
 
 from gobby.storage.config_store import (
+    _SECRET_SUFFIXES,
     ConfigStore,
     flatten_config,
+    is_secret_key_name,
     unflatten_config,
 )
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path) -> LocalDatabase:
+def db(temp_db: HubDatabase) -> HubDatabase:
     """Create a test database with migrations applied."""
-    db_path = tmp_path / "test.db"
-    database = LocalDatabase(db_path)
-    run_migrations(database)
+    database = temp_db
     return database
 
 
@@ -156,3 +157,49 @@ class TestConfigStore:
         assert store.get("str_val") == "hello"
         assert store.get("list_val") == [1, 2, 3]
         assert store.get("null_val") is None
+
+    def test_set_secret_uses_backend_neutral_boolean(self):
+        class FakeDB:
+            def __init__(self):
+                self.executed = []
+
+            def transaction(self):
+                return nullcontext()
+
+            def execute(self, sql, params=()):
+                self.executed.append((sql, params))
+
+        class FakeSecretStore:
+            def set(self, **kwargs):
+                self.kwargs = kwargs
+
+        db = FakeDB()
+        ConfigStore(db).set_secret("service.requirepass", "secret", FakeSecretStore())
+
+        sql, params = db.executed[-1]
+        assert "VALUES (?, ?, ?, ?, ?)" in sql
+        assert "is_secret = excluded.is_secret" in sql
+        assert params[3] is True
+
+    def test_get_secret_keys_uses_backend_neutral_boolean(self):
+        class FakeDB:
+            def __init__(self):
+                self.calls = []
+
+            def fetchall(self, sql, params=()):
+                self.calls.append((sql, params))
+                return [{"key": "service.requirepass"}]
+
+        db = FakeDB()
+        assert ConfigStore(db).get_secret_keys() == ["service.requirepass"]
+        assert db.calls == [
+            ("SELECT key FROM config_store WHERE is_secret = ? ORDER BY key", (True,))
+        ]
+
+
+class TestSecretKeyDetection:
+    def test_requirepass_is_a_secret_suffix(self) -> None:
+        assert "requirepass" in _SECRET_SUFFIXES
+
+    def test_falkordb_requirepass_is_secret_key_name(self) -> None:
+        assert is_secret_key_name("databases.falkordb.requirepass") is True

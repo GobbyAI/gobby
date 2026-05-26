@@ -9,8 +9,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import deque
 from collections.abc import Callable
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+import aiofiles
 
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
@@ -25,7 +29,7 @@ from gobby.storage.agents import LocalAgentRunManager
 if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
     from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
@@ -41,6 +45,8 @@ _CLI_COMPACT_COMMANDS: dict[str, str] = {
 }
 _CODEX_INTERRUPT_KEY = "Escape"
 _CODEX_INTERRUPT_SETTLE_SECONDS = 0.2
+_DEFAULT_COMPACT_HANDOFF_REFRESH_TIMEOUT_SECONDS = 180.0
+_COMPACT_HANDOFF_FALLBACK_MAX_CHARS = 20_000
 
 
 async def _send_tmux_keys(
@@ -231,6 +237,202 @@ def _resolve_session_for_compaction(
     return resolved_id, session, None
 
 
+def _has_summary_refresh_source(session: Any) -> bool:
+    """Return whether summary generation has current session content to read."""
+    digest_markdown = getattr(session, "digest_markdown", None)
+    if isinstance(digest_markdown, str) and digest_markdown.strip():
+        return True
+
+    transcript_path = getattr(session, "transcript_path", None)
+    return isinstance(transcript_path, str) and bool(transcript_path.strip())
+
+
+def _compact_handoff_refresh_timeout_seconds() -> float:
+    try:
+        from gobby.config.app import load_config
+    except ImportError as exc:
+        logger.debug("Using default compact handoff refresh timeout: %s", exc)
+        return _DEFAULT_COMPACT_HANDOFF_REFRESH_TIMEOUT_SECONDS
+
+    config = load_config()
+    compact_handoff = getattr(config, "compact_handoff", None)
+    value = getattr(
+        compact_handoff,
+        "refresh_timeout_seconds",
+        _DEFAULT_COMPACT_HANDOFF_REFRESH_TIMEOUT_SECONDS,
+    )
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        logger.debug("Using default compact handoff refresh timeout: %s", exc)
+        return _DEFAULT_COMPACT_HANDOFF_REFRESH_TIMEOUT_SECONDS
+
+
+def _compact_handoff_fallback_markdown(session: Any, *, reason: str) -> str | None:
+    """Build a bounded handoff fallback when LLM summary refresh cannot finish."""
+    digest_markdown = getattr(session, "digest_markdown", None)
+    if isinstance(digest_markdown, str) and digest_markdown.strip():
+        digest = digest_markdown.strip()
+        if len(digest) > _COMPACT_HANDOFF_FALLBACK_MAX_CHARS:
+            digest = digest[-_COMPACT_HANDOFF_FALLBACK_MAX_CHARS:].lstrip()
+            digest = "[older digest content truncated]\n\n" + digest
+        return (
+            "# Compact Handoff\n\n"
+            f"LLM handoff refresh did not complete before compaction ({reason}). "
+            "Continuing with the latest session digest.\n\n"
+            f"{digest}"
+        )
+
+    summary_markdown = getattr(session, "summary_markdown", None)
+    if isinstance(summary_markdown, str) and summary_markdown.strip():
+        return summary_markdown.strip()
+    return None
+
+
+async def _persist_compact_handoff_fallback(
+    session_id: str,
+    session: Any,
+    session_manager: SessionManager,
+    *,
+    reason: str,
+) -> dict[str, Any]:
+    fallback = _compact_handoff_fallback_markdown(session, reason=reason)
+    if not fallback:
+        return {
+            "success": False,
+            "error": f"handoff refresh {reason} and no digest/summary fallback exists",
+            "timed_out": reason == "timed out",
+        }
+
+    try:
+        session_manager.update_summary(session_id, summary_markdown=fallback)
+        session_manager.update_status(session_id, "handoff_ready")
+    except Exception as exc:
+        detail = str(exc) or type(exc).__name__
+        logger.warning(
+            "Failed persisting compact_self handoff fallback for %s: %s",
+            session_id,
+            detail,
+            exc_info=True,
+        )
+        return {"success": False, "error": detail, "timed_out": reason == "timed out"}
+
+    return {
+        "success": True,
+        "refreshed": True,
+        "fallback": True,
+        "timed_out": reason == "timed out",
+        "summary_length": len(fallback),
+    }
+
+
+async def _refresh_compact_handoff_context(
+    session_id: str,
+    session: Any,
+    session_manager: SessionManager,
+    db: HubDatabase,
+    llm_service: Any | None,
+) -> dict[str, Any]:
+    """Refresh summary_markdown before compact_self can trigger same-session resume."""
+    if not _has_summary_refresh_source(session):
+        return {"success": True, "refreshed": False, "reason": "no_summary_refresh_source"}
+
+    from gobby.sessions.summarize import generate_session_summaries
+
+    timeout_seconds = _compact_handoff_refresh_timeout_seconds()
+    try:
+        result = await asyncio.wait_for(
+            generate_session_summaries(
+                session_id=session_id,
+                session_manager=session_manager,
+                llm_service=llm_service,
+                db=db,
+                set_handoff_ready=True,
+            ),
+            timeout=timeout_seconds,
+        )
+    except TimeoutError:
+        logger.warning(
+            "Timed out refreshing compact_self handoff context for %s after %.1fs; "
+            "using digest fallback",
+            session_id,
+            timeout_seconds,
+        )
+        return await _persist_compact_handoff_fallback(
+            session_id,
+            session,
+            session_manager,
+            reason="timed out",
+        )
+    except Exception as exc:
+        detail = str(exc) or type(exc).__name__
+        logger.warning(
+            "Failed refreshing compact_self handoff context for %s: %s",
+            session_id,
+            detail,
+            exc_info=True,
+        )
+        return {"success": False, "error": detail}
+
+    if not result.get("success"):
+        error = str(result.get("error") or result.get("full_error") or "unknown error")
+        return {"success": False, "error": error}
+
+    refreshed_session = session_manager.get(session_id)
+    summary_markdown = getattr(refreshed_session, "summary_markdown", None)
+    if not isinstance(summary_markdown, str) or not summary_markdown.strip():
+        return {"success": False, "error": "summary refresh produced no summary_markdown"}
+
+    return {
+        "success": True,
+        "refreshed": True,
+        "summary_length": len(summary_markdown),
+    }
+
+
+async def _capture_transcript_tail(
+    session_id: str,
+    session_manager: SessionManager,
+    lines: int,
+    *,
+    tmux_error: str,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Return transcript tail fallback when no live tmux target is available."""
+    session = session_manager.get(session_id)
+    if session is None:
+        return None, "session_not_found"
+
+    transcript_path = getattr(session, "transcript_path", None)
+    if not isinstance(transcript_path, str) or not transcript_path:
+        return None, "missing_transcript_path"
+
+    path = Path(transcript_path)
+    if not path.is_file():
+        return None, "transcript_not_found"
+
+    max_lines = max(1, lines)
+    tail: deque[str] = deque(maxlen=max_lines)
+    try:
+        async with aiofiles.open(path, encoding="utf-8", errors="replace") as handle:
+            async for raw_line in handle:
+                tail.append(raw_line.rstrip("\n"))
+    except OSError as exc:
+        detail = str(exc) or type(exc).__name__
+        return None, f"transcript_read_failed: {detail}"
+
+    return (
+        {
+            "success": True,
+            "output": "\n".join(tail),
+            "via": "transcript",
+            "transcript_path": transcript_path,
+            "note": "No live tmux pane was capturable; returned transcript tail instead.",
+            "tmux_error": tmux_error,
+        },
+        None,
+    )
+
+
 async def _compact_live_web_chat_fallback(
     web_chat_session_registry: WebChatSessionRegistry | None,
     *session_ids: str | None,
@@ -270,7 +472,8 @@ async def _compact_live_web_chat_fallback(
 def register_terminal_tools(
     registry: InternalToolRegistry,
     session_manager: SessionManager,
-    db: DatabaseProtocol,
+    db: HubDatabase,
+    llm_service: Any | None = None,
     web_chat_session_registry: WebChatSessionRegistry | None = None,
 ) -> None:
     """Register send_keys and capture_output tools."""
@@ -307,7 +510,7 @@ def register_terminal_tools(
     @registry.tool(
         name="compact_self",
         description=(
-            "Trigger context compaction in the calling session's CLI by firing "
+            "Trigger context compaction in the current MCP caller's CLI by firing "
             "the appropriate slash command (/compact for Claude Code, "
             "/compact for Codex, /compress for other supported CLIs). Designed "
             "to be called at workflow handoff boundaries — e.g. /gobby plan calls this after spawning "
@@ -316,7 +519,15 @@ def register_terminal_tools(
             "sessions use the live daemon ChatSession registry."
         ),
     )
-    async def compact_self(session_id: str, rule_name: str | None = None) -> dict[str, Any]:
+    async def compact_self(rule_name: str | None = None) -> dict[str, Any]:
+        from gobby.utils.session_context import get_current_session_id
+
+        session_id = get_current_session_id()
+        if not session_id:
+            return {
+                "compacted": False,
+                "reason": "compact_self requires current MCP SessionContext",
+            }
         if rule_name:
             logger.info("Compacting session %s (triggered by rule %s)", session_id, rule_name)
         resolved_session_id, session, error = _resolve_session_for_compaction(
@@ -374,6 +585,20 @@ def register_terminal_tools(
         assert target is not None
         assert tmux is not None
 
+        refresh_result = await _refresh_compact_handoff_context(
+            resolved_session_id,
+            session,
+            session_manager,
+            db,
+            llm_service,
+        )
+        if not refresh_result.get("success"):
+            return {
+                "compacted": False,
+                "reason": "handoff context refresh failed before compaction: "
+                f"{refresh_result.get('error', 'unknown error')}",
+            }
+
         ok, reason, continuation_pending = await _send_terminal_compaction_command(
             tmux,
             target,
@@ -408,6 +633,13 @@ def register_terminal_tools(
             "interrupted": True,
             "continuation_pending": continuation_pending,
         }
+        if refresh_result.get("refreshed"):
+            result["handoff_context_refreshed"] = True
+            result["handoff_summary_length"] = refresh_result.get("summary_length")
+        if refresh_result.get("fallback"):
+            result["handoff_context_fallback"] = True
+        if refresh_result.get("timed_out"):
+            result["handoff_context_refresh_timed_out"] = True
         return result
 
     @registry.tool(
@@ -424,7 +656,21 @@ def register_terminal_tools(
     ) -> dict[str, Any]:
         target, tmux, error = _resolve_tmux_target(session_id, session_manager, agent_run_manager)
         if error:
-            return {"success": False, "error": error}
+            fallback, transcript_error = await _capture_transcript_tail(
+                session_id,
+                session_manager,
+                lines,
+                tmux_error=error,
+            )
+            if fallback is not None:
+                return fallback
+            return {
+                "success": False,
+                "error": error,
+                "error_code": "no_live_pane_or_transcript",
+                "tmux_error": error,
+                "transcript_error": transcript_error,
+            }
 
         assert target is not None
         assert tmux is not None
@@ -434,4 +680,4 @@ def register_terminal_tools(
                 "success": False,
                 "error": f"Failed to capture pane for session {session_id}",
             }
-        return {"success": True, "output": output}
+        return {"success": True, "output": output, "via": "tmux"}

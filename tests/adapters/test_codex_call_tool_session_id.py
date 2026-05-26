@@ -1,6 +1,5 @@
 """Codex regression coverage for call_tool session_id context rewrites."""
 
-import logging
 from collections.abc import Callable
 from unittest.mock import MagicMock
 
@@ -74,31 +73,26 @@ def test_nested_arguments_session_resolution_does_not_emit_retry_block() -> None
     _assert_no_retry_block(result)
 
 
-def test_workflow_modified_input_for_codex_falls_through_with_context(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
+def test_workflow_modified_input_for_codex_uses_updated_input_with_context() -> None:
     adapter = CodexHooksAdapter()
     context = "Hypothetical Codex-targeting workflow rule rewrote a tool input."
+    rewritten = {"command": "echo hello"}
     response = HookResponse(
         decision="allow",
         context=context,
-        modified_input={"command": "echo hello"},
+        modified_input=rewritten,
     )
 
-    with caplog.at_level(logging.DEBUG, logger="gobby.adapters.codex_impl.hooks_adapter"):
-        result = adapter.translate_from_hook_response(response, hook_type="PreToolUse")
+    result = adapter.translate_from_hook_response(response, hook_type="PreToolUse")
 
     _assert_no_retry_block(result)
     assert result["continue"] is True
     assert context in result["systemMessage"]
-    debug_messages = [
-        record.getMessage()
-        for record in caplog.records
-        if record.name == "gobby.adapters.codex_impl.hooks_adapter"
-        and record.levelno == logging.DEBUG
-        and record.getMessage().startswith("Codex PreToolUse hook returned modified_input")
-    ]
-    assert len(debug_messages) == 1
+    assert result["hookSpecificOutput"] == {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "allow",
+        "updatedInput": rewritten,
+    }
 
 
 def test_uuid_session_id_user_repro_does_not_emit_retry_block() -> None:
@@ -150,19 +144,21 @@ def test_user_repro_get_skill_call_tool_with_nested_uuid(
     _assert_no_retry_block(result)
 
 
-def test_modified_input_allow_path_logs_debug_without_retry(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
+def test_modified_input_allow_path_uses_updated_input_without_retry() -> None:
     adapter = CodexHooksAdapter()
+    rewritten = {"command": "uv run python hello.py"}
     response = HookResponse(
         decision="allow",
         context="Rewrite will be applied server-side.",
-        modified_input={"command": "uv run python hello.py"},
+        modified_input=rewritten,
         auto_approve=True,
     )
 
-    with caplog.at_level(logging.DEBUG, logger="gobby.adapters.codex_impl.hooks_adapter"):
-        result = adapter.translate_from_hook_response(response, hook_type="PreToolUse")
+    result = adapter.translate_from_hook_response(response, hook_type="PreToolUse")
 
     _assert_no_retry_block(result)
-    assert "Codex PreToolUse hook returned modified_input" in (caplog.text)
+    assert result["hookSpecificOutput"] == {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "allow",
+        "updatedInput": rewritten,
+    }

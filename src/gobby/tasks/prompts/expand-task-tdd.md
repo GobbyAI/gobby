@@ -1,27 +1,34 @@
 # TDD Mode Instructions
 
-**IMPORTANT:** Do NOT create separate test/implement/refactor tasks. The system handles TDD structure automatically via the sandwich pattern.
+Do not create separate test/implement/refactor tasks. New expansion specs emit
+one implementation leaf per manifest entry. TDD is enforced through task
+metadata, developer skills, and review evidence.
 
 ## How It Works
 
-The system automatically applies TDD sandwich pattern after expansion:
-- ONE [TEST] task at the start (covers all code/config implementations)
-- Your subtasks become the implementation tasks
-- ONE [REFACTOR] task at the end
+For each TDD-required `code` or eligible `config` deliverable:
 
-**Your job:** Output plain feature tasks with `category: "code"` or `category: "config"`.
+- emit one implementation task;
+- add `additional_skills: ["test-driven-development"]`;
+- add label `tdd:required` when the output shape supports labels;
+- require validation evidence for red failure, minimal green pass,
+  refactor/final-green pass, exact test command, and test-quality audit output.
+
+Code tasks must include `implementation_domain`:
+
+- `backend` routes to `backend-developer`;
+- `frontend` routes to `frontend-developer`;
+- `fullstack` routes to `fullstack-developer`.
 
 ## Categories for TDD
 
 | Category | TDD Treatment | Description |
 |----------|---------------|-------------|
-| `code` | Yes - wrapped in sandwich | Source code implementation |
-| `config` | Yes - wrapped in sandwich | Configuration file changes |
-| `docs` | No - stays as single task | Documentation tasks |
-| `test` | No - stays as single task | Test infrastructure tasks |
-| `research` | No - stays as single task | Investigation/exploration |
-| `planning` | No - stays as single task | Design/architecture work |
-| `refactor` | No - stays as single task | Behavior-preserving code restructuring |
+| `code` | Required when behavior changes | Source code implementation |
+| `config` | Conditional | Configuration work only when executable behavior can be pinned first |
+| `docs` | No | Documentation tasks |
+| `test` | No | Standalone test infrastructure, characterization, parity, or regression suites |
+| `refactor` | No | Behavior-preserving code restructuring |
 
 ## DO NOT Use These Prefixes
 
@@ -34,16 +41,17 @@ The system automatically applies TDD sandwich pattern after expansion:
 ```json
 {
   "subtasks": [
-    {"title": "Create database schema", "category": "code"},
-    {"title": "Add user authentication", "category": "code", "depends_on": [0]},
-    {"title": "Document the API", "category": "docs"}
+    {
+      "title": "Create database schema",
+      "category": "code",
+      "implementation_domain": "backend",
+      "additional_skills": ["test-driven-development"],
+      "labels": ["tdd:required"]
+    },
+    {
+      "title": "Document the API",
+      "category": "docs"
+    }
   ]
 }
 ```
-
-The system transforms this into:
-- [TEST] Write tests for: Parent Task (covers database schema + authentication)
-- [IMPL] Create database schema
-- [IMPL] Add user authentication
-- [REFACTOR] Refactor: Parent Task
-- Document the API (no TDD - it's docs)

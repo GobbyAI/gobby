@@ -17,9 +17,8 @@ import pytest
 from gobby.config.persistence import MemoryConfig
 from gobby.memory.manager import MemoryManager
 from gobby.memory.protocol import MemoryBackendProtocol
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories import LocalMemoryManager, Memory
-from gobby.storage.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
@@ -29,17 +28,14 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path):
-    """Create a temporary database for testing."""
-    database = LocalDatabase(tmp_path / "gobby-hub.db")
-    run_migrations(database)
-    yield database
-    database.close()
+def db(hub_db):
+    """Create a temporary hub database for testing."""
+    return hub_db
 
 
 @pytest.fixture
 def memory_config():
-    """Create a default memory configuration with SQLite backend."""
+    """Create a default memory configuration with PostgreSQL backend."""
     return MemoryConfig(
         enabled=True,
         backend="local",
@@ -65,14 +61,14 @@ def mock_config():
     """Create a mock MemoryConfig."""
     config = MagicMock(spec=MemoryConfig)
     config.access_debounce_seconds = 60
-    config.backend = "sqlite"
+    config.backend = "postgres"
     return config
 
 
 @pytest.fixture
 def mock_db():
     """Create a mock database."""
-    return MagicMock(spec=LocalDatabase)
+    return MagicMock(spec=HubDatabase)
 
 
 # =============================================================================
@@ -673,7 +669,7 @@ class TestDeleteMemoryExtended:
         )
         memory = await manager.create_memory(content="To delete VS fail")
         result = await manager.delete_memory(memory.id)
-        assert result is True  # Still returns True since SQLite delete succeeded
+        assert result is True  # Still returns True since PostgreSQL delete succeeded
         assert mock_vs.delete.await_count == 1
 
 
@@ -881,23 +877,42 @@ class TestReindexEmbeddings:
 
 
 class TestEntityGraph:
-    """Tests for Neo4j entity graph methods."""
+    """Tests for FalkorDB entity graph methods."""
+
+    def test_clear_graph_clients_clears_manager_and_child_service_refs(
+        self,
+        db,
+        memory_config,
+    ) -> None:
+        """clear_graph_clients removes all graph references owned by the manager."""
+        manager = MemoryManager(db=db, config=memory_config, falkordb_host=None)
+        kg_service = MagicMock()
+        manager._falkor_client = MagicMock()
+        manager._kg_service = kg_service
+        manager._search_service._kg_service = kg_service
+        manager._indexing_service._kg_service = kg_service
+
+        manager.clear_graph_clients()
+
+        assert manager._falkor_client is None
+        assert manager._kg_service is None
+        assert manager._search_service._kg_service is None
+        assert manager._indexing_service._kg_service is None
 
     @pytest.mark.asyncio
-    async def test_get_entity_graph_no_neo4j(self, db, memory_config) -> None:
-        """get_entity_graph returns None when no Neo4j configured."""
-        manager = MemoryManager(db=db, config=memory_config, neo4j_url=None)
-        # Ensure no neo4j client
-        assert manager._neo4j_client is None
+    async def test_get_entity_graph_no_falkordb(self, db, memory_config) -> None:
+        """get_entity_graph returns None when no FalkorDB configured."""
+        manager = MemoryManager(db=db, config=memory_config, falkordb_host=None)
+        assert manager._falkor_client is None
         assert manager._kg_service is None
         result = await manager.get_entity_graph()
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_get_entity_neighbors_no_neo4j(self, db, memory_config) -> None:
-        """get_entity_neighbors returns None when no Neo4j configured."""
-        manager = MemoryManager(db=db, config=memory_config, neo4j_url=None)
-        assert manager._neo4j_client is None
+    async def test_get_entity_neighbors_no_falkordb(self, db, memory_config) -> None:
+        """get_entity_neighbors returns None when no FalkorDB configured."""
+        manager = MemoryManager(db=db, config=memory_config, falkordb_host=None)
+        assert manager._falkor_client is None
         result = await manager.get_entity_neighbors("test-entity")
         assert result is None
 

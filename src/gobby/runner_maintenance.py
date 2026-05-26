@@ -12,23 +12,30 @@ import os
 import signal
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from random import SystemRandom
 from typing import TYPE_CHECKING, Any
 
 from gobby.cli.utils import get_gobby_home
 from gobby.config.bin_freshness import BinFreshnessConfig
+from gobby.servers.chat_attachment_files import unlink_stale_attachment_file_sync
 from gobby.shutdown_intent import ShutdownIntent
+from gobby.storage.sql_dialect import older_than_now_expr
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.metrics import ToolMetricsManager
     from gobby.memory.vectorstore import VectorStore
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 _JITTER_RANDOM = SystemRandom()
 _ISOLATION_CLEANUP_SCAN_LIMIT = 1000
 _CHAT_ATTACHMENT_CLEANUP_BATCH_LIMIT = 500
+
+
+def _positive_int_or_default(value: Any, default: int) -> int:
+    if not isinstance(value, int):
+        return default
+    return max(1, value)
 
 
 async def _run_db(
@@ -54,11 +61,11 @@ async def _sleep_until_next_bin_freshness_cycle(
 
 
 async def bin_freshness_loop(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     config: BinFreshnessConfig,
     is_shutdown_requested: Callable[[], bool],
     *,
-    update_once: Callable[[DatabaseProtocol, BinFreshnessConfig], list[Any]] | None = None,
+    update_once: Callable[[HubDatabase, BinFreshnessConfig], list[Any]] | None = None,
     run_db: Callable[..., Awaitable[Any]] | None = None,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     jitter: Callable[[float], float] | None = None,
@@ -205,19 +212,19 @@ async def memory_reconcile_loop(
     is_shutdown_requested: Callable[[], bool],
     interval_seconds: int = 24 * 60 * 60,
 ) -> None:
-    """Background loop for periodic Qdrant/Neo4j orphan reconciliation (every 24 hours)."""
+    """Background loop for periodic Qdrant/FalkorDB orphan reconciliation."""
     while not is_shutdown_requested():
         try:
             await asyncio.sleep(interval_seconds)
             report = await memory_manager.reconcile_stores(dry_run=False)
             qdrant_orphans = report.get("qdrant", {}).get("orphans_deleted", 0)
-            neo4j_orphans = report.get("neo4j", {}).get("orphan_memories_deleted", 0)
-            neo4j_entities = report.get("neo4j", {}).get("orphan_entities_deleted", 0)
-            if qdrant_orphans or neo4j_orphans or neo4j_entities:
+            falkordb_orphans = report.get("falkordb", {}).get("orphan_memories_deleted", 0)
+            falkordb_entities = report.get("falkordb", {}).get("orphan_entities_deleted", 0)
+            if qdrant_orphans or falkordb_orphans or falkordb_entities:
                 logger.info(
                     f"Memory reconciliation: {qdrant_orphans} Qdrant orphans, "
-                    f"{neo4j_orphans} Neo4j memory orphans, "
-                    f"{neo4j_entities} Neo4j entity orphans cleaned"
+                    f"{falkordb_orphans} FalkorDB memory orphans, "
+                    f"{falkordb_entities} FalkorDB entity orphans cleaned"
                 )
         except asyncio.CancelledError:
             break
@@ -241,14 +248,16 @@ async def cleanup_zombie_messages_loop(
     interval_seconds = interval_hours * 3600
 
     def _expire_zombies() -> None:
+        updated_stale_sql = older_than_now_expr(db, "updated_at", "?", "hour")
+        created_stale_sql = older_than_now_expr(db, "created_at", "?", "hour")
         expired = db.execute(
-            "UPDATE inter_session_messages SET delivered_at = datetime('now') "
+            "UPDATE inter_session_messages SET delivered_at = CURRENT_TIMESTAMP "
             "WHERE delivered_at IS NULL AND to_session IN ("
             "  SELECT id FROM sessions WHERE status IN ('closed', 'expired') "
-            "  AND (updated_at < datetime('now', ? || ' hours')"
-            "       OR (updated_at IS NULL AND created_at < datetime('now', ? || ' hours')))"
+            f"  AND ({updated_stale_sql}"
+            f"       OR (updated_at IS NULL AND {created_stale_sql}))"
             ")",
-            (f"-{ttl_hours}", f"-{ttl_hours}"),
+            (ttl_hours, ttl_hours),
         )
         if expired.rowcount:
             logger.info(f"Expired {expired.rowcount} zombie messages")
@@ -297,15 +306,9 @@ async def cleanup_comms_messages_loop(
 
 
 def _remove_stale_chat_attachment_file(local_path: str) -> bool:
-    path = Path(local_path)
-    removed = False
-    try:
-        path.unlink()
-        removed = True
-    except FileNotFoundError:
-        removed = True
-    except OSError:
-        logger.warning("Failed to remove stale chat attachment file %s", path, exc_info=True)
+    path, removed = unlink_stale_attachment_file_sync(local_path)
+    if path is None:
+        logger.warning("Skipping stale chat attachment outside managed storage: %s", local_path)
         return False
 
     # Empty upload directories are scratch structure; pruning is best effort
@@ -335,10 +338,11 @@ async def cleanup_chat_attachments_loop(
     """Delete stale unbound chat uploads left behind by abandoned browser drafts."""
     from gobby.storage import chat_attachments
 
-    interval_seconds = max(1, interval_minutes) * 60
+    retention_hours = _positive_int_or_default(retention_hours, 24)
+    interval_seconds = _positive_int_or_default(interval_minutes, 60) * 60
 
     async def cleanup_once() -> None:
-        cutoff = datetime.now(UTC) - timedelta(hours=max(1, retention_hours))
+        cutoff = datetime.now(UTC) - timedelta(hours=retention_hours)
         records = await _run_db(
             run_db,
             chat_attachments.delete_stale_unbound_attachments,
@@ -425,7 +429,7 @@ async def metric_snapshot_loop(
 ) -> None:
     """Background loop that snapshots OTel metrics every interval.
 
-    Captures get_all_metrics() output to SQLite for dashboard time-series charts.
+    Captures get_all_metrics() output to the PostgreSQL hub for dashboard time-series charts.
     Cleans old snapshots each tick to maintain 24h retention.
     """
     from gobby.storage.metric_snapshots import MetricSnapshotStorage
@@ -690,9 +694,12 @@ def setup_signal_handlers(
 ) -> None:
     """Register SIGTERM/SIGINT handlers to trigger graceful shutdown."""
     loop = asyncio.get_running_loop()
+    recorded_intent: ShutdownIntent | None = None
 
     def _make_handler(sig: signal.Signals) -> Callable[[], None]:
         def handle_shutdown() -> None:
+            nonlocal recorded_intent
+
             import traceback
 
             from gobby.shutdown_intent import format_shutdown_source, read_shutdown_intent
@@ -705,10 +712,17 @@ def setup_signal_handlers(
             shutdown_record = read_shutdown_intent(home=get_gobby_home())
             logger.info(f"Shutdown source: {format_shutdown_source(shutdown_record)}")
             if shutdown_intent_callback is not None:
-                try:
-                    shutdown_intent_callback(shutdown_record.intent)
-                except Exception:
-                    logger.exception("Shutdown intent callback failed")
+                if (
+                    recorded_intent is ShutdownIntent.RESTART
+                    and shutdown_record.intent is ShutdownIntent.STOP
+                ):
+                    logger.debug("Ignoring stop shutdown intent after restart intent was recorded")
+                else:
+                    try:
+                        shutdown_intent_callback(shutdown_record.intent)
+                        recorded_intent = shutdown_record.intent
+                    except Exception:
+                        logger.exception("Shutdown intent callback failed")
             shutdown_callback()
 
         return handle_shutdown

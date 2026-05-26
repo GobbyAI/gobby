@@ -13,9 +13,11 @@ from types import SimpleNamespace
 from unittest.mock import ANY, MagicMock, patch
 
 import pytest
+from click import ClickException
 from click.testing import CliRunner
 
 from gobby.cli import cli
+from gobby.cli.tasks._utils import config as task_config_utils
 
 pytestmark = pytest.mark.unit
 
@@ -115,6 +117,36 @@ def mock_manager():
     manager = MagicMock()
     manager.db = MagicMock()
     return manager
+
+
+def test_get_task_manager_uses_runtime_hub(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Task CLI storage follows the configured runtime hub storage."""
+    db = MagicMock()
+    open_hub = MagicMock(return_value=db)
+    monkeypatch.setattr(task_config_utils, "open_runtime_hub_database", open_hub)
+    manager_cls = MagicMock(return_value=SimpleNamespace(db=db))
+    monkeypatch.setattr(task_config_utils, "LocalTaskManager", manager_cls)
+
+    manager = task_config_utils.get_task_manager()
+
+    assert manager is manager_cls.return_value
+    assert manager.db is db
+    open_hub.assert_called_once_with(apply_migrations=False)
+    manager_cls.assert_called_once_with(db)
+
+
+def test_get_task_manager_rejects_removed_bootstrap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Task CLI does not fall back to removed PostgreSQL runtime storage."""
+    monkeypatch.setattr(
+        task_config_utils,
+        "open_runtime_hub_database",
+        MagicMock(side_effect=RuntimeError("hub_backend must be postgres")),
+    )
+
+    with pytest.raises(ClickException, match="hub_backend must be postgres"):
+        task_config_utils.get_task_manager()
 
 
 # ==============================================================================
@@ -2126,7 +2158,7 @@ class TestSyncTasksCommand:
         mock_get_sync: MagicMock,
         runner: CliRunner,
     ) -> None:
-        """Test sync with default behavior (both import and export)."""
+        """Test sync with default behavior imports only."""
         mock_manager = MagicMock()
         mock_get_sync.return_value = mock_manager
 
@@ -2134,7 +2166,7 @@ class TestSyncTasksCommand:
 
         assert result.exit_code == 0
         mock_manager.import_from_jsonl.assert_called_once()
-        mock_manager.export_to_jsonl.assert_called_once()
+        mock_manager.export_to_jsonl.assert_not_called()
         assert "Sync completed" in result.output
 
     @patch("gobby.cli.tasks.main.get_sync_manager")
@@ -2154,16 +2186,37 @@ class TestSyncTasksCommand:
         mock_manager.export_to_jsonl.assert_not_called()
 
     @patch("gobby.cli.tasks.main.get_sync_manager")
-    def test_sync_export_only(
+    def test_sync_export_only_skips_outside_remote_push_context(
         self,
         mock_get_sync: MagicMock,
         runner: CliRunner,
     ) -> None:
-        """Test sync with --export flag only."""
+        """Test sync with --export flag does not dirty JSONL locally."""
         mock_manager = MagicMock()
         mock_get_sync.return_value = mock_manager
 
         result = runner.invoke(cli, ["tasks", "sync", "--export"])
+
+        assert result.exit_code == 0
+        mock_manager.import_from_jsonl.assert_not_called()
+        mock_manager.export_to_jsonl.assert_not_called()
+        assert ".gobby/tasks.jsonl is generated only during remote push" in result.output
+
+    @patch("gobby.cli.tasks.main.get_sync_manager")
+    def test_sync_export_only_runs_in_remote_push_context(
+        self,
+        mock_get_sync: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        """Test sync with --export flag in the pre-push publication context."""
+        mock_manager = MagicMock()
+        mock_get_sync.return_value = mock_manager
+
+        result = runner.invoke(
+            cli,
+            ["tasks", "sync", "--export"],
+            env={"GOBBY_JSONL_EXPORT_CONTEXT": "pre-push"},
+        )
 
         assert result.exit_code == 0
         mock_manager.import_from_jsonl.assert_not_called()

@@ -48,20 +48,20 @@ installed.
 ```mermaid
 flowchart TB
     A[Source tree] --> B[gcode index]
-    B --> C[SQLite symbols, files, chunks]
+    B --> C[PostgreSQL hub symbols, files, chunks]
     C --> D[gcode search and outline commands]
     C --> E[Daemon sync worker]
     E --> F[Qdrant vectors]
-    E --> G[Neo4j graph]
+    E --> G[FalkorDB graph]
     E --> H[Symbol summaries]
     G --> I[gcode callers, imports, blast-radius]
     G --> J[/api/code-index/graph routes]
 ```
 
 `gcode index` owns parsing and writes symbols, indexed files, content chunks,
-imports, and call relationships to SQLite. The daemon owns integrations around
-that store: background maintenance, optional vector and graph sync, optional
-symbol summaries, HTTP graph routes, and session variables.
+imports, and call relationships through the PostgreSQL hub. The daemon owns
+integrations around those rows: background maintenance, optional vector and
+graph sync, optional symbol summaries, HTTP graph routes, and session variables.
 
 Files are indexed incrementally by content hash. Changed files are re-parsed;
 unchanged files are skipped. The post-edit trigger ignores `.gobby/` internal
@@ -76,7 +76,7 @@ The maintenance loop runs every `code_index.maintenance_interval_seconds`
 seconds. It replays `gcode index --project <root> --quiet` for each indexed
 project, purges projects whose root no longer exists, and fills missing symbol
 summaries when a summarizer is configured. A separate sync worker polls pending
-files and copies symbols to Qdrant vectors and Neo4j graph edges when those
+files and copies symbols to Qdrant vectors and FalkorDB graph edges when those
 backends are enabled and available.
 
 ## CLI Reference
@@ -108,10 +108,10 @@ All commands accept these global options unless noted:
 
 | Command | Purpose |
 | :--- | :--- |
-| `gcode search <QUERY>` | Hybrid search: FTS5 plus optional semantic and graph boost |
+| `gcode search <QUERY>` | Hybrid search: full-text plus optional semantic and graph boost |
 | `gcode search-symbol <QUERY>` | Exact-first symbol/name lookup |
-| `gcode search-text <QUERY>` | FTS5 search over symbol names, signatures, and docstrings |
-| `gcode search-content <QUERY>` | FTS5 search over file content chunks |
+| `gcode search-text <QUERY>` | Full-text search over symbol names, signatures, and docstrings |
+| `gcode search-content <QUERY>` | Full-text search over file content chunks |
 | `gcode outline <FILE>` | Hierarchical symbol outline for one file |
 | `gcode symbol <ID>` | Fetch one symbol's source by byte offset |
 | `gcode symbols <IDS>...` | Fetch multiple symbols by ID |
@@ -133,7 +133,7 @@ These commands require the Gobby daemon and graph support:
 | `gcode imports <FILE>` | Show import graph for one file |
 | `gcode blast-radius <TARGET>` | Trace transitive impact from a symbol query |
 | `gcode graph clear` | Clear the current project's graph projection |
-| `gcode graph rebuild` | Rebuild the graph projection from SQLite |
+| `gcode graph rebuild` | Rebuild the graph projection from indexed hub rows |
 
 `gcode callers` and `gcode usages` support `--limit` and `--offset`. `gcode
 blast-radius` supports `--depth`; the HTTP blast-radius route has a `limit`
@@ -141,7 +141,7 @@ query parameter, but the CLI command does not expose `--limit`.
 
 ## Indexed Data
 
-The SQLite store tracks:
+The PostgreSQL hub-backed code-index store tracks:
 
 | Data | Notes |
 | :--- | :--- |
@@ -152,9 +152,10 @@ The SQLite store tracks:
 | Calls | Caller/callee relationships, including unresolved and external targets |
 | Content chunks | Searchable chunks for comments, strings, configs, docs, and other non-symbol text |
 
-Primary storage is always SQLite. Qdrant adds semantic search and Neo4j adds
-graph traversal when configured and available. Symbol summaries are cached in
-SQLite and invalidated when a symbol's content hash changes.
+The code-index tables live in the runtime PostgreSQL hub; Qdrant adds semantic
+search and FalkorDB adds graph traversal when configured and available. Symbol
+summaries are cached in the code-index rows and invalidated when a symbol's
+content hash changes.
 
 ## Languages And Content
 
@@ -263,7 +264,7 @@ logs a warning and skips the incremental update.
 
 The maintenance loop checks indexed projects on the configured interval and
 uses `gcode index --project <root> --quiet` for refresh. The sync worker can
-then update Qdrant vectors and Neo4j graph edges in batches. Summary generation
+then update Qdrant vectors and FalkorDB graph edges in batches. Summary generation
 runs from maintenance when `code_index.summary_enabled` is true and the daemon
 has an LLM service.
 
@@ -325,4 +326,4 @@ the rules engine before claiming a rule is disabled.
 - [configuration.md](configuration.md) - Full configuration reference
 - [http-endpoints.md](http-endpoints.md) - HTTP API reference
 
-_Last verified: 2026-05-07_
+_Last verified: 2026-05-23_

@@ -142,21 +142,21 @@ Mem0 Docker containers are **persistent services**, not tied to gobby daemon lif
 
 **File: `src/gobby/memory/manager.py`**
 
-**SQLite is always the source of truth.** Mem0 is a search enhancement layer.
+**PostgreSQL is always the source of truth.** Mem0 is a search enhancement layer.
 
 When mem0 is configured (`mem0_url` in config) AND reachable:
-- `remember()`: Store content + metadata in SQLite, THEN index in mem0 (with `metadata={"project_id": ...}`). Set `mem0_id` in SQLite on success.
+- `remember()`: Store content + metadata in PostgreSQL, THEN index in mem0 (with `metadata={"project_id": ...}`). Set `mem0_id` in PostgreSQL on success.
 - `recall()`: Query mem0 for semantic results → enrich with local metadata (tags, decay) → apply gobby filters
-- `forget()`: Delete from SQLite + delete from mem0
-- `update()`: Update in SQLite + update in mem0
+- `forget()`: Delete from PostgreSQL + delete from mem0
+- `update()`: Update in PostgreSQL + update in mem0
 
 When mem0 is NOT configured:
-- Use standalone mode (SQLite + UnifiedSearcher embeddings, from Part 1)
+- Use standalone mode (PostgreSQL + UnifiedSearcher embeddings, from Part 1)
 
 When mem0 is configured but UNREACHABLE:
-- `remember()`: Store in SQLite only. `mem0_id` stays NULL (marks it as unsynced).
+- `remember()`: Store in PostgreSQL only. `mem0_id` stays NULL (marks it as unsynced).
 - `recall()`: Fall back to standalone search (Part 1 embeddings/TF-IDF). Log warning once per session, not per call.
-- `forget()`/`update()`: Apply to SQLite. Queue mem0 operation for later.
+- `forget()`/`update()`: Apply to PostgreSQL. Queue mem0 operation for later.
 - **Lazy sync**: On next successful mem0 connection, background-sync memories where `mem0_id IS NULL` to mem0. No manual intervention needed.
 
 ### 2.6 Config changes
@@ -191,7 +191,7 @@ class MemoryConfig:
 
 **Delete:**
 - `src/gobby/memory/backends/openmemory.py` — replaced by mem0 client
-- `src/gobby/memory/backends/sqlite.py` — no longer a separate backend (SQLite metadata stays in `storage/memories.py`)
+- `src/gobby/memory/backends/PostgreSQL.py` — no longer a separate backend (PostgreSQL metadata stays in `storage/memories.py`)
 
 **Refactor:**
 - `src/gobby/memory/backends/mem0.py` — replace with new `mem0_client.py`
@@ -203,7 +203,7 @@ class MemoryConfig:
 
 - Remove `OpenMemoryConfig` from `src/gobby/config/persistence.py`
 - Remove old `Mem0Config` (replaced by `mem0_url`/`mem0_api_key` fields)
-- Remove old `backend` field (no longer choosing between sqlite/mem0/openmemory)
+- Remove old `backend` field (no longer choosing between PostgreSQL/mem0/openmemory)
 - Remove `search_backend` valid options restriction to just `tfidf`/`text`
 
 ---
@@ -264,7 +264,7 @@ class MemoryConfig:
 | `src/gobby/data/docker-compose.mem0.yml` | New — bundled compose file |
 | `src/gobby/memory/backends/openmemory.py` | Delete |
 | `src/gobby/memory/backends/mem0.py` | Delete (replaced by mem0_client) |
-| `src/gobby/memory/backends/sqlite.py` | Delete |
+| `src/gobby/memory/backends/PostgreSQL.py` | Delete |
 | `web/src/App.tsx` | Wire MemoryPage |
 | `web/src/components/MemoryPage.tsx` | New |
 | `web/src/hooks/useMemory.ts` | New |

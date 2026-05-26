@@ -7,14 +7,20 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any, ClassVar, Protocol
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import (
+    HubDatabase,
+    SessionRecoveryByProject,
+    SessionRegistration,
+    WebChatSessionBootstrap,
+)
 from gobby.storage.session_models import Session
 
 from ._constants import SYSTEM_SESSION_ID, ensure_system_session, get_logger
+from ._upsert import is_session_unique_conflict, update_existing_session
 
 
 class _SessionCRUDHost(Protocol):
-    db: DatabaseProtocol
+    db: HubDatabase
     _VALID_CHAT_MODES: ClassVar[set[str]]
 
     def find_by_external_id(
@@ -107,8 +113,16 @@ class _SessionCRUDMixin:
         if parent_session_id == SYSTEM_SESSION_ID:
             ensure_system_session(self.db)
 
+        registration_lock = SessionRegistration(
+            external_id=external_id,
+            machine_id=machine_id,
+            source=source,
+            project_id=project_id,
+            session_type=session_type,
+        )
+
         change_event = "session_created"
-        with self.db.transaction_immediate() as conn:
+        with self.db.transaction_immediate(registration_lock) as conn:
             existing = self.find_by_external_id(
                 external_id,
                 machine_id,
@@ -117,64 +131,46 @@ class _SessionCRUDMixin:
                 session_type=session_type,
             )
             if existing is None and project_id:
-                existing = self.find_by_external_id_any_project(
-                    external_id,
-                    machine_id,
-                    source,
-                    session_type=session_type,
-                )
-                if existing and existing.project_id != project_id:
-                    conn.execute(
-                        "UPDATE sessions SET project_id = ?, updated_at = ? WHERE id = ?",
-                        (project_id, now, existing.id),
+                with self.db.transaction_immediate(SessionRecoveryByProject(project_id=project_id)):
+                    existing = self.find_by_external_id_any_project(
+                        external_id,
+                        machine_id,
+                        source,
+                        session_type=session_type,
                     )
-                    get_logger().info(
-                        "Recovered session %s: project_id %s -> %s",
-                        existing.id,
-                        existing.project_id,
-                        project_id,
-                    )
-                    existing = self.get(existing.id)
+                    if existing and existing.project_id != project_id:
+                        conn.execute(
+                            "UPDATE sessions SET project_id = ?, updated_at = ? WHERE id = ?",
+                            (project_id, now, existing.id),
+                        )
+                        get_logger().info(
+                            "Recovered session %s: project_id %s -> %s",
+                            existing.id,
+                            existing.project_id,
+                            project_id,
+                        )
+                        existing = self.get(existing.id)
 
             if existing:
-                conn.execute(
-                    """
-                    UPDATE sessions SET
-                        title = COALESCE(?, title),
-                        transcript_path = COALESCE(?, transcript_path),
-                        git_branch = COALESCE(?, git_branch),
-                        parent_session_id = COALESCE(?, parent_session_id),
-                        terminal_context = COALESCE(?, terminal_context),
-                        workflow_name = COALESCE(?, workflow_name),
-                        is_local = CASE WHEN ? THEN 1 ELSE is_local END,
-                        sandbox_enabled = COALESCE(?, sandbox_enabled),
-                        sandbox_policy_hash = COALESCE(?, sandbox_policy_hash),
-                        status = 'active',
-                        updated_at = ?
-                    WHERE id = ?
-                    """,
-                    (
-                        title,
-                        transcript_path,
-                        git_branch,
-                        parent_session_id,
-                        terminal_context_json,
-                        workflow_name,
-                        int(is_local),
-                        sandbox_enabled,
-                        sandbox_policy_hash,
-                        now,
-                        existing.id,
-                    ),
+                session = update_existing_session(
+                    self,
+                    conn,
+                    existing,
+                    title=title,
+                    transcript_path=transcript_path,
+                    git_branch=git_branch,
+                    parent_session_id=parent_session_id,
+                    terminal_context_json=terminal_context_json,
+                    workflow_name=workflow_name,
+                    is_local=True if is_local else None,
+                    sandbox_enabled=sandbox_enabled,
+                    sandbox_policy_hash=sandbox_policy_hash,
+                    now=now,
                 )
                 get_logger().debug(
                     "Reusing existing session %s for external_id=%s", existing.id, external_id
                 )
-                updated = self.get(existing.id)
-                if updated is None:
-                    raise RuntimeError(f"Session {existing.id} disappeared during update")
                 change_event = "session_updated"
-                session = updated
             else:
                 session_id = str(uuid.uuid4())
                 max_seq_row = conn.execute(
@@ -182,51 +178,103 @@ class _SessionCRUDMixin:
                     (project_id,),
                 ).fetchone()
                 next_seq_num = ((max_seq_row["max_seq"] if max_seq_row else None) or 0) + 1
+                savepoint = (
+                    conn.savepoint("session_register_insert")
+                    if hasattr(conn, "savepoint")
+                    else None
+                )
 
-                conn.execute(
-                    """
-                    INSERT INTO sessions (
-                        id, external_id, machine_id, source, project_id, title, title_source,
-                        transcript_path, git_branch, parent_session_id,
-                        agent_depth, spawned_by_agent_id, terminal_context,
-                        workflow_name, session_type, is_local, sandbox_enabled, sandbox_policy_hash,
-                        status, created_at, updated_at, seq_num,
-                        had_edits, message_count, turn_count, tool_call_count, last_assistant_content
+                try:
+                    conn.execute(
+                        """
+                        INSERT INTO sessions (
+                            id, external_id, machine_id, source, project_id, title, title_source,
+                            transcript_path, git_branch, parent_session_id,
+                            agent_depth, spawned_by_agent_id, terminal_context,
+                            workflow_name, session_type, is_local, sandbox_enabled, sandbox_policy_hash,
+                            status, created_at, updated_at, seq_num,
+                            had_edits, message_count, turn_count, tool_call_count, last_assistant_content
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, FALSE, 0, 0, 0, NULL)
+                        """,
+                        (
+                            session_id,
+                            external_id,
+                            machine_id,
+                            source,
+                            project_id,
+                            title,
+                            transcript_path,
+                            git_branch,
+                            parent_session_id,
+                            agent_depth,
+                            spawned_by_agent_id,
+                            terminal_context_json,
+                            workflow_name,
+                            session_type,
+                            bool(is_local),
+                            None if sandbox_enabled is None else bool(sandbox_enabled),
+                            sandbox_policy_hash,
+                            now,
+                            now,
+                            next_seq_num,
+                        ),
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, 0, 0, 0, 0, NULL)
-                    """,
-                    (
-                        session_id,
+                except Exception as exc:
+                    if savepoint is not None:
+                        savepoint.rollback()
+                        savepoint.release()
+                    if not is_session_unique_conflict(exc):
+                        raise
+                    conflicting = self.find_by_external_id(
                         external_id,
                         machine_id,
-                        source,
                         project_id,
-                        title,
-                        transcript_path,
-                        git_branch,
-                        parent_session_id,
-                        agent_depth,
-                        spawned_by_agent_id,
-                        terminal_context_json,
-                        workflow_name,
-                        session_type,
-                        int(is_local),
-                        None if sandbox_enabled is None else int(bool(sandbox_enabled)),
-                        sandbox_policy_hash,
-                        now,
-                        now,
-                        next_seq_num,
-                    ),
-                )
+                        source,
+                        session_type=session_type,
+                    )
+                    if conflicting is None:
+                        conflicting = self.find_by_external_id(
+                            external_id,
+                            machine_id,
+                            project_id,
+                            source,
+                            session_type=None,
+                        )
+                    if conflicting is None:
+                        raise
+                    get_logger().info(
+                        "Recovered existing session %s after unique conflict for external_id=%s",
+                        conflicting.id,
+                        external_id,
+                    )
+                    session = update_existing_session(
+                        self,
+                        conn,
+                        conflicting,
+                        title=title,
+                        transcript_path=transcript_path,
+                        git_branch=git_branch,
+                        parent_session_id=parent_session_id,
+                        terminal_context_json=terminal_context_json,
+                        workflow_name=workflow_name,
+                        is_local=True if is_local else None,
+                        sandbox_enabled=sandbox_enabled,
+                        sandbox_policy_hash=sandbox_policy_hash,
+                        now=now,
+                    )
+                    change_event = "session_updated"
+                else:
+                    if savepoint is not None:
+                        savepoint.release()
+                    get_logger().debug(
+                        "Created new session %s for external_id=%s", session_id, external_id
+                    )
 
-                get_logger().debug(
-                    "Created new session %s for external_id=%s", session_id, external_id
-                )
-
-                created = self.get(session_id)
-                if created is None:
-                    raise RuntimeError(f"Session {session_id} not found after creation")
-                session = created
+                    created = self.get(session_id)
+                    if created is None:
+                        raise RuntimeError(f"Session {session_id} not found after creation")
+                    session = created
 
         self._notify_session_change(change_event, session.id)
         return session
@@ -256,7 +304,15 @@ class _SessionCRUDMixin:
             )
 
         bootstrap_external_id = f"web-chat-bootstrap:{uuid.uuid4()}"
-        with self.db.transaction_immediate():
+        with self.db.transaction_immediate(
+            WebChatSessionBootstrap(
+                external_id=bootstrap_external_id,
+                machine_id=machine_id,
+                source=source,
+                project_id=project_id,
+                session_type="web_chat",
+            )
+        ):
             session = self.register(
                 external_id=bootstrap_external_id,
                 machine_id=machine_id,
@@ -276,12 +332,12 @@ class _SessionCRUDMixin:
                 """
                 UPDATE sessions
                 SET model = COALESCE(?, model),
-                    is_local = CASE WHEN ? THEN 1 ELSE is_local END,
+                    is_local = ?,
                     chat_mode = COALESCE(?, chat_mode),
                     updated_at = ?
                 WHERE id = ?
                 """,
-                (model, int(is_local), chat_mode, now, session.id),
+                (model, bool(is_local), chat_mode, now, session.id),
             )
             updated = self.get(session.id)
             if updated is None:

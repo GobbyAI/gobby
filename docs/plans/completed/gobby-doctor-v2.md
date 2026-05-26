@@ -26,7 +26,7 @@ Rename the `diagnostic` skill to `doctor` and add security audit checks inspired
 
 | Check | Description | Pass Criteria |
 |-------|-------------|---------------|
-| 5.1 File Permissions | Check ~/.gobby/config.yaml, .mcp.json, gobby-hub.db | All files 0o600 |
+| 5.1 File Permissions | Check ~/.gobby/config.yaml, .mcp.json, PostgreSQL hub | All files 0o600 |
 | 5.2 Plaintext Secrets | Scan config for hardcoded API keys | No plaintext keys in `llm_providers.api_keys` |
 | 5.3 HTTP Binding | Check daemon network binding | Warn if 0.0.0.0 with no firewall note |
 | 5.4 Webhook URLs | Validate webhook endpoints | All use HTTPS |

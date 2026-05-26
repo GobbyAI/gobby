@@ -30,7 +30,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
             Dict with success status and moved skill info
         """
         try:
-            skill = await ctx.run_sqlite(ctx.storage.move_to_project, skill_id, target_project_id)
+            skill = await ctx.run_db(ctx.storage.move_to_project, skill_id, target_project_id)
             return {
                 "success": True,
                 "skill_id": skill.id,
@@ -58,7 +58,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
             Dict with success status and moved skill info
         """
         try:
-            skill = await ctx.run_sqlite(ctx.storage.move_to_installed, skill_id)
+            skill = await ctx.run_db(ctx.storage.move_to_installed, skill_id)
             return {
                 "success": True,
                 "skill_id": skill.id,

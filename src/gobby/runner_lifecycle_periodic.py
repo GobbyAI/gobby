@@ -12,6 +12,10 @@ if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
 
 
+DEFAULT_CHAT_ATTACHMENT_RETENTION_HOURS = 24
+DEFAULT_CHAT_ATTACHMENT_GC_INTERVAL_MINUTES = 60
+
+
 def start_periodic_tasks(
     runner: GobbyRunner,
     *,
@@ -59,12 +63,22 @@ def start_periodic_tasks(
     )
     db_executor = getattr(runner, "db_executor", None)
     chat_config = getattr(runner.config, "chat", None)
+    attachment_retention_hours = getattr(
+        chat_config,
+        "attachment_unbound_retention_hours",
+        DEFAULT_CHAT_ATTACHMENT_RETENTION_HOURS,
+    )
+    attachment_gc_interval_minutes = getattr(
+        chat_config,
+        "attachment_gc_interval_minutes",
+        DEFAULT_CHAT_ATTACHMENT_GC_INTERVAL_MINUTES,
+    )
     runner._chat_attachments_cleanup_task = asyncio.create_task(
         loops["cleanup_chat_attachments_loop"](
             runner.database,
             lambda: runner._shutdown_requested,
-            retention_hours=getattr(chat_config, "attachment_unbound_retention_hours", 24),
-            interval_minutes=getattr(chat_config, "attachment_gc_interval_minutes", 60),
+            retention_hours=attachment_retention_hours,
+            interval_minutes=attachment_gc_interval_minutes,
             run_db=getattr(db_executor, "run", None),
         ),
         name="chat-attachment-cleanup",

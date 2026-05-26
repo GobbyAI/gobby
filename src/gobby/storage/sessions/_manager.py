@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import threading
-import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 from ._bootstrap import SessionChangeCallback, TitleChangeCallback, _SessionBootstrapMixin
 from ._bulk_update import _BulkUpdateMixin
@@ -43,7 +42,7 @@ class SessionManager(
 ):
     """Manager for local session storage."""
 
-    db: DatabaseProtocol
+    db: HubDatabase
     _storage: SessionManager
     logger: logging.Logger
     _config: DaemonConfig | None
@@ -58,7 +57,7 @@ class SessionManager(
 
     def __init__(
         self,
-        db: DatabaseProtocol | None = None,
+        db: HubDatabase | None = None,
         *,
         session_storage: SessionManager | None = None,
         logger_instance: logging.Logger | None = None,
@@ -89,6 +88,97 @@ class SessionManager(
 
     _VALID_SESSION_TYPES: ClassVar[set[str]] = {"terminal", "web_chat"}
 
+    def _cache_registered_session(
+        self,
+        *,
+        session_id: str,
+        external_id: str,
+        machine_id: str,
+        source: str,
+        project_id: str | None,
+        parent_session_id: str | None,
+        transcript_path: str | None,
+        title: str | None,
+        git_branch: str | None,
+        workflow_name: str | None,
+        agent_depth: int,
+        is_local: bool,
+        sandbox_enabled: bool | None,
+    ) -> None:
+        with self._session_mapping_lock:
+            self._session_mapping[(external_id, source)] = session_id
+
+        with self._session_metadata_lock:
+            self._session_metadata[session_id] = {
+                "external_id": external_id,
+                "machine_id": machine_id,
+                "source": source,
+                "parent_session_id": parent_session_id,
+                "transcript_path": transcript_path,
+                "project_id": project_id,
+                "title": title,
+                "git_branch": git_branch,
+                "workflow_name": workflow_name,
+                "agent_depth": agent_depth,
+                "is_local": is_local,
+                "sandbox_enabled": sandbox_enabled,
+            }
+
+    def _recover_registered_session_after_failure(
+        self,
+        *,
+        external_id: str,
+        machine_id: str,
+        source: str,
+        project_id: str | None,
+        parent_session_id: str | None,
+        transcript_path: str | None,
+        title: str | None,
+        git_branch: str | None,
+        workflow_name: str | None,
+        agent_depth: int,
+        is_local: bool,
+        sandbox_enabled: bool | None,
+    ) -> str:
+        try:
+            recovered = self.find_by_external_id(
+                external_id=external_id,
+                machine_id=machine_id,
+                project_id=project_id,
+                source=source,
+            )
+            if recovered is None:
+                relaxed = self.find_active_by_external_id(external_id, source)
+                if relaxed and (project_id is None or relaxed.project_id == project_id):
+                    recovered = relaxed
+
+            if recovered is None:
+                return ""
+
+            self._cache_registered_session(
+                session_id=recovered.id,
+                external_id=external_id,
+                machine_id=machine_id,
+                source=source,
+                project_id=project_id,
+                parent_session_id=parent_session_id,
+                transcript_path=transcript_path,
+                title=title,
+                git_branch=git_branch,
+                workflow_name=workflow_name,
+                agent_depth=agent_depth,
+                is_local=is_local,
+                sandbox_enabled=sandbox_enabled,
+            )
+            return recovered.id
+        except Exception as recovery_error:
+            self.logger.debug(
+                "Failed to recover persisted session after registration failure: %s",
+                recovery_error,
+                exc_info=True,
+            )
+            return ""
+
     def register_session(
         self,
         external_id: str,
@@ -109,8 +199,9 @@ class SessionManager(
         """
         Register new session with local storage.
 
-        Returns a temporary UUID on failure so hooks can continue without
-        persisting or caching an ephemeral row.
+        Returns an existing persisted session on recoverable storage failures.
+        If no persisted session can be recovered, returns an empty string so
+        callers do not inject an ephemeral wrapper ID into later hooks.
         """
         working_dir = project_path or str(Path.cwd())
 
@@ -143,24 +234,21 @@ class SessionManager(
 
             session_id = session.id
 
-            with self._session_mapping_lock:
-                self._session_mapping[(external_id, source)] = session_id
-
-            with self._session_metadata_lock:
-                self._session_metadata[session_id] = {
-                    "external_id": external_id,
-                    "machine_id": machine_id,
-                    "source": source,
-                    "parent_session_id": parent_session_id,
-                    "transcript_path": transcript_path,
-                    "project_id": project_id,
-                    "title": title,
-                    "git_branch": git_branch,
-                    "workflow_name": workflow_name,
-                    "agent_depth": agent_depth,
-                    "is_local": is_local,
-                    "sandbox_enabled": sandbox_enabled,
-                }
+            self._cache_registered_session(
+                session_id=session_id,
+                external_id=external_id,
+                machine_id=machine_id,
+                source=source,
+                project_id=project_id,
+                parent_session_id=parent_session_id,
+                transcript_path=transcript_path,
+                title=title,
+                git_branch=git_branch,
+                workflow_name=workflow_name,
+                agent_depth=agent_depth,
+                is_local=is_local,
+                sandbox_enabled=sandbox_enabled,
+            )
 
             self.logger.debug(
                 "Registered session %s (external_id=%s)",
@@ -170,8 +258,37 @@ class SessionManager(
             return session_id
 
         except Exception as e:
-            self.logger.error("Failed to register session: %s", e, exc_info=True)
-            return str(uuid.uuid4())
+            recovered_session_id = self._recover_registered_session_after_failure(
+                external_id=external_id,
+                machine_id=machine_id,
+                source=source,
+                project_id=project_id,
+                parent_session_id=parent_session_id,
+                transcript_path=transcript_path,
+                title=title,
+                git_branch=git_branch,
+                workflow_name=workflow_name,
+                agent_depth=agent_depth,
+                is_local=is_local,
+                sandbox_enabled=sandbox_enabled,
+            )
+            if recovered_session_id:
+                self.logger.warning(
+                    "Session registration failed; reused existing session %s for "
+                    "external_id=%s source=%s: %s",
+                    recovered_session_id,
+                    external_id,
+                    source,
+                    e,
+                )
+                return recovered_session_id
+
+            self.logger.error(
+                "Failed to register session and no persisted session could be recovered: %s",
+                e,
+                exc_info=True,
+            )
+            return ""
 
     def update_session_status(
         self,

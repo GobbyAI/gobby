@@ -16,7 +16,8 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sql_dialect import json_array_contains_condition, json_text_expr
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.utils.native_bin import resolve_native_bin
 from gobby.workflows.definitions import RuleDefinitionBody
@@ -58,7 +59,7 @@ def _iter_active_rule_files(rules_paths: list[Path]) -> list[tuple[Path, Path]]:
 
 
 def sync_bundled_rules(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     rules_path: Path | None = None,
     tag: str = "gobby",
 ) -> dict[str, Any]:
@@ -79,13 +80,16 @@ def sync_bundled_rules(
     rules_paths = get_bundled_rules_paths() if rules_path is None else [rules_path]
 
     # Repair rows where workflow_type was silently changed from 'rule'
+    event_expr = json_text_expr(db, "definition_json", "event")
+    effect_expr = json_text_expr(db, "definition_json", "effect")
+    effects_expr = json_text_expr(db, "definition_json", "effects")
     repaired = db.execute(
         "UPDATE workflow_definitions "
-        "SET workflow_type = 'rule', updated_at = datetime('now') "
+        "SET workflow_type = 'rule', updated_at = CURRENT_TIMESTAMP "
         "WHERE workflow_type != 'rule' "
-        "  AND json_extract(definition_json, '$.event') IS NOT NULL "
-        "  AND (json_extract(definition_json, '$.effect') IS NOT NULL "
-        "       OR json_extract(definition_json, '$.effects') IS NOT NULL)",
+        f"  AND {event_expr} IS NOT NULL "
+        f"  AND ({effect_expr} IS NOT NULL "
+        f"       OR {effects_expr} IS NOT NULL)",
     ).rowcount
     if repaired:
         logger.info(f"Repaired {repaired} rows with incorrect workflow_type (should be 'rule')")
@@ -142,11 +146,14 @@ def sync_bundled_rules(
 
                 # Name collision prevention: user templates can't shadow gobby rules
                 if tag != "gobby":
+                    gobby_tag_condition, gobby_tag_params = json_array_contains_condition(
+                        db, "tags", "gobby"
+                    )
                     gobby_row = db.fetchone(
                         "SELECT id FROM workflow_definitions "
-                        "WHERE name = ? AND tags LIKE '%\"gobby\"%' "
+                        f"WHERE name = ? AND {gobby_tag_condition} "
                         "AND deleted_at IS NULL",
-                        (rule_name,),
+                        (rule_name, *gobby_tag_params),
                     )
                     if gobby_row:
                         logger.debug(
@@ -180,12 +187,12 @@ def sync_bundled_rules(
 
     # Orphan cleanup: soft-delete rules whose YAML was removed.
     # Only touch rows with matching tag to avoid cross-tag damage.
-    tag_filter = f'%"{tag}"%'
+    tag_condition, tag_params = json_array_contains_condition(db, "tags", tag)
     orphan_rows = db.fetchall(
         "SELECT id, name FROM workflow_definitions "
         "WHERE workflow_type = 'rule' "
-        "AND tags LIKE ? AND deleted_at IS NULL",
-        (tag_filter,),
+        f"AND {tag_condition} AND deleted_at IS NULL",
+        tag_params,
     )
     result["orphaned"] = 0
     for row in orphan_rows:
@@ -355,7 +362,7 @@ def _build_rule_update_fields(
     """Build the minimal field set needed to refresh a bundled rule row."""
     update_fields: dict[str, Any] = {}
 
-    if existing.definition_json != definition_json:
+    if not _json_payloads_equal(existing.definition_json, definition_json):
         update_fields["definition_json"] = definition_json
     if existing.description != description:
         update_fields["description"] = description
@@ -367,3 +374,12 @@ def _build_rule_update_fields(
         update_fields["tags"] = tags
 
     return update_fields
+
+
+def _json_payloads_equal(left: str, right: str) -> bool:
+    try:
+        left_payload: object = json.loads(left)
+        right_payload: object = json.loads(right)
+        return left_payload == right_payload
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return left == right

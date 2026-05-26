@@ -26,13 +26,11 @@ def test_loads_required_skills_before_implementation() -> None:
     assert agent["step_variables"]["required_skills"] == [
         "tech-writer",
         "task-transitions",
-        "verification-before-completion",
     ]
     assert steps["claim"]["transitions"] == [{"to": "load_skills", "when": "vars.task_claimed"}]
     assert load_step["allowed_mcp_tools"] == ["gobby-skills:get_skill"]
     assert 'get_skill(name="tech-writer")' in load_step["status_message"]
     assert 'get_skill(name="task-transitions")' in load_step["status_message"]
-    assert 'get_skill(name="verification-before-completion")' in load_step["status_message"]
     assert load_step["transitions"] == [
         {
             "to": "implement",

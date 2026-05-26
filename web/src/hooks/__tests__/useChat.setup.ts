@@ -18,6 +18,7 @@ export interface UseChatTestContext {
   originalLocalStorage: Storage;
   consoleSpy: {
     log: ReturnType<typeof vi.spyOn>;
+    debug: ReturnType<typeof vi.spyOn>;
     error: ReturnType<typeof vi.spyOn>;
     warn: ReturnType<typeof vi.spyOn>;
   };
@@ -26,6 +27,7 @@ export interface UseChatTestContext {
 export function createUseChatTestContext(): UseChatTestContext {
   const consoleSpy = {
     log: vi.spyOn(console, "log").mockImplementation(() => {}),
+    debug: vi.spyOn(console, "debug").mockImplementation(() => {}),
     error: vi.spyOn(console, "error").mockImplementation(() => {}),
     warn: vi.spyOn(console, "warn").mockImplementation(() => {}),
   };
@@ -74,6 +76,7 @@ export function cleanupUseChatTestContext(context: UseChatTestContext): void {
     configurable: true,
   });
   context.consoleSpy.log.mockRestore();
+  context.consoleSpy.debug.mockRestore();
   context.consoleSpy.error.mockRestore();
   context.consoleSpy.warn.mockRestore();
   vi.restoreAllMocks();

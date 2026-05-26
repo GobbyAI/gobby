@@ -2,11 +2,12 @@
 
 import logging
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ class Project:
     deleted_at: str | None = None
 
     @classmethod
-    def from_row(cls, row: Any) -> "Project":
+    def from_row(cls, row: Mapping[str, Any]) -> "Project":
         """Create Project from database row."""
         keys = row.keys()
         return cls(
@@ -72,7 +73,7 @@ class Project:
 class LocalProjectManager:
     """Manager for local project storage."""
 
-    def __init__(self, db: DatabaseProtocol):
+    def __init__(self, db: HubDatabase):
         """Initialize with database connection."""
         self.db = db
 
@@ -164,8 +165,9 @@ class LocalProjectManager:
         now = datetime.now(UTC).isoformat()
         self.db.execute(
             """
-            INSERT OR IGNORE INTO projects (id, name, repo_path, created_at, updated_at)
+            INSERT INTO projects (id, name, repo_path, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT (id) DO NOTHING
             """,
             (project_id, name, repo_path, now, now),
         )
@@ -175,7 +177,7 @@ class LocalProjectManager:
             return project
 
         raise RuntimeError(
-            f"Project '{name}' ({project_id}) not found after INSERT OR IGNORE — "
+            f"Project '{name}' ({project_id}) not found after idempotent insert — "
             "possible database inconsistency"
         )
 

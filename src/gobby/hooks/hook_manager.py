@@ -5,40 +5,27 @@ to :mod:`gobby.hooks.event_handlers`.  See :class:`HookManager` for details.
 """
 
 import asyncio
+import concurrent.futures
 import copy
 import logging
 import os
-import sqlite3
 import threading
-import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from gobby.hooks.dispatchers.mcp import (
-    dispatch_mcp_calls as _dispatch_mcp_calls_impl,
-)
-from gobby.hooks.dispatchers.mcp import (
-    format_discovery_result as _format_discovery_result_impl,
-)
-from gobby.hooks.dispatchers.mcp import (
-    proxy_self_call as _proxy_self_call_impl,
-)
-from gobby.hooks.dispatchers.mcp import (
-    run_coro_blocking as _run_coro_blocking_impl,
-)
-from gobby.hooks.dispatchers.webhook import (
-    dispatch_webhooks_async as _dispatch_webhooks_async_impl,
-)
-from gobby.hooks.dispatchers.webhook import (
-    dispatch_webhooks_sync as _dispatch_webhooks_sync_impl,
-)
-from gobby.hooks.dispatchers.webhook import (
-    evaluate_blocking_webhooks as _evaluate_blocking_webhooks_impl,
-)
+from gobby.hooks.broadcaster import schedule_hook_broadcast
+from gobby.hooks.dispatchers import mcp as mcp_dispatcher
+from gobby.hooks.dispatchers import webhook as webhook_dispatcher
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.hooks.factory import HookManagerFactory
-from gobby.hooks.project_context import resolve_hook_project_context
+from gobby.hooks.health_gate import ensure_daemon_ready, ensure_daemon_ready_async
+from gobby.hooks.project_context import ProjectIdResolver, resolve_hook_project_context
+from gobby.hooks.rule_evaluator import WorkflowRuleEvaluator
 from gobby.hooks.session_activation import reconcile_session_activation
+from gobby.hooks.session_ref_resolution import (
+    resolve_session_refs_in_tool_input,
+)
+from gobby.hooks.session_summary_dispatcher import SessionSummaryDispatcher
 from gobby.hooks.session_types import HookSessionManager
 from gobby.servers.routes.sessions.statusline_activity import record_session_activity
 from gobby.telemetry.tracing import create_span
@@ -48,40 +35,12 @@ if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
     from gobby.events.completion_registry import CompletionEventRegistry
     from gobby.llm.service import LLMService
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.sessions import SessionManager
 
 
 class HookManager:
-    """
-    Session-scoped coordinator for Claude Code hooks.
-
-    Delegates all work to subsystems:
-    - DaemonClient: HTTP communication with Gobby daemon
-    - TranscriptProcessor: JSONL parsing and analysis
-    - RuleEngine + WorkflowHookHandler: Handles session lifecycle and rule enforcement
-
-    Session ID Mapping:
-        There are two types of session IDs used throughout the system:
-
-        | Name                     | Description                                    | Example                                |
-        |--------------------------|------------------------------------------------|----------------------------------------|
-        | external_id / session_id | CLI's internal session UUID (Claude Code, etc) | 683bc13e-091e-4911-9e59-e7546e385cd6   |
-        | _platform_session_id     | Gobby's internal session.id (database PK)      | 0ebb2c00-0f58-4c39-9370-eba1833dec33   |
-
-        The _platform_session_id is derived from session_manager.get_session_id(external_id, source)
-        which looks up Gobby's session by the CLI's external_id.
-
-        When injecting into agent context:
-        - "session_id" in response.metadata = Gobby's _platform_session_id (for MCP tool calls)
-        - "external_id" in response.metadata = CLI's session UUID (for transcript lookups)
-
-    Attributes:
-        daemon_host: Host for daemon communication
-        daemon_port: Port for daemon communication
-        log_file: Full path to log file
-        logger: Configured logger instance
-    """
+    """Session-scoped coordinator for hook events."""
 
     def __init__(
         self,
@@ -99,31 +58,10 @@ class HookManager:
         task_sync_manager: Any | None = None,
         agent_runner: "AgentRunner | None" = None,
         completion_registry: "CompletionEventRegistry | None" = None,
-        database: "DatabaseProtocol | None" = None,
+        database: "HubDatabase | None" = None,
         session_manager: "SessionManager | None" = None,
         code_index_trigger: Any | None = None,
     ) -> None:
-        """
-        Initialize HookManager with subsystems.
-
-        Args:
-            daemon_host: Daemon host for communication
-            daemon_port: Daemon port for communication
-            llm_service: Optional LLMService for multi-provider support
-            config: Optional DaemonConfig instance for feature configuration
-            log_file: Full path to log file (default: ~/.gobby/logs/hook-manager.log)
-            log_max_bytes: Max log file size before rotation
-            log_backup_count: Number of backup log files
-            broadcaster: Optional HookEventBroadcaster instance
-            tool_proxy_getter: Callable returning ToolProxyService (lazy getter)
-            message_processor: SessionMessageProcessor instance
-            memory_sync_manager: Optional MemorySyncManager instance
-            task_sync_manager: Optional TaskSyncManager instance
-            agent_runner: Optional AgentRunner for workflow-bound agent completion
-            completion_registry: Optional CompletionEventRegistry for wait wakeups
-            database: Optional database instance to share with daemon services
-            session_manager: Optional SessionManager instance to share with daemon services
-        """
         self.daemon_host = daemon_host
         self.daemon_port = daemon_port
         self.daemon_url = f"http://{daemon_host}:{daemon_port}"
@@ -147,6 +85,10 @@ class HookManager:
 
         # Setup logging
         self.logger = logging.getLogger("gobby.hooks")
+        self._project_id_resolver = ProjectIdResolver(
+            logger=self.logger,
+            ensure_project_in_db=lambda context: self._ensure_project_in_db(context),
+        )
 
         # Store LLM service
         self._llm_service = llm_service
@@ -197,6 +139,7 @@ class HookManager:
         self._workflow_handler = components.workflow_handler
         self._webhook_dispatcher = components.webhook_dispatcher
         self._session_manager = cast(HookSessionManager, components.session_manager)
+        self._project_id_resolver.session_manager = self._session_manager
         self._session_coordinator = components.session_coordinator
         self._health_monitor = components.health_monitor
         self._hook_assembler = components.hook_assembler
@@ -245,13 +188,13 @@ class HookManager:
 
         self.logger.debug("HookManager initialized")
 
-    def _reregister_active_sessions(self) -> None:
-        """
-        Re-register active sessions with the message processor.
+    @property
+    def session_manager(self) -> "SessionManager":
+        """Return the concrete session manager for diagnostics and tests."""
+        return cast("SessionManager", self._session_manager)
 
-        Called during HookManager initialization to restore message processing
-        for sessions that were active before a daemon restart.
-        """
+    def _reregister_active_sessions(self) -> None:
+        """Re-register active sessions with the message processor."""
         self._session_coordinator.reregister_active_sessions()
 
     def _start_health_check_monitoring(self) -> None:
@@ -259,30 +202,11 @@ class HookManager:
         self._health_monitor.start()
 
     def _get_cached_daemon_status(self) -> tuple[bool, str | None, str, str | None]:
-        """
-        Get cached daemon status without making HTTP call.
-
-        Returns:
-            Tuple of (is_ready, message, status, error)
-        """
+        """Get cached daemon status without making an HTTP call."""
         return self._health_monitor.get_cached_status()
 
     def handle(self, event: HookEvent) -> HookResponse:
-        """
-        Handle unified HookEvent from any CLI source.
-
-        This is the main entry point for hook handling. Adapters translate
-        CLI-specific payloads to HookEvent and call this method.
-
-        Args:
-            event: Unified HookEvent with event_type, session_id, source, and data.
-
-        Returns:
-            HookResponse with decision, context, and reason fields.
-
-        Raises:
-            ValueError: If event_type has no registered handler.
-        """
+        """Handle a unified HookEvent from any CLI source."""
         with create_span(
             "hook.handle",
             attributes={
@@ -300,47 +224,47 @@ class HookManager:
                     span.record_exception(e)
                 raise
 
+    async def handle_async(self, event: HookEvent) -> HookResponse:
+        """Async entry point for event-loop hook callers."""
+        with create_span(
+            "hook.handle",
+            attributes={
+                "event_type": str(event.event_type),
+                "source": str(event.source),
+            },
+        ) as span:
+            try:
+                response = await self._handle_internal_async(event)
+                if span.is_recording():
+                    span.set_attribute("decision", response.decision)
+                return response
+            except Exception as e:
+                if span.is_recording():
+                    span.record_exception(e)
+                raise
+
     def _handle_internal(self, event: HookEvent) -> HookResponse:
         """Internal handle logic wrapped by span."""
-        # Check daemon status (cached)
-        is_ready, _, daemon_status, error_reason = self._get_cached_daemon_status()
+        daemon_unavailable = ensure_daemon_ready(event, self._health_monitor, self.logger)
+        if daemon_unavailable:
+            return daemon_unavailable
 
-        # Critical hooks that should retry before giving up
-        # These hooks are essential for session context preservation
-        critical_hooks = {
-            HookEventType.SESSION_START,
-            HookEventType.SESSION_END,
-            HookEventType.PRE_COMPACT,
-            HookEventType.AFTER_AGENT,
-            HookEventType.STOP,
-        }
-        retry_delays = [0.5, 1.0, 2.0]  # Exponential backoff
+        return self._handle_after_daemon_ready(event)
 
-        # Retry with fresh health checks for critical hooks
-        if not is_ready and event.event_type in critical_hooks:
-            for attempt, delay in enumerate(retry_delays, 1):
-                time.sleep(delay)
-                is_ready = self._health_monitor.check_now()
-                if is_ready:
-                    self.logger.info(
-                        f"Daemon recovered after {attempt} retry(ies) for {event.event_type}"
-                    )
-                    break
-                self.logger.debug(
-                    f"Daemon still unavailable, retry {attempt}/{len(retry_delays)} "
-                    f"for {event.event_type}"
-                )
+    async def _handle_internal_async(self, event: HookEvent) -> HookResponse:
+        """Internal async handle logic wrapped by span."""
+        daemon_unavailable = await ensure_daemon_ready_async(
+            event,
+            self._health_monitor,
+            self.logger,
+        )
+        if daemon_unavailable:
+            return daemon_unavailable
 
-        if not is_ready:
-            self.logger.warning(
-                f"Daemon not available after retries, skipping hook execution: {event.event_type}. "
-                f"Status: {daemon_status}, Error: {error_reason}"
-            )
-            return HookResponse(
-                decision="allow",  # Fail-open
-                reason=f"Daemon {daemon_status}: {error_reason or 'Unknown'}",
-            )
+        return await asyncio.to_thread(self._handle_after_daemon_ready, event)
 
+    def _handle_after_daemon_ready(self, event: HookEvent) -> HookResponse:
+        """Run hook handling after the daemon readiness gate has passed."""
         # SESSION_START is special: the handler establishes the canonical
         # platform session first (including pre-created web-chat rows). Doing a
         # generic lookup here can auto-register a stray duplicate before the
@@ -461,25 +385,7 @@ class HookManager:
             except Exception as e:
                 self.logger.error(f"Response enrichment failed: {e}", exc_info=True)
 
-        # Broadcast event (fire-and-forget)
-        if self.broadcaster:
-            try:
-                # Case 1: Running in an event loop (e.g. from app-server client)
-                loop = asyncio.get_running_loop()
-                loop.create_task(self.broadcaster.broadcast_event(event, response))
-            except RuntimeError:
-                # Case 2: Running in a thread (e.g. from HTTP endpoint via to_thread)
-                if self._loop:
-                    try:
-                        # Use the main loop captured at init
-                        asyncio.run_coroutine_threadsafe(
-                            self.broadcaster.broadcast_event(event, response),
-                            self._loop,
-                        )
-                    except Exception as e:
-                        self.logger.warning(f"Failed to schedule broadcast threadsafe: {e}")
-                else:
-                    self.logger.debug("No event loop available for broadcasting")
+        schedule_hook_broadcast(self.broadcaster, event, response, self._loop, self.logger)
 
         # Dispatch non-blocking webhooks (fire-and-forget)
         try:
@@ -487,20 +393,10 @@ class HookManager:
         except Exception as e:
             self.logger.warning(f"Non-blocking webhook dispatch failed: {e}")
 
-        # Hook-based transcript capture removed (session_messages table dropped)
-
         return cast(HookResponse, response)
 
     def _get_event_handler(self, event_type: HookEventType) -> Any | None:
-        """
-        Get the handler method for a given HookEventType.
-
-        Args:
-            event_type: The unified event type enum value.
-
-        Returns:
-            Handler method or None if not found.
-        """
+        """Get the handler method for a HookEventType."""
         return self._event_handlers.get_handler(event_type)
 
     @staticmethod
@@ -511,44 +407,13 @@ class HookManager:
             record_session_activity(platform_id)
 
     def _resolve_session_refs_in_tool_input(self, event: HookEvent) -> None:
-        """Resolve #N session references to UUIDs in MCP tool arguments.
-
-        Modifies event.data["tool_input"] in place so all downstream consumers
-        (rules, handlers, auto-coercion) see resolved UUIDs.
-        """
-        if event.event_type != HookEventType.BEFORE_TOOL:
-            return
-
-        tool_name = (event.data or {}).get("tool_name", "")
-        if not tool_name.startswith("mcp__gobby__"):
-            return
-
-        tool_input = event.data.get("tool_input")
-        if not tool_input or not isinstance(tool_input, dict):
-            return
-
-        project_id = event.project_id
-
-        # Variable tools intentionally keep the user's explicit session ref
-        # (#N, N, UUID, or prefix). They resolve refs internally and preserving
-        # the original form keeps retry payloads cleaner for agents.
-        if tool_name not in {"mcp__gobby__set_variable", "mcp__gobby__get_variable"}:
-            # Top-level session_id (call_tool, tasks tools, etc.)
-            self._try_resolve_session_field(tool_input, "session_id", project_id)
-
-        # Nested session_id inside call_tool arguments
-        if tool_name == "mcp__gobby__call_tool":
-            args = tool_input.get("arguments")
-            if isinstance(args, dict):
-                self._try_resolve_session_field(args, "session_id", project_id)
+        """Resolve #N session references to UUIDs in MCP tool arguments."""
+        resolve_session_refs_in_tool_input(event, self._session_manager)
 
     def _try_resolve_session_field(
         self, d: dict[str, Any], field: str, project_id: str | None
     ) -> bool:
-        """Resolve a #N session reference in d[field] to UUID in place.
-
-        Returns True if the field was rewritten.
-        """
+        """Resolve a #N session reference in d[field] to UUID in place."""
         return try_resolve_session_field(
             d,
             field,
@@ -559,13 +424,7 @@ class HookManager:
     @staticmethod
     def _summarize_mcp_calls(mcp_calls: list[dict[str, Any]]) -> list[str]:
         """Return compact server/tool labels for workflow-triggered MCP calls."""
-        targets: list[str] = []
-        for call in mcp_calls:
-            server = call.get("server")
-            tool = call.get("tool")
-            if isinstance(server, str) and isinstance(tool, str) and server and tool:
-                targets.append(f"{server}/{tool}")
-        return targets
+        return WorkflowRuleEvaluator._summarize_mcp_calls(mcp_calls)
 
     def _log_workflow_evaluation(
         self,
@@ -574,254 +433,72 @@ class HookManager:
         mcp_calls: list[dict[str, Any]],
     ) -> None:
         """Log workflow decisions, keeping routine allow decisions at debug level."""
-        session_id = event.metadata.get("_platform_session_id", "unknown")
-        event_name = event.event_type.value
-        tool_name = event.data.get("tool_name")
-        has_rewrite = bool(workflow_response.modified_input)
-        has_visible_side_effects = bool(mcp_calls) or has_rewrite or workflow_response.auto_approve
-
-        parts = [
-            f"Workflow rule evaluation: event={event_name}",
-            f"decision={workflow_response.decision}",
-            f"session={session_id}",
-        ]
-        if isinstance(tool_name, str) and tool_name:
-            parts.append(f"tool={tool_name}")
-        if mcp_calls:
-            parts.append(f"mcp_calls={len(mcp_calls)}")
-            mcp_targets = self._summarize_mcp_calls(mcp_calls)
-            if mcp_targets:
-                parts.append(f"mcp_targets={', '.join(mcp_targets)}")
-        if has_rewrite:
-            parts.append("rewrote_input=true")
-        if workflow_response.auto_approve:
-            parts.append("auto_approve=true")
-        if workflow_response.reason and workflow_response.decision != "allow":
-            parts.append(f"reason={workflow_response.reason}")
-
-        message = ", ".join(parts)
-        if workflow_response.decision != "allow" or has_visible_side_effects:
-            self.logger.info(message)
-        else:
-            self.logger.debug(message)
+        self._create_rule_evaluator()._log_workflow_evaluation(
+            event,
+            workflow_response,
+            mcp_calls,
+        )
 
     def _evaluate_workflow_rules(self, event: HookEvent) -> tuple[str | None, HookResponse | None]:
-        """Evaluate workflow rules and dispatch mcp_call effects.
+        """Evaluate workflow rules and dispatch mcp_call effects."""
+        return self._create_rule_evaluator().evaluate(event)
 
-        Args:
-            event: The hook event to evaluate rules for.
-
-        Returns:
-            Tuple of (workflow_context, blocking_response).
-            blocking_response is non-None if rules blocked/modified the event.
-        """
-        try:
-            with create_span("hook.rules.evaluate"):
-                workflow_response = self._workflow_handler.handle(event)
-
-            # Extract and dispatch mcp_calls BEFORE the block check —
-            # they're explicit side effects that should fire regardless of decision
-            mcp_calls = (workflow_response.metadata or {}).get("mcp_calls", [])
-
-            with create_span(
-                "hook.rules.mcp_dispatch",
-                attributes={
-                    "mcp_call_count": len(mcp_calls),
-                    "mcp_calls": [f"{c.get('server')}/{c.get('tool')}" for c in mcp_calls],
-                },
-            ):
-                dispatch_results = self._dispatch_mcp_calls(mcp_calls, event) if mcp_calls else []
-
-            # Process auto-heal dispatch results: inject context, block on failure/success
-            extra_context: list[str] = []
-            block_override: HookResponse | None = None
-
-            session_id = event.metadata.get("_platform_session_id")
-
-            for dr in dispatch_results:
-                if dr.get("inject_result") and dr.get("result"):
-                    # Dedup memory injection — filter already-injected memories
-                    if dr.get("tool") == "search_memories" and session_id:
-                        dr["result"] = self._dedup_memory_results(dr["result"], session_id)
-                    # Dedup skill suggestions — filter already-suggested and low-relevance
-                    if dr.get("tool") == "search_skills" and session_id:
-                        dr["result"] = self._dedup_skill_results(dr["result"], session_id)
-                    extra_context.append(self._format_discovery_result(dr))
-                if dr.get("block_on_failure") and not dr.get("success"):
-                    result = dr.get("result") or {}
-                    error_msg = (
-                        result.get("error", "unknown") if isinstance(result, dict) else str(result)
-                    )
-                    block_override = HookResponse(
-                        decision="block",
-                        reason=(
-                            f"Auto-heal prerequisite failed: {dr['server']}/{dr['tool']}: "
-                            f"{error_msg}"
-                        ),
-                        context="\n\n".join(extra_context) if extra_context else None,
-                    )
-                    break
-                if dr.get("block_on_success") and dr.get("success"):
-                    block_override = HookResponse(
-                        decision="block",
-                        reason=(f"Intercepted by {dr['server']}/{dr['tool']} — see context below."),
-                        context="\n\n".join(extra_context) if extra_context else None,
-                    )
-                    break
-
-            if block_override:
-                self._log_workflow_evaluation(event, block_override, mcp_calls)
-                return None, block_override
-
-            if workflow_response.decision != "allow":
-                self._log_workflow_evaluation(event, workflow_response, mcp_calls)
-                # Merge any auto-heal context into the block response
-                if extra_context and workflow_response.context:
-                    workflow_response.context = (
-                        workflow_response.context + "\n\n" + "\n\n".join(extra_context)
-                    )
-                elif extra_context:
-                    workflow_response.context = "\n\n".join(extra_context)
-                return None, workflow_response
-
-            # Stash rewrite_input data on event.metadata
-            # so the main handle() method can propagate them to the final response
-            if workflow_response.modified_input:
-                event.metadata["_modified_input"] = workflow_response.modified_input
-                event.metadata["_auto_approve"] = workflow_response.auto_approve
-
-            self._log_workflow_evaluation(event, workflow_response, mcp_calls)
-
-            # Capture context to merge later
-            workflow_context = workflow_response.context if workflow_response.context else None
-            # Merge auto-heal discovery context
-            if extra_context:
-                heal_context = "\n\n".join(extra_context)
-                workflow_context = (
-                    f"{workflow_context}\n\n{heal_context}" if workflow_context else heal_context
-                )
-
-            return workflow_context, None
-
-        except Exception as e:
-            self.logger.error(f"Workflow evaluation failed: {e}", exc_info=True)
-            # Fail-open for workflow errors
-            return None, None
+    def _create_rule_evaluator(self) -> WorkflowRuleEvaluator:
+        """Create a rule evaluator bound to the manager's current dependencies."""
+        return WorkflowRuleEvaluator(
+            workflow_handler=self._workflow_handler,
+            dispatch_mcp_calls=lambda calls, event: self._dispatch_mcp_calls(calls, event),
+            format_discovery_result=self._format_discovery_result,
+            database=self._database,
+            logger=self.logger,
+        )
 
     def _evaluate_blocking_webhooks(self, event: HookEvent) -> HookResponse | None:
         """Evaluate blocking webhooks before handler execution."""
-        return _evaluate_blocking_webhooks_impl(
+        return webhook_dispatcher.evaluate_blocking_webhooks(
             event, self._webhook_dispatcher, self.logger, self._loop
         )
 
     def _dispatch_webhooks_sync(self, event: HookEvent, blocking_only: bool = False) -> list[Any]:
         """Dispatch webhooks synchronously (for blocking webhooks)."""
-        return _dispatch_webhooks_sync_impl(
+        return webhook_dispatcher.dispatch_webhooks_sync(
             event, self._webhook_dispatcher, self.logger, blocking_only
         )
 
     def _dispatch_webhooks_async(self, event: HookEvent) -> None:
         """Dispatch non-blocking webhooks asynchronously (fire-and-forget)."""
-        _dispatch_webhooks_async_impl(event, self._webhook_dispatcher, self.logger, self._loop)
+        webhook_dispatcher.dispatch_webhooks_async(
+            event, self._webhook_dispatcher, self.logger, self._loop
+        )
 
     def _dispatch_mcp_calls(
         self, mcp_calls: list[dict[str, Any]], event: HookEvent
     ) -> list[dict[str, Any]]:
         """Dispatch mcp_call effects from rule engine evaluation."""
-        return _dispatch_mcp_calls_impl(
+        return mcp_dispatcher.dispatch_mcp_calls(
             mcp_calls, event, self.tool_proxy_getter, self._loop, self.logger
         )
 
     def _run_coro_blocking(self, coro: Any) -> Any:
         """Run a coroutine blocking, using the best available event loop strategy."""
-        return _run_coro_blocking_impl(coro, self._loop, self.logger)
+        return mcp_dispatcher.run_coro_blocking(coro, self._loop, self.logger)
 
     async def _proxy_self_call(self, proxy: Any, tool: str, args: dict[str, Any]) -> dict[str, Any]:
         """Route _proxy/* tool calls to ToolProxyService methods directly."""
-        return await _proxy_self_call_impl(proxy, tool, args)
+        return await mcp_dispatcher.proxy_self_call(proxy, tool, args)
 
     @staticmethod
     def _format_discovery_result(dr: dict[str, Any]) -> str:
         """Format a proxy discovery result for context injection."""
-        return _format_discovery_result_impl(dr)
+        return mcp_dispatcher.format_discovery_result(dr)
 
     def _dedup_memory_results(self, result: dict[str, Any], session_id: str) -> dict[str, Any]:
-        """Filter already-injected memories and track newly-injected IDs.
-
-        Reads ``injected_memory_ids`` from session variables, removes memories
-        whose IDs are already present, then appends the remaining IDs back to
-        the variable for future dedup.  Fails open — returns unfiltered result
-        on any error.
-        """
-        try:
-            from gobby.workflows.state_manager import SessionVariableManager
-
-            sv_mgr = SessionVariableManager(self._database)
-            variables = sv_mgr.get_variables(session_id)
-            already_injected: set[str] = set(variables.get("injected_memory_ids", []))
-
-            memories = result.get("memories", [])
-            id_less = [m for m in memories if not m.get("id")]
-            if id_less:
-                self.logger.warning(
-                    "Memory dedup: %d memories lack 'id' field and cannot be tracked",
-                    len(id_less),
-                )
-            if not memories or not already_injected:
-                # Nothing to filter — but still track the IDs we're about to inject
-                new_ids = [m["id"] for m in memories if m.get("id")]
-                if new_ids:
-                    sv_mgr.append_to_set_variable(session_id, "injected_memory_ids", new_ids)
-                return result
-
-            filtered = [m for m in memories if m.get("id") not in already_injected]
-            new_ids = [m["id"] for m in filtered if m.get("id")]
-            if new_ids:
-                sv_mgr.append_to_set_variable(session_id, "injected_memory_ids", new_ids)
-
-            return {**result, "memories": filtered}
-        except Exception as e:
-            self.logger.debug(f"Memory injection dedup failed (fail-open): {e}")
-            return result
+        """Filter already-injected memories and track newly-injected IDs."""
+        return self._create_rule_evaluator().dedup_memory_results(result, session_id)
 
     def _dedup_skill_results(self, result: dict[str, Any], session_id: str) -> dict[str, Any]:
-        """Filter already-suggested skills and low-relevance results.
-
-        Reads ``suggested_skill_names`` from session variables, removes skills
-        whose names are already present or whose relevance score is below the
-        threshold, then appends the remaining names back for future dedup.
-        Fails open — returns unfiltered result on any error.
-        """
-        _MIN_RELEVANCE = 0.65
-
-        try:
-            from gobby.workflows.state_manager import SessionVariableManager
-
-            sv_mgr = SessionVariableManager(self._database)
-            variables = sv_mgr.get_variables(session_id)
-            already_suggested: set[str] = set(variables.get("suggested_skill_names", []))
-
-            results_list = result.get("results", [])
-            if not results_list:
-                return result
-
-            # Filter by relevance threshold and dedup
-            filtered = [
-                r
-                for r in results_list
-                if r.get("score", 0) >= _MIN_RELEVANCE
-                and r.get("skill_name", "") not in already_suggested
-            ]
-
-            # Track newly suggested skill names
-            new_names = [r["skill_name"] for r in filtered if r.get("skill_name")]
-            if new_names:
-                sv_mgr.append_to_set_variable(session_id, "suggested_skill_names", new_names)
-
-            return {**result, "results": filtered, "count": len(filtered)}
-        except Exception as e:
-            self.logger.debug(f"Skill suggestion dedup failed (fail-open): {e}")
-            return result
+        """Filter already-suggested skills and low-relevance results."""
+        return self._create_rule_evaluator().dedup_skill_results(result, session_id)
 
     def _dispatch_session_summaries(
         self,
@@ -830,66 +507,20 @@ class HookManager:
         done_event: threading.Event | None = None,
         set_handoff_ready: bool = False,
     ) -> None:
-        """Fire session summary generation.
-
-        Uses the shared generate_session_summaries() which reads the full
-        transcript, runs TranscriptAnalyzer + LLM, and persists results.
-
-        Always dispatched as background (fire-and-forget) — the background
-        param is kept for interface compat but is now ignored. SESSION_START
-        polls for the result instead of blocking here, which avoids the
-        previous 30s timeout bug when LLM calls took longer.
-
-        Args:
-            session_id: Platform session ID.
-            background: Ignored — always runs in background.
-        """
-        from gobby.sessions.summarize import generate_session_summaries
-
-        async def _run() -> None:
-            try:
-                await generate_session_summaries(
-                    session_id=session_id,
-                    session_manager=self._session_manager,
-                    llm_service=self._llm_service,
-                    db=self._database,
-                    set_handoff_ready=set_handoff_ready,
-                )
-            except Exception as exc:
-                self.logger.error(
-                    f"_dispatch_session_summaries: failed for session {session_id}: {type(exc).__name__}: {exc}",
-                    exc_info=True,
-                )
-            finally:
-                if done_event:
-                    done_event.set()
-
-        coro = _run()
-
-        # Always fire-and-forget onto event loop
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(coro)
-        except RuntimeError:
-            if self._loop and self._loop.is_running():
-                try:
-                    asyncio.run_coroutine_threadsafe(coro, self._loop)
-                except Exception as e:
-                    coro.close()  # Prevent "coroutine never awaited" warning
-                    self.logger.warning(f"_dispatch_session_summaries: failed to schedule: {e}")
-                    if done_event:
-                        done_event.set()
-            else:
-
-                def _run_coro() -> None:
-                    try:
-                        asyncio.run(coro)
-                    except Exception as e:
-                        self.logger.warning(f"_dispatch_session_summaries: background failed: {e}")
-                        if done_event:
-                            done_event.set()
-
-                threading.Thread(target=_run_coro, daemon=True).start()
+        """Fire session summary generation."""
+        dispatcher = SessionSummaryDispatcher(
+            session_manager=self._session_manager,
+            llm_service=self._llm_service,
+            database=self._database,
+            loop=self._loop,
+            logger=self.logger,
+        )
+        dispatcher.dispatch(
+            session_id,
+            _background=background,
+            done_event=done_event,
+            set_handoff_ready=set_handoff_ready,
+        )
 
     def shutdown(self) -> None:
         """
@@ -903,21 +534,67 @@ class HookManager:
         # Stop health check monitoring (delegated to HealthMonitor)
         self._health_monitor.stop()
 
-        # Close webhook dispatcher HTTP client
-        try:
-            if self._loop:
-                asyncio.run_coroutine_threadsafe(
-                    self._webhook_dispatcher.close(), self._loop
-                ).result(timeout=5.0)
-            else:
-                asyncio.run(self._webhook_dispatcher.close())
-        except Exception as e:
-            self.logger.warning(f"Failed to close webhook dispatcher: {e}")
+        self._close_webhook_dispatcher_sync()
 
         if self._owns_database and hasattr(self, "_database"):
             self._database.close()
 
         self.logger.debug("HookManager shutdown complete")
+
+    async def shutdown_async(self) -> None:
+        """Clean up HookManager resources from an async shutdown context."""
+        self.logger.debug("HookManager shutting down")
+
+        # Stop health check monitoring (delegated to HealthMonitor)
+        self._health_monitor.stop()
+
+        await self._close_webhook_dispatcher_async()
+
+        if self._owns_database and hasattr(self, "_database"):
+            self._database.close()
+
+        self.logger.debug("HookManager shutdown complete")
+
+    async def _close_webhook_dispatcher_async(self) -> None:
+        try:
+            await self._webhook_dispatcher.close()
+        except Exception as exc:
+            self._log_webhook_dispatcher_close_failure(exc)
+
+    def _close_webhook_dispatcher_sync(self) -> None:
+        try:
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            running_loop = None
+
+        if running_loop is not None:
+            running_loop.create_task(self._close_webhook_dispatcher_async())
+            self.logger.debug("Scheduled webhook dispatcher close on current event loop")
+            return
+
+        try:
+            if self._loop and self._loop.is_running():
+                asyncio.run_coroutine_threadsafe(
+                    self._close_webhook_dispatcher_async(), self._loop
+                ).result(timeout=5.0)
+            else:
+                asyncio.run(self._close_webhook_dispatcher_async())
+        except concurrent.futures.TimeoutError:
+            self.logger.warning(
+                "Timed out closing webhook dispatcher after 5.0s",
+                exc_info=True,
+            )
+        except Exception as exc:
+            self._log_webhook_dispatcher_close_failure(exc)
+
+    def _log_webhook_dispatcher_close_failure(self, exc: Exception) -> None:
+        message = str(exc) or "<no message>"
+        self.logger.warning(
+            "Failed to close webhook dispatcher (%s): %s",
+            type(exc).__name__,
+            message,
+            exc_info=True,
+        )
 
     # ==================== HELPER METHODS ====================
 
@@ -929,65 +606,11 @@ class HookManager:
         return result or "unknown-machine"
 
     def _resolve_project_id(self, project_id: str | None, cwd: str | None) -> str:
-        """
-        Resolve project_id from cwd if not provided.
-
-        If project_id is given, returns it directly.
-        Otherwise, looks up project from .gobby/project.json in the cwd.
-        If no project.json exists, automatically initializes the project.
-
-        Args:
-            project_id: Optional explicit project ID
-            cwd: Current working directory path
-
-        Returns:
-            Project ID (existing or newly created)
-        """
-        if project_id:
-            return project_id
-
-        if not cwd:
-            # No CWD available (e.g. daemon startup, factory init).
-            # Fall back to personal workspace since there's no project context.
-            from gobby.storage.projects import PERSONAL_PROJECT_ID
-
-            return PERSONAL_PROJECT_ID
-
-        working_dir = Path(cwd)
-
-        # Look up project from .gobby/project.json
-        from gobby.utils.project_context import get_project_context
-
-        project_context = get_project_context(working_dir)
-        if project_context and project_context.get("id"):
-            # Ensure project exists in database (may have been created on another machine)
-            self._ensure_project_in_db(project_context)
-            return str(project_context["id"])
-
-        raise ValueError(
-            f"No .gobby/project.json found in {working_dir}. "
-            f"Run 'gobby init' in your project directory first."
-        )
+        """Resolve project_id from explicit input, cwd, or personal fallback."""
+        return self._project_id_resolver.resolve(project_id, cwd)
 
     def _ensure_project_in_db(self, project_context: dict[str, Any]) -> None:
-        """
-        Ensure project from project.json exists in the database.
-
-        This handles the case where project.json was created on another machine
-        and the project ID doesn't exist in the local database.
-        """
-        if not hasattr(self, "_session_manager") or self._session_manager is None:
-            return
-
-        from gobby.storage.projects import LocalProjectManager
-
-        project_id = str(project_context["id"])
-        project_name = project_context.get("name", "unknown")
-        repo_path = project_context.get("project_path")
-
-        try:
-            db = self._session_manager.db
-            project_manager = LocalProjectManager(db)
-            project_manager.ensure_exists(project_id, project_name, repo_path)
-        except (sqlite3.Error, ValueError, RuntimeError) as e:
-            self.logger.warning(f"Failed to ensure project in database: {e}")
+        """Ensure project from project.json exists in the database."""
+        self._project_id_resolver.session_manager = getattr(self, "_session_manager", None)
+        self._project_id_resolver.logger = self.logger
+        self._project_id_resolver.ensure_project_in_db(project_context)

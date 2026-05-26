@@ -31,11 +31,11 @@ on both sides, not just READMEs.
 
 | | gobby | multica |
 |---|---|---|
-| Backend | Python 3.13, FastAPI, SQLite (Postgres migration in flight, plan #12761) | Go (Chi, sqlc, gorilla/ws), Postgres + pg extensions |
+| Backend | Python 3.13, FastAPI, PostgreSQL hub | Go (Chi, sqlc, gorilla/ws), Postgres + pg extensions |
 | Frontend | `./web/` (mixed) | Next.js 16 web + Electron desktop, monorepo (pnpm + Turborepo), strict `core/ui/views/` packages bridged via `NavigationAdapter` |
 | Topology | Single local daemon, single user | Server (cloud or self-hosted Docker) + many local daemons; daemons connect via heartbeat **and** websocket push (`daemonws/hub.go` broadcasts `task_available` events) |
 | Agent CLIs | claude, gemini, codex (3) | claude, codex, copilot, openclaw, opencode, hermes, gemini, pi, cursor-agent, kimi, kiro-cli (11) |
-| Persistence | `~/.gobby/gobby-hub.db` | Postgres rows scoped by `workspace_id` |
+| Persistence | PostgreSQL hub database from `bootstrap.yaml` `database_url` | Postgres rows scoped by `workspace_id` |
 
 ## Verified architectural differences
 

@@ -248,6 +248,30 @@ class TestMCPConfigManagerLoadServers:
         assert len(servers) == 1
         assert servers[0].name == "valid"
 
+    def test_load_servers_warns_and_preserves_first_duplicate_name(
+        self,
+        tmp_path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Duplicate server names are ignored after the first valid entry."""
+        config_path = tmp_path / "test_mcp.json"
+        config_data = {
+            "servers": [
+                {"name": "dup", "transport": "http", "url": "http://localhost:8080/mcp"},
+                {"name": "dup", "transport": "http", "url": "http://localhost:9090/mcp"},
+            ]
+        }
+        config_path.write_text(json.dumps(config_data))
+        caplog.set_level("WARNING", logger="gobby.config.mcp")
+
+        manager = MCPConfigManager(str(config_path))
+        servers = manager.load_servers()
+
+        assert len(servers) == 1
+        assert servers[0].name == "dup"
+        assert servers[0].url == "http://localhost:8080/mcp"
+        assert "Skipping duplicate MCP server config 'dup'; first entry wins" in caplog.text
+
     def test_load_servers_with_oauth(self, tmp_path) -> None:
         """Test loading server with OAuth configuration."""
         config_path = tmp_path / "test_mcp.json"

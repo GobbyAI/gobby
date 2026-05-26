@@ -1,5 +1,6 @@
 import json
 import subprocess
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -7,6 +8,14 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gobby.utils import deps
+
+
+def _patch_runtime_hub_database(db: Any):
+    @contextmanager
+    def _runtime_hub_database(*_args: Any, **_kwargs: Any):
+        yield db
+
+    return patch("gobby.storage.hub.runtime.runtime_hub_database", _runtime_hub_database)
 
 
 def test_run_cmd() -> None:
@@ -291,7 +300,6 @@ def test_lmstudio_info_exception() -> None:
 
 @pytest.mark.unit
 def test_get_configured_embedding_provider_detects_ollama(temp_db) -> None:
-    from gobby.config.bootstrap import BootstrapConfig
     from gobby.storage.config_store import ConfigStore
 
     store = ConfigStore(temp_db)
@@ -302,16 +310,12 @@ def test_get_configured_embedding_provider_detects_ollama(temp_db) -> None:
         }
     )
 
-    with patch(
-        "gobby.utils.deps.load_bootstrap",
-        return_value=BootstrapConfig(database_path=str(temp_db.db_path)),
-    ):
+    with _patch_runtime_hub_database(temp_db):
         assert deps.get_configured_embedding_provider() == "ollama"
 
 
 @pytest.mark.unit
 def test_get_configured_embedding_provider_detects_lmstudio(temp_db) -> None:
-    from gobby.config.bootstrap import BootstrapConfig
     from gobby.storage.config_store import ConfigStore
 
     store = ConfigStore(temp_db)
@@ -322,10 +326,7 @@ def test_get_configured_embedding_provider_detects_lmstudio(temp_db) -> None:
         }
     )
 
-    with patch(
-        "gobby.utils.deps.load_bootstrap",
-        return_value=BootstrapConfig(database_path=str(temp_db.db_path)),
-    ):
+    with _patch_runtime_hub_database(temp_db):
         assert deps.get_configured_embedding_provider() == "lmstudio"
 
 
@@ -333,7 +334,6 @@ def test_get_configured_embedding_provider_detects_lmstudio(temp_db) -> None:
 def test_get_configured_embedding_provider_detects_openai_secret(
     temp_db, mock_machine_id, tmp_path
 ) -> None:
-    from gobby.config.bootstrap import BootstrapConfig
     from gobby.storage.config_store import ConfigStore
     from gobby.storage.secrets import SecretStore
 
@@ -348,10 +348,7 @@ def test_get_configured_embedding_provider_detects_openai_secret(
     salt_file = tmp_path / ".secret_salt"
     with (
         patch("gobby.storage.secrets.SALT_FILE", salt_file),
-        patch(
-            "gobby.utils.deps.load_bootstrap",
-            return_value=BootstrapConfig(database_path=str(temp_db.db_path)),
-        ),
+        _patch_runtime_hub_database(temp_db),
     ):
         SecretStore(temp_db).set(
             name="openai_api_key",
@@ -365,7 +362,6 @@ def test_get_configured_embedding_provider_detects_openai_secret(
 def test_get_configured_embedding_provider_returns_none_without_secret(
     temp_db, monkeypatch
 ) -> None:
-    from gobby.config.bootstrap import BootstrapConfig
     from gobby.storage.config_store import ConfigStore
 
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -378,16 +374,12 @@ def test_get_configured_embedding_provider_returns_none_without_secret(
         }
     )
 
-    with patch(
-        "gobby.utils.deps.load_bootstrap",
-        return_value=BootstrapConfig(database_path=str(temp_db.db_path)),
-    ):
+    with _patch_runtime_hub_database(temp_db):
         assert deps.get_configured_embedding_provider() is None
 
 
 @pytest.mark.unit
 def test_get_configured_embedding_provider_detects_disabled_state(temp_db) -> None:
-    from gobby.config.bootstrap import BootstrapConfig
     from gobby.storage.config_store import ConfigStore
 
     store = ConfigStore(temp_db)
@@ -398,10 +390,7 @@ def test_get_configured_embedding_provider_detects_disabled_state(temp_db) -> No
         }
     )
 
-    with patch(
-        "gobby.utils.deps.load_bootstrap",
-        return_value=BootstrapConfig(database_path=str(temp_db.db_path)),
-    ):
+    with _patch_runtime_hub_database(temp_db):
         assert deps.get_configured_embedding_provider() == "none"
 
 
@@ -409,13 +398,11 @@ def test_get_configured_embedding_provider_detects_disabled_state(temp_db) -> No
 def test_get_configured_embedding_provider_falls_back_to_env_when_db_missing(
     monkeypatch, tmp_path
 ) -> None:
-    from gobby.config.bootstrap import BootstrapConfig
-
     monkeypatch.setenv("OPENAI_API_KEY", "sk-env")
 
     with patch(
-        "gobby.utils.deps.load_bootstrap",
-        return_value=BootstrapConfig(database_path=str(tmp_path / "missing.db")),
+        "gobby.storage.hub.runtime.runtime_hub_database",
+        side_effect=RuntimeError(f"missing runtime hub at {tmp_path / 'missing.db'}"),
     ):
         assert deps.get_configured_embedding_provider() == "openai"
 
@@ -425,6 +412,7 @@ def test_check_config_mismatches() -> None:
     config.llm_providers.claude = True
     config.llm_providers.codex = True
     config.llm_providers.gemini = True
+    config.llm_providers.grok = False
     config.embeddings.api_base = "http://localhost:1234/v1"
 
     with patch("shutil.which", return_value=False):
@@ -432,7 +420,7 @@ def test_check_config_mismatches() -> None:
         assert len(issues) == 4
         assert issues[0]["subsystem"] == "Claude Code"
         assert issues[1]["subsystem"] == "Codex"
-        assert issues[2]["subsystem"] == "Gemini"
+        assert issues[2]["subsystem"] == "Gemini (deprecated)"
         assert issues[3]["subsystem"] == "LM Studio"
 
     config.embeddings.api_base = "http://localhost:11434/v1"

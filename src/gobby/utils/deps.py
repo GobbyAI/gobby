@@ -15,9 +15,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from gobby.storage.database import LocalDatabase
+    from gobby.storage.hub.protocol import HubDatabase
 
-from gobby.config.bootstrap import load_bootstrap
 from gobby.utils.native_bin import local_native_bin_path, resolve_native_bin
 
 logger = logging.getLogger(__name__)
@@ -133,6 +132,15 @@ def get_gemini_cli_version() -> str | None:
     return None
 
 
+def get_grok_cli_version() -> str | None:
+    """Get Grok CLI version."""
+    output = _run_cmd(["grok", "version"])
+    if output:
+        match = re.search(r"(\d+\.\d+\.\d+)", output)
+        return match.group(1) if match else output
+    return None
+
+
 def get_codex_cli_version() -> str | None:
     """Get Codex CLI version."""
     output = _run_cmd(["codex", "--version"])
@@ -145,6 +153,15 @@ def get_codex_cli_version() -> str | None:
 def get_qwen_cli_version() -> str | None:
     """Get Qwen CLI version."""
     output = _run_cmd(["qwen", "--version"])
+    if output:
+        match = re.search(r"(\d+\.\d+\.\d+)", output)
+        return match.group(1) if match else output
+    return None
+
+
+def get_agy_cli_version() -> str | None:
+    """Get AGY CLI version."""
+    output = _run_cmd(["agy", "--version"])
     if output:
         match = re.search(r"(\d+\.\d+\.\d+)", output)
         return match.group(1) if match else output
@@ -175,6 +192,13 @@ def get_coding_cli_hooks_status() -> dict[str, bool]:
     # Gemini: ~/.gemini/settings.json
     gemini_settings = Path.home() / ".gemini" / "settings.json"
     result["gemini"] = _check_hooks_in_file(gemini_settings)
+
+    # Grok: ~/.grok/hooks/gobby.json
+    grok_hooks = Path.home() / ".grok" / "hooks" / "gobby.json"
+    result["grok"] = _check_hooks_in_file(grok_hooks)
+
+    # AGY: no supported hook transport
+    result["agy"] = False
 
     # Codex: ~/.codex/hooks.json
     codex_hooks = Path.home() / ".codex" / "hooks.json"
@@ -376,7 +400,7 @@ def _infer_embedding_provider_from_api_base(api_base: Any) -> str | None:
     return None
 
 
-def _detect_openai(db: LocalDatabase | None = None) -> str | None:
+def _detect_openai(db: HubDatabase | None = None) -> str | None:
     """Detect OpenAI embeddings from stored or environment credentials."""
     if db is not None:
         try:
@@ -390,7 +414,7 @@ def _detect_openai(db: LocalDatabase | None = None) -> str | None:
     return "openai" if os.environ.get("OPENAI_API_KEY") else None
 
 
-def _infer_from_env_or_none(dim: Any, db: LocalDatabase | None = None) -> str | None:
+def _infer_from_env_or_none(dim: Any, db: HubDatabase | None = None) -> str | None:
     """Return the env-backed OpenAI provider, or explicit disabled state, or None."""
     normalized_dim = dim
     if isinstance(dim, str):
@@ -409,13 +433,9 @@ def get_configured_embedding_provider() -> str | None:
     """Get the configured embeddings provider from persisted config."""
     try:
         from gobby.storage.config_store import ConfigStore
-        from gobby.storage.database import LocalDatabase
+        from gobby.storage.hub.runtime import runtime_hub_database
 
-        db_path = Path(load_bootstrap().database_path).expanduser()
-        if not db_path.exists():
-            return _infer_from_env_or_none(dim=None)
-
-        with LocalDatabase(db_path) as db:
+        with runtime_hub_database(apply_migrations=False) as db:
             store = ConfigStore(db)
             api_base = store.get("embeddings.api_base")
             dim = store.get("embeddings.dim")
@@ -433,7 +453,7 @@ def get_configured_embedding_provider() -> str | None:
         logger.debug(
             "Failed to resolve configured embeddings provider from persisted config", exc_info=True
         )
-    return None
+    return _detect_openai()
 
 
 # ---------------------------------------------------------------------------
@@ -467,8 +487,15 @@ def check_config_mismatches(config: Any) -> list[dict[str, str]]:
     if providers.gemini and not shutil.which("gemini"):
         issues.append(
             {
-                "subsystem": "Gemini",
+                "subsystem": "Gemini (deprecated)",
                 "error": "provider configured but gemini CLI not in PATH",
+            }
+        )
+    if getattr(providers, "grok", None) and not shutil.which("grok"):
+        issues.append(
+            {
+                "subsystem": "Grok",
+                "error": "provider configured but grok CLI not in PATH",
             }
         )
 
@@ -524,9 +551,11 @@ def collect_all_deps() -> dict[str, Any]:
         "coding_clis": {
             "claude": get_claude_code_version(),
             "gemini": get_gemini_cli_version(),
+            "grok": get_grok_cli_version(),
             "codex": get_codex_cli_version(),
             "droid": get_droid_cli_version(),
             "qwen": get_qwen_cli_version(),
+            "agy": get_agy_cli_version(),
             "hooks": get_coding_cli_hooks_status(),
         },
         "dependencies": {

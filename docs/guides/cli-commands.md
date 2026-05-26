@@ -151,7 +151,8 @@ gobby uninstall [OPTIONS]
 | `--git-hooks` | Install repository git hooks. |
 | `--all` | Install all supported integrations. |
 | `--no-ext-services` | Skip external service setup. |
-| `--neo4j-password PASSWORD` | Configure Neo4j with a specific password. |
+| `--falkordb` | Install only the FalkorDB graph backend service. |
+| `--falkordb-password PASSWORD` | Configure FalkorDB with a specific password. |
 | `--project` | Install project-scoped configuration. |
 | `--voice` | Install voice support assets. |
 | `--embedding-url URL` | Use a custom embedding API endpoint. |
@@ -171,7 +172,7 @@ gobby uninstall [OPTIONS]
 | `--droid` | Remove Droid integration assets. |
 | `--qwen` | Remove QwenCode integration assets. |
 | `--all` | Remove all supported integration assets. |
-| `--neo4j` | Remove Neo4j integration data. |
+| `--falkordb` | Remove FalkorDB graph backend data and configuration. |
 | `--volumes` | Remove service volumes where supported. |
 | `--project` | Remove project-scoped configuration. |
 | `-C`, `--path PATH` | Uninstall from a specific path. |
@@ -212,12 +213,24 @@ gobby build restart REF [--dry-run] [--force] [--yes] [--no-resume]
 | `--reset-expansion-output` | Clear prior expansion output before building. |
 | `--max-active-agents N` | Cap immediately active automation agents. |
 | `--max-retries N` | Cap retries per build stage. |
+| `--planning-seed-state STATE` | For plan-file builds, seed planning as `drafted`, `needs_review`, or `approved`. |
+| `--completed-plan-review-rounds N` | Count already-completed plan adversary rounds when seeding from `needs_review` or `approved`. |
 | `--dry-run` | Preview `clean` or `restart` effects. |
 | `--force` | Force destructive cleanup for `clean` or `restart`. |
 | `--yes` | Confirm destructive `clean` or `restart` prompts. |
 | `--no-resume` | For `restart`, reset state and leave automation paused. |
 
 Use `gobby build stop [REF]` to pause future dispatch work for a target.
+
+For `/gobby plan` handoff, use:
+
+```bash
+gobby build .gobby/plans/example.md --planning-seed-state approved --completed-plan-review-rounds 1
+```
+
+`planning_seed_state=approved` starts at expansion. `needs_review` starts at
+the remaining planning review loop with the completed round count already
+applied. `drafted` starts from planning.
 
 ## Task Lifecycle
 
@@ -350,7 +363,7 @@ gobby plan coverage --plan PLAN.md --plan-id ID --plan-hash HASH \
 | `--plan PATH` | Plan file to evaluate. |
 | `--plan-id ID` | Stable plan identifier. |
 | `--plan-hash HASH` | Expected plan content hash. |
-| `--task-tree db|matrix-file` | Choose DB-backed task tree or matrix-file input. |
+| `--task-tree db\|matrix-file` | Choose DB-backed task tree or matrix-file input. |
 | `--root-task TASK` | Root task ref for `db` mode. |
 | `--project-id PROJECT` | Project UUID for `db` mode. |
 | `--matrix-file PATH` | Matrix file for `matrix-file` mode. |
@@ -582,4 +595,4 @@ references where the task tree has a path cache.
 - [rules.md](rules.md) - rule engine guide
 - [worktrees.md](worktrees.md) - worktree guide
 
-_Last verified: 2026-05-07_
+_Last verified: 2026-05-23_

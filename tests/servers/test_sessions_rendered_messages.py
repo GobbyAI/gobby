@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from tests.servers.conftest import create_http_server
@@ -16,13 +16,13 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def session_storage(temp_db: LocalDatabase) -> SessionManager:
+def session_storage(temp_db: HubDatabase) -> SessionManager:
     """Create session storage."""
     return SessionManager(temp_db)
 
 
 @pytest.fixture
-def project_storage(temp_db: LocalDatabase) -> LocalProjectManager:
+def project_storage(temp_db: HubDatabase) -> LocalProjectManager:
     """Create project storage."""
     return LocalProjectManager(temp_db)
 

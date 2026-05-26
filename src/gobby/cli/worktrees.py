@@ -22,13 +22,13 @@ import httpx
 
 from gobby.cli.tasks._utils import get_task_manager, resolve_task_id
 from gobby.cli.utils import resolve_project_ref, resolve_session_id
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.storage.worktrees import LocalWorktreeManager
 
 
 def get_worktree_manager() -> LocalWorktreeManager:
     """Get initialized worktree manager."""
-    db = LocalDatabase()
+    db = open_runtime_hub_database(apply_migrations=False)
     return LocalWorktreeManager(db)
 
 

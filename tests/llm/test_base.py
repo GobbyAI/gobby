@@ -37,6 +37,8 @@ class ConcreteProvider(LLMProvider):
         prompt: str,
         system_prompt: str | None = None,
         model: str | None = None,
+        *,
+        caller: str | None = None,
     ) -> dict[str, Any]:
         return {"test": True}
 
@@ -76,6 +78,8 @@ class IncompleteProviderMissingDescribeImage(LLMProvider):
         prompt: str,
         system_prompt: str | None = None,
         model: str | None = None,
+        *,
+        caller: str | None = None,
     ) -> dict[str, Any]:
         return {}
 

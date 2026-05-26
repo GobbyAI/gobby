@@ -2,40 +2,39 @@
 
 import json
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import WorkflowDefinition, WorkflowInstance
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.state_manager import WorkflowInstanceManager
 
+if TYPE_CHECKING:
+    from gobby.storage.hub.protocol import HubDatabase
+
 SESSION_ID = "audit-session"
 
 
 @pytest.fixture
-def db(tmp_path) -> LocalDatabase:
-    database = LocalDatabase(tmp_path / "test_step_enforcement_audit.db")
-    run_migrations(database)
-    return database
+def db(hub_db: "HubDatabase") -> "HubDatabase":
+    return hub_db
 
 
 @pytest.fixture
-def manager(db: LocalDatabase) -> LocalWorkflowDefinitionManager:
+def manager(db: "HubDatabase") -> LocalWorkflowDefinitionManager:
     return LocalWorkflowDefinitionManager(db)
 
 
 @pytest.fixture
-def engine(db: LocalDatabase) -> RuleEngine:
+def engine(db: "HubDatabase") -> RuleEngine:
     return RuleEngine(db)
 
 
 @pytest.fixture
-def instance_mgr(db: LocalDatabase) -> WorkflowInstanceManager:
+def instance_mgr(db: "HubDatabase") -> WorkflowInstanceManager:
     return WorkflowInstanceManager(db)
 
 
@@ -54,21 +53,23 @@ def _make_event(
     )
 
 
-def _create_session(db: LocalDatabase) -> None:
+def _create_session(db: "HubDatabase") -> None:
     db.execute(
-        "INSERT OR IGNORE INTO projects (id, name, created_at) VALUES (?, ?, datetime('now'))",
+        "INSERT INTO projects (id, name, created_at) VALUES (?, ?, CURRENT_TIMESTAMP) "
+        "ON CONFLICT (id) DO NOTHING",
         ("project-1", "test-project"),
     )
     db.execute(
-        "INSERT OR IGNORE INTO sessions "
+        "INSERT INTO sessions "
         "(id, external_id, machine_id, source, project_id, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
+        "VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
+        "ON CONFLICT (id) DO NOTHING",
         (SESSION_ID, "ext-1", "machine-1", "claude", "project-1"),
     )
 
 
 def _setup_workflow(
-    db: LocalDatabase,
+    db: "HubDatabase",
     manager: LocalWorkflowDefinitionManager,
     instance_mgr: WorkflowInstanceManager,
 ) -> None:
@@ -120,7 +121,7 @@ def _setup_workflow(
     )
 
 
-def _audit_rows(db: LocalDatabase) -> list[dict[str, Any]]:
+def _audit_rows(db: "HubDatabase") -> list[dict[str, Any]]:
     rows = db.fetchall(
         """
         SELECT step, event_type, tool_name, condition, result, reason, context
@@ -141,7 +142,12 @@ def _audit_rows(db: LocalDatabase) -> list[dict[str, Any]]:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_step_success_writes_audit_rows(db, manager, engine, instance_mgr) -> None:
+async def test_step_success_writes_audit_rows(
+    db: "HubDatabase",
+    manager: LocalWorkflowDefinitionManager,
+    engine: RuleEngine,
+    instance_mgr: WorkflowInstanceManager,
+) -> None:
     _setup_workflow(db, manager, instance_mgr)
     event = _make_event(
         HookEventType.AFTER_TOOL,
@@ -182,7 +188,12 @@ async def test_step_success_writes_audit_rows(db, manager, engine, instance_mgr)
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_step_mcp_block_writes_audit_row(db, manager, engine, instance_mgr) -> None:
+async def test_step_mcp_block_writes_audit_row(
+    db: "HubDatabase",
+    manager: LocalWorkflowDefinitionManager,
+    engine: RuleEngine,
+    instance_mgr: WorkflowInstanceManager,
+) -> None:
     _setup_workflow(db, manager, instance_mgr)
     event = _make_event(
         HookEventType.BEFORE_TOOL,

@@ -235,8 +235,11 @@ class TestRunPipeline:
     @patch("gobby.cli.pipelines._try_daemon_run", return_value=None)
     @patch("gobby.cli.pipelines.get_project_path", return_value=Path("/proj"))
     @patch("gobby.cli.pipelines.get_workflow_loader")
+    # Defensive stub: avoid constructing a real executor if fallback flow shifts.
+    @patch("gobby.cli.pipelines.get_pipeline_executor")
     def test_run_local_approval_required(
         self,
+        mock_executor: MagicMock,
         mock_loader: MagicMock,
         mock_pp: MagicMock,
         mock_daemon: MagicMock,
@@ -253,6 +256,7 @@ class TestRunPipeline:
         with patch("gobby.cli.pipelines.asyncio.run", side_effect=exc):
             result = runner.invoke(pipelines, ["run", "deploy"])
         assert result.exit_code == 0
+        mock_executor.assert_called_once_with()
         assert "waiting for approval" in result.output
         assert "tok-123" in result.output
 
@@ -260,8 +264,11 @@ class TestRunPipeline:
     @patch("gobby.cli.pipelines._try_daemon_run", return_value=None)
     @patch("gobby.cli.pipelines.get_project_path", return_value=Path("/proj"))
     @patch("gobby.cli.pipelines.get_workflow_loader")
+    # Defensive stub: avoid constructing a real executor if fallback flow shifts.
+    @patch("gobby.cli.pipelines.get_pipeline_executor")
     def test_run_local_generic_error(
         self,
+        mock_executor: MagicMock,
         mock_loader: MagicMock,
         mock_pp: MagicMock,
         mock_daemon: MagicMock,
@@ -272,14 +279,18 @@ class TestRunPipeline:
         with patch("gobby.cli.pipelines.asyncio.run", side_effect=RuntimeError("boom")):
             result = runner.invoke(pipelines, ["run", "deploy"])
         assert result.exit_code == 1
+        mock_executor.assert_called_once_with()
         assert "Pipeline execution failed" in result.output
 
     @patch("gobby.cli.pipelines._get_project_id", return_value="")
     @patch("gobby.cli.pipelines._try_daemon_run", return_value=None)
     @patch("gobby.cli.pipelines.get_project_path", return_value=Path("/proj"))
     @patch("gobby.cli.pipelines.get_workflow_loader")
+    # Defensive stub: avoid constructing a real executor if fallback flow shifts.
+    @patch("gobby.cli.pipelines.get_pipeline_executor")
     def test_run_local_json_output(
         self,
+        mock_executor: MagicMock,
         mock_loader: MagicMock,
         mock_pp: MagicMock,
         mock_daemon: MagicMock,
@@ -297,6 +308,7 @@ class TestRunPipeline:
         with patch("gobby.cli.pipelines.asyncio.run", return_value=execution):
             result = runner.invoke(pipelines, ["run", "deploy", "--json"])
         assert result.exit_code == 0
+        mock_executor.assert_called_once_with()
         data = json.loads(result.output)
         assert data["outputs"]["url"] == "https://example.com"
 
@@ -304,8 +316,11 @@ class TestRunPipeline:
     @patch("gobby.cli.pipelines._try_daemon_run", return_value=None)
     @patch("gobby.cli.pipelines.get_project_path", return_value=Path("/proj"))
     @patch("gobby.cli.pipelines.get_workflow_loader")
+    # Defensive stub: avoid constructing a real executor if fallback flow shifts.
+    @patch("gobby.cli.pipelines.get_pipeline_executor")
     def test_run_local_json_bad_outputs(
         self,
+        mock_executor: MagicMock,
         mock_loader: MagicMock,
         mock_pp: MagicMock,
         mock_daemon: MagicMock,
@@ -323,6 +338,7 @@ class TestRunPipeline:
         with patch("gobby.cli.pipelines.asyncio.run", return_value=execution):
             result = runner.invoke(pipelines, ["run", "deploy", "--json"])
         assert result.exit_code == 0
+        mock_executor.assert_called_once_with()
         data = json.loads(result.output)
         assert data["outputs"] == "not json at all"
 

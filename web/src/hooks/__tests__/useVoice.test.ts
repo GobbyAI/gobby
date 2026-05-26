@@ -2,7 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
 import { useVoice } from '../useVoice'
 import { parseVoiceStatus } from '../voiceStatus'
-import { VOICE_TRANSCRIPTION_WATCHDOG_MS } from '../voice/useVoiceCapture'
+import {
+  VOICE_AUDIO_MAX_PAYLOAD_BYTES,
+  VOICE_TRANSCRIPTION_WATCHDOG_MS,
+} from '../voice/useVoiceCapture'
 import {
   resetVoicePrepareCacheForTests,
   seedVoicePrepareCacheForTests,
@@ -157,6 +160,7 @@ describe('useVoice', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     resetVoicePrepareCacheForTests()
+    vi.spyOn(console, 'info').mockImplementation(() => {})
     lastVADConfig = null
     lastWorkletNode = null
     startedSources = []
@@ -229,6 +233,12 @@ describe('useVoice', () => {
   const voiceAudioPayloads = () => (
     sentPayloads().filter((payload) => payload.type === 'voice_audio')
   )
+  const voiceLogCalls = () => vi.mocked(console.info).mock.calls
+  const expectVoiceLog = (event: string, details: Record<string, unknown> = {}) => {
+    expect(voiceLogCalls()).toEqual(expect.arrayContaining([
+      [`[gobby:voice] ${event}`, expect.objectContaining(details)],
+    ]))
+  }
 
   const submitPttAudio = async (result: { current: ReturnType<typeof useVoice> }) => {
     await act(async () => {
@@ -559,7 +569,7 @@ describe('useVoice', () => {
     })
   })
 
-  it('records PTT audio and sends WAV using the actual capture sample rate', async () => {
+  it('records PTT audio, normalizes to 16 kHz, and logs the send lifecycle', async () => {
     const { result } = renderHook(() => useVoice(
       wsRef as any,
       'conv-ptt',
@@ -586,7 +596,9 @@ describe('useVoice', () => {
       await result.current.stopRecording()
     })
 
-    expect(voiceMocks.mockEncodeWAV).toHaveBeenCalledWith(expect.any(Float32Array), 1, 48_000, 1, 16)
+    const [[encodedAudio]] = voiceMocks.mockEncodeWAV.mock.calls as unknown as [[Float32Array]]
+    expect(encodedAudio.length).toBe(Math.round(16_000 / 3))
+    expect(voiceMocks.mockEncodeWAV).toHaveBeenCalledWith(expect.any(Float32Array), 1, 16_000, 1, 16)
 
     const payloads = wsRef.current?.send.mock.calls.map(([raw]) => JSON.parse(raw))
     expect(payloads).toEqual(expect.arrayContaining([
@@ -600,6 +612,21 @@ describe('useVoice', () => {
     ]))
     const voiceAudio = payloads?.find((payload) => payload.type === 'voice_audio')
     expect(voiceAudio).not.toHaveProperty('project_id')
+    expectVoiceLog('ptt_start')
+    expectVoiceLog('ptt_started', { sampleRate: 48_000 })
+    expectVoiceLog('ptt_stop', {
+      inputSampleRate: 48_000,
+      outputSampleRate: 16_000,
+      resampled: true,
+    })
+    expectVoiceLog('send_attempt', {
+      conversationPrefix: 'conv-ptt',
+      sampleRate: 16_000,
+    })
+    expectVoiceLog('send_ok', {
+      conversationPrefix: 'conv-ptt',
+      sampleRate: 16_000,
+    })
   })
 
   it('uses the supplied attached session id for PTT voice audio payloads', async () => {
@@ -768,6 +795,7 @@ describe('useVoice', () => {
     await submitPttAudio(missingConversation.result)
     expect(missingConversation.result.current.isTranscribing).toBe(false)
     expect(voiceAudioPayloads()).toHaveLength(0)
+    expectVoiceLog('send_failed', { reason: 'missing_conversation' })
 
     missingConversation.unmount()
     wsRef.current!.readyState = 3
@@ -785,6 +813,35 @@ describe('useVoice', () => {
     expect(closedSocket.result.current.isTranscribing).toBe(false)
     expect(voiceAudioPayloads()).toHaveLength(0)
     expect(warnSpy).toHaveBeenCalledWith('Voice: WebSocket not open, discarding audio')
+    expectVoiceLog('send_failed', { reason: 'websocket_not_open' })
+  })
+
+  it('resets PTT transcribing state when WebSocket send throws', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    wsRef.current!.send.mockImplementation((raw: string) => {
+      const payload = JSON.parse(raw)
+      if (payload.type === 'voice_audio') {
+        throw new Error('send failed')
+      }
+    })
+
+    const { result } = renderHook(() => useVoice(
+      wsRef as any,
+      'conv-send-throws',
+      0,
+      projectIdRef,
+      { sttEnabled: true, ttsEnabled: false, voiceInputMode: 'ptt' },
+      true,
+    ))
+
+    await submitPttAudio(result)
+
+    expect(result.current.isTranscribing).toBe(false)
+    await waitFor(() => {
+      expect(result.current.voiceError).toBe('Failed to send audio')
+    })
+    expect(errorSpy).toHaveBeenCalledWith('Voice: Failed to send audio:', expect.any(Error))
+    expectVoiceLog('send_failed', { reason: 'websocket_send_error' })
   })
 
   it('clears stale PTT transcribing state after the watchdog timeout', async () => {
@@ -843,6 +900,56 @@ describe('useVoice', () => {
     expect(wsRef.current?.send.mock.calls.map(([raw]) => JSON.parse(raw))).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ type: 'voice_audio' })]),
     )
+    expectVoiceLog('ptt_stop', { reason: 'too_short' })
+  })
+
+  it('surfaces empty PTT captures without sending audio', async () => {
+    const { result } = renderHook(() => useVoice(
+      wsRef as any,
+      'conv-empty',
+      0,
+      projectIdRef,
+      { sttEnabled: true, ttsEnabled: false, voiceInputMode: 'ptt' },
+      true,
+    ))
+
+    await act(async () => {
+      await result.current.startRecording()
+    })
+
+    await act(async () => {
+      await result.current.stopRecording()
+    })
+
+    await waitFor(() => {
+      expect(result.current.voiceError).toBe('No audio captured — try again')
+    })
+    expect(voiceAudioPayloads()).toHaveLength(0)
+    expectVoiceLog('ptt_stop', { inputSamples: 0 })
+    expectVoiceLog('send_failed', { reason: 'empty_audio' })
+  })
+
+  it('blocks oversized PTT payloads before WebSocket send', async () => {
+    voiceMocks.mockArrayBufferToBase64.mockReturnValueOnce(
+      'a'.repeat(VOICE_AUDIO_MAX_PAYLOAD_BYTES),
+    )
+    const { result } = renderHook(() => useVoice(
+      wsRef as any,
+      'conv-oversized',
+      0,
+      projectIdRef,
+      { sttEnabled: true, ttsEnabled: false, voiceInputMode: 'ptt' },
+      true,
+    ))
+
+    await submitPttAudio(result)
+
+    await waitFor(() => {
+      expect(result.current.voiceError).toBe('Audio clip too long — try a shorter recording')
+    })
+    expect(voiceAudioPayloads()).toHaveLength(0)
+    expectVoiceLog('send_attempt', { conversationPrefix: 'conv-ove' })
+    expectVoiceLog('send_failed', { reason: 'payload_too_large' })
   })
 
   it('keeps VAD auto-submit and barge-in behavior', async () => {
@@ -860,10 +967,22 @@ describe('useVoice', () => {
       expect(voiceMocks.mockMicVADNew).toHaveBeenCalledTimes(1)
       expect(result.current.isListening).toBe(true)
     })
+    expect(lastVADConfig).toEqual(expect.objectContaining({
+      positiveSpeechThreshold: 0.65,
+      negativeSpeechThreshold: 0.45,
+      minSpeechFrames: 6,
+      redemptionFrames: 12,
+      preSpeechPadFrames: 2,
+      submitUserSpeechOnPause: false,
+    }))
+    expectVoiceLog('vad_start')
+    expectVoiceLog('vad_ready')
 
     act(() => {
       lastVADConfig?.onSpeechStart?.()
-      lastVADConfig?.onSpeechEnd?.(new Float32Array([0.3, -0.2]))
+      lastVADConfig?.onVADMisfire?.()
+      lastVADConfig?.onSpeechStart?.()
+      lastVADConfig?.onSpeechEnd?.(new Float32Array(8_000).fill(0.2))
     })
 
     expect(voiceMocks.mockEncodeWAV).toHaveBeenCalledWith(expect.any(Float32Array), 1, 16_000, 1, 16)
@@ -876,6 +995,94 @@ describe('useVoice', () => {
         project_id: 'project-vad',
       }),
     ]))
+    expectVoiceLog('vad_speech_start')
+    expectVoiceLog('vad_misfire')
+    expectVoiceLog('vad_speech_end', {
+      audioSamples: 8_000,
+      sampleRate: 16_000,
+    })
+    expectVoiceLog('send_ok', {
+      conversationPrefix: 'conv-vad',
+      sampleRate: 16_000,
+    })
+  })
+
+  it('creates a chat session before VAD auto-submit from a fresh chat', async () => {
+    const ensureConversationId = vi.fn(async () => 'fresh-session-id')
+    renderHook(() => useVoice(
+      wsRef as any,
+      '',
+      0,
+      projectIdRef,
+      { sttEnabled: true, ttsEnabled: false, voiceInputMode: 'vad' },
+      true,
+      ensureConversationId,
+    ))
+
+    await waitFor(() => {
+      expect(voiceMocks.mockMicVADNew).toHaveBeenCalledTimes(1)
+    })
+
+    act(() => {
+      lastVADConfig?.onSpeechEnd?.(new Float32Array(8_000).fill(0.2))
+    })
+
+    await waitFor(() => {
+      expect(ensureConversationId).toHaveBeenCalledTimes(1)
+      expect(voiceAudioPayloads()).toEqual([
+        expect.objectContaining({
+          type: 'voice_audio',
+          conversation_id: 'fresh-session-id',
+        }),
+      ])
+    })
+    expectVoiceLog('send_ok', {
+      conversationPrefix: 'fresh-se',
+      sampleRate: 16_000,
+    })
+  })
+
+  it('rejects low-energy VAD segments before STT submission', async () => {
+    renderHook(() => useVoice(
+      wsRef as any,
+      'conv-vad-quiet',
+      0,
+      projectIdRef,
+      { sttEnabled: true, ttsEnabled: false, voiceInputMode: 'vad' },
+      true,
+    ))
+
+    await waitFor(() => {
+      expect(voiceMocks.mockMicVADNew).toHaveBeenCalledTimes(1)
+    })
+
+    act(() => {
+      lastVADConfig?.onSpeechEnd?.(new Float32Array(8_000).fill(0.002))
+    })
+
+    expect(voiceAudioPayloads()).toHaveLength(0)
+    expectVoiceLog('vad_reject', { reason: 'low_energy_or_too_short' })
+  })
+
+  it('logs VAD startup failures', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    voiceMocks.mockMicVADNew.mockRejectedValueOnce(new Error('VAD denied'))
+
+    const { result } = renderHook(() => useVoice(
+      wsRef as any,
+      'conv-vad-error',
+      0,
+      projectIdRef,
+      { sttEnabled: true, ttsEnabled: false, voiceInputMode: 'vad' },
+      true,
+    ))
+
+    await waitFor(() => {
+      expect(result.current.voiceError).toBe('VAD denied')
+    })
+    expect(errorSpy).toHaveBeenCalledWith('Failed to start VAD:', expect.any(Error))
+    expect(result.current.isListening).toBe(false)
+    expectVoiceLog('vad_error', { error: 'VAD denied' })
   })
 
   it('drops incoming TTS audio when the playback queue is full', async () => {

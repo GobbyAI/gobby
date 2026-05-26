@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 from gobby.hooks.normalization import canonicalize_shell_tool_name, is_shell_tool
 
 if TYPE_CHECKING:
-    from gobby.storage.database import LocalDatabase
+    from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +108,7 @@ class ProgressTracker:
 
     def __init__(
         self,
-        db: "LocalDatabase",
+        db: "HubDatabase",
         stagnation_threshold: float | None = None,
         max_low_value_events: int | None = None,
     ):
@@ -267,7 +267,7 @@ class ProgressTracker:
             """
             SELECT COUNT(*) as count
             FROM loop_progress
-            WHERE session_id = ? AND is_high_value = 1
+            WHERE session_id = ? AND is_high_value IS TRUE
             """,
             (session_id,),
         )
@@ -278,7 +278,7 @@ class ProgressTracker:
             """
             SELECT recorded_at
             FROM loop_progress
-            WHERE session_id = ? AND is_high_value = 1
+            WHERE session_id = ? AND is_high_value IS TRUE
             ORDER BY recorded_at DESC
             LIMIT 1
             """,

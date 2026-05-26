@@ -2,10 +2,21 @@
 
 from __future__ import annotations
 
-from typing import Any
+import asyncio
+import json
+import logging
+import sqlite3
+from functools import partial
+from typing import TYPE_CHECKING, Any
+
+import psycopg
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+from gobby.mcp_proxy.tools.tasks._dispatch_mutex_release import (
+    _release_current_agent_dispatch_mutex,
+)
+from gobby.mcp_proxy.tools.tasks._dispatcher_tick import schedule_dispatcher_tick
 from gobby.mcp_proxy.tools.tasks._errors import TaskToolErrorCode, task_error
 from gobby.mcp_proxy.tools.tasks._lifecycle_status import (
     _clear_prior_claim_session_variables,
@@ -14,10 +25,14 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_status import (
 from gobby.mcp_proxy.tools.tasks._notifications import notify_parent_on_task_state_change
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.tasks import TaskNotFoundError
-from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._stage_views import stage_state_operation_view
 from gobby.tasks.state_semantics import get_claimed_session_id
 from gobby.utils.session_context import get_current_session_id
+
+logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from gobby.storage.tasks import Task
 
 
 def _operation_response(ctx: RegistryContext, task_id: str, stage_name: str) -> dict[str, Any]:
@@ -75,49 +90,135 @@ def _auto_link_session_commits(
         pass  # nosec B110 # best-effort, SESSION_END is the backstop
 
 
-def _release_current_agent_dispatch_mutex(
+def _relay_signoff_to_build_coordinator_sync(
     ctx: RegistryContext,
     *,
+    task: Task,
     task_id: str,
-    session_id: str,
-) -> bool:
-    """Release the spawn lease only for the running agent that owns this session."""
-    db = ctx.task_manager.db
-    mutexes = TaskDispatchMutexManager(db)
-    try:
-        mutex = mutexes.get_mutex(task_id)
-    except Exception:
-        return False
-    if mutex is None or not isinstance(mutex.run_id, str) or not mutex.run_id:
-        return False
+    stage_name: str,
+    action: str,
+    from_session_id: str,
+    signoff_message: str,
+) -> None:
+    """Persist a direct P2P signoff for the coordinator of the newest build run."""
+    from gobby.storage.build_history import BuildHistoryStorage
+    from gobby.storage.inter_session_messages import InterSessionMessageManager
 
-    try:
-        row = db.fetchone(
-            """
-            SELECT id
-              FROM agent_runs
-             WHERE id = ?
-               AND child_session_id = ?
-               AND task_id = ?
-               AND status = 'running'
-            """,
-            (mutex.run_id, session_id, task_id),
+    run = BuildHistoryStorage(ctx.task_manager.db).latest_coordinated_run_for_task(
+        str(task.project_id),
+        task_id,
+    )
+    if run is None or not run.summary:
+        return
+    coordinator_session_id = run.summary.get("coordinator_session_id")
+    if not isinstance(coordinator_session_id, str) or not coordinator_session_id:
+        return
+
+    coordinator = ctx.session_manager.get(coordinator_session_id)
+    if coordinator is None:
+        return
+    if getattr(coordinator, "project_id", None) != task.project_id:
+        logger.warning(
+            "Skipping cross-project build coordinator signoff relay",
+            extra={
+                "task_id": task_id,
+                "build_run_id": run.id,
+                "coordinator_session_id": coordinator_session_id,
+            },
         )
-    except Exception:
-        return False
-    if row is None:
-        return False
+        return
 
-    try:
-        if row["id"] != mutex.run_id:
-            return False
-    except Exception:
-        return False
+    metadata = {
+        "task_id": task_id,
+        "task_ref": f"#{task.seq_num}" if getattr(task, "seq_num", None) else None,
+        "stage_name": stage_name,
+        "action": action,
+        "signoff_message": signoff_message,
+        "build_run_id": run.id,
+        "root_task_id": run.root_task_id,
+        "from_session_id": from_session_id,
+    }
+    InterSessionMessageManager(ctx.task_manager.db).create_message(
+        from_session=from_session_id,
+        to_session=coordinator_session_id,
+        content=signoff_message,
+        priority="high",
+        message_type="message",
+        metadata_json=json.dumps(metadata, default=str, sort_keys=True),
+    )
 
+
+async def _relay_signoff_to_build_coordinator(
+    ctx: RegistryContext,
+    *,
+    task: Task,
+    task_id: str,
+    stage_name: str,
+    action: str,
+    from_session_id: str,
+    signoff_message: str,
+) -> None:
+    """Persist a direct P2P signoff for the coordinator of the newest build run."""
     try:
-        return mutexes.clear_by_run_id(mutex.run_id) > 0
-    except Exception:
-        return False
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(
+            None,
+            partial(
+                _relay_signoff_to_build_coordinator_sync,
+                ctx,
+                task=task,
+                task_id=task_id,
+                stage_name=stage_name,
+                action=action,
+                from_session_id=from_session_id,
+                signoff_message=signoff_message,
+            ),
+        )
+    except (sqlite3.DatabaseError, psycopg.Error):
+        logger.warning(
+            "Failed to relay review signoff to build coordinator",
+            extra={"task_id": task_id, "stage_name": stage_name, "action": action},
+            exc_info=True,
+        )
+
+
+def _schedule_signoff_relay(
+    ctx: RegistryContext,
+    *,
+    task: Task,
+    task_id: str,
+    stage_name: str,
+    action: str,
+    from_session_id: str,
+    signoff_message: str,
+) -> None:
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError as exc:
+        logger.warning(
+            "Failed to schedule review signoff relay to build coordinator: %s",
+            exc,
+            extra={
+                "task_id": task_id,
+                "stage_name": stage_name,
+                "action": action,
+                "project_id": task.project_id,
+            },
+            exc_info=True,
+        )
+        return
+    loop.create_task(
+        _relay_signoff_to_build_coordinator(
+            ctx,
+            task=task,
+            task_id=task_id,
+            stage_name=stage_name,
+            action=action,
+            from_session_id=from_session_id,
+            signoff_message=signoff_message,
+        ),
+        name=f"gobby-review-signoff-relay-{action}",
+    )
 
 
 def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryContext) -> None:
@@ -183,6 +284,11 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
             ctx.session_task_manager.link_task(resolved_session_id, resolved_id, "needs_review")
         except Exception:
             pass  # nosec B110 # best-effort linking
+        schedule_dispatcher_tick(
+            ctx,
+            project_id=task.project_id,
+            reason="submit_for_review",
+        )
         return _operation_response(ctx, resolved_id, stage_name)
 
     registry.register(
@@ -273,6 +379,20 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
             ctx.session_var_manager.set_variable(resolved_session_id, "adversary_verdict", verdict)
         except Exception:
             pass  # nosec B110 # best-effort signoff
+        _schedule_signoff_relay(
+            ctx,
+            task=task,
+            task_id=resolved_id,
+            stage_name=stage_name,
+            action="approve_review",
+            from_session_id=resolved_session_id,
+            signoff_message=verdict,
+        )
+        schedule_dispatcher_tick(
+            ctx,
+            project_id=task.project_id,
+            reason="approve_review",
+        )
         return _operation_response(ctx, resolved_id, stage_name)
 
     registry.register(
@@ -372,6 +492,20 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
             ctx.session_var_manager.set_variable(resolved_session_id, "adversary_verdict", verdict)
         except Exception:
             pass  # nosec B110 # best-effort signoff
+        _schedule_signoff_relay(
+            ctx,
+            task=task,
+            task_id=resolved_id,
+            stage_name=stage_name,
+            action="reject_review",
+            from_session_id=resolved_session_id,
+            signoff_message=verdict,
+        )
+        schedule_dispatcher_tick(
+            ctx,
+            project_id=task.project_id,
+            reason="reject_review",
+        )
         return _operation_response(ctx, resolved_id, stage_name)
 
     registry.register(

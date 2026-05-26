@@ -5,28 +5,21 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+import yaml
 
 from gobby.agents.sync import sync_bundled_agents
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import AgentDefinitionBody
-
-
-def _setup_db(tmp_path: Path) -> LocalDatabase:
-    """Create a fresh database with migrations applied."""
-    db = LocalDatabase(tmp_path / "test.db")
-    run_migrations(db)
-    return db
 
 
 class TestSyncBundledAgents:
     """Tests for sync_bundled_agents function."""
 
     @pytest.mark.unit
-    def test_sync_creates_bundled_agents(self, tmp_path: Path) -> None:
+    def test_sync_creates_bundled_agents(self, tmp_path: Path, temp_db: HubDatabase) -> None:
         """Test that sync creates installed agent definitions directly."""
-        db = _setup_db(tmp_path)
+        db = temp_db
 
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
@@ -53,9 +46,9 @@ class TestSyncBundledAgents:
         assert body.name == "test-agent"
 
     @pytest.mark.unit
-    def test_sync_skips_unchanged(self, tmp_path: Path) -> None:
+    def test_sync_skips_unchanged(self, tmp_path: Path, temp_db: HubDatabase) -> None:
         """Test that sync skips agents that already exist."""
-        db = _setup_db(tmp_path)
+        db = temp_db
 
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
@@ -75,9 +68,11 @@ class TestSyncBundledAgents:
             assert result2["updated"] == 0
 
     @pytest.mark.unit
-    def test_sync_uses_filename_when_yaml_name_is_null(self, tmp_path: Path) -> None:
+    def test_sync_uses_filename_when_yaml_name_is_null(
+        self, tmp_path: Path, temp_db: HubDatabase
+    ) -> None:
         """A null name should not become a managed orphan key."""
-        db = _setup_db(tmp_path)
+        db = temp_db
 
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
@@ -94,9 +89,11 @@ class TestSyncBundledAgents:
         assert row is not None
 
     @pytest.mark.unit
-    def test_sync_updates_existing_installed_definition(self, tmp_path: Path) -> None:
+    def test_sync_updates_existing_installed_definition(
+        self, tmp_path: Path, temp_db: HubDatabase
+    ) -> None:
         """Installed bundled agents should update when the template definition changes."""
-        db = _setup_db(tmp_path)
+        db = temp_db
 
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
@@ -129,9 +126,85 @@ class TestSyncBundledAgents:
         assert body.description == "Updated description"
 
     @pytest.mark.unit
-    def test_sync_enables_legacy_discovery_placeholder(self, tmp_path: Path) -> None:
+    def test_sync_repairs_stale_generated_step_workflow_for_unchanged_agent(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+    ) -> None:
+        """Agent sync should refresh stale `<agent>-steps` rows even when the agent row skips."""
+        db = temp_db
+
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        agent_yaml = (
+            "name: merge-helper\n"
+            "description: Merge helper\n"
+            "provider: claude\n"
+            "mode: interactive\n"
+            "steps:\n"
+            "  - name: merge\n"
+            "    allowed_tools:\n"
+            "      - mcp__gobby__call_tool\n"
+            "    allowed_mcp_tools:\n"
+            "      - gobby-worktrees:get_worktree\n"
+            "      - gobby-merge:inspect_merge_state\n"
+        )
+        (agents_dir / "merge-helper.yaml").write_text(agent_yaml)
+
+        body = AgentDefinitionBody.model_validate(yaml.safe_load(agent_yaml))
+        mgr = LocalWorkflowDefinitionManager(db)
+        mgr.create(
+            name="merge-helper",
+            definition_json=body.model_dump_json(),
+            workflow_type="agent",
+            description=body.description,
+            source="installed",
+            enabled=body.enabled,
+            tags=["gobby"],
+        )
+        mgr.create(
+            name="merge-helper-steps",
+            definition_json=json.dumps(
+                {
+                    "name": "merge-helper-steps",
+                    "type": "step",
+                    "version": "2.0",
+                    "enabled": False,
+                    "steps": [
+                        {
+                            "name": "merge",
+                            "allowed_tools": ["mcp__gobby__call_tool"],
+                            "allowed_mcp_tools": ["gobby-worktrees:merge_worktree"],
+                        }
+                    ],
+                    "variables": {},
+                    "exit_condition": None,
+                }
+            ),
+            workflow_type="workflow",
+            source="agent",
+            enabled=False,
+        )
+
+        with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
+            result = sync_bundled_agents(db)
+
+        assert result["skipped"] == 1
+        step_row = mgr.get_by_name("merge-helper-steps")
+        assert step_row is not None
+        step_body = json.loads(step_row.definition_json)
+        allowed = step_body["steps"][0]["allowed_mcp_tools"]
+        assert allowed == [
+            "gobby-worktrees:get_worktree",
+            "gobby-merge:inspect_merge_state",
+        ]
+
+    @pytest.mark.unit
+    def test_sync_enables_legacy_discovery_placeholder(
+        self, tmp_path: Path, temp_db: HubDatabase
+    ) -> None:
         """Old disabled discovery placeholders should become enabled real agents on upgrade."""
-        db = _setup_db(tmp_path)
+        db = temp_db
 
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
@@ -171,9 +244,11 @@ class TestSyncBundledAgents:
         assert body.provider == "codex"
 
     @pytest.mark.unit
-    def test_sync_preserves_user_disabled_non_placeholder_agent(self, tmp_path: Path) -> None:
+    def test_sync_preserves_user_disabled_non_placeholder_agent(
+        self, tmp_path: Path, temp_db: HubDatabase
+    ) -> None:
         """Template updates should not re-enable unrelated user-disabled bundled agents."""
-        db = _setup_db(tmp_path)
+        db = temp_db
 
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
@@ -208,9 +283,11 @@ class TestSyncBundledAgents:
         assert row.enabled is False
 
     @pytest.mark.unit
-    def test_sync_updates_legacy_template_agent_row(self, tmp_path: Path) -> None:
+    def test_sync_updates_legacy_template_agent_row(
+        self, tmp_path: Path, temp_db: HubDatabase
+    ) -> None:
         """Old gobby template rows should become installed bundled rows."""
-        db = _setup_db(tmp_path)
+        db = temp_db
 
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
@@ -255,9 +332,11 @@ class TestSyncBundledAgents:
         assert body.enabled is True
 
     @pytest.mark.unit
-    def test_sync_restores_reintroduced_bundled_agent(self, tmp_path: Path) -> None:
+    def test_sync_restores_reintroduced_bundled_agent(
+        self, tmp_path: Path, temp_db: HubDatabase
+    ) -> None:
         """A changed bundled agent can return after a prior bundled orphan delete."""
-        db = _setup_db(tmp_path)
+        db = temp_db
 
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
@@ -302,9 +381,9 @@ class TestSyncBundledAgents:
         assert body.description == "Active developer"
 
     @pytest.mark.unit
-    def test_sync_multiple_agents(self, tmp_path: Path) -> None:
+    def test_sync_multiple_agents(self, tmp_path: Path, temp_db: HubDatabase) -> None:
         """Test syncing multiple agent files."""
-        db = _setup_db(tmp_path)
+        db = temp_db
 
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
@@ -322,9 +401,9 @@ class TestSyncBundledAgents:
         assert result["errors"] == []
 
     @pytest.mark.unit
-    def test_sync_missing_path(self, tmp_path: Path) -> None:
+    def test_sync_missing_path(self, tmp_path: Path, temp_db: HubDatabase) -> None:
         """Test sync handles missing agents directory gracefully."""
-        db = _setup_db(tmp_path)
+        db = temp_db
 
         with patch(
             "gobby.agents.sync.get_bundled_agents_path",
@@ -337,9 +416,9 @@ class TestSyncBundledAgents:
         assert len(result["errors"]) == 1
 
     @pytest.mark.unit
-    def test_sync_ignores_deprecated_directory(self, tmp_path: Path) -> None:
+    def test_sync_ignores_deprecated_directory(self, tmp_path: Path, temp_db: HubDatabase) -> None:
         """Deprecated bundled agents are archival and not active install inputs."""
-        db = _setup_db(tmp_path)
+        db = temp_db
 
         agents_dir = tmp_path / "agents"
         deprecated_dir = agents_dir / "deprecated"
@@ -362,9 +441,9 @@ class TestSyncBundledAgents:
         assert rows == []
 
     @pytest.mark.unit
-    def test_sync_invalid_yaml(self, tmp_path: Path) -> None:
+    def test_sync_invalid_yaml(self, tmp_path: Path, temp_db: HubDatabase) -> None:
         """Test sync handles invalid YAML gracefully."""
-        db = _setup_db(tmp_path)
+        db = temp_db
 
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
@@ -377,9 +456,9 @@ class TestSyncBundledAgents:
         assert len(result["errors"]) == 1
 
     @pytest.mark.unit
-    def test_sync_respects_soft_deletes(self, tmp_path: Path) -> None:
+    def test_sync_respects_soft_deletes(self, tmp_path: Path, temp_db: HubDatabase) -> None:
         """Test that sync does not re-create soft-deleted agents."""
-        db = _setup_db(tmp_path)
+        db = temp_db
 
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
@@ -404,9 +483,11 @@ class TestSyncBundledAgents:
             assert result["synced"] == 0
 
     @pytest.mark.unit
-    def test_sync_soft_deletes_removed_bundled_agents(self, tmp_path: Path) -> None:
+    def test_sync_soft_deletes_removed_bundled_agents(
+        self, tmp_path: Path, temp_db: HubDatabase
+    ) -> None:
         """Bundled agent rows disappear when their YAML is removed from disk."""
-        db = _setup_db(tmp_path)
+        db = temp_db
 
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
@@ -424,9 +505,9 @@ class TestSyncBundledAgents:
         assert LocalWorkflowDefinitionManager(db).get_by_name("test-agent") is None
 
     @pytest.mark.integration
-    def test_sync_with_real_bundled_agents(self, tmp_path: Path) -> None:
+    def test_sync_with_real_bundled_agents(self, tmp_path: Path, temp_db: HubDatabase) -> None:
         """Test that sync works with the actual bundled agents directory."""
-        db = _setup_db(tmp_path)
+        db = temp_db
 
         result = sync_bundled_agents(db)
 
@@ -463,3 +544,24 @@ class TestSyncBundledAgents:
         assert "conductor" not in names
         assert "developer" not in names
         assert "pipeline-worker" not in names
+
+
+@pytest.mark.unit
+def test_memory_recall_helper_synced(temp_db: HubDatabase) -> None:
+    """The bundled memory recall helper syncs into workflow_definitions."""
+    result = sync_bundled_agents(temp_db)
+
+    assert result["success"] is True
+    assert result["errors"] == []
+
+    row = LocalWorkflowDefinitionManager(temp_db).get_by_name("memory-recall-helper")
+    assert row is not None
+    assert row.workflow_type == "agent"
+    assert row.enabled is True
+
+    body = AgentDefinitionBody.model_validate_json(row.definition_json)
+    assert body.model == "claude-haiku-4-5"
+    assert body.max_turns == 3
+    assert body.timeout == 60
+    assert "mcp__gobby__set_variable" in body.blocked_tools
+    assert body.blocked_mcp_tools == ["gobby-agents:kill_agent"]

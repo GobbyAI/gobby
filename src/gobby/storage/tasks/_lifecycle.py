@@ -9,18 +9,23 @@ This module provides operations for managing task lifecycle:
 """
 
 import json
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 
-from gobby.storage.database import DatabaseProtocol
-from gobby.storage.tasks._crud import get_task, update_task
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.tasks._dispatcher_wake import wake_dispatcher_for_task_change
 from gobby.storage.tasks._models import Task, TaskHasChildrenError, TaskHasDependentsError
+from gobby.storage.tasks._read import get_task
 from gobby.storage.tasks._transitions import close_task as _close_task_transition
 from gobby.storage.tasks._transitions import reopen_task as _reopen_task_transition
+from gobby.storage.tasks._updates import update_task
+
+logger = logging.getLogger(__name__)
 
 
 def close_task(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task_id: str,
     reason: str | None = None,
     force: bool = False,
@@ -65,10 +70,18 @@ def close_task(
         closed_commit_sha=closed_commit_sha,
         validation_override_reason=validation_override_reason,
     )
+    try:
+        wake_dispatcher_for_task_change(db, task_id)
+    except Exception:
+        logger.warning(
+            "dispatcher_wake_after_task_close_failed",
+            extra={"task_id": task_id},
+            exc_info=True,
+        )
 
 
 def reopen_task(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task_id: str,
     reason: str | None = None,
 ) -> None:
@@ -88,7 +101,7 @@ def reopen_task(
     _reopen_task_transition(db, task_id, reason=reason)
 
 
-def add_label(db: DatabaseProtocol, task_id: str, label: str) -> Task:
+def add_label(db: HubDatabase, task_id: str, label: str) -> Task:
     """Add a label to a task if not present."""
     task = get_task(db, task_id)
     labels = task.labels or []
@@ -99,7 +112,7 @@ def add_label(db: DatabaseProtocol, task_id: str, label: str) -> Task:
     return task
 
 
-def remove_label(db: DatabaseProtocol, task_id: str, label: str) -> Task:
+def remove_label(db: HubDatabase, task_id: str, label: str) -> Task:
     """Remove a label from a task if present."""
     task = get_task(db, task_id)
     labels = task.labels or []
@@ -111,7 +124,7 @@ def remove_label(db: DatabaseProtocol, task_id: str, label: str) -> Task:
 
 
 def link_commit(
-    db: DatabaseProtocol, task_id: str, commit_sha: str, cwd: str | Path | None = None
+    db: HubDatabase, task_id: str, commit_sha: str, cwd: str | Path | None = None
 ) -> bool:
     """Link a commit SHA to a task.
 
@@ -153,7 +166,7 @@ def link_commit(
 
 
 def unlink_commit(
-    db: DatabaseProtocol, task_id: str, commit_sha: str, cwd: str | Path | None = None
+    db: HubDatabase, task_id: str, commit_sha: str, cwd: str | Path | None = None
 ) -> bool:
     """Unlink a commit SHA from a task.
 
@@ -203,7 +216,7 @@ def unlink_commit(
 
 
 def delete_task(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task_id: str,
     cascade: bool = False,
     unlink: bool = False,

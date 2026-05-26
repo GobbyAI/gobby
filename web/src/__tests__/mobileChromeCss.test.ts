@@ -229,6 +229,26 @@ function expectContainerDeclarations(
 }
 
 describe('mobile chrome CSS', () => {
+  it('owns Tailwind from the app global stylesheet and keeps chat variables alias-only', () => {
+    const globalStyles = readSource('src/styles/index.css')
+    const chatVariables = readSource('src/components/chat/styles/variables.css')
+    const chatVariableNames = Array.from(
+      chatVariables.matchAll(/^\s*(--[A-Za-z0-9_-]+)\s*:/gm),
+      match => match[1],
+    )
+
+    expect(globalStyles).toContain('@import "tailwindcss";')
+    expect(globalStyles).toContain('@config "../../tailwind.config.ts";')
+    expect(globalStyles).toContain('@import "./tailwind-theme.css";')
+    expect(chatVariables).not.toMatch(/tailwindcss|@config|@theme/)
+    expect(chatVariableNames).toEqual([
+      '--bg-code',
+      '--bg-muted',
+      '--border-color',
+      '--accent-color',
+    ])
+  })
+
   it('loads the app shell stylesheet after base button styles', () => {
     const source = readSource('src/main.tsx')
     const imports = importSpecifiers(source)

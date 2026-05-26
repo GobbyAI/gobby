@@ -4,7 +4,7 @@ Specifically: deliverables-with-no-phases must fail validation. The parser's
 `draft` mode silently drops headings whose IDs do not match the canonical
 section regex, so a plan authored with `## Phase 1: Setup` (literal word
 "Phase") parses cleanly but yields zero phase sections — which the expansion
-compiler cannot anchor TDD wrappers to. The validator must surface this as
+compiler cannot turn into a phase hierarchy. The validator must surface this as
 ``valid: False`` instead of letting the compiler choke later.
 """
 
@@ -185,4 +185,4 @@ def test_validate_plan_file_rejects_manual_manifest_category(
 
     assert result["valid"] is False
     assert any("unsupported category 'manual'" in error for error in result["errors"])
-    assert any("automated leaf categories" in error for error in result["errors"])
+    assert any("development-forward categories" in error for error in result["errors"])

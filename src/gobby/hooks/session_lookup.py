@@ -101,6 +101,7 @@ class SessionLookupService:
                 return None
 
         if explicit_platform_session_id:
+            self._revive_expired_terminal_session(explicit_platform_session_id, event)
             self._backfill_terminal_context(explicit_platform_session_id, event)
             self._enrich_task_context(explicit_platform_session_id, event)
             event.metadata["_platform_session_id"] = explicit_platform_session_id
@@ -114,6 +115,7 @@ class SessionLookupService:
 
         # Resolve active task for this session
         if platform_session_id:
+            self._revive_expired_terminal_session(platform_session_id, event)
             self._backfill_terminal_context(platform_session_id, event)
             self._enrich_task_context(platform_session_id, event)
 
@@ -121,6 +123,27 @@ class SessionLookupService:
         event.metadata["_platform_session_id"] = platform_session_id
 
         return platform_session_id
+
+    def _revive_expired_terminal_session(
+        self,
+        platform_session_id: str,
+        event: HookEvent,
+    ) -> None:
+        """Repair false-expired terminal rows when a non-end hook arrives."""
+        if event.event_type == HookEventType.SESSION_END:
+            return
+
+        try:
+            self._session_manager.revive_expired_terminal_session(platform_session_id)
+        except Exception as exc:
+            self._logger.debug(
+                "Failed to revive expired terminal session %s on %s: %s",
+                platform_session_id,
+                event.event_type.value,
+                exc,
+                exc_info=True,
+            )
+            return
 
     def _resolve_metadata_platform_session(
         self,

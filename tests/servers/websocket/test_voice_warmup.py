@@ -180,6 +180,7 @@ class TestVoiceWarmup:
             and record.message == "Voice model warmup triggered by client"
         ]
         assert len(warmup_logs) == 1
+        assert mixin._voice_warmup_task is not None
 
         await mixin.stop_voice_warmup()
 
@@ -330,6 +331,7 @@ class TestVoiceWarmup:
         inter_msg_manager.create_message.assert_called_once()
         mixin._handle_chat_message.assert_not_awaited()
         sent_payloads = [json.loads(call.args[0]) for call in websocket.send.await_args_list]
+        assert len(sent_payloads) >= 1
         assert any(
             payload["type"] == "voice_transcription"
             and payload["conversation_id"] == "term-voice"
@@ -391,6 +393,8 @@ class TestVoiceWarmup:
 
         mock_stt.warmup.assert_awaited_once()
         mock_tts.warmup.assert_awaited_once()
+        assert mixin._stt_warmup_status == "ready"
+        assert mixin._tts_warmup_status == "ready"
 
     def test_scoped_status_ignores_unrequested_tts_state(self) -> None:
         """Scoped STT status should ignore unrequested TTS loading state."""
@@ -559,6 +563,7 @@ class TestVoiceWarmup:
         mixin._handle_chat_message.assert_awaited_once()
         chat_data = mixin._handle_chat_message.await_args.args[1]
         assert "project_id" not in chat_data
+        assert chat_data["conversation_id"] == "conv-voice"
 
     @pytest.mark.asyncio
     async def test_voice_audio_timeout_sends_error_with_request_id(

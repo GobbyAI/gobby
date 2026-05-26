@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import sqlite3
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.storage.tasks._runtime_mutex import RuntimeStageSnapshotState
@@ -49,7 +48,7 @@ __all__ = [
 
 
 class StageStatesManager:
-    def __init__(self, db: DatabaseProtocol, events: TaskLifecycleEventManager) -> None:
+    def __init__(self, db: HubDatabase, events: TaskLifecycleEventManager) -> None:
         self.db = db
         self.events = events
         self.registry = StageRegistryManager(db)
@@ -91,6 +90,22 @@ class StageStatesManager:
         by_session_id: str | None,
     ) -> list[StageState]:
         return self._manifest.initialize_manifest(task_id, specs, by_session_id=by_session_id)
+
+    def insert_new_task_manifest_in_transaction(
+        self,
+        conn: Transaction,
+        task_id: str,
+        specs: Sequence[StageManifestSpec],
+        *,
+        by_session_id: str | None,
+    ) -> list[StageState]:
+        """Insert initial stage rows using the caller's existing task-create transaction."""
+        return self._manifest.insert_new_task_manifest_in_transaction(
+            conn,
+            task_id,
+            specs,
+            by_session_id=by_session_id,
+        )
 
     def add_stage(
         self,
@@ -266,7 +281,7 @@ class StageStatesManager:
             cited_subtasks=cited_subtasks,
         )
 
-    def _state_from_row(self, row: Any) -> StageState:
+    def _state_from_row(self, row: Mapping[str, Any]) -> StageState:
         return self._rows.state_from_row(row)
 
     def _ensure_phase2_columns(self) -> None:
@@ -282,7 +297,7 @@ class StageStatesManager:
 
     @staticmethod
     def _terminal_after_done(
-        conn: sqlite3.Connection,
+        conn: Transaction,
         task_id: str,
         stage_name: str,
     ) -> bool:

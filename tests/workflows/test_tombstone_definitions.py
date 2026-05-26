@@ -10,8 +10,7 @@ import pytest
 import yaml
 
 from gobby.agents.sync import sync_bundled_agents
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import AgentDefinitionBody, PipelineDefinition
 from gobby.workflows.sync_pipelines import sync_bundled_pipelines
@@ -38,12 +37,6 @@ def _load_yaml(path: Path) -> dict[str, object]:
     data = yaml.safe_load(path.read_text())
     assert isinstance(data, dict)
     return data
-
-
-def _make_db(tmp_path: Path) -> LocalDatabase:
-    db = LocalDatabase(tmp_path / "test.db")
-    run_migrations(db)
-    return db
 
 
 def test_no_external_conductor_imports_remain() -> None:
@@ -102,8 +95,10 @@ def test_retired_agent_yaml_is_disabled_deprecated_definition(name: str) -> None
     assert body.deprecated_reason == data["deprecated_reason"]
 
 
-def test_deprecated_pipeline_sync_soft_deletes_installed_row(tmp_path: Path) -> None:
-    db = _make_db(tmp_path)
+def test_deprecated_pipeline_sync_soft_deletes_installed_row(
+    tmp_path: Path, temp_db: HubDatabase
+) -> None:
+    db = temp_db
     manager = LocalWorkflowDefinitionManager(db)
     manager.create(
         name="orchestrator",
@@ -154,9 +149,9 @@ steps: []
 
 
 def test_deprecated_agent_sync_soft_deletes_installed_row_without_metadata_update(
-    tmp_path: Path,
+    tmp_path: Path, temp_db: HubDatabase
 ) -> None:
-    db = _make_db(tmp_path)
+    db = temp_db
     manager = LocalWorkflowDefinitionManager(db)
     manager.create(
         name="developer",

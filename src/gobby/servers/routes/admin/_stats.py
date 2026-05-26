@@ -29,7 +29,7 @@ def _not_closed_or_escalated_sql(task_alias: str = "t") -> str:
     return (
         f"{task_alias}.closed_at IS NULL "
         f"AND {task_alias}.escalated_at IS NULL "
-        f"AND COALESCE({task_alias}.is_escalated, 0) = 0"
+        f"AND COALESCE({task_alias}.is_escalated, FALSE) IS FALSE"
     )
 
 

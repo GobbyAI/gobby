@@ -13,7 +13,7 @@ from gobby.storage.cron_models import CronJob
 from gobby.storage.sessions import SYSTEM_SESSION_ID, SessionManager
 
 if TYPE_CHECKING:
-    from gobby.storage.database import LocalDatabase
+    from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
 
@@ -21,7 +21,7 @@ PROJECT_ID = "00000000-0000-0000-0000-000000000000"
 
 
 @pytest.fixture
-def cron_storage(temp_db: LocalDatabase) -> CronJobStorage:
+def cron_storage(temp_db: HubDatabase) -> CronJobStorage:
     return CronJobStorage(temp_db)
 
 
@@ -168,7 +168,7 @@ async def test_execute_pipeline_no_executor(
 
 @pytest.mark.asyncio
 async def test_execute_pipeline_recreates_missing_system_session(
-    cron_storage: CronJobStorage, temp_db: LocalDatabase
+    cron_storage: CronJobStorage, temp_db: HubDatabase
 ) -> None:
     """Pipeline cron runs repair the root system session before creating cron sessions."""
     pipeline = MagicMock()

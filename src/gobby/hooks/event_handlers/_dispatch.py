@@ -8,7 +8,7 @@ from typing import Any, cast
 
 from gobby.dispatch.actions import Action, AdvanceLifecycleAction, EscalateAction
 from gobby.dispatch.mutex import RuntimeDispatchMutex
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import (
     IllegalStageTransitionError,
     TaskDispatchMutexManager,
@@ -54,7 +54,7 @@ def on_expansion_run_completed(
     expansion_run_id: str,
     *,
     apply_created_children: bool = True,
-    db: DatabaseProtocol | None = None,
+    db: HubDatabase | None = None,
     storage: TaskDispatchMutexManager | None = None,
 ) -> object | None:
     """Advance successful applied expansion runs and release their mutex."""
@@ -80,7 +80,7 @@ def on_expansion_run_failed(
     expansion_attempts: int | None = None,
     max_expansion_attempts: int | None = None,
     unattended: bool = False,
-    db: DatabaseProtocol | None = None,
+    db: HubDatabase | None = None,
     storage: TaskDispatchMutexManager | None = None,
 ) -> Action | object | None:
     """Handle failed expansion runs, retrying until the attempt cap is exhausted."""
@@ -120,7 +120,7 @@ def on_expansion_run_cancelled(
 def on_pipeline_completed(
     event: object,
     *,
-    db: DatabaseProtocol | None = None,
+    db: HubDatabase | None = None,
     storage: TaskDispatchMutexManager | None = None,
 ) -> object | None:
     """Advance the stage that launched a completed stage pipeline."""
@@ -130,7 +130,7 @@ def on_pipeline_completed(
 def on_pipeline_failed(
     event: object,
     *,
-    db: DatabaseProtocol | None = None,
+    db: HubDatabase | None = None,
     storage: TaskDispatchMutexManager | None = None,
 ) -> object | None:
     """Fail the stage that launched a failed stage pipeline."""
@@ -140,7 +140,7 @@ def on_pipeline_failed(
 def on_pipeline_cancelled(
     event: object,
     *,
-    db: DatabaseProtocol | None = None,
+    db: HubDatabase | None = None,
     storage: TaskDispatchMutexManager | None = None,
 ) -> object | None:
     """Escalate the stage that launched a cancelled stage pipeline."""
@@ -162,7 +162,7 @@ def _handle_stage_pipeline_terminal(
     event: object,
     status: str,
     *,
-    db: DatabaseProtocol | None,
+    db: HubDatabase | None,
     storage: TaskDispatchMutexManager | None,
 ) -> object | None:
     run_id = _event_value(event, "execution_id") or _event_value(event, "run_id")
@@ -232,11 +232,11 @@ def _event_storage(
     db = _event_value(event, "db")
     if db is None:
         return None
-    return TaskDispatchMutexManager(cast(DatabaseProtocol, db))
+    return TaskDispatchMutexManager(cast(HubDatabase, db))
 
 
 def _storage_from_db(
-    db: DatabaseProtocol | None,
+    db: HubDatabase | None,
     storage: TaskDispatchMutexManager | None,
 ) -> TaskDispatchMutexManager | None:
     if storage is not None or db is None:
@@ -244,7 +244,7 @@ def _storage_from_db(
     return TaskDispatchMutexManager(db)
 
 
-def _stage_states(db: DatabaseProtocol | None) -> StageStatesManager | None:
+def _stage_states(db: HubDatabase | None) -> StageStatesManager | None:
     if db is None:
         return None
     return StageStatesManager(db, TaskLifecycleEventManager(db))
@@ -274,7 +274,7 @@ def _complete_stage(
     task_id: str,
     *,
     stage_name: str,
-    db: DatabaseProtocol | None,
+    db: HubDatabase | None,
 ) -> object | None:
     manager = _stage_states(db)
     if manager is None:
@@ -294,7 +294,7 @@ def _fail_stage(
     *,
     stage_name: str,
     reason: str,
-    db: DatabaseProtocol | None,
+    db: HubDatabase | None,
 ) -> object | None:
     manager = _stage_states(db)
     if manager is None:

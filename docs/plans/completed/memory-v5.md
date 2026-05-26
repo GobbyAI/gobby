@@ -2,7 +2,7 @@
 
 ## Overview
 
-Gobby's current memory system is a layered stack: SQLite storage, TF-IDF/embedding search backends, a `SearchCoordinator` that routes between them, and an optional HTTP-client-to-Docker-service integration with mem0 (3 containers: mem0 API + PostgreSQL/pgvector + Neo4j).
+Gobby's current memory system is a layered stack: PostgreSQL storage, TF-IDF/embedding search backends, a `SearchCoordinator` that routes between them, and an optional HTTP-client-to-Docker-service integration with mem0 (3 containers: mem0 API + PostgreSQL/pgvector + Neo4j).
 
 Replace all of that with a single coherent memory system built from vendored mem0 core logic:
 - **Qdrant embedded** (on-disk, zero Docker) for vector search
@@ -14,7 +14,7 @@ All `mem0` references removed from code. Vendored prompts carry Apache 2.0 attri
 
 ## Constraints
 
-- **SQLite is source of truth** for memory records. Qdrant is a search index — rebuildable from SQLite if lost.
+- **PostgreSQL is source of truth** for memory records. Qdrant is a search index — rebuildable from PostgreSQL if lost.
 - **Fire-and-forget async**: `create_memory` returns fast. LLM dedup + graph building run as background `asyncio.Task`s (same pattern as current `EmbeddingService`). Tasks tracked in `_background_tasks: set[asyncio.Task]` with auto-cleanup callbacks. Failures logged but never fail the caller.
 - **No importance scoring or decay**: Vector similarity handles relevance. LLM dedup DELETE handles staleness. User-created memories (`source_type="user"`) get a similarity score boost (×1.2) in search.
 - **Prompts as templates**: All LLM prompts stored as markdown in `install/shared/prompts/memory/`, loaded via `PromptLoader` (`src/gobby/prompts/loader.py`), user-overridable at project/global/bundled tiers.
@@ -97,7 +97,7 @@ All `mem0` references removed from code. Vendored prompts carry Apache 2.0 attri
   - Remove: `SearchService`, `SearchCoordinator`, `EmbeddingService`, `MemoryEmbeddingManager`, `Mem0Client`, `Mem0Service` imports and attributes
   - Add: `VectorStore` attribute, `_embed_fn` callable
   - `create_memory(content, ...)`:
-    1. Store in SQLite via `LocalMemoryManager.create_memory()`
+    1. Store in PostgreSQL via `LocalMemoryManager.create_memory()`
     2. Generate embedding via `generate_embedding(content, model)` (keep `src/gobby/search/embeddings.py`)
     3. Upsert into Qdrant with `payload={project_id, tags}`
     4. Create crossrefs if enabled
@@ -109,10 +109,10 @@ All `mem0` references removed from code. Vendored prompts carry Apache 2.0 attri
     5. Filter by tags/type if specified
     6. Return re-ranked results
   - `delete_memory(memory_id)`:
-    1. Delete from SQLite
+    1. Delete from PostgreSQL
     2. Delete from Qdrant
   - `update_memory(memory_id, content, ...)`:
-    1. Update in SQLite
+    1. Update in PostgreSQL
     2. Re-embed, upsert into Qdrant
 
 - [ ] Initialize VectorStore in runner.py and remove Mem0SyncProcessor `(depends: Rewrite MemoryManager)` `(category: code)`
@@ -123,7 +123,7 @@ All `mem0` references removed from code. Vendored prompts carry Apache 2.0 attri
     await vector_store.initialize()
     ```
   - Pass to `MemoryManager`
-  - On startup: if Qdrant empty but SQLite has memories, trigger `rebuild()`
+  - On startup: if Qdrant empty but PostgreSQL has memories, trigger `rebuild()`
   - On shutdown: `await vector_store.close()`
   - Remove: `Mem0SyncProcessor` import, `self.mem0_sync` attribute, start/stop logic
 
@@ -143,7 +143,7 @@ All `mem0` references removed from code. Vendored prompts carry Apache 2.0 attri
   - `src/gobby/search/protocol.py` — SearchBackend protocol
   - `src/gobby/search/models.py` — SearchConfig
   - `src/gobby/search/backends/` — embedding backend
-  - `src/gobby/storage/memory_embeddings.py` — MemoryEmbeddingManager (SQLite BLOB storage)
+  - `src/gobby/storage/memory_embeddings.py` — MemoryEmbeddingManager (PostgreSQL BLOB storage)
   - `src/gobby/memory/services/embeddings.py` — old EmbeddingService
   - Note: Keep `src/gobby/search/embeddings.py` (the `generate_embedding()` function itself)
 
@@ -203,13 +203,13 @@ All `mem0` references removed from code. Vendored prompts carry Apache 2.0 attri
 - [ ] Wire DedupService into MemoryManager as fire-and-forget background task `(depends: Create DedupService)` `(category: code)`
   - Initialize `DedupService` when LLM provider is available
   - `create_memory` flow:
-    1. Store in SQLite + embed + upsert to Qdrant (immediate, same as Phase 1)
+    1. Store in PostgreSQL + embed + upsert to Qdrant (immediate, same as Phase 1)
     2. Return the `Memory` to caller (fast)
     3. Fire background `asyncio.Task` for `dedup.process(memory, ...)`:
        - LLM extracts facts from content
        - For each fact: search Qdrant for similar existing memories
        - LLM decides ADD/UPDATE/DELETE/NOOP for each fact
-       - Execute actions against SQLite + Qdrant
+       - Execute actions against PostgreSQL + Qdrant
        - Task tracked in `_background_tasks` set, auto-cleaned on completion
     4. If no LLM available: skip step 3 (simple mode, same as Phase 1)
   - Default behavior when LLM available, not opt-in
@@ -310,7 +310,7 @@ All `mem0` references removed from code. Vendored prompts carry Apache 2.0 attri
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
 | Search engine | Qdrant embedded only (no TF-IDF) | One engine, zero config, HNSW-indexed vector search |
-| Storage model | SQLite (source of truth) + Qdrant (search index) | SQLite is authoritative, Qdrant rebuildable; consistent with rest of gobby |
+| Storage model | PostgreSQL (source of truth) + Qdrant (search index) | PostgreSQL is authoritative, Qdrant rebuildable; consistent with rest of gobby |
 | Async strategy | Fire-and-forget background tasks | `create_memory` returns fast; LLM dedup + graph build run as tracked `asyncio.Task`s |
 | Importance scoring | Removed | LLM time estimates are arbitrary; vector similarity handles relevance, LLM DELETE handles staleness |
 | Ranking boost | User-created memories boosted in search | `source_type="user"` gets similarity score × 1.2 — binary signal, not arbitrary scores |
@@ -330,10 +330,10 @@ All `mem0` references removed from code. Vendored prompts carry Apache 2.0 attri
 
 ## Edge Cases
 
-- **No LLM configured**: Simple mode — embed content, store in SQLite + Qdrant, no fact extraction. Search still works via Qdrant.
+- **No LLM configured**: Simple mode — embed content, store in PostgreSQL + Qdrant, no fact extraction. Search still works via Qdrant.
 - **No Neo4j configured**: Graph features silently disabled. Memory storage and search work fine.
-- **Qdrant data lost**: `VectorStore.rebuild()` re-embeds all content from `memories` table. Triggered automatically on startup if collection is empty but SQLite has memories.
-- **Embedding API down**: Store in SQLite, skip Qdrant upsert. Memory exists but won't appear in vector search until re-embedded.
+- **Qdrant data lost**: `VectorStore.rebuild()` re-embeds all content from `memories` table. Triggered automatically on startup if collection is empty but PostgreSQL has memories.
+- **Embedding API down**: Store in PostgreSQL, skip Qdrant upsert. Memory exists but won't appear in vector search until re-embedded.
 
 ## Verification
 
@@ -344,7 +344,7 @@ After each phase:
 
 End-to-end after all phases:
 1. `uv run gobby start --verbose` — daemon starts, Qdrant initializes at `~/.gobby/qdrant/`
-2. `create_memory` via MCP — stored in SQLite + Qdrant
+2. `create_memory` via MCP — stored in PostgreSQL + Qdrant
 3. `search_memories` via MCP — returns results from Qdrant
 4. Create duplicate-ish memory — LLM detects similarity, updates instead of creating
 5. `gobby install --neo4j` — standalone Neo4j container starts

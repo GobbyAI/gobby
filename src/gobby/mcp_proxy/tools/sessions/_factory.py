@@ -18,6 +18,7 @@ from gobby.mcp_proxy.tools.sessions._messages import register_message_tools
 from gobby.mcp_proxy.tools.sessions._registration import register_registration_tools
 from gobby.mcp_proxy.tools.sessions._terminal import register_terminal_tools
 from gobby.mcp_proxy.tools.sessions._transcripts import register_transcript_tools
+from gobby.mcp_proxy.tools.sessions._verification import register_verification_tools
 
 if TYPE_CHECKING:
     from gobby.sessions.transcript_reader import TranscriptReader
@@ -90,6 +91,10 @@ def create_session_messages_registry(
     if session_manager is not None:
         register_registration_tools(registry, session_manager)
 
+    # --- Verification Evidence Tools ---
+    if session_manager is not None and db is not None:
+        register_verification_tools(registry, session_manager, db)
+
     # --- Commits Tools ---
     # Only register if session_manager is available
     if session_manager is not None:
@@ -118,6 +123,7 @@ def create_session_messages_registry(
             registry,
             session_manager,
             db,
+            llm_service=llm_service,
             web_chat_session_registry=web_chat_session_registry,
         )
 

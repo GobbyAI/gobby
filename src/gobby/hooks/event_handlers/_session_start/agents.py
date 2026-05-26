@@ -79,6 +79,21 @@ def setup_code_index(handler: Any, session_id: str | None, project_id: str | Non
         handler.logger.debug(f"Could not check code index availability: {e}")
 
 
+def _seed_memory_recall_helper_vars(handler: Any, session_id: str) -> None:
+    """Seed memory-recall-helper variables before activation guards run."""
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    sv_mgr = SessionVariableManager(handler._session_manager.db)
+    helper_cfg = handler._memory_recall_helper_config
+    enabled_val = bool(helper_cfg.enabled) if helper_cfg is not None else True
+
+    existing = sv_mgr.get_variables(session_id)
+    seed: dict[str, Any] = {"memory_recall_helper_enabled": enabled_val}
+    if "parent_turn_seq" not in (existing or {}):
+        seed["parent_turn_seq"] = 0
+    sv_mgr.merge_variables(session_id, seed)
+
+
 def activate_default_agent(
     handler: Any,
     session_id: str,
@@ -141,6 +156,7 @@ def activate_default_agent(
         "_skill_format",
         "_agent_blocked_tools",
         "_agent_blocked_mcp_tools",
+        "memory_recall_helper_enabled",
         "is_spawned_agent",
     }
     variables_count = len([k for k in changes if k not in internal_keys])

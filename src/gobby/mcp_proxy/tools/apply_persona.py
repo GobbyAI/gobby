@@ -18,7 +18,7 @@ import logging
 import uuid
 from typing import Any
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import AgentDefinitionBody
 
 logger = logging.getLogger(__name__)
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 def build_persona_changes(
     agent_body: AgentDefinitionBody,
     session_id: str,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     *,
     enabled_rules: list[Any] | None = None,
     all_skills: list[Any] | None = None,
@@ -133,7 +133,7 @@ def build_persona_changes(
 
 def build_session_persona_changes(
     agent_body: AgentDefinitionBody,
-    db: DatabaseProtocol,
+    db: HubDatabase,
 ) -> tuple[dict[str, Any], set[str] | None]:
     """Compute the narrow session-variable delta for a persona switch."""
     from gobby.skills.manager import SkillManager
@@ -155,7 +155,7 @@ def build_session_persona_changes(
 
 def build_session_persona_context(
     agent_body: AgentDefinitionBody,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     *,
     cli_source: str,
     identity_only: bool = False,
@@ -182,7 +182,7 @@ def build_session_persona_context(
 
 
 def _resolve_session_identity(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     session_id: str,
     cli_source: str | None,
 ) -> tuple[str | None, str | None]:
@@ -204,7 +204,7 @@ def _resolve_session_identity(
 
 async def apply_persona_impl(
     agent: str,
-    db: DatabaseProtocol | None = None,
+    db: HubDatabase | None = None,
     session_id: str | None = None,
     variables: dict[str, Any] | None = None,
     task_id: str | None = None,

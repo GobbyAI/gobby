@@ -21,10 +21,12 @@ from gobby.agents.sandbox import (
 )
 from gobby.servers.models import SessionRegisterRequest, WebChatSessionRequest
 from gobby.servers.routes.sessions.statusline_activity import (
+    STATUSLINE_GAP_OBSERVATION_THRESHOLD_MS,
     STATUSLINE_GAP_WARNING_THRESHOLD_MS,
     last_session_activity,
     prune_trackers,
     record_statusline_seen,
+    should_emit_statusline_gap_warning,
 )
 from gobby.storage.token_events import TokenEventStore, build_session_usage_payload
 from gobby.telemetry.instruments import inc_counter
@@ -33,12 +35,12 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from gobby.servers.http import HTTPServer
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
 
-def _get_commit_count(db: "DatabaseProtocol", session: Any) -> int:
+def _get_commit_count(db: "HubDatabase", session: Any) -> int:
     """Count git commits made during a session's timeframe.
 
     Args:
@@ -205,10 +207,13 @@ def register_core_routes(
                 raise HTTPException(status_code=503, detail="Session manager not available")
 
             provider = body.provider or "claude"
-            if provider not in {"claude", "gemini", "qwen", "codex", "droid"}:
+            if provider not in {"claude", "gemini", "grok", "qwen", "codex", "droid", "agy"}:
                 raise HTTPException(
                     status_code=400,
-                    detail="Invalid provider. Must be one of: claude, gemini, qwen, codex, droid",
+                    detail=(
+                        "Invalid provider. Must be one of: claude, gemini, grok, "
+                        "qwen, codex, droid, agy"
+                    ),
                 )
 
             project_id = server.resolve_project_id(body.project_id, body.cwd)
@@ -378,27 +383,44 @@ def register_core_routes(
         previous = record_statusline_seen(session.id, now)
         if previous is not None:
             gap_ms = int((now - previous).total_seconds() * 1000)
-            if gap_ms >= STATUSLINE_GAP_WARNING_THRESHOLD_MS:
+            if gap_ms >= STATUSLINE_GAP_OBSERVATION_THRESHOLD_MS:
                 activity_ts = last_session_activity(session.id)
                 if activity_ts is not None and activity_ts > previous:
-                    logger.warning(
-                        "statusline_usage_gap session_id=%s gap_ms=%s threshold_ms=%s "
-                        "last_activity_ms_ago=%s",
-                        session.id,
-                        gap_ms,
-                        STATUSLINE_GAP_WARNING_THRESHOLD_MS,
-                        int((now - activity_ts).total_seconds() * 1000),
-                    )
-                    inc_counter(
-                        "statusline_usage_gap_warnings_total",
-                        attributes={"source": "claude"},
-                    )
+                    last_activity_ms_ago = int((now - activity_ts).total_seconds() * 1000)
+                    if (
+                        gap_ms >= STATUSLINE_GAP_WARNING_THRESHOLD_MS
+                        and should_emit_statusline_gap_warning(session.id, now)
+                    ):
+                        logger.warning(
+                            "statusline_usage_gap session_id=%s gap_ms=%s threshold_ms=%s "
+                            "last_activity_ms_ago=%s",
+                            session.id,
+                            gap_ms,
+                            STATUSLINE_GAP_WARNING_THRESHOLD_MS,
+                            last_activity_ms_ago,
+                        )
+                        inc_counter(
+                            "statusline_usage_gap_warnings_total",
+                            attributes={"source": "claude"},
+                        )
+                    else:
+                        logger.debug(
+                            "statusline_usage_gap_quiet session_id=%s gap_ms=%s "
+                            "observation_threshold_ms=%s warning_threshold_ms=%s "
+                            "last_activity_ms_ago=%s",
+                            session.id,
+                            gap_ms,
+                            STATUSLINE_GAP_OBSERVATION_THRESHOLD_MS,
+                            STATUSLINE_GAP_WARNING_THRESHOLD_MS,
+                            last_activity_ms_ago,
+                        )
                 else:
                     logger.debug(
-                        "statusline_usage_gap_quiet session_id=%s gap_ms=%s threshold_ms=%s",
+                        "statusline_usage_gap_quiet session_id=%s gap_ms=%s "
+                        "observation_threshold_ms=%s",
                         session.id,
                         gap_ms,
-                        STATUSLINE_GAP_WARNING_THRESHOLD_MS,
+                        STATUSLINE_GAP_OBSERVATION_THRESHOLD_MS,
                     )
 
         sm.update_usage(

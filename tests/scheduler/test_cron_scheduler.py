@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import time
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock
@@ -12,18 +14,23 @@ import pytest
 from gobby.config.cron import CronConfig
 from gobby.scheduler.executor import CronExecutor
 from gobby.scheduler.scheduler import CronScheduler
+from gobby.shutdown_intent import (
+    ShutdownIntent,
+    get_active_shutdown_marker_path,
+    write_shutdown_intent,
+)
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronRun
 from tests._timing import drain_asyncio_tasks, wait_for_async_condition
 
 if TYPE_CHECKING:
-    from gobby.storage.database import LocalDatabase
+    from gobby.storage.hub.protocol import HubDatabase
 
 PROJECT_ID = "00000000-0000-0000-0000-000000000000"
 
 
 @pytest.fixture
-def cron_storage(temp_db: LocalDatabase) -> CronJobStorage:
+def cron_storage(temp_db: HubDatabase) -> CronJobStorage:
     return CronJobStorage(temp_db)
 
 
@@ -59,10 +66,16 @@ async def test_scheduler_advances_dispatcher_next_run_at(
     mock_executor: CronExecutor,
     config: CronConfig,
 ) -> None:
-    columns = {row["name"] for row in cron_storage.db.fetchall("PRAGMA table_info(cron_jobs)")}
+    columns = {
+        row["column_name"]
+        for row in cron_storage.db.fetchall(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = ?",
+            ("cron_jobs",),
+        )
+    }
     if "is_system" not in columns:
         cron_storage.db.execute(
-            "ALTER TABLE cron_jobs ADD COLUMN is_system INTEGER NOT NULL DEFAULT 0"
+            "ALTER TABLE cron_jobs ADD COLUMN is_system BOOLEAN NOT NULL DEFAULT FALSE"
         )
     scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
     job = cron_storage.create_job(
@@ -73,7 +86,7 @@ async def test_scheduler_advances_dispatcher_next_run_at(
         action_config={"handler": "dispatch.tick"},
         interval_seconds=60,
     )
-    cron_storage.db.execute("UPDATE cron_jobs SET is_system = 1 WHERE id = ?", (job.id,))
+    cron_storage.db.execute("UPDATE cron_jobs SET is_system = TRUE WHERE id = ?", (job.id,))
     cron_storage.update_system_job_bookkeeping(
         job.id,
         next_run_at=(datetime.now(UTC) - timedelta(minutes=1)).isoformat(),
@@ -103,6 +116,45 @@ async def test_start_creates_tasks(scheduler: CronScheduler) -> None:
     assert scheduler._check_task is not None
     assert scheduler._cleanup_task is not None
     await scheduler.stop()
+
+
+@pytest.mark.asyncio
+async def test_start_fails_orphan_running_runs_before_first_tick(
+    cron_storage: CronJobStorage,
+    mock_executor: CronExecutor,
+) -> None:
+    """Rows left running by a previous daemon must not suppress the first tick."""
+    config = CronConfig(check_interval_seconds=60, max_concurrent_jobs=1)
+    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="gobby:dispatcher",
+        schedule_type="interval",
+        action_type="handler",
+        action_config={"handler": "dispatch.tick"},
+        interval_seconds=60,
+    )
+    stale_run = cron_storage.create_run(job.id)
+    cron_storage.update_run(stale_run.id, status="running")
+    cron_storage.update_job(
+        job.id, next_run_at=(datetime.now(UTC) - timedelta(minutes=1)).isoformat()
+    )
+
+    try:
+        await scheduler.start()
+        await wait_for_async_condition(
+            lambda: mock_executor.execute.await_count >= 1,
+            description="dispatch after startup stale cron cleanup",
+        )
+    finally:
+        await scheduler.stop()
+
+    refreshed_run = cron_storage.get_run(stale_run.id)
+    assert refreshed_run is not None
+    assert refreshed_run.status == "failed"
+    assert refreshed_run.error == "Cron run was still marked running when the scheduler started"
+    mock_executor.execute.assert_called_once()
+    assert mock_executor.execute.await_args.args[0].id == job.id
 
 
 @pytest.mark.asyncio
@@ -326,6 +378,172 @@ async def test_stale_running_runs_do_not_block_due_jobs(
 
 
 @pytest.mark.asyncio
+async def test_stale_running_runs_during_planned_restart_do_not_warn(
+    cron_storage: CronJobStorage,
+    mock_executor: CronExecutor,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Expected restart recovery logs stale cron cleanup below warning severity."""
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+    write_shutdown_intent("cli_restart", ShutdownIntent.RESTART, home=tmp_path)
+    config = CronConfig(
+        check_interval_seconds=60,
+        max_concurrent_jobs=1,
+        running_timeout_seconds=60,
+    )
+    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    stale_job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="stale",
+        schedule_type="interval",
+        action_type="shell",
+        action_config={"command": "echo"},
+        interval_seconds=60,
+    )
+    stale_run = cron_storage.create_run(stale_job.id)
+    old = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
+    cron_storage.update_run(stale_run.id, status="running", started_at=old)
+    due_job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="waiting",
+        schedule_type="interval",
+        action_type="shell",
+        action_config={"command": "echo"},
+        interval_seconds=60,
+    )
+    cron_storage.update_job(due_job.id, next_run_at=old)
+    caplog.set_level("INFO", logger="gobby.scheduler.scheduler")
+
+    await scheduler._check_due_jobs()
+    await wait_for_async_condition(
+        lambda: mock_executor.execute.await_count >= 1,
+        description="dispatch after planned restart stale cron cleanup",
+    )
+
+    assert "during planned restart" in caplog.text
+    assert "Marked 1 stale cron run(s) failed before dispatch" not in caplog.text
+    warning_messages = [
+        record.message for record in caplog.records if record.levelname == "WARNING"
+    ]
+    assert all("stale cron run" not in message for message in warning_messages)
+
+
+@pytest.mark.asyncio
+async def test_delayed_stale_running_runs_after_planned_restart_do_not_warn(
+    cron_storage: CronJobStorage,
+    mock_executor: CronExecutor,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Restart recovery can lag until stale run timeout plus the next scheduler tick."""
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+    write_shutdown_intent("cli_restart", ShutdownIntent.RESTART, home=tmp_path)
+    active_marker = get_active_shutdown_marker_path(tmp_path)
+    marker_data = json.loads(active_marker.read_text(encoding="utf-8"))
+    marker_data["timestamp"] = time.time() - 150
+    active_marker.write_text(json.dumps(marker_data), encoding="utf-8")
+    config = CronConfig(
+        check_interval_seconds=60,
+        max_concurrent_jobs=1,
+        running_timeout_seconds=60,
+    )
+    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    stale_job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="stale",
+        schedule_type="interval",
+        action_type="shell",
+        action_config={"command": "echo"},
+        interval_seconds=60,
+    )
+    stale_run = cron_storage.create_run(stale_job.id)
+    old = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
+    cron_storage.update_run(stale_run.id, status="running", started_at=old)
+    due_job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="waiting",
+        schedule_type="interval",
+        action_type="shell",
+        action_config={"command": "echo"},
+        interval_seconds=60,
+    )
+    cron_storage.update_job(due_job.id, next_run_at=old)
+    caplog.set_level("INFO", logger="gobby.scheduler.scheduler")
+
+    await scheduler._check_due_jobs()
+    await wait_for_async_condition(
+        lambda: mock_executor.execute.await_count >= 1,
+        description="dispatch after delayed planned restart stale cron cleanup",
+    )
+
+    assert "during planned restart" in caplog.text
+    assert "Marked 1 stale cron run(s) failed before dispatch" not in caplog.text
+    warning_messages = [
+        record.message for record in caplog.records if record.levelname == "WARNING"
+    ]
+    assert all("stale cron run" not in message for message in warning_messages)
+
+
+@pytest.mark.asyncio
+async def test_stale_running_runs_after_expired_planned_restart_window_warn(
+    cron_storage: CronJobStorage,
+    mock_executor: CronExecutor,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Unrelated stale cron cleanup outside restart recovery still warns."""
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+    write_shutdown_intent("cli_restart", ShutdownIntent.RESTART, home=tmp_path)
+    active_marker = get_active_shutdown_marker_path(tmp_path)
+    marker_data = json.loads(active_marker.read_text(encoding="utf-8"))
+    marker_data["timestamp"] = time.time() - 400
+    active_marker.write_text(json.dumps(marker_data), encoding="utf-8")
+    config = CronConfig(
+        check_interval_seconds=60,
+        max_concurrent_jobs=1,
+        running_timeout_seconds=60,
+    )
+    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    stale_job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="stale",
+        schedule_type="interval",
+        action_type="shell",
+        action_config={"command": "echo"},
+        interval_seconds=60,
+    )
+    stale_run = cron_storage.create_run(stale_job.id)
+    old = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
+    cron_storage.update_run(stale_run.id, status="running", started_at=old)
+    due_job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="waiting",
+        schedule_type="interval",
+        action_type="shell",
+        action_config={"command": "echo"},
+        interval_seconds=60,
+    )
+    cron_storage.update_job(due_job.id, next_run_at=old)
+    caplog.set_level("INFO", logger="gobby.scheduler.scheduler")
+
+    await scheduler._check_due_jobs()
+    await wait_for_async_condition(
+        lambda: mock_executor.execute.await_count >= 1,
+        description="dispatch after expired restart stale cron cleanup",
+    )
+
+    assert "during planned restart" not in caplog.text
+    warning_messages = [
+        record.message for record in caplog.records if record.levelname == "WARNING"
+    ]
+    assert "Marked 1 stale cron run(s) failed before dispatch" in warning_messages
+
+
+@pytest.mark.asyncio
 async def test_backoff_on_consecutive_failures(
     cron_storage: CronJobStorage,
     mock_executor: CronExecutor,
@@ -404,7 +622,7 @@ async def test_run_now(
 async def test_run_now_executes_in_empty_session_context(
     cron_storage: CronJobStorage,
     config: CronConfig,
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     sample_project,
 ) -> None:
     """Manual cron ticks must not inherit the caller session context."""

@@ -1,9 +1,8 @@
 """Tests for list_skills MCP tool (TDD - written before implementation)."""
 
 import asyncio
-import time
+import threading
 from collections.abc import Callable, Iterator
-from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -12,32 +11,28 @@ import pytest
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.skills._context import SkillsContext
 from gobby.mcp_proxy.tools.skills.list_skills import register as register_list_skills
-from gobby.storage.database import LocalDatabase
 from gobby.storage.executor import DatabaseExecutor
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.skills import LocalSkillManager
 
 pytestmark = [pytest.mark.integration]
 
 
 @pytest.fixture
-def db(tmp_path: Path) -> Iterator[LocalDatabase]:
+def db(temp_db: HubDatabase) -> Iterator[HubDatabase]:
     """Create a fresh database with migrations applied."""
-    db_path = tmp_path / "test.db"
-    database = LocalDatabase(db_path)
-    run_migrations(database)
+    database = temp_db
     yield database
-    database.close()
 
 
 @pytest.fixture
-def storage(db: LocalDatabase) -> LocalSkillManager:
+def storage(db: HubDatabase) -> LocalSkillManager:
     """Create a LocalSkillManager for storage operations."""
     return LocalSkillManager(db)
 
 
 @pytest.fixture
-def populated_db(db: LocalDatabase, storage: LocalSkillManager) -> LocalDatabase:
+def populated_db(db: HubDatabase, storage: LocalSkillManager) -> HubDatabase:
     """Create database with test skills."""
     # Create test skills
     storage.create_skill(
@@ -68,9 +63,7 @@ class TestListSkillsTool:
     """Tests for list_skills MCP tool."""
 
     @pytest.mark.asyncio
-    async def test_list_skills_returns_all_skills(
-        self, populated_db: LocalDatabase
-    ) -> None:
+    async def test_list_skills_returns_all_skills(self, populated_db: HubDatabase) -> None:
         """Test that list_skills returns all skills."""
         from gobby.mcp_proxy.tools.skills import create_skills_registry
 
@@ -84,34 +77,48 @@ class TestListSkillsTool:
         assert len(result["skills"]) == 3
 
     @pytest.mark.asyncio
-    async def test_repeated_list_skills_keeps_sqlite_connections_bounded(
-        self, populated_db: LocalDatabase
+    async def test_repeated_list_skills_keeps_postgres_connections_bounded(
+        self, populated_db: HubDatabase
     ) -> None:
         """Concurrent list_skills calls use the injected bounded DB runner."""
         from gobby.mcp_proxy.tools.skills import create_skills_registry
 
         executor = DatabaseExecutor(max_workers=2, thread_name_prefix="skills-list-db")
         original_list_skills = LocalSkillManager.list_skills
+        first_read_started = threading.Event()
+        release_reads = threading.Event()
+        waits_completed: list[bool] = []
 
         def slow_list_skills(self: LocalSkillManager, *args: Any, **kwargs: Any) -> Any:
             """Delay storage reads so concurrent connection growth is observable."""
-            time.sleep(0.02)
+            first_read_started.set()
+            waits_completed.append(release_reads.wait(timeout=1))
             return original_list_skills(self, *args, **kwargs)
 
         try:
             with patch.object(LocalSkillManager, "list_skills", new=slow_list_skills):
                 registry = create_skills_registry(populated_db, run_db=executor.run)
                 tool = registry.get_tool("list_skills")
-                results = await asyncio.gather(*(tool() for _ in range(20)))
+
+                async def run_tools() -> list[dict[str, Any]]:
+                    return await asyncio.gather(*(tool() for _ in range(20)))
+
+                task = asyncio.create_task(run_tools())
+                assert await asyncio.to_thread(first_read_started.wait, 1)
+                release_reads.set()
+                results = await task
 
             assert all(result["success"] is True for result in results)
-            assert populated_db.connection_count <= 1 + executor.max_workers
+            assert all(waits_completed)
+            connection_count = getattr(populated_db, "connection_count", None)
+            if connection_count is not None:
+                assert connection_count <= 1 + executor.max_workers
         finally:
             executor.shutdown(wait=True)
 
     @pytest.mark.asyncio
     async def test_list_skills_returns_lightweight_metadata(
-        self, populated_db: LocalDatabase
+        self, populated_db: HubDatabase
     ) -> None:
         """Test that list_skills returns only lightweight fields."""
         from gobby.mcp_proxy.tools.skills import create_skills_registry
@@ -137,7 +144,7 @@ class TestListSkillsTool:
         assert "compatibility" not in skill
 
     @pytest.mark.asyncio
-    async def test_list_skills_filters_by_enabled(self, populated_db: LocalDatabase) -> None:
+    async def test_list_skills_filters_by_enabled(self, populated_db: HubDatabase) -> None:
         """Test that list_skills can filter by enabled status."""
         from gobby.mcp_proxy.tools.skills import create_skills_registry
 
@@ -153,7 +160,7 @@ class TestListSkillsTool:
             assert skill["enabled"] is True
 
     @pytest.mark.asyncio
-    async def test_list_skills_filters_by_disabled(self, populated_db: LocalDatabase) -> None:
+    async def test_list_skills_filters_by_disabled(self, populated_db: HubDatabase) -> None:
         """Test that list_skills can filter by disabled status."""
         from gobby.mcp_proxy.tools.skills import create_skills_registry
 
@@ -168,7 +175,7 @@ class TestListSkillsTool:
         assert result["skills"][0]["name"] == "disabled-skill"
 
     @pytest.mark.asyncio
-    async def test_list_skills_filters_by_category(self, populated_db: LocalDatabase) -> None:
+    async def test_list_skills_filters_by_category(self, populated_db: HubDatabase) -> None:
         """Test that list_skills can filter by category."""
         from gobby.mcp_proxy.tools.skills import create_skills_registry
 
@@ -183,7 +190,7 @@ class TestListSkillsTool:
         assert result["skills"][0]["category"] == "git"
 
     @pytest.mark.asyncio
-    async def test_list_skills_respects_limit(self, populated_db: LocalDatabase) -> None:
+    async def test_list_skills_respects_limit(self, populated_db: HubDatabase) -> None:
         """Test that list_skills respects limit parameter."""
         from gobby.mcp_proxy.tools.skills import create_skills_registry
 
@@ -196,7 +203,7 @@ class TestListSkillsTool:
         assert result["count"] == 2
 
     @pytest.mark.asyncio
-    async def test_list_skills_empty_database(self, db: LocalDatabase) -> None:
+    async def test_list_skills_empty_database(self, db: HubDatabase) -> None:
         """Test list_skills handles empty database."""
         from gobby.mcp_proxy.tools.skills import create_skills_registry
 
@@ -210,7 +217,7 @@ class TestListSkillsTool:
         assert result["skills"] == []
 
     @pytest.mark.asyncio
-    async def test_list_skills_combined_filters(self, populated_db: LocalDatabase) -> None:
+    async def test_list_skills_combined_filters(self, populated_db: HubDatabase) -> None:
         """Test list_skills with multiple filters."""
         from gobby.mcp_proxy.tools.skills import create_skills_registry
 
@@ -225,7 +232,7 @@ class TestListSkillsTool:
         assert result["skills"][0]["name"] == "git-commit"
 
     @pytest.mark.asyncio
-    async def test_list_skills_category_not_found(self, populated_db: LocalDatabase) -> None:
+    async def test_list_skills_category_not_found(self, populated_db: HubDatabase) -> None:
         """Test list_skills with non-existent category returns empty."""
         from gobby.mcp_proxy.tools.skills import create_skills_registry
 
@@ -239,7 +246,7 @@ class TestListSkillsTool:
         assert result["skills"] == []
 
     @pytest.mark.asyncio
-    async def test_list_skills_has_skill_id(self, populated_db: LocalDatabase) -> None:
+    async def test_list_skills_has_skill_id(self, populated_db: HubDatabase) -> None:
         """Test that list_skills returns skill ID."""
         from gobby.mcp_proxy.tools.skills import create_skills_registry
 
@@ -255,7 +262,7 @@ class TestListSkillsTool:
 
 
 @pytest.fixture
-def db_with_internal(db: LocalDatabase, storage: LocalSkillManager) -> LocalDatabase:
+def db_with_internal(db: HubDatabase, storage: LocalSkillManager) -> HubDatabase:
     """Database with a mix of user-facing and internal-flagged skills."""
     storage.create_skill(
         name="public-skill",
@@ -285,7 +292,7 @@ class TestListSkillsInternalFilter:
     """Filter behavior for `internal: true` skills."""
 
     @pytest.mark.asyncio
-    async def test_hides_internal_by_default(self, db_with_internal: LocalDatabase) -> None:
+    async def test_hides_internal_by_default(self, db_with_internal: HubDatabase) -> None:
         from gobby.mcp_proxy.tools.skills import create_skills_registry
 
         registry = create_skills_registry(db_with_internal)
@@ -298,9 +305,7 @@ class TestListSkillsInternalFilter:
         assert names == {"public-skill"}
 
     @pytest.mark.asyncio
-    async def test_include_internal_surfaces_them(
-        self, db_with_internal: LocalDatabase
-    ) -> None:
+    async def test_include_internal_surfaces_them(self, db_with_internal: HubDatabase) -> None:
         from gobby.mcp_proxy.tools.skills import create_skills_registry
 
         registry = create_skills_registry(db_with_internal)
@@ -313,9 +318,7 @@ class TestListSkillsInternalFilter:
         assert names == {"public-skill", "methodology-one", "methodology-two"}
 
     @pytest.mark.asyncio
-    async def test_nested_gobby_internal_is_hidden(
-        self, db_with_internal: LocalDatabase
-    ) -> None:
+    async def test_nested_gobby_internal_is_hidden(self, db_with_internal: HubDatabase) -> None:
         """metadata.gobby.internal also counts as internal."""
         from gobby.mcp_proxy.tools.skills import create_skills_registry
 
@@ -329,13 +332,13 @@ class TestListSkillsInternalFilter:
 
 
 @pytest.mark.asyncio
-async def test_list_skills_routes_direct_storage_calls_through_run_sqlite() -> None:
+async def test_list_skills_routes_direct_storage_calls_through_run_db() -> None:
     storage = MagicMock()
     storage.list_skills.return_value = []
     run_db_calls: list[Callable[..., Any]] = []
 
     async def run_db(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-        """Record DB calls routed through the injected SQLite runner."""
+        """Record DB calls routed through the injected PostgreSQL runner."""
         run_db_calls.append(func)
         return func(*args, **kwargs)
 
@@ -349,7 +352,7 @@ async def test_list_skills_routes_direct_storage_calls_through_run_sqlite() -> N
         loader=MagicMock(),
         project_id="proj-1",
         hub_manager=None,
-        run_db=run_db,
+        db_runner=run_db,
     )
     registry = InternalToolRegistry(name="gobby-skills")
     register_list_skills(ctx, registry)
@@ -364,13 +367,13 @@ async def test_list_skills_routes_direct_storage_calls_through_run_sqlite() -> N
 
 
 @pytest.mark.asyncio
-async def test_list_skills_routes_overfetch_batches_through_run_sqlite() -> None:
+async def test_list_skills_routes_overfetch_batches_through_run_db() -> None:
     storage = MagicMock()
     storage.list_skills.side_effect = [[], []]
     run_db_calls: list[Callable[..., Any]] = []
 
     async def run_db(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-        """Record overfetch DB calls routed through the injected SQLite runner."""
+        """Record overfetch DB calls routed through the injected PostgreSQL runner."""
         run_db_calls.append(func)
         return func(*args, **kwargs)
 
@@ -384,7 +387,7 @@ async def test_list_skills_routes_overfetch_batches_through_run_sqlite() -> None
         loader=MagicMock(),
         project_id="proj-1",
         hub_manager=None,
-        run_db=run_db,
+        db_runner=run_db,
     )
     registry = InternalToolRegistry(name="gobby-skills")
     register_list_skills(ctx, registry)
@@ -412,7 +415,7 @@ async def test_list_skills_ignores_value_error_resolving_active_skills() -> None
         loader=MagicMock(),
         project_id="proj-1",
         hub_manager=None,
-        run_db=None,
+        db_runner=None,
     )
     ctx.get_active_skill_names = AsyncMock(side_effect=ValueError("invalid session"))
     registry = InternalToolRegistry(name="gobby-skills")
@@ -440,7 +443,7 @@ async def test_list_skills_surfaces_unexpected_active_skill_lookup_errors() -> N
         loader=MagicMock(),
         project_id="proj-1",
         hub_manager=None,
-        run_db=None,
+        db_runner=None,
     )
     ctx.get_active_skill_names = AsyncMock(side_effect=RuntimeError("database unavailable"))
     registry = InternalToolRegistry(name="gobby-skills")

@@ -4,13 +4,23 @@ Tests verify the sync service correctly orchestrates between gobby tasks
 and Linear via the official Linear MCP server.
 """
 
+import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gobby.integrations.linear_graphql import LinearGraphQLError
+from gobby.sync import linear as linear_module
 from gobby.sync.linear import LinearSyncService
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def reset_linear_fetch_failure_limiter():
+    linear_module._linear_fetch_failure_limiter.reset()
+    yield
+    linear_module._linear_fetch_failure_limiter.reset()
 
 
 def _set_task_state(task: MagicMock, state: str) -> None:
@@ -385,6 +395,77 @@ class TestLinearSyncServiceSync:
         call = mock_mcp_manager.call_tool.call_args
         assert call.kwargs["arguments"]["teamId"] == "team-123"
         assert call.kwargs["arguments"]["projectId"] == "lin-proj"
+
+    @pytest.mark.asyncio
+    async def test_pull_updates_rate_limits_repeated_linear_fetch_failures(
+        self, sync_service: LinearSyncService, mock_task_manager, caplog
+    ) -> None:
+        """Repeated identical fetch failures do not emit repeated error logs."""
+        mock_task_manager.db.fetchall.return_value = [
+            {"id": "task-1", "linear_issue_id": "issue-1"}
+        ]
+        client = MagicMock()
+        client.list_issues = AsyncMock(side_effect=LinearGraphQLError("network unavailable"))
+        sync_service._linear_mcp_has_tool = MagicMock(return_value=False)  # type: ignore[method-assign]
+        sync_service._get_graphql_client = MagicMock(return_value=client)  # type: ignore[method-assign]
+        caplog.set_level(logging.DEBUG, logger="gobby.sync.linear")
+
+        first = await sync_service.pull_linear_updates()
+        second = await sync_service.pull_linear_updates()
+
+        error_records = [
+            record
+            for record in caplog.records
+            if record.levelno >= logging.ERROR
+            and "Failed to fetch Linear issues" in record.getMessage()
+        ]
+        assert first["errors"] == 1
+        assert second["errors"] == 1
+        assert len(error_records) == 1
+        assert any(
+            "Suppressing repeated Linear issue fetch failure #1" in record.getMessage()
+            for record in caplog.records
+        )
+
+    @pytest.mark.asyncio
+    async def test_pull_updates_recovery_resets_linear_fetch_failure_limit(
+        self, sync_service: LinearSyncService, mock_task_manager, caplog
+    ) -> None:
+        """Successful fetch logs recovery and lets the next failure surface again."""
+        mock_task_manager.db.fetchall.return_value = [
+            {"id": "task-1", "linear_issue_id": "issue-1"}
+        ]
+        client = MagicMock()
+        client.list_issues = AsyncMock(
+            side_effect=[
+                LinearGraphQLError("network unavailable"),
+                LinearGraphQLError("network unavailable"),
+                [],
+                LinearGraphQLError("network unavailable"),
+            ]
+        )
+        sync_service._linear_mcp_has_tool = MagicMock(return_value=False)  # type: ignore[method-assign]
+        sync_service._get_graphql_client = MagicMock(return_value=client)  # type: ignore[method-assign]
+        caplog.set_level(logging.DEBUG, logger="gobby.sync.linear")
+
+        await sync_service.pull_linear_updates()
+        await sync_service.pull_linear_updates()
+        recovered = await sync_service.pull_linear_updates()
+        await sync_service.pull_linear_updates()
+
+        error_records = [
+            record
+            for record in caplog.records
+            if record.levelno >= logging.ERROR
+            and "Failed to fetch Linear issues" in record.getMessage()
+        ]
+        assert recovered["errors"] == 0
+        assert recovered["skipped"] == 1
+        assert len(error_records) == 2
+        assert any(
+            "Linear issue fetch recovered after 1 suppressed repeat(s)" in record.getMessage()
+            for record in caplog.records
+        )
 
     @pytest.mark.asyncio
     async def test_sync_all_does_not_update_cursor_when_pull_has_errors(

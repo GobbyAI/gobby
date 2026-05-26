@@ -4,7 +4,6 @@ Tests for config.py MCP tools module.
 Tests the config tools that provide read/write access to daemon configuration.
 """
 
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -13,24 +12,20 @@ from gobby.config.app import DaemonConfig
 from gobby.mcp_proxy.tools.config import create_config_registry
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.config_store import ConfigStore, config_key_to_secret_name, is_secret_key_name
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import SecretStore
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def temp_db(tmp_path: Path) -> LocalDatabase:
+def temp_db(postgres_db: HubDatabase) -> HubDatabase:
     """Create a temporary database with schema."""
-    db_path = tmp_path / "test.db"
-    db = LocalDatabase(db_path)
-    run_migrations(db)
-    return db
+    return postgres_db
 
 
 @pytest.fixture
-def config_store(temp_db: LocalDatabase) -> ConfigStore:
+def config_store(temp_db: HubDatabase) -> ConfigStore:
     """Create a ConfigStore backed by temp database."""
     return ConfigStore(temp_db)
 
@@ -48,6 +43,21 @@ def config_registry(config_store: ConfigStore, config_state: dict[str, DaemonCon
         config=config_state["config"],
         config_store=config_store,
         config_setter=lambda c: config_state.__setitem__("config", c),
+    )
+
+
+@pytest.fixture
+def config_registry_with_db(
+    temp_db: HubDatabase,
+    config_store: ConfigStore,
+    config_state: dict[str, DaemonConfig],
+) -> InternalToolRegistry:
+    """Create a config registry with database-backed secret support."""
+    return create_config_registry(
+        config=config_state["config"],
+        config_store=config_store,
+        config_setter=lambda c: config_state.__setitem__("config", c),
+        db=temp_db,
     )
 
 
@@ -79,6 +89,29 @@ class TestGetConfig:
         assert result["success"] is False
         assert "not found" in result["error"]
 
+    def test_get_config_masks_auto_detected_secret_key(
+        self,
+        temp_db: HubDatabase,
+        config_store: ConfigStore,
+        config_state: dict[str, DaemonConfig],
+        mock_machine_id,
+    ) -> None:
+        with patch("gobby.utils.machine_id.get_machine_id", return_value=mock_machine_id):
+            SecretStore(temp_db).set("requirepass", "Valid-123")
+
+        config_state["config"] = DaemonConfig(databases={"falkordb": {"requirepass": "Valid-123"}})
+        registry = create_config_registry(
+            config=config_state["config"],
+            config_store=config_store,
+            config_setter=lambda c: config_state.__setitem__("config", c),
+            db=temp_db,
+        )
+
+        result = registry.get_tool("get_config")(key="databases.falkordb.requirepass")
+
+        assert result["success"] is True
+        assert result["value"] == "********"
+
 
 class TestGetConfigSection:
     """Tests for get_config_section tool."""
@@ -109,6 +142,32 @@ class TestGetConfigSection:
         assert result["success"] is True
         section = result["section"]
         assert "log_level" in section
+
+    def test_get_config_section_masks_auto_detected_secret_keys(
+        self,
+        temp_db: HubDatabase,
+        config_store: ConfigStore,
+        config_state: dict[str, DaemonConfig],
+        mock_machine_id,
+    ) -> None:
+        with patch("gobby.utils.machine_id.get_machine_id", return_value=mock_machine_id):
+            SecretStore(temp_db).set("requirepass", "Valid-123")
+
+        config_state["config"] = DaemonConfig(
+            databases={"falkordb": {"requirepass": "Valid-123", "rrf_k": 77}}
+        )
+        registry = create_config_registry(
+            config=config_state["config"],
+            config_store=config_store,
+            config_setter=lambda c: config_state.__setitem__("config", c),
+            db=temp_db,
+        )
+
+        result = registry.get_tool("get_config_section")(prefix="databases")
+
+        assert result["success"] is True
+        assert result["section"]["falkordb"]["requirepass"] == "********"
+        assert result["section"]["falkordb"]["rrf_k"] == 77
 
 
 class TestSetConfig:
@@ -155,6 +214,43 @@ class TestSetConfig:
         assert result["success"] is True
         assert config_store.get("telemetry.log_level") == "debug"
         assert config_state["config"].telemetry.log_level == "debug"
+
+    def test_set_config_auto_detects_requirepass_secret(
+        self,
+        config_registry_with_db: InternalToolRegistry,
+        config_store: ConfigStore,
+        temp_db: HubDatabase,
+        config_state: dict[str, DaemonConfig],
+        mock_machine_id,
+    ) -> None:
+        with patch("gobby.utils.machine_id.get_machine_id", return_value=mock_machine_id):
+            tool = config_registry_with_db.get_tool("set_config")
+            result = tool(key="databases.falkordb.requirepass", value="Valid-123")
+
+            assert result["success"] is True
+            assert result["stored_as"] == "encrypted_secret"
+            assert "value" not in result
+            assert result["requires_restart"] is True
+            assert "FalkorDB password" in result["restart_hint"]
+            assert config_store.get("databases.falkordb.requirepass") == "$secret:requirepass"
+            assert SecretStore(temp_db).get("requirepass") == "Valid-123"
+            assert config_state["config"].databases.falkordb.requirepass == "Valid-123"
+
+    def test_set_config_validates_requirepass_before_persisting(
+        self,
+        config_registry_with_db: InternalToolRegistry,
+        config_store: ConfigStore,
+        temp_db: HubDatabase,
+        mock_machine_id,
+    ) -> None:
+        with patch("gobby.utils.machine_id.get_machine_id", return_value=mock_machine_id):
+            tool = config_registry_with_db.get_tool("set_config")
+            result = tool(key="databases.falkordb.requirepass", value="contains space")
+
+            assert result["success"] is False
+            assert "must not contain whitespace" in result["error"]
+            assert config_store.get("databases.falkordb.requirepass") is None
+            assert SecretStore(temp_db).get("requirepass") is None
 
 
 class TestListConfigKeys:
@@ -283,6 +379,9 @@ class TestIsSecretKeyName:
     def test_password_suffix(self) -> None:
         assert is_secret_key_name("db.db_password") is True
 
+    def test_requirepass_suffix(self) -> None:
+        assert is_secret_key_name("databases.falkordb.requirepass") is True
+
     def test_access_token_suffix(self) -> None:
         assert is_secret_key_name("oauth.user_access_token") is True
 
@@ -302,7 +401,7 @@ class TestConfigStoreSecrets:
     """Tests for ConfigStore secret-aware methods."""
 
     @pytest.fixture
-    def secret_store(self, temp_db: LocalDatabase) -> SecretStore:
+    def secret_store(self, temp_db: HubDatabase) -> SecretStore:
         with patch("gobby.utils.machine_id.get_machine_id", return_value="test-machine-12345"):
             return SecretStore(temp_db)
 
@@ -368,7 +467,7 @@ class TestSetConfigSecret:
     @pytest.fixture
     def config_registry_with_db(
         self,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
         config_store: ConfigStore,
         config_state: dict[str, DaemonConfig],
     ) -> InternalToolRegistry:
@@ -381,7 +480,7 @@ class TestSetConfigSecret:
         )
 
     def test_set_config_secret_encrypts(
-        self, config_registry_with_db, config_store: ConfigStore, temp_db: LocalDatabase
+        self, config_registry_with_db, config_store: ConfigStore, temp_db: HubDatabase
     ) -> None:
         """set_config with is_secret=True encrypts the value."""
         with patch("gobby.utils.machine_id.get_machine_id", return_value="test-machine-12345"):
@@ -565,6 +664,80 @@ class TestSetConfigBatch:
         # Should not have persisted the invalid value
         assert config_store.get("daemon_port") is None
 
+    def test_batch_partitions_requirepass_secret_and_plain_entries(
+        self,
+        config_registry_with_db: InternalToolRegistry,
+        config_store: ConfigStore,
+        temp_db: HubDatabase,
+        config_state: dict[str, DaemonConfig],
+        mock_machine_id,
+    ) -> None:
+        with patch("gobby.utils.machine_id.get_machine_id", return_value=mock_machine_id):
+            tool = config_registry_with_db.get_tool("set_config_batch")
+            result = tool(
+                entries=[
+                    {"key": "databases.falkordb.rrf_k", "value": 77},
+                    {"key": "databases.falkordb.requirepass", "value": "Valid-123"},
+                ]
+            )
+
+            assert result["success"] is True
+            assert result["requires_restart"] is True
+            assert "FalkorDB password" in result["restart_hint"]
+            assert config_store.get("databases.falkordb.rrf_k") == 77
+            assert config_store.get("databases.falkordb.requirepass") == "$secret:requirepass"
+            assert SecretStore(temp_db).get("requirepass") == "Valid-123"
+            assert config_state["config"].databases.falkordb.requirepass == "Valid-123"
+
+    def test_batch_invalid_requirepass_rolls_back_plain_entries(
+        self,
+        config_registry_with_db: InternalToolRegistry,
+        config_store: ConfigStore,
+        temp_db: HubDatabase,
+        mock_machine_id,
+    ) -> None:
+        with patch("gobby.utils.machine_id.get_machine_id", return_value=mock_machine_id):
+            tool = config_registry_with_db.get_tool("set_config_batch")
+            result = tool(
+                entries=[
+                    {"key": "databases.falkordb.rrf_k", "value": 77},
+                    {"key": "databases.falkordb.requirepass", "value": "contains space"},
+                ]
+            )
+
+            assert result["success"] is False
+            assert "must not contain whitespace" in result["error"]
+            assert config_store.get("databases.falkordb.rrf_k") is None
+            assert config_store.get("databases.falkordb.requirepass") is None
+            assert SecretStore(temp_db).get("requirepass") is None
+
+    def test_batch_mid_write_failure_rolls_back_secret_and_plain_legs(
+        self,
+        config_registry_with_db: InternalToolRegistry,
+        config_store: ConfigStore,
+        temp_db: HubDatabase,
+        mock_machine_id,
+    ) -> None:
+        with (
+            patch("gobby.utils.machine_id.get_machine_id", return_value=mock_machine_id),
+            patch.object(config_store, "set_secret", wraps=config_store.set_secret) as set_secret,
+            patch.object(config_store, "set_many", side_effect=RuntimeError("disk full")),
+        ):
+            tool = config_registry_with_db.get_tool("set_config_batch")
+            result = tool(
+                entries=[
+                    {"key": "databases.falkordb.requirepass", "value": "Valid-123"},
+                    {"key": "databases.falkordb.rrf_k", "value": 77},
+                ]
+            )
+
+            assert result["success"] is False
+            assert "disk full" in result["error"]
+            set_secret.assert_called_once()
+            assert config_store.get("databases.falkordb.requirepass") is None
+            assert config_store.get("databases.falkordb.rrf_k") is None
+            assert SecretStore(temp_db).get("requirepass") is None
+
 
 class TestDeleteConfig:
     """Tests for delete_config tool."""
@@ -572,7 +745,7 @@ class TestDeleteConfig:
     @pytest.fixture
     def config_registry_with_db(
         self,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
         config_store: ConfigStore,
         config_state: dict[str, DaemonConfig],
     ) -> InternalToolRegistry:
@@ -648,7 +821,7 @@ class TestDeleteConfig:
         config_registry_with_db,
         config_store: ConfigStore,
         config_state: dict[str, DaemonConfig],
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
     ) -> None:
         """Deleting a secret override clears both the config row and secret blob."""
         with patch("gobby.utils.machine_id.get_machine_id", return_value="test-machine-12345"):
@@ -674,7 +847,7 @@ class TestDeleteConfig:
         config_registry_with_db,
         config_store: ConfigStore,
         config_state: dict[str, DaemonConfig],
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
     ) -> None:
         """Secret deletion fails cleanly when the registry has no DB access."""
         with patch("gobby.utils.machine_id.get_machine_id", return_value="test-machine-12345"):

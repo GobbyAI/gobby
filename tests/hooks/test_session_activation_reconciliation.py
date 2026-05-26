@@ -29,7 +29,7 @@ from gobby.hooks.session_activation import (
     reconcile_session_activation,
 )
 from gobby.storage.agents import LocalAgentRunManager
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
@@ -48,18 +48,18 @@ def clear_rule_cache() -> Iterator[None]:
 
 
 @pytest.fixture
-def db(temp_db: LocalDatabase) -> LocalDatabase:
+def db(temp_db: HubDatabase) -> HubDatabase:
     return temp_db
 
 
 @pytest.fixture
-def project_id(db: LocalDatabase, tmp_path) -> str:
+def project_id(db: HubDatabase, tmp_path) -> str:
     project = LocalProjectManager(db).create(name="activation-test", repo_path=str(tmp_path))
     return project.id
 
 
 @pytest.fixture
-def session_manager(db: LocalDatabase) -> SessionManager:
+def session_manager(db: HubDatabase) -> SessionManager:
     return SessionManager(db)
 
 
@@ -97,11 +97,11 @@ def _register_session(
     )
 
 
-def _variables(db: LocalDatabase, session_id: str) -> dict:
+def _variables(db: HubDatabase, session_id: str) -> dict:
     return SessionVariableManager(db).get_variables(session_id)
 
 
-def _create_worker_agent(db: LocalDatabase) -> None:
+def _create_worker_agent(db: HubDatabase) -> None:
     manager = LocalWorkflowDefinitionManager(db)
     manager.create(
         name="worker",
@@ -133,7 +133,7 @@ def _create_worker_agent(db: LocalDatabase) -> None:
 
 
 def _create_parent_and_child(
-    db: LocalDatabase,
+    db: HubDatabase,
     session_manager: SessionManager,
     project_id: str,
     tmp_path,
@@ -164,7 +164,7 @@ def _create_parent_and_child(
 
 
 def test_marker_creation_on_session_start(
-    db: LocalDatabase,
+    db: HubDatabase,
     session_manager: SessionManager,
     handlers: EventHandlers,
     project_id: str,
@@ -184,7 +184,7 @@ def test_marker_creation_on_session_start(
 
 
 def test_before_agent_fast_noop_when_current(
-    db: LocalDatabase,
+    db: HubDatabase,
     session_manager: SessionManager,
     handlers: EventHandlers,
     project_id: str,
@@ -202,7 +202,7 @@ def test_before_agent_fast_noop_when_current(
 
 
 def test_missing_agent_type_restored_before_rules(
-    db: LocalDatabase,
+    db: HubDatabase,
     session_manager: SessionManager,
     handlers: EventHandlers,
     project_id: str,
@@ -232,7 +232,7 @@ def test_missing_agent_type_restored_before_rules(
 
 
 def test_reconciliation_refreshes_stale_active_rule_names(
-    db: LocalDatabase,
+    db: HubDatabase,
     session_manager: SessionManager,
     handlers: EventHandlers,
     project_id: str,
@@ -298,7 +298,7 @@ def test_reconciliation_refreshes_stale_active_rule_names(
 
 
 def test_reconciliation_caches_active_rule_names_for_same_agent_and_project(
-    db: LocalDatabase,
+    db: HubDatabase,
     session_manager: SessionManager,
     handlers: EventHandlers,
     project_id: str,
@@ -367,7 +367,7 @@ def test_reconciliation_caches_active_rule_names_for_same_agent_and_project(
 
 
 def test_reconciliation_invalidates_active_rule_cache_after_definition_mutation(
-    db: LocalDatabase,
+    db: HubDatabase,
     session_manager: SessionManager,
     handlers: EventHandlers,
     project_id: str,
@@ -439,7 +439,7 @@ def test_reconciliation_invalidates_active_rule_cache_after_definition_mutation(
 
 
 def test_active_rule_names_cache_evicts_oldest_entries(
-    db: LocalDatabase,
+    db: HubDatabase,
     project_id: str,
 ) -> None:
     manager = LocalWorkflowDefinitionManager(db)
@@ -469,7 +469,7 @@ def test_active_rule_names_cache_evicts_oldest_entries(
 
 
 def test_active_rule_names_cache_purges_expired_entries(
-    db: LocalDatabase,
+    db: HubDatabase,
     project_id: str,
 ) -> None:
     manager = LocalWorkflowDefinitionManager(db)
@@ -499,7 +499,7 @@ def test_active_rule_names_cache_purges_expired_entries(
 
 
 def test_spawned_step_agent_restores_workflow_variable_and_instance(
-    db: LocalDatabase,
+    db: HubDatabase,
     session_manager: SessionManager,
     handlers: EventHandlers,
     project_id: str,
@@ -523,7 +523,7 @@ def test_spawned_step_agent_restores_workflow_variable_and_instance(
 
 
 def test_existing_step_workflow_current_step_is_preserved(
-    db: LocalDatabase,
+    db: HubDatabase,
     session_manager: SessionManager,
     handlers: EventHandlers,
     project_id: str,
@@ -559,7 +559,7 @@ def test_existing_step_workflow_current_step_is_preserved(
 
 
 def test_baseline_dirty_initializes_once_and_preserves_session_edits(
-    db: LocalDatabase,
+    db: HubDatabase,
     session_manager: SessionManager,
     handlers: EventHandlers,
     project_id: str,
@@ -582,7 +582,7 @@ def test_baseline_dirty_initializes_once_and_preserves_session_edits(
 
 
 def test_terminal_pickup_metadata_backfills_from_agent_runs(
-    db: LocalDatabase,
+    db: HubDatabase,
     session_manager: SessionManager,
     handlers: EventHandlers,
     project_id: str,

@@ -4,6 +4,7 @@ Daemon management commands.
 
 import asyncio
 import contextlib
+import json
 import logging
 import os
 import subprocess  # nosec B404 # subprocess needed for daemon management
@@ -45,11 +46,20 @@ logger = logging.getLogger(__name__)
 SERVICE_MANAGED_STOP_TIMEOUT_SECONDS = 75.0
 
 
+def _open_services_config_db(gobby_home: Path) -> Any:
+    """Open the runtime hub DB using the bootstrap file for a Gobby home."""
+    from gobby.storage.hub.runtime import open_runtime_hub_database
+
+    return open_runtime_hub_database(
+        str(gobby_home / "bootstrap.yaml"),
+        apply_migrations=False,
+    )
+
+
 def _services_start(gobby_home: Path) -> None:
-    """Start Docker services (Qdrant, Neo4j) via unified compose file.
+    """Start Docker services (Qdrant, FalkorDB) via unified compose file.
 
     Uses Docker Compose profiles to start only installed services.
-    Falls back to legacy per-service compose files during migration.
     """
     import shutil
 
@@ -59,36 +69,41 @@ def _services_start(gobby_home: Path) -> None:
     services_dir = gobby_home / "services"
     compose_file = services_dir / "docker-compose.yml"
 
-    # Fall back to legacy Neo4j-only compose if unified file doesn't exist yet
     if not compose_file.exists():
-        legacy_compose = services_dir / "neo4j" / "docker-compose.yml"
-        if legacy_compose.exists():
-            compose_file = legacy_compose
-        else:
-            return
+        return
 
-    # Build subprocess env with config resolved from bootstrap + DB config
+    # Build subprocess env with resolved service config.
     env = dict(os.environ)
     profiles: list[str] = []
+    db = None
     try:
         from gobby.config.app import load_config
-        from gobby.config.bootstrap import load_bootstrap
+        from gobby.config.persistence import is_falkordb_enabled
+        from gobby.storage.config_store import ConfigStore
+        from gobby.storage.secrets import SecretStore
 
-        bootstrap = load_bootstrap()
-        config = load_config()
-
-        # Neo4j auth — read password directly from bootstrap
-        env["GOBBY_NEO4J_PASSWORD"] = bootstrap.neo4j_password
+        db = _open_services_config_db(gobby_home)
+        config_store = ConfigStore(db)
+        secret_store = SecretStore(db)
+        bootstrap_file = gobby_home / "bootstrap.yaml"
+        config = load_config(
+            str(bootstrap_file),
+            config_store=config_store,
+            secret_resolver=secret_store.get,
+        )
 
         # Determine which profiles to start
-        if config.databases.neo4j.url:
-            profiles.append("neo4j")
+        if is_falkordb_enabled(config.databases):
+            env["GOBBY_FALKORDB_PASSWORD"] = config.databases.falkordb.requirepass or ""
+            profiles.append("falkordb")
         if config.databases.qdrant.url:
             profiles.append("qdrant")
     except Exception as e:
-        logger.warning(f"Could not resolve config for services: {e}")
-        # Default: try starting all profiles
-        profiles = ["all"]
+        logger.warning(f"Could not resolve config for services; skipping Docker startup: {e}")
+        profiles = []
+    finally:
+        if db is not None:
+            db.close()
 
     if not profiles:
         logger.debug("No external services configured — skipping Docker startup")
@@ -126,13 +141,8 @@ def _services_stop(gobby_home: Path) -> None:
     services_dir = gobby_home / "services"
     compose_file = services_dir / "docker-compose.yml"
 
-    # Fall back to legacy Neo4j-only compose
     if not compose_file.exists():
-        legacy_compose = services_dir / "neo4j" / "docker-compose.yml"
-        if legacy_compose.exists():
-            compose_file = legacy_compose
-        else:
-            return
+        return
 
     try:
         result = subprocess.run(  # nosec B603 B607 # hardcoded docker command
@@ -231,7 +241,19 @@ def _poll_startup_progress(http_port: int, max_wait: float = 60.0) -> bool:
 
         except (httpx.ConnectError, httpx.TimeoutException):
             pass
-        except Exception:
+        except (
+            httpx.DecodingError,
+            httpx.ProtocolError,
+            httpx.TooManyRedirects,
+            json.JSONDecodeError,
+        ) as e:
+            logger.error("Non-retryable startup progress polling error: %s", e, exc_info=True)
+            return False
+        except httpx.RequestError as e:
+            logger.error("Non-retryable startup progress request error: %s", e, exc_info=True)
+            return False
+        except Exception as e:
+            logger.error("Unexpected startup progress polling error: %s", e, exc_info=True)
             return False
         time.sleep(0.5)
     return False
@@ -260,7 +282,9 @@ def _is_daemon_healthy(http_port: int) -> bool:
     try:
         response = httpx.get(f"http://localhost:{http_port}/api/admin/health", timeout=1.0)
         return response.status_code == 200
-    except (httpx.ConnectError, httpx.TimeoutException):
+    except httpx.TimeoutException:
+        return False
+    except httpx.RequestError:
         return False
 
 
@@ -348,7 +372,7 @@ def _wait_for_service_stop(
     "--docker",
     "docker_flag",
     is_flag=True,
-    help="Also start Docker service containers (Qdrant, Neo4j)",
+    help="Also start Docker service containers (Qdrant, FalkorDB)",
 )
 @click.pass_context
 def start(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -> None:
@@ -388,16 +412,16 @@ def start(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -> 
     click.echo("Starting Gobby daemon...")
     click.echo("")
 
-    # Initialize local storage
-    init_local_storage()
-    _step("Local storage initialized")
-
     # Start Docker services if compose file exists or --docker flag
     services_compose = gobby_dir / "services" / "docker-compose.yml"
-    legacy_compose = gobby_dir / "services" / "neo4j" / "docker-compose.yml"
-    if services_compose.exists() or legacy_compose.exists() or docker_flag:
+    if services_compose.exists() or docker_flag:
         _services_start(gobby_dir)
         _step("Docker services started")
+
+    # Initialize runtime hub storage after services are up.
+    hub_db = init_local_storage()
+    hub_db.close()
+    _step("PostgreSQL hub initialized")
 
     # Kill existing gobby daemon processes
     killed_count = kill_all_gobby_daemons()
@@ -597,7 +621,7 @@ def _do_stop(
     "--docker",
     "docker_flag",
     is_flag=True,
-    help="Also stop Docker service containers (Qdrant, Neo4j)",
+    help="Also stop Docker service containers (Qdrant, FalkorDB)",
 )
 @click.pass_context
 def stop(ctx: click.Context, docker_flag: bool) -> None:
@@ -621,7 +645,7 @@ def stop(ctx: click.Context, docker_flag: bool) -> None:
     "--docker",
     "docker_flag",
     is_flag=True,
-    help="Also restart Docker service containers (Qdrant, Neo4j)",
+    help="Also restart Docker service containers (Qdrant, FalkorDB)",
 )
 @click.pass_context
 def restart(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -> None:
@@ -788,7 +812,7 @@ def health(ctx: click.Context) -> None:
         else:
             click.echo(f"Gobby daemon: unhealthy (HTTP {response.status_code})")
             sys.exit(1)
-    except (httpx.ConnectError, httpx.TimeoutException):
+    except (httpx.RequestError, httpx.TimeoutException):
         click.echo(f"Gobby daemon: not responding (PID: {pid})")
         sys.exit(1)
 
@@ -806,27 +830,30 @@ def get_merge_status() -> dict[str, Any]:
         - pending_conflicts: int - Number of unresolved conflicts
     """
     try:
-        from gobby.storage.database import LocalDatabase
+        from gobby.storage.hub.runtime import open_runtime_hub_database
         from gobby.storage.merge_resolutions import MergeResolutionManager
 
-        db = LocalDatabase()
-        manager = MergeResolutionManager(db)
+        db = open_runtime_hub_database(apply_migrations=False)
+        try:
+            manager = MergeResolutionManager(db)
 
-        resolution = manager.get_active_resolution()
-        if not resolution:
-            return {"active": False}
+            resolution = manager.get_active_resolution()
+            if not resolution:
+                return {"active": False}
 
-        conflicts = manager.list_conflicts(resolution_id=resolution.id)
-        pending_count = sum(1 for c in conflicts if c.status == "pending")
+            conflicts = manager.list_conflicts(resolution_id=resolution.id)
+            pending_count = sum(1 for c in conflicts if c.status == "pending")
 
-        return {
-            "active": True,
-            "resolution_id": resolution.id,
-            "source_branch": resolution.source_branch,
-            "target_branch": resolution.target_branch,
-            "pending_conflicts": pending_count,
-            "total_conflicts": len(conflicts),
-        }
+            return {
+                "active": True,
+                "resolution_id": resolution.id,
+                "source_branch": resolution.source_branch,
+                "target_branch": resolution.target_branch,
+                "pending_conflicts": pending_count,
+                "total_conflicts": len(conflicts),
+            }
+        finally:
+            db.close()
     except Exception as e:
         logger.debug(f"Error getting merge status: {e}")
         return {"active": False, "error": str(e)}

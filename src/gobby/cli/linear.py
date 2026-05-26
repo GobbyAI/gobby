@@ -14,7 +14,8 @@ import click
 from gobby.cli.tasks._utils import resolve_task_id
 from gobby.integrations.linear import LinearIntegration
 from gobby.mcp_proxy.manager import MCPClientManager
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.storage.mcp import LocalMCPManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
@@ -31,7 +32,7 @@ def _optional_str(value: object) -> str | None:
 
 def get_linear_deps() -> tuple[LocalTaskManager, MCPClientManager, LocalProjectManager, str]:
     """Get dependencies for Linear commands."""
-    db = LocalDatabase()
+    db = open_runtime_hub_database(apply_migrations=False)
     task_manager = LocalTaskManager(db)
     project_manager = LocalProjectManager(db)
 
@@ -44,7 +45,7 @@ def get_linear_deps() -> tuple[LocalTaskManager, MCPClientManager, LocalProjectM
     return task_manager, mcp_manager, project_manager, project_id
 
 
-def _create_linear_mcp_manager(db: LocalDatabase, project_id: str) -> MCPClientManager:
+def _create_linear_mcp_manager(db: HubDatabase, project_id: str) -> MCPClientManager:
     """Create an MCP manager with the same database-backed servers as the daemon."""
     return MCPClientManager(
         mcp_db_manager=LocalMCPManager(db),
@@ -144,7 +145,7 @@ def _enable_linear_auto_sync(
             existing.id,
             interval_seconds=interval,
             action_config={"handler": handler_name},
-            enabled=1,
+            enabled=True,
         )
         return existing.id
 
@@ -610,7 +611,7 @@ def linear_auto_sync(interval: int, disable: bool) -> None:
         if disable:
             if not existing:
                 raise click.ClickException("No auto-sync job found to disable.")
-            cron_storage.update_job(existing.id, enabled=0)
+            cron_storage.update_job(existing.id, enabled=False)
             click.echo("✓ Disabled Linear auto-sync job")
             return
 

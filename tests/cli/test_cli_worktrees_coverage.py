@@ -145,7 +145,9 @@ def test_show_worktree(runner, mock_worktree_manager, mock_resolve_worktree_id) 
     assert "Branch: feat/1" in result.output
 
 
-def test_delete_worktree(runner, mock_httpx, mock_resolve_worktree_id) -> None:
+def test_delete_worktree(
+    runner, mock_httpx, mock_resolve_worktree_id, mock_worktree_manager
+) -> None:
     """Test delete worktree command."""
     mock_resolve_worktree_id.return_value = "wt-123"
 
@@ -172,7 +174,7 @@ def test_claim_worktree(runner, mock_worktree_manager, mock_resolve_worktree_id)
     assert "Claimed worktree wt-123" in result.output
 
 
-def test_sync_worktree(runner, mock_httpx, mock_resolve_worktree_id) -> None:
+def test_sync_worktree(runner, mock_httpx, mock_resolve_worktree_id, mock_worktree_manager) -> None:
     """Test sync worktree command."""
     mock_resolve_worktree_id.return_value = "wt-123"
 

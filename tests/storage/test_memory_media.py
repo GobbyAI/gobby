@@ -9,20 +9,17 @@ import json
 
 import pytest
 
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories import LocalMemoryManager, Memory
-from gobby.storage.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path):
+def db(temp_db: HubDatabase):
     """Create a test database with migrations applied."""
-    database = LocalDatabase(tmp_path / "gobby-hub.db")
-    run_migrations(database)
+    database = temp_db
     yield database
-    database.close()
 
 
 @pytest.fixture
@@ -110,9 +107,13 @@ class TestMediaColumnMigration:
 
     def test_memories_table_has_media_column(self, db) -> None:
         """Test that memories table has a media column after migration."""
-        # Query table schema
-        cursor = db.execute("PRAGMA table_info(memories)")
-        columns = {row[1] for row in cursor.fetchall()}
+        columns = {
+            row["column_name"]
+            for row in db.fetchall(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = ?",
+                ("memories",),
+            )
+        }
         assert "media" in columns
 
     def test_media_column_allows_null(self, db) -> None:
@@ -125,7 +126,7 @@ class TestMediaColumnMigration:
         # Should not raise - media defaults to NULL
         cursor = db.execute("SELECT media FROM memories WHERE id = 'mm-test'")
         row = cursor.fetchone()
-        assert row[0] is None
+        assert row["media"] is None
 
 
 # =============================================================================
@@ -156,11 +157,10 @@ class TestMemoryFromRowMedia:
         )
 
         cursor = db.execute("SELECT * FROM memories WHERE id = 'mm-test'")
-        cursor.row_factory = db.connection.row_factory
         row = cursor.fetchone()
 
         memory = Memory.from_row(row)
-        assert memory.media == media_data
+        assert json.loads(memory.media) == json.loads(media_data)
 
     def test_from_row_without_media(self, db) -> None:
         """Test that Memory.from_row() handles NULL media gracefully."""
@@ -172,7 +172,6 @@ class TestMemoryFromRowMedia:
         """)
 
         cursor = db.execute("SELECT * FROM memories WHERE id = 'mm-test'")
-        cursor.row_factory = db.connection.row_factory
         row = cursor.fetchone()
 
         memory = Memory.from_row(row)
@@ -201,7 +200,7 @@ class TestMemoryManagerMedia:
             memory_type="fact",
             media=media_data,
         )
-        assert memory.media == media_data
+        assert json.loads(memory.media) == json.loads(media_data)
 
     def test_create_memory_without_media(self, memory_manager) -> None:
         """Test creating a memory without media (default behavior)."""
@@ -219,7 +218,8 @@ class TestMemoryManagerMedia:
             media=media_data,
         )
         retrieved = memory_manager.get_memory(created.id)
-        assert retrieved.media == media_data
+        assert retrieved.media is not None
+        assert json.loads(retrieved.media) == json.loads(media_data)
 
     def test_update_memory_media(self, memory_manager) -> None:
         """Test updating a memory's media field."""
@@ -230,7 +230,8 @@ class TestMemoryManagerMedia:
         # Update to add media
         media_data = json.dumps({"path": "/new-image.png"})
         updated = memory_manager.update_memory(created.id, media=media_data)
-        assert updated.media == media_data
+        assert updated.media is not None
+        assert json.loads(updated.media) == json.loads(media_data)
 
     def test_update_memory_remove_media(self, memory_manager) -> None:
         """Test removing media from a memory."""
@@ -258,7 +259,8 @@ class TestMemoryManagerMedia:
         # Find the memory with media
         with_media = next((m for m in memories if m.content == "With media"), None)
         assert with_media is not None
-        assert with_media.media == media_data
+        assert with_media.media is not None
+        assert json.loads(with_media.media) == json.loads(media_data)
 
         # Find the memory without media
         without_media = next((m for m in memories if m.content == "Without media"), None)

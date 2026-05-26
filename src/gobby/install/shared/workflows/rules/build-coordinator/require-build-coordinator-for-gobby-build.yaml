@@ -1,0 +1,20 @@
+tags: [build-coordinator, enforcement, gobby, default]
+
+rules:
+  require-build-coordinator-for-gobby-build:
+    description: "Require build-coordinator guidance before running gobby build"
+    event: before_tool
+    enabled: true
+    priority: 23
+    when: >
+      not skill_loaded('build-coordinator')
+      and source != 'pipeline'
+      and (
+        variables.get('is_spawned_agent')
+        or event.metadata.get('session_type') == 'web_chat'
+      )
+      and event.data.get('canonical_tool_kind') == 'execute'
+      and is_gobby_build_command(tool_input.get('command') or tool_input.get('cmd'))
+    effects:
+      - type: block
+        reason: 'Call get_skill(name="build-coordinator") on gobby-skills through mcp__gobby__ progressive discovery: list_mcp_servers -> list_tools("gobby-skills") -> get_tool_schema("gobby-skills", "get_skill") -> call_tool("gobby-skills", "get_skill", {"name": "build-coordinator"}). Then continue.'

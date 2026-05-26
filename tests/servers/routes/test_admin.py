@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from gobby.config.persistence import DatabasesConfig
 from gobby.servers.routes.admin import create_admin_router
 from gobby.shutdown_intent import ShutdownIntent
 
@@ -72,10 +73,24 @@ class TestAdminRoutes:
         server.memory_manager = MagicMock()
         server.memory_manager.get_stats.return_value = {"total_count": 10}
         server.memory_manager._vector_store = None
-        server.memory_manager._neo4j_client = None
+        server.memory_manager._falkor_client = None
 
         server._background_tasks = set()
         server._runner = RunnerShutdownStub()
+        server.get_runner = lambda: server._runner
+        server.services = SimpleNamespace(
+            config=SimpleNamespace(
+                databases=DatabasesConfig(),
+                hub_backend="postgres",
+                postgres_install_mode=None,
+            ),
+            database=MagicMock(),
+            db_executor_stats=lambda: None,
+            dev_mode=False,
+            project_id=None,
+            provider_model_catalog=None,
+        )
+        server.config = server.services.config
 
         # Shutdown support
         server._process_shutdown = AsyncMock()
@@ -155,6 +170,131 @@ class TestAdminRoutes:
         assert data["memory"]["qdrant"] == {"configured": True, "healthy": True}
         mock_is_qdrant_healthy.assert_awaited_once_with("http://localhost:6333")
 
+    @patch("gobby.cli.services.get_falkordb_status", new_callable=AsyncMock)
+    @patch("gobby.servers.routes.admin._health.psutil")
+    @patch("gobby.servers.routes.admin._health.asyncio.to_thread")
+    def test_status_endpoint_reports_falkordb_not_neo4j(
+        self,
+        mock_to_thread,
+        mock_psutil,
+        mock_get_falkordb_status,
+        client,
+        mock_server,
+    ) -> None:
+        mock_process = MagicMock()
+        mock_process.memory_info.return_value = MagicMock(
+            rss=1024 * 1024 * 100, vms=1024 * 1024 * 200
+        )
+        mock_process.num_threads.return_value = 10
+        mock_psutil.Process.return_value = mock_process
+        mock_to_thread.return_value = 0.5
+        mock_get_falkordb_status.return_value = {
+            "installed": True,
+            "healthy": False,
+            "url": "redis://127.0.0.1:16379",
+        }
+        mock_server.services.config.databases = DatabasesConfig(
+            falkordb={"requirepass": "Valid-123"}
+        )
+        mock_server.config = mock_server.services.config
+        mock_server.memory_manager._falkor_client = None
+        mock_server.memory_manager._kg_service = None
+        del mock_server.db
+
+        response = client.get("/api/admin/status")
+
+        assert response.status_code == 200
+        memory = response.json()["memory"]
+        assert "neo4j" not in memory
+        assert memory["falkordb"] == {
+            "configured": True,
+            "installed": True,
+            "healthy": False,
+            "url": "redis://127.0.0.1:16379",
+        }
+        mock_get_falkordb_status.assert_awaited_once_with(
+            db=mock_server.services.database,
+            host="127.0.0.1",
+            port=16379,
+            password="Valid-123",
+        )
+
+    @patch("gobby.cli.services.get_falkordb_status", new_callable=AsyncMock)
+    @patch("gobby.servers.routes.admin._health.psutil")
+    @patch("gobby.servers.routes.admin._health.asyncio.to_thread")
+    def test_status_endpoint_always_includes_falkordb_payload(
+        self,
+        mock_to_thread,
+        mock_psutil,
+        mock_get_falkordb_status,
+        client,
+        mock_server,
+    ) -> None:
+        mock_process = MagicMock()
+        mock_process.memory_info.return_value = MagicMock(
+            rss=1024 * 1024 * 100, vms=1024 * 1024 * 200
+        )
+        mock_process.num_threads.return_value = 10
+        mock_psutil.Process.return_value = mock_process
+        mock_to_thread.return_value = 0.5
+        mock_get_falkordb_status.return_value = {
+            "installed": False,
+            "healthy": False,
+            "url": None,
+        }
+        mock_server.memory_manager = None
+
+        response = client.get("/api/admin/status")
+
+        assert response.status_code == 200
+        assert response.json()["memory"]["falkordb"] == {
+            "configured": False,
+            "installed": False,
+            "healthy": False,
+            "url": None,
+        }
+
+    @patch("gobby.cli.installers.postgres.get_postgres_status", new_callable=AsyncMock)
+    @patch("gobby.servers.routes.admin._health.psutil")
+    @patch("gobby.servers.routes.admin._health.asyncio.to_thread")
+    def test_status_endpoint_includes_postgres_hub_status(
+        self,
+        mock_to_thread,
+        mock_psutil,
+        mock_get_postgres_status,
+        client,
+        mock_server,
+    ) -> None:
+        mock_process = MagicMock()
+        mock_process.memory_info.return_value = MagicMock(
+            rss=1024 * 1024 * 100, vms=1024 * 1024 * 200
+        )
+        mock_process.num_threads.return_value = 10
+        mock_psutil.Process.return_value = mock_process
+        mock_to_thread.return_value = 0.5
+        mock_server.services.database.dialect = "postgres"
+        mock_server.services.database.connection_count = 2
+        mock_server.services.config.hub_backend = "postgres"
+        mock_server.services.config.postgres_install_mode = "docker"
+        mock_get_postgres_status.return_value = {
+            "mode": "docker",
+            "dsn_host": "localhost",
+            "dsn_db": "gobby",
+            "healthy": True,
+        }
+
+        response = client.get("/api/admin/status")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert data["database"]["backend"] == "postgres"
+        assert data["postgres"]["mode"] == "docker"
+        assert data["postgres"]["healthy"] is True
+        mock_get_postgres_status.assert_awaited_once_with(
+            readiness_timeout=1.5,
+            connect_timeout=1,
+        )
+
     @patch("gobby.servers.routes.admin._health.get_all_metrics")
     @patch("gobby.servers.routes.admin._health.generate_latest")
     @patch("gobby.servers.routes.admin._health.psutil")
@@ -186,8 +326,6 @@ class TestAdminRoutes:
         assert data["config"]["features"]["session_manager"] is True
 
     def test_shutdown_endpoint(self, client, mock_server) -> None:
-        # We don't need to patch shutdown_event, admin.py calls server._process_shutdown()
-
         with patch("gobby.runner_maintenance.write_shutdown_source") as mock_write_shutdown:
             response = client.post("/api/admin/shutdown")
         assert response.status_code == 200
@@ -201,23 +339,32 @@ class TestAdminRoutes:
         assert mock_server._runner._shutdown_intent is ShutdownIntent.STOP
         assert mock_server._runner.request_shutdown_calls == [ShutdownIntent.STOP]
 
-        # Verify shutdown was initiated
-        # Note: TestClient runs synchronous, but create_task might loop issues.
-        # But endpoints call asyncio.create_task.
-        # Since we use TestClient, it might not actually run the task loop unless we handle it,
-        # but the endpoint function itself executed up to return.
+        mock_server._process_shutdown.assert_not_called()
+        assert mock_server._background_tasks == set()
 
-        # Verify shutdown was initiated
-        # Instead of checking background_tasks (which might clear quickly via callback),
-        # verify the method was called.
-        mock_server._process_shutdown.assert_called()
+    def test_shutdown_endpoint_without_runner_schedules_process_shutdown(
+        self, client, mock_server
+    ) -> None:
+        mock_server._runner = None
+
+        with patch("gobby.runner_maintenance.write_shutdown_source") as mock_write_shutdown:
+            response = client.post("/api/admin/shutdown")
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "shutting_down"
+        mock_write_shutdown.assert_called_once_with("http_shutdown", intent="stop")
+        mock_server._process_shutdown.assert_called_once()
 
     def test_request_runner_shutdown_falls_back_to_runner_attrs(self) -> None:
         from gobby.servers.routes.admin._lifecycle import _request_runner_shutdown
 
         runner = MinimalRunnerFallbackStub()
-        _request_runner_shutdown(SimpleNamespace(_runner=runner), ShutdownIntent.RESTART)
+        requested = _request_runner_shutdown(
+            SimpleNamespace(_runner=runner),
+            ShutdownIntent.RESTART,
+        )
 
+        assert requested is True
         assert runner._shutdown_requested is True
         assert runner._shutdown_intent is ShutdownIntent.RESTART
 
@@ -253,7 +400,8 @@ class TestAdminRoutes:
         assert mock_server._runner._shutdown_intent is ShutdownIntent.RESTART
         assert mock_server._runner.request_shutdown_calls == [ShutdownIntent.RESTART]
 
-        mock_server._process_shutdown.assert_called()
+        mock_server._process_shutdown.assert_not_called()
+        assert mock_server._background_tasks == set()
 
     @patch("gobby.servers.routes.admin._lifecycle.os.getpid", return_value=4321)
     @patch(
@@ -294,7 +442,33 @@ class TestAdminRoutes:
         assert mock_server._runner._shutdown_intent is ShutdownIntent.RESTART
         assert mock_server._runner.request_shutdown_calls == [ShutdownIntent.RESTART]
 
-        mock_server._process_shutdown.assert_called()
+        mock_server._process_shutdown.assert_not_called()
+        assert mock_server._background_tasks == set()
+
+    @patch("gobby.servers.routes.admin._lifecycle.os.getpid", return_value=4321)
+    @patch(
+        "gobby.servers.routes.admin._lifecycle._should_restart_via_service_manager",
+        return_value=False,
+    )
+    @patch("gobby.servers.routes.admin._lifecycle.subprocess.Popen")
+    def test_restart_endpoint_without_runner_schedules_process_shutdown(
+        self,
+        mock_popen,
+        _mock_service_mode,
+        _mock_getpid,
+        client,
+        mock_server,
+    ) -> None:
+        mock_server._runner = None
+
+        with patch("gobby.runner_maintenance.write_shutdown_source") as mock_write_shutdown:
+            response = client.post("/api/admin/restart")
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "restarting"
+        mock_popen.assert_called_once()
+        mock_write_shutdown.assert_called_once_with("http_restart", intent="restart")
+        mock_server._process_shutdown.assert_called_once()
 
     @patch(
         "gobby.servers.routes.admin._lifecycle._should_restart_via_service_manager",

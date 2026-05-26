@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.shutdown_intent import ShutdownIntent, write_shutdown_intent
 from gobby.utils.daemon_client import DaemonClient
 
 pytestmark = pytest.mark.unit
@@ -73,13 +74,35 @@ class TestDaemonClientCheckHealth:
 
     def test_health_check_connection_refused(self) -> None:
         """Test health check when daemon not running."""
-        client = DaemonClient()
+        logger = MagicMock()
+        client = DaemonClient(logger=logger)
 
         with patch("httpx.get", side_effect=Exception("Connection refused")):
             is_healthy, error = client.check_health()
 
         assert is_healthy is False
         assert error is None  # None indicates daemon not running
+        logger.warning.assert_called_once()
+
+    def test_health_check_connection_refused_during_planned_restart_does_not_warn(
+        self,
+        tmp_path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Planned restarts make transient daemon gaps expected."""
+        monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+        write_shutdown_intent("cli_restart", ShutdownIntent.RESTART, home=tmp_path)
+        logger = MagicMock()
+        client = DaemonClient(logger=logger)
+
+        with patch("httpx.get", side_effect=Exception("Connection refused")):
+            is_healthy, error = client.check_health()
+
+        assert is_healthy is False
+        assert error is None
+        logger.warning.assert_not_called()
+        logger.debug.assert_called_once()
+        assert "during planned restart (cli_restart)" in logger.debug.call_args.args[0]
 
     def test_health_check_other_error(self) -> None:
         """Test health check with other errors."""

@@ -1,24 +1,29 @@
 """Tests for the HookManager coordinator."""
 
 import json
+import logging
+import uuid
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.hook_manager import HookManager
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
+from gobby.utils.session_context import reset_seeded_contexts, resolve_and_seed_contexts
+from gobby.workflows.state_manager import SessionVariableManager
 from tests._timing import wait_for_async_condition
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def mock_daemon_client():
+def mock_daemon_client() -> Any:
     """Create a mock daemon client."""
     client = MagicMock()
     # Mock check_status to return (is_ready, message, status, error)
@@ -27,12 +32,13 @@ def mock_daemon_client():
 
 
 @pytest.fixture
-def hook_manager_with_mocks(temp_dir: Path, mock_daemon_client: MagicMock):
+def hook_manager_with_mocks(
+    temp_dir: Path,
+    mock_daemon_client: MagicMock,
+    hub_db: HubDatabase,
+) -> Iterator[HookManager]:
     """Create a HookManager with mocked dependencies."""
-    # Create temp database
-    db_path = temp_dir / "test.db"
-    db = LocalDatabase(db_path)
-    run_migrations(db)
+    db = hub_db
 
     # Create a test project
     project_mgr = LocalProjectManager(db)
@@ -46,9 +52,8 @@ def hook_manager_with_mocks(temp_dir: Path, mock_daemon_client: MagicMock):
     from gobby.config.app import DaemonConfig
     from gobby.config.extensions import HookExtensionsConfig, WebhooksConfig
 
-    # Create config with temp DB and disabled webhooks
+    # Create config with disabled webhooks.
     test_config = DaemonConfig(
-        database_path=str(db_path),
         hook_extensions=HookExtensionsConfig(
             webhooks=WebhooksConfig(enabled=False),
         ),
@@ -65,6 +70,7 @@ def hook_manager_with_mocks(temp_dir: Path, mock_daemon_client: MagicMock):
             daemon_host="localhost",
             daemon_port=60887,
             config=test_config,
+            database=db,
             log_file=str(temp_dir / "logs" / "hook-manager.log"),
         )
 
@@ -74,10 +80,8 @@ def hook_manager_with_mocks(temp_dir: Path, mock_daemon_client: MagicMock):
 
         yield manager
 
-        # Cleanup: HookManager uses the temp database via config.database_path
-        # (protect_production_resources fixture ensures GOBBY_TEST_PROTECT is set)
+        # Cleanup: the database itself is owned by the hub_db fixture.
         manager.shutdown()
-        db.close()
 
 
 @pytest.fixture
@@ -234,6 +238,41 @@ class TestHookManagerHandle:
 
         # Should fail open
         assert response.decision == "allow"
+
+    def test_non_session_end_hook_revives_expired_terminal_session(
+        self,
+        hook_manager_with_mocks: HookManager,
+        temp_dir: Path,
+    ) -> None:
+        """Hook activity repairs false-expired terminal sessions before handling."""
+        manager = hook_manager_with_mocks
+        project_id = manager._resolve_project_id(None, str(temp_dir))
+        session = manager.session_manager.register(
+            external_id="codex-ext-1",
+            machine_id="test-machine-id",
+            source="codex",
+            project_id=project_id,
+            transcript_path=str(temp_dir / "codex.jsonl"),
+            terminal_context={"parent_pid": 99999},
+        )
+        manager.session_manager.update_status(session.id, "expired")
+
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id="codex-ext-1",
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={"cwd": str(temp_dir), "tool_name": "shell", "tool_input": {}},
+            machine_id="test-machine-id",
+            cwd=str(temp_dir),
+        )
+
+        response = manager.handle(event)
+
+        assert response.decision == "allow"
+        revived = manager.session_manager.get(session.id)
+        assert revived is not None
+        assert revived.status == "active"
 
 
 class TestHookManagerSessionStart:
@@ -546,7 +585,10 @@ class TestHookManagerConfigLoadError:
     """Tests for config loading error handling."""
 
     def test_init_handles_config_load_error(
-        self, temp_dir: Path, mock_daemon_client: MagicMock
+        self,
+        temp_dir: Path,
+        mock_daemon_client: MagicMock,
+        hub_db: HubDatabase,
     ) -> None:
         """Test that init handles config loading errors gracefully."""
         with (
@@ -560,6 +602,7 @@ class TestHookManagerConfigLoadError:
                 daemon_host="localhost",
                 daemon_port=60887,
                 config=None,  # Force config loading
+                database=hub_db,
                 log_file=str(temp_dir / "logs" / "hook-manager.log"),
             )
 
@@ -570,7 +613,10 @@ class TestHookManagerConfigLoadError:
             manager.shutdown()
 
     def test_init_uses_default_health_check_interval_without_config(
-        self, temp_dir: Path, mock_daemon_client: MagicMock
+        self,
+        temp_dir: Path,
+        mock_daemon_client: MagicMock,
+        hub_db: HubDatabase,
     ) -> None:
         """Test that init uses default health check interval when config is None."""
         with (
@@ -583,6 +629,7 @@ class TestHookManagerConfigLoadError:
                 daemon_host="localhost",
                 daemon_port=60887,
                 config=None,
+                database=hub_db,
                 log_file=str(temp_dir / "logs" / "hook-manager.log"),
             )
 
@@ -709,6 +756,7 @@ class TestHookManagerWebhookBlocking:
             response = manager.handle(event)
 
         assert response.decision == "block"
+        assert response.reason is not None
         assert "Webhook rejected" in response.reason
 
     def test_handle_webhook_error_fails_open(
@@ -746,13 +794,14 @@ class TestHookManagerHandlerErrors:
         )
 
         # Mock handler to raise exception
-        def failing_handler(evt):
+        def failing_handler(evt: Any) -> Any:
             raise Exception("Handler crashed")
 
         with patch.object(manager._event_handlers, "get_handler", return_value=failing_handler):
             response = manager.handle(event)
 
         assert response.decision == "allow"
+        assert response.reason is not None
         assert "Handler error:" in response.reason
 
 
@@ -769,14 +818,14 @@ class TestHookManagerBroadcasting:
 
         mock_broadcaster = MagicMock()
 
-        async def mock_broadcast(*args, **kwargs):
+        async def mock_broadcast(*args: Any, **kwargs: Any) -> Any:
             return None
 
         mock_broadcaster.broadcast_event = MagicMock(side_effect=mock_broadcast)
         manager.broadcaster = mock_broadcaster
 
         # Simulate running in an event loop
-        async def run_in_loop():
+        async def run_in_loop() -> Any:
             return manager.handle(sample_session_start_event)
 
         asyncio.run(run_in_loop())
@@ -796,7 +845,7 @@ class TestHookManagerBroadcasting:
         mock_broadcaster = MagicMock()
         broadcasted = threading.Event()
 
-        async def mock_broadcast(*args, **kwargs):
+        async def mock_broadcast(*args: Any, **kwargs: Any) -> Any:
             broadcasted.set()
             return None
 
@@ -809,7 +858,7 @@ class TestHookManagerBroadcasting:
 
         import threading
 
-        def run_loop():
+        def run_loop() -> Any:
             asyncio.set_event_loop(loop)
             loop.run_forever()
 
@@ -850,7 +899,7 @@ class TestHookManagerBroadcasting:
 
         mock_broadcaster = MagicMock()
 
-        async def mock_broadcast(*args, **kwargs):
+        async def mock_broadcast(*args: Any, **kwargs: Any) -> Any:
             return None
 
         mock_broadcaster.broadcast_event = MagicMock(side_effect=mock_broadcast)
@@ -895,7 +944,7 @@ class TestHookManagerSessionLookup:
         manager = hook_manager_with_mocks
         project_meta = (temp_dir / ".gobby" / "project.json").read_text()
         project_id = json.loads(project_meta)["id"]
-        precreated = manager._session_manager.create_web_chat_session(
+        precreated = manager.session_manager.create_web_chat_session(
             machine_id="test-machine-id",
             project_id=project_id,
             source="codex",
@@ -914,15 +963,87 @@ class TestHookManagerSessionLookup:
         )
 
         with patch.object(
-            manager._session_manager,
+            manager.session_manager,
             "register_session",
-            wraps=manager._session_manager.register_session,
+            wraps=manager.session_manager.register_session,
         ) as mock_register:
             response = manager.handle(event)
 
         assert response.decision == "allow"
         mock_register.assert_not_called()
         assert event.metadata["_platform_session_id"] == precreated.id
+
+    def test_resumed_codex_ignores_stale_wrapper_metadata_for_session_context(
+        self,
+        hook_manager_with_mocks: HookManager,
+        temp_dir: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A stale injected wrapper id must be replaced by the canonical Codex session."""
+        manager = hook_manager_with_mocks
+        external_id = "resumed-codex-session"
+
+        start_event = HookEvent(
+            event_type=HookEventType.SESSION_START,
+            session_id=external_id,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={
+                "cwd": str(temp_dir),
+                "source": "startup",
+                "transcript_path": str(temp_dir / "resumed-codex.jsonl"),
+            },
+            machine_id="test-machine-id",
+        )
+        response = manager.handle(start_event)
+
+        assert response.decision == "allow"
+        canonical_id = start_event.metadata["_platform_session_id"]
+        stale_wrapper_id = str(uuid.uuid4())
+        assert stale_wrapper_id != canonical_id
+
+        caplog.set_level(logging.WARNING)
+        caplog.clear()
+        resumed_event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=external_id,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={
+                "tool_name": "mcp__gobby__set_variable",
+                "tool_input": {
+                    "name": "wrapper_recovery",
+                    "value": True,
+                    "session_id": canonical_id,
+                },
+                "cwd": str(temp_dir),
+            },
+            machine_id="test-machine-id",
+            metadata={"_platform_session_id": stale_wrapper_id},
+        )
+        response = manager.handle(resumed_event)
+
+        assert response.decision == "allow"
+        assert resumed_event.metadata["_platform_session_id"] == canonical_id
+
+        tokens = resolve_and_seed_contexts(
+            session_ref=resumed_event.metadata["_platform_session_id"],
+            session_manager=manager.session_manager,
+            db=manager._database,
+        )
+        try:
+            assert tokens.resolved_session_id == canonical_id
+            variables = SessionVariableManager(manager._database)
+            variables.set_variable(tokens.resolved_session_id, "wrapper_recovery", True)
+            assert variables.get_variables(canonical_id)["wrapper_recovery"] is True
+            assert variables.get_variables(stale_wrapper_id) == {}
+            warning_messages = [record.getMessage() for record in caplog.records]
+            assert not any("Session not found" in message for message in warning_messages)
+            assert not any(
+                "could not resolve session ref" in message for message in warning_messages
+            )
+        finally:
+            reset_seeded_contexts(tokens)
 
     def test_handle_looks_up_session_from_database(
         self, hook_manager_with_mocks: HookManager, temp_dir: Path
@@ -1023,7 +1144,7 @@ class TestHookManagerSessionLookup:
         manager = hook_manager_with_mocks
         project_meta = (temp_dir / ".gobby" / "project.json").read_text()
         project_id = json.loads(project_meta)["id"]
-        existing = manager._session_manager.register(
+        existing = manager.session_manager.register(
             external_id="shared-session-id",
             machine_id="test-machine-id",
             source="codex",
@@ -1288,6 +1409,8 @@ class TestHookManagerWebhookDispatch:
         self, hook_manager_with_mocks: HookManager, temp_dir: Path
     ) -> None:
         """Test that async webhook dispatch does nothing when disabled."""
+        from gobby.config.extensions import WebhookEndpointConfig
+
         manager = hook_manager_with_mocks
 
         event = HookEvent(
@@ -1299,11 +1422,30 @@ class TestHookManagerWebhookDispatch:
             machine_id="test-machine-id",
         )
 
-        # Disable webhooks
-        manager._webhook_dispatcher.config.enabled = False
+        endpoint = WebhookEndpointConfig(
+            name="disabled-async-webhook",
+            url="https://example.com/webhook",
+            events=["before_tool"],
+            can_block=False,
+            enabled=True,
+        )
 
-        result = manager._dispatch_webhooks_async(event)
+        manager._webhook_dispatcher.config.enabled = False
+        manager._webhook_dispatcher.config.endpoints = [endpoint]
+
+        with (
+            patch.object(manager._webhook_dispatcher, "_build_payload") as build_payload,
+            patch.object(
+                manager._webhook_dispatcher,
+                "_dispatch_single",
+                new_callable=AsyncMock,
+            ) as dispatch_single,
+        ):
+            result = manager._dispatch_webhooks_async(event)
+
         assert result is None
+        build_payload.assert_not_called()
+        dispatch_single.assert_not_called()
 
     def test_dispatch_webhooks_async_no_matching_endpoints(
         self, hook_manager_with_mocks: HookManager, temp_dir: Path
@@ -1324,8 +1466,19 @@ class TestHookManagerWebhookDispatch:
         manager._webhook_dispatcher.config.enabled = True
         manager._webhook_dispatcher.config.endpoints = []
 
-        result = manager._dispatch_webhooks_async(event)
+        with (
+            patch.object(manager._webhook_dispatcher, "_build_payload") as build_payload,
+            patch.object(
+                manager._webhook_dispatcher,
+                "_dispatch_single",
+                new_callable=AsyncMock,
+            ) as dispatch_single,
+        ):
+            result = manager._dispatch_webhooks_async(event)
+
         assert result is None
+        build_payload.assert_not_called()
+        dispatch_single.assert_not_called()
 
     def test_dispatch_webhooks_async_with_matching_endpoints(
         self, hook_manager_with_mocks: HookManager, temp_dir: Path
@@ -1363,7 +1516,7 @@ class TestHookManagerWebhookDispatch:
         loop = asyncio.new_event_loop()
         manager._loop = loop
 
-        def run_loop():
+        def run_loop() -> Any:
             asyncio.set_event_loop(loop)
             loop.run_forever()
 
@@ -1373,7 +1526,7 @@ class TestHookManagerWebhookDispatch:
 
         try:
 
-            async def mock_dispatch(*args, **kwargs):
+            async def mock_dispatch(*args: Any, **kwargs: Any) -> Any:
                 dispatched.set()
                 return None
 
@@ -1431,7 +1584,7 @@ class TestHookManagerWebhookDispatch:
         manager._webhook_dispatcher.config.enabled = True
         manager._webhook_dispatcher.config.endpoints = [endpoint]
 
-        async def run_dispatch():
+        async def run_dispatch() -> Any:
             with (
                 patch.object(manager._webhook_dispatcher, "_build_payload", return_value={}),
                 patch.object(
@@ -1441,11 +1594,12 @@ class TestHookManagerWebhookDispatch:
                 ),
             ):
                 manager._dispatch_webhooks_async(event)
+                dispatch_single = cast(AsyncMock, manager._webhook_dispatcher._dispatch_single)
                 await wait_for_async_condition(
-                    lambda: manager._webhook_dispatcher._dispatch_single.await_count == 1,
+                    lambda: dispatch_single.await_count == 1,
                     description="webhook dispatch",
                 )
-                assert manager._webhook_dispatcher._dispatch_single.await_count == 1
+                assert dispatch_single.await_count == 1
 
         asyncio.run(run_dispatch())
 
@@ -1467,7 +1621,7 @@ class TestHookManagerShutdownWebhook:
         loop = asyncio.new_event_loop()
         manager._loop = loop
 
-        def run_loop():
+        def run_loop() -> Any:
             asyncio.set_event_loop(loop)
             loop.run_forever()
 
@@ -1503,10 +1657,10 @@ class TestHookManagerShutdownWebhook:
         manager = hook_manager_with_mocks
 
         # Mock close to raise exception
-        async def failing_close():
+        async def failing_close() -> Any:
             raise Exception("Close failed")
 
-        manager._webhook_dispatcher.close = failing_close
+        cast(Any, manager._webhook_dispatcher).close = failing_close
         manager._loop = None
 
         # Should not raise - error is logged
@@ -1560,7 +1714,10 @@ class TestHookManagerLogging:
     """Tests for logging setup."""
 
     def test_setup_logging_creates_log_directory(
-        self, temp_dir: Path, mock_daemon_client: MagicMock
+        self,
+        temp_dir: Path,
+        mock_daemon_client: MagicMock,
+        hub_db: HubDatabase,
     ) -> None:
         """Test that logging setup creates the log file directory."""
         # First ensure the parent directory for logs doesn't exist
@@ -1576,6 +1733,7 @@ class TestHookManagerLogging:
             manager = HookManager(
                 daemon_host="localhost",
                 daemon_port=60887,
+                database=hub_db,
                 log_file=str(log_path),
             )
 
@@ -1587,7 +1745,10 @@ class TestHookManagerLogging:
             manager.shutdown()
 
     def test_setup_logging_reuses_existing_logger(
-        self, temp_dir: Path, mock_daemon_client: MagicMock
+        self,
+        temp_dir: Path,
+        mock_daemon_client: MagicMock,
+        hub_db: HubDatabase,
     ) -> None:
         """Test that logging setup reuses existing logger if already configured."""
         import logging
@@ -1603,6 +1764,7 @@ class TestHookManagerLogging:
             manager = HookManager(
                 daemon_host="localhost",
                 daemon_port=60887,
+                database=hub_db,
                 log_file=str(temp_dir / "logs" / "hook.log"),
             )
 
@@ -1628,7 +1790,7 @@ class TestHookManagerContextMerging:
         workflow_response = HookResponse(decision="allow", context="Workflow context")
 
         # Mock event handler to return response with context
-        def handler_with_context(event):
+        def handler_with_context(event: Any) -> Any:
             return HookResponse(decision="allow", context="Handler context")
 
         with (
@@ -1638,6 +1800,7 @@ class TestHookManagerContextMerging:
             response = manager.handle(sample_session_start_event)
 
         # Both contexts should be present
+        assert response.context is not None
         assert "Handler context" in response.context
         assert "Workflow context" in response.context
 

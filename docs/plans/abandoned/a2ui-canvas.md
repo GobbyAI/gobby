@@ -364,7 +364,7 @@ if (msg.type === 'canvas_event') {
 
 ### Phase 3: Persistence + Templates
 
-- SQLite `canvas_states` table for surviving session restarts
+- PostgreSQL `canvas_states` table for surviving session restarts
 - REST endpoints (`/canvas/{conversation_id}`) following `create_*_router()` pattern
 - Canvas templates: agent calls `render_canvas(template="approval_form", variables={...})`
 

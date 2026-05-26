@@ -6,12 +6,13 @@ import asyncio
 import inspect
 import json
 import logging
-import sqlite3
 import uuid
-from collections.abc import Awaitable, Mapping
+from collections.abc import Awaitable
 from dataclasses import dataclass
-from types import SimpleNamespace
+from datetime import UTC, datetime, timedelta
 from typing import Any, cast
+
+import psycopg
 
 from gobby.dispatch import rules as dispatch_rules
 from gobby.dispatch.actions import (
@@ -25,6 +26,7 @@ from gobby.dispatch.actions import (
     StartPipelineAction,
     StartStageAction,
 )
+from gobby.dispatch.context import _field, build_context, reload_candidate
 from gobby.dispatch.mutex import (
     DispatchCandidateChangedError,
     DispatchMutexUnavailableError,
@@ -38,31 +40,29 @@ from gobby.dispatch.spawn import (
     spawn_agent,
 )
 from gobby.dispatch.workspace_merge import execute_merge_workspace
+from gobby.dispatch.write_set_guard import DispatchWriteSetGuard, WriteSetOverlap
 from gobby.mcp_proxy.tools.workflows._pipeline_execution import (
     _execute_pipeline_background,
     _register_background_task,
 )
-from gobby.storage.database import DatabaseProtocol, LocalDatabase
-from gobby.storage.tasks._artifacts import (
-    TaskArtifactManager,
-    TaskArtifacts,
-)
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.tasks._artifacts import TaskArtifacts
 from gobby.storage.tasks._artifacts import (
     set_artifacts_atomic as _set_artifacts_atomic,
 )
-from gobby.storage.tasks._blocking import hydrate_task_blocking_state
-from gobby.storage.tasks._crud import get_task, list_automation_candidates, update_task
+from gobby.storage.tasks._automation import (
+    list_automation_candidates,
+    sweep_stale_claims,
+)
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.storage.tasks._models import Task
-from gobby.storage.tasks._stage_hydration import hydrate_task_stage_state
-from gobby.storage.tasks._stage_registry import StageRegistryEntry, StageRegistryManager
+from gobby.storage.tasks._read import get_task
 from gobby.storage.tasks._stage_states import StageStatesManager
-from gobby.storage.tasks._stage_types import StageState
+from gobby.storage.tasks._stage_types import IllegalStageTransitionError
 from gobby.storage.tasks._transitions import escalate_task as _escalate_task
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager, WorkflowDefinitionRow
+from gobby.storage.tasks._updates import update_task
 from gobby.utils.id import generate_prefixed_id
-from gobby.workflows.definitions import AgentDefinitionBody
 from gobby.workflows.pipeline.renderer import StepRenderer
 from gobby.workflows.templates import TemplateEngine
 
@@ -71,10 +71,11 @@ logger = logging.getLogger(__name__)
 MAX_ACTIVE_AGENTS = 10
 DISPATCH_HOLDER = "dispatcher"
 DISPATCH_TTL_SECONDS = 600
+ORPHAN_NO_RUN_MUTEX_GRACE_SECONDS = 30
 _PIPELINE_ATTACH_DATABASE_ERRORS = (
-    sqlite3.IntegrityError,
-    sqlite3.OperationalError,
-    sqlite3.DatabaseError,
+    psycopg.IntegrityError,
+    psycopg.OperationalError,
+    psycopg.Error,
 )
 
 
@@ -113,7 +114,7 @@ def _unavailable(result: HeartbeatResult, reason: str) -> HeartbeatResult:
 
 async def run_heartbeat(
     *,
-    db: DatabaseProtocol | None = None,
+    db: HubDatabase | None = None,
     project_id: str | None = None,
     startup: bool = False,
     max_active_agents: int | None = None,
@@ -129,13 +130,29 @@ async def run_heartbeat(
         logger.info("Dispatcher heartbeat skipped: %s", readiness_reason)
         return _unavailable(HeartbeatResult(), readiness_reason)
 
-    resolved_db = db or LocalDatabase()
+    if db is None:
+        from gobby.storage.hub.runtime import open_runtime_hub_database
+
+        resolved_db = open_runtime_hub_database(apply_migrations=False)
+    else:
+        resolved_db = db
     mutex_storage = TaskDispatchMutexManager(resolved_db)
     if startup:
         sweep_expired_leases(mutex_storage)
+    orphan_mutexes = sweep_orphan_no_run_dispatch_mutexes(
+        mutex_storage,
+        resolved_db,
+        project_id=project_id,
+    )
+    if orphan_mutexes:
+        logger.info("Dispatcher cleared %d orphan no-run mutex(es)", orphan_mutexes)
+    reclaimed = sweep_stale_claims(resolved_db, project_id=project_id)
+    if reclaimed:
+        logger.info("Dispatcher reclaimed %d task(s) from dead sessions", reclaimed)
 
     cap = MAX_ACTIVE_AGENTS if max_active_agents is None else max_active_agents
     candidates = list_automation_candidates(resolved_db, project_id=project_id)
+    write_set_guard = DispatchWriteSetGuard.load(resolved_db, project_id=project_id)
     result = HeartbeatResult(scanned=len(candidates))
 
     for candidate in candidates:
@@ -184,16 +201,26 @@ async def run_heartbeat(
             if action is None:
                 result = _release_and_skip(mutex, result)
                 continue
+            if write_set_guard.action_reserves_write_set(action, current):
+                overlap = write_set_guard.conflict_for(action.task_id)
+                if overlap is not None:
+                    _log_write_set_overlap(overlap)
+                    result = _release_and_skip(mutex, result)
+                    continue
 
-            await _execute_action(
+            action_result = await _execute_action(
                 action,
                 mutex=mutex,
                 db=resolved_db,
                 context=context,
                 services=services,
             )
+            if action_result is not None and write_set_guard.action_reserves_write_set(
+                action, current
+            ):
+                write_set_guard.reserve(action.task_id)
             result = HeartbeatResult(result.scanned, result.executed + 1, result.skipped)
-        except (TypeError, AttributeError, sqlite3.DatabaseError):
+        except (TypeError, AttributeError, psycopg.Error):
             mutex.release()
             raise
         except DispatchSpawnUnavailable as exc:
@@ -218,10 +245,22 @@ async def run_heartbeat(
     return result
 
 
+def _log_write_set_overlap(overlap: WriteSetOverlap) -> None:
+    logger.info(
+        "Dispatcher skipped overlapping write-set task",
+        extra={
+            "task_id": overlap.task_id,
+            "blocking_task_ids": overlap.blocking_task_ids,
+            "file_paths": overlap.file_paths[:10],
+            "file_count": len(overlap.file_paths),
+        },
+    )
+
+
 def _candidate_for_stage_snapshot(
     candidate: Task,
     *,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str | None,
 ) -> Task | None:
     if _candidate_current_stage(candidate) is not None:
@@ -241,216 +280,102 @@ def _release_and_skip(mutex: RuntimeDispatchMutex, result: HeartbeatResult) -> H
     return _skipped(result)
 
 
-def _rules() -> list[Any]:
-    return list(getattr(dispatch_rules, "RULES", dispatch_rules.BASE_RULES))
-
-
-def reload_candidate(
-    task_id: str,
+def sweep_orphan_no_run_dispatch_mutexes(
+    mutex_storage: TaskDispatchMutexManager,
+    db: HubDatabase,
     *,
-    db: DatabaseProtocol | None = None,
     project_id: str | None = None,
-) -> Task | None:
-    if db is None:
-        return None
-    where_clause, params = _candidate_lookup_clause(task_id, project_id)
-    if where_clause is None:
-        return None
+    now: datetime | None = None,
+) -> int:
+    """Release dispatcher leases that never attached a run and aged past the grace window."""
+    resolved_now = now or datetime.now(UTC)
+    project_join = ""
+    project_filter = ""
+    params: list[object] = [DISPATCH_HOLDER]
+    if project_id is not None:
+        project_join = "JOIN tasks t ON t.id = mutex.task_id"
+        project_filter = "AND t.project_id = ?"
+        params.append(project_id)
     rows = db.fetchall(
         f"""
-        SELECT
-            t.*,
-            s.task_id AS stage_task_id,
-            s.stage_name AS stage_name,
-            s.position AS stage_position,
-            s.state AS stage_state,
-            s.review_policy AS stage_review_policy,
-            s.reviewer_agent AS stage_reviewer_agent,
-            s.entered_at AS stage_entered_at,
-            s.entered_by_session_id AS stage_entered_by_session_id,
-            s.completed_at AS stage_completed_at,
-            s.completed_by_session_id AS stage_completed_by_session_id,
-            s.completed_commit_sha AS stage_completed_commit_sha,
-            s.work_attempt_count AS stage_work_attempt_count,
-            s.review_round_count AS stage_review_round_count,
-            s.max_work_attempts AS stage_max_work_attempts,
-            s.max_review_rounds AS stage_max_review_rounds,
-            s.artifact_refs AS stage_artifact_refs,
-            s.notes AS stage_notes,
-            s.updated_at AS stage_updated_at
-        FROM tasks t
-        LEFT JOIN task_stage_states s ON s.task_id = t.id
-        WHERE {where_clause}
-        ORDER BY s.position, s.stage_name
-        """,  # nosec B608 # where_clause is selected from fixed templates.
+        SELECT mutex.task_id, mutex.lease_until, mutex.updated_at
+          FROM task_dispatch_mutex mutex
+          {project_join}
+         WHERE mutex.lease_holder = ?
+           AND mutex.run_id IS NULL
+           {project_filter}
+        """,  # nosec B608 # project join/filter are fixed SQL fragments selected above.
         tuple(params),
     )
-    if not rows:
-        return None
-    task = Task.from_row(rows[0])
-    task.stages = tuple(_stage_from_joined_row(row) for row in rows if row["stage_task_id"])
-    hydrate_task_blocking_state(db, [task])
-    return task
+    cleared = 0
+    for row in rows:
+        lease_until = _parse_mutex_timestamp(row["lease_until"])
+        if lease_until is not None:
+            if lease_until >= resolved_now:
+                continue
+            should_release = True
+        else:
+            should_release = False
+
+        updated_at = _parse_mutex_timestamp(row["updated_at"])
+        if updated_at is None and not should_release:
+            continue
+        if (
+            not should_release
+            and updated_at is not None
+            and resolved_now - updated_at < timedelta(seconds=ORPHAN_NO_RUN_MUTEX_GRACE_SECONDS)
+        ):
+            continue
+        if _release_orphan_no_run_mutex(
+            mutex_storage,
+            task_id=str(row["task_id"]),
+            updated_at=str(row["updated_at"]),
+        ):
+            cleared += 1
+    return cleared
 
 
-def _candidate_lookup_clause(
+def _release_orphan_no_run_mutex(
+    mutex_storage: TaskDispatchMutexManager,
+    *,
     task_id: str,
-    project_id: str | None,
-) -> tuple[str | None, list[object]]:
-    if task_id.startswith("#") or task_id.isdigit():
-        if project_id is None:
-            return None, []
-        try:
-            seq_num = int(task_id[1:] if task_id.startswith("#") else task_id)
-        except ValueError:
-            return None, []
-        return "t.project_id = ? AND t.seq_num = ?", [project_id, seq_num]
-
-    if "." in task_id and all(part.isdigit() for part in task_id.split(".")):
-        if project_id is None:
-            return None, []
-        return "t.project_id = ? AND t.path_cache = ?", [project_id, task_id]
-
-    params: list[object] = [task_id]
-    clause = "t.id = ?"
-    if project_id is not None:
-        clause += " AND t.project_id = ?"
-        params.append(project_id)
-    return clause, params
-
-
-def _stage_from_joined_row(row: Any) -> StageState:
-    return StageState(
-        task_id=row["stage_task_id"],
-        stage_name=row["stage_name"],
-        position=int(row["stage_position"]),
-        state=row["stage_state"],
-        review_policy=row["stage_review_policy"],
-        reviewer_agent=row["stage_reviewer_agent"],
-        entered_at=row["stage_entered_at"],
-        entered_by_session_id=row["stage_entered_by_session_id"],
-        completed_at=row["stage_completed_at"],
-        completed_by_session_id=row["stage_completed_by_session_id"],
-        completed_commit_sha=row["stage_completed_commit_sha"],
-        work_attempt_count=int(row["stage_work_attempt_count"]),
-        review_round_count=int(row["stage_review_round_count"]),
-        max_work_attempts=row["stage_max_work_attempts"],
-        max_review_rounds=row["stage_max_review_rounds"],
-        artifact_refs=_artifact_refs(row["stage_artifact_refs"]),
-        notes=row["stage_notes"],
-        updated_at=row["stage_updated_at"],
-    )
-
-
-def _artifact_refs(value: str | None) -> dict[str, str] | None:
-    if not value:
-        return None
-    decoded = json.loads(value)
-    if not isinstance(decoded, dict):
-        return None
-    return {str(key): str(item) for key, item in decoded.items()}
-
-
-def build_context(
-    db: DatabaseProtocol,
-    task: Task,
-    *,
-    services: object | None = None,
-) -> object:
-    artifacts = TaskArtifactManager(db).get_artifacts(task.id)
-    children = _children(db, task.id)
-    build_config = getattr(services, "config", None) if services is not None else None
-    stage_registry = _stage_registry(db)
-    agent_definitions = _agent_definitions(db, project_id=task.project_id)
-    return SimpleNamespace(
-        agent_definitions=agent_definitions,
-        agents=agent_definitions,
-        artifacts=artifacts,
-        children=children,
-        build_config=build_config,
-        current_stage=dispatch_rules.current_stage(task),
-        db=db,
-        project_id=task.project_id,
-        services=services,
-        stage_registry=stage_registry,
-        task=task,
-    )
-
-
-def _children(db: DatabaseProtocol, task_id: str) -> list[Task]:
-    rows = db.fetchall("SELECT * FROM tasks WHERE parent_task_id = ?", (task_id,))
-    children = [Task.from_row(row) for row in rows]
-    hydrate_task_stage_state(db, children)
-    hydrate_task_blocking_state(db, children)
-    return children
-
-
-def _stage_registry(db: DatabaseProtocol) -> dict[str, StageRegistryEntry]:
-    return {entry.name: entry for entry in StageRegistryManager(db).list_all()}
-
-
-def _agent_definitions(
-    db: DatabaseProtocol,
-    *,
-    project_id: str | None,
-) -> dict[str, SimpleNamespace]:
-    manager = LocalWorkflowDefinitionManager(db)
-    if project_id is None:
-        rows = [
-            row
-            for row in manager.list_all(workflow_type="agent", include_deleted=False)
-            if row.project_id is None
-        ]
-    else:
-        rows = manager.list_all(
-            project_id=project_id,
-            workflow_type="agent",
-            include_deleted=False,
+    updated_at: str,
+) -> bool:
+    with mutex_storage.db.transaction() as conn:
+        cursor = conn.execute(
+            """
+            DELETE FROM task_dispatch_mutex
+             WHERE task_id = ?
+               AND lease_holder = ?
+               AND run_id IS NULL
+               AND updated_at = ?
+            """,
+            (task_id, DISPATCH_HOLDER, updated_at),
         )
-    definitions: dict[str, SimpleNamespace] = {}
-    for row in sorted(rows, key=_agent_definition_precedence):
-        definitions[row.name] = _agent_definition_view(row)
-    return definitions
+        return cursor.rowcount > 0
 
 
-def _agent_definition_precedence(row: WorkflowDefinitionRow) -> tuple[int, str]:
-    return (0 if row.project_id is None else 1, row.name)
-
-
-def _agent_definition_view(row: WorkflowDefinitionRow) -> SimpleNamespace:
+def _parse_mutex_timestamp(value: object) -> datetime | None:
+    if value is None:
+        return None
     try:
-        body = AgentDefinitionBody.model_validate_json(row.definition_json)
-    except ValueError as exc:
-        return SimpleNamespace(
-            name=row.name,
-            enabled=False,
-            row_enabled=row.enabled,
-            parse_error=str(exc),
-            source=row.source,
-            project_id=row.project_id,
-        )
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
-    spawn_capable = "spawn" in body.surfaces
-    enabled = bool(row.enabled and body.enabled and spawn_capable and not body.deprecated)
-    return SimpleNamespace(
-        name=row.name,
-        enabled=enabled,
-        row_enabled=row.enabled,
-        body_enabled=body.enabled,
-        deprecated=body.deprecated,
-        surfaces=tuple(body.surfaces),
-        spawn_capable=spawn_capable,
-        source=row.source,
-        project_id=row.project_id,
-        definition=body,
-    )
+
+def _rules() -> list[Any]:
+    return list(getattr(dispatch_rules, "RULES", dispatch_rules.BASE_RULES))
 
 
 async def _execute_action(
     action: Action,
     *,
     mutex: RuntimeDispatchMutex,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     context: object,
     services: object | None,
 ) -> object | None:
@@ -470,7 +395,7 @@ async def _execute_spawn_action(
     action: SpawnAgentAction,
     *,
     mutex: RuntimeDispatchMutex,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     context: object | None,
     services: object | None,
 ) -> str | None:
@@ -484,6 +409,10 @@ async def _execute_spawn_action(
     except DispatchSpawnFailed as exc:
         _handle_spawn_failure(action, mutex=mutex, db=db, context=context, error=str(exc))
         return None
+    except BaseException:
+        if mutex.run_id is None:
+            mutex.release()
+        raise
     if raw_run_id:
         mutex.attach(str(raw_run_id))
         return str(raw_run_id)
@@ -495,7 +424,7 @@ async def execute_action(
     action: Action,
     *,
     mutex: RuntimeDispatchMutex,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     context: object | None = None,
     services: object | None = None,
 ) -> object | None:
@@ -517,34 +446,43 @@ async def execute_action(
     try:
         if isinstance(action, StartStageAction):
             manager = _stage_states_manager(db=db, services=services)
-            return manager.start_stage(
-                action.task_id,
-                action.stage_name,
-                by_session_id="dispatcher",
+            return cast(
+                object,
+                manager.start_stage(
+                    action.task_id,
+                    action.stage_name,
+                    by_session_id="dispatcher",
+                ),
             )
         if isinstance(action, AdvanceStageAction):
             manager = _stage_states_manager(db=db, services=services)
             if action.method == "complete_stage":
-                return manager.complete_stage(
-                    action.task_id,
-                    action.stage_name,
-                    by_session_id=action.by_session_id,
-                    validation_override_reason=action.validation_override_reason,
+                return cast(
+                    object,
+                    manager.complete_stage(
+                        action.task_id,
+                        action.stage_name,
+                        by_session_id=action.by_session_id,
+                        validation_override_reason=action.validation_override_reason,
+                    ),
                 )
             if action.method == "approve_review":
-                return manager.approve_review(
-                    action.task_id,
-                    action.stage_name,
-                    by_session_id=action.by_session_id,
+                return cast(
+                    object,
+                    manager.approve_review(
+                        action.task_id,
+                        action.stage_name,
+                        by_session_id=action.by_session_id,
+                    ),
                 )
         if isinstance(action, AppendAuditMarkerAction):
             return append_audit_marker(db, action.task_id, action.heading, action.body)
         if isinstance(action, EscalateAction):
             return escalate_task(db=db, task_id=action.task_id, reason=action.reason)
         if isinstance(action, MergeWorkspaceAction):
-            return await execute_merge_workspace(action, db=db, services=services)
+            return cast(object, await execute_merge_workspace(action, db=db, services=services))
         if isinstance(action, CreateIsolationAction):
-            return create_isolation(action, db=db, context=context)
+            return cast(object | None, create_isolation(action, db=db, context=context))
         raise TypeError(f"Unsupported dispatcher action: {type(action).__name__}")
     finally:
         mutex.release()
@@ -554,7 +492,7 @@ async def _start_pipeline_action(
     action: StartPipelineAction,
     *,
     mutex: RuntimeDispatchMutex,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     context: object | None,
     services: object | None,
 ) -> dict[str, object]:
@@ -630,7 +568,7 @@ async def _start_pipeline_action(
 def _escalate_pipeline_dispatch(
     action: StartPipelineAction,
     mutex: RuntimeDispatchMutex,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     reason: str,
 ) -> dict[str, object]:
     escalate_task(db=db, task_id=action.task_id, reason=f"stage_pipeline_dispatch:{reason}")
@@ -678,7 +616,7 @@ def _create_stage_pipeline_execution(
     pipeline: object,
     inputs: dict[str, Any],
     mutex: RuntimeDispatchMutex,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     services: object | None,
 ) -> str:
     execution_id = generate_prefixed_id("pe")
@@ -696,7 +634,7 @@ def _create_stage_pipeline_execution(
                 id, pipeline_name, project_id, status, inputs_json, session_id,
                 definition_json, created_at, updated_at
             )
-            SELECT ?, ?, project_id, 'pending', ?, ?, ?, datetime('now'), datetime('now')
+            SELECT ?, ?, project_id, 'pending', ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
               FROM tasks
              WHERE id = ?
             """,
@@ -714,7 +652,7 @@ def _create_stage_pipeline_execution(
             UPDATE task_dispatch_mutex
                SET run_id = ?,
                    action_kind = ?,
-                   updated_at = datetime('now')
+                   updated_at = CURRENT_TIMESTAMP
              WHERE task_id = ?
             """,
             (execution_id, f"stage-pipeline:{action.stage_name}", action.task_id),
@@ -725,7 +663,7 @@ def _create_stage_pipeline_execution(
     return execution_id
 
 
-def _stage_states_manager(*, db: DatabaseProtocol, services: object | None) -> StageStatesManager:
+def _stage_states_manager(*, db: HubDatabase, services: object | None) -> StageStatesManager:
     task_manager = getattr(services, "task_manager", None)
     manager = getattr(task_manager, "stage_states", None)
     if manager is not None:
@@ -733,7 +671,7 @@ def _stage_states_manager(*, db: DatabaseProtocol, services: object | None) -> S
     return StageStatesManager(db, TaskLifecycleEventManager(db))
 
 
-def count_active_agents(db: DatabaseProtocol | None, project_id: str | None = None) -> int:
+def count_active_agents(db: HubDatabase | None, project_id: str | None = None) -> int:
     """Return pending/running agent runs, optionally scoped by parent-session project."""
     if db is None:
         return 0
@@ -763,40 +701,57 @@ def _handle_spawn_failure(
     action: SpawnAgentAction,
     *,
     mutex: RuntimeDispatchMutex,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     context: object | None,
     error: str,
 ) -> None:
-    append_audit_marker(db, action.task_id, "Dispatch spawn failed", error)
-    task = get_task(db, action.task_id)
-    failure_count = int(getattr(task, "dispatch_failure_count", 0) or 0) + 1
-    update_task(db, action.task_id, dispatch_failure_count=failure_count)
-    stage = _field(context, "current_stage")
-    stage_name = _stage_name(stage)
-    if stage_name and _field(stage, "state") == "in_progress":
-        try:
-            _stage_states_manager(db=db, services=getattr(context, "services", None)).fail_stage(
-                action.task_id,
-                stage_name,
-                reason="dispatch_spawn_failed",
-                by_session_id="dispatcher",
+    try:
+        append_audit_marker(db, action.task_id, "Dispatch spawn failed", error)
+        task = get_task(db, action.task_id)
+        failure_count = int(getattr(task, "dispatch_failure_count", 0) or 0) + 1
+        update_task(db, action.task_id, dispatch_failure_count=failure_count)
+        stage = _field(context, "current_stage")
+        stage_name = _stage_name(stage)
+        if stage_name and _field(stage, "state") == "in_progress":
+            try:
+                _stage_states_manager(
+                    db=db,
+                    services=getattr(context, "services", None),
+                ).fail_stage(
+                    action.task_id,
+                    stage_name,
+                    reason="dispatch_spawn_failed",
+                    by_session_id="dispatcher",
+                )
+            except IllegalStageTransitionError:
+                fresh_stage = _stage_states_manager(
+                    db=db,
+                    services=getattr(context, "services", None),
+                ).get(action.task_id, stage_name)
+                if fresh_stage is None or fresh_stage.state != "ready":
+                    raise
+                logger.info(
+                    "Dispatch spawn failure rollback already applied: task_id=%s stage_name=%s",
+                    action.task_id,
+                    stage_name,
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to roll back stage after dispatch spawn failure: "
+                    "task_id=%s stage_name=%s by_session_id=%s",
+                    action.task_id,
+                    stage_name,
+                    "dispatcher",
+                    exc_info=True,
+                )
+        if failure_count >= MAX_DISPATCH_SPAWN_ATTEMPTS:
+            escalate_task(
+                db=db,
+                task_id=action.task_id,
+                reason=f"dispatch_spawn_max_attempts:{error}",
             )
-        except Exception:
-            logger.warning(
-                "Failed to roll back stage after dispatch spawn failure: "
-                "task_id=%s stage_name=%s by_session_id=%s",
-                action.task_id,
-                stage_name,
-                "dispatcher",
-                exc_info=True,
-            )
-    if failure_count >= MAX_DISPATCH_SPAWN_ATTEMPTS:
-        escalate_task(
-            db=db,
-            task_id=action.task_id,
-            reason=f"dispatch_spawn_max_attempts:{error}",
-        )
-    mutex.release()
+    finally:
+        mutex.release()
 
 
 def allocate_expansion_run_id() -> str:
@@ -810,10 +765,10 @@ def sweep_expired_leases(storage: TaskDispatchMutexManager) -> int:
 def create_isolation(
     action: CreateIsolationAction,
     *,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     context: object | None = None,
 ) -> TaskArtifacts | None:
-    artifacts = cast(TaskArtifacts | None, getattr(context, "artifacts", None))
+    artifacts = getattr(context, "artifacts", None)
     target_branch = action.base_branch or getattr(artifacts, "target_branch", None)
     if not target_branch:
         append_audit_marker(
@@ -851,14 +806,14 @@ def resolve_branch_sha(branch: str) -> str:
 
 def set_artifacts_atomic(
     *,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task_id: str,
     **fields: str | int | None,
 ) -> TaskArtifacts:
     return _set_artifacts_atomic(db, task_id, **fields)
 
 
-def append_audit_marker(db: DatabaseProtocol, task_id: str, heading: str, body: str) -> bool:
+def append_audit_marker(db: HubDatabase, task_id: str, heading: str, body: str) -> bool:
     task = get_task(db, task_id)
     description = task.description or ""
     marker = f"\n\n### {heading}\n\n{body}"
@@ -866,7 +821,7 @@ def append_audit_marker(db: DatabaseProtocol, task_id: str, heading: str, body: 
     return True
 
 
-def escalate_task(*, db: DatabaseProtocol, task_id: str, reason: str) -> bool:
+def escalate_task(*, db: HubDatabase, task_id: str, reason: str) -> bool:
     _escalate_task(db, task_id, reason=reason)
     return True
 
@@ -907,18 +862,6 @@ def _stage_snapshot_state(stage: object | None) -> RuntimeStageSnapshotState | N
 def _stage_updated_at(stage: object | None) -> str | None:
     value = _field(stage, "updated_at")
     return value if isinstance(value, str) else None
-
-
-def _field(
-    obj: object | None,
-    name: str,
-    default: object | None = None,
-) -> object | None:
-    if obj is None:
-        return default
-    if isinstance(obj, Mapping):
-        return cast(Mapping[str, object | None], obj).get(name, default)
-    return getattr(obj, name, default)
 
 
 __all__ = [

@@ -49,11 +49,15 @@ def _strip_none(obj: Any) -> Any:
     return obj
 
 
-LLM_TASK_TOOLS = (
+# Tools that can legitimately spend longer than a standard HTTP proxy call on
+# LLM-backed generation or long-running coordination before returning.
+EXTENDED_TIMEOUT_TOOL_NAMES = (
     "close_task",
     "expand_task",
     "apply_tdd",
+    "merge_resolve",
     "suggest_next_task",
+    "compact_self",
 )
 
 WAIT_TOOL_NAMES = (
@@ -62,6 +66,7 @@ WAIT_TOOL_NAMES = (
     "wait_for_all_tasks",
     "wait_for_agent",
 )
+HEARTBEAT_TOOL_NAMES = (*WAIT_TOOL_NAMES, "compact_self")
 WAIT_TOOL_HEARTBEAT_INTERVAL_SECONDS = 15.0
 REMOVED_WORKFLOW_WAIT_TOOL = "wait_for_completion"
 DAEMON_HEALTH_ATTEMPTS = 30
@@ -104,8 +109,8 @@ async def _call_with_wait_heartbeat(
     tool_name: str,
     timeout: float | None,
 ) -> dict[str, Any]:
-    """Keep stdio MCP transport active while a long-running wait tool blocks."""
-    if ctx is None or tool_name not in WAIT_TOOL_NAMES:
+    """Keep stdio MCP transport active while a long-running proxied tool blocks."""
+    if ctx is None or tool_name not in HEARTBEAT_TOOL_NAMES:
         return await tool_call
 
     stop_event = asyncio.Event()
@@ -190,9 +195,12 @@ class DaemonProxy:
         # Build context headers so the daemon resolves the correct project
         headers: dict[str, str] = {}
         effective_project_id = project_id or self._project_id
+        caller_project_id = self._project_id
         effective_session_id = session_id or self._session_id
         if effective_project_id:
             headers["X-Gobby-Project-Id"] = effective_project_id
+        if caller_project_id:
+            headers["X-Gobby-Caller-Project-Id"] = caller_project_id
         if effective_session_id:
             headers["X-Gobby-Session-Id"] = effective_session_id
 
@@ -263,24 +271,31 @@ class DaemonProxy:
         if server_name == "gobby-workflows" and tool_name == REMOVED_WORKFLOW_WAIT_TOOL:
             return _removed_wait_for_completion_result()
 
-        # Tool-specific timeouts
-        config = load_config()
+        # Tool-specific timeouts. Proxying should still work if the local MCP
+        # stdio process cannot load bootstrap config; only timeout overrides are optional.
+        try:
+            config = load_config()
+            tool_timeouts = config.mcp_client_proxy.tool_timeouts
+        except Exception as exc:
+            logger.warning(f"Failed to load config for MCP tool timeout overrides: {exc}")
+            tool_timeouts = {}
+
         # Default to standard timeout
         timeout = 30.0
         # Check for tool-specific override in config
-        if (
-            config.mcp_client_proxy.tool_timeouts
-            and tool_name in config.mcp_client_proxy.tool_timeouts
-        ):
-            timeout = config.mcp_client_proxy.tool_timeouts[tool_name]
-        # Fallback for LLM-based task tools if not explicit in config
-        elif tool_name in LLM_TASK_TOOLS:
+        if tool_timeouts and tool_name in tool_timeouts:
+            timeout = tool_timeouts[tool_name]
+        # Fallback for slow LLM-backed/coordinator tools if not explicit in config
+        elif tool_name in EXTENDED_TIMEOUT_TOOL_NAMES:
             timeout = 300.0
         # Wait tools: use the requested timeout plus a buffer
         elif tool_name in WAIT_TOOL_NAMES:
             # Extract timeout from arguments, default to 300s if not specified
             arg_map = arguments if isinstance(arguments, dict) else {}
-            arg_timeout = float(arg_map.get("timeout", 300.0))
+            raw_timeout = arg_map.get("timeout")
+            if raw_timeout is None:
+                raw_timeout = arg_map.get("timeout_seconds", 300.0)
+            arg_timeout = float(raw_timeout)
             # Add 30s buffer for HTTP overhead
             timeout = arg_timeout + 30.0
         request_kwargs: dict[str, Any] = {
@@ -574,11 +589,14 @@ def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
             tool_name: Name of the specific tool to execute
             arguments: Dictionary of arguments required by the tool (optional)
             args: Alias for arguments. Accepts dict or JSON string. Use 'arguments' preferred.
-            session_id: Wrapper context only (accepts #N, N, UUID, or prefix).
+            session_id: Wrapper context (accepts #N, N, UUID, or prefix).
                 Propagated to the daemon via X-Gobby-Session-Id header and used
-                for Gobby context/workflow resolution. Target tool parameters still
-                belong in arguments; pass arguments.session_id when the target tool
-                schema requires it.
+                for Gobby context/workflow resolution. Same-repo calls can rely
+                on wrapper or ambient session context; if the target schema
+                requires session_id, the resolved UUID is supplied to the target
+                arguments before validation. Use arguments.session_id only to
+                target a different session. Local #N refs resolve in the caller
+                project; cross-project target sessions should use UUIDs.
             project_id: Optional project UUID or name for cross-project tool calls.
 
         Returns:
@@ -610,9 +628,15 @@ def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
 
         requested_timeout = None
         if tool_name in WAIT_TOOL_NAMES:
-            raw_timeout = final_args.get("timeout") if isinstance(final_args, dict) else None
+            raw_timeout = None
+            if isinstance(final_args, dict):
+                raw_timeout = final_args.get("timeout")
+                if raw_timeout is None:
+                    raw_timeout = final_args.get("timeout_seconds")
             if isinstance(raw_timeout, int | float):
                 requested_timeout = float(raw_timeout)
+        elif tool_name in EXTENDED_TIMEOUT_TOOL_NAMES:
+            requested_timeout = 300.0
 
         call_kwargs: dict[str, Any] = {}
         if project_id:

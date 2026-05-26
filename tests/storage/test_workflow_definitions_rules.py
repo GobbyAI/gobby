@@ -6,24 +6,21 @@ import json
 
 import pytest
 
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path) -> LocalDatabase:
+def db(temp_db: HubDatabase) -> HubDatabase:
     """Create a fresh database with migrations applied."""
-    db_path = tmp_path / "test_wf_defs_rules.db"
-    database = LocalDatabase(db_path)
-    run_migrations(database)
+    database = temp_db
     return database
 
 
 @pytest.fixture
-def manager(db: LocalDatabase) -> LocalWorkflowDefinitionManager:
+def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
     return LocalWorkflowDefinitionManager(db)
 
 

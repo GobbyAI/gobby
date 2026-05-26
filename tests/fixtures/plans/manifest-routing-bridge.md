@@ -24,6 +24,7 @@ Build a React frontend panel rendering dispatcher state.
 ```yaml
 - title: "Build React UI Panel"
   category: code
+  implementation_domain: backend
   task_type: feature
   depends_on: []
   validation_criteria: "web/src/Panel.tsx exists"

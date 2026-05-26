@@ -7,11 +7,11 @@ behavior to the old rule_definitions format.
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.sync_rules import sync_bundled_rules
@@ -20,15 +20,13 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path) -> LocalDatabase:
-    db_path = tmp_path / "test_worker_safety.db"
-    database = LocalDatabase(db_path)
-    run_migrations(database)
+def db(temp_db: HubDatabase) -> HubDatabase:
+    database = temp_db
     return database
 
 
 @pytest.fixture
-def manager(db: LocalDatabase) -> LocalWorkflowDefinitionManager:
+def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
     return LocalWorkflowDefinitionManager(db)
 
 
@@ -133,3 +131,60 @@ class TestNoDestructiveGitRule:
         assert body.effects[0].tools == ["Bash"]
         assert body.effects[0].command_pattern is not None
         assert "reset" in body.effects[0].command_pattern
+
+
+class TestNoFullVitestSuiteRule:
+    """Verify full-suite Vitest runs are blocked without blocking focused files."""
+
+    def _effect(self, db, manager):
+        _sync_bundled(db)
+
+        row = manager.get_by_name("no-full-vitest-suite")
+        assert row is not None
+
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        return body.effects[0]
+
+    @staticmethod
+    def _is_blocked(effect, command: str) -> bool:
+        assert effect.command_pattern is not None
+        if not re.search(effect.command_pattern, command):
+            return False
+        if effect.command_not_pattern and re.search(effect.command_not_pattern, command):
+            return False
+        return True
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "npx vitest run",
+            "cd web && npx vitest run --no-coverage",
+            "jest --runInBand",
+        ],
+    )
+    def test_blocks_unscoped_vitest_and_jest_runs(self, db, manager, command: str) -> None:
+        effect = self._effect(db, manager)
+
+        assert self._is_blocked(effect, command)
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            (
+                "cd web && npx vitest run "
+                "src/components/dashboard/__tests__/SystemHealthCard.test.tsx"
+            ),
+            (
+                "cd web && npx vitest run --no-coverage "
+                "src/components/memory/__tests__/MemoryPage.falkordb.test.tsx "
+                "src/hooks/__tests__/useMemory.test.ts"
+            ),
+            "npx vitest run src/hooks/useMemory.spec.ts",
+            "jest --runInBand --testPathPattern=SystemHealthCard",
+            "jest -t 'renders FalkorDB status'",
+        ],
+    )
+    def test_allows_focused_vitest_and_jest_runs(self, db, manager, command: str) -> None:
+        effect = self._effect(db, manager)
+
+        assert not self._is_blocked(effect, command)

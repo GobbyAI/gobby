@@ -7,6 +7,18 @@ from typing import TYPE_CHECKING, Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from gobby.storage.agents import (
+    ACTIVE_AGENT_RUN_STATUSES,
+    STATUS_CANCELLED,
+    STATUS_ERROR,
+    STATUS_PENDING,
+    STATUS_RUNNING,
+    STATUS_SUCCESS,
+    STATUS_TIMEOUT,
+    TERMINAL_AGENT_RUN_STATUSES,
+    AgentRunStatus,
+)
+
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
 
@@ -95,6 +107,8 @@ def register_testing_routes(router: APIRouter, server: "HTTPServer") -> None:
         run_id: str
         session_id: str
         parent_session_id: str
+        agent_name: str | None = None
+        status: AgentRunStatus = STATUS_RUNNING
 
     @router.post("/test/register-agent")
     async def register_test_agent(request: TestAgentRegisterRequest) -> dict[str, Any]:
@@ -123,6 +137,14 @@ def register_testing_routes(router: APIRouter, server: "HTTPServer") -> None:
 
         try:
             db = server.services.database
+            allowed_statuses = set(ACTIVE_AGENT_RUN_STATUSES) | set(TERMINAL_AGENT_RUN_STATUSES)
+            if request.status not in allowed_statuses:
+                allowed_statuses_message = ", ".join(sorted(allowed_statuses))
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"status must be one of: {allowed_statuses_message}",
+                )
+
             arm = LocalAgentRunManager(db)
 
             # Create agent run in DB
@@ -131,10 +153,19 @@ def register_testing_routes(router: APIRouter, server: "HTTPServer") -> None:
                 parent_session_id=request.parent_session_id,
                 provider="test",
                 prompt="test agent",
+                agent_name=request.agent_name,
             )
-            # Mark as running with child session
-            arm.start(request.run_id)
+            if request.status != STATUS_PENDING:
+                arm.start(request.run_id)
             arm.update_child_session(request.run_id, request.session_id)
+            if request.status == STATUS_SUCCESS:
+                arm.complete(request.run_id, result="test agent completed")
+            elif request.status == STATUS_CANCELLED:
+                arm.cancel(request.run_id)
+            elif request.status == STATUS_ERROR:
+                arm.fail(request.run_id, error="test agent failed")
+            elif request.status == STATUS_TIMEOUT:
+                arm.timeout(request.run_id)
 
             run = arm.get(request.run_id)
             response_time_ms = (time.perf_counter() - start_time) * 1000
@@ -146,6 +177,8 @@ def register_testing_routes(router: APIRouter, server: "HTTPServer") -> None:
                 "response_time_ms": response_time_ms,
             }
 
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error registering test agent: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail=str(e)) from e

@@ -59,6 +59,7 @@ def _valid_manifest_yaml(plan_id: str = "demo-plan") -> str:
         f"""
         - title: "Foundation"
           category: code
+          implementation_domain: backend
           task_type: feature
           depends_on: []
           validation_criteria: "src/foundation.py"
@@ -178,6 +179,7 @@ def test_replace_malformed(tmp_path: Path) -> None:
         """
         - title: "Stale"
           category: code
+          implementation_domain: backend
         """
     ).strip()
     plan = _plan_with_manifest_yaml(tmp_path, malformed)
@@ -276,23 +278,28 @@ def test_default_assignment_and_tdd_by_category(tmp_path: Path) -> None:
     assert by_section["1.2"].tdd is False
     assert by_section["1.3"].tdd is False
     assert by_section["1.4"].tdd is True
-    assert by_section["1.5"].tdd is False
+    assert by_section["1.5"].category == "code"
+    assert by_section["1.5"].tdd is True
     assert by_section["1.6"].tdd is False
-    assert by_section["1.7"].tdd is False
+    assert by_section["1.7"].category == "code"
+    assert by_section["1.7"].tdd is True
 
-    assert by_section["1.1"].assigned_agent == "backend-developer"
+    assert by_section["1.1"].assigned_agent is None
+    assert by_section["1.1"].implementation_domain == "backend"
     assert by_section["1.2"].assigned_agent == "tech-writer"
     assert by_section["1.3"].assigned_agent == "backend-developer"
     assert by_section["1.4"].assigned_agent == "backend-developer"
-    assert by_section["1.5"].assigned_agent == "researcher"
+    assert by_section["1.5"].assigned_agent is None
+    assert by_section["1.5"].implementation_domain == "backend"
     assert by_section["1.6"].assigned_agent == "backend-developer"
-    assert by_section["1.7"].assigned_agent == "planner"
+    assert by_section["1.7"].assigned_agent is None
+    assert by_section["1.7"].implementation_domain == "backend"
 
     for entry in document.manifest_entries:
         assert entry.task_type == "feature"
 
 
-def test_synthesized_test_entry_uses_frontend_agent_for_frontend_signals(
+def test_synthesized_test_entry_uses_category_default_agent(
     tmp_path: Path,
 ) -> None:
     plan = _write(
@@ -315,7 +322,7 @@ def test_synthesized_test_entry_uses_frontend_agent_for_frontend_signals(
 
     assert outcome == "fresh"
     document = parse_plan(plan, parse_mode="expansion")
-    assert document.manifest_entries[0].assigned_agent == "frontend-developer"
+    assert document.manifest_entries[0].assigned_agent == "backend-developer"
 
 
 def test_synthesized_entry_preserves_section_depends_on(tmp_path: Path) -> None:

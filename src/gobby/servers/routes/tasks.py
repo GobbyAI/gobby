@@ -5,6 +5,7 @@ Provides CRUD, list, stage-transition, and dependency endpoints for the task sys
 """
 
 import logging
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -32,6 +33,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _enum_schema(values: Iterable[str]) -> Any:
+    return {"enum": list(values)}
+
+
 # =============================================================================
 # Request/Response models
 # =============================================================================
@@ -48,7 +53,7 @@ class TaskCreateRequest(BaseModel):
     task_type: str = Field(
         default="task",
         description="Task type",
-        json_schema_extra={"enum": list(TASK_TYPE_CHOICES)},
+        json_schema_extra=_enum_schema(TASK_TYPE_CHOICES),
     )
     parent_task_id: str | None = Field(default=None, description="Parent task ID")
     labels: list[str] | None = Field(default=None, description="Labels for categorization")
@@ -57,6 +62,10 @@ class TaskCreateRequest(BaseModel):
         description=f"Task domain: {', '.join(sorted(VALID_CATEGORIES))}",
     )
     validation_criteria: str | None = Field(default=None, description="Acceptance criteria")
+    implementation_domain: Literal["backend", "frontend", "fullstack"] | None = Field(
+        default=None,
+        description="Required for code tasks; routes implementation to the matching developer.",
+    )
     assignee: str | None = Field(default=None, description="Assignee session ID")
     project_id: str | None = Field(
         default=None, description="Project ID (resolved from cwd if omitted)"
@@ -79,7 +88,7 @@ class TaskUpdateRequest(BaseModel):
     task_type: str | None = Field(
         default=None,
         description="New task type",
-        json_schema_extra={"enum": list(TASK_TYPE_CHOICES)},
+        json_schema_extra=_enum_schema(TASK_TYPE_CHOICES),
     )
     assignee: str | None = Field(
         default=None,
@@ -89,6 +98,10 @@ class TaskUpdateRequest(BaseModel):
     parent_task_id: str | None = Field(default=None, description="New parent task ID")
     category: str | None = Field(default=None, description="New category")
     validation_criteria: str | None = Field(default=None, description="New validation criteria")
+    implementation_domain: Literal["backend", "frontend", "fullstack"] | None = Field(
+        default=None,
+        description="Code task implementation domain.",
+    )
     allow_automation: bool | None = Field(
         default=None,
         description="Enable or disable dispatcher automation for this task.",
@@ -375,6 +388,8 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         """Create a new task."""
         try:
             project_id = _resolve_project(request_data.project_id)
+            if request_data.category == "code" and request_data.implementation_domain is None:
+                raise ValueError("Code tasks require implementation_domain.")
             task = server.task_manager.create_task(
                 project_id=project_id,
                 title=request_data.title,
@@ -385,6 +400,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                 labels=request_data.labels,
                 category=request_data.category,
                 validation_criteria=request_data.validation_criteria,
+                implementation_domain=request_data.implementation_domain,
                 assignee=request_data.assignee,
             )
             result = task.to_dict()

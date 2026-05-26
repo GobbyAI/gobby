@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from gobby.agents.dry_run import SpawnEvaluation, evaluate_spawn
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import (
     AgentDefinitionBody,
@@ -23,15 +21,13 @@ from gobby.workflows.dry_run import WorkflowEvaluation
 pytestmark = pytest.mark.unit
 
 
-def _setup_db(tmp_path: Path) -> LocalDatabase:
-    """Create a fresh database with migrations."""
-    db = LocalDatabase(tmp_path / "test.db")
-    run_migrations(db)
+def _setup_db(db: HubDatabase) -> HubDatabase:
+    """Use the migrated PostgreSQL hub database fixture."""
     return db
 
 
 def _create_agent(
-    db: LocalDatabase,
+    db: HubDatabase,
     name: str = "test-agent",
     provider: str = "claude",
     isolation: str | None = None,
@@ -72,9 +68,9 @@ def mock_runner() -> MagicMock:
 
 class TestAgentNotFound:
     @pytest.mark.asyncio
-    async def test_agent_not_found(self, tmp_path: Path) -> None:
+    async def test_agent_not_found(self, temp_db: HubDatabase) -> None:
         """AGENT_NOT_FOUND error, can_spawn=False."""
-        db = _setup_db(tmp_path)
+        db = _setup_db(temp_db)
 
         result = await evaluate_spawn(
             agent="nonexistent",
@@ -89,9 +85,9 @@ class TestAgentNotFound:
 
 class TestWorkflowResolution:
     @pytest.mark.asyncio
-    async def test_no_workflow(self, tmp_path: Path) -> None:
+    async def test_no_workflow(self, temp_db: HubDatabase) -> None:
         """NO_WORKFLOW info when no pipeline configured."""
-        db = _setup_db(tmp_path)
+        db = _setup_db(temp_db)
         _create_agent(db)
 
         result = await evaluate_spawn(agent="test-agent", db=db)
@@ -100,9 +96,11 @@ class TestWorkflowResolution:
         assert len(no_wf) == 1
 
     @pytest.mark.asyncio
-    async def test_pipeline_resolved(self, tmp_path: Path, mock_workflow_loader: MagicMock) -> None:
+    async def test_pipeline_resolved(
+        self, temp_db: HubDatabase, mock_workflow_loader: MagicMock
+    ) -> None:
         """WORKFLOW_RESOLVED when pipeline is configured."""
-        db = _setup_db(tmp_path)
+        db = _setup_db(temp_db)
         _create_agent(db, pipeline="my-pipeline")
 
         result = await evaluate_spawn(
@@ -117,10 +115,10 @@ class TestWorkflowResolution:
 
     @pytest.mark.asyncio
     async def test_explicit_workflow_overrides_pipeline(
-        self, tmp_path: Path, mock_workflow_loader: MagicMock
+        self, temp_db: HubDatabase, mock_workflow_loader: MagicMock
     ) -> None:
         """Explicit workflow parameter overrides agent's pipeline."""
-        db = _setup_db(tmp_path)
+        db = _setup_db(temp_db)
         _create_agent(db, pipeline="my-pipeline")
 
         result = await evaluate_spawn(
@@ -135,9 +133,9 @@ class TestWorkflowResolution:
 
 class TestIsolation:
     @pytest.mark.asyncio
-    async def test_isolation_deps_missing_worktree(self, tmp_path: Path) -> None:
+    async def test_isolation_deps_missing_worktree(self, temp_db: HubDatabase) -> None:
         """ISOLATION_DEPS_MISSING for worktree mode without deps."""
-        db = _setup_db(tmp_path)
+        db = _setup_db(temp_db)
         _create_agent(db, isolation="worktree")
 
         result = await evaluate_spawn(
@@ -151,9 +149,9 @@ class TestIsolation:
         assert len(dep_items) == 1
 
     @pytest.mark.asyncio
-    async def test_isolation_deps_missing_clone(self, tmp_path: Path) -> None:
+    async def test_isolation_deps_missing_clone(self, temp_db: HubDatabase) -> None:
         """ISOLATION_DEPS_MISSING for clone mode without deps."""
-        db = _setup_db(tmp_path)
+        db = _setup_db(temp_db)
         _create_agent(db, isolation="clone")
 
         result = await evaluate_spawn(
@@ -169,9 +167,11 @@ class TestIsolation:
 
 class TestRuntimeEnvironment:
     @pytest.mark.asyncio
-    async def test_spawn_depth_exceeded(self, tmp_path: Path, mock_runner: MagicMock) -> None:
+    async def test_spawn_depth_exceeded(
+        self, temp_db: HubDatabase, mock_runner: MagicMock
+    ) -> None:
         """SPAWN_DEPTH_EXCEEDED when can_spawn returns False."""
-        db = _setup_db(tmp_path)
+        db = _setup_db(temp_db)
         _create_agent(db)
         mock_runner.can_spawn.return_value = (False, "Max depth 3 exceeded", 4)
 
@@ -190,10 +190,10 @@ class TestRuntimeEnvironment:
 class TestWorkflowEvaluation:
     @pytest.mark.asyncio
     async def test_workflow_eval_embedded(
-        self, tmp_path: Path, mock_workflow_loader: MagicMock
+        self, temp_db: HubDatabase, mock_workflow_loader: MagicMock
     ) -> None:
         """workflow_evaluation populated with structural results."""
-        db = _setup_db(tmp_path)
+        db = _setup_db(temp_db)
         _create_agent(db, pipeline="worker")
 
         wf_definition = WorkflowDefinition(
@@ -220,10 +220,10 @@ class TestWorkflowEvaluation:
 
     @pytest.mark.asyncio
     async def test_workflow_invalid_for_agent(
-        self, tmp_path: Path, mock_workflow_loader: MagicMock
+        self, temp_db: HubDatabase, mock_workflow_loader: MagicMock
     ) -> None:
         """WORKFLOW_INVALID_FOR_AGENT when lifecycle workflow used for agent."""
-        db = _setup_db(tmp_path)
+        db = _setup_db(temp_db)
         _create_agent(db, pipeline="lifecycle-wf")
 
         mock_workflow_loader.validate_workflow_for_agent.return_value = (
@@ -245,10 +245,10 @@ class TestWorkflowEvaluation:
 class TestHappyPath:
     @pytest.mark.asyncio
     async def test_full_happy_path(
-        self, tmp_path: Path, mock_workflow_loader: MagicMock, mock_runner: MagicMock
+        self, temp_db: HubDatabase, mock_workflow_loader: MagicMock, mock_runner: MagicMock
     ) -> None:
         """All layers pass, can_spawn=True."""
-        db = _setup_db(tmp_path)
+        db = _setup_db(temp_db)
         _create_agent(db, pipeline="worker")
 
         wf_definition = WorkflowDefinition(

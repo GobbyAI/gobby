@@ -1,7 +1,7 @@
 """Unified search orchestration with fallback.
 
 This module provides UnifiedSearcher, the main entry point for the unified
-search layer. It orchestrates between embedding-based and FTS5 keyword backends
+search layer. It orchestrates between embedding-based and keyword backends
 with automatic fallback and configurable search modes.
 
 Example usage:
@@ -31,7 +31,7 @@ from gobby.search.embeddings import (
     is_embedding_configured,
     is_embedding_reachable,
 )
-from gobby.search.fts5 import FTS5SearchBackend
+from gobby.search.keyword import KeywordAsyncSearchBackend, keyword_table_for_fts_table
 from gobby.search.models import FallbackEvent, SearchConfig, SearchMode
 
 logger = logging.getLogger(__name__)
@@ -43,13 +43,13 @@ FallbackCallback = Callable[[FallbackEvent], None]
 class UnifiedSearcher:
     """Unified search with automatic fallback.
 
-    Orchestrates between embedding-based and FTS5 keyword search backends
+    Orchestrates between embedding-based and keyword search backends
     based on the configured mode and availability of embedding providers.
 
     Search Modes:
-    - keyword: FTS5 keyword search only (always works, no API needed)
+    - keyword: PostgreSQL keyword search only
     - embedding: Embedding-based only (fails if unavailable)
-    - auto: Try embedding, fallback to FTS5 if unavailable
+    - auto: Try embedding, fallback to keyword if unavailable
     - hybrid: Combine both with weighted scores
 
     Fallback Behavior:
@@ -57,7 +57,7 @@ class UnifiedSearcher:
     rate limit), the searcher will:
     1. Emit a FallbackEvent via the event_callback
     2. Log a warning (if notify_on_fallback is True)
-    3. Return FTS5 results for this and future searches
+    3. Return keyword results for this and future searches
 
     Example:
         config = SearchConfig(mode="auto")
@@ -71,7 +71,7 @@ class UnifiedSearcher:
         results = await searcher.search_async("query")
 
         if searcher.is_using_fallback():
-            print("Using FTS5 fallback")
+            print("Using keyword fallback")
     """
 
     def __init__(
@@ -94,11 +94,11 @@ class UnifiedSearcher:
         Args:
             config: Search configuration (defaults to SearchConfig())
             event_callback: Optional callback for fallback events
-            db: LocalDatabase instance for FTS5 backend (required)
-            fts_table: FTS5 virtual table name (required)
-            fts_content_table: Content table name for FTS5 JOINs (None for contentless)
+            db: Hub database instance for keyword search (required)
+            fts_table: Legacy keyword table alias (required)
+            fts_content_table: Retained for compatibility; ignored by the keyword backend
             fts_id_column: ID column name in the content table
-            fts_weights: bm25 column weights for FTS5 ranking
+            fts_weights: Retained for compatibility; ignored by the keyword backend
             embedding_model: Embedding model name (from EmbeddingsConfig)
             embedding_api_base: API base URL for embedding endpoint
             embedding_api_key: API key for embedding provider
@@ -111,7 +111,7 @@ class UnifiedSearcher:
         self._embedding_api_key = embedding_api_key
         self._embedding_dim = embedding_dim
 
-        # FTS5 config
+        # Legacy keyword config
         self._db = db
         self._fts_table = fts_table
         self._fts_content_table = fts_content_table
@@ -136,14 +136,11 @@ class UnifiedSearcher:
         return self._config
 
     def _get_keyword_backend(self) -> AsyncSearchBackend:
-        """Get or create the FTS5 keyword search backend."""
+        """Get or create the dialect-aware keyword search backend."""
         if self._keyword_backend is None:
-            self._keyword_backend = FTS5SearchBackend(
-                db=self._db,
-                fts_table=self._fts_table,
-                content_table=self._fts_content_table,
-                id_column=self._fts_id_column,
-                weights=self._fts_weights,
+            self._keyword_backend = KeywordAsyncSearchBackend(
+                self._db,
+                keyword_table_for_fts_table(self._fts_table),
             )
         return self._keyword_backend
 
@@ -189,7 +186,7 @@ class UnifiedSearcher:
         error: Exception | None = None,
         items: list[tuple[str, str]] | None = None,
     ) -> None:
-        """Switch to keyword backend (FTS5) and reindex.
+        """Switch to keyword backend and reindex.
 
         Args:
             reason: Human-readable reason for fallback
@@ -198,7 +195,7 @@ class UnifiedSearcher:
         """
         self._using_fallback = True
         self._fallback_reason = reason
-        self._active_backend = "fts5"
+        self._active_backend = "keyword"
 
         # Fit keyword backend with provided items or cached items
         fit_items = items if items is not None else self._items
@@ -216,7 +213,7 @@ class UnifiedSearcher:
         """Build or rebuild the search index.
 
         Indexes items into the appropriate backend(s) based on mode:
-        - keyword: FTS5 keyword only
+        - keyword: keyword only
         - embedding: Embedding only (raises if unavailable)
         - auto: Try embedding, fallback to keyword if unavailable
         - hybrid: Both keyword and embedding
@@ -236,7 +233,7 @@ class UnifiedSearcher:
             # Keyword only
             keyword = self._get_keyword_backend()
             await keyword.fit_async(items)
-            self._active_backend = "fts5"
+            self._active_backend = "keyword"
             self._fitted = True
             self._fitted_mode = mode
 
@@ -324,12 +321,12 @@ class UnifiedSearcher:
                         f"Hybrid mode embedding failed: {e}",
                         error=e,
                     )
-                    self._active_backend = "fts5"
+                    self._active_backend = "keyword"
             else:
                 self._emit_fallback_event(
                     f"Hybrid mode: embedding not configured for {self._embedding_model}"
                 )
-                self._active_backend = "fts5"
+                self._active_backend = "keyword"
 
             self._fitted = True
             self._fitted_mode = mode
@@ -355,7 +352,7 @@ class UnifiedSearcher:
         if not self._fitted:
             return []
 
-        # If we've already fallen back, use FTS5 keyword search
+        # If we've already fallen back, use keyword search
         if self._using_fallback:
             return await self._get_keyword_backend().search_async(query, top_k)
 
@@ -365,7 +362,7 @@ class UnifiedSearcher:
         if self._fitted_mode is not None and self._fitted_mode != mode:
             logger.warning(
                 f"Search mode changed from {self._fitted_mode.value} to {mode.value} "
-                "since last fit. Falling back to FTS5. Call fit_async() to reindex."
+                "since last fit. Falling back to keyword search. Call fit_async() to reindex."
             )
             if self._keyword_backend is not None and not self._keyword_backend.needs_refit():
                 return await self._keyword_backend.search_async(query, top_k)
@@ -451,7 +448,7 @@ class UnifiedSearcher:
         """Get the name of the currently active backend.
 
         Returns:
-            One of "fts5", "embedding", "hybrid", or "none" if not fitted.
+            One of "keyword", "embedding", "hybrid", or "none" if not fitted.
         """
         return self._active_backend or "none"
 

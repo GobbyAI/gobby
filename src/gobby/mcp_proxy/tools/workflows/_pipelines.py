@@ -30,7 +30,7 @@ from gobby.mcp_proxy.tools.workflows._pipeline_query import (
     list_pipeline_executions,
     search_pipeline_executions,
 )
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.utils.project_context import get_project_context
 from gobby.utils.session_context import get_current_session_id
@@ -62,7 +62,7 @@ def _auto_subscribe_lineage(
     session_id: str,
     session_manager: "SessionManager | None",
     continuation_prompt: str | None,
-    db: DatabaseProtocol | None,
+    db: HubDatabase | None,
 ) -> None:
     """Register a completion event and subscribe the calling session + its lineage.
 
@@ -113,7 +113,7 @@ def register_pipeline_tools(
     loader: Any | None = None,
     executor_getter: Callable[[], Any | None] | None = None,
     execution_manager_getter: Callable[[], Any | None] | None = None,
-    db: DatabaseProtocol | None = None,
+    db: HubDatabase | None = None,
     session_manager: "SessionManager | None" = None,
     completion_registry: Any | None = None,
     def_manager: LocalWorkflowDefinitionManager | None = None,
@@ -526,7 +526,7 @@ def _register_exposed_pipeline_tools(
     executor_getter: Callable[[], Any | None],
     session_manager: "SessionManager | None" = None,
     completion_registry: Any | None = None,
-    db: DatabaseProtocol | None = None,
+    db: HubDatabase | None = None,
 ) -> None:
     """
     Register dynamic tools for pipelines with expose_as_tool=True.
@@ -568,7 +568,7 @@ def _create_pipeline_tool(
     executor_getter: Callable[[], Any | None],
     session_manager: "SessionManager | None" = None,
     completion_registry: Any | None = None,
-    db: DatabaseProtocol | None = None,
+    db: HubDatabase | None = None,
 ) -> None:
     """Create a dynamic tool for a single pipeline."""
     _completion_registry = completion_registry

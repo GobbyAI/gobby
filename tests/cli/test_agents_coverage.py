@@ -136,7 +136,7 @@ class TestResolveAgentRunId:
         mock_mgr_fn.return_value = mgr
         assert resolve_agent_run_id(full_id) == full_id
 
-    @patch("gobby.cli.agents.LocalDatabase")
+    @patch("gobby.cli.agents.open_runtime_hub_database")
     @patch("gobby.cli.agents.get_agent_run_manager")
     def test_prefix_match(self, mock_mgr_fn: MagicMock, mock_db_cls: MagicMock) -> None:
         mgr = MagicMock()
@@ -145,7 +145,7 @@ class TestResolveAgentRunId:
         mock_db_cls.return_value.fetchall.return_value = [{"id": "run-abc123"}]
         assert resolve_agent_run_id("run-abc") == "run-abc123"
 
-    @patch("gobby.cli.agents.LocalDatabase")
+    @patch("gobby.cli.agents.open_runtime_hub_database")
     @patch("gobby.cli.agents.get_agent_run_manager")
     def test_not_found(self, mock_mgr_fn: MagicMock, mock_db_cls: MagicMock) -> None:
         mgr = MagicMock()
@@ -155,7 +155,7 @@ class TestResolveAgentRunId:
         with pytest.raises(click.ClickException, match="not found"):
             resolve_agent_run_id("zzz")
 
-    @patch("gobby.cli.agents.LocalDatabase")
+    @patch("gobby.cli.agents.open_runtime_hub_database")
     @patch("gobby.cli.agents.get_agent_run_manager")
     def test_ambiguous(self, mock_mgr_fn: MagicMock, mock_db_cls: MagicMock) -> None:
         mgr = MagicMock()
@@ -266,7 +266,7 @@ class TestCheckAgent:
 
 
 class TestAgentStatsGlobal:
-    @patch("gobby.cli.agents.LocalDatabase")
+    @patch("gobby.cli.agents.open_runtime_hub_database")
     def test_global_stats(self, mock_db_cls: MagicMock, runner: CliRunner) -> None:
         mock_db_cls.return_value.fetchone.return_value = {
             "total": 20,
@@ -282,14 +282,14 @@ class TestAgentStatsGlobal:
         assert "Total Runs: 20" in result.output
         assert "Success Rate: 75.0%" in result.output
 
-    @patch("gobby.cli.agents.LocalDatabase")
+    @patch("gobby.cli.agents.open_runtime_hub_database")
     def test_global_stats_empty(self, mock_db_cls: MagicMock, runner: CliRunner) -> None:
         mock_db_cls.return_value.fetchone.return_value = None
         result = runner.invoke(agents, ["stats"])
         assert result.exit_code == 0
         assert "No agent runs found" in result.output
 
-    @patch("gobby.cli.agents.LocalDatabase")
+    @patch("gobby.cli.agents.open_runtime_hub_database")
     def test_global_stats_zero_total(self, mock_db_cls: MagicMock, runner: CliRunner) -> None:
         mock_db_cls.return_value.fetchone.return_value = {
             "total": 0,
@@ -313,7 +313,7 @@ class TestAgentStatsGlobal:
 
 
 class TestCleanupAgents:
-    @patch("gobby.cli.agents.LocalDatabase")
+    @patch("gobby.cli.agents.open_runtime_hub_database")
     def test_cleanup_dry_run(self, mock_db_cls: MagicMock, runner: CliRunner) -> None:
         mock_db = mock_db_cls.return_value
         mock_db.fetchall.side_effect = [
@@ -587,6 +587,11 @@ class TestKillAgent:
         result = runner.invoke(agents, ["kill", "run-1", "--yes"])
         assert result.exit_code == 0
         assert "Killed agent" in result.output
+        mock_client_cls.return_value.call_mcp_tool.assert_called_once_with(
+            server_name="gobby-agents",
+            tool_name="kill_agent",
+            arguments={"run_id": "run-1", "force": False, "stop": False},
+        )
 
     @patch("gobby.cli.agents.resolve_agent_run_id", return_value="run-1")
     @patch("gobby.utils.daemon_client.DaemonClient")
@@ -606,6 +611,11 @@ class TestKillAgent:
         assert "pgrep" in result.output
         assert "already terminated" in result.output
         assert "workflow ended" in result.output
+        mock_client_cls.return_value.call_mcp_tool.assert_called_once_with(
+            server_name="gobby-agents",
+            tool_name="kill_agent",
+            arguments={"run_id": "run-1", "force": False, "stop": True},
+        )
 
     @patch("gobby.cli.agents.resolve_agent_run_id", return_value="run-1")
     @patch("gobby.utils.daemon_client.DaemonClient")

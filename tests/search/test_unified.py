@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -15,19 +16,15 @@ from gobby.search import (
     SearchMode,
     UnifiedSearcher,
 )
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.search.keyword import KeywordAsyncSearchBackend
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path):
-    """Create a temporary database with FTS5 tables."""
-    database = LocalDatabase(tmp_path / "test.db")
-    run_migrations(database)
-    yield database
-    database.close()
+def db() -> SimpleNamespace:
+    """Lightweight database seam for UnifiedSearcher keyword backend tests."""
+    return SimpleNamespace(dialect="postgres")
 
 
 def _make_searcher(
@@ -35,7 +32,7 @@ def _make_searcher(
     config: SearchConfig | None = None,
     event_callback=None,
 ) -> UnifiedSearcher:
-    """Helper to create UnifiedSearcher with required FTS5 params."""
+    """Helper to create UnifiedSearcher with required keyword params."""
     return UnifiedSearcher(
         config,
         event_callback=event_callback,
@@ -190,7 +187,7 @@ class TestUnifiedSearcher:
 
     @pytest.mark.asyncio
     async def test_keyword_mode(self, db) -> None:
-        """Test FTS5 keyword-only mode."""
+        """Test keyword-only mode."""
         config = SearchConfig(mode="keyword")
         searcher = _make_searcher(db, config)
 
@@ -200,12 +197,12 @@ class TestUnifiedSearcher:
         ]
 
         await searcher.fit_async(items)
-        assert searcher.get_active_backend() == "fts5"
+        assert searcher.get_active_backend() == "keyword"
         assert not searcher.is_using_fallback()
 
     @pytest.mark.asyncio
     async def test_auto_mode_no_api_key(self, db) -> None:
-        """Test auto mode falls back to FTS5 when no API key."""
+        """Test auto mode falls back to keyword when no API key."""
         config = SearchConfig(
             mode="auto",
             embedding_model="text-embedding-3-small",
@@ -225,7 +222,7 @@ class TestUnifiedSearcher:
             items = [("id1", "test content")]
             await searcher.fit_async(items)
 
-            assert searcher.get_active_backend() == "fts5"
+            assert searcher.get_active_backend() == "keyword"
             assert searcher.is_using_fallback()
             assert len(fallback_events) == 1
             assert "unavailable" in fallback_events[0].reason.lower()
@@ -365,7 +362,7 @@ class TestUnifiedSearcher:
 
         assert stats["mode"] == "keyword"
         assert stats["fitted"] is True
-        assert stats["active_backend"] == "fts5"
+        assert stats["active_backend"] == "keyword"
         assert stats["using_fallback"] is False
         assert stats["item_count"] == 1
 
@@ -425,7 +422,7 @@ class TestUnifiedSearcher:
 
     @pytest.mark.asyncio
     async def test_hybrid_partial_failure(self, db) -> None:
-        """Test hybrid mode continues with FTS5 when embedding fails."""
+        """Test hybrid mode continues with keyword search when embedding fails."""
         config = SearchConfig(mode="hybrid")
 
         with (
@@ -439,7 +436,32 @@ class TestUnifiedSearcher:
             searcher = _make_searcher(db, config)
             await searcher.fit_async([("id1", "test")])
 
-            assert searcher.get_active_backend() == "fts5"
+            assert searcher.get_active_backend() == "keyword"
+
+
+class TestDeprecatedSqliteKeywordSearch:
+    """Tests for the legacy PostgreSQL keyword fallback used by fixtures."""
+
+    @pytest.mark.asyncio
+    async def test_fit_items_allow_partial_token_matches_with_ranked_scores(self) -> None:
+        """Partial token matches are returned with lower scores than full matches."""
+        backend = KeywordAsyncSearchBackend(SimpleNamespace(dialect="postgres"), "skills")
+        await backend.fit_async(
+            [
+                ("full", "deprecated postgres import"),
+                ("partial", "deprecated postgres"),
+                ("single", "deprecated"),
+                ("none", "unrelated"),
+            ]
+        )
+
+        results = await backend.search_async("deprecated postgres import", top_k=10)
+
+        assert results == [
+            ("full", 1.0),
+            ("partial", 2 / 3),
+            ("single", 1 / 3),
+        ]
 
 
 class TestEmbeddingBackend:

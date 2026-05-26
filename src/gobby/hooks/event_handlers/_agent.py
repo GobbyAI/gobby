@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import logging
 import re
-import sqlite3
 from typing import Any
+
+import psycopg
 
 from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.events import HookEvent, HookResponse, SessionSource
@@ -11,8 +12,11 @@ from gobby.skills.formatting import format_skill_fetch_context, skill_fetch_dire
 
 logger = logging.getLogger(__name__)
 
-# Pattern for /gobby or /gobby skillname with optional args
-_GOBBY_CMD_PATTERN = re.compile(r"^/gobby(?::(\S+))?\s*(.*)?$", re.IGNORECASE | re.DOTALL)
+# Pattern for slash-router /gobby or Codex $gobby commands with optional args.
+_GOBBY_CMD_PATTERN = re.compile(
+    r"^[/\$]gobby(?::(\S+))?(?:\s+(.*)|\s*)$",
+    re.IGNORECASE | re.DOTALL,
+)
 _HELP_SKILL_LIST_LIMIT = 50
 
 
@@ -212,60 +216,62 @@ class AgentEventHandlerMixin(EventHandlersBase):
         )
 
     def _intercept_skill_command(self, prompt: str, session_id: str | None = None) -> str | None:
-        """Intercept /gobby and /gobby skillname commands.
+        """Intercept /gobby or $gobby skill commands.
 
-        Returns context string to add, or None if not a /gobby command.
-        Supports space syntax (/gobby expand) and legacy colon syntax.
+        Returns context string to add, or None if not a Gobby router command.
+        Supports space syntax (/gobby expand, $gobby expand) and legacy slash-router
+        colon syntax.
         """
         match = _GOBBY_CMD_PATTERN.match(prompt)
         if not match:
             return None
 
+        command_prefix = "$gobby" if prompt.startswith("$") else "/gobby"
         skill_name = match.group(1)  # None for bare /gobby or space syntax
         args = (match.group(2) or "").strip()
 
-        # Support space syntax: /gobby expand → treat first word of args as skill name
-        # Also supports /gobby skill(s) <name> as a namespace prefix
+        # Support space syntax: Gobby expand → treat first word of args as skill name.
+        # Also supports Gobby skill(s) <name> as a namespace prefix.
         resolved = None
         if not skill_name and args and self._skill_manager:
             parts = args.split(None, 1)
             first_word = parts[0]
             if first_word.lower() in ("skill", "skills"):
-                # /gobby skill(s) <name> → shift to second word
+                # Gobby skill(s) <name> → shift to second word.
                 if len(parts) > 1:
                     sub_parts = parts[1].split(None, 1)
                     skill_name = sub_parts[0]
                     args = sub_parts[1] if len(sub_parts) > 1 else ""
                     resolved = self._skill_manager.resolve_skill_name(skill_name)
-                # bare /gobby skills → fall through to help
+                # Bare Gobby skills → fall through to help.
             elif first_word.lower() != "help":
                 skill_name = first_word
                 resolved = self._skill_manager.resolve_skill_name(first_word)
                 if resolved:
                     args = parts[1] if len(parts) > 1 else ""
 
-        # /gobby or /gobby help → generate help
+        # Bare Gobby or Gobby help → generate help.
         if not skill_name or skill_name.lower() == "help":
-            return self._generate_help_content(session_id)
+            return self._generate_help_content(session_id, command_prefix=command_prefix)
 
-        # /gobby skillname → resolve and direct the agent to fetch it on demand
+        # Gobby skillname → resolve and direct the agent to fetch it on demand.
         if self._skill_manager is None:
             raise RuntimeError("skill_manager not initialized")
         skill = resolved if resolved else self._skill_manager.resolve_skill_name(skill_name)
 
         if not skill:
-            return self._skill_not_found_context(skill_name)
+            return self._skill_not_found_context(skill_name, command_prefix=command_prefix)
 
         return format_skill_fetch_context(skill.name, args)
 
     def _suggest_skills(self, prompt: str) -> str | None:
         """Suggest skills based on trigger keyword matching.
 
-        Only runs for non-slash-command prompts. Returns a lightweight hint
+        Only runs for non-command prompts. Returns a lightweight hint
         if a strong match is found (score >= 0.7).
         """
-        # Skip if it looks like a slash command
-        if prompt.startswith("/"):
+        # Skip if it looks like a native command.
+        if prompt.startswith(("/", "$")):
             return None
 
         if self._skill_manager is None:
@@ -279,7 +285,11 @@ class AgentEventHandlerMixin(EventHandlersBase):
         fallback = f"Relevant skill available. {skill_fetch_directive(skill.name)}"
         return _load_agent_prompt("skill-hint", {"skill_name": skill.name}, fallback)
 
-    def _generate_help_content(self, session_id: str | None = None) -> str:
+    def _generate_help_content(
+        self,
+        session_id: str | None = None,
+        command_prefix: str = "/gobby",
+    ) -> str:
         """Generate help content listing all available skills."""
         if self._skill_manager is None:
             raise RuntimeError("skill_manager not initialized")
@@ -308,7 +318,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
         skill_lines = []
         for skill in user_skills[:_HELP_SKILL_LIST_LIMIT]:
             desc = skill.description.split(".")[0] if skill.description else ""
-            skill_lines.append(f"- `/gobby {skill.name}` — {desc}")
+            skill_lines.append(f"- `{command_prefix} {skill.name}` — {desc}")
         hidden_count = len(user_skills) - len(skill_lines)
         if hidden_count > 0:
             skill_lines.append(
@@ -319,7 +329,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
         fallback = (
             "# Gobby Skills\n\n"
             "Installed skills below are generated from `discover_core_skills()`. "
-            "Invoke one with `/gobby <skill>`:\n\n"
+            f"Invoke one with `{command_prefix} <skill>`:\n\n"
             f"{skills_list}\n\n"
             '**Skill discovery**: `list_skills()` / `get_skill(name="skill-name")` '
             "on `gobby-skills`.\n"
@@ -330,9 +340,13 @@ class AgentEventHandlerMixin(EventHandlersBase):
             '`call_tool(server_name="...", tool_name="...", arguments={...})`.'
         )
 
-        return _load_agent_prompt("help-content", {"skills_list": skills_list}, fallback)
+        return _load_agent_prompt(
+            "help-content",
+            {"skills_list": skills_list, "command_prefix": command_prefix},
+            fallback,
+        )
 
-    def _skill_not_found_context(self, name: str) -> str:
+    def _skill_not_found_context(self, name: str, command_prefix: str = "/gobby") -> str:
         """Generate context for an unrecognized skill name."""
         if self._skill_manager is None:
             raise RuntimeError("skill_manager not initialized")
@@ -353,13 +367,22 @@ class AgentEventHandlerMixin(EventHandlersBase):
             lines.append("")
             lines.append("Did you mean:")
             for match in close:
-                lines.append(f"  - `/gobby {match}`")
-        lines.extend(["", "Run `/gobby` or `/gobby help` to see all available skills."])
+                lines.append(f"  - `{command_prefix} {match}`")
+        lines.extend(
+            [
+                "",
+                f"Run `{command_prefix}` or `{command_prefix} help` to see all available skills.",
+            ]
+        )
         fallback = "\n".join(lines)
 
         return _load_agent_prompt(
             "skill-not-found",
-            {"skill_name": name, "close_matches": close},
+            {
+                "skill_name": name,
+                "close_matches": close,
+                "command_prefix": command_prefix,
+            },
             fallback,
         )
 
@@ -495,7 +518,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
                 sv_mgr = SessionVariableManager(self._session_manager.db)
                 sv_mgr.set_variable(session_id, "is_subagent", True)
                 self.logger.debug(f"Set is_subagent=True for session {session_id}")
-            except (sqlite3.Error, KeyError, TypeError, ValueError) as e:
+            except (psycopg.Error, KeyError, TypeError, ValueError) as e:
                 self.logger.warning(f"Failed to set is_subagent on SUBAGENT_START: {e}")
 
         return HookResponse(decision="allow")
@@ -517,7 +540,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
                 sv_mgr = SessionVariableManager(self._session_manager.db)
                 sv_mgr.set_variable(session_id, "is_subagent", False)
                 self.logger.debug(f"Set is_subagent=False for session {session_id}")
-            except (sqlite3.Error, KeyError, TypeError, ValueError) as e:
+            except (psycopg.Error, KeyError, TypeError, ValueError) as e:
                 self.logger.warning(f"Failed to clear is_subagent on SUBAGENT_STOP: {e}")
 
         return HookResponse(decision="allow")

@@ -2,9 +2,8 @@
 
 import json
 import logging
-import sqlite3
 
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.runtime import open_runtime_hub_database
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +23,7 @@ def get_claimed_task_ids() -> set[str]:
         Set of task UUIDs claimed by active sessions
     """
     try:
-        db = LocalDatabase()
+        db = open_runtime_hub_database(apply_migrations=False)
         try:
             # Join workflow_states with sessions to find active sessions with session_task
             rows = db.fetchall(
@@ -87,6 +86,6 @@ def get_claimed_task_ids() -> set[str]:
             return claimed_ids
         finally:
             db.close()
-    except (sqlite3.Error, json.JSONDecodeError, KeyError) as e:
+    except (RuntimeError, json.JSONDecodeError, KeyError) as e:
         logger.debug(f"Failed to get claimed task IDs: {e}")
         return set()

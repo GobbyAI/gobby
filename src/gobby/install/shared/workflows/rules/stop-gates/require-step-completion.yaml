@@ -8,6 +8,7 @@ rules:
     priority: 49
     when: >-
       variables.get('is_spawned_agent')
+      and variables.get('current_step')
       and not variables.get('step_workflow_complete')
       and variables.get('stop_attempts', 0) < variables.get('max_stop_attempts', 8)
     effects:
@@ -15,3 +16,4 @@ rules:
         reason: >-
           Step workflow not complete. Continue with your current step
           before stopping. Current step: {{ variables.get('current_step', 'unknown') }}.
+          {{ variables.get('current_step_status_message', '') }}

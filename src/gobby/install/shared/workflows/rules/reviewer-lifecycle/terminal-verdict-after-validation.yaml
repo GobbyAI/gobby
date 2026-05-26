@@ -1,0 +1,95 @@
+tags: [reviewer-lifecycle, enforcement, lifecycle, reviewer-terminal-verdict, gobby, default]
+
+rules:
+  reviewer-terminal-verdict-track-successful-validation:
+    description: "Track successful reviewer validation and require an immediate lifecycle verdict"
+    event: after_tool
+    enabled: true
+    priority: 35
+    agent_scope:
+      - qa-reviewer
+      - doc-reviewer
+      - holistic-reviewer
+    when: >-
+      variables.get('current_step') == 'review'
+      and not variables.get('review_complete')
+      and event.data.get('tool_name') == 'Bash'
+      and tool_call_succeeded()
+      and is_validation_command(tool_input.get('command') or tool_input.get('cmd'))
+    effects:
+      - type: set_variable
+        variable: reviewer_terminal_verdict_pending
+        value: true
+      - type: set_variable
+        variable: reviewer_terminal_verdict_validation_command
+        value: "tool_input.get('command') or tool_input.get('cmd') or ''"
+      - type: inject_context
+        template: |
+          Reviewer validation succeeded. Emit the lifecycle verdict now before ending the turn.
+          {{ 'Call complete_stage(stage_name="holistic_qa"), fail_stage(stage_name="holistic_qa"), or escalate_task.' if variables.get('_agent_type') == 'holistic-reviewer' else 'Call approve_review(stage_name="development"), reject_review(stage_name="development"), or escalate_task.' }}
+
+  reviewer-terminal-verdict-clear-on-verdict:
+    description: "Clear reviewer terminal-verdict pending state after the matching verdict tool succeeds"
+    event: after_tool
+    enabled: true
+    priority: 34
+    agent_scope:
+      - qa-reviewer
+      - doc-reviewer
+      - holistic-reviewer
+    when: >-
+      variables.get('reviewer_terminal_verdict_pending')
+      and tool_call_succeeded()
+      and (
+        (
+          variables.get('_agent_type') in ('qa-reviewer', 'doc-reviewer')
+          and (
+            (
+              event.data.get('mcp_server') == 'gobby-tasks-ops'
+              and event.data.get('mcp_tool') in ('approve_review', 'reject_review')
+            )
+            or (
+              event.data.get('mcp_server') == 'gobby-tasks'
+              and event.data.get('mcp_tool') == 'escalate_task'
+            )
+          )
+        )
+        or (
+          variables.get('_agent_type') == 'holistic-reviewer'
+          and (
+            (
+              event.data.get('mcp_server') == 'gobby-tasks-ops'
+              and event.data.get('mcp_tool') in ('complete_stage', 'fail_stage')
+            )
+            or (
+              event.data.get('mcp_server') == 'gobby-tasks'
+              and event.data.get('mcp_tool') == 'escalate_task'
+            )
+          )
+        )
+      )
+    effects:
+      - type: set_variable
+        variable: reviewer_terminal_verdict_pending
+        value: false
+      - type: set_variable
+        variable: reviewer_terminal_verdict_validation_command
+        value: ""
+
+  reviewer-terminal-verdict-block-turn-end:
+    description: "Block reviewer turn end after successful validation until a lifecycle verdict succeeds"
+    event: turn_end
+    enabled: true
+    priority: 48
+    agent_scope:
+      - qa-reviewer
+      - doc-reviewer
+      - holistic-reviewer
+    when: >-
+      variables.get('reviewer_terminal_verdict_pending')
+    effects:
+      - type: block
+        reason: |
+          Successful reviewer validation ran, but no lifecycle verdict has succeeded yet.
+          Validation command: {{ variables.get('reviewer_terminal_verdict_validation_command') or '(unknown)' }}
+          {{ 'Call complete_stage(stage_name="holistic_qa"), fail_stage(stage_name="holistic_qa"), or escalate_task before ending the turn.' if variables.get('_agent_type') == 'holistic-reviewer' else 'Call approve_review(stage_name="development"), reject_review(stage_name="development"), or escalate_task before ending the turn.' }}

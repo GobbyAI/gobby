@@ -8,7 +8,7 @@ This document outlines high-value features inspired by trending AI projects. The
 
 - [Auto-Claude](https://github.com/AndyMik90/Auto-Claude) - Multi-agent orchestration with worktree isolation (Phases 1-5)
 - [Continuous-Claude v2](https://github.com/parcadei/Continuous-Claude-v2) - Ledger-based state, artifact indexing (Phase 6)
-- [KnowNote](https://github.com/MrSibe/KnowNote) - Local-first semantic search with sqlite-vec (Phase 8)
+- [KnowNote](https://github.com/MrSibe/KnowNote) - Local-first semantic search with PostgreSQL-vec (Phase 8)
 - Original Design - Task-driven autonomous execution with multi-surface termination controls (Phase 9)
 
 > **Note**: Worktree management (`gobby-worktrees`) has been moved to [SUBAGENTS.md](./SUBAGENTS.md) as it is tightly coupled with the subagent spawning system.
@@ -30,7 +30,7 @@ Phase 5: Structured Pipeline Workflows (BMAD integration)
     ↓
 Phase 6: Artifact Index (searchable session history with FTS5)
     ↓
-Phase 8: Semantic Memory Search (sqlite-vec local vectors)
+Phase 8: Semantic Memory Search (PostgreSQL-vec local vectors)
     ↓
 Phase 9: Autonomous Work Loop (task-driven execution with termination controls)
 ```
@@ -871,7 +871,7 @@ def get_phase_checklist(
 
 ### Phase 6: Overview
 
-Implement a searchable index of session artifacts inspired by [Continuous-Claude v2](https://github.com/parcadei/Continuous-Claude-v2). Their "clear, don't compact" philosophy uses ledger-based state management with an **Artifact Index** (SQLite + FTS5) for fast retrieval of past session content.
+Implement a searchable index of session artifacts inspired by [Continuous-Claude v2](https://github.com/parcadei/Continuous-Claude-v2). Their "clear, don't compact" philosophy uses ledger-based state management with an **Artifact Index** (PostgreSQL + FTS5) for fast retrieval of past session content.
 
 **Inspiration:** Continuous-Claude's approach to lossless session history vs. lossy summarization.
 
@@ -1102,7 +1102,7 @@ This phase overhauls gobby-memory with Memora-inspired enhancements:
 
 ### Why This Changed
 
-The original sqlite-vec approach had issues:
+The original PostgreSQL-vec approach had issues:
 
 - Native extension loading causes platform compatibility problems
 - sentence-transformers adds ~500MB dependency
@@ -1418,7 +1418,7 @@ This was superseded by integrating with existing systems:
 | 6 | **Pipeline phases** | Fixed 5-phase model | Clear structure, matches Auto-Claude pattern |
 | 7 | **External validator** | Separate agent context | Avoids bias from implementation agent |
 | 8 | **Loop state persistence** | Tasks (not workflow variables) | Workflow vars reset on session end; tasks survive |
-| 9 | **Stop signal registry** | Thread-safe in-memory + SQLite | Fast checks, persistence across daemon restarts |
+| 9 | **Stop signal registry** | Thread-safe in-memory + PostgreSQL | Fast checks, persistence across daemon restarts |
 | 10 | **Stuck detection layers** | 3 layers (validation, selection, stagnation) | Comprehensive coverage of stuck scenarios |
 | 11 | **Session chaining trigger** | on_session_end lifecycle hook | Natural hook point, runs after handoff extraction |
 | 12 | **Autonomous mode activation** | session.data.autonomous flag | Clean separation, explicit opt-in per session |

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import sqlite3
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -65,7 +65,7 @@ class Symbol:
         return str(uuid.uuid5(CODE_INDEX_UUID_NAMESPACE, key))
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row) -> Symbol:
+    def from_row(cls, row: Mapping[str, Any]) -> Symbol:
         return cls(
             id=row["id"],
             project_id=row["project_id"],
@@ -142,8 +142,8 @@ class IndexedFile:
     content_hash: str
     symbol_count: int = 0
     byte_size: int = 0
-    graph_synced: int = 0
-    vectors_synced: int = 0
+    graph_synced: bool = False
+    vectors_synced: bool = False
     graph_sync_attempted_at: str | None = None
     indexed_at: str = ""
 
@@ -157,7 +157,7 @@ class IndexedFile:
         return str(uuid.uuid5(CODE_INDEX_UUID_NAMESPACE, key))
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row) -> IndexedFile:
+    def from_row(cls, row: Mapping[str, Any]) -> IndexedFile:
         return cls(
             id=row["id"],
             project_id=row["project_id"],
@@ -166,8 +166,8 @@ class IndexedFile:
             content_hash=row["content_hash"],
             symbol_count=row["symbol_count"],
             byte_size=row["byte_size"],
-            graph_synced=row["graph_synced"] if "graph_synced" in row.keys() else 0,
-            vectors_synced=row["vectors_synced"] if "vectors_synced" in row.keys() else 0,
+            graph_synced=bool(row["graph_synced"]) if "graph_synced" in row.keys() else False,
+            vectors_synced=bool(row["vectors_synced"]) if "vectors_synced" in row.keys() else False,
             graph_sync_attempted_at=(
                 row["graph_sync_attempted_at"] if "graph_sync_attempted_at" in row.keys() else None
             ),
@@ -202,7 +202,7 @@ class IndexedProject:
     index_duration_ms: int = 0
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row) -> IndexedProject:
+    def from_row(cls, row: Mapping[str, Any]) -> IndexedProject:
         return cls(
             id=row["id"],
             root_path=row["root_path"],

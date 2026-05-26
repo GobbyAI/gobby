@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from gobby.mcp_proxy.bundled import CHROME_DEVTOOLS_NPM_PACKAGE
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.mcp import LocalMCPManager
 from gobby.storage.projects import GLOBAL_PROJECT_ID, LocalProjectManager
 
@@ -185,7 +185,7 @@ class TestLocalMCPManager:
         self,
         mcp_manager: LocalMCPManager,
         sample_project: dict,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
     ) -> None:
         """Bundled servers are stored globally and never persist runtime-only browser paths."""
         server = mcp_manager.upsert(
@@ -1023,7 +1023,7 @@ class TestLocalMCPManager:
         self,
         mcp_manager: LocalMCPManager,
         sample_project: dict,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
     ) -> None:
         """Legacy project rows are collapsed into a canonical global bundled row."""
         temp_db.execute(
@@ -1031,7 +1031,7 @@ class TestLocalMCPManager:
             INSERT INTO mcp_servers (
                 id, name, project_id, transport, command, args, enabled, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             (
                 "legacy-chrome-server",
@@ -1047,13 +1047,13 @@ class TestLocalMCPManager:
                         "--no-usage-statistics",
                     ]
                 ),
-                1,
+                True,
             ),
         )
         temp_db.execute(
             """
             INSERT INTO tools (id, mcp_server_id, name, description, input_schema, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             (
                 "legacy-chrome-tool",
@@ -1091,7 +1091,7 @@ class TestLocalMCPManager:
     def test_normalize_bundled_servers_updates_chrome_devtools_package_pin(
         self,
         mcp_manager: LocalMCPManager,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
     ) -> None:
         """Existing bundled chrome-devtools rows are repaired to the tested package pin."""
         temp_db.execute(
@@ -1099,7 +1099,7 @@ class TestLocalMCPManager:
             INSERT INTO mcp_servers (
                 id, name, project_id, transport, command, args, enabled, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             (
                 "global-chrome-server",
@@ -1108,7 +1108,7 @@ class TestLocalMCPManager:
                 "stdio",
                 "npx",
                 json.dumps(["-y", "chrome-devtools-mcp@latest", "--no-usage-statistics"]),
-                1,
+                True,
             ),
         )
 
@@ -1123,7 +1123,7 @@ class TestLocalMCPManager:
         self,
         mcp_manager: LocalMCPManager,
         sample_project: dict,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
     ) -> None:
         """Bundled normalization preserves the union of tool names across duplicates."""
         temp_db.execute(
@@ -1131,7 +1131,7 @@ class TestLocalMCPManager:
             INSERT INTO mcp_servers (
                 id, name, project_id, transport, command, args, enabled, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             (
                 "legacy-context7-server",
@@ -1140,13 +1140,13 @@ class TestLocalMCPManager:
                 "stdio",
                 "npx",
                 json.dumps(["-y", "@upstash/context7-mcp"]),
-                1,
+                True,
             ),
         )
         temp_db.execute(
             """
             INSERT INTO tools (id, mcp_server_id, name, description, input_schema, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             (
                 "legacy-context7-search",
@@ -1162,7 +1162,7 @@ class TestLocalMCPManager:
             INSERT INTO mcp_servers (
                 id, name, project_id, transport, command, args, enabled, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             (
                 "global-context7-server",
@@ -1171,13 +1171,13 @@ class TestLocalMCPManager:
                 "stdio",
                 "npx",
                 json.dumps(["-y", "@upstash/context7-mcp"]),
-                1,
+                True,
             ),
         )
         temp_db.execute(
             """
             INSERT INTO tools (id, mcp_server_id, name, description, input_schema, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             (
                 "global-context7-resolve",
@@ -1328,7 +1328,7 @@ class TestRefreshToolsIncremental:
         self,
         mcp_manager: LocalMCPManager,
         sample_project: dict,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
     ) -> None:
         """Test incremental refresh with schema hash manager for change detection."""
         from gobby.mcp_proxy.schema_hash import SchemaHashManager

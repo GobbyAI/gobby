@@ -1440,7 +1440,7 @@ def test_extract_key_decisions() -> None:
                 "content": [
                     {
                         "type": "text",
-                        "text": "I opted for SQLite instead of PostgreSQL for local storage.",
+                        "text": "I opted for PostgreSQL instead of PostgreSQL for local storage.",
                     },
                 ]
             },
@@ -1453,7 +1453,7 @@ def test_extract_key_decisions() -> None:
     assert ctx.key_decisions is not None
     assert len(ctx.key_decisions) == 2
     assert "factory pattern" in ctx.key_decisions[0]
-    assert "SQLite" in ctx.key_decisions[1]
+    assert "PostgreSQL" in ctx.key_decisions[1]
 
 
 def test_extract_key_decisions_caps_at_10() -> None:

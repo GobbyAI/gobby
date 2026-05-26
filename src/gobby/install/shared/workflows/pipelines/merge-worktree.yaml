@@ -31,7 +31,7 @@ steps:
       server: gobby-agents
       tool: spawn_agent
       arguments:
-        prompt: "Merge worktree ${{ inputs.worktree_id }} into ${{ inputs.target_branch }}. Call merge_worktree with push=true and target_branch=${{ inputs.target_branch }}."
+        prompt: "Merge worktree ${{ inputs.worktree_id }} into local ${{ inputs.target_branch }}. Call merge_worktree with target_branch=${{ inputs.target_branch }}, record its merge_sha as the final target merge SHA, and do not push; remote publication is PR-only."
         agent: merge-worker
         worktree_id: "${{ inputs.worktree_id }}"
         provider: "${{ inputs.provider }}"

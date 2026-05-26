@@ -5,6 +5,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, NoReturn
+from unittest.mock import patch
 
 import click
 import pytest
@@ -70,7 +71,10 @@ def test_load_session_messages_wraps_parse_errors(
 
     monkeypatch.setattr(tokens_module.ClaudeTranscriptParser, "parse_lines", _raise_parse_error)
 
-    with pytest.raises(click.ClickException, match="Failed to parse transcript"):
+    with (
+        patch("pathlib.Path.home", return_value=tmp_path),
+        pytest.raises(click.ClickException, match="Failed to parse transcript"),
+    ):
         tokens_module._load_session_messages("sess-1", session)
 
 
@@ -81,11 +85,9 @@ def test_audit_all_filters_by_project(runner: CliRunner, monkeypatch: pytest.Mon
     def resolve_project_ref(_ref: str | None, exit_on_not_found: bool = False) -> str:
         return "proj-1"
 
-    def local_database() -> _FakeDatabase:
+    def open_runtime_hub_database(*, apply_migrations: bool = False) -> _FakeDatabase:
+        assert apply_migrations is False
         return fake_db
-
-    def run_migrations(_db: _FakeDatabase) -> None:
-        return None
 
     def session_manager(_db: _FakeDatabase) -> SimpleNamespace:
         return fake_manager
@@ -97,8 +99,7 @@ def test_audit_all_filters_by_project(runner: CliRunner, monkeypatch: pytest.Mon
         return []
 
     monkeypatch.setattr(tokens_module, "resolve_project_ref", resolve_project_ref)
-    monkeypatch.setattr(tokens_module, "LocalDatabase", local_database)
-    monkeypatch.setattr(tokens_module, "run_migrations", run_migrations)
+    monkeypatch.setattr(tokens_module, "open_runtime_hub_database", open_runtime_hub_database)
     monkeypatch.setattr(tokens_module, "SessionManager", session_manager)
     monkeypatch.setattr(tokens_module, "TokenEventStore", token_event_store)
     monkeypatch.setattr(tokens_module, "_load_session_messages", load_session_messages)
@@ -122,11 +123,9 @@ def test_audit_all_continues_after_transcript_failure(
             raise click.ClickException("bad transcript")
         return []
 
-    def local_database() -> _FakeDatabase:
+    def open_runtime_hub_database(*, apply_migrations: bool = False) -> _FakeDatabase:
+        assert apply_migrations is False
         return fake_db
-
-    def run_migrations(_db: _FakeDatabase) -> None:
-        return None
 
     def session_manager(_db: _FakeDatabase) -> SimpleNamespace:
         return fake_manager
@@ -134,8 +133,7 @@ def test_audit_all_continues_after_transcript_failure(
     def token_event_store(_db: _FakeDatabase) -> _FakeStore:
         return _FakeStore()
 
-    monkeypatch.setattr(tokens_module, "LocalDatabase", local_database)
-    monkeypatch.setattr(tokens_module, "run_migrations", run_migrations)
+    monkeypatch.setattr(tokens_module, "open_runtime_hub_database", open_runtime_hub_database)
     monkeypatch.setattr(tokens_module, "SessionManager", session_manager)
     monkeypatch.setattr(tokens_module, "TokenEventStore", token_event_store)
     monkeypatch.setattr(tokens_module, "_load_session_messages", _load_messages)

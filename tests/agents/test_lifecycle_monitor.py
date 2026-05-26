@@ -9,7 +9,9 @@ All tests are DB-driven — no in-memory RunningAgentRegistry.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+import threading
 import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -19,16 +21,21 @@ import pytest
 
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
-from gobby.storage.database import LocalDatabase
 from gobby.storage.executor import DatabaseExecutor
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+from gobby.storage.tasks._stage_states import StageManifestSpec
+from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.workflows.definitions import WorkflowInstance
+from gobby.workflows.state_manager import WorkflowInstanceManager
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def agent_run_manager(temp_db: LocalDatabase) -> LocalAgentRunManager:
+def agent_run_manager(temp_db: HubDatabase) -> LocalAgentRunManager:
     return LocalAgentRunManager(temp_db)
 
 
@@ -49,13 +56,21 @@ def sample_session(
 @pytest.fixture
 def monitor(
     agent_run_manager: LocalAgentRunManager,
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
 ) -> AgentLifecycleMonitor:
     return AgentLifecycleMonitor(
         agent_run_manager=agent_run_manager,
         db=temp_db,
         check_interval_seconds=1.0,
     )
+
+
+def test_idle_check_handler_receives_monitor_database(
+    monitor: AgentLifecycleMonitor,
+    temp_db: HubDatabase,
+) -> None:
+    """IdleCheckHandler uses the monitor DB instead of inferring storage internals."""
+    assert monitor._idle_check_handler.db is temp_db
 
 
 def _make_terminal_run(
@@ -89,6 +104,60 @@ def _make_terminal_run(
     stored_run = agent_run_manager.get(run.id)
     assert stored_run is not None
     return stored_run
+
+
+def _make_dispatched_stage_run(
+    *,
+    agent_run_manager: LocalAgentRunManager,
+    task_manager: LocalTaskManager,
+    temp_db: HubDatabase,
+    sample_project: dict,
+    parent_session_id: str,
+    child_session_id: str,
+    run_id: str,
+    tmux_session_name: str,
+    provider: str = "codex",
+) -> tuple[Any, AgentRun, TaskDispatchMutexManager]:
+    task = task_manager.create_task(
+        project_id=sample_project["id"],
+        title=f"Dispatched {run_id}",
+        claimed_by_session_id=child_session_id,
+    )
+    task_manager.stage_states.initialize_manifest(
+        task.id,
+        [StageManifestSpec(stage_name="development", position=0)],
+        by_session_id="dispatcher",
+    )
+    task_manager.stage_states.start_stage(
+        task.id,
+        "development",
+        by_session_id="dispatcher",
+    )
+
+    run = agent_run_manager.create(
+        parent_session_id=parent_session_id,
+        child_session_id=child_session_id,
+        claimed_session_id=child_session_id,
+        provider=provider,
+        prompt="test",
+        run_id=run_id,
+        task_id=task.id,
+    )
+    agent_run_manager.start(run.id)
+    agent_run_manager.update_runtime(run.id, tmux_session_name=tmux_session_name)
+    stored_run = agent_run_manager.get(run.id)
+    assert stored_run is not None
+
+    mutexes = TaskDispatchMutexManager(temp_db)
+    mutexes.ensure_table()
+    assert mutexes.acquire_mutex(
+        task.id,
+        holder="dispatcher",
+        kind="heartbeat",
+        ttl_seconds=600,
+        run_id=run.id,
+    )
+    return task, stored_run, mutexes
 
 
 def _make_autonomous_run(
@@ -136,6 +205,7 @@ class TestCheckDeadAgents:
             sample_session,
             run_id="run-dead",
             tmux_session_name="gobby-dead",
+            pid=999999,
         )
 
         with patch.object(monitor._tmux, "has_session", new_callable=AsyncMock, return_value=False):
@@ -241,7 +311,7 @@ class TestCheckDeadAgents:
         self,
         agent_run_manager: LocalAgentRunManager,
         sample_session: dict,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
         session_manager: SessionManager,
     ) -> None:
         """Worktrees are released when a dead agent is cleaned up."""
@@ -264,6 +334,7 @@ class TestCheckDeadAgents:
             run_id="run-wt",
             tmux_session_name="gobby-wt",
             child_session_id=child_session.id,
+            pid=999999,
         )
 
         with patch.object(mon._tmux, "has_session", new_callable=AsyncMock, return_value=False):
@@ -321,7 +392,7 @@ class TestCheckIdleAgents:
     def idle_monitor(
         self,
         agent_run_manager: LocalAgentRunManager,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
     ) -> AgentLifecycleMonitor:
         from gobby.config.tmux import TmuxConfig
 
@@ -468,7 +539,7 @@ class TestCheckIdleAgents:
     async def test_disabled_idle_check(
         self,
         agent_run_manager: LocalAgentRunManager,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
         sample_session: dict,
     ) -> None:
         """Idle check should be skipped when disabled."""
@@ -518,7 +589,7 @@ class TestCheckIdleAgents:
         agent_run_manager: LocalAgentRunManager,
         session_manager: SessionManager,
         sample_session: dict,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
     ) -> None:
         """Agent with recent session updated_at should be considered active,
         skipping pane pattern matching entirely."""
@@ -566,7 +637,7 @@ class TestCheckIdleAgents:
         agent_run_manager: LocalAgentRunManager,
         session_manager: SessionManager,
         sample_session: dict,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
     ) -> None:
         """Agent with stale session updated_at should fall through to pane detection."""
         import time
@@ -627,12 +698,99 @@ class TestCheckIdleAgents:
         mock_send.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_idle_step_workflow_agent_gets_actionable_handoff_reprompt(
+        self,
+        agent_run_manager: LocalAgentRunManager,
+        session_manager: SessionManager,
+        sample_session: dict,
+        temp_db: HubDatabase,
+    ) -> None:
+        """Idle step-workflow agents should get reprompted with current step context."""
+        import time
+        from datetime import UTC, datetime, timedelta
+
+        from gobby.config.tmux import TmuxConfig
+
+        config = TmuxConfig(
+            idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2
+        )
+        mon = AgentLifecycleMonitor(
+            agent_run_manager=agent_run_manager,
+            db=temp_db,
+            session_manager=session_manager,
+            check_interval_seconds=1.0,
+            tmux_config=config,
+        )
+        child = session_manager.register(
+            external_id="child-planner-step",
+            machine_id="machine-1",
+            source="codex",
+            project_id=sample_session.get("project_id"),
+        )
+        temp_db.execute(
+            "UPDATE sessions SET updated_at = ? WHERE id = ?",
+            ((datetime.now(UTC) - timedelta(seconds=120)).isoformat(), child.id),
+        )
+        LocalWorkflowDefinitionManager(temp_db).create(
+            name="planner-steps",
+            definition_json=json.dumps(
+                {
+                    "name": "planner-steps",
+                    "version": "1.0",
+                    "enabled": True,
+                    "steps": [
+                        {
+                            "name": "plan",
+                            "status_message": (
+                                'submit_for_review(stage_name="planning"), then end_agent_run'
+                            ),
+                        },
+                        {"name": "terminate"},
+                    ],
+                    "exit_condition": "current_step == 'terminate'",
+                }
+            ),
+            workflow_type="workflow",
+            enabled=True,
+        )
+        WorkflowInstanceManager(temp_db).save_instance(
+            WorkflowInstance(
+                id="wf-planner-step",
+                session_id=child.id,
+                workflow_name="planner-steps",
+                current_step="plan",
+            )
+        )
+        run = _make_terminal_run(
+            agent_run_manager,
+            sample_session,
+            run_id="run-planner-step-idle",
+            tmux_session_name="gobby-planner-step-idle",
+            child_session_id=child.id,
+        )
+        mon._idle_detector.get_state(run.id).first_idle_at = time.monotonic() - 120
+
+        with (
+            patch.object(mon._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
+            patch.object(
+                mon._tmux, "send_keys", new_callable=AsyncMock, return_value=True
+            ) as mock_send,
+        ):
+            handled = await mon.check_idle_agents()
+
+        assert handled == 1
+        prompt = mock_send.call_args.args[1]
+        assert "Workflow: planner-steps. Current step: plan." in prompt
+        assert 'submit_for_review(stage_name="planning")' in prompt
+        assert "end_agent_run" in prompt
+
+    @pytest.mark.asyncio
     async def test_naive_legacy_session_timestamp_is_treated_as_utc(
         self,
         agent_run_manager: LocalAgentRunManager,
         session_manager: SessionManager,
         sample_session: dict,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
     ) -> None:
         """Naive legacy updated_at values should not crash idle checks."""
         import time
@@ -690,7 +848,7 @@ class TestCheckIdleAgents:
         agent_run_manager: LocalAgentRunManager,
         session_manager: SessionManager,
         sample_session: dict,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
     ) -> None:
         """xhigh runs should stay active within the extended idle window."""
         import time
@@ -757,7 +915,7 @@ class TestCheckIdleAgents:
         agent_run_manager: LocalAgentRunManager,
         session_manager: SessionManager,
         sample_session: dict,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
     ) -> None:
         """Non-xhigh runs keep the base idle timeout."""
         import time
@@ -820,7 +978,7 @@ class TestCheckIdleAgents:
         agent_run_manager: LocalAgentRunManager,
         session_manager: SessionManager,
         sample_session: dict,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
     ) -> None:
         """xhigh runs still fail normally once the extended window expires."""
         from datetime import UTC, datetime, timedelta
@@ -880,7 +1038,7 @@ class TestCheckIdleAgents:
         agent_run_manager: LocalAgentRunManager,
         session_manager: SessionManager,
         sample_session: dict,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
     ) -> None:
         """Stale session should be treated as idle even when pane looks active."""
         import time
@@ -1102,6 +1260,7 @@ class TestCheckTrustPrompts:
             sample_session,
             run_id="run-cleanup",
             tmux_session_name="gobby-cleanup",
+            pid=999999,
         )
 
         # Pre-mark as dismissed
@@ -1176,7 +1335,7 @@ class TestCheckExpiredAgents:
         monitor: AgentLifecycleMonitor,
         agent_run_manager: LocalAgentRunManager,
         sample_session: dict,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
     ) -> None:
         """Expired agent is killed and marked as timed out."""
         run = agent_run_manager.create(
@@ -1201,7 +1360,11 @@ class TestCheckExpiredAgents:
 
         with (
             patch.object(monitor._tmux, "has_session", new_callable=AsyncMock, return_value=True),
-            patch("gobby.agents.lifecycle_monitor.kill_agent", new_callable=AsyncMock),
+            patch(
+                "gobby.agents.agent_health.kill_agent",
+                new_callable=AsyncMock,
+                return_value={"success": True},
+            ),
         ):
             cleaned = await monitor.check_unhealthy_agents()
 
@@ -1217,7 +1380,7 @@ class TestCheckExpiredAgents:
         monitor: AgentLifecycleMonitor,
         agent_run_manager: LocalAgentRunManager,
         sample_session: dict,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
         session_manager: SessionManager,
     ) -> None:
         """Timed-out agent runs expire their child session."""
@@ -1248,7 +1411,11 @@ class TestCheckExpiredAgents:
 
         with (
             patch.object(monitor._tmux, "has_session", new_callable=AsyncMock, return_value=True),
-            patch("gobby.agents.lifecycle_monitor.kill_agent", new_callable=AsyncMock),
+            patch(
+                "gobby.agents.agent_health.kill_agent",
+                new_callable=AsyncMock,
+                return_value={"success": True},
+            ),
         ):
             cleaned = await monitor.check_unhealthy_agents()
 
@@ -1264,7 +1431,7 @@ class TestCheckExpiredAgents:
         monitor: AgentLifecycleMonitor,
         agent_run_manager: LocalAgentRunManager,
         sample_session: dict,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
         session_manager: SessionManager,
     ) -> None:
         """Already-terminal agent runs expire sessions even if their panes remain alive."""
@@ -1297,11 +1464,183 @@ class TestCheckExpiredAgents:
         assert session_manager.get(child_session.id).status == "expired"
 
     @pytest.mark.asyncio
+    async def test_terminal_completed_run_closes_lingering_tmux_after_daemon_outage(
+        self,
+        monitor: AgentLifecycleMonitor,
+        agent_run_manager: LocalAgentRunManager,
+        sample_session: dict,
+        temp_db: HubDatabase,
+        session_manager: SessionManager,
+    ) -> None:
+        """Recovery closes tmux left behind after a successful end_agent_run outage."""
+        child_session = session_manager.register(
+            external_id="child-sess-completed-lingering-tmux",
+            machine_id="machine-1",
+            source="claude",
+            project_id=sample_session.get("project_id"),
+        )
+        run = agent_run_manager.create(
+            parent_session_id=sample_session["id"],
+            provider="claude",
+            prompt="test",
+            run_id="run-terminal-lingering-tmux",
+            child_session_id=child_session.id,
+        )
+        agent_run_manager.update_runtime(
+            run.id,
+            tmux_session_name="gobby-terminal-lingering-tmux",
+        )
+        completed_at = datetime.now(UTC).isoformat()
+        temp_db.execute(
+            """
+            UPDATE agent_runs
+            SET status = 'success', completed_at = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (completed_at, completed_at, run.id),
+        )
+
+        with patch.object(
+            monitor._tmux,
+            "kill_session",
+            new_callable=AsyncMock,
+            return_value=True,
+        ) as kill_session:
+            expired = await monitor.expire_terminal_run_sessions()
+
+        assert expired == 1
+        kill_session.assert_awaited_once_with(
+            "gobby-terminal-lingering-tmux",
+            missing_ok=True,
+        )
+        updated = agent_run_manager.get(run.id)
+        assert updated is not None
+        assert updated.status == "success"
+        assert updated.tmux_session_name is None
+        assert session_manager.get(child_session.id).status == "expired"
+
+    @pytest.mark.asyncio
+    async def test_terminal_error_run_recovers_in_progress_task_before_session_expiry(
+        self,
+        agent_run_manager: LocalAgentRunManager,
+        temp_db: HubDatabase,
+        session_manager: SessionManager,
+        sample_session: dict,
+        sample_project: dict,
+    ) -> None:
+        """Session-end terminal errors must recover claimed dispatch tasks."""
+        child = session_manager.register(
+            external_id="child-terminal-error-recovery",
+            machine_id="machine-1",
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        task_manager = LocalTaskManager(temp_db)
+        task, run, mutexes = _make_dispatched_stage_run(
+            agent_run_manager=agent_run_manager,
+            task_manager=task_manager,
+            temp_db=temp_db,
+            sample_project=sample_project,
+            parent_session_id=sample_session["id"],
+            child_session_id=child.id,
+            run_id="run-terminal-error-recovery",
+            tmux_session_name="gobby-terminal-error-recovery",
+        )
+        completed_at = datetime.now(UTC).isoformat()
+        temp_db.execute(
+            """
+            UPDATE agent_runs
+            SET status = 'error', error = ?, completed_at = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            ("agent session ended with incomplete workflow", completed_at, completed_at, run.id),
+        )
+        monitor = AgentLifecycleMonitor(
+            agent_run_manager=agent_run_manager,
+            db=temp_db,
+            session_manager=session_manager,
+            task_manager=task_manager,
+            check_interval_seconds=1.0,
+        )
+
+        with patch.object(monitor._tmux, "kill_session", new_callable=AsyncMock):
+            expired = await monitor.expire_terminal_run_sessions()
+
+        assert expired == 1
+        stage = task_manager.stage_states.get(task.id, "development")
+        assert stage is not None
+        assert stage.state == "ready"
+        assert mutexes.get_mutex(task.id) is None
+        recovered = task_manager.get_task(task.id)
+        assert recovered is not None
+        assert recovered.claimed_by_session_id is None
+        assert recovered.dispatch_failure_count == 1
+        assert session_manager.get(child.id).status == "expired"
+
+    @pytest.mark.asyncio
+    async def test_terminal_cancelled_run_cleans_claim_without_failing_stage(
+        self,
+        agent_run_manager: LocalAgentRunManager,
+        temp_db: HubDatabase,
+        session_manager: SessionManager,
+        sample_session: dict,
+        sample_project: dict,
+    ) -> None:
+        """Terminal cancelled sweeps release ownership without failing active work."""
+        child = session_manager.register(
+            external_id="child-terminal-cancel-recovery",
+            machine_id="machine-1",
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        task_manager = LocalTaskManager(temp_db)
+        task, run, mutexes = _make_dispatched_stage_run(
+            agent_run_manager=agent_run_manager,
+            task_manager=task_manager,
+            temp_db=temp_db,
+            sample_project=sample_project,
+            parent_session_id=sample_session["id"],
+            child_session_id=child.id,
+            run_id="run-terminal-cancel-recovery",
+            tmux_session_name="gobby-terminal-cancel-recovery",
+        )
+        completed_at = datetime.now(UTC).isoformat()
+        temp_db.execute(
+            """
+            UPDATE agent_runs
+            SET status = 'cancelled', terminal_reason = ?, completed_at = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            ("user_cancelled", completed_at, completed_at, run.id),
+        )
+        monitor = AgentLifecycleMonitor(
+            agent_run_manager=agent_run_manager,
+            db=temp_db,
+            session_manager=session_manager,
+            task_manager=task_manager,
+            check_interval_seconds=1.0,
+        )
+
+        with patch.object(monitor._tmux, "kill_session", new_callable=AsyncMock):
+            expired = await monitor.expire_terminal_run_sessions()
+
+        assert expired == 1
+        stage = task_manager.stage_states.get(task.id, "development")
+        assert stage is not None
+        assert stage.state == "in_progress"
+        assert mutexes.get_mutex(task.id) is None
+        recovered = task_manager.get_task(task.id)
+        assert recovered is not None
+        assert recovered.claimed_by_session_id is None
+        assert recovered.dispatch_failure_count in (None, 0)
+        assert session_manager.get(child.id).status == "expired"
+
+    @pytest.mark.asyncio
     async def test_expired_agent_releases_worktrees(
         self,
         agent_run_manager: LocalAgentRunManager,
         sample_session: dict,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
         session_manager: SessionManager,
     ) -> None:
         """Expired agent cleanup releases worktrees."""
@@ -1340,7 +1679,11 @@ class TestCheckExpiredAgents:
 
         with (
             patch.object(mon._tmux, "has_session", new_callable=AsyncMock, return_value=True),
-            patch("gobby.agents.lifecycle_monitor.kill_agent", new_callable=AsyncMock),
+            patch(
+                "gobby.agents.agent_health.kill_agent",
+                new_callable=AsyncMock,
+                return_value={"success": True},
+            ),
         ):
             await mon.check_unhealthy_agents()
 
@@ -1353,7 +1696,7 @@ class TestCheckExpiredAgents:
         self,
         agent_run_manager: LocalAgentRunManager,
         sample_session: dict,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
     ) -> None:
         """Expired agent cleanup releases clones."""
         mock_clone_storage = MagicMock()
@@ -1386,7 +1729,11 @@ class TestCheckExpiredAgents:
 
         with (
             patch.object(mon._tmux, "has_session", new_callable=AsyncMock, return_value=True),
-            patch("gobby.agents.lifecycle_monitor.kill_agent", new_callable=AsyncMock),
+            patch(
+                "gobby.agents.agent_health.kill_agent",
+                new_callable=AsyncMock,
+                return_value={"success": True},
+            ),
         ):
             await mon.check_unhealthy_agents()
 
@@ -1527,6 +1874,70 @@ class TestCheckProviderStallsKillsAgent:
         assert "rate limit" in (updated.error or "").lower()
 
     @pytest.mark.asyncio
+    async def test_provider_stall_resets_stage_and_releases_dispatch_mutex(
+        self,
+        agent_run_manager: LocalAgentRunManager,
+        temp_db: HubDatabase,
+        session_manager: SessionManager,
+        sample_session: dict,
+        sample_project: dict,
+    ) -> None:
+        """Provider stall recovery must not leave a task stage stuck in progress."""
+        child = session_manager.register(
+            external_id="child-provider-stall",
+            machine_id="machine-1",
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        task_manager = LocalTaskManager(temp_db)
+        task, run, mutexes = _make_dispatched_stage_run(
+            agent_run_manager=agent_run_manager,
+            task_manager=task_manager,
+            temp_db=temp_db,
+            sample_project=sample_project,
+            parent_session_id=sample_session["id"],
+            child_session_id=child.id,
+            run_id="run-stall-stage-reset",
+            tmux_session_name="gobby-stall-stage-reset",
+        )
+        monitor = AgentLifecycleMonitor(
+            agent_run_manager=agent_run_manager,
+            db=temp_db,
+            task_manager=task_manager,
+            check_interval_seconds=1.0,
+        )
+
+        with (
+            patch.object(
+                monitor._tmux,
+                "capture_pane",
+                new_callable=AsyncMock,
+                return_value="Provider connection timed out while starting\n",
+            ),
+            patch.object(
+                monitor._tmux,
+                "kill_session",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await monitor.check_provider_stalls()
+            state = monitor._stall_classifier._states.get(run.id)
+            assert state is not None
+            state.last_check_at = time.monotonic() - 35
+            stalled = await monitor.check_provider_stalls()
+
+        assert stalled == 1
+        stage = task_manager.stage_states.get(task.id, "development")
+        assert stage is not None
+        assert stage.state == "ready"
+        assert mutexes.get_mutex(task.id) is None
+        recovered = task_manager.get_task(task.id)
+        assert recovered.claimed_by_session_id is None
+        updated = agent_run_manager.get(run.id)
+        assert updated is not None
+        assert updated.status == "error"
+
+    @pytest.mark.asyncio
     async def test_stall_error_matches_provider_pattern(
         self,
         monitor: AgentLifecycleMonitor,
@@ -1629,6 +2040,65 @@ class TestCheckInitializationTimeout:
         assert updated.status == "error"
         assert "connection timed out" in (updated.error or "").lower()
         assert "never initialized" in (updated.error or "").lower()
+
+    @pytest.mark.asyncio
+    async def test_initialization_timeout_resets_stage_and_releases_dispatch_mutex(
+        self,
+        agent_run_manager: LocalAgentRunManager,
+        session_manager: SessionManager,
+        sample_session: dict,
+        sample_project: dict,
+        temp_db: HubDatabase,
+    ) -> None:
+        """Provider startup timeout must return the task to dispatchable state."""
+        child = session_manager.register(
+            external_id="child-init-timeout-stage",
+            machine_id="machine-1",
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        task_manager = LocalTaskManager(temp_db)
+        task, run, mutexes = _make_dispatched_stage_run(
+            agent_run_manager=agent_run_manager,
+            task_manager=task_manager,
+            temp_db=temp_db,
+            sample_project=sample_project,
+            parent_session_id=sample_session["id"],
+            child_session_id=child.id,
+            run_id="run-init-timeout-stage",
+            tmux_session_name="gobby-init-timeout-stage",
+        )
+
+        backdated = (datetime.now(UTC) - timedelta(seconds=200)).isoformat()
+        agent_run_manager.db.execute(
+            "UPDATE agent_runs SET started_at = ? WHERE id = ?",
+            (backdated, run.id),
+        )
+        monitor = AgentLifecycleMonitor(
+            agent_run_manager=agent_run_manager,
+            db=temp_db,
+            session_manager=session_manager,
+            task_manager=task_manager,
+            check_interval_seconds=1.0,
+        )
+
+        with patch.object(
+            monitor._tmux,
+            "kill_session",
+            new_callable=AsyncMock,
+        ):
+            killed = await monitor.check_initialization_timeout()
+
+        assert killed == 1
+        stage = task_manager.stage_states.get(task.id, "development")
+        assert stage is not None
+        assert stage.state == "ready"
+        assert mutexes.get_mutex(task.id) is None
+        recovered = task_manager.get_task(task.id)
+        assert recovered.claimed_by_session_id is None
+        updated = agent_run_manager.get(run.id)
+        assert updated is not None
+        assert updated.status == "error"
 
     @pytest.mark.asyncio
     async def test_skips_initialized_agent(
@@ -1964,7 +2434,7 @@ class TestRecoverTaskFromFailedAgent:
     async def test_no_task_manager_is_noop(
         self,
         agent_run_manager: LocalAgentRunManager,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
     ) -> None:
         """Without task_manager, recovery does nothing."""
         mon = AgentLifecycleMonitor(
@@ -1980,7 +2450,7 @@ class TestRecoverTaskFromFailedAgent:
     async def test_no_db_run_is_noop(
         self,
         agent_run_manager: LocalAgentRunManager,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
     ) -> None:
         """When DB run not found, recovery does nothing."""
         mock_task_manager = MagicMock()
@@ -2014,9 +2484,9 @@ async def test_lifecycle_monitor_db_paths_stay_on_bounded_executor(
     session_manager: SessionManager,
     sample_project: dict,
     sample_session: dict,
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
 ) -> None:
-    """Repeated lifecycle DB reads and task recovery do not grow SQLite handles."""
+    """Repeated lifecycle DB reads and task recovery do not grow PostgreSQL handles."""
     executor = DatabaseExecutor(max_workers=2, thread_name_prefix="lifecycle-db")
     task_manager = LocalTaskManager(temp_db)
     task = task_manager.create_task(
@@ -2045,8 +2515,12 @@ async def test_lifecycle_monitor_db_paths_stay_on_bounded_executor(
     )
     original_list_active = agent_run_manager.list_active
 
+    list_active_started = threading.Event()
+    release_list_active = threading.Event()
+
     def slow_list_active() -> list[AgentRun]:
-        time.sleep(0.02)
+        list_active_started.set()
+        release_list_active.wait(timeout=1)
         return original_list_active()
 
     try:
@@ -2054,11 +2528,21 @@ async def test_lifecycle_monitor_db_paths_stay_on_bounded_executor(
             patch.object(agent_run_manager, "list_active", side_effect=slow_list_active),
             patch.object(monitor._tmux, "send_keys", new=AsyncMock(return_value=True)),
         ):
-            await asyncio.gather(*(monitor.check_periodic_enters() for _ in range(20)))
+            async def run_checks() -> list[None]:
+                return await asyncio.gather(
+                    *(monitor.check_periodic_enters() for _ in range(20))
+                )
+
+            checks = asyncio.create_task(run_checks())
+            assert await asyncio.to_thread(list_active_started.wait, 1)
+            release_list_active.set()
+            await checks
 
         await monitor._recover_task_from_failed_agent(run.id)
 
-        assert temp_db.connection_count <= 1 + executor.max_workers
+        connection_count = getattr(temp_db, "connection_count", None)
+        if connection_count is not None:
+            assert connection_count <= 1 + executor.max_workers
     finally:
         executor.shutdown(wait=True)
 
@@ -2089,7 +2573,7 @@ class TestDeadAgentCompletionEvent:
         self,
         agent_run_manager: LocalAgentRunManager,
         sample_session: dict,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
     ) -> None:
         """Completion event is fired when a dead tmux agent is cleaned up."""
         mock_cr = MagicMock()
@@ -2105,6 +2589,7 @@ class TestDeadAgentCompletionEvent:
             sample_session,
             run_id="run-dead-cr",
             tmux_session_name="gobby-dead-cr",
+            pid=999999,
         )
 
         with patch.object(mon._tmux, "has_session", new_callable=AsyncMock, return_value=False):
@@ -2119,7 +2604,7 @@ class TestDeadAgentCompletionEvent:
         self,
         agent_run_manager: LocalAgentRunManager,
         sample_session: dict,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
     ) -> None:
         """Clones are released when a dead tmux agent with clone_id is cleaned up."""
         mock_clone_storage = MagicMock()
@@ -2136,6 +2621,7 @@ class TestDeadAgentCompletionEvent:
             run_id="run-dead-clone",
             tmux_session_name="gobby-dead-clone",
             clone_id="clone-789",
+            pid=999999,
         )
 
         with patch.object(mon._tmux, "has_session", new_callable=AsyncMock, return_value=False):
@@ -2179,7 +2665,7 @@ class TestSessionExpirationOnCleanup:
         self,
         agent_run_manager: LocalAgentRunManager,
         sample_session: dict,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
         session_manager: SessionManager,
     ) -> None:
         """Session is expired when a dead agent is cleaned up."""
@@ -2203,6 +2689,7 @@ class TestSessionExpirationOnCleanup:
             run_id="run-expire-sess",
             tmux_session_name="gobby-expire-sess",
             child_session_id=child_session.id,
+            pid=999999,
         )
 
         with patch.object(mon._tmux, "has_session", new_callable=AsyncMock, return_value=False):
@@ -2220,7 +2707,7 @@ class TestSessionExpirationOnCleanup:
         self,
         agent_run_manager: LocalAgentRunManager,
         sample_session: dict,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
     ) -> None:
         """Without session_manager, cleanup still succeeds but skips expiration."""
         mon = AgentLifecycleMonitor(
@@ -2234,6 +2721,7 @@ class TestSessionExpirationOnCleanup:
             sample_session,
             run_id="run-no-sm",
             tmux_session_name="gobby-no-sm",
+            pid=999999,
         )
 
         with patch.object(mon._tmux, "has_session", new_callable=AsyncMock, return_value=False):

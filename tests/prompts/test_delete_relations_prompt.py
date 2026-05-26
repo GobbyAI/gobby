@@ -6,8 +6,7 @@ import pytest
 
 from gobby.prompts.loader import PromptLoader
 from gobby.prompts.sync import sync_bundled_prompts
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
 
@@ -20,10 +19,9 @@ class TestDeleteRelationsPrompt:
     """Tests for memory/delete_relations prompt template."""
 
     @pytest.fixture
-    def loader(self, tmp_path) -> PromptLoader:
+    def loader(self, temp_db: HubDatabase) -> PromptLoader:
         """Create a DB-backed PromptLoader with bundled prompts synced."""
-        db = LocalDatabase(tmp_path / "test.db")
-        run_migrations(db)
+        db = temp_db
         sync_bundled_prompts(db)
         return PromptLoader(db=db)
 

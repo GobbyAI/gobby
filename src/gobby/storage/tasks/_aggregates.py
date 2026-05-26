@@ -2,7 +2,8 @@
 
 from typing import Any
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sql_dialect import newer_than_now_expr
 
 
 def _current_stage_join_sql(task_alias: str = "t", *, join_type: str = "LEFT JOIN") -> str:
@@ -45,7 +46,7 @@ def _not_closed_or_escalated_sql(task_alias: str = "t") -> str:
     return (
         f"{task_alias}.closed_at IS NULL "
         f"AND {task_alias}.escalated_at IS NULL "
-        f"AND COALESCE({task_alias}.is_escalated, 0) = 0"
+        f"AND COALESCE({task_alias}.is_escalated, FALSE) IS FALSE"
     )
 
 
@@ -77,7 +78,7 @@ def _no_external_blocker_sql(task_alias: str = "t") -> str:
 
 
 def count_tasks(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str | None = None,
     current_stage_state: str | None = None,
 ) -> int:
@@ -114,7 +115,7 @@ def count_tasks(
 
 
 def count_by_state(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str | None = None,
 ) -> dict[str, int]:
     """Count tasks grouped by canonical state bucket.
@@ -143,7 +144,7 @@ def count_by_state(
 
 
 def count_ready_tasks(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str | None = None,
 ) -> int:
     """Count tasks that are ready (open and not blocked).
@@ -185,7 +186,7 @@ def count_ready_tasks(
 
 
 def count_closed_since(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     hours: int = 24,
     project_id: str | None = None,
 ) -> int:
@@ -199,12 +200,11 @@ def count_closed_since(
     Returns:
         Count of recently closed tasks
     """
+    closed_recent_sql = newer_than_now_expr(db, "closed_at", "?", "hour")
     query = (
-        "SELECT COUNT(*) as count FROM tasks "
-        "WHERE closed_at IS NOT NULL "
-        "AND closed_at >= datetime('now', ?)"
+        f"SELECT COUNT(*) as count FROM tasks WHERE closed_at IS NOT NULL AND {closed_recent_sql}"
     )
-    params: list[Any] = [f"-{hours} hours"]
+    params: list[Any] = [hours]
 
     if project_id:
         query += " AND project_id = ?"
@@ -215,7 +215,7 @@ def count_closed_since(
 
 
 def count_blocked_tasks(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str | None = None,
 ) -> int:
     """Count tasks that are blocked by at least one external blocking dependency.
@@ -237,7 +237,7 @@ def count_blocked_tasks(
     WHERE t.closed_at IS NULL
     AND (
         t.escalated_at IS NOT NULL
-        OR COALESCE(t.is_escalated, 0) = 1
+        OR COALESCE(t.is_escalated, FALSE) IS TRUE
         OR {_external_blocker_exists_sql("t")}
     )
     """

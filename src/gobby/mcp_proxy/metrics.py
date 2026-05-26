@@ -5,7 +5,7 @@ from typing import Any
 
 from gobby.mcp_proxy.metrics_events import MetricsEventStore
 from gobby.mcp_proxy.metrics_store import ToolMetrics, ToolMetricsStore
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.telemetry.instruments import get_telemetry_metrics
 
 logger = logging.getLogger(__name__)
@@ -14,24 +14,31 @@ logger = logging.getLogger(__name__)
 DEFAULT_RETENTION_DAYS = 7
 
 
+def _date_value_to_string(value: Any) -> str:
+    """Normalize database DATE values across drivers."""
+    if hasattr(value, "isoformat"):
+        return str(value.isoformat())
+    return str(value)
+
+
 class ToolMetricsManager:
     """
     Manager for tracking tool call metrics.
 
     Refactored to a facade that dual-writes to OTel (for real-time observability)
-    and SQLite (for queryable analytics).
+    and hub database tables (for queryable analytics).
     """
 
     def __init__(
         self,
-        db: DatabaseProtocol,
+        db: HubDatabase,
         event_store: MetricsEventStore | None = None,
     ):
         """
         Initialize the metrics manager.
 
         Args:
-            db: LocalDatabase instance for persistence
+            db: Hub database adapter for persistence
             event_store: Optional MetricsEventStore for per-event recording
         """
         self.store = ToolMetricsStore(db)
@@ -49,9 +56,9 @@ class ToolMetricsManager:
     ) -> None:
         """
         Record a tool call with its metrics.
-        Triple-writes to: SQLite aggregate table, event log, and OTel.
+        Triple-writes to: hub aggregate table, event log, and OTel.
         """
-        # 1. SQLite aggregate persistence (backward compat)
+        # 1. Hub database aggregate persistence.
         try:
             self.store.record_call(
                 server_name=server_name,
@@ -61,7 +68,7 @@ class ToolMetricsManager:
                 success=success,
             )
         except Exception as e:
-            logger.error(f"Failed to record call to SQLite: {e}")
+            logger.error(f"Failed to record call to hub database: {e}")
 
         # 2. Event log (per-event with session_id)
         try:
@@ -230,7 +237,7 @@ class ToolMetricsManager:
                     "project_id": row["project_id"],
                     "server_name": row["server_name"],
                     "tool_name": row["tool_name"],
-                    "date": row["date"],
+                    "date": _date_value_to_string(row["date"]),
                     "call_count": call_count,
                     "success_count": row["success_count"],
                     "failure_count": row["failure_count"],

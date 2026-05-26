@@ -2,28 +2,20 @@
 
 from __future__ import annotations
 
-import re
-
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sql_dialect import table_column_names
 from gobby.storage.tasks._stage_state_rows import StageStateRows
 from gobby.storage.tasks._stage_utils import _now
 
-_SQLITE_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-
 
 class StageStateSchema:
-    def __init__(self, db: DatabaseProtocol, rows: StageStateRows) -> None:
+    def __init__(self, db: HubDatabase, rows: StageStateRows) -> None:
         self.db = db
         self.rows = rows
 
     def ensure_phase2_columns(self) -> None:
         columns = self.columns("task_stage_states")
-        table_sql = self.db.fetchone(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND name='task_stage_states'"
-        )
-        if "attempt_count" in columns or (
-            table_sql is not None and "needs_review" not in str(table_sql["sql"])
-        ):
+        if "attempt_count" in columns:
             self.rebuild_stage_states_table()
             return
         additions = {
@@ -91,7 +83,7 @@ class StageStateSchema:
                     max_review_rounds INTEGER,
                     artifact_refs TEXT,
                     notes TEXT,
-                    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY (task_id, stage_name)
                 )
                 """
@@ -153,9 +145,4 @@ class StageStateSchema:
             )
 
     def columns(self, table_name: str) -> set[str]:
-        if not _SQLITE_IDENTIFIER_RE.fullmatch(table_name):
-            raise ValueError(f"Invalid table name: {table_name!r}")
-        return {
-            row["name"]
-            for row in self.db.fetchall(f"PRAGMA table_info({table_name})")  # nosec B608
-        }
+        return table_column_names(self.db, table_name)

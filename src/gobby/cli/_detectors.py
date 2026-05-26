@@ -14,9 +14,19 @@ def _is_gemini_cli_installed() -> bool:
     return shutil.which("gemini") is not None
 
 
+def _is_grok_cli_installed() -> bool:
+    """Check if Grok CLI is installed."""
+    return shutil.which("grok") is not None
+
+
 def _is_qwen_cli_installed() -> bool:
     """Check if Qwen CLI is installed."""
     return shutil.which("qwen") is not None
+
+
+def _is_agy_cli_installed() -> bool:
+    """Check if AGY CLI is installed."""
+    return shutil.which("agy") is not None
 
 
 def _is_codex_cli_installed() -> bool:

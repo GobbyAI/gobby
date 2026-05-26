@@ -374,6 +374,9 @@ class FakeHookManager:
     def shutdown(self) -> None:
         pass
 
+    async def shutdown_async(self) -> None:
+        pass
+
 
 class TestStopSignalEndpoints:
     """Tests for stop signal HTTP endpoints."""
@@ -508,7 +511,7 @@ class TestStopSignalEndpoints:
         # Set hook_manager without stop_registry
         with TestClient(server.app) as client:
             # Overwrite after lifespan
-            mock_hm = MagicMock()
+            mock_hm = FakeHookManager()
             mock_hm._stop_registry = None
             client.app.state.hook_manager = mock_hm
 

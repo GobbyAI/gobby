@@ -2,24 +2,27 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.tasks._stage_registry import StageRegistryEntry, StageRegistryManager
 from gobby.storage.tasks._stage_types import StageManifestSpec, StageState, _coerce_artifact_refs
 
 VALID_STAGE_STATES = frozenset({"ready", "in_progress", "needs_review", "review_approved", "done"})
+_StageStateReader = HubDatabase | Transaction
 
 
-def row_value(row: Any, column: str) -> Any:
+def row_value(row: Mapping[str, Any], column: str) -> Any:
     try:
         return row[column]
     except (IndexError, KeyError):
         return None
 
 
-def state_from_row(row: Any, registry: StageRegistryManager | None = None) -> StageState:
+def state_from_row(
+    row: Mapping[str, Any], registry: StageRegistryManager | None = None
+) -> StageState:
     display_label = row_value(row, "display_label")
     category = row_value(row, "category")
     if (display_label is None or category is None) and registry is not None:
@@ -62,12 +65,18 @@ def validate_state_value(value: str) -> None:
 
 
 class StageStateRows:
-    def __init__(self, db: DatabaseProtocol, registry: StageRegistryManager) -> None:
+    def __init__(self, db: HubDatabase, registry: StageRegistryManager) -> None:
         self.db = db
         self.registry = registry
 
-    def list_for_task(self, task_id: str) -> list[StageState]:
-        rows = self.db.fetchall(
+    def list_for_task(
+        self,
+        task_id: str,
+        *,
+        reader: _StageStateReader | None = None,
+    ) -> list[StageState]:
+        active_reader = reader or self.db
+        rows = active_reader.execute(
             """
             SELECT *
               FROM task_stage_states
@@ -75,22 +84,35 @@ class StageStateRows:
              ORDER BY position, stage_name
             """,
             (task_id,),
-        )
+        ).fetchall()
         return [self.state_from_row(row) for row in rows]
 
-    def get(self, task_id: str, stage_name: str) -> StageState | None:
-        row = self.db.fetchone(
+    def get(
+        self,
+        task_id: str,
+        stage_name: str,
+        *,
+        reader: _StageStateReader | None = None,
+    ) -> StageState | None:
+        active_reader = reader or self.db
+        row = active_reader.execute(
             """
             SELECT *
               FROM task_stage_states
              WHERE task_id = ? AND stage_name = ?
             """,
             (task_id, stage_name),
-        )
+        ).fetchone()
         return self.state_from_row(row) if row is not None else None
 
-    def current_stage(self, task_id: str) -> StageState | None:
-        row = self.db.fetchone(
+    def current_stage(
+        self,
+        task_id: str,
+        *,
+        reader: _StageStateReader | None = None,
+    ) -> StageState | None:
+        active_reader = reader or self.db
+        row = active_reader.execute(
             """
             SELECT *
               FROM task_stage_states
@@ -99,7 +121,7 @@ class StageStateRows:
              LIMIT 1
             """,
             (task_id,),
-        )
+        ).fetchone()
         return self.state_from_row(row) if row is not None else None
 
     def list_tasks_at_stage(
@@ -130,7 +152,7 @@ class StageStateRows:
         )
         return [row["task_id"] for row in rows]
 
-    def state_from_row(self, row: Any) -> StageState:
+    def state_from_row(self, row: Mapping[str, Any]) -> StageState:
         return state_from_row(row, self.registry)
 
     def validate_specs(self, specs: Sequence[StageManifestSpec]) -> None:

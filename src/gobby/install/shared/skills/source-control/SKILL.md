@@ -32,10 +32,12 @@ Prefer staging specific files over `git add -A`.
 ### Step 2: Commit with Task ID
 
 ```bash
-git commit -m "[project-#N] type: description"
+git commit -m "[<project_name>-#<task_number>] <type>: <description>"
 ```
 
-Use the `project-#N` format (e.g., `[gobby-#123]`) — the hyphen before `#` is required.
+Use the real project name in the task reference (e.g., `[gobby-#123]` or
+`[gobby-cli-#123]`). `project_name` is a placeholder, never a literal prefix.
+The hyphen before `#` is required.
 
 ### Step 3: Task Transitions (close_task, review, validation)
 
@@ -46,7 +48,7 @@ memory review).
 ## Commit Message Format
 
 ```
-[<project>-#<N>] <type>: <description>
+[<project_name>-#<task_number>] <type>: <description>
 
 <optional body>
 ```

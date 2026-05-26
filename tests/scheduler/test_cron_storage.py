@@ -11,7 +11,7 @@ from gobby.storage.cron import CronJobStorage, compute_next_run
 from gobby.storage.cron_models import CronJob
 
 if TYPE_CHECKING:
-    from gobby.storage.database import LocalDatabase
+    from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
 
@@ -19,7 +19,7 @@ PROJECT_ID = "00000000-0000-0000-0000-000000000000"
 
 
 @pytest.fixture
-def cron_storage(temp_db: LocalDatabase) -> CronJobStorage:
+def cron_storage(temp_db: HubDatabase) -> CronJobStorage:
     """Create a CronJobStorage with the temp database."""
     return CronJobStorage(temp_db)
 
@@ -27,21 +27,33 @@ def cron_storage(temp_db: LocalDatabase) -> CronJobStorage:
 # --- Migration tests (#7620) ---
 
 
-def test_cron_jobs_table_exists(temp_db: LocalDatabase) -> None:
+def test_cron_jobs_table_exists(temp_db: HubDatabase) -> None:
     """Migration creates cron_jobs table."""
-    row = temp_db.fetchone("SELECT name FROM sqlite_master WHERE type='table' AND name='cron_jobs'")
+    row = temp_db.fetchone(
+        "SELECT table_name FROM information_schema.tables WHERE table_name = ?",
+        ("cron_jobs",),
+    )
     assert row is not None
 
 
-def test_cron_runs_table_exists(temp_db: LocalDatabase) -> None:
+def test_cron_runs_table_exists(temp_db: HubDatabase) -> None:
     """Migration creates cron_runs table."""
-    row = temp_db.fetchone("SELECT name FROM sqlite_master WHERE type='table' AND name='cron_runs'")
+    row = temp_db.fetchone(
+        "SELECT table_name FROM information_schema.tables WHERE table_name = ?",
+        ("cron_runs",),
+    )
     assert row is not None
 
 
-def test_cron_jobs_has_expected_columns(temp_db: LocalDatabase) -> None:
+def test_cron_jobs_has_expected_columns(temp_db: HubDatabase) -> None:
     """cron_jobs table has all required columns."""
-    columns = {row["name"] for row in temp_db.fetchall("PRAGMA table_info(cron_jobs)")}
+    columns = {
+        row["column_name"]
+        for row in temp_db.fetchall(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = ?",
+            ("cron_jobs",),
+        )
+    }
     expected = {
         "id",
         "project_id",
@@ -425,6 +437,36 @@ def test_count_running(cron_storage: CronJobStorage) -> None:
     assert cron_storage.count_running() == 0
     cron_storage.update_run(run.id, status="running")
     assert cron_storage.count_running() == 1
+
+
+def test_fail_running_runs_marks_only_active_rows_failed(
+    cron_storage: CronJobStorage,
+) -> None:
+    """fail_running_runs clears orphaned active rows without touching completed history."""
+    job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Fail Running Test",
+        schedule_type="cron",
+        action_type="shell",
+        action_config={"command": "echo"},
+        cron_expr="0 * * * *",
+    )
+    running = cron_storage.create_run(job.id)
+    completed = cron_storage.create_run(job.id)
+    cron_storage.update_run(running.id, status="running")
+    cron_storage.update_run(completed.id, status="completed")
+
+    failed = cron_storage.fail_running_runs("scheduler restarted")
+
+    assert failed == 1
+    refreshed_running = cron_storage.get_run(running.id)
+    refreshed_completed = cron_storage.get_run(completed.id)
+    assert refreshed_running is not None
+    assert refreshed_running.status == "failed"
+    assert refreshed_running.error == "scheduler restarted"
+    assert refreshed_running.completed_at is not None
+    assert refreshed_completed is not None
+    assert refreshed_completed.status == "completed"
 
 
 def test_has_running_run_is_scoped_to_job(cron_storage: CronJobStorage) -> None:

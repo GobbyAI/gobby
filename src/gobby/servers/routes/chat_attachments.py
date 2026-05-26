@@ -19,9 +19,10 @@ from fastapi.responses import FileResponse
 
 import gobby.storage.chat_attachments as chat_attachments
 from gobby.paths import get_gobby_home
+from gobby.servers.chat_attachment_files import unlink_stored_attachment_file
 from gobby.servers.chat_attachment_limits import resolve_chat_attachment_limits
 from gobby.storage.config_store import ConfigStore
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import PERSONAL_PROJECT_ID, LocalProjectManager
 
 if TYPE_CHECKING:
@@ -224,9 +225,7 @@ async def _validate_declared_mime(
 
 async def _remove_path(path: Path) -> bool:
     try:
-        await asyncio.to_thread(path.unlink)
-        return True
-    except FileNotFoundError:
+        await asyncio.to_thread(path.unlink, missing_ok=True)
         return True
     except OSError:
         logger.warning("Failed to remove chat attachment path %s", path, exc_info=True)
@@ -250,7 +249,7 @@ def _get_config_store(server: HTTPServer) -> ConfigStore:
 
 
 def _resolve_upload_project_id(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     requested_project_id: str | None,
     service_project_id: str | None,
 ) -> str:
@@ -414,7 +413,7 @@ def create_chat_attachments_router(server: HTTPServer) -> APIRouter:
         if record is None:
             raise HTTPException(status_code=404, detail="Attachment not found")
 
-        removed = await _remove_path(Path(record.local_path))
+        removed = await unlink_stored_attachment_file(record.local_path, record_id=record.id)
         return {"ok": removed}
 
     return router

@@ -519,7 +519,7 @@ class TestTranslateFromHookResponse:
             reason=(
                 "Rule enforced by Gobby: [require-task-creation-skill-loaded]\n"
                 "Task lifecycle tools require the task creation skill.\n"
-                'Call get_skill(name="task-creation") on gobby-skills, then continue.'
+                'Call get_skill(name="task-creation") on gobby-skills through mcp__gobby__ progressive discovery'
             ),
         )
         result = adapter.translate_from_hook_response(response, hook_type="pre-tool-use")
@@ -532,7 +532,7 @@ class TestTranslateFromHookResponse:
                 "permissionDecisionReason": (
                     "Gobby blocked [require-task-creation-skill-loaded]: "
                     "Task lifecycle tools require the task creation skill; "
-                    'Call get_skill(name="task-creation") on gobby-skills, then continue.'
+                    'Call get_skill(name="task-creation") on gobby-skills through mcp__gobby__ progressive discovery'
                 ),
             },
         }

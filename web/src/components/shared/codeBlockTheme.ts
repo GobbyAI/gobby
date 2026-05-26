@@ -7,7 +7,7 @@ import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/pris
  * Source of truth: this module exports the typed `{ dark, light }` OKLCH
  * pairs in `CODE_CHROME` and the matching `var(--…)` refs in
  * `CODE_CHROME_VARS`. The same values are mirrored as `--code-*` CSS
- * custom properties in `web/src/styles/index.css`, which lets consumers
+ * custom properties in `web/src/styles/tokens.css`, which lets consumers
  * read the theme-active variant via `var(--…)` and lets the browser
  * cascade pick the right one for the current `[data-theme]`.
  *

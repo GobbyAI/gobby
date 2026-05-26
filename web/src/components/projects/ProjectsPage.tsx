@@ -1,6 +1,7 @@
 import { useState, useMemo, useCallback } from "react";
 import { TabBar } from "../shared/TabBar";
 import { useProjects } from "../../hooks/useProjects";
+import type { ProjectUpdateFields } from "../../hooks/useProjects";
 import { useSourceControl } from "../../hooks/useSourceControl";
 import { CodeGraphExplorer } from "../code-graph/CodeGraphExplorer";
 import { ProjectSettings } from "./ProjectSettings";
@@ -62,7 +63,7 @@ export function ProjectsPage({ projectId }: ProjectsPageProps = {}) {
   const headingText = activeProject ? `Project: ${activeProject.display_name}` : "Projects";
 
   const handleSave = useCallback(
-    async (fields: Record<string, string | string[] | null>) => {
+    async (fields: ProjectUpdateFields) => {
       if (!activeProject) return false;
       return updateProject(activeProject.id, fields);
     },

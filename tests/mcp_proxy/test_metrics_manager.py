@@ -9,7 +9,7 @@ import pytest
 from gobby.mcp_proxy.metrics import ToolMetrics, ToolMetricsManager
 
 if TYPE_CHECKING:
-    from gobby.storage.database import LocalDatabase
+    from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
 
@@ -24,20 +24,20 @@ def mock_telemetry():
 
 
 @pytest.fixture
-def metrics_manager(temp_db: "LocalDatabase", mock_telemetry) -> ToolMetricsManager:
+def metrics_manager(temp_db: "HubDatabase", mock_telemetry) -> ToolMetricsManager:
     """Create a metrics manager with temp database."""
     # Create test projects for foreign key constraints
     temp_db.execute(
         """
         INSERT INTO projects (id, name, repo_path, created_at, updated_at)
-        VALUES (?, ?, ?, datetime('now'), datetime('now'))
+        VALUES (?, ?, ?, NOW(), NOW())
         """,
         ("proj-1", "Test Project 1", "/tmp/test1"),
     )
     temp_db.execute(
         """
         INSERT INTO projects (id, name, repo_path, created_at, updated_at)
-        VALUES (?, ?, ?, datetime('now'), datetime('now'))
+        VALUES (?, ?, ?, NOW(), NOW())
         """,
         ("proj-2", "Test Project 2", "/tmp/test2"),
     )
@@ -480,7 +480,7 @@ class TestCleanupOldMetrics:
     """Tests for cleanup_old_metrics method."""
 
     def test_cleanup_old_metrics(
-        self, metrics_manager: ToolMetricsManager, temp_db: "LocalDatabase"
+        self, metrics_manager: ToolMetricsManager, temp_db: "HubDatabase"
     ) -> None:
         """Test cleanup deletes old metrics."""
         # Insert a metric with old timestamp
@@ -558,7 +558,7 @@ class TestGetDailyMetrics:
         assert result["summary"]["total_days"] == 0
 
     def test_get_daily_metrics_with_filters(
-        self, metrics_manager: ToolMetricsManager, temp_db: "LocalDatabase"
+        self, metrics_manager: ToolMetricsManager, temp_db: "HubDatabase"
     ) -> None:
         """Test get_daily_metrics with filters."""
         # Insert daily metrics directly
@@ -568,7 +568,7 @@ class TestGetDailyMetrics:
                 project_id, server_name, tool_name, date,
                 call_count, success_count, failure_count,
                 total_latency_ms, avg_latency_ms, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
             """,
             ("proj-1", "server1", "tool1", "2024-01-01", 10, 8, 2, 1000.0, 100.0),
         )
@@ -578,7 +578,7 @@ class TestGetDailyMetrics:
                 project_id, server_name, tool_name, date,
                 call_count, success_count, failure_count,
                 total_latency_ms, avg_latency_ms, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
             """,
             ("proj-2", "server2", "tool2", "2024-01-02", 5, 5, 0, 500.0, 100.0),
         )

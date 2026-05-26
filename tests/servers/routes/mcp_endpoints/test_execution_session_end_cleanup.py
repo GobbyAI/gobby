@@ -6,6 +6,7 @@ import json
 import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from typing import TYPE_CHECKING, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -14,8 +15,7 @@ from gobby.hooks.event_handlers._session_end import SessionEndMixin
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.servers.routes.mcp.endpoints.execution import _set_context_for_request
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.utils.session_context import reset_seeded_contexts
@@ -23,6 +23,9 @@ from gobby.workflows.definitions import WorkflowInstance
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import WorkflowInstanceManager
+
+if TYPE_CHECKING:
+    from gobby.hooks.hook_manager import HookManager
 
 pytestmark = pytest.mark.unit
 
@@ -43,19 +46,17 @@ _PLAN_ADVERSARY_TERMINATE_WORKFLOW = {
 
 
 @pytest.fixture
-def db(tmp_path) -> LocalDatabase:
-    database = LocalDatabase(tmp_path / "test.db")
-    run_migrations(database)
+def db(hub_db: HubDatabase) -> HubDatabase:
+    database = hub_db
     database.execute(
         "INSERT INTO projects (id, name) VALUES (?, ?)",
         ("proj1", "test-project"),
     )
-    yield database
-    database.close()
+    return database
 
 
 def _insert_session(
-    db: LocalDatabase,
+    db: HubDatabase,
     *,
     session_id: str,
     external_id: str,
@@ -65,7 +66,7 @@ def _insert_session(
         """
         INSERT INTO sessions (
             id, external_id, machine_id, source, project_id, status, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, 'active', datetime('now'), datetime('now'))
+        ) VALUES (?, ?, ?, ?, ?, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         """,
         (session_id, external_id, "machine-1", "codex", project_id),
     )
@@ -122,7 +123,7 @@ def _make_session_end_event(session_id: str) -> HookEvent:
 )
 @pytest.mark.asyncio
 async def test_session_end_cleanup_unblocks_session_targeted_read_only_calls(
-    db: LocalDatabase,
+    db: HubDatabase,
     tool_name: str,
     expected_fragment: str,
 ) -> None:
@@ -171,7 +172,7 @@ async def test_session_end_cleanup_unblocks_session_targeted_read_only_calls(
     tool_proxy = ToolProxyService(
         mcp_manager=MagicMock(),
         validate_arguments=False,
-        hook_manager_resolver=lambda: hook_manager,
+        hook_manager_resolver=lambda: cast("HookManager", hook_manager),
     )
 
     server = MagicMock()

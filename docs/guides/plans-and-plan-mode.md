@@ -13,8 +13,13 @@ Plan records are durable database rows. They register a plan file, hash, kind,
 state, root task reference, and generated coverage manifest. They let Gobby
 validate that a plan maps to the tasks and files it is supposed to cover.
 
-Use plan mode to produce and approve a plan. Use plan records to track a plan
-artifact through validation, archival, review, and deletion.
+Use `/gobby plan` to produce and approve a plan artifact. It drafts and revises
+the Markdown file with the user, runs taskless adversarial review after user
+approval, records review history in the plan, and hands approved artifacts to
+`gobby build`.
+
+Use plan records to track a plan artifact through validation, archival, review,
+and deletion.
 
 ## Quick Start
 
@@ -50,7 +55,9 @@ Plan mode is enforced through workflow/rule state. In plan mode:
 
 - The agent may write the active plan artifact.
 - Unrelated file writes are blocked by `block-writes-outside-plan-artifact.yaml`.
-- `gobby-tasks` Task Management MCP calls remain allowed for organizing work.
+- `/gobby plan` does not create planning epics, review anchors, or per-round
+  review tasks. Task management calls remain available for other planning
+  workflows, but artifact-first planning keeps review state in the file.
 - User approval can exit plan mode and authorize execution.
 - The UI can show an approval bar for the active plan state.
 
@@ -62,6 +69,38 @@ src/gobby/install/shared/workflows/rules/plan-mode/block-writes-outside-plan-art
 
 Rule templates are not runtime rules by themselves. Installed DB rules are the
 source of truth after daemon startup and sync.
+
+## Artifact-First Review
+
+Taskless review uses `plan-adversary-taskless`. The parent session passes the
+plan path, round number, review cap, and parent session id. The adversary loads
+`plan-review`, returns structured findings or approval to the parent, and calls
+`end_agent_run`. It does not claim or mutate Gobby tasks.
+
+Every review round is recorded in the plan under:
+
+```markdown
+## V1 Plan Changelog
+`kind: verification`
+```
+
+Each round records reviewer run/session, verdict, findings, and resolution
+notes. Keep prior rounds for audit.
+
+Approved plans must carry `## M1 Task Manifest` and pass:
+
+```bash
+uv run gobby plans validate <plan-file> --mode expansion
+```
+
+Then hand off to build:
+
+```bash
+uv run gobby build <plan-file> --planning-seed-state approved --completed-plan-review-rounds <N>
+```
+
+`/gobby expand` remains available for operator expansion, debugging, and
+targeted reruns.
 
 ## Plan Records
 

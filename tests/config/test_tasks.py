@@ -91,13 +91,15 @@ class TestCompactHandoffConfigDefaults:
 
         config = CompactHandoffConfig()
         assert config.enabled is True
+        assert config.refresh_timeout_seconds == 180.0
 
     def test_disabled_handoff(self) -> None:
         """Test CompactHandoffConfig with disabled handoff."""
         from gobby.config.tasks import CompactHandoffConfig
 
-        config = CompactHandoffConfig(enabled=False)
+        config = CompactHandoffConfig(enabled=False, refresh_timeout_seconds=45.0)
         assert config.enabled is False
+        assert config.refresh_timeout_seconds == 45.0
 
 
 # =============================================================================

@@ -8,17 +8,21 @@ Handles configuring/removing MCP server entries in JSON and TOML config files.
 import json
 import logging
 import re
-import sqlite3
 import sys
 import time
 from pathlib import Path
 from shutil import copy2
 from typing import Any, cast
 
+import psycopg
+
 from gobby.config.mcp import DEFAULT_MCP_CONFIG_PATH, migrate_legacy_mcp_config
 from gobby.mcp_proxy.bundled import DEFAULT_EXTERNAL_MCP_SERVERS
 
 logger = logging.getLogger(__name__)
+
+_GOBBY_MCP_COMMAND = "gobby"
+_GOBBY_MCP_ARGS = ["mcp-server"]
 
 
 def _remove_toml_table_block(existing_text: str, *, table_prefix: str) -> str:
@@ -65,6 +69,76 @@ def _remove_toml_table_block(existing_text: str, *, table_prefix: str) -> str:
     return "".join(rebuilt)
 
 
+def _command_basename(command: Any) -> str | None:
+    if not isinstance(command, str):
+        return None
+    normalized = command.replace("\\", "/").rstrip("/")
+    if not normalized:
+        return None
+    return normalized.rsplit("/", maxsplit=1)[-1]
+
+
+def _toml_string_list(value: Any) -> list[str] | None:
+    if isinstance(value, str):
+        return None
+    try:
+        return [str(item) for item in value]
+    except TypeError:
+        return None
+
+
+def _is_current_gobby_mcp_server_config(server_config: Any) -> bool:
+    args = _toml_string_list(server_config.get("args"))
+    return _command_basename(server_config.get("command")) == _GOBBY_MCP_COMMAND and args == [
+        *_GOBBY_MCP_ARGS
+    ]
+
+
+def _is_repairable_stale_gobby_mcp_server_config(server_config: Any) -> bool:
+    if _command_basename(server_config.get("command")) != "uv":
+        return False
+
+    args = _toml_string_list(server_config.get("args"))
+    if not args or len(args) < 3:
+        return False
+    if args[0] != "run" or args[-2:] != [_GOBBY_MCP_COMMAND, *_GOBBY_MCP_ARGS]:
+        return False
+
+    middle = args[1:-2]
+    return middle == [] or (len(middle) == 2 and middle[0] == "--directory")
+
+
+def _repair_stale_gobby_mcp_server_toml(
+    existing_text: str,
+    *,
+    server_name: str,
+) -> tuple[str | None, str | None]:
+    """Return updated TOML text for known stale Gobby MCP entries."""
+    import tomlkit
+
+    try:
+        config = tomlkit.parse(existing_text)
+    except tomlkit.exceptions.ParseError as e:
+        return None, f"Failed to parse TOML {server_name} MCP config: {e}"
+
+    mcp_servers = config.get("mcp_servers")
+    if not hasattr(mcp_servers, "get"):
+        return None, None
+
+    server_config = cast(Any, mcp_servers).get(server_name)
+    if not hasattr(server_config, "get"):
+        return None, None
+
+    if _is_current_gobby_mcp_server_config(server_config):
+        return None, None
+    if not _is_repairable_stale_gobby_mcp_server_config(server_config):
+        return None, None
+
+    server_config["command"] = _GOBBY_MCP_COMMAND
+    server_config["args"] = [*_GOBBY_MCP_ARGS]
+    return tomlkit.dumps(config), None
+
+
 def configure_project_mcp_server(project_path: Path, server_name: str = "gobby") -> dict[str, Any]:
     """Add Gobby MCP server to project-specific config in ~/.claude.json.
 
@@ -87,6 +161,7 @@ def configure_project_mcp_server(project_path: Path, server_name: str = "gobby")
     result: dict[str, Any] = {
         "success": False,
         "added": False,
+        "updated": False,
         "already_configured": False,
         "backup_path": None,
         "error": None,
@@ -124,6 +199,33 @@ def configure_project_mcp_server(project_path: Path, server_name: str = "gobby")
 
     # Check if already configured
     if server_name in project_settings["mcpServers"]:
+        server_config = project_settings["mcpServers"][server_name]
+        if isinstance(server_config, dict) and _is_repairable_stale_gobby_mcp_server_config(
+            server_config
+        ):
+            if settings_path.exists():
+                timestamp = int(time.time())
+                backup_path = settings_path.parent / f".claude.json.{timestamp}.backup"
+                try:
+                    copy2(settings_path, backup_path)
+                    result["backup_path"] = str(backup_path)
+                except OSError as e:
+                    result["error"] = f"Failed to create backup: {e}"
+                    return result
+
+            server_config["command"] = _GOBBY_MCP_COMMAND
+            server_config["args"] = [*_GOBBY_MCP_ARGS]
+            try:
+                with open(settings_path, "w") as f:
+                    json.dump(existing_settings, f, indent=2)
+            except OSError as e:
+                result["error"] = f"Failed to write {settings_path}: {e}"
+                return result
+
+            result["success"] = True
+            result["updated"] = True
+            return result
+
         result["success"] = True
         result["already_configured"] = True
         return result
@@ -142,8 +244,8 @@ def configure_project_mcp_server(project_path: Path, server_name: str = "gobby")
     # Add gobby MCP server config
     project_settings["mcpServers"][server_name] = {
         "type": "stdio",
-        "command": "uv",
-        "args": ["run", "gobby", "mcp-server"],
+        "command": _GOBBY_MCP_COMMAND,
+        "args": [*_GOBBY_MCP_ARGS],
     }
 
     # Write updated settings
@@ -271,16 +373,25 @@ def configure_mcp_server_json(
 
     # Check if already configured. Existing callers preserve the historical
     # "presence means configured" behavior; callers that pass extra fields can
-    # ask us to merge those fields into an existing server.
+    # ask us to merge those fields into an existing server. Known stale
+    # `uv run ... gobby mcp-server` entries are repaired because they can launch
+    # the stdio wrapper from the wrong project context.
     if "mcpServers" in existing_settings and server_name in existing_settings["mcpServers"]:
         server_config = existing_settings["mcpServers"][server_name]
-        if extra_server_fields and isinstance(server_config, dict):
-            missing_or_different = {
-                key: value
-                for key, value in extra_server_fields.items()
-                if server_config.get(key) != value
-            }
-            if missing_or_different:
+        if isinstance(server_config, dict):
+            updates: dict[str, Any] = {}
+            if _is_repairable_stale_gobby_mcp_server_config(server_config):
+                updates["command"] = _GOBBY_MCP_COMMAND
+                updates["args"] = [*_GOBBY_MCP_ARGS]
+            if extra_server_fields:
+                updates.update(
+                    {
+                        key: value
+                        for key, value in extra_server_fields.items()
+                        if server_config.get(key) != value
+                    }
+                )
+            if updates:
                 if settings_path.exists():
                     timestamp = int(time.time())
                     backup_path = settings_path.parent / f"{settings_path.name}.{timestamp}.backup"
@@ -291,7 +402,7 @@ def configure_mcp_server_json(
                         result["error"] = f"Failed to create backup: {e}"
                         return result
 
-                server_config.update(missing_or_different)
+                server_config.update(updates)
                 try:
                     with open(settings_path, "w") as f:
                         json.dump(existing_settings, f, indent=2)
@@ -329,15 +440,15 @@ def configure_mcp_server_json(
     if Path(gobby_bin).exists():
         server_config = {
             "command": gobby_bin,
-            "args": ["mcp-server"],
+            "args": [*_GOBBY_MCP_ARGS],
         }
         if extra_server_fields:
             server_config.update(extra_server_fields)
         existing_settings["mcpServers"][server_name] = server_config
     else:
         server_config = {
-            "command": "gobby",
-            "args": ["mcp-server"],
+            "command": _GOBBY_MCP_COMMAND,
+            "args": [*_GOBBY_MCP_ARGS],
         }
         if extra_server_fields:
             server_config.update(extra_server_fields)
@@ -437,6 +548,7 @@ def configure_mcp_server_toml(config_path: Path, server_name: str = "gobby") -> 
     result: dict[str, Any] = {
         "success": False,
         "added": False,
+        "updated": False,
         "already_configured": False,
         "backup_path": None,
         "error": None,
@@ -457,6 +569,33 @@ def configure_mcp_server_toml(config_path: Path, server_name: str = "gobby") -> 
     # Check if already configured
     pattern = re.compile(rf"^\s*\[mcp_servers\.{re.escape(server_name)}\]", re.MULTILINE)
     if pattern.search(existing):
+        updated, repair_error = _repair_stale_gobby_mcp_server_toml(
+            existing,
+            server_name=server_name,
+        )
+        if repair_error:
+            result["error"] = repair_error
+            return result
+        if updated is not None:
+            timestamp = int(time.time())
+            backup_path = config_path.with_suffix(f".toml.{timestamp}.backup")
+            try:
+                backup_path.write_text(existing, encoding="utf-8")
+                result["backup_path"] = str(backup_path)
+            except OSError as e:
+                result["error"] = f"Failed to create backup: {e}"
+                return result
+
+            try:
+                config_path.write_text(updated, encoding="utf-8")
+            except OSError as e:
+                result["error"] = f"Failed to write {config_path}: {e}"
+                return result
+
+            result["success"] = True
+            result["updated"] = True
+            return result
+
         result["success"] = True
         result["already_configured"] = True
         return result
@@ -472,12 +611,12 @@ def configure_mcp_server_toml(config_path: Path, server_name: str = "gobby") -> 
             result["error"] = f"Failed to create backup: {e}"
             return result
 
-    # Add MCP server config
-    # Use 'uv run gobby' since most users won't have gobby installed globally
+    # Add MCP server config. Codex should launch gobby from the caller's project
+    # environment so the stdio wrapper can derive the correct project scope.
     mcp_config = f"""
 [mcp_servers.{server_name}]
-command = "uv"
-args = ["run", "gobby", "mcp-server"]
+command = "{_GOBBY_MCP_COMMAND}"
+args = ["mcp-server"]
 """
     updated = (existing.rstrip() + "\n" if existing.strip() else "") + mcp_config
 
@@ -728,11 +867,13 @@ def install_default_mcp_servers() -> dict[str, Any]:
             for secret_name, extra_args in optional_secret_args.items():
                 if secret_store is None and not secret_store_init_failed:
                     try:
-                        from gobby.storage.database import LocalDatabase
+                        from gobby.storage.hub.runtime import open_runtime_hub_database
                         from gobby.storage.secrets import SecretStore
 
-                        secret_store = SecretStore(LocalDatabase())
-                    except (ImportError, OSError, sqlite3.Error) as exc:
+                        secret_store = SecretStore(
+                            open_runtime_hub_database(apply_migrations=False)
+                        )
+                    except (ImportError, OSError, RuntimeError, psycopg.Error) as exc:
                         secret_store_init_failed = True
                         logger.warning(
                             "Failed to initialize secret store for optional MCP args: %s",
@@ -750,7 +891,7 @@ def install_default_mcp_servers() -> dict[str, Any]:
                             secret_value = secret_store.get(secret_name)
                             if secret_value:
                                 args.extend(extra_args + [secret_value])
-                    except (OSError, sqlite3.Error) as exc:
+                    except (OSError, RuntimeError, psycopg.Error) as exc:
                         logger.warning(
                             "Failed to read optional MCP secret %s: %s",
                             secret_name,
@@ -792,16 +933,19 @@ def install_default_mcp_servers() -> dict[str, Any]:
 
     # Sync .mcp.json to database so the daemon proxy can serve them
     try:
-        from gobby.storage.database import LocalDatabase
+        from gobby.storage.hub.runtime import open_runtime_hub_database
         from gobby.storage.mcp import LocalMCPManager
         from gobby.storage.projects import GLOBAL_PROJECT_ID
 
-        db = LocalDatabase()
-        mcp_db = LocalMCPManager(db)
-        imported = mcp_db.import_from_mcp_json(mcp_config_path, project_id=GLOBAL_PROJECT_ID)
-        mcp_db.normalize_bundled_servers()
-        if imported:
-            logger.info(f"Synced {imported} MCP servers to database")
+        db = open_runtime_hub_database(apply_migrations=False)
+        try:
+            mcp_db = LocalMCPManager(db)
+            imported = mcp_db.import_from_mcp_json(mcp_config_path, project_id=GLOBAL_PROJECT_ID)
+            mcp_db.normalize_bundled_servers()
+            if imported:
+                logger.info(f"Synced {imported} MCP servers to database")
+        finally:
+            db.close()
     except Exception as e:
         logger.warning(f"Failed to sync MCP servers to database: {e}")
 

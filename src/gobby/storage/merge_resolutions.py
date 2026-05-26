@@ -5,14 +5,15 @@ Stores merge resolutions and conflicts for worktree merge operations.
 """
 
 import logging
-import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
-from gobby.storage.database import DatabaseProtocol
+import psycopg
+
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.id import generate_prefixed_id
 
 logger = logging.getLogger(__name__)
@@ -41,7 +42,7 @@ class MergeResolution:
     updated_at: str
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row) -> "MergeResolution":
+    def from_row(cls, row: Mapping[str, Any]) -> "MergeResolution":
         """Create a MergeResolution from a database row."""
         return cls(
             id=row["id"],
@@ -83,7 +84,7 @@ class MergeConflict:
     updated_at: str
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row) -> "MergeConflict":
+    def from_row(cls, row: Mapping[str, Any]) -> "MergeConflict":
         """Create a MergeConflict from a database row."""
         return cls(
             id=row["id"],
@@ -97,25 +98,42 @@ class MergeConflict:
             updated_at=row["updated_at"],
         )
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self, *, include_content: bool = True) -> dict[str, Any]:
         """Convert conflict to dictionary for serialization."""
-        return {
+        data: dict[str, Any] = {
             "id": self.id,
             "resolution_id": self.resolution_id,
             "file_path": self.file_path,
             "status": self.status,
-            "ours_content": self.ours_content,
-            "theirs_content": self.theirs_content,
-            "resolved_content": self.resolved_content,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
+        if include_content:
+            data.update(
+                {
+                    "ours_content": self.ours_content,
+                    "theirs_content": self.theirs_content,
+                    "resolved_content": self.resolved_content,
+                }
+            )
+        else:
+            data.update(
+                {
+                    "has_ours_content": self.ours_content is not None,
+                    "has_theirs_content": self.theirs_content is not None,
+                    "has_resolved_content": self.resolved_content is not None,
+                    "ours_content_length": len(self.ours_content or ""),
+                    "theirs_content_length": len(self.theirs_content or ""),
+                    "resolved_content_length": len(self.resolved_content or ""),
+                }
+            )
+        return data
 
 
 class MergeResolutionManager:
-    """Manages merge resolutions and conflicts in local SQLite database."""
+    """Manages merge resolutions and conflicts in the hub database."""
 
-    def __init__(self, db: DatabaseProtocol):
+    def __init__(self, db: HubDatabase):
         self.db = db
         self._change_listeners: list[Callable[[], Any]] = []
 
@@ -185,6 +203,67 @@ class MergeResolutionManager:
                 f"Failed to retrieve resolution '{resolution_id}' after successful insert"
             )
         return result
+
+    def get_resolution_for_merge(
+        self,
+        worktree_id: str,
+        source_branch: str,
+        target_branch: str,
+    ) -> MergeResolution | None:
+        """Get the newest resolution for an exact merge request."""
+        row = self.db.fetchone(
+            """
+            SELECT * FROM merge_resolutions
+            WHERE worktree_id = ? AND source_branch = ? AND target_branch = ?
+            ORDER BY created_at DESC, updated_at DESC
+            LIMIT 1
+            """,
+            (worktree_id, source_branch, target_branch),
+        )
+        return MergeResolution.from_row(row) if row else None
+
+    def get_or_create_resolution(
+        self,
+        worktree_id: str,
+        source_branch: str,
+        target_branch: str,
+        status: str = "pending",
+        tier_used: str | None = None,
+    ) -> tuple[MergeResolution, bool]:
+        """Return an exact existing resolution or create a new one.
+
+        Returns:
+            A tuple of ``(resolution, created)``. Duplicate insert races are
+            treated as reuse only when the existing row is an exact merge match.
+        """
+        existing = self.get_resolution_for_merge(
+            worktree_id=worktree_id,
+            source_branch=source_branch,
+            target_branch=target_branch,
+        )
+        if existing:
+            return existing, False
+
+        try:
+            return (
+                self.create_resolution(
+                    worktree_id=worktree_id,
+                    source_branch=source_branch,
+                    target_branch=target_branch,
+                    status=status,
+                    tier_used=tier_used,
+                ),
+                True,
+            )
+        except psycopg.IntegrityError:
+            existing = self.get_resolution_for_merge(
+                worktree_id=worktree_id,
+                source_branch=source_branch,
+                target_branch=target_branch,
+            )
+            if existing:
+                return existing, False
+            raise
 
     def get_resolution(self, resolution_id: str) -> MergeResolution | None:
         """Get a resolution by ID.
@@ -375,6 +454,9 @@ class MergeResolutionManager:
         conflict_id: str,
         status: str | None = None,
         resolved_content: str | None = None,
+        *,
+        ours_content: str | None = None,
+        theirs_content: str | None = None,
     ) -> MergeConflict | None:
         """Update a conflict.
 
@@ -382,6 +464,8 @@ class MergeResolutionManager:
             conflict_id: The conflict ID
             status: New status (optional)
             resolved_content: Resolved content (optional)
+            ours_content: Our-side conflict content (optional)
+            theirs_content: Their-side conflict content (optional)
 
         Returns:
             The updated MergeConflict if found, None otherwise
@@ -392,6 +476,8 @@ class MergeResolutionManager:
 
         now = datetime.now(UTC).isoformat()
         new_status = status if status is not None else conflict.status
+        new_ours = ours_content if ours_content is not None else conflict.ours_content
+        new_theirs = theirs_content if theirs_content is not None else conflict.theirs_content
         new_resolved = (
             resolved_content if resolved_content is not None else conflict.resolved_content
         )
@@ -400,10 +486,11 @@ class MergeResolutionManager:
             conn.execute(
                 """
                 UPDATE merge_conflicts
-                SET status = ?, resolved_content = ?, updated_at = ?
+                SET status = ?, ours_content = ?, theirs_content = ?, resolved_content = ?,
+                    updated_at = ?
                 WHERE id = ?
                 """,
-                (new_status, new_resolved, now, conflict_id),
+                (new_status, new_ours, new_theirs, new_resolved, now, conflict_id),
             )
 
         self._notify_listeners()
@@ -500,6 +587,19 @@ class MergeResolutionManager:
                 LIMIT 1
                 """
             )
+        return MergeResolution.from_row(row) if row else None
+
+    def get_latest_resolution(self, worktree_id: str) -> MergeResolution | None:
+        """Get the most recently updated merge resolution for a worktree."""
+        row = self.db.fetchone(
+            """
+            SELECT * FROM merge_resolutions
+            WHERE worktree_id = ?
+            ORDER BY updated_at DESC, created_at DESC
+            LIMIT 1
+            """,
+            (worktree_id,),
+        )
         return MergeResolution.from_row(row) if row else None
 
     def get_conflict_by_path(

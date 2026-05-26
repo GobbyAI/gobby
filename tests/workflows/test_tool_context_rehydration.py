@@ -8,8 +8,7 @@ from typing import Any
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.git_utils import DirtyFiles
 from gobby.workflows.hooks import WorkflowHookHandler
@@ -32,9 +31,8 @@ PROGRESSIVE_DISCOVERY_RULES = {
 
 
 @pytest.fixture
-def db(tmp_path) -> LocalDatabase:
-    database = LocalDatabase(tmp_path / "test_tool_context_rehydration.db")
-    run_migrations(database)
+def db(temp_db: HubDatabase) -> HubDatabase:
+    database = temp_db
     return database
 
 
@@ -47,13 +45,13 @@ def clean_dirty_files(monkeypatch) -> None:
 
 
 @pytest.fixture
-def handler(db: LocalDatabase) -> WorkflowHookHandler:
+def handler(db: HubDatabase) -> WorkflowHookHandler:
     sync_bundled_rules(db, get_bundled_rules_path())
     db.execute("UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'")
-    db.execute("UPDATE workflow_definitions SET enabled = 0 WHERE workflow_type = 'rule'")
+    db.execute("UPDATE workflow_definitions SET enabled = FALSE WHERE workflow_type = 'rule'")
     for name in PROGRESSIVE_DISCOVERY_RULES:
         db.execute(
-            "UPDATE workflow_definitions SET enabled = 1 WHERE name = ?",
+            "UPDATE workflow_definitions SET enabled = TRUE WHERE name = ?",
             (name,),
         )
 
@@ -87,6 +85,59 @@ def _call_arguments(mcp_tool: str) -> dict[str, Any]:
     return {"task_id": "#1", "description": "updated"}
 
 
+def test_pending_tool_context_matches_direct_proxy_event(
+    handler: WorkflowHookHandler,
+) -> None:
+    """The MCP proxy can identify a CLI PreToolUse it is about to re-enter."""
+    before_data = {
+        "tool_name": "mcp__gobby__call_tool",
+        "tool_input": {
+            "server_name": "gobby-merge",
+            "tool_name": "merge_resolve",
+            "arguments": '{"conflict_id": "mc-one", "use_ai": true}',
+        },
+        "tool_use_id": "toolu-test",
+    }
+    proxy_data = {
+        "tool_name": "mcp__gobby__call_tool",
+        "tool_input": {
+            "server_name": "gobby-merge",
+            "tool_name": "merge_resolve",
+            "arguments": {"conflict_id": "mc-one", "use_ai": True},
+        },
+    }
+    other_data = {
+        "tool_name": "mcp__gobby__call_tool",
+        "tool_input": {
+            "server_name": "gobby-merge",
+            "tool_name": "merge_resolve",
+            "arguments": {"conflict_id": "mc-two", "use_ai": True},
+        },
+    }
+
+    handler._remember_tool_context(SessionSource.CLAUDE, PLATFORM_SESSION_ID, before_data)
+
+    assert handler.has_pending_tool_context(
+        SessionSource.CLAUDE,
+        PLATFORM_SESSION_ID,
+        proxy_data,
+    )
+    assert not handler.has_pending_tool_context(
+        SessionSource.CLAUDE,
+        PLATFORM_SESSION_ID,
+        other_data,
+    )
+
+    snapshot = handler._match_tool_context(SessionSource.CLAUDE, PLATFORM_SESSION_ID, before_data)
+    assert snapshot is not None
+    handler._forget_tool_context(SessionSource.CLAUDE, PLATFORM_SESSION_ID, snapshot)
+    assert not handler.has_pending_tool_context(
+        SessionSource.CLAUDE,
+        PLATFORM_SESSION_ID,
+        proxy_data,
+    )
+
+
 @pytest.mark.parametrize(
     ("mcp_tool", "schema_input"),
     [
@@ -111,7 +162,7 @@ def _call_arguments(mcp_tool: str) -> dict[str, Any]:
 @pytest.mark.asyncio
 async def test_cli_after_tool_rehydrates_schema_lookup_context(
     handler: WorkflowHookHandler,
-    db: LocalDatabase,
+    db: HubDatabase,
     mcp_tool: str,
     schema_input: dict[str, Any],
     source: SessionSource,

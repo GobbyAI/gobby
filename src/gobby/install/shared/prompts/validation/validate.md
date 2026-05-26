@@ -26,6 +26,12 @@ variables:
 ---
 Validate if the following changes satisfy the requirements.
 
+You are validating completion, not explaining around gaps. Return `invalid` if any
+acceptance criterion is unmet, any required command/lint/type/test gate is missing or
+failing, or required evidence is absent. Do not return `valid` while describing a
+failed criterion, non-clean mypy/ruff/test result, missing verification, or errors
+that prevented a required gate from passing.
+
 Task: {{ title }}
 {{ category_section }}{{ criteria_text }}
 

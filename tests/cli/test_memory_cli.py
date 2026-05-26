@@ -374,6 +374,95 @@ class TestMemoryStatsCommand:
         assert "Total Memories: 0" in result.output
 
 
+class TestMemoryReconcileCommand:
+    """Tests for gobby memory reconcile command."""
+
+    @pytest.fixture
+    def runner(self) -> CliRunner:
+        """Create a CLI test runner."""
+        return CliRunner()
+
+    @patch("gobby.cli.memory._get_daemon_client")
+    def test_reconcile_uses_hub_memory_count_label(
+        self,
+        mock_get_daemon_client: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        """Reconcile output should describe the hub as the memory source."""
+        response = MagicMock()
+        response.json.return_value = {
+            "storage_count": 7,
+            "qdrant": {"orphans_found": 1, "orphans_deleted": 0},
+            "falkordb": {
+                "orphan_memories_found": 2,
+                "orphan_memories_deleted": 0,
+                "orphan_entities_deleted": 0,
+            },
+        }
+        client = MagicMock()
+        client.call_http_api.return_value = response
+        mock_get_daemon_client.return_value = client
+
+        result = runner.invoke(cli, ["memory", "reconcile", "--dry-run"])
+
+        assert result.exit_code == 0
+        assert "Hub memories: 7" in result.output
+        client.call_http_api.assert_called_once_with(
+            "/api/memories/reconcile?dry_run=true", method="POST", timeout=600.0
+        )
+
+
+class TestMemoryBackupCommand:
+    """Tests for gobby memory backup command."""
+
+    @pytest.fixture
+    def runner(self) -> CliRunner:
+        """Create a CLI test runner."""
+        return CliRunner()
+
+    @patch("gobby.sync.memories.MemoryBackupManager")
+    @patch("gobby.cli.memory.get_memory_manager")
+    def test_default_backup_skips_outside_jsonl_export_context(
+        self,
+        mock_get_manager: MagicMock,
+        mock_backup_manager_cls: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        """Default tracked memories.jsonl backup is pre-push only."""
+        result = runner.invoke(cli, ["memory", "backup"])
+
+        assert result.exit_code == 0
+        assert ".gobby/memories.jsonl is generated only during remote push" in result.output
+        mock_get_manager.assert_not_called()
+        mock_backup_manager_cls.assert_not_called()
+
+    @patch("gobby.sync.memories.MemoryBackupManager")
+    @patch("gobby.cli.memory.get_memory_manager")
+    def test_default_backup_runs_in_jsonl_export_context(
+        self,
+        mock_get_manager: MagicMock,
+        mock_backup_manager_cls: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        """Default tracked memories.jsonl backup runs during pre-push publication."""
+        mock_manager = MagicMock()
+        mock_manager.db = MagicMock()
+        mock_get_manager.return_value = mock_manager
+        mock_backup_manager = MagicMock()
+        mock_backup_manager.backup_sync.return_value = 4
+        mock_backup_manager_cls.return_value = mock_backup_manager
+
+        result = runner.invoke(
+            cli,
+            ["memory", "backup"],
+            env={"GOBBY_JSONL_EXPORT_CONTEXT": "pre-push"},
+        )
+
+        assert result.exit_code == 0
+        assert "Backed up 4 memories" in result.output
+        mock_backup_manager.backup_sync.assert_called_once()
+
+
 class TestMemoryRestoreCommand:
     """Tests for gobby memory restore command."""
 
@@ -390,7 +479,7 @@ class TestMemoryRestoreCommand:
         mock_backup_manager_cls: MagicMock,
         runner: CliRunner,
     ) -> None:
-        """Default restore imports from .gobby/memories.jsonl with force=True."""
+        """Default restore imports from .gobby/memories.jsonl without force."""
         mock_manager = MagicMock()
         mock_manager.db = MagicMock()
         mock_get_manager.return_value = mock_manager
@@ -402,13 +491,14 @@ class TestMemoryRestoreCommand:
             restore_path = Path(".gobby/memories.jsonl")
             restore_path.parent.mkdir()
             restore_path.write_text("{}", encoding="utf-8")
+            expected_path = restore_path.resolve()
             result = runner.invoke(cli, ["memory", "restore"])
 
         assert result.exit_code == 0
         assert "Restored 3 memories" in result.output
-        mock_backup_manager.import_sync.assert_called_once_with(force=True)
+        mock_backup_manager.import_sync.assert_called_once_with(force=False)
         config = mock_backup_manager_cls.call_args.kwargs["config"]
-        assert config.export_path == Path(".gobby/memories.jsonl")
+        assert config.export_path == expected_path
 
     @patch("gobby.sync.memories.MemoryBackupManager")
     @patch("gobby.cli.memory.get_memory_manager")
@@ -430,6 +520,7 @@ class TestMemoryRestoreCommand:
         with runner.isolated_filesystem():
             restore_path = Path("memories.jsonl")
             restore_path.write_text("{}", encoding="utf-8")
+            expected_path = restore_path.resolve()
             result = runner.invoke(
                 cli,
                 ["memory", "restore", "--input", str(restore_path), "--quiet"],
@@ -437,9 +528,9 @@ class TestMemoryRestoreCommand:
 
         assert result.exit_code == 0
         assert result.output == ""
-        mock_backup_manager.import_sync.assert_called_once_with(force=True)
+        mock_backup_manager.import_sync.assert_called_once_with(force=False)
         config = mock_backup_manager_cls.call_args.kwargs["config"]
-        assert config.export_path == restore_path
+        assert config.export_path == expected_path
 
     def test_restore_missing_explicit_input_fails(self, runner: CliRunner) -> None:
         """Explicit --input paths should fail when missing."""
@@ -447,7 +538,8 @@ class TestMemoryRestoreCommand:
             result = runner.invoke(cli, ["memory", "restore", "--input", "missing.jsonl"])
 
         assert result.exit_code != 0
-        assert "Memory backup not found: missing.jsonl" in result.output
+        assert "Memory backup not found:" in result.output
+        assert "missing.jsonl" in result.output
 
 
 class TestResolveMemoryId:

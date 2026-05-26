@@ -2,13 +2,14 @@ name: gobby-merge
 type: pipeline
 version: "1.0"
 description: |
-  Robust branch merge pipeline with AI conflict resolution, test validation,
-  approval gates, and automatic rollback on failure.
+  Robust local branch merge pipeline with AI conflict resolution, test validation,
+  and automatic rollback on failure.
 
   Operates on an existing worktree — does NOT create or manage worktrees.
-  Attempts merge with AI conflict resolution, optionally runs tests,
-  and pushes only after human approval. If anything fails, the worktree
-  is left untouched for retry or debugging.
+  Attempts merge with AI conflict resolution and optionally runs tests.
+  It never pushes to remote; remote publication is handled only by explicit PR
+  delivery. If anything fails, the worktree is left untouched for retry or
+  debugging.
 
 enabled: true
 resume_on_restart: true
@@ -33,7 +34,7 @@ inputs:
   dry_run:
     type: boolean
     default: false
-    description: "If true, merge and test but do not push"
+    description: "Deprecated; worktree merge is always local-only and never pushes"
   strategy:
     type: string
     default: "auto"
@@ -163,7 +164,19 @@ steps:
       arguments:
         message: "Merge failed: conflicts could not be resolved by AI or human review"
 
-  # ── PHASE 4: TEST VALIDATION (conditional) ──
+  # ── PHASE 4: COMPLETE LOCAL MERGE AFTER CONFLICT RESOLUTION ──
+
+  - id: complete_local_merge
+    condition: "${{ check_merge.output.has_conflicts and apply_resolution.output and apply_resolution.output.get('success', false) }}"
+    mcp:
+      server: gobby-worktrees
+      tool: merge_worktree
+      arguments:
+        worktree_id: "${{ inputs.worktree_id }}"
+        source_branch: "${{ resolve_branches.output.source }}"
+        target_branch: "${{ resolve_branches.output.target }}"
+
+  # ── PHASE 5: TEST VALIDATION (conditional) ──
 
   - id: run_tests
     condition: "${{ inputs.test_command }}"
@@ -171,33 +184,6 @@ steps:
       TEST_CMD: "${{ inputs.test_command }}"
       WORKTREE: "${{ resolve_branches.output.worktree_path }}"
     exec: "cd \"$WORKTREE\" && eval \"$TEST_CMD\""
-
-  # ── PHASE 5: PUSH (with approval gate) ──
-
-  - id: push_gate
-    condition: "${{ not inputs.dry_run }}"
-    mcp:
-      server: gobby-workflows
-      tool: pipeline_eval
-      arguments:
-        data:
-          ready: true
-    approval:
-      required: true
-      message: |
-        Merge of ${{ resolve_branches.output.source }} -> ${{ resolve_branches.output.target }} is ready to push.
-        Tests: ${{ 'passed' if inputs.test_command else 'skipped (no test_command)' }}
-        Conflicts: ${{ 'resolved by AI' if check_merge.output.has_conflicts else 'none' }}
-        Approve to push to origin.
-      timeout_seconds: 86400
-
-  - id: commit_merge
-    condition: "${{ not inputs.dry_run and check_merge.output.has_conflicts }}"
-    exec: "cd ${{ resolve_branches.output.worktree_path }} && git commit --no-edit"
-
-  - id: push_merge
-    condition: "${{ not inputs.dry_run }}"
-    exec: "cd ${{ resolve_branches.output.worktree_path }} && git push --no-verify origin ${{ resolve_branches.output.source }}:${{ resolve_branches.output.target }}"
 
   # ── RESULT ──
 
@@ -208,7 +194,7 @@ steps:
       arguments:
         data:
           merge_method: "${{ 'clean' if check_merge.output.clean else 'ai_resolved' }}"
-          pushed: "${{ not inputs.dry_run and push_merge.output and push_merge.output.get('exit_code', 1) == 0 }}"
+          pushed: false
           dry_run: "${{ inputs.dry_run }}"
           worktree_path: "${{ resolve_branches.output.worktree_path }}"
           conflicts_resolved: "${{ len(ai_resolve.output.get('resolved_files', [])) if ai_resolve.output else 0 }}"

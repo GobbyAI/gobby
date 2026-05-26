@@ -66,7 +66,7 @@ gobby/                                  # Project root
 │   │       ├── git_hooks.py            # Git hook installer
 │   │       ├── ide_config.py           # IDE configuration
 │   │       ├── mcp_config.py           # MCP configuration
-│   │       ├── neo4j.py                # Neo4j installer
+│   │       ├── falkor.py               # FalkorDB installer
 │   │       └── skill_install.py        # Skill installer
 │   │
 │   ├── adapters/                       # CLI-specific hook adapters (~4 modules)
@@ -237,9 +237,9 @@ gobby/                                  # Project root
 │   │       ├── codex.py                # Codex transcript parser
 │   │       └── hook_assembler.py       # Hook-based transcript assembly
 │   │
-│   ├── storage/                        # SQLite storage layer (~29 modules)
-│   │   ├── database.py                 # LocalDatabase (connection management)
-│   │   ├── migrations.py               # Schema migrations
+│   ├── storage/                        # PostgreSQL hub storage and import helpers
+│   │   ├── hub/postgres.py             # PostgresHubDatabase
+│   │   ├── migrations.py               # PostgreSQL schema migrations
 │   │   ├── sessions.py                 # Session CRUD
 │   │   ├── session_models.py           # Session models
 │   │   ├── session_messages.py         # Session message storage
@@ -250,7 +250,6 @@ gobby/                                  # Project root
 │   │   ├── task_dependencies.py        # Task dependency storage
 │   │   ├── memories.py                 # Memory storage
 │   │   ├── agents.py                   # Agent storage
-│   │   ├── agent_commands.py           # Agent command storage
 │   │   ├── inter_session_messages.py   # Inter-session messaging
 │   │   ├── workflow_definitions.py     # Workflow definition storage
 │   │   ├── workflow_audit.py           # Workflow audit log
@@ -271,7 +270,7 @@ gobby/                                  # Project root
 │   ├── memory/                         # Persistent memory system (~11 modules)
 │   │   ├── manager.py                  # MemoryManager
 │   │   ├── vectorstore.py              # Qdrant-based VectorStore
-│   │   ├── neo4j_client.py             # Neo4j knowledge graph client
+│   │   ├── falkor_client.py            # FalkorDB knowledge graph client
 │   │   ├── extractor.py                # LLM-powered fact extraction
 │   │   ├── digest.py                   # Memory digest
 │   │   ├── context.py                  # Memory context
@@ -409,7 +408,7 @@ gobby/                                  # Project root
 │   │       └── variables/              # Default variable definitions
 │   │
 │   └── data/                           # Bundled data files
-│       └── docker-compose.neo4j.yml    # Neo4j Docker setup
+│       └── docker-compose.services.yml # Docker services setup
 │
 ├── tests/                              # Test suite (~533 files)
 │   ├── conftest.py                     # Pytest fixtures
@@ -470,7 +469,7 @@ cli/
 │   │   └── mcp_proxy/tools/*
 │   ├── agents/runner.py
 │   └── sessions/manager.py
-├── storage/database.py
+├── storage/hub/postgres.py
 │   └── storage/migrations.py
 ├── llm/service.py
 │   └── llm/{claude,gemini,codex,litellm}.py

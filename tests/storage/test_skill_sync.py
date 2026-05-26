@@ -4,31 +4,31 @@ from pathlib import Path
 
 import pytest
 
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.skills import LocalSkillManager
 
 pytestmark = pytest.mark.unit
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BUNDLED_SKILLS_DIR = REPO_ROOT / "src/gobby/install/shared/skills"
-REMOVED_BUNDLED_SKILLS = ("orchestrate", "automate", "test-battery")
+REMOVED_BUNDLED_SKILLS = (
+    "orchestrate",
+    "automate",
+    "test-battery",
+    "agent-" + "monitoring",
+)
 
 
 class TestSyncBundledSkills:
     """Test sync_bundled_skills function."""
 
     @pytest.fixture
-    def db(self, tmp_path: Path) -> LocalDatabase:
+    def db(self, temp_db: HubDatabase) -> HubDatabase:
         """Create a test database."""
-        db_path = tmp_path / "test.db"
-        db = LocalDatabase(db_path)
-        from gobby.storage.migrations import run_migrations
-
-        run_migrations(db)
-        return db
+        return temp_db
 
     @pytest.fixture
-    def skill_manager(self, db: LocalDatabase) -> LocalSkillManager:
+    def skill_manager(self, db: HubDatabase) -> LocalSkillManager:
         """Create a skill manager."""
         return LocalSkillManager(db)
 
@@ -39,7 +39,7 @@ class TestSyncBundledSkills:
         assert callable(sync_bundled_skills)
 
     def test_sync_bundled_skills_creates_installed_rows(
-        self, db: LocalDatabase, skill_manager: LocalSkillManager
+        self, db: HubDatabase, skill_manager: LocalSkillManager
     ) -> None:
         """Verify bundled skills are synced to database as installed rows."""
         from gobby.skills.sync import sync_bundled_skills
@@ -60,7 +60,7 @@ class TestSyncBundledSkills:
         assert len(installed) > 0
 
     def test_sync_bundled_skills_creates_as_installed_source(
-        self, db: LocalDatabase, skill_manager: LocalSkillManager
+        self, db: HubDatabase, skill_manager: LocalSkillManager
     ) -> None:
         """Verify synced skills have source='installed' and enabled=True."""
         from gobby.skills.sync import sync_bundled_skills
@@ -73,7 +73,7 @@ class TestSyncBundledSkills:
         assert skill.enabled is True
 
     def test_sync_bundled_skills_includes_core_skills(
-        self, db: LocalDatabase, skill_manager: LocalSkillManager
+        self, db: HubDatabase, skill_manager: LocalSkillManager
     ) -> None:
         """Verify specific core skills are synced."""
         from gobby.skills.sync import sync_bundled_skills
@@ -86,7 +86,7 @@ class TestSyncBundledSkills:
         assert len(skill.content) > 0
 
     def test_removed_bundled_skill_directories_do_not_sync(
-        self, db: LocalDatabase, skill_manager: LocalSkillManager
+        self, db: HubDatabase, skill_manager: LocalSkillManager
     ) -> None:
         from gobby.skills.sync import sync_bundled_skills
 
@@ -100,7 +100,7 @@ class TestSyncBundledSkills:
             assert skill_manager.get_by_name(skill_name) is None
 
     def test_removed_bundled_skill_rows_are_orphaned_on_sync(
-        self, db: LocalDatabase, skill_manager: LocalSkillManager
+        self, db: HubDatabase, skill_manager: LocalSkillManager
     ) -> None:
         from gobby.skills.sync import sync_bundled_skills
 
@@ -125,7 +125,7 @@ class TestSyncBundledSkills:
             assert orphaned.deleted_at is not None
 
     def test_sync_bundled_skills_includes_triage_judgment(
-        self, db: LocalDatabase, skill_manager: LocalSkillManager
+        self, db: HubDatabase, skill_manager: LocalSkillManager
     ) -> None:
         """GitHub triage methodology skill should parse and sync."""
         from gobby.skills.sync import sync_bundled_skills
@@ -139,7 +139,7 @@ class TestSyncBundledSkills:
         assert "Return structured JSON only" in skill.content
 
     def test_sync_bundled_skills_is_idempotent(
-        self, db: LocalDatabase, skill_manager: LocalSkillManager
+        self, db: HubDatabase, skill_manager: LocalSkillManager
     ) -> None:
         """Verify syncing twice doesn't create duplicates."""
         from gobby.skills.sync import sync_bundled_skills
@@ -157,7 +157,7 @@ class TestSyncBundledSkills:
         assert result2["skipped"] > 0 or result2["synced"] == 0
 
     def test_sync_bundled_skills_sets_source_type_filesystem(
-        self, db: LocalDatabase, skill_manager: LocalSkillManager
+        self, db: HubDatabase, skill_manager: LocalSkillManager
     ) -> None:
         """Verify synced skills have source_type='filesystem'."""
         from gobby.skills.sync import sync_bundled_skills
@@ -169,7 +169,7 @@ class TestSyncBundledSkills:
         assert skill.source_type == "filesystem"
 
     def test_sync_bundled_skills_are_global(
-        self, db: LocalDatabase, skill_manager: LocalSkillManager
+        self, db: HubDatabase, skill_manager: LocalSkillManager
     ) -> None:
         """Verify synced skills have project_id=None."""
         from gobby.skills.sync import sync_bundled_skills
@@ -181,7 +181,7 @@ class TestSyncBundledSkills:
         assert skill.project_id is None
 
     def test_sync_bundled_skills_updates_changed_content(
-        self, db: LocalDatabase, skill_manager: LocalSkillManager
+        self, db: HubDatabase, skill_manager: LocalSkillManager
     ) -> None:
         """Verify re-sync updates skills whose content has changed on disk."""
         from gobby.skills.sync import sync_bundled_skills
@@ -217,7 +217,7 @@ class TestSyncBundledSkills:
         assert refreshed.content != stale_content
 
     def test_sync_bundled_skills_have_gobby_metadata(
-        self, db: LocalDatabase, skill_manager: LocalSkillManager
+        self, db: HubDatabase, skill_manager: LocalSkillManager
     ) -> None:
         """Verify synced skills have gobby key in metadata."""
         from gobby.skills.sync import sync_bundled_skills
@@ -230,7 +230,7 @@ class TestSyncBundledSkills:
         assert "gobby" in skill.metadata
 
     def test_sync_skips_user_skills_with_same_name(
-        self, db: LocalDatabase, skill_manager: LocalSkillManager
+        self, db: HubDatabase, skill_manager: LocalSkillManager
     ) -> None:
         """Verify sync doesn't overwrite user-created skills."""
         from gobby.skills.sync import sync_bundled_skills
@@ -257,16 +257,11 @@ class TestSoftDelete:
     """Test soft delete and restore."""
 
     @pytest.fixture
-    def db(self, tmp_path: Path) -> LocalDatabase:
-        db_path = tmp_path / "test.db"
-        db = LocalDatabase(db_path)
-        from gobby.storage.migrations import run_migrations
-
-        run_migrations(db)
-        return db
+    def db(self, temp_db: HubDatabase) -> HubDatabase:
+        return temp_db
 
     @pytest.fixture
-    def storage(self, db: LocalDatabase) -> LocalSkillManager:
+    def storage(self, db: HubDatabase) -> LocalSkillManager:
         return LocalSkillManager(db)
 
     def test_delete_soft_deletes(self, storage: LocalSkillManager) -> None:
@@ -316,12 +311,12 @@ class TestSoftDelete:
         assert "dead" in all_names
 
 
-def _create_test_project(db: LocalDatabase, project_id: str = "test-proj") -> str:
+def _create_test_project(db: HubDatabase, project_id: str = "test-proj") -> str:
     """Insert a test project row to satisfy FK constraints."""
     with db.transaction() as conn:
         conn.execute(
-            "INSERT OR IGNORE INTO projects (id, name, created_at, updated_at) "
-            "VALUES (?, ?, datetime('now'), datetime('now'))",
+            "INSERT INTO projects (id, name, created_at, updated_at) "
+            "VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) ON CONFLICT (id) DO NOTHING",
             (project_id, f"Test Project {project_id}"),
         )
     return project_id
@@ -331,20 +326,15 @@ class TestSourceTaxonomy:
     """Test installed/project source values."""
 
     @pytest.fixture
-    def db(self, tmp_path: Path) -> LocalDatabase:
-        db_path = tmp_path / "test.db"
-        db = LocalDatabase(db_path)
-        from gobby.storage.migrations import run_migrations
-
-        run_migrations(db)
-        return db
+    def db(self, temp_db: HubDatabase) -> HubDatabase:
+        return temp_db
 
     @pytest.fixture
-    def storage(self, db: LocalDatabase) -> LocalSkillManager:
+    def storage(self, db: HubDatabase) -> LocalSkillManager:
         return LocalSkillManager(db)
 
     @pytest.fixture
-    def project_id(self, db: LocalDatabase) -> str:
+    def project_id(self, db: HubDatabase) -> str:
         return _create_test_project(db)
 
     def test_create_with_project_id_sets_source_project(

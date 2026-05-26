@@ -1,5 +1,6 @@
 """Additional tests for AgentLifecycleMonitor."""
 
+import json
 from datetime import UTC, datetime
 from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
@@ -8,7 +9,7 @@ import pytest
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.agents.prompt_detector import PromptDetector
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._models import Task
@@ -626,10 +627,12 @@ class TestPeriodicAgentTerminalEnter:
         run_id: str = "run-periodic",
         tmux_session_name: str | None = "gobby-periodic",
         provider: str = "codex",
+        child_session_id: str | None = None,
     ) -> AgentRun:
         return AgentRun(
             id=run_id,
             parent_session_id="p",
+            child_session_id=child_session_id,
             provider=provider,
             prompt="p",
             status="running",
@@ -646,12 +649,13 @@ class TestPeriodicAgentTerminalEnter:
         *,
         enabled: bool = True,
         interval: int = 30,
+        db: HubDatabase | None = None,
     ) -> AgentLifecycleMonitor:
         from gobby.config.tmux import TmuxConfig
 
         monitor = AgentLifecycleMonitor(
             agent_run_manager=mock_run_mgr,
-            db=MagicMock(),
+            db=db or MagicMock(),
             tmux_config=TmuxConfig(
                 auto_enter_agent_terminals=enabled,
                 auto_enter_agent_interval_seconds=interval,
@@ -681,6 +685,61 @@ class TestPeriodicAgentTerminalEnter:
             call("gobby-claude", PromptDetector.ENTER_KEY, literal=False),
             call("gobby-gemini", PromptDetector.ENTER_KEY, literal=False),
         ]
+
+    @pytest.mark.asyncio
+    async def test_periodic_enter_reaches_active_step_workflow_agents(
+        self,
+        temp_db: HubDatabase,
+        session_manager: SessionManager,
+        sample_project: dict[str, object],
+    ) -> None:
+        from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+
+        child = session_manager.register(
+            external_id="child-step-workflow",
+            machine_id="machine-1",
+            source="codex",
+            project_id=str(sample_project["id"]),
+        )
+        LocalWorkflowDefinitionManager(temp_db).create(
+            name="planner-steps",
+            definition_json=json.dumps(
+                {
+                    "name": "planner-steps",
+                    "version": "1.0",
+                    "enabled": True,
+                    "steps": [{"name": "plan", "status_message": "submit_for_review"}],
+                    "exit_condition": "current_step == 'terminate'",
+                }
+            ),
+            workflow_type="workflow",
+            enabled=True,
+        )
+        WorkflowInstanceManager(temp_db).save_instance(
+            WorkflowInstance(
+                id="wf-step",
+                session_id=child.id,
+                workflow_name="planner-steps",
+                current_step="plan",
+            )
+        )
+
+        mock_run_mgr = MagicMock()
+        mock_tmux = AsyncMock()
+        monitor = self._monitor(mock_run_mgr, mock_tmux, db=temp_db)
+        mock_run_mgr.list_active.return_value = [
+            self._run(child_session_id=child.id),
+        ]
+        mock_tmux.send_keys.return_value = True
+
+        handled = await monitor.check_periodic_enters()
+
+        assert handled == 1
+        mock_tmux.send_keys.assert_called_once_with(
+            "gobby-periodic",
+            PromptDetector.ENTER_KEY,
+            literal=False,
+        )
 
     @pytest.mark.asyncio
     async def test_periodic_enter_respects_interval_per_run(self) -> None:
@@ -803,7 +862,7 @@ class TestDispatchFailureCountCRUD:
         assert brief["dispatch_failure_count"] == 3
 
     def test_update_task_sets_dispatch_failure_count(
-        self, temp_db: LocalDatabase, sample_project: dict
+        self, temp_db: HubDatabase, sample_project: dict
     ) -> None:
         """update_task can set dispatch_failure_count."""
 
@@ -813,7 +872,7 @@ class TestDispatchFailureCountCRUD:
         assert updated.dispatch_failure_count == 2
 
     def test_reopen_resets_dispatch_failure_count(
-        self, temp_db: LocalDatabase, sample_project: dict
+        self, temp_db: HubDatabase, sample_project: dict
     ) -> None:
         """Reopening a task resets dispatch_failure_count to 0."""
 
@@ -937,7 +996,7 @@ class TestTerminalizeCancelledRun:
     @pytest.mark.asyncio
     async def test_cancelled_task_linked_run_cleans_child_session_claim_state(
         self,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
         sample_project: dict,
     ) -> None:
         session_manager = SessionManager(temp_db)
@@ -1019,7 +1078,7 @@ class TestTerminalizeCancelledRun:
     @pytest.mark.asyncio
     async def test_cancelled_run_preserves_replacement_claim_and_cleans_old_child_state(
         self,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
         sample_project: dict,
     ) -> None:
         session_manager = SessionManager(temp_db)

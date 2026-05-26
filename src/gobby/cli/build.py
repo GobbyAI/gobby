@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 from collections.abc import Mapping
 from dataclasses import asdict
-from typing import Any
+from pathlib import Path
+from typing import Any, Literal, cast
 
 import click
 
@@ -27,12 +29,13 @@ from gobby.build import (
 from gobby.build.dispatch_tick import kick_dispatcher_tick as _kick_dispatcher_tick
 from gobby.build.profiles import BuildProfileError
 from gobby.config.build import Isolation, StageCapOverride
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 
 from .utils import resolve_project_ref
 
 logger = logging.getLogger(__name__)
+BuildPlanningSeedState = Literal["drafted", "needs_review", "approved"]
+CURRENT_COORDINATOR = "__current_cli_session__"
 
 DAEMON_BUILD_REQUEST_TIMEOUT_SECONDS = 900.0
 _PROFILE_ERROR_RE = re.compile(
@@ -142,9 +145,17 @@ def _echo_build_result(result: BuildResult) -> None:
         click.echo("Dispatcher cron is disabled. Run `gobby build resume` to re-enable it.")
 
 
-def _build_payload(opts: BuildOptions, input_ref: str) -> dict[str, object]:
+def _build_payload(
+    opts: BuildOptions,
+    input_ref: str,
+    *,
+    project_id: str | None = None,
+    cwd: str | None = None,
+) -> dict[str, object]:
     payload: dict[str, object] = {
         "input_ref": input_ref,
+        "project_id": project_id,
+        "cwd": cwd,
         "quick": opts.quick,
         "skip_stages": opts.skip_stages,
         "no_merge": opts.no_merge,
@@ -155,7 +166,12 @@ def _build_payload(opts: BuildOptions, input_ref: str) -> dict[str, object]:
         "reset_expansion_output": opts.reset_expansion_output,
         "max_active_agents": opts.max_active_agents,
         "max_retries": opts.max_retries,
+        "planning_seed_state": opts.planning_seed_state,
+        "completed_plan_review_rounds": opts.completed_plan_review_rounds,
+        "dry_run": opts.dry_run,
     }
+    if opts.coordinator_session_ref:
+        payload["coordinator"] = opts.coordinator_session_ref
     if opts.isolation_explicit:
         payload["isolation"] = opts.isolation
     return payload
@@ -178,6 +194,7 @@ def _result_from_payload(payload: dict[str, object]) -> BuildResult:
         dispatcher_tick=dispatcher_tick,
         manifest=manifest if isinstance(manifest, list) else None,
         warnings=_payload_string_list(payload.get("warnings")),
+        dry_run=bool(payload.get("dry_run")),
     )
 
 
@@ -211,7 +228,13 @@ def _payload_string_list(value: object) -> list[str]:
     return []
 
 
-def _try_daemon_build(input_ref: str, opts: BuildOptions) -> BuildResult | None:
+def _try_daemon_build(
+    input_ref: str,
+    opts: BuildOptions,
+    *,
+    project_id: str | None = None,
+    cwd: str | None = None,
+) -> BuildResult | None:
     try:
         import httpx
 
@@ -226,7 +249,7 @@ def _try_daemon_build(input_ref: str, opts: BuildOptions) -> BuildResult | None:
         response = client.call_http_api(
             "/api/build",
             method="POST",
-            json_data=_build_payload(opts, input_ref),
+            json_data=_build_payload(opts, input_ref, project_id=project_id, cwd=cwd),
             timeout=DAEMON_BUILD_REQUEST_TIMEOUT_SECONDS,
         )
         if response.status_code == 200:
@@ -252,6 +275,78 @@ def _try_daemon_build(input_ref: str, opts: BuildOptions) -> BuildResult | None:
         return None
 
 
+def _try_daemon_build_control(
+    action: str,
+    *,
+    input_ref: str | None = None,
+    project_id: str | None = None,
+    cwd: str | None = None,
+    dry_run: bool = False,
+    force: bool = False,
+    yes: bool = False,
+    no_resume: bool = False,
+) -> dict[str, object] | None:
+    try:
+        import httpx
+
+        from gobby.config.app import load_config
+        from gobby.utils.daemon_client import DaemonClient
+
+        config = load_config()
+        client = DaemonClient(port=config.daemon_port, timeout=5.0)
+        is_healthy, _ = client.check_health()
+        if not is_healthy:
+            return None
+        response = client.call_http_api(
+            f"/api/build/{action}",
+            method="POST",
+            json_data={
+                "input_ref": input_ref,
+                "project_id": project_id,
+                "cwd": cwd,
+                "dry_run": dry_run,
+                "force": force,
+                "yes": yes,
+                "no_resume": no_resume,
+            },
+            timeout=DAEMON_BUILD_REQUEST_TIMEOUT_SECONDS,
+        )
+        if response.status_code == 200:
+            payload = response.json()
+            if isinstance(payload, dict):
+                return _control_payload_from_daemon(payload)
+            return None
+        if response.status_code == 400:
+            raise click.ClickException(_daemon_error_message(_daemon_error_detail(response)))
+        return None
+    except click.ClickException:
+        raise
+    except httpx.TimeoutException as exc:
+        raise click.ClickException(
+            "Daemon build control request timed out before the dispatcher result returned. "
+            "The daemon may still be running accepted build work; local fallback was skipped. "
+            "Check progress with `gobby agents runs list --status running` or rerun "
+            f"`gobby build {action}` later."
+        ) from exc
+    except Exception:
+        logger.debug(
+            "Daemon build control request failed; falling back to local control",
+            exc_info=True,
+        )
+        return None
+
+
+def _control_payload_from_daemon(payload: dict[str, object]) -> dict[str, object] | None:
+    if payload.get("success") is True:
+        result = payload.get("result")
+        if isinstance(result, dict):
+            return {str(key): value for key, value in result.items()}
+        return None
+    if payload.get("success") is False:
+        raise click.ClickException(_daemon_error_message(payload))
+    return payload
+
+
 def _daemon_error_detail(response: Any) -> Any:
     try:
         payload = response.json()
@@ -265,6 +360,10 @@ def _daemon_error_detail(response: Any) -> Any:
 def _daemon_error_message(detail: Any) -> str:
     if isinstance(detail, dict):
         message = detail.get("message") or detail.get("detail") or detail.get("error")
+        if isinstance(message, Mapping):
+            nested = message.get("message") or message.get("detail") or message.get("error")
+            if nested is not None:
+                return str(nested)
         return str(message) if message is not None else str(detail)
     return str(detail)
 
@@ -331,25 +430,26 @@ def _echo_target_control_result(payload: dict[str, object]) -> None:
             click.echo(f"  {reason}")
     tick = payload.get("dispatcher_tick")
     if isinstance(tick, dict):
-        click.echo(
+        line = (
             "Dispatcher tick: "
             f"scanned={tick.get('scanned', 0)} "
             f"executed={tick.get('executed', 0)} "
             f"skipped={tick.get('skipped', 0)}"
         )
+        if tick.get("cap_reached"):
+            line = f"{line} cap_reached"
+        elif tick.get("reason"):
+            line = f"{line} reason={tick['reason']}"
+        click.echo(line)
     if payload.get("dry_run"):
         click.echo("Dry run: no changes made")
 
 
-def _open_database() -> LocalDatabase:
-    """Open the hub database and apply pending migrations before build storage use."""
-    db = LocalDatabase()
-    try:
-        run_migrations(db)
-    except Exception:
-        db.close()
-        raise
-    return db
+def _open_database() -> HubDatabase:
+    """Open the active hub database before build storage use."""
+    from gobby.storage.hub.runtime import open_runtime_hub_database
+
+    return open_runtime_hub_database(apply_migrations=False)
 
 
 @click.command("build")
@@ -391,7 +491,32 @@ def _open_database() -> LocalDatabase:
     type=click.IntRange(min=0),
     help="Maximum retries per build stage; 0 means one attempt.",
 )
-@click.option("--dry-run", is_flag=True, default=False, help="Preview clean/restart effects.")
+@click.option(
+    "--planning-seed-state",
+    type=click.Choice(["drafted", "needs_review", "approved"]),
+    default="drafted",
+    show_default=True,
+    help="Initial plan-file lifecycle state.",
+)
+@click.option(
+    "--completed-plan-review-rounds",
+    type=click.IntRange(min=0),
+    default=0,
+    show_default=True,
+    help="Review rounds already completed before plan-file build handoff.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Preview build, clean, or restart without persisting changes.",
+)
+@click.option(
+    "--coordinator",
+    is_flag=False,
+    flag_value=CURRENT_COORDINATOR,
+    help="Session to wake for build-spawned agent completions.",
+)
 @click.option("--force", is_flag=True, default=False, help="Force destructive cleanup.")
 @click.option("--yes", is_flag=True, default=False, help="Confirm destructive clean/restart.")
 @click.option(
@@ -415,7 +540,10 @@ def build_command(
     reset_expansion_output: bool,
     max_active_agents: int | None,
     max_retries: int | None,
+    planning_seed_state: str,
+    completed_plan_review_rounds: int,
     dry_run: bool,
+    coordinator: str | None,
     force: bool,
     yes: bool,
     no_resume: bool,
@@ -462,9 +590,14 @@ def build_command(
         reset_expansion_output=reset_expansion_output,
         max_active_agents=max_active_agents,
         max_retries=max_retries,
+        planning_seed_state=cast(BuildPlanningSeedState, planning_seed_state),
+        completed_plan_review_rounds=completed_plan_review_rounds,
+        dry_run=dry_run,
+        coordinator_session_ref=_coordinator_session_ref(coordinator),
     )
     project_id = resolve_project_id()
-    result = _try_daemon_build(input_ref, opts)
+    cwd = str(Path.cwd())
+    result = _try_daemon_build(input_ref, opts, project_id=project_id, cwd=cwd)
     if result is None:
         db = _open_database()
         try:
@@ -477,6 +610,19 @@ def build_command(
             db.close()
 
     _echo_build_result(result)
+
+
+def _coordinator_session_ref(coordinator: str | None) -> str | None:
+    if coordinator is None:
+        return None
+    if coordinator != CURRENT_COORDINATOR and coordinator.strip():
+        return coordinator.strip()
+    current_session = (os.environ.get("GOBBY_SESSION_ID") or "").strip()
+    if current_session:
+        return current_session
+    raise click.ClickException(
+        "--coordinator needs an active Gobby session; pass --coordinator SESSION explicitly"
+    )
 
 
 @click.command("stop")
@@ -495,6 +641,14 @@ def build_resume_command(input_ref: str | None) -> None:
 
 def _run_build_stop(input_ref: str | None = None) -> None:
     project_id = resolve_project_id()
+    cwd = str(Path.cwd())
+    if input_ref is not None:
+        daemon_payload = _try_daemon_build_control(
+            "stop", input_ref=input_ref, project_id=project_id, cwd=cwd
+        )
+        if daemon_payload is not None:
+            _echo_target_control_result(daemon_payload)
+            return
     db = _open_database()
     try:
         if input_ref is None:
@@ -517,6 +671,14 @@ def _run_build_stop(input_ref: str | None = None) -> None:
 
 def _run_build_resume(input_ref: str | None = None) -> None:
     project_id = resolve_project_id()
+    cwd = str(Path.cwd())
+    if input_ref is not None:
+        daemon_payload = _try_daemon_build_control(
+            "resume", input_ref=input_ref, project_id=project_id, cwd=cwd
+        )
+        if daemon_payload is not None:
+            _echo_target_control_result(daemon_payload)
+            return
     db = _open_database()
     try:
         if input_ref is None:
@@ -558,6 +720,19 @@ def _run_build_clean(
     if not _confirm_destructive("clean", input_ref, yes, dry_run):
         return
     project_id = resolve_project_id()
+    cwd = str(Path.cwd())
+    daemon_payload = _try_daemon_build_control(
+        "clean",
+        input_ref=input_ref,
+        project_id=project_id,
+        cwd=cwd,
+        dry_run=dry_run,
+        force=force,
+        yes=True,
+    )
+    if daemon_payload is not None:
+        _echo_target_control_result(daemon_payload)
+        return
     db = _open_database()
     try:
         result = asyncio.run(
@@ -590,6 +765,20 @@ def _run_build_restart(
     if not _confirm_destructive("restart", input_ref, yes, dry_run):
         return
     project_id = resolve_project_id()
+    cwd = str(Path.cwd())
+    daemon_payload = _try_daemon_build_control(
+        "restart",
+        input_ref=input_ref,
+        project_id=project_id,
+        cwd=cwd,
+        dry_run=dry_run,
+        force=force,
+        yes=True,
+        no_resume=no_resume,
+    )
+    if daemon_payload is not None:
+        _echo_target_control_result(daemon_payload)
+        return
     db = _open_database()
     try:
         result = asyncio.run(

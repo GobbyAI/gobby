@@ -1,5 +1,7 @@
 """Tests for agent constants module."""
 
+from pathlib import Path
+
 import pytest
 
 from gobby.agents.constants import (
@@ -13,6 +15,8 @@ from gobby.agents.constants import (
     GOBBY_PROMPT_FILE,
     GOBBY_SESSION_ID,
     GOBBY_WORKFLOW_NAME,
+    UV_CACHE_DIR,
+    get_agent_uv_cache_dir,
     get_terminal_env_vars,
 )
 
@@ -33,6 +37,7 @@ class TestEnvironmentVariableConstants:
         assert isinstance(GOBBY_MAX_AGENT_DEPTH, str)
         assert isinstance(GOBBY_PROMPT, str)
         assert isinstance(GOBBY_PROMPT_FILE, str)
+        assert isinstance(UV_CACHE_DIR, str)
 
     def test_constants_are_uppercase(self) -> None:
         """All constants follow ENV_VAR naming convention."""
@@ -42,6 +47,8 @@ class TestEnvironmentVariableConstants:
     def test_constants_start_with_gobby(self) -> None:
         """All constants are prefixed with GOBBY_."""
         for var in ALL_TERMINAL_ENV_VARS:
+            if var == UV_CACHE_DIR:
+                continue
             assert var.startswith("GOBBY_"), f"{var} should start with GOBBY_"
 
     def test_all_terminal_env_vars_complete(self) -> None:
@@ -56,6 +63,7 @@ class TestEnvironmentVariableConstants:
             GOBBY_MAX_AGENT_DEPTH,
             GOBBY_PROMPT,
             GOBBY_PROMPT_FILE,
+            UV_CACHE_DIR,
         }
         assert set(ALL_TERMINAL_ENV_VARS) == expected
 
@@ -76,6 +84,15 @@ class TestGetTerminalEnvVars:
         assert result[GOBBY_PARENT_SESSION_ID] == "sess-parent"
         assert result[GOBBY_AGENT_RUN_ID] == "run-123"
         assert result[GOBBY_PROJECT_ID] == "proj-abc"
+        assert Path(result[UV_CACHE_DIR]).parts[-3:] == ("gobby", "uv-cache", "sess-child")
+
+    def test_uv_cache_dir_sanitizes_session_id(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """uv cache paths are writable temp paths scoped to safe session IDs."""
+        monkeypatch.setattr("gobby.agents.constants.tempfile.gettempdir", lambda: "/tmp/test-tmp")
+
+        result = get_agent_uv_cache_dir("sess/child:one")
+
+        assert Path(result) == Path("/tmp/test-tmp") / "gobby" / "uv-cache" / "sess-child-one"
 
     def test_includes_workflow_when_provided(self) -> None:
         """Function includes workflow name when provided."""

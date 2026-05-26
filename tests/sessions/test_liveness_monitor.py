@@ -377,6 +377,7 @@ class TestCheckSessions:
         mock_session_storage.db.fetchall.return_value = [
             {
                 "id": "s1",
+                "source": "claude",
                 "terminal_context": json.dumps({"parent_pid": 99999}),
             },
         ]
@@ -387,6 +388,27 @@ class TestCheckSessions:
         mock_dispatch_fn.assert_called_once_with("s1", False, None)
         mock_session_storage.update_status.assert_called_once_with("s1", "expired")
         assert set(monitor._recently_handled) == {"s1"}
+
+    @pytest.mark.asyncio
+    async def test_dead_pid_no_tmux_pane_does_not_expire_codex(
+        self, monitor, mock_session_storage, mock_dispatch_fn
+    ):
+        """Codex parent-PID-only rows are weak liveness records."""
+        mock_session_storage.db.fetchall.return_value = [
+            {
+                "id": "s1",
+                "source": "codex",
+                "terminal_context": json.dumps({"parent_pid": 99999}),
+            },
+        ]
+
+        with patch.object(SessionLivenessMonitor, "_is_pid_alive", return_value=False):
+            await monitor._check_sessions()
+
+        mock_dispatch_fn.assert_not_called()
+        mock_session_storage.update_status.assert_not_called()
+        mock_session_storage.touch.assert_not_called()
+        assert monitor._recently_handled == {}
 
     @pytest.mark.asyncio
     async def test_legacy_pane_only_live_tmux_pane_retained(

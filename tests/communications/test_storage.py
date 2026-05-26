@@ -9,11 +9,11 @@ from gobby.communications.models import (
     CommsRoutingRule,
 )
 from gobby.storage.communications import LocalCommunicationsStore
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 
 
 @pytest.fixture
-def comms_store(temp_db: LocalDatabase) -> LocalCommunicationsStore:
+def comms_store(temp_db: HubDatabase) -> LocalCommunicationsStore:
     """Fixture for communications store."""
     return LocalCommunicationsStore(temp_db, project_id="00000000-0000-0000-0000-000000000000")
 
@@ -140,8 +140,8 @@ def test_message_crud(comms_store: LocalCommunicationsStore) -> None:
             name="Msg",
             enabled=True,
             config_json={},
-            created_at="2024",
-            updated_at="2024",
+            created_at="2024-01-01T00:00:00Z",
+            updated_at="2024-01-01T00:00:00Z",
         )
     )
     comms_store.create_identity(
@@ -149,8 +149,8 @@ def test_message_crud(comms_store: LocalCommunicationsStore) -> None:
             id="ci-msg",
             channel_id="cc-msg",
             external_user_id="u1",
-            created_at="2024",
-            updated_at="2024",
+            created_at="2024-01-01T00:00:00Z",
+            updated_at="2024-01-01T00:00:00Z",
         )
     )
 
@@ -203,8 +203,8 @@ def test_routing_rule_crud(comms_store: LocalCommunicationsStore) -> None:
             name="Rule",
             enabled=True,
             config_json={},
-            created_at="2024",
-            updated_at="2024",
+            created_at="2024-01-01T00:00:00Z",
+            updated_at="2024-01-01T00:00:00Z",
         )
     )
 

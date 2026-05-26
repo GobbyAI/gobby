@@ -1,7 +1,7 @@
 """Tests for VectorStore initialization in runner.py.
 
 Validates that the runner creates a VectorStore, passes it to MemoryManager,
-triggers rebuild when Qdrant is empty but SQLite has memories, and calls
+triggers rebuild when Qdrant is empty but PostgreSQL has memories, and calls
 close() on shutdown.
 """
 
@@ -60,7 +60,7 @@ class TestVectorStoreInitialization:
         config.enabled = True
         config.backend = "local"
         config.auto_crossref = False
-        config.neo4j_url = None
+        config.falkordb_host = None
 
         db = MagicMock()
         db.fetchone = MagicMock(return_value=None)
@@ -90,15 +90,15 @@ class TestVectorStoreInitialization:
         assert vs.close.call_args is not None
 
     @pytest.mark.asyncio
-    async def test_rebuild_when_qdrant_empty_sqlite_has_memories(self) -> None:
-        """Should trigger rebuild when Qdrant is empty but SQLite has memories."""
+    async def test_rebuild_when_qdrant_empty_postgres_has_memories(self) -> None:
+        """Should trigger rebuild when Qdrant is empty but PostgreSQL has memories."""
         from gobby.memory.vectorstore import VectorStore
 
         vs = MagicMock(spec=VectorStore)
         vs.count = AsyncMock(return_value=0)
         vs.rebuild = AsyncMock()
 
-        # Simulate SQLite having memories
+        # Simulate PostgreSQL having memories
         storage = MagicMock()
         storage.list_memories.return_value = [
             MagicMock(id="mm-1", content="Memory 1"),
@@ -109,10 +109,10 @@ class TestVectorStoreInitialization:
 
         # Simulate the rebuild logic from runner
         qdrant_count = await vs.count()
-        sqlite_memories = storage.list_memories(limit=10000)
+        postgres_memories = storage.list_memories(limit=10000)
 
-        if qdrant_count == 0 and len(sqlite_memories) > 0:
-            memory_dicts = [{"id": m.id, "content": m.content} for m in sqlite_memories]
+        if qdrant_count == 0 and len(postgres_memories) > 0:
+            memory_dicts = [{"id": m.id, "content": m.content} for m in postgres_memories]
             await vs.rebuild(memory_dicts, embed_fn)
 
         vs.rebuild.assert_called_once()
@@ -133,9 +133,9 @@ class TestVectorStoreInitialization:
         storage.list_memories.return_value = [MagicMock(id="mm-1", content="x")]
 
         qdrant_count = await vs.count()
-        sqlite_memories = storage.list_memories(limit=10000)
+        postgres_memories = storage.list_memories(limit=10000)
 
-        if qdrant_count == 0 and len(sqlite_memories) > 0:
+        if qdrant_count == 0 and len(postgres_memories) > 0:
             await vs.rebuild([], AsyncMock())
 
         vs.rebuild.assert_not_called()
@@ -143,8 +143,8 @@ class TestVectorStoreInitialization:
         assert not vs.rebuild.called
 
     @pytest.mark.asyncio
-    async def test_no_rebuild_when_sqlite_empty(self) -> None:
-        """Should NOT rebuild when SQLite has no memories."""
+    async def test_no_rebuild_when_postgres_empty(self) -> None:
+        """Should NOT rebuild when PostgreSQL has no memories."""
         from gobby.memory.vectorstore import VectorStore
 
         vs = MagicMock(spec=VectorStore)
@@ -155,9 +155,9 @@ class TestVectorStoreInitialization:
         storage.list_memories.return_value = []
 
         qdrant_count = await vs.count()
-        sqlite_memories = storage.list_memories(limit=10000)
+        postgres_memories = storage.list_memories(limit=10000)
 
-        if qdrant_count == 0 and len(sqlite_memories) > 0:
+        if qdrant_count == 0 and len(postgres_memories) > 0:
             await vs.rebuild([], AsyncMock())
 
         vs.rebuild.assert_not_called()

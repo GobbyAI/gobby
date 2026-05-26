@@ -13,14 +13,14 @@ from gobby.mcp_proxy.semantic_search import (
     _compute_text_hash,
     _cosine_similarity,
 )
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.mcp import LocalMCPManager
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def semantic_search(temp_db: LocalDatabase) -> SemanticToolSearch:
+def semantic_search(temp_db: HubDatabase) -> SemanticToolSearch:
     """Create a SemanticToolSearch instance with temp database."""
     return SemanticToolSearch(temp_db, openai_api_key="sk-test-fake-key")
 
@@ -100,12 +100,12 @@ class TestTextProcessing:
 class TestSemanticToolSearchApiBase:
     """Tests for SemanticToolSearch api_base parameter."""
 
-    def test_api_base_default_none(self, temp_db: LocalDatabase) -> None:
+    def test_api_base_default_none(self, temp_db: HubDatabase) -> None:
         """Test api_base defaults to None."""
         search = SemanticToolSearch(temp_db)
         assert search._api_base is None
 
-    def test_api_base_custom(self, temp_db: LocalDatabase) -> None:
+    def test_api_base_custom(self, temp_db: HubDatabase) -> None:
         """Test api_base can be set for local models."""
         search = SemanticToolSearch(
             temp_db,
@@ -116,7 +116,7 @@ class TestSemanticToolSearchApiBase:
         assert search.embedding_model == "openai/nomic-embed-text"
 
     @pytest.mark.asyncio
-    async def test_embed_text_delegates_to_generate_embedding(self, temp_db: LocalDatabase) -> None:
+    async def test_embed_text_delegates_to_generate_embedding(self, temp_db: HubDatabase) -> None:
         """Test that embed_text delegates to the shared generate_embedding router."""
         search = SemanticToolSearch(
             temp_db,
@@ -143,7 +143,7 @@ class TestSemanticToolSearchApiBase:
             assert result == [0.1, 0.2, 0.3]
 
     @pytest.mark.asyncio
-    async def test_embed_text_local_model_no_api_key_needed(self, temp_db: LocalDatabase) -> None:
+    async def test_embed_text_local_model_no_api_key_needed(self, temp_db: HubDatabase) -> None:
         """Test that embed_text works with local models without API key."""
         search = SemanticToolSearch(temp_db)
 
@@ -164,7 +164,7 @@ class TestSemanticToolSearchApiBase:
             assert len(result) == 768
 
     @pytest.mark.asyncio
-    async def test_embed_text_query_mode(self, temp_db: LocalDatabase) -> None:
+    async def test_embed_text_query_mode(self, temp_db: HubDatabase) -> None:
         """Test that embed_text passes is_query=True for search queries."""
         search = SemanticToolSearch(temp_db)
 
@@ -203,7 +203,7 @@ class TestSemanticToolSearch:
         assert semantic_search.embedding_model == DEFAULT_EMBEDDING_MODEL
         assert semantic_search.embedding_dim == DEFAULT_EMBEDDING_DIM
 
-    def test_init_custom_values(self, temp_db: LocalDatabase) -> None:
+    def test_init_custom_values(self, temp_db: HubDatabase) -> None:
         """Test initialization with custom values."""
         search = SemanticToolSearch(
             temp_db,
@@ -214,7 +214,7 @@ class TestSemanticToolSearch:
         assert search.embedding_dim == 768
 
     @pytest.mark.asyncio
-    async def test_store_embedding_qdrant(self, temp_db: LocalDatabase) -> None:
+    async def test_store_embedding_qdrant(self, temp_db: HubDatabase) -> None:
         """Test that store_embedding upserts to Qdrant with tool metadata."""
         mock_vs = AsyncMock()
         mock_vs.get_collection_dimension = AsyncMock(return_value=DEFAULT_EMBEDDING_DIM)
@@ -253,7 +253,7 @@ class TestSemanticToolSearch:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_has_embeddings_true(self, temp_db: LocalDatabase) -> None:
+    async def test_has_embeddings_true(self, temp_db: HubDatabase) -> None:
         """Test has_embeddings returns True when points exist."""
         mock_vs = AsyncMock()
         mock_vs.get_collection_dimension = AsyncMock(return_value=DEFAULT_EMBEDDING_DIM)
@@ -264,7 +264,7 @@ class TestSemanticToolSearch:
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_has_embeddings_false(self, temp_db: LocalDatabase) -> None:
+    async def test_has_embeddings_false(self, temp_db: HubDatabase) -> None:
         """Test has_embeddings returns False when no points exist."""
         mock_vs = AsyncMock()
         mock_vs.get_collection_dimension = AsyncMock(return_value=DEFAULT_EMBEDDING_DIM)
@@ -546,7 +546,7 @@ class TestSearchTools:
     """Tests for search_tools method (Qdrant-backed)."""
 
     @pytest.fixture
-    def search_with_vs(self, temp_db: LocalDatabase) -> SemanticToolSearch:
+    def search_with_vs(self, temp_db: HubDatabase) -> SemanticToolSearch:
         """Create SemanticToolSearch with a mock VectorStore."""
         mock_vs = AsyncMock()
         mock_vs.get_collection_dimension = AsyncMock(return_value=DEFAULT_EMBEDDING_DIM)
@@ -688,7 +688,7 @@ class TestSearchTools:
         search_with_vs: SemanticToolSearch,
         sample_project: dict,
     ):
-        """Test that internal tools (not in SQLite) resolve names from payload."""
+        """Test that internal tools (not in PostgreSQL) resolve names from payload."""
         import uuid
 
         internal_tool_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, "gobby-tasks/create_task"))
@@ -722,7 +722,7 @@ class TestSearchTools:
     @pytest.mark.asyncio
     async def test_store_embedding_repairs_dimension_mismatch_and_retries(
         self,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
     ) -> None:
         """Test store_embedding repairs tool collection mismatch and retries once."""
         mock_vs = AsyncMock()
@@ -795,7 +795,7 @@ class TestSearchTools:
     @pytest.mark.asyncio
     async def test_runtime_repair_stays_scoped_to_tool_embeddings(
         self,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
     ) -> None:
         """Test runtime repair only targets the tool embeddings collection."""
         mock_vs = AsyncMock()
@@ -821,7 +821,7 @@ class TestSearchTools:
     @pytest.mark.asyncio
     async def test_get_tool_collection_dimension_logs_lookup_failures(
         self,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         mock_vs = AsyncMock()

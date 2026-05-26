@@ -4,6 +4,11 @@ import fnmatch
 import logging
 from typing import Any, cast
 
+from gobby.mcp_proxy.services._manager_compat import (
+    manager_is_connected,
+    manager_server_configs,
+)
+
 logger = logging.getLogger("gobby.mcp.server")
 
 
@@ -39,14 +44,14 @@ def find_tool_server(service: Any, tool_name: str) -> str | None:
         if server:
             return server
 
-    for server_name, config in service._mcp_manager._configs.items():
+    for server_name, config in manager_server_configs(service._mcp_manager):
         if config.tools:
             for tool in config.tools:
                 tool_name_in_config = (
                     tool.get("name") if isinstance(tool, dict) else getattr(tool, "name", None)
                 )
                 if tool_name_in_config == tool_name:
-                    return cast("str", server_name)
+                    return server_name
 
     return None
 
@@ -62,7 +67,7 @@ async def list_servers(service: Any, name_filter: str | None = None) -> dict[str
     for config in service._mcp_manager.server_configs:
         health = service._mcp_manager.health.get(config.name)
         state = health.state.value if health else "unknown"
-        is_conn = config.name in service._mcp_manager.connections
+        is_conn = await manager_is_connected(service._mcp_manager, config.name)
         if is_conn:
             connected += 1
         entry: dict[str, Any] = {

@@ -126,7 +126,7 @@ CREATE INDEX idx_session_memories_memory ON session_memories(memory_id);
 │     • Skill learning: Generate from trajectory                   │
 │                                                                  │
 │  2. STORAGE                                                      │
-│     • SQLite (local): ~/.gobby/gobby-hub.db                         │
+│     • PostgreSQL (local): ~/.gobby/PostgreSQL hub                         │
 │     • Git sync (optional): .gobby/memories.jsonl                │
 │     • Embeddings for semantic search                             │
 │                                                                  │
@@ -688,7 +688,7 @@ triggers:
 | 2 | **Skill storage** | DB + markdown files | DB for querying, markdown for git sync and easy editing |
 | 3 | **Injection timing** | Session start hook | Early injection ensures LLM has context from the beginning |
 | 4 | **Decay model** | Time-based with access boost | Unused memories fade, frequently accessed ones stay important |
-| 5 | **Embedding storage** | SQLite BLOB | Simple, no external dependencies |
+| 5 | **Embedding storage** | PostgreSQL BLOB | Simple, no external dependencies |
 | 6 | **Skill delivery** | Claude Code native format | Skills exported to `.claude/skills/<name>/` are automatically available to Claude Code without runtime injection. Removed `match_skills` method/tool and `auto_suggest`/`max_suggestions` config. Memories still use runtime injection via `<project-memory>` tags. |
 
 ## Future Enhancements

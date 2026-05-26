@@ -1,14 +1,14 @@
 import json
 import logging
-import sqlite3
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
 
 from gobby.memory.protocol import MediaAttachment
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sql_dialect import newer_than_now_expr
 
 # Stable namespace for deterministic memory UUIDs (uuid5)
 MEMORY_UUID_NAMESPACE = uuid.UUID("a3b2c1d0-1234-5678-9abc-def012345678")
@@ -32,7 +32,7 @@ class MemoryCrossRef:
     created_at: str
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row) -> "MemoryCrossRef":
+    def from_row(cls, row: Mapping[str, Any]) -> "MemoryCrossRef":
         return cls(
             source_id=row["source_id"],
             target_id=row["target_id"],
@@ -71,7 +71,7 @@ class Memory:
     ranking_mode: str | None = None  # Search-time scoring mode, not persisted
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row) -> "Memory":
+    def from_row(cls, row: Mapping[str, Any]) -> "Memory":
         tags_json = row["tags"]
         tags = json.loads(tags_json) if tags_json else []
 
@@ -129,7 +129,7 @@ class Memory:
 
 
 class LocalMemoryManager:
-    def __init__(self, db: DatabaseProtocol):
+    def __init__(self, db: HubDatabase):
         self.db = db
         self._change_listeners: list[Callable[[], Any]] = []
 
@@ -174,12 +174,13 @@ class LocalMemoryManager:
         # source_id proximity dedup: if the same session created a very similar
         # memory within the last 60 seconds, treat it as a duplicate
         if source_session_id:
+            recent_cutoff_sql = newer_than_now_expr(self.db, "created_at", "?", "second")
             recent = self.db.fetchone(
-                """SELECT id, content FROM memories
+                f"""SELECT id, content FROM memories
                    WHERE source_session_id = ?
-                     AND created_at > datetime('now', '-60 seconds')
+                     AND {recent_cutoff_sql}
                    ORDER BY created_at DESC LIMIT 1""",
-                (source_session_id,),
+                (source_session_id, 60),
             )
             if recent and normalized_content[:100] == str(recent["content"]).strip()[:100]:
                 return self.get_memory(recent["id"])
@@ -365,7 +366,7 @@ class LocalMemoryManager:
         """Mark a memory as pending KG graph processing."""
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                "UPDATE memories SET graph_processed = 0 WHERE id = ?",
+                "UPDATE memories SET graph_processed = FALSE WHERE id = ?",
                 (memory_id,),
             )
             if cursor.rowcount == 0:
@@ -379,10 +380,10 @@ class LocalMemoryManager:
         """
         with self.db.transaction() as conn:
             if project_id is None:
-                cursor = conn.execute("UPDATE memories SET graph_processed = 0")
+                cursor = conn.execute("UPDATE memories SET graph_processed = FALSE")
             else:
                 cursor = conn.execute(
-                    "UPDATE memories SET graph_processed = 0 WHERE project_id = ?",
+                    "UPDATE memories SET graph_processed = FALSE WHERE project_id = ?",
                     (project_id,),
                 )
             return cursor.rowcount
@@ -391,7 +392,7 @@ class LocalMemoryManager:
         """Mark a memory as having been processed by the KG pipeline."""
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                "UPDATE memories SET graph_processed = 1 WHERE id = ?",
+                "UPDATE memories SET graph_processed = TRUE WHERE id = ?",
                 (memory_id,),
             )
             if cursor.rowcount == 0:
@@ -413,7 +414,7 @@ class LocalMemoryManager:
     def get_pending_graph_memories(self, limit: int = 20) -> list[Memory]:
         """Get memories pending KG graph processing."""
         rows = self.db.fetchall(
-            "SELECT * FROM memories WHERE graph_processed = 0 ORDER BY created_at ASC LIMIT ?",
+            "SELECT * FROM memories WHERE graph_processed IS FALSE ORDER BY created_at ASC LIMIT ?",
             (limit,),
         )
         return [Memory.from_row(row) for row in rows]

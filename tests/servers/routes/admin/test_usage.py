@@ -1,6 +1,6 @@
-import sqlite3
 from unittest.mock import MagicMock
 
+import psycopg
 import pytest
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
@@ -128,8 +128,8 @@ def test_usage_exceptions(test_app):
     app, server_mock = test_app
     db = server_mock.services.database
 
-    db.fetchall.side_effect = sqlite3.Error("DB error")
-    db.fetchone.side_effect = sqlite3.Error("DB error")
+    db.fetchall.side_effect = psycopg.Error("DB error")
+    db.fetchone.side_effect = psycopg.Error("DB error")
 
     client = TestClient(app)
     response = client.get("/usage")

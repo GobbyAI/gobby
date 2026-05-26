@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Literal
 if TYPE_CHECKING:
     from gobby.config.features import RecommendToolsConfig
 from gobby.prompts import PromptLoader
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger("gobby.mcp.server")
 
@@ -27,7 +27,7 @@ class RecommendationService:
         semantic_search: Any | None = None,
         project_id: str | None = None,
         config: RecommendToolsConfig | None = None,
-        db: DatabaseProtocol | None = None,
+        db: HubDatabase | None = None,
     ):
         self._llm_service = llm_service
         self._mcp_manager = mcp_manager

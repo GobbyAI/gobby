@@ -477,6 +477,59 @@ async def test_call_tool_project_id_priority_over_session(daemon_tools):
 
 
 @pytest.mark.asyncio
+async def test_call_tool_resolves_hash_session_in_caller_project_before_target_override(
+    daemon_tools, mock_mcp_manager
+):
+    """#N wrapper session refs use caller project scope before project_id overrides context."""
+    from unittest.mock import sentinel
+
+    daemon_tools.tool_proxy.call_tool = AsyncMock(return_value={"ok": True})
+    mock_mcp_manager.project_id = "caller-project"
+
+    mock_sm = MagicMock()
+    mock_sm.db = MagicMock()
+    mock_session = MagicMock()
+    mock_session.external_id = "ext-123"
+    mock_sm.get.return_value = mock_session
+    mock_sm.resolve_session_reference.return_value = "platform-session"
+    daemon_tools._session_manager = mock_sm
+
+    def resolve_ref(project_ref):
+        project = MagicMock()
+        project.id = {
+            "caller-project": "caller-project-id",
+            "target-project": "target-project-id",
+        }[project_ref]
+        return project
+
+    with (
+        patch("gobby.storage.projects.LocalProjectManager") as mock_pm_class,
+        patch(
+            "gobby.utils.project_context.set_project_context_from_ref",
+            return_value=sentinel.token,
+        ) as mock_ref,
+        patch("gobby.utils.project_context.reset_project_context"),
+    ):
+        mock_pm_class.return_value.resolve_ref.side_effect = resolve_ref
+        result = await daemon_tools.call_tool(
+            "gobby-tasks",
+            "list_tasks",
+            {},
+            session_id="#7",
+            project_id="target-project",
+        )
+
+    assert result == {"ok": True}
+    mock_sm.resolve_session_reference.assert_called_once_with("#7", "caller-project-id")
+    mock_ref.assert_called_once_with("target-project-id", mock_sm.db)
+    call_args = daemon_tools.tool_proxy.call_tool.call_args
+    resolved_session = call_args.kwargs.get("session_id")
+    if resolved_session is None:
+        resolved_session = call_args.args[3]
+    assert resolved_session == "platform-session"
+
+
+@pytest.mark.asyncio
 async def test_call_tool_project_id_stripped_from_arguments(daemon_tools):
     """project_id in arguments dict is stripped (leaked-key protection)."""
     from unittest.mock import sentinel

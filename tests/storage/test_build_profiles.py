@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import asdict
 from typing import Any
 
 import pytest
@@ -149,17 +150,12 @@ def test_profile_from_row_logs_malformed_json(
         source="project",
         project_id=sample_project["id"],
     )
-    temp_db.execute(
-        "UPDATE build_profiles SET skip_stages_json = ? WHERE id = ?",
-        ("{malformed", profile.id),
-    )
+    row = asdict(profile)
+    row["skip_stages_json"] = "{malformed"
+    row["tags_json"] = "[]"
 
     with caplog.at_level(logging.DEBUG):
-        reloaded = manager.get(
-            "local-fast",
-            source="project",
-            project_id=sample_project["id"],
-        )
+        reloaded = manager._profile_from_row(row)
 
     assert reloaded is not None
     assert reloaded.skip_stages == []

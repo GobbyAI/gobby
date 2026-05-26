@@ -12,6 +12,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from gobby.servers.routes._database import require_hub_database
 from gobby.storage.auth import AuthStore
 from gobby.storage.config_store import config_key_to_secret_name
 from gobby.storage.secrets import SecretStore
@@ -47,13 +48,7 @@ def _get_auth_credentials(server: "HTTPServer") -> tuple[str, str]:
         return "", ""
 
     # Resolve password from secrets (Fernet-encrypted in secrets table)
-    from gobby.storage.database import LocalDatabase
-
-    db = server.services.database
-    if not isinstance(db, LocalDatabase):
-        return "", ""
-
-    secret_store = SecretStore(db)
+    secret_store = SecretStore(require_hub_database(server.services.database))
 
     secret_name = config_key_to_secret_name("auth.password")
     stored_password = secret_store.get(secret_name)
@@ -72,12 +67,7 @@ def is_auth_enabled(server: "HTTPServer") -> bool:
 
 def _get_auth_store(server: "HTTPServer") -> AuthStore:
     """Get or create AuthStore instance."""
-    from gobby.storage.database import LocalDatabase
-
-    db = server.services.database
-    if not isinstance(db, LocalDatabase):
-        raise RuntimeError("Database not available")
-    return AuthStore(db)
+    return AuthStore(require_hub_database(server.services.database))
 
 
 def validate_session_cookie(request: Request, server: "HTTPServer") -> bool:

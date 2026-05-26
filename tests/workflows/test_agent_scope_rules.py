@@ -15,8 +15,7 @@ from typing import Any
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleEvent
 from gobby.workflows.engine.core import RuleEngine
@@ -25,15 +24,13 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path) -> LocalDatabase:
-    db_path = tmp_path / "test_agent_scope.db"
-    database = LocalDatabase(db_path)
-    run_migrations(database)
+def db(temp_db: HubDatabase) -> HubDatabase:
+    database = temp_db
     return database
 
 
 @pytest.fixture
-def manager(db: LocalDatabase) -> LocalWorkflowDefinitionManager:
+def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
     return LocalWorkflowDefinitionManager(db)
 
 
@@ -76,7 +73,7 @@ class TestAgentScopeFiltering:
 
     @pytest.mark.asyncio
     async def test_global_rule_fires_without_agent_type(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Rules with no agent_scope fire for any session."""
         _insert_rule(
@@ -97,7 +94,7 @@ class TestAgentScopeFiltering:
 
     @pytest.mark.asyncio
     async def test_global_rule_fires_with_agent_type(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Rules with no agent_scope fire even when _agent_type is set."""
         _insert_rule(
@@ -119,7 +116,7 @@ class TestAgentScopeFiltering:
 
     @pytest.mark.asyncio
     async def test_scoped_rule_fires_for_matching_agent(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Rules with agent_scope fire when _agent_type matches."""
         _insert_rule(
@@ -143,7 +140,7 @@ class TestAgentScopeFiltering:
 
     @pytest.mark.asyncio
     async def test_scoped_rule_skipped_for_non_matching_agent(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Rules with agent_scope are skipped when _agent_type doesn't match."""
         _insert_rule(
@@ -166,7 +163,7 @@ class TestAgentScopeFiltering:
 
     @pytest.mark.asyncio
     async def test_scoped_rule_skipped_without_agent_type(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Rules with agent_scope are skipped when no _agent_type is set."""
         _insert_rule(
@@ -188,7 +185,7 @@ class TestAgentScopeFiltering:
 
     @pytest.mark.asyncio
     async def test_multi_scope_rule_matches_any(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Rules with multiple agent_scope entries match any of them."""
         _insert_rule(
@@ -231,7 +228,7 @@ class TestDeveloperAgentRules:
 
     @pytest.mark.asyncio
     async def test_no_coderabbit_blocks_for_developer(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """no-coderabbit blocks coderabbit MCP tools for developer agents."""
         _insert_rule(
@@ -268,7 +265,7 @@ class TestDeveloperAgentRules:
 
     @pytest.mark.asyncio
     async def test_no_coderabbit_allows_for_qa(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """no-coderabbit does not block QA agents."""
         _insert_rule(
@@ -304,7 +301,7 @@ class TestDeveloperAgentRules:
 
     @pytest.mark.asyncio
     async def test_require_tests_blocks_git_commit_for_developer(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """require-tests-pass blocks git commit for developer agents."""
         _insert_rule(
@@ -346,7 +343,7 @@ class TestQAAgentRules:
 
     @pytest.mark.asyncio
     async def test_no_code_writing_blocks_edit_for_qa(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """no-code-writing blocks Edit/Write for QA agents."""
         _insert_rule(
@@ -375,7 +372,7 @@ class TestQAAgentRules:
 
     @pytest.mark.asyncio
     async def test_no_code_writing_allows_for_developer(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """no-code-writing does not block developer agents."""
         _insert_rule(
@@ -413,7 +410,7 @@ class TestCoordinatorAgentRules:
 
     @pytest.mark.asyncio
     async def test_no_code_writing_blocks_for_coordinator(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Coordinator can't use Edit/Write/NotebookEdit."""
         _insert_rule(
@@ -442,7 +439,7 @@ class TestCoordinatorAgentRules:
 
     @pytest.mark.asyncio
     async def test_no_code_writing_allows_for_developer(
-        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Coordinator no-code-writing doesn't affect developer agents."""
         _insert_rule(

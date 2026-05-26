@@ -18,7 +18,7 @@ blocked_mcp_tools:
 skills:
   baseline:
     - Python backend and daemon implementation
-    - storage, migrations, sqlite3, psql, and database clients
+    - storage, migrations, psql, and database clients
     - pytest, mypy, ruff, and task-focused validation
     - uv, pip, poetry, container tools, and infrastructure debugging
     - docs and test leaves that do not require a specialized agent
@@ -27,7 +27,6 @@ skills:
     - mypy
     - ruff
     - psql
-    - sqlite3
     - uv
     - pip
     - poetry
@@ -47,15 +46,16 @@ instructions: |
   ## Agent Selection
   Defaulted to `backend-developer`
 
-  Prefer the backend toolchain: pytest, mypy, ruff, psql, sqlite3, uv, pip,
+  Prefer the backend toolchain: pytest, mypy, ruff, psql, uv, pip,
   poetry, and container tools. Use repository-specific validation commands
   rather than broad full-suite runs.
 
   ADDITIONAL SKILLS:
-  After claiming the task, inspect the prompt's additional_skills list. For each
-  entry, call get_skill(name=<skill>) on gobby-skills before implementing. The
-  list is usually empty; baseline backend competence is defined in this YAML's
-  skills block.
+  After claiming the task, first load development-discipline and
+  task-transitions with gobby-skills. Then inspect the prompt's additional_skills
+  list. For each entry, call get_skill(name=<skill>) on gobby-skills before
+  implementing. TDD-required leaves include
+  test-driven-development in additional_skills.
 
   HANDOFF:
   Inspect the assigned task's stage manifest. If the current development row has
@@ -80,6 +80,10 @@ workflows:
 
 step_variables:
   task_claimed: false
+  required_skills:
+    - development-discipline
+    - task-transitions
+  required_skills_loaded: false
   additional_skills: []
   additional_skills_loaded: false
   implementation_complete: false
@@ -104,14 +108,50 @@ steps:
         variable: task_claimed
         value: true
     transitions:
-      - to: load_additional_skills
+      - to: load_required_skills
         when: "vars.task_claimed"
+
+  - name: load_required_skills
+    description: "Load required developer discipline skills"
+    status_message: |
+      Load required developer skills before loading optional task skills or
+      implementing:
+      1. get_skill(name="development-discipline") on gobby-skills
+      2. get_skill(name="task-transitions") on gobby-skills
+      Use only mcp__gobby__* proxy tools in this step. Exact path for each skill:
+      list_mcp_servers -> list_tools("gobby-skills") ->
+      get_tool_schema("gobby-skills", "get_skill") ->
+      call_tool("gobby-skills", "get_skill", {"name": <skill>}).
+      Do not use native Skill, GitHub/app connector, or Computer Use tools.
+    allowed_tools:
+      - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
+    allowed_mcp_tools:
+      - "gobby-skills:get_skill"
+    on_mcp_success:
+      - server: gobby-skills
+        tool: get_skill
+        action: set_variable
+        variable: required_skills_loaded
+        value: >-
+          all(skill in vars.get('loaded_skills', []) for skill in vars.required_skills)
+    transitions:
+      - to: load_additional_skills
+        when: >-
+          all(skill in vars.get('loaded_skills', []) for skill in vars.required_skills)
 
   - name: load_additional_skills
     description: "Load optional task-specific skills"
     status_message: |
       For each prompt additional_skills entry, call get_skill(name=<skill>) on
       gobby-skills. If the list is empty, proceed to implementation.
+      Use only mcp__gobby__* proxy tools in this step. Exact path for each skill:
+      list_mcp_servers -> list_tools("gobby-skills") ->
+      get_tool_schema("gobby-skills", "get_skill") ->
+      call_tool("gobby-skills", "get_skill", {"name": <skill>}).
+      Do not use native Skill, GitHub/app connector, or Computer Use tools.
     allowed_tools:
       - mcp__gobby__call_tool
       - mcp__gobby__list_mcp_servers

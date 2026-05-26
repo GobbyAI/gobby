@@ -19,7 +19,7 @@ class TestSessionManagerPruning:
     ) -> None:
         """Test expiring stale sessions."""
         # Create a stale session (simulated by mocking updated_at in query or just rely on db time)
-        # Since we use SQLite datetime('now') in queries, we can't easily mock time without
+        # Since we use PostgreSQL CURRENT_TIMESTAMP in queries, we can't easily mock time without
         # deeper mocking. Instead, we'll verify the SQL generation and execution flow
         # or use a very short timeout.
 
@@ -32,7 +32,7 @@ class TestSessionManagerPruning:
 
         # Manually backdate the session in DB
         session_manager.db.execute(
-            "UPDATE sessions SET updated_at = datetime('now', '-25 hours') WHERE id = ?",
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '25 hours' WHERE id = ?",
             (session.id,),
         )
 
@@ -57,7 +57,7 @@ class TestSessionManagerPruning:
 
         # Backdate
         session_manager.db.execute(
-            "UPDATE sessions SET updated_at = datetime('now', '-31 minutes') WHERE id = ?",
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '31 minutes' WHERE id = ?",
             (session.id,),
         )
 
@@ -81,7 +81,7 @@ class TestSessionManagerPruning:
         )
 
         session_manager.db.execute(
-            "UPDATE sessions SET updated_at = datetime('now', '-31 minutes') WHERE id = ?",
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '31 minutes' WHERE id = ?",
             (session.id,),
         )
         before = session_manager.db.fetchone(
@@ -114,7 +114,7 @@ class TestSessionManagerPruning:
         )
 
         session_manager.db.execute(
-            "UPDATE sessions SET updated_at = datetime('now', '-25 hours') WHERE id = ?",
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '25 hours' WHERE id = ?",
             (session.id,),
         )
 
@@ -148,7 +148,7 @@ class TestSessionManagerPruning:
 
         session_manager.update_status(paused_session.id, "paused")
         session_manager.db.execute(
-            "UPDATE sessions SET updated_at = datetime('now', '-3 hours') WHERE id IN (?, ?)",
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '3 hours' WHERE id IN (?, ?)",
             (active_session.id, paused_session.id),
         )
 
@@ -184,7 +184,7 @@ class TestSessionManagerPruning:
         session_manager.update_stats(nonempty_active.id, message_count=1)
         session_manager.update_status(expired_empty.id, "expired")
         session_manager.db.execute(
-            "UPDATE sessions SET updated_at = datetime('now', '-3 hours') WHERE id IN (?, ?)",
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '3 hours' WHERE id IN (?, ?)",
             (nonempty_active.id, expired_empty.id),
         )
 
@@ -238,10 +238,10 @@ class TestSessionManagerPruning:
             """
             UPDATE sessions
             SET updated_at = CASE
-                WHEN id = ? THEN datetime('now', '-2 hours')
-                WHEN id = ? THEN datetime('now', '-30 minutes')
-                WHEN id = ? THEN datetime('now', '-2 hours')
-                WHEN id = ? THEN datetime('now', '-2 hours')
+                WHEN id = ? THEN NOW() - INTERVAL '2 hours'
+                WHEN id = ? THEN NOW() - INTERVAL '30 minutes'
+                WHEN id = ? THEN NOW() - INTERVAL '2 hours'
+                WHEN id = ? THEN NOW() - INTERVAL '2 hours'
             END
             WHERE id IN (?, ?, ?, ?)
             """,
@@ -308,7 +308,7 @@ class TestSessionManagerPruning:
         session_manager.db.execute(
             """
             UPDATE sessions
-            SET updated_at = datetime('now', '-2 hours')
+            SET updated_at = NOW() - INTERVAL '2 hours'
             WHERE id IN (?, ?, ?, ?)
             """,
             (child_parent.id, task_ref.id, memory_ref.id, agent_run_ref.id),
@@ -325,7 +325,7 @@ class TestSessionManagerPruning:
             """
             INSERT INTO tasks (
                 id, project_id, title, created_in_session_id, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
+            ) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             (str(uuid4()), sample_project["id"], "Retained task history", task_ref.id),
         )
@@ -333,7 +333,7 @@ class TestSessionManagerPruning:
             """
             INSERT INTO memories (
                 id, project_id, memory_type, content, source_session_id, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             (
                 str(uuid4()),
@@ -347,7 +347,7 @@ class TestSessionManagerPruning:
             """
             INSERT INTO agent_runs (
                 id, parent_session_id, provider, prompt, status, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             (str(uuid4()), agent_run_ref.id, "claude", "retained prompt", "success"),
         )
@@ -397,7 +397,7 @@ class TestSessionManagerPruning:
         session_manager.db.execute(
             f"""
             UPDATE sessions
-            SET updated_at = datetime('now', '-3 hours')
+            SET updated_at = NOW() - INTERVAL '3 hours'
             WHERE id IN ({placeholders})
             """,
             tuple(stale_ids),
@@ -414,7 +414,7 @@ class TestSessionManagerPruning:
             """
             INSERT INTO memories (
                 id, project_id, memory_type, content, source_session_id, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             (
                 str(uuid4()),

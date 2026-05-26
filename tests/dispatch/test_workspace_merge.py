@@ -7,8 +7,9 @@ import pytest
 
 from gobby.build.workspaces import BuildWorkspaceError, _integration_branch
 from gobby.dispatch.actions import MergeWorkspaceAction
-from gobby.dispatch.workspace_merge import execute_merge_workspace
-from gobby.storage.database import LocalDatabase
+from gobby.dispatch.merge_recovery import WORKSPACE_MERGE_CONFLICT_LABEL
+from gobby.dispatch.workspace_merge import _non_gobby_status_lines, execute_merge_workspace
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager
@@ -45,8 +46,17 @@ def _assert_worktree_removed(
     assert not worktree_path.exists()
 
 
+async def test_non_gobby_status_lines_ignores_gobby_paths_with_full_or_stripped_prefix() -> None:
+    assert _non_gobby_status_lines(" M .gobby/tasks.jsonl\n") == []
+    assert _non_gobby_status_lines("M .gobby/tasks.jsonl") == []
+    assert _non_gobby_status_lines("R  .gobby/old.json -> .gobby/new.json") == []
+    assert _non_gobby_status_lines("M src/gobby/app.py\n M .gobby/tasks.jsonl") == [
+        "M src/gobby/app.py"
+    ]
+
+
 async def test_execute_merge_workspace_merges_worktree_and_completes_stage(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
@@ -117,8 +127,81 @@ async def test_execute_merge_workspace_merges_worktree_and_completes_stage(
     assert task_manager.artifacts.get_artifacts(leaf.id).worktree_id is None
 
 
+async def test_execute_merge_workspace_completes_already_merged_worktree(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    integration_path = tmp_path / "integration"
+    task_path = tmp_path / "task"
+    repo.mkdir()
+    _init_repo(repo)
+    _git(repo, "worktree", "add", "-b", "integration/root", str(integration_path), "main")
+    _git(repo, "worktree", "add", "-b", "task/leaf", str(task_path), "integration/root")
+    _git(task_path, "config", "user.email", "test@example.com")
+    _git(task_path, "config", "user.name", "Test User")
+    (task_path / "feature.txt").write_text("feature\n")
+    _git(task_path, "add", "feature.txt")
+    _git(task_path, "commit", "-m", "feature")
+    source_commit = _git(task_path, "rev-parse", "HEAD")
+    _git(integration_path, "merge", "--no-ff", "--no-edit", source_commit)
+
+    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    task_manager = LocalTaskManager(temp_db)
+    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    leaf = task_manager.create_task(
+        project_id=project.id,
+        title="Leaf",
+        parent_task_id=parent.id,
+        category="code",
+        task_type="task",
+    )
+    task_manager.initialize_task_manifest(leaf.id, stage_names=["merge"])
+    task_manager.stage_states.start_stage(leaf.id, "merge", by_session_id="test")
+
+    worktrees = LocalWorktreeManager(temp_db)
+    worktrees.create(
+        project_id=project.id,
+        branch_name="integration/root",
+        worktree_path=str(integration_path),
+        base_branch="main",
+        task_id=parent.id,
+        workspace_role="integration",
+    )
+    source = worktrees.create(
+        project_id=project.id,
+        branch_name="task/leaf",
+        worktree_path=str(task_path),
+        base_branch="integration/root",
+        task_id=leaf.id,
+    )
+    task_manager.artifacts.set_artifacts_atomic(
+        leaf.id,
+        worktree_path=str(task_path),
+        worktree_id=source.id,
+        base_commit_sha=_git(repo, "rev-parse", "main"),
+        target_branch="integration/root",
+    )
+
+    merge_sha = await execute_merge_workspace(
+        MergeWorkspaceAction(
+            task_id=leaf.id,
+            task_ref=f"#{leaf.seq_num}",
+            backend="worktree",
+            target_branch="integration/root",
+            source_workspace_id=source.id,
+        ),
+        db=temp_db,
+    )
+
+    assert merge_sha == source_commit
+    assert task_manager.stage_states.get(leaf.id, "merge").state == "done"
+    _assert_worktree_removed(worktrees, source.id, task_path)
+    assert task_manager.artifacts.get_artifacts(leaf.id).worktree_id is None
+
+
 async def test_execute_merge_workspace_lands_root_integration_worktree_on_local_branch(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
@@ -231,10 +314,79 @@ async def test_execute_merge_workspace_lands_root_integration_worktree_on_local_
     assert task_manager.artifacts.get_artifacts(dirty_leaf.id).worktree_id == dirty_source.id
 
 
-async def test_execute_merge_workspace_adopts_missing_integration_worktree_metadata(
-    temp_db: LocalDatabase,
+async def test_execute_merge_workspace_lands_child_epic_integration_on_local_branch(
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
+    repo = tmp_path / "repo"
+    integration_path = tmp_path / "phase-integration"
+    repo.mkdir()
+    _init_repo(repo)
+    _git(repo, "worktree", "add", "-b", "gobby/integration/phase", str(integration_path), "main")
+    _git(integration_path, "config", "user.email", "test@example.com")
+    _git(integration_path, "config", "user.name", "Test User")
+    (integration_path / "phase.txt").write_text("phase\n")
+    _git(integration_path, "add", "phase.txt")
+    _git(integration_path, "commit", "-m", "phase work")
+
+    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    task_manager = LocalTaskManager(temp_db)
+    root = task_manager.create_task(project_id=project.id, title="Root", task_type="epic")
+    phase = task_manager.create_task(
+        project_id=project.id,
+        title="Phase",
+        parent_task_id=root.id,
+        task_type="epic",
+    )
+    task_manager.initialize_task_manifest(phase.id, stage_names=["merge"])
+    task_manager.stage_states.start_stage(phase.id, "merge", by_session_id="test")
+
+    worktrees = LocalWorktreeManager(temp_db)
+    integration = worktrees.create(
+        project_id=project.id,
+        branch_name="gobby/integration/phase",
+        worktree_path=str(integration_path),
+        base_branch="main",
+        task_id=phase.id,
+        workspace_role="integration",
+    )
+    task_manager.artifacts.set_artifacts_atomic(
+        phase.id,
+        target_branch="main",
+        integration_branch="gobby/integration/phase",
+        integration_workspace_id=integration.id,
+    )
+    (repo / ".gobby").mkdir()
+    (repo / ".gobby" / "tasks.jsonl").write_text("sync artifact\n")
+
+    merge_sha = await execute_merge_workspace(
+        MergeWorkspaceAction(
+            task_id=phase.id,
+            task_ref=f"#{phase.seq_num}",
+            backend="worktree",
+            target_branch="main",
+            source_branch="gobby/integration/phase",
+            source_workspace_id=integration.id,
+        ),
+        db=temp_db,
+    )
+
+    stage = task_manager.stage_states.get(phase.id, "merge")
+
+    assert merge_sha == _git(repo, "rev-parse", "HEAD")
+    assert (repo / "phase.txt").read_text() == "phase\n"
+    assert stage is not None
+    assert stage.state == "done"
+    assert stage.completed_commit_sha == merge_sha
+    _assert_worktree_removed(worktrees, integration.id, integration_path)
+    assert task_manager.artifacts.get_artifacts(phase.id).integration_workspace_id is None
+
+
+async def test_execute_merge_workspace_adopts_missing_integration_worktree_metadata(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    """Generated integration worktree metadata is adopted when the DB row is missing."""
     repo = tmp_path / "repo"
     integration_path = tmp_path / "integration"
     task_path = tmp_path / "task"
@@ -307,7 +459,7 @@ async def test_execute_merge_workspace_adopts_missing_integration_worktree_metad
 
 
 async def test_execute_merge_workspace_rejects_dirty_unmanaged_integration_worktree(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
@@ -370,8 +522,159 @@ async def test_execute_merge_workspace_rejects_dirty_unmanaged_integration_workt
     assert task_path.exists()
 
 
+async def test_execute_merge_workspace_allows_disjoint_registered_target_dirt(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    integration_path = tmp_path / "integration"
+    task_path = tmp_path / "task"
+    repo.mkdir()
+    _init_repo(repo)
+
+    _git(repo, "worktree", "add", "-b", "integration/root", str(integration_path), "main")
+    _git(repo, "worktree", "add", "-b", "task/leaf", str(task_path), "integration/root")
+    (integration_path / "dirty.txt").write_text("dirty\n")
+    (task_path / "feature.txt").write_text("feature\n")
+    _git(task_path, "add", "feature.txt")
+    _git(task_path, "commit", "-m", "feature")
+
+    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    task_manager = LocalTaskManager(temp_db)
+    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    leaf = task_manager.create_task(
+        project_id=project.id,
+        title="Leaf",
+        parent_task_id=parent.id,
+        category="code",
+        task_type="task",
+    )
+    task_manager.initialize_task_manifest(leaf.id, stage_names=["merge"])
+    task_manager.stage_states.start_stage(leaf.id, "merge", by_session_id="test")
+
+    worktrees = LocalWorktreeManager(temp_db)
+    worktrees.create(
+        project_id=project.id,
+        branch_name="integration/root",
+        worktree_path=str(integration_path),
+        base_branch="main",
+        task_id=parent.id,
+        workspace_role="integration",
+    )
+    source = worktrees.create(
+        project_id=project.id,
+        branch_name="task/leaf",
+        worktree_path=str(task_path),
+        base_branch="integration/root",
+        task_id=leaf.id,
+    )
+    task_manager.artifacts.set_artifacts_atomic(
+        leaf.id,
+        worktree_path=str(task_path),
+        worktree_id=source.id,
+        base_commit_sha=_git(repo, "rev-parse", "main"),
+        target_branch="integration/root",
+    )
+
+    merge_sha = await execute_merge_workspace(
+        MergeWorkspaceAction(
+            task_id=leaf.id,
+            task_ref=f"#{leaf.seq_num}",
+            backend="worktree",
+            target_branch="integration/root",
+            source_workspace_id=source.id,
+        ),
+        db=temp_db,
+    )
+
+    stage = task_manager.stage_states.get(leaf.id, "merge")
+    assert merge_sha == _git(integration_path, "rev-parse", "HEAD")
+    assert stage is not None
+    assert stage.state == "done"
+    assert (integration_path / "dirty.txt").read_text() == "dirty\n"
+    _assert_worktree_removed(worktrees, source.id, task_path)
+
+
+async def test_execute_merge_workspace_fails_stage_when_target_dirt_overlaps_merge(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    integration_path = tmp_path / "integration"
+    task_path = tmp_path / "task"
+    repo.mkdir()
+    _init_repo(repo)
+
+    _git(repo, "worktree", "add", "-b", "integration/root", str(integration_path), "main")
+    _git(repo, "worktree", "add", "-b", "task/leaf", str(task_path), "integration/root")
+    (integration_path / "feature.txt").write_text("dirty local feature\n")
+    (task_path / "feature.txt").write_text("feature\n")
+    _git(task_path, "add", "feature.txt")
+    _git(task_path, "commit", "-m", "feature")
+
+    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    task_manager = LocalTaskManager(temp_db)
+    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    leaf = task_manager.create_task(
+        project_id=project.id,
+        title="Leaf",
+        parent_task_id=parent.id,
+        category="code",
+        task_type="task",
+    )
+    task_manager.initialize_task_manifest(leaf.id, stage_names=["merge"])
+    task_manager.stage_states.start_stage(leaf.id, "merge", by_session_id="test")
+
+    worktrees = LocalWorktreeManager(temp_db)
+    worktrees.create(
+        project_id=project.id,
+        branch_name="integration/root",
+        worktree_path=str(integration_path),
+        base_branch="main",
+        task_id=parent.id,
+        workspace_role="integration",
+    )
+    source = worktrees.create(
+        project_id=project.id,
+        branch_name="task/leaf",
+        worktree_path=str(task_path),
+        base_branch="integration/root",
+        task_id=leaf.id,
+    )
+    task_manager.artifacts.set_artifacts_atomic(
+        leaf.id,
+        worktree_path=str(task_path),
+        worktree_id=source.id,
+        base_commit_sha=_git(repo, "rev-parse", "main"),
+        target_branch="integration/root",
+    )
+
+    merge_sha = await execute_merge_workspace(
+        MergeWorkspaceAction(
+            task_id=leaf.id,
+            task_ref=f"#{leaf.seq_num}",
+            backend="worktree",
+            target_branch="integration/root",
+            source_workspace_id=source.id,
+        ),
+        db=temp_db,
+    )
+
+    stage = task_manager.stage_states.get(leaf.id, "merge")
+    updated = task_manager.get_task(leaf.id)
+    assert merge_sha is None
+    assert stage is not None
+    assert stage.state == "ready"
+    assert (
+        "### Workspace merge failed\n\n"
+        "workspace_merge_failed:target integration workspace dirty paths overlap merge: feature.txt"
+    ) in (updated.description or "")
+    assert worktrees.get(source.id) is not None
+    assert task_path.exists()
+
+
 async def test_execute_merge_workspace_preserves_worktree_after_merge_conflict(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
@@ -444,18 +747,22 @@ async def test_execute_merge_workspace_preserves_worktree_after_merge_conflict(
     )
 
     stage = task_manager.stage_states.get(leaf.id, "merge")
+    updated = task_manager.get_task(leaf.id)
     assert merge_sha is None
     assert stage is not None
     assert stage.state == "ready"
+    assert not updated.is_escalated
+    assert WORKSPACE_MERGE_CONFLICT_LABEL in (updated.labels or [])
     assert worktrees.get(source.id) is not None
     assert task_path.exists()
     assert task_manager.artifacts.get_artifacts(leaf.id).worktree_id == source.id
 
 
 async def test_execute_merge_workspace_resolves_worktree_local_project_metadata(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
+    """Non-generated worktree-local project metadata is preserved during merge."""
     repo = tmp_path / "repo"
     integration_path = tmp_path / "integration"
     task_path = tmp_path / "task"
@@ -545,7 +852,7 @@ async def test_execute_merge_workspace_resolves_worktree_local_project_metadata(
 
 
 async def test_execute_merge_workspace_resolves_docs_guides_readme_row_conflict(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
@@ -662,7 +969,7 @@ async def test_execute_merge_workspace_resolves_docs_guides_readme_row_conflict(
 
 
 async def test_execute_merge_workspace_resolves_represented_docs_guides_readme_quick_link(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"

@@ -2,24 +2,22 @@
 
 Tier 1 behaviors (hardcoded in RuleEngine.evaluate):
 - stop_attempts auto-increment on STOP
-- BEFORE_AGENT full reset (tool_block_pending, errors_resolved, stop_attempts, etc.)
+- BEFORE_AGENT full reset (tool_block_pending, stop_attempts, etc.)
 - tool_block_pending stop gate, force_allow_stop bypass, consecutive tool block counter
 
 Tier 2 rules (YAML templates — configurable):
-- require-error-triage-before-status (task-enforcement), require-task-close
+- require-task-close
 """
 
 from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from unittest.mock import MagicMock
 
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.tasks.state_semantics import ACTIVE_STAGE_STATES
 from gobby.workflows.definitions import RuleDefinitionBody
@@ -31,15 +29,13 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path) -> LocalDatabase:
-    db_path = tmp_path / "test_stop_gates.db"
-    database = LocalDatabase(db_path)
-    run_migrations(database)
+def db(temp_db: HubDatabase) -> HubDatabase:
+    database = temp_db
     return database
 
 
 @pytest.fixture
-def manager(db: LocalDatabase) -> LocalWorkflowDefinitionManager:
+def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
     return LocalWorkflowDefinitionManager(db)
 
 
@@ -57,6 +53,7 @@ def _get_rule(manager, name):
 
 STOP_GATES_RULES = {
     "require-task-close",
+    "require-step-completion",
 }
 
 
@@ -165,47 +162,6 @@ class TestStopAttemptsPlumbing:
         assert variables.get("stop_attempts") == 2
 
 
-class TestRequireErrorTriage:
-    """Verify require-error-triage-before-status blocks status transitions until triage confirmed."""
-
-    def test_blocks_on_before_tool(self, db, manager) -> None:
-        """Should have a block effect on before_tool event."""
-        _sync_bundled(db)
-
-        row = _get_rule(manager, "require-error-triage-before-status")
-        assert row is not None
-
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-        assert body.event.value == "before_tool"
-        effect_types = {e.type for e in body.resolved_effects}
-        assert "block" in effect_types
-
-    def test_blocks_all_status_transitions(self, db, manager) -> None:
-        """Should block close_task and all review lifecycle transitions."""
-        _sync_bundled(db)
-
-        row = _get_rule(manager, "require-error-triage-before-status")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-
-        mcp_tools = body.effects[0].mcp_tools
-        assert "gobby-tasks:close_task" in mcp_tools
-        assert "gobby-tasks:de_escalate_task" in mcp_tools
-        assert "gobby-tasks-ops:submit_for_review" in mcp_tools
-        assert "gobby-tasks-ops:approve_review" in mcp_tools
-        assert "gobby-tasks-ops:reject_review" in mcp_tools
-
-    def test_when_checks_triage_flag(self, db, manager) -> None:
-        """Should check errors_resolved."""
-        _sync_bundled(db)
-
-        row = _get_rule(manager, "require-error-triage-before-status")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-
-        assert body.when is not None
-        assert "errors_resolved" in body.when
-        assert "session_edited_files" in body.when
-
-
 class TestRequireTaskClose:
     """Verify require-task-close blocks stop if task in_progress."""
 
@@ -287,43 +243,103 @@ class TestRequireTaskClose:
         assert "require-task-close" in (response.reason or "")
 
 
-class TestCompactPreservesTriagedState:
-    """Regression: compact must NOT reset errors_resolved.
+class TestRequireStepCompletion:
+    """Verify spawned-agent step completion gates only apply to active step workflows."""
 
-    Bug scenario: agent sets errors_resolved=true during session,
-    then /compact fires SessionStart → _activate_default_agent re-applies
-    defaults → overwrites triaged back to false → require-error-triage fires
-    spuriously on next stop.
-    """
-
-    def test_compact_preserves_triaged_state(self, db, manager) -> None:
-        """After triaging errors, compact should NOT cause require-error-triage to fire."""
+    def test_blocks_on_turn_end(self, db, manager) -> None:
+        """Should be a block effect on semantic turn_end."""
         _sync_bundled(db)
 
-        row = _get_rule(manager, "require-error-triage-before-status")
+        row = _get_rule(manager, "require-step-completion")
+        assert row is not None
+
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.event.value == "turn_end"
+        assert body.effects[0].type == "block"
+
+    def test_when_requires_current_step(self, db, manager) -> None:
+        """Default/no-step spawned agents should not be trapped at stop."""
+        _sync_bundled(db)
+
+        row = _get_rule(manager, "require-step-completion")
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
 
-        # State AFTER agent has triaged errors and committed
+        assert body.when is not None
+        assert "current_step" in body.when
+
+    def test_does_not_block_spawned_agent_without_current_step(self, db, manager) -> None:
+        """A spawned agent without a step instance may terminate normally."""
+        _sync_bundled(db)
+
+        row = _get_rule(manager, "require-step-completion")
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+
         variables: dict[str, object] = {
-            "errors_resolved": True,  # Set by agent
+            "is_spawned_agent": True,
+            "step_workflow_complete": False,
             "stop_attempts": 1,
         }
-
-        # The fix ensures _activate_default_agent does NOT overwrite these.
-        # Verify: with preserved variables, the rule condition should NOT match.
-        # Build event context that would normally trigger the rule (close_task with commit)
-        mock_event = MagicMock()
-        mock_event.data = {
-            "mcp_tool": "close_task",
-            "tool_input": {"arguments": {"commit_sha": "abc123"}},
-        }
         evaluator = SafeExpressionEvaluator(
-            context={"variables": variables, "event": mock_event},
+            context={"variables": variables},
             allowed_funcs={"len": len, "str": str, "int": int, "bool": bool},
         )
-        assert not evaluator.evaluate(body.when), (
-            "require-error-triage-before-status should NOT fire when errors_resolved=true"
+        assert not evaluator.evaluate(body.when)
+
+    def test_blocks_spawned_agent_with_incomplete_current_step(self, db, manager) -> None:
+        """A real active step workflow still blocks termination until complete."""
+        _sync_bundled(db)
+
+        row = _get_rule(manager, "require-step-completion")
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+
+        variables: dict[str, object] = {
+            "is_spawned_agent": True,
+            "current_step": "implement",
+            "step_workflow_complete": False,
+            "stop_attempts": 1,
+        }
+        evaluator = SafeExpressionEvaluator(
+            context={"variables": variables},
+            allowed_funcs={"len": len, "str": str, "int": int, "bool": bool},
         )
+        assert evaluator.evaluate(body.when)
+
+    @pytest.mark.asyncio
+    async def test_turn_end_allows_spawned_agent_without_current_step(self, db) -> None:
+        """Regression: no-step spawned agents must not hit an unknown-step stop loop."""
+        _sync_bundled(db)
+
+        engine = RuleEngine(db)
+        variables: dict[str, object] = {
+            "is_spawned_agent": True,
+            "step_workflow_complete": False,
+            "stop_attempts": 0,
+        }
+
+        event = _make_event(HookEventType.AFTER_AGENT)
+        response = await engine.evaluate(event, "sess-1", variables)
+
+        assert response.decision == "allow"
+        assert variables["stop_attempts"] == 1
+
+    @pytest.mark.asyncio
+    async def test_turn_end_block_includes_current_step_status_message(self, db) -> None:
+        _sync_bundled(db)
+
+        engine = RuleEngine(db)
+        variables: dict[str, object] = {
+            "is_spawned_agent": True,
+            "current_step": "plan",
+            "current_step_status_message": 'Call submit_for_review(stage_name="planning").',
+            "step_workflow_complete": False,
+            "stop_attempts": 0,
+        }
+
+        event = _make_event(HookEventType.STOP)
+        response = await engine.evaluate(event, "sess-1", variables)
+
+        assert response.decision == "block"
+        assert 'submit_for_review(stage_name="planning")' in (response.reason or "")
 
 
 class TestBeforeAgentResetsPlumbing:
@@ -331,7 +347,6 @@ class TestBeforeAgentResetsPlumbing:
 
     The semantic turn_start boundary clears per-turn stop-cycle state: tool_block_pending,
     stop_attempts, consecutive_tool_blocks, _last_blocked_tool.
-    It does NOT reset errors_resolved (session-scoped).
     """
 
     @pytest.mark.asyncio
@@ -346,23 +361,11 @@ class TestBeforeAgentResetsPlumbing:
         assert variables.get("tool_block_pending") is False
 
     @pytest.mark.asyncio
-    async def test_preserves_errors_resolved(self, db) -> None:
-        """The semantic turn_start boundary should NOT reset errors_resolved."""
-        engine = RuleEngine(db)
-        variables: dict[str, object] = {"errors_resolved": True}
-
-        event = _make_event(HookEventType.BEFORE_AGENT)
-        await engine.evaluate(event, "sess-1", variables)
-
-        assert variables.get("errors_resolved") is True
-
-    @pytest.mark.asyncio
     async def test_full_reset_on_new_turn(self, db) -> None:
         """The semantic turn_start boundary should reset stop-cycle variables."""
         engine = RuleEngine(db)
         variables: dict[str, object] = {
             "tool_block_pending": True,
-            "errors_resolved": True,
             "stop_attempts": 5,
             "consecutive_tool_blocks": 2,
             "_last_blocked_tool": "Edit",
@@ -372,7 +375,6 @@ class TestBeforeAgentResetsPlumbing:
         await engine.evaluate(event, "sess-1", variables)
 
         assert variables["tool_block_pending"] is False
-        assert variables["errors_resolved"] is True
         assert variables["stop_attempts"] == 0
         assert variables["consecutive_tool_blocks"] == 0
         assert variables["_last_blocked_tool"] == ""
@@ -1200,6 +1202,101 @@ class TestClaimedTaskReconciliation:
 
         assert variables["task_claimed"] is True
         assert variables["claimed_tasks"] == {"uuid-review": "#11"}
+
+    def test_reconcile_repairs_lineage_claim_instead_of_pruning(self) -> None:
+        """A compact/continuation child keeps an active task owned by its parent."""
+        from unittest.mock import MagicMock
+
+        from gobby.workflows.observers import reconcile_claimed_tasks
+
+        task_manager = MagicMock()
+        task_manager.get_task.return_value = _make_task(
+            "uuid-anchor",
+            status="in_progress",
+            assignee="parent-sess",
+        )
+        session_manager = MagicMock()
+        session_manager.is_ancestor.side_effect = (
+            lambda ancestor, descendant: ancestor == "parent-sess" and descendant == "child-sess"
+        )
+        parent_session = MagicMock()
+        parent_session.parent_session_id = None
+        parent_session.terminal_context = {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"}
+        child_session = MagicMock()
+        child_session.parent_session_id = "parent-sess"
+        child_session.terminal_context = {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"}
+        session_manager.get.side_effect = lambda sid: {
+            "parent-sess": parent_session,
+            "child-sess": child_session,
+        }[sid]
+        session_task_manager = MagicMock()
+
+        variables: dict[str, object] = {
+            "task_claimed": True,
+            "claimed_tasks": {"uuid-anchor": "#14853"},
+        }
+        reconcile_claimed_tasks(
+            variables,
+            "child-sess",
+            task_manager=task_manager,
+            session_manager=session_manager,
+            session_task_manager=session_task_manager,
+        )
+
+        assert variables["task_claimed"] is True
+        assert variables["claimed_tasks"] == {"uuid-anchor": "#14853"}
+        task_manager.claim_task.assert_called_once_with(
+            "uuid-anchor",
+            session_id="child-sess",
+            force=True,
+        )
+        session_task_manager.link_task.assert_called_once_with(
+            "child-sess",
+            "uuid-anchor",
+            "claimed",
+        )
+
+    def test_reconcile_prunes_lineage_claim_from_different_terminal(self) -> None:
+        """A stale child lineage alone cannot preserve a task claim."""
+        from unittest.mock import MagicMock
+
+        from gobby.workflows.observers import reconcile_claimed_tasks
+
+        task_manager = MagicMock()
+        task_manager.get_task.return_value = _make_task(
+            "uuid-anchor",
+            status="in_progress",
+            assignee="parent-sess",
+        )
+        session_manager = MagicMock()
+        session_manager.is_ancestor.side_effect = (
+            lambda ancestor, descendant: ancestor == "parent-sess" and descendant == "child-sess"
+        )
+        parent_session = MagicMock()
+        parent_session.parent_session_id = None
+        parent_session.terminal_context = {"tmux_pane": "%5815", "tmux_socket_path": "/tmp/tmux"}
+        child_session = MagicMock()
+        child_session.parent_session_id = "parent-sess"
+        child_session.terminal_context = {"tmux_pane": "%5867", "tmux_socket_path": "/tmp/tmux"}
+        session_manager.get.side_effect = lambda sid: {
+            "parent-sess": parent_session,
+            "child-sess": child_session,
+        }[sid]
+
+        variables: dict[str, object] = {
+            "task_claimed": True,
+            "claimed_tasks": {"uuid-anchor": "#14853"},
+        }
+        reconcile_claimed_tasks(
+            variables,
+            "child-sess",
+            task_manager=task_manager,
+            session_manager=session_manager,
+        )
+
+        assert variables["task_claimed"] is False
+        assert variables["claimed_tasks"] == {}
+        task_manager.claim_task.assert_not_called()
 
     def test_reconcile_mixed_valid_and_stale(self) -> None:
         """Mix of valid and stale claims → only valid ones survive."""

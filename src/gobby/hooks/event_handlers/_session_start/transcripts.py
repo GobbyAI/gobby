@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from typing import Any, cast
+from urllib.parse import quote
 
 
 def _compat_module() -> Any:
@@ -23,6 +24,8 @@ def derive_transcript_path(
         return cast(str | None, handler._find_gemini_transcript(input_data, external_id))
     if cli_source == "qwen":
         return cast(str | None, handler._find_qwen_transcript(input_data, external_id))
+    if cli_source == "grok":
+        return find_grok_transcript(handler, input_data, external_id)
     return None
 
 
@@ -48,6 +51,34 @@ def find_qwen_transcript(
         str | None,
         handler._find_json_session_transcript("qwen", "Qwen", input_data, external_id),
     )
+
+
+def find_grok_transcript(
+    handler: Any,
+    input_data: dict[str, Any],
+    external_id: str,
+) -> str | None:
+    """Derive Grok ``updates.jsonl`` path for the hook event."""
+    cwd = input_data.get("cwd")
+    if not cwd:
+        handler.logger.debug("Cannot derive Grok transcript: no cwd")
+        return None
+
+    session_id = input_data.get("sessionId") or input_data.get("session_id") or external_id
+    if not session_id:
+        handler.logger.debug("Cannot derive Grok transcript: no session id")
+        return None
+
+    encoded_cwd = quote(str(cwd), safe="")
+    path = (
+        _compat_module().Path.home()
+        / ".grok"
+        / "sessions"
+        / encoded_cwd
+        / str(session_id)
+        / "updates.jsonl"
+    )
+    return str(path)
 
 
 def find_json_session_transcript(

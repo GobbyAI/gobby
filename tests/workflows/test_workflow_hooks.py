@@ -60,7 +60,7 @@ def test_handler_returns_allow_without_rule_engine(workflow_handler) -> None:
 def test_hook_manager_integration() -> None:
     """HookManager delegates workflow hook evaluation when daemon health is cached."""
     with (
-        patch("gobby.hooks.factory.LocalDatabase"),
+        patch("gobby.hooks.factory.HookManagerFactory._create_database", return_value=MagicMock()),
         patch("gobby.hooks.factory.SessionManager") as MockSessionManagerClass,
         patch("gobby.hooks.factory.SessionTaskManager"),
         patch("gobby.hooks.factory.DaemonClient") as MockDaemonClientClass,
@@ -79,9 +79,9 @@ def test_hook_manager_integration() -> None:
 
         manager = HookManager(log_file="/tmp/gobby-test.log")
 
-        manager._cached_daemon_is_ready = True
-        manager._cached_daemon_status = "healthy"
-        manager._get_cached_daemon_status = MagicMock(return_value=(True, "OK", "healthy", None))
+        manager._health_monitor.get_cached_status = MagicMock(
+            return_value=(True, "OK", "healthy", None)
+        )
 
         event = HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
@@ -102,7 +102,7 @@ def test_hook_manager_integration() -> None:
 
 def test_hook_manager_blocks_on_workflow():
     with (
-        patch("gobby.hooks.factory.LocalDatabase"),
+        patch("gobby.hooks.factory.HookManagerFactory._create_database", return_value=MagicMock()),
         patch("gobby.hooks.factory.SessionManager") as MockSessionManagerClass,
         patch("gobby.hooks.factory.SessionTaskManager"),
         patch("gobby.hooks.factory.DaemonClient") as MockDaemonClientClass,
@@ -123,9 +123,9 @@ def test_hook_manager_blocks_on_workflow():
 
         manager = HookManager(log_file="/tmp/gobby-test.log")
 
-        manager._cached_daemon_is_ready = True
-        manager._cached_daemon_status = "healthy"
-        manager._get_cached_daemon_status = MagicMock(return_value=(True, "OK", "healthy", None))
+        manager._health_monitor.get_cached_status = MagicMock(
+            return_value=(True, "OK", "healthy", None)
+        )
 
         event = HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
@@ -278,6 +278,7 @@ class TestProjectPathResolution:
             await handler._evaluate_rules(event)
 
         assert "no project_path resolved" not in caplog.text
+        assert not caplog.records
         mock_run.assert_not_called()
 
     def test_no_repo_project_ids_include_constants_and_legacy_literals(self) -> None:

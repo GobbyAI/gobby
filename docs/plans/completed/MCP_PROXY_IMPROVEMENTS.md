@@ -49,7 +49,7 @@ Detect tool schema changes via hashing and only re-process modified tools.
 │                    Enhanced MCP Proxy                            │
 │  ┌─────────────────┐  ┌─────────────────┐  ┌────────────────┐  │
 │  │  Lazy Connector │  │  Tool Metrics   │  │  Semantic      │  │
-│  │  (deferred init)│  │  (SQLite)       │  │  Search        │  │
+│  │  (deferred init)│  │  (PostgreSQL)       │  │  Search        │  │
 │  └────────┬────────┘  └────────┬────────┘  └───────┬────────┘  │
 │           │                    │                    │           │
 │  ┌────────▼────────────────────▼────────────────────▼────────┐  │
@@ -205,7 +205,7 @@ Final recommendations (1-3 tools)
 **Embedding generation**:
 - Use small, fast embedding model (e.g., `text-embedding-3-small`)
 - Generate on first tool discovery or schema change
-- Store in SQLite as BLOB (float32 array)
+- Store in PostgreSQL as BLOB (float32 array)
 
 **Search modes** (configurable):
 - `semantic`: Embeddings only (fastest)
@@ -395,7 +395,7 @@ async def refresh_server_tools(server_name: str):
 - [x] Implement `embed_tool()` method with text hashing for change detection
 - [x] Implement `embed_all_tools()` batch method
 - [x] Auto-generate embeddings on first search if none exist
-- [x] Store embeddings in SQLite as BLOB with project_id scoping
+- [x] Store embeddings in PostgreSQL as BLOB with project_id scoping
 
 #### Search Implementation
 - [x] Implement `search_tools(query, project_id, top_k, min_similarity)`
@@ -553,7 +553,7 @@ async def refresh_server_tools(server_name: str):
 | 1 | **Embedding model choice** | Cloud (OpenAI `text-embedding-3-small`) with graceful degradation | Cheap ($0.02/1M tokens), high quality. Fall back to LLM-only if unavailable. Add local model later if offline support needed. |
 | 2 | **Metrics retention** | Forever with daily aggregation | Keep daily aggregates permanently. Keep raw call logs for 7 days, then aggregate and delete. Gives both recent detail and historical trends. |
 | 3 | **Fallback UX** | Separate `fallback_suggestions` field, auto-retry OFF by default | Let the LLM decide whether to retry. Inline would pollute error messages. |
-| 4 | **Metrics scope** | Global (project-agnostic) | Tool reliability doesn't change per-project. Single SQLite database for single machine. Multi-tenant is future (gobby_platform). |
+| 4 | **Metrics scope** | Global (project-agnostic) | Tool reliability doesn't change per-project. Single PostgreSQL database for single machine. Multi-tenant is future (gobby_platform). |
 | 5 | **Embedding dimensions** | 1536 (OpenAI `text-embedding-3-small` default) | Good balance of quality and performance. Don't overthink - start with defaults. |
 
 ---

@@ -1,6 +1,6 @@
 """Search operations for task management.
 
-Provides FTS5 full-text search tools for tasks.
+Provides keyword search tools for tasks.
 """
 
 from typing import Any
@@ -36,9 +36,9 @@ def create_search_registry(ctx: RegistryContext) -> InternalToolRegistry:
         all_projects: bool = False,
         project: str | None = None,
     ) -> dict[str, Any]:
-        """Search tasks using FTS5 full-text search.
+        """Search tasks using keyword search.
 
-        Performs keyword-based full-text search (FTS5) on task title, description, labels, and type.
+        Performs keyword search on task title and description.
         Results are ranked by relevance and can be filtered by current stage state, type, etc.
 
         Args:
@@ -111,7 +111,7 @@ def create_search_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
     registry.register(
         name="search_tasks",
-        description="Search tasks using FTS5 full-text search. Returns tasks ranked by relevance to the query.",
+        description="Search tasks using keyword search. Returns tasks ranked by relevance to the query.",
         input_schema={
             "type": "object",
             "properties": {

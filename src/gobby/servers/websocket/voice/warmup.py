@@ -416,8 +416,8 @@ class VoiceWarmupMixin:
 
             if hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache"):
                 torch.mps.empty_cache()
-        except ImportError:
-            pass
+        except (ImportError, OSError, RuntimeError):
+            logger.debug("Torch cache cleanup skipped", exc_info=True)
 
         logger.info(f"Voice models unloaded ({', '.join(unloaded)}) — memory reclaimed")
 

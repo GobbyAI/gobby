@@ -8,7 +8,7 @@ Tests cover:
 
 import pytest
 
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
 
@@ -45,7 +45,7 @@ class TestInterSessionMessageDataclass:
         assert msg.sent_at == "2026-01-19T12:00:00Z"
         assert msg.read_at is None
 
-    def test_from_row_creates_instance(self, temp_db: LocalDatabase) -> None:
+    def test_from_row_creates_instance(self, temp_db: HubDatabase) -> None:
         """Test that InterSessionMessage.from_row creates instance from DB row."""
         from gobby.storage.inter_session_messages import InterSessionMessage
         from gobby.storage.projects import LocalProjectManager
@@ -77,7 +77,7 @@ class TestInterSessionMessageDataclass:
         temp_db.execute(
             """INSERT INTO inter_session_messages
                (id, from_session, to_session, content, priority, sent_at)
-               VALUES (?, ?, ?, ?, ?, datetime('now'))""",
+               VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)""",
             (msg_id, parent.id, child.id, "Test content", "normal"),
         )
 
@@ -195,7 +195,7 @@ class TestInterSessionMessageManagerImport:
 
         assert InterSessionMessageManager is not None
 
-    def test_manager_accepts_database(self, temp_db: LocalDatabase) -> None:
+    def test_manager_accepts_database(self, temp_db: HubDatabase) -> None:
         """Test that manager can be instantiated with database."""
         from gobby.storage.inter_session_messages import InterSessionMessageManager
 
@@ -206,7 +206,7 @@ class TestInterSessionMessageManagerImport:
 class TestInterSessionMessageManagerCreateMessage:
     """TDD tests for create_message method."""
 
-    def test_create_message_returns_message(self, temp_db: LocalDatabase) -> None:
+    def test_create_message_returns_message(self, temp_db: HubDatabase) -> None:
         """Test that create_message returns an InterSessionMessage."""
         from gobby.storage.inter_session_messages import (
             InterSessionMessage,
@@ -243,7 +243,7 @@ class TestInterSessionMessageManagerCreateMessage:
         assert msg.priority == "normal"
         assert msg.read_at is None
 
-    def test_create_message_persists_to_database(self, temp_db: LocalDatabase) -> None:
+    def test_create_message_persists_to_database(self, temp_db: HubDatabase) -> None:
         """Test that created message is persisted to database."""
         from gobby.storage.inter_session_messages import InterSessionMessageManager
         from gobby.storage.projects import LocalProjectManager
@@ -272,7 +272,7 @@ class TestInterSessionMessageManagerCreateMessage:
         assert row is not None
         assert row["content"] == "Persistent message"
 
-    def test_create_message_defaults_priority_to_normal(self, temp_db: LocalDatabase) -> None:
+    def test_create_message_defaults_priority_to_normal(self, temp_db: HubDatabase) -> None:
         """Test that priority defaults to 'normal' if not specified."""
         from gobby.storage.inter_session_messages import InterSessionMessageManager
         from gobby.storage.projects import LocalProjectManager
@@ -302,7 +302,7 @@ class TestInterSessionMessageManagerCreateMessage:
 class TestInterSessionMessageManagerGetMessages:
     """TDD tests for get_messages method."""
 
-    def test_has_completion_notification_matches_metadata(self, temp_db: LocalDatabase) -> None:
+    def test_has_completion_notification_matches_metadata(self, temp_db: HubDatabase) -> None:
         """Completion notification lookup checks stable metadata IDs."""
         from gobby.storage.inter_session_messages import InterSessionMessageManager
         from gobby.storage.projects import LocalProjectManager
@@ -339,7 +339,7 @@ class TestInterSessionMessageManagerGetMessages:
             "run-2",
         )
 
-    def test_get_messages_returns_list(self, temp_db: LocalDatabase) -> None:
+    def test_get_messages_returns_list(self, temp_db: HubDatabase) -> None:
         """Test that get_messages returns a list of messages."""
         from gobby.storage.inter_session_messages import InterSessionMessageManager
         from gobby.storage.projects import LocalProjectManager
@@ -372,7 +372,7 @@ class TestInterSessionMessageManagerGetMessages:
         assert isinstance(messages, list)
         assert len(messages) == 2
 
-    def test_get_messages_filters_by_recipient(self, temp_db: LocalDatabase) -> None:
+    def test_get_messages_filters_by_recipient(self, temp_db: HubDatabase) -> None:
         """Test that get_messages only returns messages for specified recipient."""
         from gobby.storage.inter_session_messages import InterSessionMessageManager
         from gobby.storage.projects import LocalProjectManager
@@ -400,7 +400,7 @@ class TestInterSessionMessageManagerGetMessages:
         assert len(messages) == 1
         assert messages[0].content == "For child 1"
 
-    def test_get_messages_unread_only(self, temp_db: LocalDatabase) -> None:
+    def test_get_messages_unread_only(self, temp_db: HubDatabase) -> None:
         """Test that get_messages with unread_only=True filters read messages."""
         from gobby.storage.inter_session_messages import InterSessionMessageManager
         from gobby.storage.projects import LocalProjectManager
@@ -435,7 +435,7 @@ class TestInterSessionMessageManagerGetMessages:
 class TestInterSessionMessageManagerMarkRead:
     """TDD tests for mark_read method."""
 
-    def test_mark_read_sets_read_at(self, temp_db: LocalDatabase) -> None:
+    def test_mark_read_sets_read_at(self, temp_db: HubDatabase) -> None:
         """Test that mark_read sets the read_at timestamp."""
         from gobby.storage.inter_session_messages import InterSessionMessageManager
         from gobby.storage.projects import LocalProjectManager
@@ -464,7 +464,7 @@ class TestInterSessionMessageManagerMarkRead:
         row = temp_db.fetchone("SELECT read_at FROM inter_session_messages WHERE id = ?", (msg.id,))
         assert row["read_at"] is not None
 
-    def test_mark_read_returns_updated_message(self, temp_db: LocalDatabase) -> None:
+    def test_mark_read_returns_updated_message(self, temp_db: HubDatabase) -> None:
         """Test that mark_read returns the updated message."""
         from gobby.storage.inter_session_messages import (
             InterSessionMessage,
@@ -495,7 +495,7 @@ class TestInterSessionMessageManagerMarkRead:
 class TestInterSessionMessageManagerGetMessage:
     """TDD tests for get_message method."""
 
-    def test_get_message_returns_message(self, temp_db: LocalDatabase) -> None:
+    def test_get_message_returns_message(self, temp_db: HubDatabase) -> None:
         """Test that get_message returns the message by ID."""
         from gobby.storage.inter_session_messages import (
             InterSessionMessage,
@@ -525,7 +525,7 @@ class TestInterSessionMessageManagerGetMessage:
         assert fetched.id == created.id
         assert fetched.content == "Fetch me"
 
-    def test_get_message_returns_none_for_missing(self, temp_db: LocalDatabase) -> None:
+    def test_get_message_returns_none_for_missing(self, temp_db: HubDatabase) -> None:
         """Test that get_message returns None for non-existent message."""
         from gobby.storage.inter_session_messages import InterSessionMessageManager
 
@@ -538,7 +538,7 @@ class TestInterSessionMessageManagerListMessages:
     """Tests for list_messages read-only query method."""
 
     @pytest.fixture
-    def setup(self, temp_db: LocalDatabase):
+    def setup(self, temp_db: HubDatabase):
         """Create project, sessions, manager, and seed messages."""
         from gobby.storage.inter_session_messages import InterSessionMessageManager
         from gobby.storage.projects import LocalProjectManager
@@ -583,6 +583,12 @@ class TestInterSessionMessageManagerListMessages:
     def test_direction_inbox(self, setup) -> None:
         """direction='inbox' returns only received messages."""
         msgs = setup.manager.list_messages(setup.beta.id, direction="inbox")
+        assert len(msgs) == 2
+        assert all(m.to_session == setup.beta.id for m in msgs)
+
+    def test_direction_received_aliases_inbox(self, setup) -> None:
+        """direction='received' returns only received messages."""
+        msgs = setup.manager.list_messages(setup.beta.id, direction="received")
         assert len(msgs) == 2
         assert all(m.to_session == setup.beta.id for m in msgs)
 
@@ -638,13 +644,18 @@ class TestInterSessionMessageManagerListMessages:
         sent_times = [m.sent_at for m in msgs]
         assert sent_times == sorted(sent_times, reverse=True)
 
-    def test_empty_result(self, temp_db: LocalDatabase) -> None:
+    def test_empty_result(self, temp_db: HubDatabase) -> None:
         """Returns empty list when no messages match."""
         from gobby.storage.inter_session_messages import InterSessionMessageManager
 
         mgr = InterSessionMessageManager(temp_db)
         msgs = mgr.list_messages("nonexistent-session", direction="all")
         assert msgs == []
+
+    def test_invalid_direction_raises_clear_error(self, setup) -> None:
+        """Invalid directions are rejected instead of silently returning all messages."""
+        with pytest.raises(ValueError, match="Invalid direction 'bogus'"):
+            setup.manager.list_messages(setup.beta.id, direction="bogus")
 
 
 class TestInterSessionMessageManagerExport:

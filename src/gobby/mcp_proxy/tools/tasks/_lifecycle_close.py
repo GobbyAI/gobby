@@ -23,6 +23,7 @@ from gobby.plans.bootstrap_ledger import BootstrapLedgerMismatchError
 from gobby.storage.session_models import Session
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.tasks.state_semantics import get_claimed_session_id
+from gobby.workflows.verification_evidence import VERIFICATION_EVIDENCE_VARIABLE
 
 logger = logging.getLogger(__name__)
 
@@ -213,7 +214,10 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                         "You must commit your changes and link them to the task before closing."
                     ),
                     "suggestion": (
-                        f"Commit your changes with `[{ctx.get_current_project_name() or 'project'}-#task_id]` in the message, "
+                        "Commit your changes with "
+                        "`[<project_name>-#<task_number>] <type>: <description>` "
+                        "in the message "
+                        f"(for example, `[{ctx.get_current_project_name() or 'gobby'}-#N]`), "
                         "or pass `commit_sha` to `close_task`."
                     ),
                 }
@@ -239,6 +243,11 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                 # Gather validation context
                 validation_context, raw_diff = gather_validation_context(
                     task, changes_summary, repo_path, ctx.task_manager
+                )
+                validation_context = _append_verification_evidence_context(
+                    validation_context,
+                    ctx,
+                    resolved_session_id,
                 )
 
                 if validation_context:
@@ -276,11 +285,18 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         )
         current_commit_sha: str | None = None
         if requires_closed_commit_sha:
-            current_commit_sha = (
-                normalize_commit_sha(commit_sha, cwd=cwd)
-                if commit_sha
-                else run_git_command(["git", "rev-parse", "--short", "HEAD"], cwd=cwd)
-            )
+            if commit_sha:
+                current_commit_sha = normalize_commit_sha(commit_sha, cwd=cwd)
+            elif task.commits:
+                linked_commit_sha = task.commits[-1]
+                current_commit_sha = (
+                    normalize_commit_sha(linked_commit_sha, cwd=cwd) or linked_commit_sha
+                )
+            else:
+                current_commit_sha = run_git_command(
+                    ["git", "rev-parse", "--short", "HEAD"],
+                    cwd=cwd,
+                )
             if current_commit_sha is None:
                 return {
                     "success": False,
@@ -390,7 +406,16 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
 
     registry.register(
         name="close_task",
-        description="Close a task. Pass commit_sha to link and close in one call: close_task(task_id, commit_sha='abc123'). Or include [project-#N] in commit message for auto-linking. Parent tasks require all children closed. Validation auto-skipped for: duplicate, already_implemented, wont_fix, obsolete, out_of_repo. Note: out_of_repo only skips LLM validation and the basic commit-linked check; commits are still required if the session edited in-repo files (session.had_edits enforcement).",
+        description=(
+            "Close a task. Pass commit_sha to link and close in one call: "
+            "close_task(task_id, commit_sha='abc123'). Or include "
+            "[<project_name>-#<task_number>] in commit message for auto-linking, "
+            "e.g. [gobby-#123]. Parent tasks require all children closed. "
+            "Validation auto-skipped for: duplicate, already_implemented, wont_fix, "
+            "obsolete, out_of_repo. Note: out_of_repo only skips LLM validation and "
+            "the basic commit-linked check; commits are still required if the session "
+            "edited in-repo files (session.had_edits enforcement)."
+        ),
         input_schema={
             "type": "object",
             "properties": {
@@ -434,3 +459,41 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         },
         func=close_task,
     )
+
+
+def _append_verification_evidence_context(
+    validation_context: str | None,
+    ctx: RegistryContext,
+    resolved_session_id: str | None,
+) -> str | None:
+    """Append successful validation command evidence to LLM validation context."""
+    if not resolved_session_id:
+        return validation_context
+    try:
+        variables = ctx.session_var_manager.get_variables(resolved_session_id)
+    except Exception as exc:
+        logger.debug("Failed to load verification evidence for close validation: %s", exc)
+        return validation_context
+
+    evidence_items = variables.get(VERIFICATION_EVIDENCE_VARIABLE)
+    if not isinstance(evidence_items, list):
+        return validation_context
+
+    lines: list[str] = []
+    for item in evidence_items[-10:]:
+        if not isinstance(item, dict) or item.get("success") is not True:
+            continue
+        command = item.get("command")
+        if not isinstance(command, str) or not command.strip():
+            continue
+        matcher = item.get("matcher_id")
+        matcher_text = f" [{matcher}]" if isinstance(matcher, str) and matcher else ""
+        lines.append(f"- {command}{matcher_text}")
+
+    if not lines:
+        return validation_context
+
+    evidence_text = "Successful verification evidence:\n" + "\n".join(lines)
+    if validation_context:
+        return f"{validation_context}\n\n{evidence_text}"
+    return evidence_text

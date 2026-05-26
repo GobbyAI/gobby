@@ -142,9 +142,9 @@ def kill(
     if agent.mode == "terminal" and agent.session_id:
         # Strategy 1: Check session's terminal_context (Claude captures PID via hooks)
         from gobby.storage.sessions import LocalSessionManager
-        from gobby.storage.database import LocalDatabase
+        from gobby.storage.database import HubDatabase
         try:
-            db = LocalDatabase()
+            db = HubDatabase()
             session_mgr = LocalSessionManager(db)
             session = session_mgr.get_session(agent.session_id)
             if session and session.terminal_context:

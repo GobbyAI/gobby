@@ -308,6 +308,7 @@ class TestCreateTaskTool:
                     "title": "Implement new feature",
                     "category": "code",
                     "validation_criteria": "Tests pass and feature works",
+                    "implementation_domain": "backend",
                 },
             )
 

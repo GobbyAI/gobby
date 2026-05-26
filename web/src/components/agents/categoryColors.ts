@@ -3,7 +3,7 @@
  *
  * Source of truth: this module exports the typed `{ dark, light }` OKLCH
  * pairs. The same values are mirrored as `--category-*` CSS custom
- * properties in `web/src/styles/index.css`, which lets consumers read the
+ * properties in `web/src/styles/tokens.css`, which lets consumers read the
  * theme-active variant via `var(--…)` and lets the browser cascade pick
  * the right one for the current `[data-theme]`.
  *
@@ -24,7 +24,7 @@ export interface CategoryColorPair {
 }
 
 /** Typed map of task-category → {dark, light} OKLCH pairs.
- *  Mirrored by `--category-<key>` tokens in styles/index.css. */
+ *  Mirrored by `--category-<key>` tokens in styles/tokens.css. */
 export const CATEGORY_COLORS: Record<string, CategoryColorPair> = {
   code: { dark: "oklch(70% 0.18 250)", light: "oklch(45% 0.20 250)" },
   test: { dark: "oklch(72% 0.20 145)", light: "oklch(45% 0.20 145)" },
@@ -42,7 +42,7 @@ export const CATEGORY_COLORS: Record<string, CategoryColorPair> = {
  *
  * Returns a `var(--category-<key>)` reference; the active `[data-theme]`
  * selects the dark or light variant declared above and mirrored by
- * `web/src/styles/index.css`. Unknown categories collapse to
+ * `web/src/styles/tokens.css`. Unknown categories collapse to
  * `var(--category-default)`.
  */
 export function getCategoryColorVar(category: string): string {

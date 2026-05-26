@@ -6,8 +6,7 @@ import sys
 import click
 
 from gobby.config.app import load_config
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.storage.tasks import LocalTaskManager
 from gobby.sync.tasks import TaskSyncManager
 
@@ -34,8 +33,10 @@ def check_tasks_enabled() -> None:
 
 def get_task_manager() -> LocalTaskManager:
     """Get initialized task manager."""
-    db = LocalDatabase()
-    run_migrations(db)
+    try:
+        db = open_runtime_hub_database(apply_migrations=False)
+    except RuntimeError as exc:
+        raise click.ClickException(str(exc)) from exc
     return LocalTaskManager(db)
 
 

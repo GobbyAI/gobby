@@ -165,7 +165,7 @@ on_pre_compact:
 |----------|------|---------|
 | `injected_memory_ids` | `list[str]` | UUIDs of memories already injected this session |
 
-The variable is stored in `WorkflowState.variables` which persists to SQLite via the `workflow_state` table.
+The variable is stored in `WorkflowState.variables` which persists to PostgreSQL via the `workflow_state` table.
 
 ## Design Decisions
 

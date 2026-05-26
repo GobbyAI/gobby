@@ -2,14 +2,17 @@
 Tests for SpawnExecutor unified spawn dispatch.
 """
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.agents.constants import UV_CACHE_DIR
 from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.spawn_executor import (
     SpawnRequest,
     SpawnResult,
+    _apply_extra_env,
     execute_spawn,
 )
 
@@ -200,7 +203,10 @@ class TestExecuteSpawn:
         mock_spawn_context = MagicMock()
         mock_spawn_context.session_id = "child-session-id"
         mock_spawn_context.agent_run_id = "run-123"
-        mock_spawn_context.env_vars = {"GOBBY_SESSION_ID": "child-session-id"}
+        mock_spawn_context.env_vars = {
+            "GOBBY_SESSION_ID": "child-session-id",
+            UV_CACHE_DIR: "/tmp/gobby/uv-cache/child-session-id",
+        }
 
         mock_spawner = MagicMock()
         mock_spawner.spawn.return_value = MagicMock(
@@ -246,7 +252,10 @@ class TestExecuteSpawn:
         mock_spawn_context = MagicMock()
         mock_spawn_context.session_id = "child-session-id"
         mock_spawn_context.agent_run_id = "run-123"
-        mock_spawn_context.env_vars = {"GOBBY_SESSION_ID": "child-session-id"}
+        mock_spawn_context.env_vars = {
+            "GOBBY_SESSION_ID": "child-session-id",
+            UV_CACHE_DIR: "/tmp/gobby/uv-cache/child-session-id",
+        }
 
         mock_spawner = MagicMock()
         mock_spawner.spawn.return_value = MagicMock(
@@ -290,7 +299,10 @@ class TestExecuteSpawn:
         mock_spawn_context = MagicMock()
         mock_spawn_context.session_id = "child-session-id"
         mock_spawn_context.agent_run_id = "run-123"
-        mock_spawn_context.env_vars = {"GOBBY_SESSION_ID": "child-session-id"}
+        mock_spawn_context.env_vars = {
+            "GOBBY_SESSION_ID": "child-session-id",
+            UV_CACHE_DIR: "/tmp/gobby/uv-cache/child-session-id",
+        }
 
         mock_spawner = MagicMock()
         mock_spawner.spawn.return_value = MagicMock(
@@ -341,7 +353,10 @@ class TestExecuteSpawn:
             return_value=MagicMock(
                 session_id="gobby-sess-123",
                 agent_run_id="run-abc123",
-                env_vars={"GOBBY_SESSION_ID": "gobby-sess-123"},
+                env_vars={
+                    "GOBBY_SESSION_ID": "gobby-sess-123",
+                    UV_CACHE_DIR: "/tmp/gobby/uv-cache/gobby-sess-123",
+                },
             )
         )
 
@@ -394,12 +409,14 @@ class TestExecuteSpawn:
             session_manager=mock_session_manager,
         )
 
+        call_order: list[str] = []
+        spawn_context = MagicMock(
+            session_id="gobby-sess-123",
+            agent_run_id="run-abc123def456",
+            env_vars={"GOBBY_SESSION_ID": "gobby-sess-123"},
+        )
         mock_prepare = MagicMock(
-            return_value=MagicMock(
-                session_id="gobby-sess-123",
-                agent_run_id="run-abc123def456",
-                env_vars={"GOBBY_SESSION_ID": "gobby-sess-123"},
-            )
+            side_effect=lambda **_kwargs: call_order.append("prepare") or spawn_context
         )
 
         mock_spawner = MagicMock()
@@ -419,12 +436,16 @@ class TestExecuteSpawn:
                 "gobby.agents.spawn_executor.TmuxSpawner",
                 return_value=mock_spawner,
             ),
+            patch("gobby.agents.spawn_executor.pre_approve_directory") as mock_preapprove,
         ):
+            mock_preapprove.side_effect = lambda *_args, **_kwargs: call_order.append("preapprove")
             result = await execute_spawn(request)
 
             # prepare_terminal_spawn must be called with source='codex' and the
             # caller's agent_run_id threaded through unchanged.
+            mock_preapprove.assert_called_once_with("codex", "/path")
             mock_prepare.assert_called_once()
+            assert call_order == ["prepare", "preapprove"]
             call_kwargs = mock_prepare.call_args.kwargs
             assert call_kwargs["source"] == "codex"
             assert call_kwargs["agent_run_id"] == "run-abc123def456"
@@ -463,6 +484,56 @@ class TestExecuteSpawn:
             assert result.codex_session_id is None  # late-linked via SessionStart hook
 
     @pytest.mark.asyncio
+    async def test_codex_preapprove_runs_after_command_and_env_setup(self) -> None:
+        """Workspace trust is seeded after Codex command and environment setup."""
+        request = SpawnRequest(
+            prompt="Test",
+            cwd="/path",
+            provider="codex",
+            session_id="sess",
+            run_id="run",
+            parent_session_id="parent",
+            project_id="proj",
+            agent_run_id="run-abc123def456",
+            session_manager=MagicMock(),
+        )
+        call_order: list[str] = []
+        spawn_context = MagicMock(
+            session_id="gobby-sess-123",
+            agent_run_id="run-abc123def456",
+            env_vars={"GOBBY_SESSION_ID": "gobby-sess-123"},
+        )
+        mock_spawner = MagicMock()
+        mock_spawner.spawn.side_effect = lambda **_kwargs: call_order.append("spawn") or MagicMock(
+            success=True, pid=12345, terminal_type="tmux"
+        )
+
+        def fake_apply_extra_env(_env: dict[str, str], _request: SpawnRequest) -> None:
+            call_order.append("env")
+
+        with (
+            patch(
+                "gobby.agents.spawn_executor.prepare_terminal_spawn",
+                side_effect=lambda **_kwargs: call_order.append("prepare") or spawn_context,
+            ),
+            patch(
+                "gobby.agents.spawn_executor.build_cli_command",
+                side_effect=lambda **_kwargs: call_order.append("command")
+                or (["codex", "Test"], {}),
+            ),
+            patch("gobby.agents.spawn_executor._apply_extra_env", fake_apply_extra_env),
+            patch("gobby.agents.spawn_executor.TmuxSpawner", return_value=mock_spawner),
+            patch(
+                "gobby.agents.spawn_executor.pre_approve_directory",
+                side_effect=lambda *_args, **_kwargs: call_order.append("preapprove"),
+            ),
+        ):
+            result = await execute_spawn(request)
+
+        assert result.success is True
+        assert call_order == ["prepare", "command", "env", "preapprove", "spawn"]
+
+    @pytest.mark.asyncio
     async def test_codex_terminal_spawn_with_sandbox_config(self) -> None:
         """Test that Codex terminal spawn applies sandbox flags."""
         sandbox_config = SandboxConfig(enabled=True, mode="permissive")
@@ -483,7 +554,10 @@ class TestExecuteSpawn:
             return_value=MagicMock(
                 session_id="gobby-sess-123",
                 agent_run_id="run-xyz",
-                env_vars={"GOBBY_SESSION_ID": "gobby-sess-123"},
+                env_vars={
+                    "GOBBY_SESSION_ID": "gobby-sess-123",
+                    UV_CACHE_DIR: "/tmp/gobby/uv-cache/gobby-sess-123",
+                },
             )
         )
 
@@ -504,15 +578,21 @@ class TestExecuteSpawn:
                 "gobby.agents.spawn_executor.TmuxSpawner",
                 return_value=mock_spawner,
             ),
+            patch("gobby.agents.spawn_executor.pre_approve_directory") as mock_preapprove,
         ):
             result = await execute_spawn(request)
 
+            mock_preapprove.assert_called_once_with("codex", "/path")
             command = mock_spawner.spawn.call_args.kwargs["command"]
             assert "--ask-for-approval" in command
             assert command[command.index("--ask-for-approval") + 1] == "never"
             assert command[command.index("--disable") + 1] == "guardian_approval"
             assert "--sandbox" in command
             assert "workspace-write" in command
+            assert "-c" in command
+            assert "sandbox_workspace_write.network_access=true" in command
+            assert "--add-dir" in command
+            assert command[command.index("--add-dir") + 1] == "/tmp/gobby/uv-cache/gobby-sess-123"
             assert "--full-auto" not in command
             prompt_arg = command[-1]
             # Sandbox args must appear before the final prompt argv entry, which
@@ -521,6 +601,9 @@ class TestExecuteSpawn:
             assert request.prompt in prompt_arg
             assert command.index("--ask-for-approval") < command.index("--sandbox")
             assert command.index("--disable") < command.index("--sandbox")
+            assert command.index("sandbox_workspace_write.network_access=true") < command.index(
+                prompt_arg
+            )
             assert command.index("--sandbox") < command.index(prompt_arg)
             assert result.success is True
 
@@ -581,7 +664,10 @@ class TestExecuteSpawn:
             return_value=MagicMock(
                 session_id="gobby-sess-123",
                 agent_run_id="run-abc123",
-                env_vars={"GOBBY_SESSION_ID": "gobby-sess-123"},
+                env_vars={
+                    "GOBBY_SESSION_ID": "gobby-sess-123",
+                    UV_CACHE_DIR: "/tmp/gobby/uv-cache/gobby-sess-123",
+                },
             )
         )
 
@@ -611,6 +697,126 @@ class TestExecuteSpawn:
             assert result.success is False
             assert "Terminal not found" in (result.error or "")
 
+    @pytest.mark.asyncio
+    async def test_grok_terminal_spawn_constructs_headless_command(self):
+        """Grok spawn uses the documented single-shot command and hook env linkage."""
+        mock_session_manager = MagicMock()
+        request = SpawnRequest(
+            prompt="Test",
+            cwd="/path",
+            provider="grok",
+            session_id="sess",
+            run_id="run",
+            parent_session_id="parent",
+            project_id="proj",
+            session_manager=mock_session_manager,
+            model="grok-build",
+            effective_reasoning_effort="high",
+        )
+
+        mock_prepare = MagicMock(
+            return_value=MagicMock(
+                session_id="gobby-sess-123",
+                agent_run_id="run-grok123",
+                env_vars={"GOBBY_SESSION_ID": "gobby-sess-123"},
+            )
+        )
+        mock_spawner = MagicMock()
+        mock_spawner.spawn.return_value = MagicMock(
+            success=True,
+            pid=12345,
+            terminal_type="tmux",
+            tmux_session_name="agent-run-grok123",
+        )
+
+        with (
+            patch("gobby.agents.spawn_executor.prepare_terminal_spawn", mock_prepare),
+            patch("gobby.agents.spawn_executor.TmuxSpawner", return_value=mock_spawner),
+            patch("gobby.agents.spawn_executor.pre_approve_directory") as mock_preapprove,
+        ):
+            result = await execute_spawn(request)
+
+        mock_prepare.assert_called_once()
+        call_kwargs = mock_prepare.call_args.kwargs
+        assert call_kwargs["source"] == "grok"
+        mock_preapprove.assert_called_once_with("grok", "/path")
+
+        spawn_kwargs = mock_spawner.spawn.call_args.kwargs
+        assert spawn_kwargs["cwd"] == "/path"
+        assert spawn_kwargs["env"]["GOBBY_SESSION_ID"] == "gobby-sess-123"
+        assert spawn_kwargs["command"] == [
+            "grok",
+            "--always-approve",
+            "--no-alt-screen",
+            "--cwd",
+            "/path",
+            "--model",
+            "grok-build",
+            "--reasoning-effort",
+            "high",
+            "--single",
+            "Test",
+        ]
+        assert result.success is True
+        assert result.run_id == "run-grok123"
+        assert result.child_session_id == "gobby-sess-123"
+
+    @pytest.mark.asyncio
+    async def test_grok_terminal_spawn_applies_sandbox_config(self):
+        """Grok spawn passes built-in sandbox profile flags."""
+        request = SpawnRequest(
+            prompt="Test",
+            cwd="/path",
+            provider="grok",
+            session_id="sess",
+            run_id="run",
+            parent_session_id="parent",
+            project_id="proj",
+            session_manager=MagicMock(),
+            sandbox_config=SandboxConfig(enabled=True, mode="restrictive"),
+        )
+        mock_prepare = MagicMock(
+            return_value=MagicMock(
+                session_id="gobby-sess-123",
+                agent_run_id="run-grok123",
+                env_vars={"GOBBY_SESSION_ID": "gobby-sess-123"},
+            )
+        )
+        mock_spawner = MagicMock()
+        mock_spawner.spawn.return_value = MagicMock(success=True, pid=12345, terminal_type="tmux")
+
+        with (
+            patch("gobby.agents.spawn_executor.prepare_terminal_spawn", mock_prepare),
+            patch("gobby.agents.spawn_executor.TmuxSpawner", return_value=mock_spawner),
+            patch("gobby.agents.spawn_executor.pre_approve_directory"),
+        ):
+            result = await execute_spawn(request)
+
+        command = mock_spawner.spawn.call_args.kwargs["command"]
+        assert "--sandbox" in command
+        assert "strict" in command
+        assert command.index("--sandbox") < command.index("Test")
+        assert result.success is True
+
+    @pytest.mark.asyncio
+    async def test_agy_spawn_rejects_unavailable_provider(self):
+        """AGY is visible but explicitly unavailable for agent spawning."""
+        request = SpawnRequest(
+            prompt="Test",
+            cwd="/path",
+            provider="agy",
+            session_id="sess",
+            run_id="run",
+            parent_session_id="parent",
+            project_id="proj",
+        )
+
+        result = await execute_spawn(request)
+
+        assert result.success is False
+        assert result.child_session_id is None
+        assert "machine transport" in (result.error or "")
+
 
 class TestExecuteSpawnSandbox:
     """Integration tests for sandbox configuration in spawn flow."""
@@ -636,7 +842,10 @@ class TestExecuteSpawnSandbox:
         mock_spawn_context = MagicMock()
         mock_spawn_context.session_id = "child-session-id"
         mock_spawn_context.agent_run_id = "run-123"
-        mock_spawn_context.env_vars = {"GOBBY_SESSION_ID": "child-session-id"}
+        mock_spawn_context.env_vars = {
+            "GOBBY_SESSION_ID": "child-session-id",
+            UV_CACHE_DIR: "/tmp/gobby/uv-cache/child-session-id",
+        }
 
         mock_spawner = MagicMock()
         mock_spawner.spawn.return_value = MagicMock(
@@ -665,15 +874,19 @@ class TestExecuteSpawnSandbox:
                 "gobby.agents.sandbox.ClaudeSandboxResolver",
                 return_value=mock_resolver,
             ),
+            patch("gobby.agents.spawn_executor.pre_approve_directory"),
         ):
             result = await execute_spawn(request)
 
             # Verify sandbox was resolved and env vars passed to spawn
             mock_resolver.resolve.assert_called_once()
+            resolved_config = mock_resolver.resolve.call_args.args[0]
+            assert "/tmp/gobby/uv-cache/child-session-id" in resolved_config.extra_write_paths
             mock_spawner.spawn.assert_called_once()
             call_kwargs = mock_spawner.spawn.call_args.kwargs
             assert "env" in call_kwargs
             assert "SEATBELT_PROFILE" in call_kwargs["env"]
+            assert call_kwargs["env"][UV_CACHE_DIR] == "/tmp/gobby/uv-cache/child-session-id"
             # Command should include sandbox args
             command = call_kwargs.get("command")
             assert "--dangerously-skip-permissions" in command
@@ -778,7 +991,11 @@ class TestExecuteSpawnSandbox:
     @pytest.mark.asyncio
     async def test_gemini_terminal_spawn_with_sandbox_config(self) -> None:
         """Test that Gemini terminal spawn applies sandbox config correctly."""
-        sandbox_config = SandboxConfig(enabled=True, mode="permissive")
+        sandbox_config = SandboxConfig(
+            enabled=True,
+            mode="permissive",
+            extra_write_paths=["/tmp/gobby-gemini-git"],
+        )
         mock_session_manager = MagicMock()
         request = SpawnRequest(
             prompt="Test with sandbox",
@@ -796,7 +1013,10 @@ class TestExecuteSpawnSandbox:
             return_value=MagicMock(
                 session_id="gobby-sess-123",
                 agent_run_id="run-abc123",
-                env_vars={"GOBBY_SESSION_ID": "gobby-sess-123"},
+                env_vars={
+                    "GOBBY_SESSION_ID": "gobby-sess-123",
+                    UV_CACHE_DIR: "/tmp/gobby/uv-cache/gobby-sess-123",
+                },
             )
         )
 
@@ -810,10 +1030,6 @@ class TestExecuteSpawnSandbox:
             patch(
                 "gobby.agents.spawn_executor.prepare_terminal_spawn",
                 mock_prepare,
-            ),
-            patch(
-                "gobby.agents.spawn_executor.build_cli_command",
-                return_value=(["gemini", "--approval-mode", "yolo", "-i", "prompt"], {}),
             ),
             patch(
                 "gobby.agents.spawn_executor.TmuxSpawner",
@@ -835,7 +1051,69 @@ class TestExecuteSpawnSandbox:
             assert "--approval-mode" in command
             assert "yolo" in command
             assert "-s" in command
+            assert "--include-directories" in command
+            assert command[command.index("--include-directories") + 1] == str(
+                Path("/tmp/gobby-gemini-git").resolve(strict=False)
+            )
+            assert str(Path("/tmp/gobby/uv-cache/gobby-sess-123").resolve(strict=False)) in command
+            assert command[-1] == request.prompt
+            assert command.index("-s") < len(command) - 1
+            assert command.index("--include-directories") < len(command) - 1
             assert result.success is True
+
+    @pytest.mark.asyncio
+    async def test_qwen_terminal_spawn_uses_qwen_resolver_for_sandbox_config(self) -> None:
+        """Qwen uses its own resolver and passes sandbox args before the prompt."""
+        sandbox_config = SandboxConfig(enabled=True, mode="permissive")
+        mock_session_manager = MagicMock()
+        request = SpawnRequest(
+            prompt="Test with sandbox",
+            cwd="/path",
+            provider="qwen",
+            session_id="sess",
+            run_id="run",
+            parent_session_id="parent",
+            project_id="proj",
+            session_manager=mock_session_manager,
+            sandbox_config=sandbox_config,
+        )
+
+        mock_prepare = MagicMock(
+            return_value=MagicMock(
+                session_id="gobby-sess-123",
+                agent_run_id="run-abc123",
+                env_vars={"GOBBY_SESSION_ID": "gobby-sess-123"},
+            )
+        )
+        mock_spawner = MagicMock()
+        mock_spawner.spawn.return_value = MagicMock(success=True, pid=12345)
+        mock_resolver = MagicMock()
+        mock_resolver.resolve.return_value = (
+            ["-s", "--include-directories", "/tmp/qwen-git"],
+            {"SEATBELT_PROFILE": "permissive-open"},
+        )
+
+        with (
+            patch("gobby.agents.spawn_executor.prepare_terminal_spawn", mock_prepare),
+            patch(
+                "gobby.agents.spawn_executor.QwenSandboxResolver", return_value=mock_resolver
+            ) as mock_resolver_class,
+            patch(
+                "gobby.agents.spawn_executor.TmuxSpawner",
+                return_value=mock_spawner,
+            ),
+        ):
+            result = await execute_spawn(request)
+
+        mock_resolver_class.assert_called_once()
+        mock_resolver.resolve.assert_called_once()
+        command = mock_spawner.spawn.call_args.kwargs["command"]
+        assert command[0] == "qwen"
+        assert command[-1] == request.prompt
+        assert command.index("-s") < len(command) - 1
+        assert command.index("--include-directories") < len(command) - 1
+        assert mock_spawner.spawn.call_args.kwargs["env"]["SEATBELT_PROFILE"] == "permissive-open"
+        assert result.success is True
 
 
 class TestExecuteSpawnErrorPaths:
@@ -899,9 +1177,11 @@ class TestExecuteSpawnErrorPaths:
                 "gobby.agents.spawn_executor.TmuxSpawner",
                 return_value=mock_spawner,
             ),
+            patch("gobby.agents.spawn_executor.pre_approve_directory") as mock_preapprove,
         ):
             result = await execute_spawn(request)
 
+        mock_preapprove.assert_called_once_with("codex", "/path")
         assert result.success is False
         assert "tmux failed" in (result.error or "")
 
@@ -994,3 +1274,31 @@ class TestExecuteSpawnErrorPaths:
         assert result.tmux_session_name == "gobby-abc"
         assert result.success is True
         assert result.pid == 99
+
+
+class TestApplyExtraEnv:
+    def test_reserved_env_overrides_are_ignored(self) -> None:
+        request = SpawnRequest(
+            prompt="Test",
+            cwd="/path",
+            provider="codex",
+            session_id="sess",
+            run_id="run",
+            parent_session_id="parent",
+            project_id="proj",
+            extra_env={
+                "GOBBY_SESSION_ID": "attacker-session",
+                UV_CACHE_DIR: "/bad/cache",
+                "CUSTOM_FLAG": "1",
+            },
+        )
+        env = {
+            "GOBBY_SESSION_ID": "gobby-sess-123",
+            UV_CACHE_DIR: "/tmp/gobby/uv-cache/gobby-sess-123",
+        }
+
+        _apply_extra_env(env, request)
+
+        assert env["GOBBY_SESSION_ID"] == "gobby-sess-123"
+        assert env[UV_CACHE_DIR] == "/tmp/gobby/uv-cache/gobby-sess-123"
+        assert env["CUSTOM_FLAG"] == "1"

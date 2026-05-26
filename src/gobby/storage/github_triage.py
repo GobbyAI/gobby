@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sqlite3
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from gobby.storage.database import DatabaseProtocol
+import psycopg
+from psycopg.errors import UniqueViolation
+
+from gobby.storage.hub.protocol import HubDatabase
 
 DeliveryStatus = Literal["pending", "processing", "processed", "ignored", "duplicate", "error"]
 TriageVerdict = Literal["implement", "skip", "escalate", "dedup"]
@@ -37,7 +40,7 @@ class GitHubTriageConfig:
     updated_at: str | None = None
 
     @classmethod
-    def from_row(cls, row: Any) -> GitHubTriageConfig:
+    def from_row(cls, row: Mapping[str, Any]) -> GitHubTriageConfig:
         repositories = json.loads(row["repositories_json"] or "[]")
         return cls(
             project_id=row["project_id"],
@@ -94,7 +97,7 @@ class GitHubTriageDelivery:
     updated_at: str
 
     @classmethod
-    def from_row(cls, row: Any) -> GitHubTriageDelivery:
+    def from_row(cls, row: Mapping[str, Any]) -> GitHubTriageDelivery:
         return cls(
             id=row["id"],
             project_id=row["project_id"],
@@ -138,7 +141,7 @@ class GitHubIssueTriageRecord:
     updated_at: str
 
     @classmethod
-    def from_row(cls, row: Any) -> GitHubIssueTriageRecord:
+    def from_row(cls, row: Mapping[str, Any]) -> GitHubIssueTriageRecord:
         labels = json.loads(row["labels_json"] or "[]")
         return cls(
             id=row["id"],
@@ -165,7 +168,7 @@ class GitHubIssueTriageRecord:
 class GitHubTriageStore:
     """CRUD wrapper for GitHub triage audit/config tables."""
 
-    def __init__(self, db: DatabaseProtocol) -> None:
+    def __init__(self, db: HubDatabase) -> None:
         self.db = db
 
     def get_config(self, project_id: str, fallback_repo: str | None = None) -> GitHubTriageConfig:
@@ -214,8 +217,8 @@ class GitHubTriageStore:
                 """,
                 (
                     config.project_id,
-                    int(config.enabled),
-                    int(config.webhook_enabled),
+                    bool(config.enabled),
+                    bool(config.webhook_enabled),
                     _json_dumps(list(config.repositories)),
                     config.reconcile_interval_seconds,
                     config.webhook_secret_ref,
@@ -268,7 +271,7 @@ class GitHubTriageStore:
                 ),
             )
             inserted = True
-        except sqlite3.IntegrityError:
+        except (psycopg.IntegrityError, UniqueViolation):
             inserted = False
 
         delivery = self.get_delivery(project_id, delivery_id)

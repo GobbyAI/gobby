@@ -2,15 +2,15 @@
 Unified search backend abstraction.
 
 Provides a unified search layer with multiple backends:
-- FTS5 (default) - SQLite full-text search, always available
+- Keyword - PostgreSQL pg_search BM25
 - Embedding - OpenAI-compatible semantic search (OpenAI, Ollama, etc.)
 - Unified - Orchestrates between backends with automatic fallback
 
-Basic usage (FTS5):
-    from gobby.search import FTS5SearchBackend
+Basic usage (keyword):
+    from gobby.search import SearchConfig, UnifiedSearcher
 
-    backend = FTS5SearchBackend(db, "tasks_fts", "tasks", weights=(10.0, 5.0))
-    results = await backend.search_async("query text", top_k=10)
+    searcher = UnifiedSearcher(SearchConfig(mode="keyword"), db=db, fts_table="tasks_fts")
+    results = await searcher.search_async("query text", top_k=10)
 
 Unified search (async with fallback):
     from gobby.search import UnifiedSearcher, SearchConfig
@@ -35,9 +35,7 @@ from gobby.search.embeddings import (
     is_embedding_configured,
     is_embedding_reachable,
 )
-
-# FTS5 backend
-from gobby.search.fts5 import FTS5SearchBackend, sanitize_fts_query
+from gobby.search.keyword import BM25SearchBackend, KeywordSearchBackend, SearchHit
 from gobby.search.models import FallbackEvent, SearchConfig, SearchMode
 
 # Unified search (async with fallback)
@@ -47,9 +45,10 @@ __all__ = [
     # Async backends
     "AsyncSearchBackend",
     "EmbeddingBackend",
-    # FTS5 backend
-    "FTS5SearchBackend",
-    "sanitize_fts_query",
+    # Keyword backend
+    "BM25SearchBackend",
+    "KeywordSearchBackend",
+    "SearchHit",
     # Models
     "SearchConfig",
     "SearchMode",

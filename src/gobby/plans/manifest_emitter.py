@@ -25,7 +25,11 @@ from gobby.plans.parser import (
     parse_plan,
     resolve_plan_id,
 )
-from gobby.tasks.categories import TDD_ELIGIBLE_CATEGORIES
+from gobby.tasks.categories import (
+    AGENT_BY_IMPLEMENTATION_DOMAIN,
+    DEVELOPMENT_FORWARD_LEAF_CATEGORIES,
+    TDD_ELIGIBLE_CATEGORIES,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,14 +53,17 @@ _FRONTEND_SIGNAL_RE = re.compile(
     r"next\.?js|playwright|react|routing|storybook|svelte|ui|vite|vue|webpack)\b",
     flags=re.IGNORECASE,
 )
+_BACKEND_SIGNAL_RE = re.compile(
+    r"\b(?:api|backend|cache|database|daemon|endpoint|migration|model|postgres|"
+    r"queue|schema|server|service|storage|worker)\b",
+    flags=re.IGNORECASE,
+)
 _DEFAULT_CATEGORY = "code"
 _AGENT_BY_CATEGORY: dict[str, str] = {
     "code": "backend-developer",
     "config": "backend-developer",
     "docs": "tech-writer",
-    "planning": "planner",
     "refactor": "backend-developer",
-    "research": "researcher",
     "test": "backend-developer",
 }
 _DEFAULT_AGENT_FALLBACK = "backend-developer"
@@ -258,17 +265,22 @@ def _synthesize_entry(
     labels = [
         f"covers:{plan_id}:{section.section_id}:{item.item_id}" for item in section.acceptance_items
     ]
-    return {
+    entry: dict[str, object] = {
         "title": title,
         "category": category,
         "task_type": _DEFAULT_TASK_TYPE,
         "depends_on": list(dependencies),
         "validation_criteria": validation,
         "labels": labels,
-        "assigned_agent": _agent_for(category, section, title, validation),
         "tdd": category in TDD_ELIGIBLE_CATEGORIES,
         "source_section": section.section_id,
     }
+    if category == "code":
+        domain = _implementation_domain_for(section, title, validation)
+        entry["implementation_domain"] = domain
+    else:
+        entry["assigned_agent"] = _agent_for(category, section, title, validation)
+    return entry
 
 
 def _synthesized_dependencies(
@@ -351,6 +363,14 @@ def _agent_for(
     title: str,
     validation: str,
 ) -> str:
+    if category == "code":
+        return AGENT_BY_IMPLEMENTATION_DOMAIN[
+            _implementation_domain_for(section, title, validation)
+        ]
+    return _AGENT_BY_CATEGORY.get(category, _DEFAULT_AGENT_FALLBACK)
+
+
+def _implementation_domain_for(section: PlanSection, title: str, validation: str) -> str:
     signal_text = " ".join(
         [
             section.title,
@@ -359,16 +379,23 @@ def _agent_for(
             *[item.artifact_ref for item in section.acceptance_items],
         ]
     )
-    if _FRONTEND_SIGNAL_RE.search(signal_text):
-        return "frontend-developer"
-    return _AGENT_BY_CATEGORY.get(category, _DEFAULT_AGENT_FALLBACK)
+    frontend = _FRONTEND_SIGNAL_RE.search(signal_text) is not None
+    backend = _BACKEND_SIGNAL_RE.search(signal_text) is not None
+    if frontend and backend:
+        return "fullstack"
+    if frontend:
+        return "frontend"
+    return "backend"
 
 
 def _extract_category(title: str) -> str:
     match = _CATEGORY_RE.search(title)
     if match is None:
         return _DEFAULT_CATEGORY
-    return match.group("value")
+    category = match.group("value")
+    if category not in DEVELOPMENT_FORWARD_LEAF_CATEGORIES:
+        return _DEFAULT_CATEGORY
+    return category
 
 
 def _clean_title(title: str) -> str:

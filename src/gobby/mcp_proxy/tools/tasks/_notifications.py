@@ -5,13 +5,13 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
 
 def notify_parent_on_task_state_change(
-    db: "DatabaseProtocol",
+    db: "HubDatabase",
     task_id: str,
     new_state: str,
     task_ref: str | None = None,
@@ -29,7 +29,7 @@ def notify_parent_on_task_state_change(
 
 
 async def _notify(
-    db: "DatabaseProtocol",
+    db: "HubDatabase",
     task_id: str,
     new_state: str,
     task_ref: str | None,

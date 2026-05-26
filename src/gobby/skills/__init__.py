@@ -3,7 +3,7 @@
 This module provides:
 - YAML frontmatter parsing for SKILL.md files
 - Validation against Agent Skills specification
-- Search integration (keyword FTS5 + optional embeddings via UnifiedSearcher)
+- Search integration (keyword search + optional embeddings via UnifiedSearcher)
 - Skill loading from filesystem, GitHub, and ZIP archives
 - Skill updates from source
 """

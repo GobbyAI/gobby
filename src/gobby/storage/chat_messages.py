@@ -10,13 +10,13 @@ import logging
 import uuid
 from typing import Any
 
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
 
 def save_message(
-    db: LocalDatabase,
+    db: HubDatabase,
     *,
     conversation_id: str,
     role: str,
@@ -31,10 +31,14 @@ def save_message(
     with db.transaction() as conn:
         if seq is None:
             row = conn.execute(
-                "SELECT COALESCE(MAX(seq), 0) + 1 FROM chat_messages WHERE conversation_id = ?",
+                """
+                SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq
+                  FROM chat_messages
+                 WHERE conversation_id = ?
+                """,
                 (conversation_id,),
             ).fetchone()
-            seq = row[0]
+            seq = int(row["next_seq"]) if row is not None else 1
         conn.execute(
             """INSERT INTO chat_messages (
                    id, conversation_id, role, content, tool_calls_json,
@@ -56,7 +60,7 @@ def save_message(
 
 
 def get_messages(
-    db: LocalDatabase,
+    db: HubDatabase,
     conversation_id: str,
     *,
     after_seq: int = 0,
@@ -101,7 +105,7 @@ def get_messages(
     return result
 
 
-def delete_messages(db: LocalDatabase, conversation_id: str) -> int:
+def delete_messages(db: HubDatabase, conversation_id: str) -> int:
     """Delete all messages for a conversation. Returns count deleted."""
     with db.transaction() as conn:
         cursor = conn.execute(
@@ -111,10 +115,10 @@ def delete_messages(db: LocalDatabase, conversation_id: str) -> int:
         return cursor.rowcount
 
 
-def get_max_seq(db: LocalDatabase, conversation_id: str) -> int:
+def get_max_seq(db: HubDatabase, conversation_id: str) -> int:
     """Get the maximum sequence number for a conversation."""
     row = db.fetchone(
         "SELECT MAX(seq) as max_seq FROM chat_messages WHERE conversation_id = ?",
         (conversation_id,),
     )
-    return row["max_seq"] if row and row["max_seq"] is not None else 0
+    return int(row["max_seq"]) if row and row["max_seq"] is not None else 0

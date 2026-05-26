@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -23,7 +24,7 @@ def test_import_pathing_trap_is_fixed(protect_production_resources) -> None:
 
     # Check its behavior
     config = gobby.mcp_proxy.stdio.load_config()
-    assert "test-safe.db" in config.database_path, (
+    assert "test-safe-postgres" in config.database_url, (
         "Resulting config should point to safe test database"
     )
 
@@ -37,10 +38,23 @@ def test_runner_uses_patched_config(protect_production_resources, monkeypatch) -
     monkeypatch.setattr("gobby.runner_init.init_orchestration", lambda self: None)
     monkeypatch.setattr("gobby.runner_init.init_servers", lambda self: None)
 
+    def _fake_database(config):
+        db = MagicMock()
+        db.database_url = config.database_url
+        db.fetchall.return_value = []
+        db.fetchone.return_value = None
+        return db
+
+    monkeypatch.setattr(
+        "gobby.runner_init.storage.init_hub_database",
+        _fake_database,
+    )
+
     runner = gobby.runner.GobbyRunner()
 
     # Ensure it's using the safe DB
-    assert "test-safe.db" in str(runner.database.db_path)
+    assert "test-safe-postgres" in str(runner.database.database_url)
+    assert runner.database.database_url == runner.config.database_url
 
 
 def test_fixture_redirects_gobby_home(protect_production_resources) -> None:

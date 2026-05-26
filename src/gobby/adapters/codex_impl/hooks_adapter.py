@@ -13,15 +13,65 @@ from gobby.adapters.base import (
     normalize_adapter_response_reason,
     system_message_has_session_banner,
 )
+from gobby.adapters.capabilities import (
+    CODEX_EVENT_MAP,
+    ContextChannel,
+    get_provider_capabilities,
+)
 from gobby.adapters.codex_impl.shared import (
     TOOL_MAP as SHARED_TOOL_MAP,
 )
+from gobby.adapters.degradation import (
+    AdapterDegradationKind,
+    record_adapter_degradation,
+    record_unsupported_response_fields,
+    truncate_context_for_adapter,
+)
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.llm.sdk_utils import ADDITIONAL_CONTEXT_LIMIT
 
 if TYPE_CHECKING:
     from gobby.hooks.hook_manager import HookManager
 
 logger = logging.getLogger(__name__)
+
+_CONTEXT_SEPARATOR = "\n\n"
+_TRUNCATION_MARKER = "\n... [truncated]"
+
+
+def _bound_context_parts(
+    context_parts: list[tuple[str, str]],
+) -> tuple[str, dict[str, int], list[tuple[str, int, int]]]:
+    """Join context parts without letting one oversized part erase later context."""
+    bounded_parts: list[tuple[str, str]] = []
+    contributor_sizes: dict[str, int] = {}
+    trimmed_parts: list[tuple[str, int, int]] = []
+    used = 0
+
+    for label, part in context_parts:
+        separator_len = len(_CONTEXT_SEPARATOR) if bounded_parts else 0
+        remaining = ADDITIONAL_CONTEXT_LIMIT - used - separator_len
+        if remaining <= 0:
+            trimmed_parts.append((label, len(part), 0))
+            continue
+
+        bounded_part = part
+        if len(part) > remaining:
+            if remaining > len(_TRUNCATION_MARKER):
+                bounded_part = part[: remaining - len(_TRUNCATION_MARKER)] + _TRUNCATION_MARKER
+            else:
+                bounded_part = part[:remaining]
+            trimmed_parts.append((label, len(part), len(bounded_part)))
+
+        bounded_parts.append((label, bounded_part))
+        contributor_sizes[label] = len(part)
+        used += separator_len + len(bounded_part)
+
+    return (
+        _CONTEXT_SEPARATOR.join(part for _, part in bounded_parts),
+        contributor_sizes,
+        trimmed_parts,
+    )
 
 
 class CodexHooksAdapter(BaseAdapter):
@@ -35,16 +85,7 @@ class CodexHooksAdapter(BaseAdapter):
     source = SessionSource.CODEX
 
     # Event type mapping: Codex PascalCase hook names -> unified HookEventType
-    EVENT_MAP: dict[str, HookEventType] = {
-        "SessionStart": HookEventType.SESSION_START,
-        "UserPromptSubmit": HookEventType.BEFORE_AGENT,
-        "PreToolUse": HookEventType.BEFORE_TOOL,
-        "PermissionRequest": HookEventType.PERMISSION_REQUEST,
-        "PostToolUse": HookEventType.AFTER_TOOL,
-        "PreCompact": HookEventType.PRE_COMPACT,
-        "PostCompact": HookEventType.POST_COMPACT,
-        "Stop": HookEventType.STOP,
-    }
+    EVENT_MAP: dict[str, HookEventType] = dict(CODEX_EVENT_MAP)
 
     # Hook events where context must be routed through top-level systemMessage.
     # These schemas do not support hookSpecificOutput.additionalContext.
@@ -110,27 +151,23 @@ class CodexHooksAdapter(BaseAdapter):
         self, response: HookResponse, hook_type: str | None = None
     ) -> dict[str, Any]:
         """Convert HookResponse to Codex hooks.json expected format."""
-        from gobby.llm.sdk_utils import truncate_additional_context
-
         hook_event_name = hook_type or "Unknown"
+        capabilities = get_provider_capabilities(self.source)
+        capability = capabilities.get_hook(hook_event_name)
+        context_channel = capability.context_channel if capability else ContextChannel.NONE
+        record_unsupported_response_fields(
+            response,
+            provider=self.source,
+            hook_type=hook_type,
+            capability=capability,
+            event_logger=logger,
+        )
         normalized_reason = normalize_adapter_response_reason(
             response,
             adapter_name=self.__class__.__name__,
             hook_type=hook_type,
             logger=logger,
         )
-
-        if (
-            response.modified_input
-            and response.decision not in ("deny", "block")
-            and hook_event_name == "PreToolUse"
-        ):
-            logger.debug(
-                "Codex PreToolUse hook returned modified_input; Codex does not support "
-                "updatedInput. Proxy will apply rewrite at dispatch via "
-                "apply_before_tool_enforcement. Decision=%s.",
-                response.decision or "allow",
-            )
 
         result: dict[str, Any] = {"continue": True}
 
@@ -170,13 +207,25 @@ class CodexHooksAdapter(BaseAdapter):
                 if response.context:
                     system_parts.append(response.context)
                 if system_parts:
-                    deny_result["systemMessage"] = truncate_additional_context(
+                    if response.context:
+                        record_adapter_degradation(
+                            provider=self.source,
+                            hook_type=hook_type,
+                            kind=AdapterDegradationKind.REROUTED_FIELD,
+                            response_field="context",
+                            destination_channel=ContextChannel.SYSTEM_MESSAGE,
+                            event_logger=logger,
+                        )
+                    deny_result["systemMessage"] = truncate_context_for_adapter(
                         "\n\n".join(system_parts),
+                        provider=self.source,
+                        hook_type=hook_type,
+                        destination_channel=ContextChannel.SYSTEM_MESSAGE,
                         contributor_sizes={
                             f"system_part_{idx}": len(part)
                             for idx, part in enumerate(system_parts, start=1)
                         },
-                        logger=logger,
+                        event_logger=logger,
                     )
                 return deny_result
 
@@ -192,12 +241,16 @@ class CodexHooksAdapter(BaseAdapter):
                 "decision": {"behavior": "allow"},
             }
 
-        # Build additionalContext from all context sources
-        context_parts: list[tuple[str, str]] = []
+        if isinstance(response.modified_input, dict) and hook_event_name == "PreToolUse":
+            result["hookSpecificOutput"] = {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "allow",
+                "updatedInput": response.modified_input,
+            }
 
-        # Workflow-injected context (inject_context action)
-        if response.context:
-            context_parts.append(("response.context", response.context))
+        # Build additionalContext from all context sources. Keep high-value
+        # session/system context ahead of large workflow payloads.
+        context_parts: list[tuple[str, str]] = []
 
         session_start_hook = hook_event_name == "SessionStart"
 
@@ -206,7 +259,7 @@ class CodexHooksAdapter(BaseAdapter):
         # - SessionStart: startup context only via additionalContext
         # - UserPromptSubmit, PostToolUse: additionalContext only (hidden from user)
         if response.system_message:
-            if hook_event_name in self.SYSTEM_MESSAGE_ONLY_EVENTS:
+            if context_channel is ContextChannel.SYSTEM_MESSAGE:
                 result["systemMessage"] = response.system_message
             else:
                 # Always feed to model via additionalContext
@@ -228,21 +281,52 @@ class CodexHooksAdapter(BaseAdapter):
                 if context_lines:
                     context_parts.append(("metadata", "\n".join(context_lines)))
 
+        # Workflow-injected context (inject_context action). This can be large,
+        # so place it after session-critical context before applying the budget.
+        if response.context:
+            context_parts.append(("response.context", response.context))
+
         # Build hookSpecificOutput or systemMessage based on event type.
         if context_parts:
-            combined_context = truncate_additional_context(
-                "\n\n".join(part for _, part in context_parts),
-                contributor_sizes={label: len(part) for label, part in context_parts},
-                logger=logger,
+            bounded_context, contributor_sizes, trimmed_parts = _bound_context_parts(context_parts)
+            for label, original_len, bounded_len in trimmed_parts:
+                record_adapter_degradation(
+                    provider=self.source,
+                    hook_type=hook_type,
+                    kind=AdapterDegradationKind.CONTEXT_TRUNCATED,
+                    response_field=label,
+                    destination_channel=context_channel,
+                    detail=(
+                        f"bounded_part original_len={original_len} "
+                        f"bounded_len={bounded_len} limit={ADDITIONAL_CONTEXT_LIMIT}"
+                    ),
+                    event_logger=logger,
+                )
+            combined_context = truncate_context_for_adapter(
+                bounded_context,
+                provider=self.source,
+                hook_type=hook_type,
+                destination_channel=context_channel,
+                contributor_sizes=contributor_sizes,
+                event_logger=logger,
             )
-            if hook_event_name in self.SYSTEM_MESSAGE_ONLY_EVENTS:
+            if context_channel is ContextChannel.SYSTEM_MESSAGE:
+                if response.context:
+                    record_adapter_degradation(
+                        provider=self.source,
+                        hook_type=hook_type,
+                        kind=AdapterDegradationKind.REROUTED_FIELD,
+                        response_field="context",
+                        destination_channel=ContextChannel.SYSTEM_MESSAGE,
+                        event_logger=logger,
+                    )
                 # Append to existing systemMessage (from system_message routing above)
                 # instead of overwriting it.
                 if "systemMessage" in result:
                     result["systemMessage"] += "\n\n" + combined_context
                 else:
                     result["systemMessage"] = combined_context
-            else:
+            elif context_channel is ContextChannel.ADDITIONAL_CONTEXT:
                 hook_specific = result.get("hookSpecificOutput")
                 if not isinstance(hook_specific, dict):
                     hook_specific = {"hookEventName": hook_event_name}

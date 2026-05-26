@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import logging
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions._constants import SYSTEM_SESSION_ID
+from gobby.storage.sql_dialect import older_than_now_expr, table_column_names
 
 logger = logging.getLogger(__name__)
 
@@ -23,21 +25,15 @@ _EMPTY_SESSION_PRUNE_REFERENCE_COLUMNS: tuple[tuple[str, tuple[str, ...]], ...] 
 )
 
 
-def _build_empty_session_prune_reference_guards(db: DatabaseProtocol) -> tuple[str, ...]:
+def _build_empty_session_prune_reference_guards(db: HubDatabase) -> tuple[str, ...]:
     """Return guard clauses for retained session references present in this schema."""
     guards: list[str] = []
 
-    # table_name is drawn from _EMPTY_SESSION_PRUNE_REFERENCE_COLUMNS, a
-    # hardcoded module-scope constant; it never comes from user input. The
-    # f-string interpolation into PRAGMA is safe here — do not "fix" this
-    # into a parameterized call (PRAGMA does not accept bound parameters
-    # for identifiers anyway).
     for table_name, columns in _EMPTY_SESSION_PRUNE_REFERENCE_COLUMNS:
-        rows = db.fetchall(f"PRAGMA table_info({table_name})")
-        if not rows:
+        existing_columns = table_column_names(db, table_name)
+        if not existing_columns:
             continue
 
-        existing_columns = {row["name"] for row in rows}
         matched_columns = [column for column in columns if column in existing_columns]
         if not matched_columns:
             continue
@@ -51,7 +47,7 @@ def _build_empty_session_prune_reference_guards(db: DatabaseProtocol) -> tuple[s
     return tuple(guards)
 
 
-def expire_stale_sessions(db: DatabaseProtocol, timeout_hours: int = 24) -> int:
+def expire_stale_sessions(db: HubDatabase, timeout_hours: int = 24) -> int:
     """
     Mark sessions as expired if they've been inactive for too long.
 
@@ -62,21 +58,25 @@ def expire_stale_sessions(db: DatabaseProtocol, timeout_hours: int = 24) -> int:
     Returns:
         Number of sessions expired.
     """
+    updated_stale_sql = older_than_now_expr(db, "updated_at", "?", "hour")
+    empty_terminal_created_stale_sql = older_than_now_expr(db, "created_at", "?", "hour")
+    empty_terminal_context_sql = "terminal_context IS NULL"
     cursor = db.execute(
-        """
+        f"""
         UPDATE sessions
-        SET status = 'expired', updated_at = datetime('now')
+        SET status = 'expired', updated_at = CURRENT_TIMESTAMP
         WHERE status IN ('active', 'paused', 'handoff_ready')
+        AND id != ?
         AND (
-            datetime(updated_at) < datetime('now', 'utc', ? || ' hours')
+            {updated_stale_sql}
             OR (
                 session_type = 'terminal'
-                AND (terminal_context IS NULL OR terminal_context = '')
-                AND datetime(created_at) < datetime('now', 'utc', ? || ' hours')
+                AND {empty_terminal_context_sql}
+                AND {empty_terminal_created_stale_sql}
             )
         )
-        """,
-        (f"-{timeout_hours}", f"-{timeout_hours}"),
+        """,  # nosec B608 # cutoff expressions are selected by storage dialect.
+        (SYSTEM_SESSION_ID, timeout_hours, timeout_hours),
     )
     count = cursor.rowcount or 0
     if count > 0:
@@ -84,7 +84,7 @@ def expire_stale_sessions(db: DatabaseProtocol, timeout_hours: int = 24) -> int:
     return count
 
 
-def expire_orphaned_handoff_sessions(db: DatabaseProtocol, timeout_minutes: int = 30) -> int:
+def expire_orphaned_handoff_sessions(db: HubDatabase, timeout_minutes: int = 30) -> int:
     """
     Expire handoff_ready sessions that were never picked up by a child session.
 
@@ -99,14 +99,16 @@ def expire_orphaned_handoff_sessions(db: DatabaseProtocol, timeout_minutes: int 
     Returns:
         Number of sessions expired.
     """
+    updated_stale_sql = older_than_now_expr(db, "updated_at", "?", "minute")
     cursor = db.execute(
-        """
+        f"""
         UPDATE sessions
-        SET status = 'expired', updated_at = datetime('now')
+        SET status = 'expired', updated_at = CURRENT_TIMESTAMP
         WHERE status = 'handoff_ready'
-        AND datetime(updated_at) < datetime('now', 'utc', ? || ' minutes')
-        """,
-        (f"-{timeout_minutes}",),
+        AND id != ?
+        AND {updated_stale_sql}
+        """,  # nosec B608 # cutoff expression is selected by storage dialect.
+        (SYSTEM_SESSION_ID, timeout_minutes),
     )
     count = cursor.rowcount or 0
     if count > 0:
@@ -114,7 +116,7 @@ def expire_orphaned_handoff_sessions(db: DatabaseProtocol, timeout_minutes: int 
     return count
 
 
-def pause_inactive_active_sessions(db: DatabaseProtocol, timeout_minutes: int = 30) -> int:
+def pause_inactive_active_sessions(db: HubDatabase, timeout_minutes: int = 30) -> int:
     """
     Mark active sessions as paused if they've been inactive for too long.
 
@@ -128,14 +130,16 @@ def pause_inactive_active_sessions(db: DatabaseProtocol, timeout_minutes: int = 
     Returns:
         Number of sessions paused.
     """
+    updated_stale_sql = older_than_now_expr(db, "updated_at", "?", "minute")
     cursor = db.execute(
-        """
+        f"""
         UPDATE sessions
         SET status = 'paused'
         WHERE status = 'active'
-        AND datetime(updated_at) < datetime('now', 'utc', ? || ' minutes')
-        """,
-        (f"-{timeout_minutes}",),
+        AND id != ?
+        AND {updated_stale_sql}
+        """,  # nosec B608 # cutoff expression is selected by storage dialect.
+        (SYSTEM_SESSION_ID, timeout_minutes),
     )
     count = cursor.rowcount or 0
     if count > 0:
@@ -143,7 +147,7 @@ def pause_inactive_active_sessions(db: DatabaseProtocol, timeout_minutes: int = 
     return count
 
 
-def expire_empty_sessions(db: DatabaseProtocol, timeout_hours: int = 2) -> int:
+def expire_empty_sessions(db: HubDatabase, timeout_hours: int = 2) -> int:
     """
     Fast-expire sessions that never received any messages.
 
@@ -158,15 +162,17 @@ def expire_empty_sessions(db: DatabaseProtocol, timeout_hours: int = 2) -> int:
     Returns:
         Number of sessions expired.
     """
+    updated_stale_sql = older_than_now_expr(db, "updated_at", "?", "hour")
     cursor = db.execute(
-        """
+        f"""
         UPDATE sessions
-        SET status = 'expired', updated_at = datetime('now')
+        SET status = 'expired', updated_at = CURRENT_TIMESTAMP
         WHERE status IN ('active', 'paused')
+        AND id != ?
         AND COALESCE(message_count, 0) = 0
-        AND datetime(updated_at) < datetime('now', 'utc', ? || ' hours')
-        """,
-        (f"-{timeout_hours}",),
+        AND {updated_stale_sql}
+        """,  # nosec B608 # cutoff expression is selected by storage dialect.
+        (SYSTEM_SESSION_ID, timeout_hours),
     )
     count = cursor.rowcount or 0
     if count > 0:
@@ -174,7 +180,7 @@ def expire_empty_sessions(db: DatabaseProtocol, timeout_hours: int = 2) -> int:
     return count
 
 
-def prune_empty_sessions(db: DatabaseProtocol, min_age_hours: int = 1) -> int:
+def prune_empty_sessions(db: HubDatabase, min_age_hours: int = 1) -> int:
     """
     Hard-delete expired sessions that never received any messages.
 
@@ -189,21 +195,21 @@ def prune_empty_sessions(db: DatabaseProtocol, min_age_hours: int = 1) -> int:
     Returns:
         Number of sessions deleted.
     """
-    params = (f"-{min_age_hours}",)
-    # Compare the raw SQLite datetime text so prune-specific indexes on
-    # updated_at can participate in the candidate scan.
-    base_where = """
+    params = (min_age_hours,)
+    updated_stale_sql = older_than_now_expr(db, "updated_at", "?", "hour")
+    base_where = f"""
         status = 'expired'
+        AND id != ?
         AND COALESCE(message_count, 0) = 0
-        AND updated_at < datetime('now', 'utc', ? || ' hours')
-    """
+        AND {updated_stale_sql}
+    """  # nosec B608 # cutoff expression is selected by storage dialect.
     row = db.fetchone(
         f"""
         SELECT COUNT(*) AS count
         FROM sessions
         WHERE {base_where}
         """,
-        params,
+        (SYSTEM_SESSION_ID, *params),
     )
     candidate_count = row["count"] if row else 0
     reference_guards = "\n        AND ".join(_build_empty_session_prune_reference_guards(db))
@@ -213,7 +219,7 @@ def prune_empty_sessions(db: DatabaseProtocol, min_age_hours: int = 1) -> int:
         WHERE {base_where}
         {f"AND {reference_guards}" if reference_guards else ""}
         """,
-        params,
+        (SYSTEM_SESSION_ID, *params),
     )
     count = cursor.rowcount or 0
     skipped = max(candidate_count - count, 0)

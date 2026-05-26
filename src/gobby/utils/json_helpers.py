@@ -16,6 +16,8 @@ import msgspec
 
 logger = logging.getLogger(__name__)
 
+type JSONValue = str | int | float | bool | None | list["JSONValue"] | dict[str, "JSONValue"]
+
 
 def extract_json_from_text(text: str | None) -> str | None:
     """
@@ -116,6 +118,23 @@ def extract_json_object(text: str | None) -> dict[str, Any] | None:
     except json.JSONDecodeError as e:
         logger.warning(f"Failed to parse extracted JSON: {e}")
         return None
+
+
+def json_equal(left: object, right: object) -> bool:
+    """Compare JSON payloads semantically across strings and decoded values."""
+    left_value = _decode_json_if_text(left)
+    right_value = _decode_json_if_text(right)
+    return left_value == right_value
+
+
+def _decode_json_if_text(value: object) -> object:
+    if not isinstance(value, str):
+        return value
+    try:
+        decoded: object = json.loads(value)
+        return decoded
+    except json.JSONDecodeError:
+        return value
 
 
 def decode_llm_response[T](

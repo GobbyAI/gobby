@@ -7,8 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.sync_rules import sync_bundled_rules
 from gobby.workflows.sync_variables import sync_bundled_variables
@@ -17,15 +16,13 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path) -> LocalDatabase:
-    db_path = tmp_path / "test_session_defaults.db"
-    database = LocalDatabase(db_path)
-    run_migrations(database)
+def db(temp_db: HubDatabase) -> HubDatabase:
+    database = temp_db
     return database
 
 
 @pytest.fixture
-def manager(db: LocalDatabase) -> LocalWorkflowDefinitionManager:
+def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
     return LocalWorkflowDefinitionManager(db)
 
 
@@ -196,7 +193,7 @@ variables:
         assert result["orphaned"] == 1
 
     def test_all_expected_variables_synced(self, db) -> None:
-        """All 15 expected session-default variables should be synced.
+        """Expected session-default variables should be synced.
 
         Note: task_ref was removed — claimed_tasks map handles this now.
         """
@@ -213,7 +210,8 @@ variables:
             "task_claimed",
             "require_task_before_edit",
             "require_commit_before_status",
-            "errors_resolved",
+            "verification_evidence_recorded",
+            "verification_evidence",
             "enforce_tool_schema_check",
             "auto_inject_handoff",
             "servers_listed",

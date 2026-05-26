@@ -6,7 +6,6 @@ the rewrite into the dispatched arguments.
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -18,8 +17,7 @@ from gobby.mcp_proxy.services.result_handling import (
     apply_before_tool_enforcement,
     build_before_tool_event,
 )
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
@@ -28,7 +26,7 @@ from gobby.workflows.sync_rules import get_bundled_rules_path
 pytestmark = pytest.mark.unit
 
 
-def _load_strip_skip_validation_rule(db: LocalDatabase) -> None:
+def _load_strip_skip_validation_rule(db: HubDatabase) -> None:
     """Insert only the strip-skip-validation rule so other bundled rules don't interfere."""
     yaml_path = (
         get_bundled_rules_path() / "task-enforcement" / "strip-skip-validation-with-commit.yaml"
@@ -48,13 +46,22 @@ def _load_strip_skip_validation_rule(db: LocalDatabase) -> None:
 class _StubService:
     """Minimal service surface required by ``apply_before_tool_enforcement``."""
 
-    def __init__(self, engine: RuleEngine, session_id: str, variables: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        engine: RuleEngine,
+        session_id: str,
+        variables: dict[str, Any],
+        *,
+        pending_tool_context: bool = False,
+    ) -> None:
         self._engine = engine
         self._session_id = session_id
         self._variables = variables
+        self.seen_events: list[HookEvent] = []
 
         workflow_handler = MagicMock()
         workflow_handler.evaluate.side_effect = self._evaluate
+        workflow_handler.has_pending_tool_context.return_value = pending_tool_context
         hook_manager = MagicMock()
         hook_manager._workflow_handler = workflow_handler
         self._hook_manager = hook_manager
@@ -62,6 +69,7 @@ class _StubService:
     def _evaluate(self, event: HookEvent) -> HookResponse:
         # Production calls workflow_handler.evaluate via asyncio.to_thread,
         # so the stub is sync and can safely use asyncio.run for the async engine.
+        self.seen_events.append(event)
         return asyncio.run(
             self._engine.evaluate(
                 event=event,
@@ -109,7 +117,9 @@ class _StubService:
 
 
 @pytest.mark.asyncio
-async def test_apply_before_tool_enforcement_strips_skip_validation(tmp_path: Path) -> None:
+async def test_apply_before_tool_enforcement_strips_skip_validation(
+    temp_db: HubDatabase,
+) -> None:
     """End-to-end regression for #13048.
 
     Builds the same before_tool event the proxy emits, runs it through the real
@@ -117,8 +127,7 @@ async def test_apply_before_tool_enforcement_strips_skip_validation(tmp_path: Pa
     ``apply_before_tool_enforcement`` helper. The dispatched arguments must
     have ``skip_validation: False`` after the rewrite is applied.
     """
-    db = LocalDatabase(tmp_path / "test.db")
-    run_migrations(db)
+    db = temp_db
     _load_strip_skip_validation_rule(db)
 
     engine = RuleEngine(db)
@@ -144,11 +153,10 @@ async def test_apply_before_tool_enforcement_strips_skip_validation(tmp_path: Pa
 
 @pytest.mark.asyncio
 async def test_apply_before_tool_enforcement_passthrough_without_commits(
-    tmp_path: Path,
+    temp_db: HubDatabase,
 ) -> None:
     """Without commits, the rule does not fire and arguments pass through."""
-    db = LocalDatabase(tmp_path / "test.db")
-    run_migrations(db)
+    db = temp_db
     _load_strip_skip_validation_rule(db)
 
     engine = RuleEngine(db)
@@ -170,6 +178,33 @@ async def test_apply_before_tool_enforcement_passthrough_without_commits(
     assert server_name == "gobby-tasks"
     assert tool_name == "close_task"
     assert arguments == {"task_id": "t-1", "skip_validation": True}
+
+
+@pytest.mark.asyncio
+async def test_apply_before_tool_enforcement_marks_duplicate_pending_cli_context(
+    temp_db: HubDatabase,
+) -> None:
+    db = temp_db
+
+    service = _StubService(
+        engine=RuleEngine(db),
+        session_id="sess-1",
+        variables={},
+        pending_tool_context=True,
+    )
+
+    _, _, _, error = await apply_before_tool_enforcement(
+        service,
+        "gobby-merge",
+        "merge_resolve",
+        arguments={"conflict_id": "mc-one", "use_ai": True},
+        session_id="sess-1",
+    )
+
+    assert error is None
+    assert service.seen_events
+    assert service.seen_events[0].metadata["_mcp_proxy_duplicate_before_tool"] is True
+    service._hook_manager._workflow_handler.has_pending_tool_context.assert_called_once()
 
 
 def test_proxy_before_tool_event_shape_unchanged() -> None:

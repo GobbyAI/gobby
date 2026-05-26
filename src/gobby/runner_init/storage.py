@@ -15,6 +15,7 @@ from gobby.runner_init.helpers import (
     init_hub_database,
     resolve_embedding_api_key,
 )
+from gobby.runner_init.stale_config import check_stale_neo4j_config
 from gobby.shutdown_intent import ShutdownIntent
 from gobby.storage.executor import DatabaseExecutor
 from gobby.storage.session_tasks import SessionTaskManager
@@ -38,7 +39,7 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
             f"or omit --config to use the default path (~/.gobby/bootstrap.yaml)."
         )
     runner._config_file = str(config_path) if config_path else None
-    runner.config = load_config(runner._config_file)
+    runner.config = load_config(runner._config_file, resolve_database_url=True)
     runner.verbose = verbose
 
     init_telemetry(runner.config.telemetry, verbose=verbose)
@@ -86,10 +87,12 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
 
     runner.secret_store = SecretStore(runner.database)
     runner.config_store = ConfigStore(runner.database)
+    check_stale_neo4j_config(runner.database)
     runner.config = load_config(
         config_file=runner._config_file,
         secret_resolver=runner.secret_store.get,
         config_store=runner.config_store,
+        resolve_database_url=True,
     )
 
     if hasattr(runner.config, "embeddings") and not runner.config.embeddings.api_key:
@@ -125,7 +128,17 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
                     loop = asyncio.get_running_loop()
                     task = loop.create_task(runner.websocket_server.broadcast_trace_event(span))
                     runner._pending_tasks.add(task)
-                    task.add_done_callback(runner._pending_tasks.discard)
+
+                    def _log_broadcast_result(done_task: asyncio.Task[Any]) -> None:
+                        runner._pending_tasks.discard(done_task)
+                        try:
+                            done_task.result()
+                        except asyncio.CancelledError:
+                            logger.debug("Trace broadcast task cancelled")
+                        except Exception:
+                            logger.exception("Trace broadcast task failed")
+
+                    task.add_done_callback(_log_broadcast_result)
                 except RuntimeError as e:
                     logger.debug(f"Trace broadcast skipped (no running loop): {e}")
 

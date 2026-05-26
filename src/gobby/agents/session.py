@@ -19,6 +19,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_MAX_LINEAGE_DEPTH = 1000
+
 
 @dataclass
 class ChildSessionConfig:
@@ -84,7 +86,7 @@ class ChildSessionManager:
         Initialize ChildSessionManager.
 
         Args:
-            session_storage: SessionManager for SQLite operations.
+            session_storage: SessionManager for PostgreSQL hub operations.
             max_agent_depth: Maximum allowed nesting depth (default: 1).
                 Depth 0 = human-initiated session.
                 Depth 1 = agent can spawn, but child cannot spawn further.
@@ -92,6 +94,7 @@ class ChildSessionManager:
         self._storage = session_storage
         self.max_agent_depth = max_agent_depth
         self.logger = logger
+        self._lineage_warning_keys: set[tuple[str, str, str]] = set()
 
     def get_session_depth(self, session_id: str) -> int:
         """
@@ -258,19 +261,57 @@ class ChildSessionManager:
         """
         lineage: list[Session] = []
         current_id: str | None = session_id
+        seen: set[str] = set()
 
         while current_id:
+            if current_id in seen:
+                self._warn_lineage_once(
+                    "cycle",
+                    session_id,
+                    current_id,
+                    f"Lineage cycle detected for {session_id} at {current_id}",
+                )
+                break
+            seen.add(current_id)
+
             session = self._storage.get(current_id)
             if not session:
                 break
             lineage.append(session)
             current_id = session.parent_session_id
 
-            # Safety limit
-            if len(lineage) > 10:
-                self.logger.warning(f"Lineage exceeded safety limit for {session_id}")
+            if len(lineage) >= _MAX_LINEAGE_DEPTH:
+                self._warn_lineage_once(
+                    "depth",
+                    session_id,
+                    current_id or "",
+                    (
+                        f"Lineage traversal reached {_MAX_LINEAGE_DEPTH} sessions "
+                        f"for {session_id}; possible corrupt parent chain"
+                    ),
+                )
                 break
 
         # Reverse to get root-to-current order
         lineage.reverse()
         return lineage
+
+    def _warn_lineage_once(
+        self,
+        kind: str,
+        session_id: str,
+        related_id: str,
+        message: str,
+    ) -> None:
+        key = (kind, session_id, related_id)
+        if key in self._lineage_warning_keys:
+            return
+        self._lineage_warning_keys.add(key)
+        self.logger.warning(
+            message,
+            extra={
+                "lineage_kind": kind,
+                "session_id": session_id,
+                "related_id": related_id,
+            },
+        )

@@ -1,227 +1,252 @@
-"""Database migrations for local storage.
+"""PostgreSQL hub migrations."""
 
-For new databases (version == 0):
-    BASELINE_SCHEMA is applied, jumping directly to BASELINE_VERSION.
+from __future__ import annotations
 
-For existing databases at or above the current baseline:
-    Any future migrations in MIGRATIONS beyond BASELINE_VERSION are applied incrementally.
-
-Existing SQLite databases below the current baseline are intentionally unsupported. They
-must be reset or manually recovered; historical migration code is recoverable from Git.
-
-To add a new migration:
-    1. Add helper callables to gobby.storage.migration_helpers when needed.
-    2. Add the migration to MIGRATIONS below.
-    3. Also add the migration to BASELINE_SCHEMA for future fresh installs.
-"""
-
+import importlib.resources
 import logging
-from collections.abc import Callable
-from pathlib import Path
+import re
+from collections.abc import Iterator
+from dataclasses import dataclass
+from importlib.resources.abc import Traversable
+from typing import Any, Protocol
 
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migration_helpers import (
-    _setup_code_content_fts,
-    _setup_code_symbols_fts,
-    _setup_memories_fts,
-    _setup_skills_fts,
-    _setup_tasks_fts,
-)
+from gobby.storage.hub.protocol import HubDatabase, Transaction
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
     "BASELINE_VERSION",
-    "BASELINE_SCHEMA",
-    "MIGRATIONS",
-    "MigrationAction",
+    "Migration",
+    "MigrationRunner",
     "MigrationUnsupportedError",
-    "_apply_baseline",
-    "_run_migration_list",
-    "_setup_code_content_fts",
-    "_setup_code_symbols_fts",
-    "_setup_memories_fts",
-    "_setup_skills_fts",
-    "_setup_tasks_fts",
-    "get_current_version",
+    "_split_statements_respecting_dollar_quotes",
     "latest_known_version",
-    "migrations_needed",
-    "run_migrations",
 ]
 
 
 class MigrationUnsupportedError(Exception):
-    """Raised when database version is too old to migrate."""
+    """Raised when database version is too old or bookkeeping is corrupt."""
 
 
-MigrationAction = str | Callable[[LocalDatabase], None]
-
-BASELINE_VERSION = 260
-# Historical SQLite migration bands through v260 are flattened into the baseline.
-# Databases below v260 must use an older Gobby build or manual recovery.
-_MIN_MIGRATION_VERSION = 260
-BASELINE_SCHEMA = (Path(__file__).parent / "baseline_schema.sql").read_text()
+BASELINE_VERSION = 261
 
 
-# The current SQLite baseline includes all historical schema changes through v260.
-# Keep the generic runner helpers below for future migrations.
-MIGRATIONS: list[tuple[int, str, MigrationAction]] = []
+_MIGRATION_FILE_RE = re.compile(r"^(?P<version>\d+)_(?P<name>.+?)(?:\.postgres)?\.sql$")
+_SCHEMA_MIGRATIONS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    version INTEGER PRIMARY KEY,
+    applied_at TIMESTAMPTZ NOT NULL
+)
+"""
 
 
-def get_current_version(db: LocalDatabase) -> int:
-    """Get current schema version from database."""
+class _TransactionLike(Protocol):
+    def execute(self, sql: str, params: Any = ()) -> Any: ...
+
+
+@dataclass(frozen=True)
+class Migration:
+    version: int
+    name: str
+    path: Traversable
+
+
+class MigrationRunner:
+    """PostgreSQL file-based migration runner."""
+
+    def __init__(self, hub: HubDatabase) -> None:
+        if hub.dialect != "postgres":
+            raise MigrationUnsupportedError(
+                "MigrationRunner only supports PostgreSQL hub databases."
+            )
+        self._hub = hub
+
+    def apply_pending(self) -> None:
+        self._ensure_schema_migrations_table()
+        applied = self._read_applied_versions()
+        for migration in self._discover_migrations():
+            if migration.version in applied:
+                continue
+            logger.warning("Applying PostgreSQL migration %s_%s", migration.version, migration.name)
+            with self._hub.transaction() as txn:
+                self._run_migration(txn, migration)
+                self._record_applied_version(txn, migration.version)
+            applied.add(migration.version)
+
+    def _ensure_schema_migrations_table(self) -> None:
+        with self._hub.transaction() as txn:
+            txn.execute(_SCHEMA_MIGRATIONS_TABLE_SQL)
+
+    def _read_applied_versions(self) -> set[int]:
+        with self._hub.transaction() as txn:
+            rows = txn.execute("SELECT version FROM schema_migrations").fetchall()
+        return {int(_row_value(row, "version")) for row in rows}
+
+    def _discover_migrations(self) -> list[Migration]:
+        migrations_dir = importlib.resources.files("gobby.storage").joinpath("migrations")
+        if not migrations_dir.is_dir():
+            return []
+
+        grouped: dict[int, Migration] = {}
+        for path in migrations_dir.iterdir():
+            if not path.is_file():
+                continue
+            match = _MIGRATION_FILE_RE.match(path.name)
+            if match is None:
+                continue
+
+            version = int(match.group("version"))
+            name = match.group("name")
+            existing = grouped.get(version)
+            if existing is not None:
+                raise RuntimeError(f"Duplicate migration file for v{version}")
+            grouped[version] = Migration(version=version, name=name, path=path)
+
+        return [migration for _version, migration in sorted(grouped.items())]
+
+    def _run_migration(self, txn: Transaction, migration: Migration) -> None:
+        _execute_sql_script(txn, migration.path.read_text())
+
+    def _record_applied_version(self, txn: Transaction, version: int) -> None:
+        txn.execute(
+            "INSERT INTO schema_migrations(version, applied_at) VALUES ($1, NOW())",
+            (version,),
+        )
+
+
+def _split_statements_respecting_dollar_quotes(sql: str) -> Iterator[str]:
+    """Split SQL statements while preserving strings, comments, and dollar bodies."""
+    statement_start = 0
+    i = 0
+    n = len(sql)
+
+    while i < n:
+        char = sql[i]
+
+        if char == "-" and i + 1 < n and sql[i + 1] == "-":
+            i = _skip_line_comment(sql, i)
+            continue
+
+        if char == "/" and i + 1 < n and sql[i + 1] == "*":
+            i = _skip_block_comment(sql, i)
+            continue
+
+        if char == "'":
+            i = _skip_single_quoted_string(sql, i)
+            continue
+
+        if char == '"':
+            i = _skip_double_quoted_identifier(sql, i)
+            continue
+
+        if char == "$":
+            tag = _dollar_quote_tag_at(sql, i)
+            if tag is not None:
+                close = sql.find(tag, i + len(tag))
+                if close < 0:
+                    raise ValueError(f"unterminated dollar-quote tag {tag!r}")
+                i = close + len(tag)
+                continue
+
+        if char == ";":
+            statement = sql[statement_start:i]
+            yield statement
+            statement_start = i + 1
+
+        i += 1
+
+    tail = sql[statement_start:]
+    if tail:
+        yield tail
+
+
+def _skip_line_comment(sql: str, start: int) -> int:
+    end = sql.find("\n", start + 2)
+    return len(sql) if end < 0 else end + 1
+
+
+def _skip_block_comment(sql: str, start: int) -> int:
+    i = start + 2
+    depth = 1
+    n = len(sql)
+    while i < n and depth:
+        if i + 1 < n and sql[i] == "/" and sql[i + 1] == "*":
+            depth += 1
+            i += 2
+            continue
+        if i + 1 < n and sql[i] == "*" and sql[i + 1] == "/":
+            depth -= 1
+            i += 2
+            continue
+        i += 1
+    return i
+
+
+def _skip_single_quoted_string(sql: str, start: int) -> int:
+    i = start + 1
+    n = len(sql)
+    while i < n:
+        if sql[i] == "'":
+            if i + 1 < n and sql[i + 1] == "'":
+                i += 2
+                continue
+            return i + 1
+        i += 1
+    return i
+
+
+def _skip_double_quoted_identifier(sql: str, start: int) -> int:
+    i = start + 1
+    n = len(sql)
+    while i < n:
+        if sql[i] == '"':
+            if i + 1 < n and sql[i + 1] == '"':
+                i += 2
+                continue
+            return i + 1
+        i += 1
+    return i
+
+
+def _dollar_quote_tag_at(sql: str, start: int) -> str | None:
+    if start > 0 and _is_identifier_continuation(sql[start - 1]):
+        return None
+    if start + 1 >= len(sql):
+        return None
+    if sql[start + 1] == "$":
+        return "$$"
+    if not _is_identifier_start(sql[start + 1]):
+        return None
+
+    tag_end = start + 2
+    while tag_end < len(sql) and _is_identifier_continuation(sql[tag_end]):
+        tag_end += 1
+    if tag_end < len(sql) and sql[tag_end] == "$":
+        return sql[start : tag_end + 1]
+    return None
+
+
+def _is_identifier_start(char: str) -> bool:
+    return char.isalpha() or char == "_"
+
+
+def _is_identifier_continuation(char: str) -> bool:
+    return char.isalnum() or char == "_"
+
+
+def _execute_sql_script(executor: _TransactionLike, sql: str) -> None:
+    for statement in _split_statements_respecting_dollar_quotes(sql):
+        if statement.strip():
+            executor.execute(statement)
+
+
+def _row_value(row: Any, key: str, index: int = 0) -> Any:
     try:
-        row = db.fetchone("SELECT MAX(version) as version FROM schema_version")
-        return row["version"] if row and row["version"] else 0
-    except Exception:
-        return 0
+        return row[key]
+    except (KeyError, TypeError, IndexError):
+        return row[index]
 
 
 def latest_known_version() -> int:
     """Return the newest schema version known to this build."""
-    return max(
-        BASELINE_VERSION,
-        max((version for version, _description, _action in MIGRATIONS), default=BASELINE_VERSION),
-    )
-
-
-def migrations_needed(db: LocalDatabase) -> bool:
-    """Return whether schema migrations should run for this database.
-
-    This is intentionally a schema-version check only. Startup repair work that lives in
-    run_migrations should still be executed by normal daemon startup.
-    """
-    current_version = get_current_version(db)
-    if current_version == 0 or current_version < _MIN_MIGRATION_VERSION:
-        return True
-    return current_version < latest_known_version()
-
-
-def _apply_baseline(db: LocalDatabase) -> None:
-    """Apply baseline schema for new databases."""
-    logger.info("Applying baseline schema (v%s)", BASELINE_VERSION)
-
-    with db.transaction() as conn:
-        conn.executescript(BASELINE_SCHEMA)
-        conn.execute(
-            "INSERT INTO schema_version (version) VALUES (?)",
-            (BASELINE_VERSION,),
-        )
-
-    _setup_code_symbols_fts(db, include_summary=True)
-    _setup_code_content_fts(db)
-    _setup_tasks_fts(db)
-    _setup_skills_fts(db)
-    _setup_memories_fts(db)
-
-    logger.info("Baseline schema applied, now at version %s", BASELINE_VERSION)
-
-
-def _run_migration_list(
-    db: LocalDatabase,
-    current_version: int,
-    migrations: list[tuple[int, str, MigrationAction]],
-) -> int:
-    """
-    Run migrations from a list.
-
-    Args:
-        db: LocalDatabase instance
-        current_version: Current schema version
-        migrations: List of (version, description, action) tuples
-
-    Returns:
-        Number of migrations applied
-    """
-    applied = 0
-    last_version = current_version
-
-    for version, description, action in migrations:
-        if version > current_version:
-            logger.debug("Applying migration %s: %s", version, description)
-            try:
-                if callable(action):
-                    with db.transaction():
-                        action(db)
-                        db.execute(
-                            "INSERT INTO schema_version (version) VALUES (?)",
-                            (version,),
-                        )
-                else:
-                    with db.transaction():
-                        for statement in action.strip().split(";"):
-                            statement = statement.strip()
-                            if statement:
-                                db.execute(statement)
-                        db.execute(
-                            "INSERT INTO schema_version (version) VALUES (?)",
-                            (version,),
-                        )
-                applied += 1
-                last_version = version
-            except Exception as e:
-                logger.error("Migration %s failed: %s", version, e)
-                raise
-
-    if applied > 0:
-        logger.debug("Applied %s migration(s), now at version %s", applied, last_version)
-
-    return applied
-
-
-def run_migrations(db: LocalDatabase) -> int:
-    """
-    Run pending migrations.
-
-    For new databases:
-        - Applies the current baseline schema directly.
-
-    For existing databases:
-        - Versions below _MIN_MIGRATION_VERSION raise MigrationUnsupportedError.
-        - Versions at or above _MIN_MIGRATION_VERSION run future SQLite migrations.
-        - Versions above the latest known migration are left untouched.
-
-    Args:
-        db: LocalDatabase instance
-
-    Returns:
-        Number of migrations applied
-    """
-    current_version = get_current_version(db)
-    total_applied = 0
-
-    if current_version == 0:
-        logger.info("Using flattened baseline for new database")
-        _apply_baseline(db)
-        total_applied = 1
-        current_version = BASELINE_VERSION
-    elif current_version < _MIN_MIGRATION_VERSION:
-        msg = (
-            f"Database version {current_version} is below the current SQLite baseline "
-            f"{BASELINE_VERSION}. Direct upgrade is unsupported; reset "
-            "~/.gobby/gobby-hub.db or manually recover the data from a backup before "
-            "starting this Gobby build."
-        )
-        logger.error(msg)
-        raise MigrationUnsupportedError(msg)
-
-    latest_version = latest_known_version()
-    if current_version > latest_version:
-        logger.info(
-            "Database version %s is newer than this build's latest known SQLite "
-            "schema %s; leaving it untouched.",
-            current_version,
-            latest_version,
-        )
-        return 0
-
-    if MIGRATIONS:
-        total_applied += _run_migration_list(db, current_version, MIGRATIONS)
-
-    from gobby.storage.sessions import ensure_system_session
-    from gobby.storage.tasks import TaskDispatchMutexManager
-
-    ensure_system_session(db)
-    TaskDispatchMutexManager(db).sweep_expired()
-
-    return total_applied
+    return BASELINE_VERSION

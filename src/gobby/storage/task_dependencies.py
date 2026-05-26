@@ -1,10 +1,10 @@
 import logging
-import sqlite3
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ class TaskDependency:
     created_at: str
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row) -> "TaskDependency":
+    def from_row(cls, row: Mapping[str, Any]) -> "TaskDependency":
         return cls(
             id=row["id"],
             task_id=row["task_id"],
@@ -47,7 +47,7 @@ class DependencyCycleError(Exception):
 
 
 class TaskDependencyManager:
-    def __init__(self, db: DatabaseProtocol):
+    def __init__(self, db: HubDatabase):
         self.db = db
 
     def add_dependency(
@@ -66,15 +66,19 @@ class TaskDependencyManager:
         now = datetime.now(UTC).isoformat()
 
         with self.db.transaction() as conn:
-            cursor = conn.execute(
-                "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (?, ?, ?, ?)",
+            row = conn.execute(
+                """
+                INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at)
+                VALUES (?, ?, ?, ?)
+                RETURNING id
+                """,
                 (task_id, depends_on, dep_type, now),
-            )
-            dep_id = cursor.lastrowid
+            ).fetchone()
 
-            if dep_id is None:
+            if row is None:
                 raise ValueError("Failed to retrieve dependency ID")
 
+            dep_id = int(row["id"])
             return TaskDependency(dep_id, task_id, depends_on, dep_type, now)
 
     def remove_dependency(self, task_id: str, depends_on: str) -> bool:

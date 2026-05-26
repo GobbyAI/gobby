@@ -13,8 +13,6 @@ import pytest
 from gobby.config.persistence import MemoryConfig
 from gobby.memory.manager import MemoryManager
 from gobby.memory.vectorstore import VectorStore
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
 
 pytestmark = pytest.mark.unit
 
@@ -24,12 +22,9 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path):
-    """Create a temporary database for testing."""
-    database = LocalDatabase(tmp_path / "gobby-hub.db")
-    run_migrations(database)
-    yield database
-    database.close()
+def db(hub_db):
+    """Create a temporary hub database for testing."""
+    return hub_db
 
 
 @pytest.fixture

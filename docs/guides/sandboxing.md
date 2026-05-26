@@ -22,6 +22,9 @@ keeps `~/.gobby` readable so the runtime can resolve daemon state such as
 `machine_id`. Worktree launches also add the resolved Git metadata directories
 to the writable set so commits from a sandboxed worktree can update the real
 repository metadata.
+Daemon-owned spawned agents also permit local Gobby services on loopback,
+including the HTTP daemon, WebSocket daemon, and local Postgres hub, while
+still using each provider's filesystem sandbox.
 
 Web chat stores a `sandbox_policy_hash` with each conversation. If the daemon
 policy changes after a chat was created, Gobby blocks resume and asks the user
@@ -66,7 +69,7 @@ and direct resolver use.
 | Web chat | Qwen | Same ACP startup behavior as Gemini |
 | Spawned agents | Claude | CLI `--settings <json>` |
 | Spawned agents | Codex | CLI `--sandbox <mode>` plus `--add-dir` for extra write paths |
-| Spawned agents | Gemini | CLI `-s` plus `SEATBELT_PROFILE` |
+| Spawned agents | Gemini | CLI `-s`, `SEATBELT_PROFILE`, and `--include-directories` for external write paths |
 | Spawned agents | Qwen | Same sandbox contract as Gemini |
 
 ## Provider Details
@@ -89,7 +92,7 @@ passed to the Claude SDK.
       "allowUnixSockets": [],
       "allowAllUnixSockets": false,
       "allowLocalBinding": false,
-      "allowedDomains": []
+      "allowedDomains": ["localhost", "127.0.0.1", "::1"]
     },
     "enableWeakerNestedSandbox": false
   }
@@ -97,8 +100,8 @@ passed to the Claude SDK.
 ```
 
 Gobby enables the sandbox, uses managed permission rules only, disables
-unsandboxed command fallback, and leaves undocumented outbound-network wildcard
-settings unset.
+unsandboxed command fallback, allows loopback domains for local Gobby services,
+and leaves undocumented outbound-network wildcard settings unset.
 
 ### Codex
 
@@ -107,13 +110,17 @@ Spawned Codex agents use the CLI sandbox flag:
 ```bash
 codex --sandbox workspace-write
 codex --sandbox read-only
-codex --sandbox workspace-write --add-dir /extra/path
+codex --sandbox workspace-write -c sandbox_workspace_write.network_access=true
+codex --sandbox workspace-write -c sandbox_workspace_write.network_access=true --add-dir /extra/path
 ```
 
 Daemon-owned permissive mode maps to `workspace-write`; restrictive mode in the
-lower-level resolver maps to `read-only`. Gobby does not emit
-`danger-full-access` for daemon-owned sandboxes. Extra writable paths become
-additional `--add-dir` arguments.
+lower-level resolver maps to `read-only`. For `workspace-write`, Gobby also
+passes `sandbox_workspace_write.network_access=true` or `false` explicitly so
+spawned agents can reach local Gobby services when daemon policy allows network
+access and user-level Codex config cannot override the daemon policy. Gobby does
+not emit `danger-full-access` for daemon-owned sandboxes. Extra writable paths
+become additional `--add-dir` arguments.
 
 Codex web chat is different because it uses the app server. Gobby starts the
 thread with the app-server sandbox policy string derived from the same daemon
@@ -121,19 +128,24 @@ config instead of launching a CLI process with `--sandbox`.
 
 ### Gemini And Qwen
 
-Spawned Gemini and Qwen agents use the CLI `-s` flag and `SEATBELT_PROFILE`
-environment variable on macOS:
+Spawned Gemini and Qwen agents use the CLI `-s` flag, the `SEATBELT_PROFILE`
+environment variable on macOS, and `--include-directories` for writable paths
+outside the launched workspace:
 
 ```bash
 SEATBELT_PROFILE=permissive-open gemini -s
 SEATBELT_PROFILE=restrictive-open gemini -s
 SEATBELT_PROFILE=permissive-open qwen -s
 SEATBELT_PROFILE=restrictive-open qwen -s
+SEATBELT_PROFILE=permissive-open gemini -s --include-directories /repo/.git/worktrees/task
 ```
 
 The lower-level resolver chooses `permissive` or `restrictive` from sandbox
 mode, then chooses `open` or `proxied` from network policy. Daemon-owned config
-currently resolves to `permissive-open`.
+currently resolves to `permissive-open`. The resolver dedupes external write
+paths and omits the workspace root and workspace-internal paths. Gemini/Qwen's
+shipped Seatbelt profiles support five include directories, so Gobby fails
+early if more external write paths are required.
 
 Daemon-owned Gemini/Qwen ACP web chat does not launch the shared ACP subprocess
 with Gobby-managed Seatbelt flags because full-process Seatbelt blocked ACP
@@ -154,8 +166,8 @@ translation:
 - The daemon port defaults to `60887` for local daemon communication.
 
 Provider support for these resolved paths is CLI-dependent. Codex currently
-uses extra write paths as `--add-dir`; other providers may consume the computed
-paths indirectly through their own sandbox implementation.
+uses extra write paths as `--add-dir`; spawned Gemini/Qwen agents pass external
+write paths as repeated `--include-directories` arguments.
 
 ## Example: Spawning A Sandboxed Agent
 
@@ -192,4 +204,4 @@ its agent-run resources.
    accidental damage. They are not a complete defense against malicious code or
    hostile prompts.
 
-_Last verified: 2026-05-07_
+_Last verified: 2026-05-19_

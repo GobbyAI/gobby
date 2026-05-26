@@ -11,6 +11,10 @@ from collections.abc import Mapping
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
+from gobby.adapters.degradation import (
+    AdapterDegradationKind,
+    record_adapter_degradation,
+)
 from gobby.hooks.events import HookEvent, HookResponse, SessionSource
 
 if TYPE_CHECKING:
@@ -22,6 +26,21 @@ module_logger = logging.getLogger(__name__)
 ADAPTER_EMPTY_BLOCK_REASON_SENTINEL = (
     "Blocked by hook (ghook fallback — no reason forwarded; file a bug)"
 )
+
+
+def _provider_from_adapter_name(adapter_name: str) -> str:
+    explicit = {
+        "ClaudeCodeAdapter": "claude",
+        "CodexHooksAdapter": "codex",
+        "CodexNotifyAdapter": "codex",
+        "GeminiAdapter": "gemini",
+        "GrokAdapter": "grok",
+        "QwenAdapter": "qwen",
+        "DroidAdapter": "droid",
+    }
+    if adapter_name in explicit:
+        return explicit[adapter_name]
+    return adapter_name.removesuffix("Adapter").lower()
 
 
 def system_message_has_session_banner(system_message: str | None) -> bool:
@@ -99,6 +118,14 @@ def normalize_adapter_response_reason(
         response.decision,
         hook_type or "unknown",
         asdict(response),
+    )
+    record_adapter_degradation(
+        provider=_provider_from_adapter_name(adapter_name),
+        hook_type=hook_type,
+        kind=AdapterDegradationKind.EMPTY_BLOCK_SENTINEL,
+        response_field="reason",
+        destination_channel="reason",
+        event_logger=logger or module_logger,
     )
     return ADAPTER_EMPTY_BLOCK_REASON_SENTINEL
 

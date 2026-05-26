@@ -7,11 +7,12 @@ expire_all_pending.
 from __future__ import annotations
 
 import asyncio
+from unittest.mock import MagicMock
 
 import pytest
 
 from gobby.servers.pending_interactions import PendingInteractionManager
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from tests._timing import drain_asyncio_tasks
 
 pytestmark = pytest.mark.unit
@@ -21,20 +22,10 @@ SESSION_IDS = ["sess-1", "sess-2"]
 
 
 @pytest.fixture
-def db(tmp_path: object) -> LocalDatabase:
+def db(hub_db):
     """Create a fresh test database with pending_interactions table and stub sessions."""
-    from pathlib import Path
-
-    db_path = Path(str(tmp_path)) / "test.db"
-    database = LocalDatabase(str(db_path))
-
-    # Apply baseline schema + migrations
-    from gobby.storage.migrations import run_migrations
-
-    run_migrations(database)
-
     # Insert stub project + session rows to satisfy FK constraints
-    with database.transaction() as conn:
+    with hub_db.transaction() as conn:
         conn.execute("INSERT INTO projects (id, name) VALUES ('test-project', 'test')")
         for sid in SESSION_IDS:
             conn.execute(
@@ -42,11 +33,11 @@ def db(tmp_path: object) -> LocalDatabase:
                    VALUES (?, ?, 'test-machine', 'claude', 'test-project', 'web_chat')""",
                 (sid, sid),
             )
-    return database
+    return hub_db
 
 
 @pytest.fixture
-def manager(db: LocalDatabase) -> PendingInteractionManager:
+def manager(db: HubDatabase) -> PendingInteractionManager:
     return PendingInteractionManager(db)
 
 
@@ -64,7 +55,7 @@ class TestCreate:
 
     @pytest.mark.asyncio
     async def test_create_inserts_db_row(
-        self, manager: PendingInteractionManager, db: LocalDatabase
+        self, manager: PendingInteractionManager, db: HubDatabase
     ) -> None:
         iid = await manager.create(
             session_id="sess-1",
@@ -84,7 +75,7 @@ class TestCreate:
 class TestResolve:
     @pytest.mark.asyncio
     async def test_resolve_updates_db(
-        self, manager: PendingInteractionManager, db: LocalDatabase
+        self, manager: PendingInteractionManager, db: HubDatabase
     ) -> None:
         iid = await manager.create(session_id="sess-1", kind="tool", provider="claude", payload={})
         result = await manager.resolve(iid, "approve")
@@ -114,7 +105,7 @@ class TestResolve:
 class TestExpire:
     @pytest.mark.asyncio
     async def test_expire_marks_timeout(
-        self, manager: PendingInteractionManager, db: LocalDatabase
+        self, manager: PendingInteractionManager, db: HubDatabase
     ) -> None:
         iid = await manager.create(session_id="sess-1", kind="tool", provider="claude", payload={})
         await manager.expire(iid)
@@ -138,7 +129,7 @@ class TestExpire:
 class TestSupersede:
     @pytest.mark.asyncio
     async def test_supersede_expires_existing(
-        self, manager: PendingInteractionManager, db: LocalDatabase
+        self, manager: PendingInteractionManager, db: HubDatabase
     ) -> None:
         iid1 = await manager.create(
             session_id="sess-1", kind="tool", provider="claude", payload={"n": 1}
@@ -186,18 +177,49 @@ class TestRebroadcast:
 
 class TestCleanup:
     @pytest.mark.asyncio
+    async def test_cleanup_wakes_existing_waiter_without_database(self) -> None:
+        """Cleanup denies an in-memory waiter even when DB cleanup is unavailable."""
+        manager = PendingInteractionManager(MagicMock())
+        manager._waiters["interaction-1"] = asyncio.get_running_loop().create_future()
+
+        task = asyncio.create_task(manager.wait("interaction-1"))
+        await drain_asyncio_tasks()
+        await manager.cleanup()
+
+        result = await asyncio.wait_for(task, timeout=1.0)
+        assert result == {"decision": "deny", "reason": "daemon_shutdown"}
+        assert len(manager._waiters) == 0
+        assert len(manager._timeouts) == 0
+
+    @pytest.mark.asyncio
     async def test_cleanup_clears_state(self, manager: PendingInteractionManager) -> None:
+        """Cleanup should clear waiter and timeout registries."""
         await manager.create(session_id="sess-1", kind="tool", provider="claude", payload={})
         await manager.cleanup()
         assert len(manager._waiters) == 0
         assert len(manager._timeouts) == 0
-        assert len(manager._results) == 0
+
+    @pytest.mark.asyncio
+    async def test_cleanup_wakes_waiter_with_shutdown_denial(
+        self, manager: PendingInteractionManager
+    ) -> None:
+        """Cleanup should wake active waiters with an explicit shutdown denial."""
+        iid = await manager.create(session_id="sess-1", kind="tool", provider="claude", payload={})
+
+        task = asyncio.create_task(manager.wait(iid))
+        await drain_asyncio_tasks()
+        await manager.cleanup()
+
+        result = await asyncio.wait_for(task, timeout=1.0)
+        assert result == {"decision": "deny", "reason": "daemon_shutdown"}
+        assert len(manager._waiters) == 0
+        assert len(manager._timeouts) == 0
 
 
 class TestExpireAllPending:
     @pytest.mark.asyncio
     async def test_expire_all_marks_expired(
-        self, manager: PendingInteractionManager, db: LocalDatabase
+        self, manager: PendingInteractionManager, db: HubDatabase
     ) -> None:
         await manager.create(session_id="sess-1", kind="tool", provider="claude", payload={})
         await manager.create(session_id="sess-2", kind="plan", provider="claude", payload={})

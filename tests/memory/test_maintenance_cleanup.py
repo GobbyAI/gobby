@@ -81,7 +81,7 @@ def _make_db_row(
 
 
 class _FakeRow(dict):
-    """Dict that supports both dict[] and row['key'] access like sqlite3.Row."""
+    """Dict that supports both dict[] and row['key'] access like dict[str, object]."""
 
     def keys(self) -> list[str]:
         return list(super().keys())

@@ -13,8 +13,11 @@ from typing import Any
 
 import yaml
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.agents.step_workflow import register_agent_step_workflow
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sql_dialect import json_array_contains_condition
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager, WorkflowDefinitionRow
+from gobby.utils.json_helpers import json_equal
 from gobby.workflows.definitions import AgentDefinitionBody
 
 __all__ = ["get_bundled_agents_path", "sync_bundled_agents"]
@@ -58,6 +61,11 @@ def _is_sync_managed_bundled_agent(existing: WorkflowDefinitionRow) -> bool:
     )
 
 
+def _definition_json_equal(existing_json: Any, desired_json: str) -> bool:
+    """Compare definition JSON semantically across text and Postgres JSONB formats."""
+    return json_equal(existing_json, desired_json)
+
+
 def _build_agent_update_fields(
     existing: WorkflowDefinitionRow,
     *,
@@ -68,7 +76,7 @@ def _build_agent_update_fields(
 ) -> dict[str, Any]:
     """Build changed fields for a managed bundled agent row."""
     fields: dict[str, Any] = {}
-    if existing.definition_json != body_json:
+    if not _definition_json_equal(existing.definition_json, body_json):
         fields["definition_json"] = body_json
         fields["description"] = body.description
     if existing.source != "installed":
@@ -91,7 +99,13 @@ def get_bundled_agents_path() -> Path:
     return get_install_dir() / "shared" / "workflows" / "agents"
 
 
-def sync_bundled_agents(db: DatabaseProtocol) -> dict[str, Any]:
+def _refresh_step_workflow(body: AgentDefinitionBody, db: HubDatabase) -> None:
+    """Refresh the generated step workflow row for agents with inline steps."""
+    if body.steps:
+        register_agent_step_workflow(body, db)
+
+
+def sync_bundled_agents(db: HubDatabase) -> dict[str, Any]:
     """Sync bundled agent definitions from install/shared/workflows/agents/ to the database.
 
     Creates installed rows directly from template files. Installed rows are
@@ -155,9 +169,8 @@ def sync_bundled_agents(db: DatabaseProtocol) -> dict[str, Any]:
                     continue
 
                 if existing.deleted_at is not None:
-                    if (
-                        _is_sync_managed_bundled_agent(existing)
-                        and existing.definition_json != body_json
+                    if _is_sync_managed_bundled_agent(existing) and not _definition_json_equal(
+                        existing.definition_json, body_json
                     ):
                         with db.transaction():
                             manager.restore(existing.id)
@@ -170,6 +183,7 @@ def sync_bundled_agents(db: DatabaseProtocol) -> dict[str, Any]:
                                     restore=True,
                                 ),
                             )
+                        _refresh_step_workflow(body, db)
                         result["updated"] += 1
                         continue
                     result["skipped"] += 1
@@ -192,6 +206,7 @@ def sync_bundled_agents(db: DatabaseProtocol) -> dict[str, Any]:
                     )
                     if update_fields:
                         manager.update(existing.id, **update_fields)
+                        _refresh_step_workflow(body, db)
                         result["updated"] += 1
                         logger.debug(
                             "Updated bundled agent definition %s (%s)",
@@ -200,6 +215,8 @@ def sync_bundled_agents(db: DatabaseProtocol) -> dict[str, Any]:
                         )
                         continue
 
+                if _is_sync_managed_bundled_agent(existing):
+                    _refresh_step_workflow(body, db)
                 result["skipped"] += 1
                 continue
 
@@ -213,6 +230,7 @@ def sync_bundled_agents(db: DatabaseProtocol) -> dict[str, Any]:
                 enabled=body.enabled,
                 tags=["gobby"],
             )
+            _refresh_step_workflow(body, db)
             logger.info(f"Synced bundled agent definition: {name}")
             result["synced"] += 1
 
@@ -223,12 +241,12 @@ def sync_bundled_agents(db: DatabaseProtocol) -> dict[str, Any]:
 
     # Orphan cleanup: soft-delete agent rows whose YAML was removed.
     # Only touch gobby-tagged agent rows.
-    tag_filter = '%"gobby"%'
+    tag_condition, tag_params = json_array_contains_condition(db, "tags", "gobby")
     orphan_rows = db.fetchall(
         "SELECT id, name FROM workflow_definitions "
         "WHERE workflow_type = 'agent' "
-        "AND tags LIKE ? AND deleted_at IS NULL",
-        (tag_filter,),
+        f"AND {tag_condition} AND deleted_at IS NULL",
+        tag_params,
     )
     result["orphaned"] = 0
     for row in orphan_rows:

@@ -5,11 +5,12 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +53,7 @@ class ExpansionRun:
     completed_at: str | None = None
 
     @classmethod
-    def from_row(cls, row: Any) -> ExpansionRun:
+    def from_row(cls, row: Mapping[str, Any]) -> ExpansionRun:
         """Create an ExpansionRun from a database row."""
         run_id = row["id"]
 
@@ -60,6 +61,8 @@ class ExpansionRun:
             raw = row[field]
             if not raw:
                 return None
+            if isinstance(raw, dict | list):
+                return raw
             try:
                 return json.loads(raw)
             except json.JSONDecodeError as exc:
@@ -129,7 +132,7 @@ class LocalExpansionRunManager:
         "applying",
     )
 
-    def __init__(self, db: DatabaseProtocol):
+    def __init__(self, db: HubDatabase):
         self.db = db
 
     def create(
@@ -305,7 +308,7 @@ class LocalExpansionRunManager:
                 json.dumps(task_id_map),
                 json.dumps(created_task_ids),
                 json.dumps(checkpoints) if checkpoints is not None else None,
-                1 if completed else 0,
+                completed,
                 now,
                 now,
                 run_id,
@@ -336,22 +339,20 @@ class LocalExpansionRunManager:
     ) -> ExpansionRun | None:
         """Append a structured log entry to a run."""
         now = datetime.now(UTC).isoformat()
-        entry_json = json.dumps(
-            {
-                "timestamp": now,
-                "level": level,
-                "message": message,
-                "extra": extra or {},
-            }
-        )
+        entry = {
+            "timestamp": now,
+            "level": level,
+            "message": message,
+            "extra": extra or {},
+        }
         cursor = self.db.execute(
             """
             UPDATE expansion_runs
-            SET logs_json = json_insert(COALESCE(NULLIF(logs_json, ''), '[]'), '$[#]', json(?)),
+            SET logs_json = COALESCE(logs_json, '[]'::jsonb) || ?::jsonb,
                 updated_at = ?
             WHERE id = ?
             """,
-            (entry_json, now, run_id),
+            (json.dumps([entry]), now, run_id),
         )
         if cursor.rowcount == 0:
             return None

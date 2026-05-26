@@ -184,7 +184,11 @@ not only by declarative rules:
 | `baseline_dirty_files` | Initialized from the first rule evaluation's git status |
 | `session_edited_files` | Updated by tool observers as the session edits files |
 
-`errors_resolved` is not auto-reset by the rule engine.
+Fresh successful validation commands set `verification_evidence_recorded` and append
+`validation_command` evidence to `verification_evidence`; manual evidence should use
+`gobby-sessions:record_verification_evidence` with a snake-case `evidence_type` such as
+`manual_diff_review`. Completion gates derive readiness from the evidence list:
+failed validation commands block readiness until a later validation command succeeds.
 
 ---
 
@@ -361,8 +365,6 @@ These are the bundled default variables (from `gobby-default-variables.yaml`):
 | `servers_listed` | `true` | bool | Internal MCP servers are pre-seeded at startup |
 | `listed_servers` | internal server list | list | Internal servers discovered or pre-seeded for progressive discovery |
 | `unlocked_tools` | `[]` | list | Tools unlocked via `get_tool_schema` |
-| `errors_resolved` | `false` | bool | Whether all discovered errors have been fixed |
-| `error_triage_blocks` | `0` | int | Count of error-triage gate blocks in this session |
 | `is_subagent` | `false` | bool | Whether a native subagent is currently active |
 | `loaded_skills` | `[]` | list | Skills loaded through `gobby-skills:get_skill` |
 | `memory_nudge_fired` | `false` | bool | Whether the memory capture nudge fired this session |

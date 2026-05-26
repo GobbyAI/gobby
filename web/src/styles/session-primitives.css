@@ -1,0 +1,223 @@
+/* Shared session primitives (used by chat picker, terminals sidebar, sessions page) */
+.terminals-action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 0.375rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    background-color 0.15s,
+    color 0.15s,
+    border-color 0.15s;
+}
+
+.terminals-action-btn:hover {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border-color: var(--text-muted);
+}
+
+.terminals-action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.terminals-sidebar-toggle {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: calc(var(--font-size-base) * 0.7);
+  padding: 0.25rem;
+}
+
+.terminals-sidebar-toggle:hover {
+  color: var(--text-primary);
+}
+
+.session-group {
+  margin-bottom: 0.5rem;
+}
+
+.session-group-label {
+  padding: 0.375rem 0.75rem;
+  font-size: calc(var(--font-size-base) * 0.7);
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.session-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.375rem 0.75rem;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.session-item:hover {
+  background: var(--bg-tertiary);
+}
+
+.session-item.attached {
+  background: var(--accent-soft);
+}
+
+/* Light: the attached session reads as a brighter neutral well, not an
+   accent wash — selection by lightness + weight, accent reserved for
+   applied filters. Dark keeps the shipped accent-soft (byte-frozen). */
+[data-theme="light"] .session-item.attached {
+  background: var(--surface-selected);
+  color: var(--text-primary);
+}
+
+.session-item-main {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.session-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.session-dot.user {
+  background: var(--accent);
+}
+
+.session-dot.dead {
+  background: var(--text-muted);
+}
+
+.session-name {
+  font-size: calc(var(--font-size-base) * 0.85);
+  font-family: inherit;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.session-name-input {
+  font-size: calc(var(--font-size-base) * 0.85);
+  font-family: inherit;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  padding: 0 4px;
+  outline: none;
+  width: 100%;
+  min-width: 0;
+}
+
+.session-badge {
+  font-size: calc(var(--font-size-base) * 0.6);
+  padding: 0.1rem 0.325rem;
+  border-radius: 9999px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.dead-badge {
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+}
+
+.session-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  flex-shrink: 0;
+}
+
+.session-pid {
+  font-size: var(--text-2xs);
+  color: var(--text-muted);
+  font-family: inherit;
+}
+
+.session-kill-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 0.25rem;
+  opacity: 0;
+  transition:
+    opacity 0.15s,
+    color 0.15s,
+    background-color 0.15s;
+}
+
+.session-item:hover .session-kill-btn {
+  opacity: 1;
+}
+
+.session-kill-btn:hover {
+  color: var(--color-error);
+  background: var(--color-error-soft);
+}
+
+.session-delete-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 0.25rem;
+  opacity: 0;
+  transition:
+    opacity 0.15s,
+    color 0.15s,
+    background-color 0.15s;
+}
+
+.session-item:hover .session-delete-btn {
+  opacity: 1;
+}
+
+.session-delete-btn:hover {
+  color: var(--color-error);
+  background: var(--color-error-soft);
+}
+
+.session-delete-btn:focus,
+.session-delete-btn:focus-visible {
+  opacity: 1;
+}
+
+.session-item.deleting {
+  opacity: 0.4;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+
+.workflow-trace-icon {
+  margin-right: 6px;
+  vertical-align: middle;
+}

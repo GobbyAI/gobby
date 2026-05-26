@@ -5,6 +5,8 @@ import {
   getCanonicalTaskState,
   getTaskDisplayState,
   getTaskStateSummary,
+  type CanonicalTaskState,
+  type TaskDisplayState,
 } from "../../lib/taskState";
 import {
   getStageStateColor,
@@ -28,6 +30,47 @@ interface TaskTreeRowProps {
 const TASK_ROW_BASE_INDENT_REM = 0.75;
 const TASK_ROW_DEPTH_INDENT_REM = 1.25;
 
+const FALLBACK_TASK_STATE: CanonicalTaskState = {
+  owner_session_id: null,
+  owner_session_ref: null,
+  current_stage: null,
+  is_claimed: false,
+  is_closed: false,
+  is_escalated: false,
+  is_blocked: false,
+  is_merge_ready: false,
+  closed_at: null,
+  closed_reason: null,
+  closed_in_session_id: null,
+  closed_commit_sha: null,
+  escalated_at: null,
+  escalation_reason: null,
+};
+
+function deriveSafeTaskState(task: GobbyTask): {
+  taskState: CanonicalTaskState;
+  displayState: TaskDisplayState;
+  stateSummary: string;
+  failed: boolean;
+} {
+  try {
+    return {
+      taskState: getCanonicalTaskState(task),
+      displayState: getTaskDisplayState(task),
+      stateSummary: getTaskStateSummary(task),
+      failed: false,
+    };
+  } catch (error) {
+    console.warn("Failed to derive task row state", { taskId: task.id, error });
+    return {
+      taskState: FALLBACK_TASK_STATE,
+      displayState: "ready",
+      stateSummary: "Ready",
+      failed: true,
+    };
+  }
+}
+
 export function TaskTreeRow({
   row,
   isSelected,
@@ -39,9 +82,8 @@ export function TaskTreeRow({
   rowRef,
 }: TaskTreeRowProps) {
   const task = row.node.task;
-  const taskState = getCanonicalTaskState(task);
+  const { taskState, displayState, stateSummary, failed } = deriveSafeTaskState(task);
   const currentStage = taskState.current_stage;
-  const stateSummary = getTaskStateSummary(task);
   const priority = task.priority ?? DEFAULT_TASK_PRIORITY;
   const textColor =
     PRIORITY_TEXT_COLORS[priority] ?? "var(--text-secondary)";
@@ -53,7 +95,7 @@ export function TaskTreeRow({
   const taskRowClass = [
     "activity-task-row",
     isSelected && "activity-task-row--selected",
-    getTaskDisplayState(task) === "closed" && "activity-task-row--closed",
+    displayState === "closed" && "activity-task-row--closed",
   ]
     .filter(Boolean)
     .join(" ");
@@ -118,7 +160,7 @@ export function TaskTreeRow({
         <span className="activity-task-row-toggle-spacer" aria-hidden="true" />
       )}
       <PriorityGlyph priority={priority} />
-      <StatusDot task={task} />
+      <StatusDot task={failed ? undefined : task} status={displayState} />
       {ref && <span className="activity-task-row-ref">{ref}</span>}
       <span
         className="activity-task-row-title"

@@ -35,7 +35,7 @@ import {
 import { Heading } from '../shared/Heading'
 
 const ERROR_TOAST_CLS =
-  'fixed right-5 top-[60px] z-[1000] cursor-pointer appearance-none rounded-md border-0 bg-[var(--color-error)] px-4 py-2 text-left text-[length:var(--text-base)] text-[var(--accent-foreground)] [animation:fadeIn_0.2s_ease]'
+  'fixed right-5 top-[60px] z-[1000] cursor-pointer appearance-none rounded-md border-0 bg-[var(--color-error)] px-4 py-2 text-left text-[length:var(--text-base)] text-[var(--accent-foreground)] [animation:fade-in_0.2s_ease]'
 
 const VIEW_TOGGLE_CLS =
   'flex items-center gap-0.5 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-0.5'

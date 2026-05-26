@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.sessions import SessionManager
 
 
@@ -33,6 +34,8 @@ def register_commits_tools(
     """
 
     from gobby.utils.session_context import resolve_session_ref
+
+    db_handle: HubDatabase | None = db if db is not None else getattr(session_manager, "db", None)
 
     def _resolve_session_id(ref: str) -> str:
         return resolve_session_ref(session_manager, ref)
@@ -215,16 +218,14 @@ Args:
         try:
             from gobby.workflows.state_manager import SessionVariableManager
 
-            if db is None:
-                from gobby.storage.database import LocalDatabase
-
-                with LocalDatabase() as local_db:
-                    SessionVariableManager(local_db).set_variable(
-                        session.id, "stop_reason", "completed"
-                    )
-            else:
-                session_var_manager = SessionVariableManager(db)
-                session_var_manager.set_variable(session.id, "stop_reason", "completed")
+            if db_handle is None:
+                return {
+                    "success": False,
+                    "error": "Database not available",
+                    "session_id": session.id,
+                }
+            session_var_manager = SessionVariableManager(db_handle)
+            session_var_manager.set_variable(session.id, "stop_reason", "completed")
         except Exception as e:
             logger.warning(f"Failed to set stop_reason for session {session.id}: {e}")
             return {

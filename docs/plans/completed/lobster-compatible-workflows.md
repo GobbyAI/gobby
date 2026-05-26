@@ -48,7 +48,7 @@ steps:
 | Typed pipelines (JSON data flow) | `$step.output` references with JSON | Parity |
 | Approval gates with resume tokens | `ApprovalRequired` exception + token | Parity |
 | Deterministic execution | Sequential step execution | Parity |
-| Local-first execution | SQLite persistence | Parity |
+| Local-first execution | PostgreSQL persistence | Parity |
 | YAML/JSON workflow files | `.gobby/workflows/*.yaml` | Parity |
 | CLI run/approve/reject | `gobby pipeline run/approve/reject` | Parity |
 | `.lobster` file format | Native import + direct execution | Parity |
@@ -212,7 +212,7 @@ class ApprovalRequired(Exception):
 class PipelineExecutor:
     def __init__(
         self,
-        db: DatabaseProtocol,
+        db: HubDatabase,
         execution_manager: LocalPipelineExecutionManager,
         llm_service: LLMService,
         template_engine: TemplateEngine,

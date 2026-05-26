@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -16,8 +15,7 @@ from gobby.hooks.dispatchers.webhook import evaluate_blocking_webhooks
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.servers.chat_session import ChatSession
 from gobby.servers.websocket.chat import ChatMixin
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.state_manager import WorkflowInstanceManager
@@ -26,26 +24,22 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path) -> Iterator[LocalDatabase]:
-    db_path = tmp_path / "test_block_observability.db"
-    database = LocalDatabase(db_path)
-    run_migrations(database)
-    yield database
-    database.close()
+def db(hub_db: HubDatabase) -> HubDatabase:
+    return hub_db
 
 
 @pytest.fixture
-def manager(db: LocalDatabase) -> LocalWorkflowDefinitionManager:
+def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
     return LocalWorkflowDefinitionManager(db)
 
 
 @pytest.fixture
-def engine(db: LocalDatabase) -> RuleEngine:
+def engine(db: HubDatabase) -> RuleEngine:
     return RuleEngine(db)
 
 
 @pytest.fixture
-def instance_mgr(db: LocalDatabase) -> WorkflowInstanceManager:
+def instance_mgr(db: HubDatabase) -> WorkflowInstanceManager:
     return WorkflowInstanceManager(db)
 
 
@@ -66,27 +60,32 @@ def _make_event(
     )
 
 
-def _create_session_row(db: LocalDatabase, session_id: str = "test-session") -> None:
+def _create_session_row(db: HubDatabase, session_id: str = "test-session") -> None:
     db.execute(
-        "INSERT OR IGNORE INTO projects (id, name, created_at) VALUES (?, ?, datetime('now'))",
+        """
+        INSERT INTO projects (id, name, created_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT (id) DO NOTHING
+        """,
         ("project-1", "test-project"),
     )
     db.execute(
-        "INSERT OR IGNORE INTO sessions "
+        "INSERT INTO sessions "
         "(id, external_id, machine_id, source, project_id, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
+        "VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
+        "ON CONFLICT (id) DO NOTHING",
         (session_id, "ext-1", "machine-1", "claude", "project-1"),
     )
 
 
 def _insert_block_rule(
-    db: LocalDatabase,
+    db: HubDatabase,
     *,
     name: str,
     event: str,
     reason: str = "",
 ) -> None:
-    definition = {
+    definition: dict[str, Any] = {
         "event": event,
         "priority": 10,
         "effects": [
@@ -98,22 +97,24 @@ def _insert_block_rule(
     }
     db.execute(
         """
-        INSERT INTO workflow_definitions (name, workflow_type, definition_json, enabled, source)
-        VALUES (?, 'rule', ?, 1, 'test')
+        INSERT INTO workflow_definitions (
+            id, name, workflow_type, definition_json, enabled, source
+        )
+        VALUES (?, ?, 'rule', ?, ?, 'test')
         """,
-        (name, json.dumps(definition)),
+        (f"rule-{name}", name, json.dumps(definition), True),
     )
 
 
 def _setup_step_workflow(
-    db: LocalDatabase,
+    db: HubDatabase,
     manager: LocalWorkflowDefinitionManager,
     instance_mgr: WorkflowInstanceManager,
     *,
     session_id: str = "test-session",
 ) -> None:
     _create_session_row(db, session_id)
-    definition = {
+    definition: dict[str, Any] = {
         "name": "step-observability",
         "version": "2.0",
         "enabled": False,
@@ -182,7 +183,7 @@ class ChatLifecycleHost(ChatMixin):
 
 @pytest.mark.asyncio
 async def test_rule_block_reason_and_log_are_structured(
-    db: LocalDatabase,
+    db: HubDatabase,
     engine: RuleEngine,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -210,7 +211,7 @@ async def test_rule_block_reason_and_log_are_structured(
 
 @pytest.mark.asyncio
 async def test_step_enforcement_block_logs_structured_reason(
-    db: LocalDatabase,
+    db: HubDatabase,
     manager: LocalWorkflowDefinitionManager,
     engine: RuleEngine,
     instance_mgr: WorkflowInstanceManager,

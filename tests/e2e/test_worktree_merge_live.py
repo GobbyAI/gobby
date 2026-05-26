@@ -440,6 +440,7 @@ class TestWorktreeMergeIntegration:
                 "title": "Task for Worktree Merge Test",
                 "task_type": "task",
                 "category": "code",
+                "implementation_domain": "backend",
                 "validation_criteria": "Tests pass and task is functional",
             },
         )

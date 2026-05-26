@@ -6,6 +6,7 @@ import inspect
 
 import pytest
 
+from gobby.storage.delivery import TaskDeliveryStateManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from tests.phase2_stage_contract_helpers import register_contract_tests
@@ -101,6 +102,36 @@ def test_initialize_manifest_mirrors_registry_policy_and_current_stage(
     assert rows[0].review_round_count == 0
     assert rows[0].updated_at is not None
     assert manager.current_stage(task.id).stage_name == "development"
+
+
+def test_initialize_manifest_updates_caps_without_resetting_active_rows(
+    temp_db,
+    sample_project,
+) -> None:
+    task, manager = make_task_with_manifest(
+        temp_db,
+        sample_project,
+        [
+            spec("development", 0),
+            spec("merge", 1, max_work_attempts=12),
+        ],
+    )
+    manager.start_stage(task.id, "development", by_session_id="session-stage-tests")
+
+    rows = manager.initialize_manifest(
+        task.id,
+        [
+            spec("development", 0, max_review_rounds=4),
+            spec("merge", 1),
+        ],
+        by_session_id="session-stage-tests",
+    )
+
+    assert [row.stage_name for row in rows] == ["development", "merge"]
+    assert rows[0].state == "in_progress"
+    assert rows[0].entered_at is not None
+    assert rows[0].max_review_rounds == 4
+    assert rows[1].max_work_attempts is None
 
 
 def test_development_manifest_resolves_docs_reviewer_from_selector(
@@ -274,6 +305,41 @@ def test_invalid_transition_error_carries_full_payload(temp_db, sample_project) 
     assert err.review_policy == "required"
 
 
+def test_close_task_completes_in_progress_merge_row_with_recorded_delivery_sha(
+    temp_db,
+    sample_project,
+) -> None:
+    task, _manager = make_task_with_manifest(
+        temp_db,
+        sample_project,
+        [spec("development", 0), spec("pr", 1), spec("merge", 2)],
+    )
+    set_stage_state(temp_db, task.id, "development", "done")
+    set_stage_state(temp_db, task.id, "pr", "done")
+    set_stage_state(temp_db, task.id, "merge", "in_progress", work_attempt_count=1)
+    TaskDeliveryStateManager(temp_db).record_campaign(
+        task.id,
+        state="merged",
+        merge_sha="delivery-merge-sha",
+        merge_report_ref="merge-report.md",
+        last_error="",
+    )
+
+    manager = LocalTaskManager(temp_db)
+    closed = manager.close_task(
+        task.id,
+        reason="completed",
+        closed_commit_sha="repair-commit-sha",
+    )
+
+    row = stage_row(temp_db, task.id, "merge")
+    assert row["state"] == "done"
+    assert row["completed_at"] is not None
+    assert row["completed_commit_sha"] == "delivery-merge-sha"
+    assert manager.stage_states.current_stage(task.id) is None
+    assert closed.closed_commit_sha == "repair-commit-sha"
+
+
 def _closed_leaf_for_holistic_failure(temp_db, sample_project, parent_id: str, title: str):
     manager = LocalTaskManager(temp_db)
     leaf = manager.create_task(
@@ -337,6 +403,70 @@ def test_holistic_failure_reopens_single_cited_child_to_development(
     assert reopened["closed_at"] is None
     assert reopened["closed_commit_sha"] is None
     assert reopened["claimed_by_session_id"] is None
+    parent_comment = temp_db.fetchone(
+        "SELECT body FROM task_comments WHERE task_id = ? ORDER BY created_at DESC LIMIT 1",
+        (parent.id,),
+    )
+    child_comment = temp_db.fetchone(
+        "SELECT body FROM task_comments WHERE task_id = ? ORDER BY created_at DESC LIMIT 1",
+        (leaf.id,),
+    )
+    assert parent_comment is not None
+    assert child_comment is not None
+    assert parent_comment["body"].startswith("## Holistic QA Failure")
+    assert child_comment["body"].startswith("## Holistic QA Follow-Up")
+    assert "needs changes" in parent_comment["body"]
+    assert "needs changes" in child_comment["body"]
+
+
+def test_holistic_failure_reactivates_merged_cited_child_worktree(
+    temp_db,
+    sample_project,
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    parent = manager.create_task(
+        project_id=sample_project["id"],
+        title="Docs epic",
+        task_type="epic",
+        category="docs",
+    )
+    manager.stage_states.initialize_manifest(
+        parent.id,
+        [spec("development", 0), spec("holistic_qa", 1), spec("merge", 2)],
+        by_session_id="test",
+    )
+    set_stage_state(temp_db, parent.id, "development", "done", work_attempt_count=2)
+    set_stage_state(temp_db, parent.id, "holistic_qa", "in_progress", work_attempt_count=1)
+    leaf = _closed_leaf_for_holistic_failure(temp_db, sample_project, parent.id, "Leaf")
+    temp_db.execute(
+        """
+        INSERT INTO worktrees (
+            id, project_id, task_id, branch_name, worktree_path, base_branch,
+            agent_session_id, status, created_at, updated_at, merged_at, cleanup_after
+        )
+        VALUES (
+            'wt-reopened', ?, ?, 'task-reopened', '/tmp/gobby-reopened', 'main',
+            NULL, 'merged', '2026-05-07T00:00:00+00:00',
+            '2026-05-07T00:00:00+00:00', '2026-05-07T00:00:00+00:00',
+            '2026-05-14T00:00:00+00:00'
+        )
+        """,
+        (sample_project["id"], leaf.id),
+    )
+
+    manager.stage_states.fail_stage(
+        parent.id,
+        "holistic_qa",
+        reason="needs changes",
+        by_session_id="holistic-reviewer",
+        cited_subtasks=[leaf.id],
+    )
+
+    worktree = temp_db.fetchone("SELECT * FROM worktrees WHERE id = 'wt-reopened'")
+    assert worktree is not None
+    assert worktree["status"] == "active"
+    assert worktree["merged_at"] is None
+    assert worktree["cleanup_after"] is None
 
 
 def test_holistic_failure_reopens_multiple_cited_children_only(
@@ -539,7 +669,7 @@ def test_move_to_stage_reopens_closed_task_and_clears_reset_metadata(
                closed_commit_sha = 'abc123',
                escalated_at = '2026-05-04T00:00:00+00:00',
                escalation_reason = 'stale escalation',
-               is_escalated = 1,
+               is_escalated = TRUE,
                assignee = 'stale-agent',
                claimed_by_session_id = NULL,
                validation_fail_count = 4,
@@ -557,7 +687,7 @@ def test_move_to_stage_reopens_closed_task_and_clears_reset_metadata(
     assert reopened["closed_commit_sha"] is None
     assert reopened["escalated_at"] is None
     assert reopened["escalation_reason"] is None
-    assert reopened["is_escalated"] == 0
+    assert reopened["is_escalated"] is False
     assert reopened["assignee"] is None
     assert reopened["validation_fail_count"] == 0
     assert reopened["dispatch_failure_count"] == 0
@@ -566,7 +696,9 @@ def test_move_to_stage_reopens_closed_task_and_clears_reset_metadata(
         row = stage_row(temp_db, task.id, stage_name)
         assert row["state"] == "ready"
         assert row["entered_at"] is None
+        assert row["entered_by_session_id"] is None
         assert row["completed_at"] is None
+        assert row["completed_by_session_id"] is None
         assert row["completed_commit_sha"] is None
         assert row["artifact_refs"] is None
         assert row["notes"] is None

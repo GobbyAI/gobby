@@ -54,12 +54,12 @@ def get_pipeline_executor() -> Any:
     Creates a lightweight executor with template rendering support.
     MCP tool steps require the daemon; use _try_daemon_run() first.
     """
-    from gobby.storage.database import LocalDatabase
+    from gobby.storage.hub.runtime import open_runtime_hub_database
     from gobby.storage.pipelines import LocalPipelineExecutionManager
     from gobby.workflows.pipeline_executor import PipelineExecutor
     from gobby.workflows.templates import TemplateEngine
 
-    db = LocalDatabase()
+    db = open_runtime_hub_database(apply_migrations=False)
 
     project_id = _get_project_id()
     execution_manager = LocalPipelineExecutionManager(db, project_id)
@@ -352,10 +352,10 @@ def run_pipeline(
 
 def get_execution_manager() -> Any:
     """Get pipeline execution manager instance."""
-    from gobby.storage.database import LocalDatabase
+    from gobby.storage.hub.runtime import open_runtime_hub_database
     from gobby.storage.pipelines import LocalPipelineExecutionManager
 
-    db = LocalDatabase()
+    db = open_runtime_hub_database(apply_migrations=False)
 
     project_id = _get_project_id()
     return LocalPipelineExecutionManager(db, project_id)

@@ -99,10 +99,11 @@ class TestSpawnAgentIsolation:
                 return_value=None,
             ) as mock_config_error,
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.ensure_isolation_code_index",
+                "gobby.mcp_proxy.tools.spawn_agent._code_index.ensure_isolation_code_index",
                 new=AsyncMock(),
             ) as mock_code_index,
         ):
+            mock_code_index.return_value = MagicMock(env={"PATH": "/isolated/bin:/usr/bin"})
             mock_ctx.return_value = {
                 "id": "proj-123",
                 "project_path": "/path/to/project",
@@ -161,8 +162,92 @@ class TestSpawnAgentIsolation:
             # Real provider config and gcode preflight behavior is covered in
             # tests/agents/test_isolation.py; this boundary test verifies wiring.
             mock_config_error.assert_called_once_with("/tmp/worktrees/branch", "claude")
-            mock_code_index.assert_awaited_once_with("/tmp/worktrees/branch")
+            mock_code_index.assert_awaited_once_with(
+                "/tmp/worktrees/branch",
+                database_url=None,
+                daemon_bind_host=None,
+                daemon_port=None,
+            )
+            assert mock_execute.await_args.args[0].extra_env == {"PATH": "/isolated/bin:/usr/bin"}
             mock_execute.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_gemini_worktree_spawn_keeps_agent_sandbox_enabled(
+        self, mock_runner, build_agent_body
+    ) -> None:
+        from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
+
+        agent_body = build_agent_body(provider="gemini")
+        worktree_storage = MagicMock()
+        git_manager = MagicMock()
+        registry = create_spawn_agent_registry(
+            mock_runner,
+            worktree_storage=worktree_storage,
+            git_manager=git_manager,
+            db=MagicMock(),
+        )
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body",
+                return_value=agent_body,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context"
+            ) as mock_ctx,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_isolation_handler"
+            ) as mock_get_handler,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn"
+            ) as mock_execute,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.provider_mcp_config_error",
+                return_value=None,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._code_index.ensure_isolation_code_index",
+                new=AsyncMock(),
+            ),
+        ):
+            mock_ctx.return_value = {
+                "id": "proj-123",
+                "project_path": "/path/to/project",
+            }
+            mock_handler = MagicMock()
+            mock_handler.prepare_environment = AsyncMock(
+                return_value=IsolationContext(
+                    cwd="/tmp/worktrees/gemini-branch",
+                    branch_name="gemini-branch",
+                    worktree_id="wt-gemini",
+                    isolation_type="worktree",
+                )
+            )
+            mock_handler.build_context_prompt.return_value = "Test prompt"
+            mock_get_handler.return_value = mock_handler
+            mock_execute.return_value = MagicMock(
+                success=True,
+                run_id="run-123",
+                child_session_id="child-456",
+                status="pending",
+            )
+
+            result = await registry.call(
+                "spawn_agent",
+                {
+                    "prompt": "Test prompt",
+                    "parent_session_id": "parent-789",
+                    "isolation": "worktree",
+                },
+            )
+
+        assert result["success"] is True
+        mock_execute.assert_awaited_once()
+        spawn_request = mock_execute.await_args.args[0]
+        assert spawn_request.provider == "gemini"
+        assert spawn_request.worktree_id == "wt-gemini"
+        assert spawn_request.sandbox_config is not None
+        assert spawn_request.sandbox_config.enabled is True
 
     @pytest.mark.asyncio
     async def test_spawn_agent_clone_creates_clone(self, mock_runner, agent_body) -> None:
@@ -196,7 +281,7 @@ class TestSpawnAgentIsolation:
                 return_value=None,
             ) as mock_config_error,
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.ensure_isolation_code_index",
+                "gobby.mcp_proxy.tools.spawn_agent._code_index.ensure_isolation_code_index",
                 new=AsyncMock(),
             ) as mock_code_index,
         ):
@@ -258,7 +343,12 @@ class TestSpawnAgentIsolation:
             # Real provider config and gcode preflight behavior is covered in
             # tests/agents/test_isolation.py; this boundary test verifies wiring.
             mock_config_error.assert_called_once_with("/tmp/clones/branch", "claude")
-            mock_code_index.assert_awaited_once_with("/tmp/clones/branch")
+            mock_code_index.assert_awaited_once_with(
+                "/tmp/clones/branch",
+                database_url=None,
+                daemon_bind_host=None,
+                daemon_port=None,
+            )
             mock_execute.assert_awaited_once()
 
 
@@ -542,6 +632,7 @@ class TestSpawnAgentPreRegistration:
 
         _health_check_tasks.discard(health_task)
         assert result["success"] is True
+        assert result["run_id"].startswith("run-")
         mock_runner.run_storage.update_child_session.assert_called_once_with(ANY, "child-456")
         mock_runner.run_storage.update_runtime.assert_called_once_with(
             ANY,

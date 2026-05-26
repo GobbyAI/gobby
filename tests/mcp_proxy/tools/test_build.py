@@ -47,6 +47,7 @@ def test_build_task_tool_is_registered_with_json_schema(temp_db: Any) -> None:
     assert schema["properties"]["reset_expansion_output"]["type"] == "boolean"
     assert schema["properties"]["max_active_agents"]["minimum"] == 1
     assert schema["properties"]["max_retries"]["minimum"] == 0
+    assert schema["properties"]["coordinator"]["type"] == "string"
 
 
 def test_removed_fields_are_not_exposed(temp_db: Any) -> None:
@@ -98,6 +99,7 @@ async def test_build_task_tool_calls_shared_service_and_returns_result_dict(
             reset_expansion_output=True,
             max_active_agents=4,
             max_retries=0,
+            coordinator="#6075",
             project_id="project-1",
         )
 
@@ -116,6 +118,7 @@ async def test_build_task_tool_calls_shared_service_and_returns_result_dict(
             "reason": None,
         },
         "manifest": None,
+        "dry_run": False,
     }
     call = build.call_args
     assert call.args[0] == "#42"
@@ -135,6 +138,7 @@ async def test_build_task_tool_calls_shared_service_and_returns_result_dict(
     assert opts.reset_expansion_output is True
     assert opts.max_active_agents == 4
     assert opts.max_retries == 0
+    assert opts.coordinator_session_ref == "#6075"
     assert call.kwargs["db"] is temp_db
     assert call.kwargs["project_id"] == "project-1"
     assert "services" in call.kwargs

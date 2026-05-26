@@ -1,19 +1,19 @@
+import inspect
 from unittest.mock import patch
 
 import pytest
 
-from gobby.storage.database import LocalDatabase
+import gobby.storage.expansion_runs as expansion_runs_module
 from gobby.storage.expansion_runs import LocalExpansionRunManager
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path):
-    database = LocalDatabase(tmp_path / "expansion_runs.db")
-    run_migrations(database)
+def db(temp_db: HubDatabase):
+    database = temp_db
     with database.transaction() as conn:
         conn.execute("INSERT INTO projects (id, name) VALUES (?, ?)", ("p1", "test_project"))
     return database
@@ -32,6 +32,13 @@ def run_manager(db):
 @pytest.fixture
 def parent_task(task_manager):
     return task_manager.create_task(project_id="p1", title="Parent expansion task")
+
+
+def test_apply_result_case_condition_binds_boolean_for_postgres() -> None:
+    source = inspect.getsource(expansion_runs_module.LocalExpansionRunManager.save_apply_result)
+
+    assert "1 if completed else 0" not in source
+    assert "completed_at = CASE WHEN ? THEN ? ELSE completed_at END" in source
 
 
 def test_append_log_creates_first_entry(run_manager, parent_task) -> None:

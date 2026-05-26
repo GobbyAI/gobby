@@ -31,8 +31,8 @@ __all__ = (
     "_run_codex_uninstall",
     "_run_embedding_install",
     "_run_git_hooks_install",
-    "_run_neo4j_install",
-    "_run_neo4j_uninstall",
+    "_run_falkordb_install",
+    "_run_falkordb_uninstall",
     "_run_qdrant_install",
     "_run_standard_cli_install",
     "_run_standard_cli_uninstall",
@@ -40,7 +40,7 @@ __all__ = (
 )
 
 if TYPE_CHECKING:
-    from gobby.storage.database import LocalDatabase
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.secrets import SecretStore
 
 logger = logging.getLogger(__name__)
@@ -48,9 +48,9 @@ logger = logging.getLogger(__name__)
 
 @contextmanager
 def _ensure_db_and_secrets(
-    db: LocalDatabase | None,
+    db: HubDatabase | None,
     secret_store: SecretStore | None,
-) -> Generator[tuple[LocalDatabase, SecretStore]]:
+) -> Generator[tuple[HubDatabase, SecretStore]]:
     """Yield (db, secret_store), opening the DB only when this call created it.
 
     When the caller passes a pre-built ``db`` we use it as-is and do NOT close
@@ -63,20 +63,15 @@ def _ensure_db_and_secrets(
     ``gobby.cli`` package, mirroring the pattern used by the original
     in-function bootstrap blocks.
     """
-    from gobby.cli.utils import load_full_config_from_db
-    from gobby.storage.database import LocalDatabase as _LocalDatabase
+    from gobby.storage.hub.runtime import open_runtime_hub_database
     from gobby.storage.secrets import SecretStore as _SecretStore
 
     owns_db = False
-    local_db: LocalDatabase | None = db
+    local_db: HubDatabase | None = db
     local_store: SecretStore | None = secret_store
     try:
         if local_db is None:
-            config = load_full_config_from_db()
-            # LocalDatabase() defaults to ~/.gobby/gobby-hub.db and would
-            # silently bypass a custom database_path — use the resolved path
-            # explicitly.
-            local_db = _LocalDatabase(Path(config.database_path).expanduser())
+            local_db = open_runtime_hub_database(apply_migrations=False)
             owns_db = True
         if local_store is None:
             local_store = _SecretStore(local_db)
@@ -180,7 +175,7 @@ _API_KEY_PROMPTS = [
 def _prompt_hub_api_keys(
     no_interactive: bool = False,
     *,
-    db: LocalDatabase | None = None,
+    db: HubDatabase | None = None,
     secret_store: SecretStore | None = None,
 ) -> dict[str, Any]:
     """Prompt for skill-hub API keys driven by resolved SkillsConfig.hubs.
@@ -289,7 +284,7 @@ def _prompt_hub_api_keys(
 def _prompt_api_keys(
     no_interactive: bool = False,
     *,
-    db: LocalDatabase | None = None,
+    db: HubDatabase | None = None,
     secret_store: SecretStore | None = None,
 ) -> dict[str, Any]:
     """Prompt for API keys and store them in the secret store.
@@ -370,10 +365,16 @@ def _prompt_api_keys(
 _CLI_INSTALL_META: dict[str, tuple[str, str, str, str | None]] = {
     "claude": ("Claude Code", "~/.claude/settings.json", ".claude/settings.json", "~/.claude.json"),
     "gemini": (
-        "Gemini CLI",
+        "Gemini CLI (deprecated)",
         "~/.gemini/settings.json",
         ".gemini/settings.json",
         "~/.gemini/settings.json",
+    ),
+    "grok": (
+        "Grok CLI",
+        "~/.grok/hooks/gobby.json",
+        ".grok/hooks/gobby.json",
+        None,
     ),
     "qwen": (
         "Qwen CLI",
@@ -478,7 +479,7 @@ def _run_voice_install(
     voice_flag: bool = False,
     no_interactive: bool = False,
     *,
-    db: LocalDatabase | None = None,
+    db: HubDatabase | None = None,
     secret_store: SecretStore | None = None,
 ) -> None:
     """Interactive voice chat setup.
@@ -570,23 +571,33 @@ def _run_voice_install(
     click.echo("")
 
 
-def _run_neo4j_install(
+def _run_falkordb_install(
     installer: Callable[..., dict[str, Any]],
-    neo4j_password: str | None,
+    falkordb_password: str | None,
     results: dict[str, dict[str, Any]],
 ) -> None:
-    """Run install + echo for Neo4j."""
+    """Run install + echo for FalkorDB."""
     click.echo("-" * 40)
-    click.echo("Neo4j Knowledge Graph")
+    click.echo("FalkorDB Knowledge Graph")
     click.echo("-" * 40)
 
-    result = installer(password=neo4j_password)
-    results["neo4j"] = result
+    try:
+        result = installer(password=falkordb_password)
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
+    results["falkordb"] = result
 
     if result["success"]:
-        click.echo("Neo4j installed (local mode)")
-        click.echo(f"  HTTP: {result['neo4j_url']}")
-        click.echo(f"  Bolt: {result.get('bolt_url', 'N/A')}")
+        click.echo("FalkorDB installed (docker mode)")
+        source = result.get("password_source")
+        if source == "generated" and result.get("password"):
+            click.echo(f"  Generated FalkorDB password: {result['password']}")
+        elif source == "provided":
+            click.echo("  Using provided FalkorDB password (not displayed)")
+        elif source == "reused":
+            click.echo("  Reusing existing FalkorDB password from config_store")
+        click.echo(f"  Redis: {result['url']}")
+        click.echo(f"  Browser: {result['browser_url']}")
         if result.get("compose_file"):
             click.echo(f"  Compose: {result['compose_file']}")
         click.echo("\nRestart the daemon to apply: gobby restart")
@@ -620,7 +631,7 @@ def _echo_install_summary(
     results: dict[str, dict[str, Any]],
     no_interactive_flag: bool,
     *,
-    db: LocalDatabase | None = None,
+    db: HubDatabase | None = None,
     secret_store: SecretStore | None = None,
 ) -> bool:
     """Print install summary, next steps, and API key prompts. Returns True if all succeeded."""
@@ -754,25 +765,25 @@ def _run_codex_uninstall(
     click.echo("")
 
 
-def _run_neo4j_uninstall(
+def _run_falkordb_uninstall(
     uninstaller: Callable[..., dict[str, Any]],
     volumes_flag: bool,
     results: dict[str, dict[str, Any]],
 ) -> None:
-    """Run uninstall + echo for Neo4j."""
+    """Run uninstall + echo for FalkorDB."""
     click.echo("-" * 40)
-    click.echo("Neo4j Knowledge Graph")
+    click.echo("FalkorDB Knowledge Graph")
     click.echo("-" * 40)
 
-    result = uninstaller(remove_volumes=volumes_flag)
-    results["neo4j"] = result
+    result = uninstaller(purge=volumes_flag)
+    results["falkordb"] = result
 
     if result["success"]:
         if result.get("already_uninstalled"):
-            click.echo("Neo4j was not installed")
+            click.echo("FalkorDB was not installed")
         else:
-            click.echo("Neo4j services removed")
-            if result.get("volumes_removed"):
+            click.echo("FalkorDB services removed")
+            if result.get("data_removed"):
                 click.echo("  Docker volumes removed (data deleted)")
         click.echo("\nRestart the daemon to apply: gobby restart")
     else:

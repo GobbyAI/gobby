@@ -3,11 +3,12 @@
 from pathlib import Path
 
 from gobby.cli.utils import resolve_session_id as resolve_session_id
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.workflows.loader import WorkflowLoader
 from gobby.workflows.state_manager import SessionVariableManager
 
-_db_instance: LocalDatabase | None = None
+_db_instance: HubDatabase | None = None
 _session_var_manager_instance: SessionVariableManager | None = None
 
 
@@ -16,19 +17,18 @@ def get_workflow_loader() -> WorkflowLoader:
     return WorkflowLoader()
 
 
-def get_session_var_manager(db: LocalDatabase | None = None) -> SessionVariableManager:
+def get_session_var_manager(db: HubDatabase | None = None) -> SessionVariableManager:
     """Get session variable manager instance (cached).
 
     Args:
         db: Optional database instance to inject. If not provided, a shared
-            instance is used. LocalDatabase uses thread-local connections
-            internally, so sharing one instance is safe.
+            active hub connection is used.
     """
     global _db_instance, _session_var_manager_instance
     if db is not None:
         return SessionVariableManager(db)
     if _session_var_manager_instance is None:
-        _db_instance = LocalDatabase()
+        _db_instance = open_runtime_hub_database(apply_migrations=False)
         _session_var_manager_instance = SessionVariableManager(_db_instance)
     return _session_var_manager_instance
 

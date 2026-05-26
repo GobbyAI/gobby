@@ -3,7 +3,7 @@
 import json
 import logging
 import uuid
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -16,7 +16,7 @@ from gobby.mcp_proxy.bundled import (
     is_bundled_external_mcp_server,
     normalize_bundled_managed_args,
 )
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import GLOBAL_PROJECT_ID
 
 logger = logging.getLogger(__name__)
@@ -41,7 +41,7 @@ class MCPServer:
     project_id: str  # Required - all servers must belong to a project
 
     @classmethod
-    def from_row(cls, row: Any) -> "MCPServer":
+    def from_row(cls, row: Mapping[str, Any]) -> "MCPServer":
         """Create MCPServer from database row."""
         return cls(
             id=row["id"],
@@ -114,7 +114,7 @@ class Tool:
     updated_at: str
 
     @classmethod
-    def from_row(cls, row: Any) -> "Tool":
+    def from_row(cls, row: Mapping[str, Any]) -> "Tool":
         """Create Tool from database row."""
         return cls(
             id=row["id"],
@@ -142,7 +142,7 @@ class Tool:
 class LocalMCPManager:
     """Manager for local MCP server and tool storage."""
 
-    def __init__(self, db: DatabaseProtocol):
+    def __init__(self, db: HubDatabase):
         """Initialize with database connection."""
         self.db = db
 
@@ -179,7 +179,7 @@ class LocalMCPManager:
                 env = excluded.env,
                 headers = excluded.headers,
                 enabled = excluded.enabled,
-                description = COALESCE(excluded.description, description),
+                description = COALESCE(excluded.description, mcp_servers.description),
                 updated_at = excluded.updated_at
             """,
             (
@@ -192,7 +192,7 @@ class LocalMCPManager:
                 json.dumps(args) if args else None,
                 json.dumps(env) if env else None,
                 json.dumps(headers) if headers else None,
-                1 if enabled else 0,
+                bool(enabled),
                 description,
                 now,
                 now,
@@ -382,7 +382,7 @@ class LocalMCPManager:
         params: list[Any] = [project_id]
 
         if enabled_only:
-            conditions.append("enabled = 1")
+            conditions.append("enabled IS TRUE")
 
         where_clause = " AND ".join(conditions)
         query = f"SELECT * FROM mcp_servers WHERE {where_clause} ORDER BY name"  # nosec B608
@@ -403,7 +403,7 @@ class LocalMCPManager:
             List of all servers.
         """
         if enabled_only:
-            query = "SELECT * FROM mcp_servers WHERE enabled = 1 ORDER BY name"
+            query = "SELECT * FROM mcp_servers WHERE enabled IS TRUE ORDER BY name"
         else:
             query = "SELECT * FROM mcp_servers ORDER BY name"
         rows = self.db.fetchall(query, ())
@@ -423,7 +423,7 @@ class LocalMCPManager:
 
     def list_runtime_servers(self, project_id: str, enabled_only: bool = True) -> list[MCPServer]:
         """List project-scoped servers plus bundled global servers available at runtime."""
-        conditions = ["enabled = 1"] if enabled_only else []
+        conditions = ["enabled IS TRUE"] if enabled_only else []
         project_where = " AND ".join(["project_id = ?"] + conditions) or "project_id = ?"
         project_rows = self.db.fetchall(
             f"SELECT * FROM mcp_servers WHERE {project_where} ORDER BY name",  # nosec B608
@@ -435,7 +435,7 @@ class LocalMCPManager:
             global_conditions = ["project_id = ?"]
             params: list[Any] = [project_scope]
             if enabled_only:
-                global_conditions.append("enabled = 1")
+                global_conditions.append("enabled IS TRUE")
             global_conditions.append(
                 "name IN ({})".format(",".join("?" for _ in BUNDLED_EXTERNAL_MCP_SERVER_NAMES))
             )
@@ -557,7 +557,7 @@ class LocalMCPManager:
         if "headers" in fields and fields["headers"] is not None:
             fields["headers"] = json.dumps(fields["headers"])
         if "enabled" in fields:
-            fields["enabled"] = 1 if fields["enabled"] else 0
+            fields["enabled"] = bool(fields["enabled"])
 
         fields["updated_at"] = datetime.now(UTC).isoformat()
 

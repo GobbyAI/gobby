@@ -17,8 +17,8 @@ flowchart TB
 
 | Source | Scope | Purpose |
 | --- | --- | --- |
-| `~/.gobby/bootstrap.yaml` | Machine | Startup values needed before SQLite is open |
-| `config_store` table in `~/.gobby/gobby-hub.db` | Machine | Runtime daemon settings and user overrides |
+| `~/.gobby/bootstrap.yaml` | Machine | Startup values needed before the PostgreSQL hub is open |
+| `config_store` table in the PostgreSQL hub | Machine | Runtime daemon settings and user overrides |
 | `~/.gobby/mcp-servers.json` | Machine | Persistent downstream MCP server registry |
 | `.gobby/project.json` | Project | Project identity, verification commands, and project hook settings |
 | `~/.gobby/build.yaml` | Machine | Build lifecycle defaults |
@@ -50,13 +50,25 @@ booleans, strings, and lists keep their type.
 available:
 
 ```yaml
-database_path: "~/.gobby/gobby-hub.db"
+hub_backend: postgres
+database_url: "postgresql://gobby:gobby_dev@localhost:60891/gobby"
+postgres_install_mode: docker
 daemon_port: 60887
 bind_host: "localhost"
 websocket_port: 60888
 ui_port: 60889
-neo4j_password: "gobbyneo4j"
+falkordb_password: "gobbyfalkor"
 ```
+
+`database_url` is the required PostgreSQL DSN for the runtime hub. PostgreSQL is
+the only runtime hub. Startup fails when the PostgreSQL DSN is missing, so do not
+remove `database_url` or use `gobby postgres uninstall` as a runtime recovery
+path.
+
+Root bootstrap stores the local PostgreSQL DSN directly in `database_url`.
+`bootstrap.yaml` is written with mode `0600`; keep that permission so the DSN
+stays owner-readable only. Gobby-generated helper bootstraps also use
+`database_url`; `database_url_ref` values are no longer supported.
 
 Changing bootstrap settings affects startup wiring. Restart the daemon after
 editing this file.
@@ -215,11 +227,14 @@ databases:
     api_key: null
     port: 6333
     collection_prefix: code_symbols_
-  neo4j:
-    url: http://localhost:8474
-    auth: null
-    database: neo4j
+  falkordb:
+    host: 127.0.0.1
+    port: 16379
+    requirepass: null
+    graph_name: gobby_kg
     graph_search: true
+    graph_min_score: 0.5
+    rrf_k: 60
 
 embeddings:
   model: nomic-embed-text
@@ -263,8 +278,9 @@ gobby install --embedding-url http://localhost:1234/v1 \
 # --embedding-dim is auto-detected from the endpoint; pass 2560 to skip the probe.
 ```
 
-`memory.backend` accepts `local` or `null`. Qdrant and Neo4j connection settings
-are shared infrastructure; memory-specific behavior lives under `memory`.
+`memory.backend` accepts `local` or `null`. Qdrant and FalkorDB connection
+settings are shared infrastructure; memory-specific behavior lives under
+`memory`.
 
 ### Sessions
 
@@ -563,4 +579,4 @@ after changing server definitions.
 - [search.md](./search.md) - Search and embedding behavior
 - [webhooks-and-plugins.md](./webhooks-and-plugins.md) - Extension development
 
-_Last verified: 2026-05-07_
+_Last verified: 2026-05-23_

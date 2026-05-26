@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +52,7 @@ UNIT_COLUMNS = frozenset(
     }
 )
 CAMPAIGN_JSON_COLUMNS = frozenset({"structured_pr_verdict"})
+CAMPAIGN_DEFAULT_COLUMNS = frozenset({"state", "delivery_mode", "merge_strategy"})
 UNIT_JSON_COLUMNS = frozenset({"protection_json", "gate_snapshot_json"})
 
 
@@ -87,7 +88,7 @@ def _as_bool(value: Any) -> bool | None:
 class TaskDeliveryStateManager:
     """Persistence helper for PR/merge delivery state."""
 
-    def __init__(self, db: DatabaseProtocol):
+    def __init__(self, db: HubDatabase):
         self.db = db
 
     def record_campaign(self, task_id: str, **fields: Any) -> dict[str, Any]:
@@ -214,6 +215,8 @@ class TaskDeliveryStateManager:
         for column, value in fields.items():
             if column not in CAMPAIGN_COLUMNS:
                 continue
+            if column in CAMPAIGN_DEFAULT_COLUMNS and value is None:
+                continue
             cleaned[column] = (
                 _encode_json(value)
                 if column in CAMPAIGN_JSON_COLUMNS and value is not None
@@ -231,7 +234,7 @@ class TaskDeliveryStateManager:
             if value is None:
                 cleaned[column] = None
             elif column == "pr_required":
-                cleaned[column] = 1 if bool(value) else 0
+                cleaned[column] = bool(value)
             elif column in UNIT_JSON_COLUMNS:
                 cleaned[column] = _encode_json(value)
             else:

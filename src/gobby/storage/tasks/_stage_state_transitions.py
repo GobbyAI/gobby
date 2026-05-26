@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
-import sqlite3
+import uuid
 from collections.abc import Mapping, Sequence
 from typing import Literal
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase, Transaction
+from gobby.storage.tasks._dispatcher_wake import wake_dispatcher_for_task_change
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.storage.tasks._stage_state_mutex import StageStateMutexFactory
 from gobby.storage.tasks._stage_state_rows import StageStateRows
@@ -22,7 +23,7 @@ logger = logging.getLogger(__name__)
 class StageStateTransitions:
     def __init__(
         self,
-        db: DatabaseProtocol,
+        db: HubDatabase,
         events: TaskLifecycleEventManager,
         rows: StageStateRows,
         mutexes: StageStateMutexFactory,
@@ -130,6 +131,7 @@ class StageStateTransitions:
                         conn,
                         task_id,
                         tuple(cited_subtasks),
+                        reason=reason,
                         now=now,
                         holder=holder,
                     )
@@ -161,14 +163,26 @@ class StageStateTransitions:
                     task_id,
                     f"{stage_name}_failed:{reason or 'needs_human'}",
                 )
+            self._wake_dispatcher(task_id, stage_name, verb)
             return updated
+
+    def _wake_dispatcher(self, task_id: str, stage_name: str, verb: str) -> None:
+        try:
+            wake_dispatcher_for_task_change(self.db, task_id)
+        except Exception:
+            logger.warning(
+                "dispatcher_wake_after_stage_transition_failed",
+                extra={"task_id": task_id, "stage_name": stage_name, "verb": verb},
+                exc_info=True,
+            )
 
     def reset_holistic_failure_targets(
         self,
-        conn: sqlite3.Connection,
+        conn: Transaction,
         task_id: str,
         cited_subtasks: Sequence[str],
         *,
+        reason: str | None,
         now: str,
         holder: str,
     ) -> None:
@@ -197,13 +211,97 @@ class StageStateTransitions:
                 + ", ".join(missing)
             )
 
+        self.append_holistic_failure_comments(
+            conn,
+            task_id,
+            cited_ids,
+            reason=reason,
+            now=now,
+            holder=holder,
+        )
         self.reset_task_from_stage(conn, task_id, "development", now=now, holder=holder)
         for cited_id in cited_ids:
             self.reset_task_from_stage(conn, cited_id, "development", now=now, holder=holder)
+        self.reactivate_cited_worktrees(conn, cited_ids, now=now)
+
+    def reactivate_cited_worktrees(
+        self,
+        conn: Transaction,
+        cited_subtasks: Sequence[str],
+        *,
+        now: str,
+    ) -> None:
+        if not cited_subtasks:
+            return
+        placeholders = sql_placeholders(len(cited_subtasks))
+        conn.execute(
+            f"""
+            UPDATE worktrees
+               SET status = 'active',
+                   merged_at = NULL,
+                   cleanup_after = NULL,
+                   updated_at = ?
+             WHERE task_id IN ({placeholders})
+               AND status = 'merged'
+            """,  # nosec B608 # placeholder count is derived from cited_subtasks length.
+            (now, *cited_subtasks),
+        )
+
+    def append_holistic_failure_comments(
+        self,
+        conn: Transaction,
+        task_id: str,
+        cited_subtasks: Sequence[str],
+        *,
+        reason: str | None,
+        now: str,
+        holder: str,
+    ) -> None:
+        body = reason or "Holistic QA requested follow-up work."
+        parent_body = f"## Holistic QA Failure\n\n{body}"
+        self.append_task_comment(
+            conn,
+            task_id,
+            body=parent_body,
+            now=now,
+            holder=holder,
+        )
+        follow_up_body = (
+            "## Holistic QA Follow-Up\n\n"
+            "This task was reopened because parent holistic QA requested changes.\n\n"
+            f"{body}"
+        )
+        for cited_id in cited_subtasks:
+            self.append_task_comment(
+                conn,
+                cited_id,
+                body=follow_up_body,
+                now=now,
+                holder=holder,
+            )
+
+    def append_task_comment(
+        self,
+        conn: Transaction,
+        task_id: str,
+        *,
+        body: str,
+        now: str,
+        holder: str,
+    ) -> None:
+        conn.execute(
+            """
+            INSERT INTO task_comments (
+                id, task_id, parent_comment_id, author, author_type, body, created_at, updated_at
+            )
+            VALUES (?, ?, NULL, ?, 'system', ?, ?, ?)
+            """,
+            (str(uuid.uuid4()), task_id, holder, body, now, now),
+        )
 
     def reset_task_from_stage(
         self,
-        conn: sqlite3.Connection,
+        conn: Transaction,
         task_id: str,
         stage_name: str,
         *,
@@ -235,7 +333,7 @@ class StageStateTransitions:
                    closed_commit_sha = NULL,
                    escalated_at = NULL,
                    escalation_reason = NULL,
-                   is_escalated = 0,
+                   is_escalated = FALSE,
                    assignee = NULL,
                    claimed_by_session_id = NULL,
                    validation_fail_count = 0,
@@ -322,7 +420,7 @@ class StageStateTransitions:
                            closed_commit_sha = NULL,
                            escalated_at = NULL,
                            escalation_reason = NULL,
-                           is_escalated = 0,
+                           is_escalated = FALSE,
                            assignee = NULL,
                            claimed_by_session_id = ?,
                            validation_fail_count = 0,
@@ -486,7 +584,7 @@ def illegal(row: StageState, verb: str) -> IllegalStageTransitionError:
 
 
 def terminal_after_done(
-    conn: sqlite3.Connection,
+    conn: Transaction,
     task_id: str,
     stage_name: str,
 ) -> bool:
@@ -500,4 +598,4 @@ def terminal_after_done(
         """,
         (task_id, stage_name),
     ).fetchone()
-    return int(row["count"]) == 0
+    return bool(row is not None and int(row["count"]) == 0)

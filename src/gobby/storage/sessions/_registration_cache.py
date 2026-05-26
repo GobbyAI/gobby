@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from gobby.storage.session_models import Session
 
 if TYPE_CHECKING:
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
 
 
 def _merge_terminal_context(
@@ -40,7 +40,7 @@ def _recovery_rank(session: Session) -> tuple[bool, bool, bool, str, str]:
 
 
 class _ManagerState(Protocol):
-    db: DatabaseProtocol
+    db: HubDatabase
     logger: logging.Logger
     _session_mapping: dict[tuple[str, str], str]
     _session_mapping_lock: Any

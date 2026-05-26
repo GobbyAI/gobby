@@ -8,15 +8,14 @@ Covers:
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.servers.websocket.chat import ChatMixin
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
@@ -61,11 +60,8 @@ def host() -> ChatMixinHost:
 
 
 @pytest.fixture
-def rules_db(tmp_path) -> LocalDatabase:
-    db_path = tmp_path / "test_fire_lifecycle_parity.db"
-    database = LocalDatabase(db_path)
-    run_migrations(database)
-    return database
+def rules_db(hub_db: HubDatabase) -> HubDatabase:
+    return hub_db
 
 
 def _make_session(db_session_id: str = "sess-123", seq_num: int = 42) -> MagicMock:
@@ -78,7 +74,10 @@ def _make_session(db_session_id: str = "sess-123", seq_num: int = 42) -> MagicMo
     return session
 
 
-def _make_workflow_handler(decision: str = "allow", context: str | None = None) -> MagicMock:
+def _make_workflow_handler(
+    decision: Literal["allow", "deny", "ask", "block", "modify"] = "allow",
+    context: str | None = None,
+) -> MagicMock:
     handler = MagicMock()
     response = HookResponse(decision=decision, context=context)
     handler.evaluate.return_value = response
@@ -569,7 +568,7 @@ class TestFireLifecycleRequireUvRule:
 
     @pytest.mark.asyncio
     async def test_real_synced_require_uv_blocks_shell_alias_without_modified_input(
-        self, host: ChatMixinHost, rules_db: LocalDatabase
+        self, host: ChatMixinHost, rules_db: HubDatabase
     ) -> None:
         """Web chat normalizes exec_command to Bash and returns a plain block."""
         sync_bundled_rules(rules_db, get_bundled_rules_path())

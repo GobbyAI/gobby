@@ -19,6 +19,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _mcp_manager_is_connected(mcp_manager: Any, name: str) -> bool:
+    is_connected = getattr(type(mcp_manager), "is_connected", None)
+    if callable(is_connected):
+        return bool(mcp_manager.is_connected(name))
+
+    connections = getattr(mcp_manager, "connections", None)
+    return isinstance(connections, dict) and name in connections
+
+
 async def embed_mcp_tools(
     request: Request,
     server: "HTTPServer" = Depends(get_server),
@@ -119,7 +128,7 @@ async def get_mcp_status(
             for config in server.mcp_manager.server_configs:
                 total_servers += 1
                 health = server.mcp_manager.health.get(config.name)
-                is_connected = config.name in server.mcp_manager.connections
+                is_connected = _mcp_manager_is_connected(server.mcp_manager, config.name)
                 if is_connected:
                     connected_servers += 1
 

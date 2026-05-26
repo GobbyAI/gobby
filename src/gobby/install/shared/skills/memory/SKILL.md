@@ -40,7 +40,7 @@ Memories that survive are **specific, contextual, and time-resilient**.
 
 **Good memories:**
 - "Josh prefers squash merges from worktrees — a Gemini session once created hundreds of micro-commits"
-- "The SQLite launch baseline is 219; versions below `_MIN_MIGRATION_VERSION` are intentionally unsupported."
+- "The PostgreSQL hub migration baseline is 260; versions below `_MIN_MIGRATION_VERSION` are intentionally unsupported."
 - "Pipeline bugs tracked in Linear project INGEST"
 
 **Bad memories:**

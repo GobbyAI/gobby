@@ -2,35 +2,35 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path):
-    database = LocalDatabase(tmp_path / "test.db")
-    run_migrations(database)
+def db(temp_db: HubDatabase) -> Any:
+    database = temp_db
     database.execute(
         "INSERT INTO projects (id, name) VALUES (?, ?)",
         ("proj1", "test-project"),
     )
     yield database
-    database.close()
 
 
-def _ensure_session(db, session_id: str) -> None:
+def _ensure_session(db: HubDatabase, session_id: str) -> None:
     db.execute(
-        "INSERT OR IGNORE INTO sessions (id, external_id, machine_id, source, project_id, "
-        "created_at, updated_at) VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
+        "INSERT INTO sessions (id, external_id, machine_id, source, project_id, "
+        "created_at, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
+        "ON CONFLICT (id) DO NOTHING",
         (session_id, f"ext-{session_id}", "machine-1", "claude", "proj1"),
     )
 
 
-def test_get_variables_empty(db) -> None:
+def test_get_variables_empty(db: Any) -> None:
     """Test get_variables returns empty dict for new/unknown session."""
     from gobby.workflows.state_manager import SessionVariableManager
 
@@ -39,7 +39,7 @@ def test_get_variables_empty(db) -> None:
     assert result == {}
 
 
-def test_set_variable(db) -> None:
+def test_set_variable(db: Any) -> None:
     """Test set_variable writes a single variable."""
     from gobby.workflows.state_manager import SessionVariableManager
 
@@ -51,7 +51,7 @@ def test_set_variable(db) -> None:
     assert result["task_claimed"] is True
 
 
-def test_set_variable_multiple(db) -> None:
+def test_set_variable_multiple(db: Any) -> None:
     """Test set_variable can set multiple variables incrementally."""
     from gobby.workflows.state_manager import SessionVariableManager
 
@@ -67,7 +67,7 @@ def test_set_variable_multiple(db) -> None:
     assert result["stop_attempts"] == 0
 
 
-def test_set_variable_overwrite(db) -> None:
+def test_set_variable_overwrite(db: Any) -> None:
     """Test set_variable overwrites an existing variable."""
     from gobby.workflows.state_manager import SessionVariableManager
 
@@ -80,7 +80,7 @@ def test_set_variable_overwrite(db) -> None:
     assert result["stop_attempts"] == 3
 
 
-def test_merge_variables(db) -> None:
+def test_merge_variables(db: Any) -> None:
     """Test merge_variables atomically merges updates."""
     from gobby.workflows.state_manager import SessionVariableManager
 
@@ -100,7 +100,7 @@ def test_merge_variables(db) -> None:
     assert variables["c"] == 3  # Added
 
 
-def test_merge_variables_creates_row(db) -> None:
+def test_merge_variables_creates_row(db: Any) -> None:
     """Test merge_variables creates a row if one doesn't exist."""
     from gobby.workflows.state_manager import SessionVariableManager
 
@@ -113,7 +113,7 @@ def test_merge_variables_creates_row(db) -> None:
     assert variables["key"] == "value"
 
 
-def test_merge_variables_empty_updates(db) -> None:
+def test_merge_variables_empty_updates(db: Any) -> None:
     """Test merge_variables with empty dict is a no-op."""
     from gobby.workflows.state_manager import SessionVariableManager
 
@@ -123,7 +123,7 @@ def test_merge_variables_empty_updates(db) -> None:
     assert result is True
 
 
-def test_delete_variables(db) -> None:
+def test_delete_variables(db: Any) -> None:
     """Test delete_variables removes all variables for a session."""
     from gobby.workflows.state_manager import SessionVariableManager
 
@@ -138,17 +138,16 @@ def test_delete_variables(db) -> None:
     assert result == {}
 
 
-def test_delete_variables_nonexistent(db) -> None:
+def test_delete_variables_nonexistent(db: Any) -> None:
     """Test delete_variables on non-existent session doesn't raise."""
     from gobby.workflows.state_manager import SessionVariableManager
 
     mgr = SessionVariableManager(db)
-    result = mgr.delete_variables("nonexistent")
-    assert result is None
+    mgr.delete_variables("nonexistent")
     assert mgr.get_variables("nonexistent") == {}
 
 
-def test_variables_persist_across_workflow_changes(db) -> None:
+def test_variables_persist_across_workflow_changes(db: Any) -> None:
     """Test that session variables persist when workflows are enabled/disabled.
 
     Session variables live in their own table, independent of workflow instances.
@@ -181,7 +180,7 @@ def test_variables_persist_across_workflow_changes(db) -> None:
     assert result["unlocked_tools"] == ["Read", "Write"]
 
 
-def test_sessions_isolated(db) -> None:
+def test_sessions_isolated(db: Any) -> None:
     """Test that variables from different sessions are isolated."""
     from gobby.workflows.state_manager import SessionVariableManager
 
@@ -194,7 +193,7 @@ def test_sessions_isolated(db) -> None:
     assert mgr.get_variables("s2")["key"] == "session2"
 
 
-def test_complex_variable_types(db) -> None:
+def test_complex_variable_types(db: Any) -> None:
     """Test that variables support complex JSON types."""
     from gobby.workflows.state_manager import SessionVariableManager
 
@@ -215,7 +214,7 @@ def test_complex_variable_types(db) -> None:
 # --- append_to_set_variable tests ---
 
 
-def test_append_to_set_variable_creates_new(db) -> None:
+def test_append_to_set_variable_creates_new(db: Any) -> None:
     """Creates row and initializes list when session has no variables."""
     from gobby.workflows.state_manager import SessionVariableManager
 
@@ -226,7 +225,7 @@ def test_append_to_set_variable_creates_new(db) -> None:
     assert result["session_edited_files"] == ["a.py"]
 
 
-def test_append_to_set_variable_deduplicates(db) -> None:
+def test_append_to_set_variable_deduplicates(db: Any) -> None:
     """Duplicate values are ignored, result is sorted."""
     from gobby.workflows.state_manager import SessionVariableManager
 
@@ -238,7 +237,7 @@ def test_append_to_set_variable_deduplicates(db) -> None:
     assert result["files"] == ["a.py", "b.py", "c.py"]
 
 
-def test_append_to_set_variable_preserves_other_vars(db) -> None:
+def test_append_to_set_variable_preserves_other_vars(db: Any) -> None:
     """Appending to a list variable doesn't clobber other session variables."""
     from gobby.workflows.state_manager import SessionVariableManager
 
@@ -251,7 +250,7 @@ def test_append_to_set_variable_preserves_other_vars(db) -> None:
     assert result["session_edited_files"] == ["a.py"]
 
 
-def test_append_to_set_variable_noop_on_empty(db) -> None:
+def test_append_to_set_variable_noop_on_empty(db: Any) -> None:
     """Empty values list is a no-op — doesn't create a row."""
     from gobby.workflows.state_manager import SessionVariableManager
 
@@ -260,3 +259,64 @@ def test_append_to_set_variable_noop_on_empty(db) -> None:
 
     result = mgr.get_variables("no-row")
     assert result == {}
+
+
+def test_append_to_set_variable_and_conditional_merge_resets_evidence(db: Any) -> None:
+    """Edited-file tracking and verification reset happen in one atomic update."""
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    mgr = SessionVariableManager(db)
+    mgr.merge_variables(
+        "s1",
+        {
+            "session_edited_files": ["b.py"],
+            "verification_evidence_recorded": True,
+            "verification_evidence": [{"command": "uv run pytest old.py", "success": True}],
+            "kept": "value",
+        },
+    )
+
+    result = mgr.append_to_set_variable_and_conditional_merge(
+        "s1",
+        "session_edited_files",
+        ["a.py", "b.py"],
+        condition_name="verification_evidence_recorded",
+        updates={"verification_evidence_recorded": False, "verification_evidence": []},
+    )
+
+    assert result is True
+    variables = mgr.get_variables("s1")
+    assert variables["session_edited_files"] == ["a.py", "b.py"]
+    assert variables["verification_evidence_recorded"] is False
+    assert variables["verification_evidence"] == []
+    assert variables["kept"] == "value"
+
+
+def test_append_to_set_variable_and_conditional_merge_preserves_unrecorded_evidence(
+    db: Any,
+) -> None:
+    """Conditional updates are skipped when the guard variable is false."""
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    mgr = SessionVariableManager(db)
+    mgr.merge_variables(
+        "s1",
+        {
+            "verification_evidence_recorded": False,
+            "verification_evidence": [{"command": "uv run pytest old.py", "success": True}],
+        },
+    )
+
+    mgr.append_to_set_variable_and_conditional_merge(
+        "s1",
+        "session_edited_files",
+        ["a.py"],
+        condition_name="verification_evidence_recorded",
+        updates={"verification_evidence_recorded": False, "verification_evidence": []},
+    )
+
+    variables = mgr.get_variables("s1")
+    assert variables["session_edited_files"] == ["a.py"]
+    assert variables["verification_evidence"] == [
+        {"command": "uv run pytest old.py", "success": True}
+    ]

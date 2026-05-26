@@ -16,13 +16,13 @@ from gobby.communications.models import (
 from gobby.storage.communications import LocalCommunicationsStore
 
 if TYPE_CHECKING:
-    from gobby.storage.database import LocalDatabase
+    from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def store(temp_db: LocalDatabase) -> LocalCommunicationsStore:
+def store(temp_db: HubDatabase) -> LocalCommunicationsStore:
     return LocalCommunicationsStore(temp_db, project_id="")
 
 

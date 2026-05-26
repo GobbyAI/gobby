@@ -31,12 +31,12 @@ variables:
   require_commit_before_status:
     value: true
     description: Default require_commit_before_status to true
-  errors_resolved:
+  verification_evidence_recorded:
     value: false
-    description: Default errors_resolved to false
-  error_triage_blocks:
-    value: 0
-    description: "Count of times require-error-triage-before-status has blocked this session (circuit breaker at 3)"
+    description: Default verification_evidence_recorded to false
+  verification_evidence:
+    value: []
+    description: Structured verification evidence recorded for completion readiness; newest 50 entries retained
   enforce_tdd:
     value: false
     description: "Enable TDD enforcement (block new code files until test is written first)"

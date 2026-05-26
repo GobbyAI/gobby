@@ -2,13 +2,13 @@
 
 ## Context
 
-Gobby's agents currently explore code via file-level reads (`Read`, `Grep`, `Glob`), which wastes context window tokens on large codebases. We will demonstrate that tree-sitter AST parsing with symbol-level retrieval can achieve 98-99% token savings. Rather than adding jcodemunch as a dependency, we're building native AST indexing as a `gobby-code` internal MCP registry — leveraging Gobby's existing storage trifecta (SQLite for structured data, Qdrant for embeddings, Neo4j for relationships).
+Gobby's agents currently explore code via file-level reads (`Read`, `Grep`, `Glob`), which wastes context window tokens on large codebases. We will demonstrate that tree-sitter AST parsing with symbol-level retrieval can achieve 98-99% token savings. Rather than adding jcodemunch as a dependency, we're building native AST indexing as a `gobby-code` internal MCP registry — leveraging Gobby's existing storage trifecta (PostgreSQL for structured data, Qdrant for embeddings, Neo4j for relationships).
 
 **Indexing trigger:** Manual via MCP tool calls (`index_folder` / `index_repo`), with potential for auto-indexing later.
 
 **Language support:** All 13 languages from day one (Python, JS, TS, Go, Rust, Java, PHP, Dart, C#, C, C++, Elixir, Ruby).
 
-**Storage:** SQLite for symbol metadata + Qdrant for symbol embeddings + Neo4j for call/import graphs.
+**Storage:** PostgreSQL for symbol metadata + Qdrant for symbol embeddings + Neo4j for call/import graphs.
 
 ## Implementation
 
@@ -277,7 +277,7 @@ Simple tracker that accumulates token savings per session and persists to `code_
 | `src/gobby/code_index/security.py` | Path/symlink/secret/binary checks | 60 |
 | `src/gobby/code_index/retrieval.py` | O(1) byte-offset symbol retrieval | 100 |
 | `src/gobby/code_index/metrics.py` | Token savings tracking | 50 |
-| `src/gobby/storage/code_index.py` | SQLite CRUD for symbols | 200 |
+| `src/gobby/storage/code_index.py` | PostgreSQL CRUD for symbols | 200 |
 | `src/gobby/mcp_proxy/tools/code_index.py` | gobby-code MCP registry (11 tools) | 250 |
 | `tests/code_index/test_parser.py` | Parser tests | 150 |
 | `tests/code_index/test_indexer.py` | Indexer tests | 100 |

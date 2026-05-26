@@ -13,8 +13,7 @@ from gobby.sessions.compact_continuation import (
     mark_compact_self_continuation_pending,
     schedule_compact_self_continuation_fallback,
 )
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.state_manager import SessionVariableManager
 from tests._timing import drain_asyncio_tasks
 
@@ -30,68 +29,62 @@ class _FakeTmux:
         return True
 
 
-def _make_db(tmp_path) -> LocalDatabase:
-    db = LocalDatabase(tmp_path / "compact-continuation.db")
-    run_migrations(db)
-    return db
+@pytest.mark.asyncio
+async def test_fallback_consumes_pending_marker_and_sends_prompt(
+    hub_db: HubDatabase,
+) -> None:
+    """Send one continuation prompt and clear the pending marker."""
+    db = hub_db
+    session = SimpleNamespace(
+        id="sess-1",
+        terminal_context={"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"},
+    )
+    tmux = _FakeTmux()
+
+    assert mark_compact_self_continuation_pending(db, "sess-1")
+    with patch(
+        "gobby.sessions.compact_continuation.get_tmux_manager_for_context",
+        return_value=tmux,
+    ):
+        scheduled = schedule_compact_self_continuation_fallback(
+            db,
+            pending_session_id="sess-1",
+            target_session=session,
+            delay_seconds=0,
+        )
+        assert scheduled is True
+        await drain_asyncio_tasks()
+
+    assert tmux.sent_keys == [("%12", f"{COMPACT_SELF_CONTINUE_PROMPT}\n", True)]
+    variables = SessionVariableManager(db).get_variables("sess-1")
+    assert COMPACT_SELF_CONTINUE_VARIABLE not in variables
 
 
 @pytest.mark.asyncio
-async def test_fallback_consumes_pending_marker_and_sends_prompt(tmp_path) -> None:
-    db = _make_db(tmp_path)
-    try:
-        session = SimpleNamespace(
-            id="sess-1",
-            terminal_context={"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"},
+async def test_fallback_noops_when_marker_was_already_consumed(
+    hub_db: HubDatabase,
+) -> None:
+    """Skip prompt delivery when the pending marker is already absent."""
+    db = hub_db
+    session = SimpleNamespace(
+        id="sess-1",
+        terminal_context={"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"},
+    )
+    tmux = _FakeTmux()
+
+    with patch(
+        "gobby.sessions.compact_continuation.get_tmux_manager_for_context",
+        return_value=tmux,
+    ):
+        scheduled = schedule_compact_self_continuation_fallback(
+            db,
+            pending_session_id="sess-1",
+            target_session=session,
+            delay_seconds=0,
         )
-        tmux = _FakeTmux()
+        assert scheduled is True
+        await drain_asyncio_tasks()
 
-        assert mark_compact_self_continuation_pending(db, "sess-1")
-        with patch(
-            "gobby.sessions.compact_continuation.get_tmux_manager_for_context",
-            return_value=tmux,
-        ):
-            scheduled = schedule_compact_self_continuation_fallback(
-                db,
-                pending_session_id="sess-1",
-                target_session=session,
-                delay_seconds=0,
-            )
-            assert scheduled is True
-            await drain_asyncio_tasks()
-
-        assert tmux.sent_keys == [("%12", f"{COMPACT_SELF_CONTINUE_PROMPT}\n", True)]
-        variables = SessionVariableManager(db).get_variables("sess-1")
-        assert COMPACT_SELF_CONTINUE_VARIABLE not in variables
-    finally:
-        db.close()
-
-
-@pytest.mark.asyncio
-async def test_fallback_noops_when_marker_was_already_consumed(tmp_path) -> None:
-    db = _make_db(tmp_path)
-    try:
-        session = SimpleNamespace(
-            id="sess-1",
-            terminal_context={"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"},
-        )
-        tmux = _FakeTmux()
-
-        with patch(
-            "gobby.sessions.compact_continuation.get_tmux_manager_for_context",
-            return_value=tmux,
-        ):
-            scheduled = schedule_compact_self_continuation_fallback(
-                db,
-                pending_session_id="sess-1",
-                target_session=session,
-                delay_seconds=0,
-            )
-            assert scheduled is True
-            await drain_asyncio_tasks()
-
-        assert tmux.sent_keys == []
-        variables = SessionVariableManager(db).get_variables("sess-1")
-        assert COMPACT_SELF_CONTINUE_VARIABLE not in variables
-    finally:
-        db.close()
+    assert tmux.sent_keys == []
+    variables = SessionVariableManager(db).get_variables("sess-1")
+    assert COMPACT_SELF_CONTINUE_VARIABLE not in variables

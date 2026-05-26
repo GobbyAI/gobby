@@ -2,14 +2,14 @@
 
 ## Overview
 
-Memory V3 transforms gobby-memory from a monolithic implementation into a **pluggable abstraction layer** that can integrate with external memory systems. Users can choose between Gobby's built-in SQLite backend, or plug in established memory frameworks like MemU, Mem0, or OpenMemory.
+Memory V3 transforms gobby-memory from a monolithic implementation into a **pluggable abstraction layer** that can integrate with external memory systems. Users can choose between Gobby's built-in PostgreSQL backend, or plug in established memory frameworks like MemU, Mem0, or OpenMemory.
 
 **Strategic rationale:** Like Microsoft making Excel compatible with Lotus 1-2-3, reducing switching costs accelerates adoption. Users already invested in Mem0 or MemU can use Gobby's orchestration layer without migrating their memory infrastructure.
 
 **Key changes:**
 
 - **Backend protocol** - Standardized interface for memory operations
-- **Pluggable backends** - SQLite (built-in), MemU, Mem0, OpenMemory, custom
+- **Pluggable backends** - PostgreSQL (built-in), MemU, Mem0, OpenMemory, custom
 - **Multimodal support** - Image attachments for browser automation (Playwright, Puppeteer)
 - **Universal JSONL backup** - All backends get automatic backup to `.gobby/memories.jsonl`
 - **Capability detection** - Graceful degradation for feature differences
@@ -36,11 +36,11 @@ Memory V3 transforms gobby-memory from a monolithic implementation into a **plug
       ┌─────────────┬───────────┼───────────┬─────────────┐
       │             │           │           │             │
  ┌────▼────┐  ┌─────▼─────┐ ┌───▼───┐ ┌─────▼──────┐ ┌────▼────┐
- │ SQLite  │  │   MemU    │ │ Mem0  │ │ OpenMemory │ │ Custom  │
+ │ PostgreSQL  │  │   MemU    │ │ Mem0  │ │ OpenMemory │ │ Custom  │
  │ Backend │  │  Backend  │ │Backend│ │  Backend   │ │ Backend │
  └────┬────┘  └─────┬─────┘ └───┬───┘ └─────┬──────┘ └────┬────┘
       │             │           │           │             │
-  SQLite DB    MemU markdown  Cloud API  localhost:60887  User impl
+  PostgreSQL DB    MemU markdown  Cloud API  localhost:60887  User impl
   (local)      (local files)  (remote)   (self-hosted)
 
                                 │
@@ -70,7 +70,7 @@ Memory V3 transforms gobby-memory from a monolithic implementation into a **plug
 | JSONL sync | Universal backup at facade level | All backends get backup; migration path between backends |
 | JSONL mode | Snapshot (periodic rewrite) | Simpler than append-only; matches current behavior |
 | JSONL import | Manual recovery only | Backends are source of truth; CLI for migration |
-| Search abstraction | `search_memories()` delegates to backend's native search | SQLite→TF-IDF, MemU→RAG/LLM, Mem0→embedding; no forced dependency |
+| Search abstraction | `search_memories()` delegates to backend's native search | PostgreSQL→TF-IDF, MemU→RAG/LLM, Mem0→embedding; no forced dependency |
 | Naming convention | Consistent with gobby-tasks pattern | `create_memory`, `search_memories`, `delete_memory`, etc. |
 | Image descriptions | Route through LLMService.describe_image() | Consistent with other LLM features; provider-agnostic |
 
@@ -289,13 +289,13 @@ class MemoryBackend(Protocol):
 
 ## Backend Implementations
 
-### SQLite Backend (Built-in)
+### PostgreSQL Backend (Built-in)
 
 ```python
-# src/gobby/memory/backends/sqlite.py
+# src/gobby/memory/backends/PostgreSQL.py
 
 class SqliteMemoryBackend:
-    """Built-in SQLite backend. Zero external dependencies."""
+    """Built-in PostgreSQL backend. Zero external dependencies."""
 
     @property
     def capabilities(self) -> MemoryCapability:
@@ -311,7 +311,7 @@ class SqliteMemoryBackend:
 
     @property
     def name(self) -> str:
-        return "sqlite"
+        return "PostgreSQL"
 ```
 
 ### MemU Backend
@@ -428,7 +428,7 @@ class NullMemoryBackend:
 
 memory:
   # Backend selection
-  backend: memu  # memu (default), sqlite, mem0, openmemory, null
+  backend: memu  # memu (default), PostgreSQL, mem0, openmemory, null
 
   # Common settings
   enabled: true
@@ -436,7 +436,7 @@ memory:
 
   # Backend-specific configuration
   backends:
-    sqlite:
+    PostgreSQL:
       tfidf_enabled: true
       decay_enabled: true
       decay_rate: 0.05
@@ -464,7 +464,7 @@ memory_backup:
 
 ## Implementation Phases
 
-### Phase 1: Protocol & SQLite Refactor
+### Phase 1: Protocol & PostgreSQL Refactor
 
 **Goal**: Extract protocol, refactor current implementation, maintain 100% compatibility.
 
@@ -475,14 +475,14 @@ src/gobby/memory/
 ├── manager.py               # MODIFY
 ├── backends/
 │   ├── __init__.py          # NEW
-│   ├── sqlite.py            # NEW (from storage/memories.py)
+│   ├── PostgreSQL.py            # NEW (from storage/memories.py)
 │   └── null.py              # NEW
 ```
 
 **Tasks:**
 1. [ ] Create `protocol.py` with types
 2. [ ] Create `backends/__init__.py` with factory
-3. [ ] Create `backends/sqlite.py` (refactor LocalMemoryManager)
+3. [ ] Create `backends/PostgreSQL.py` (refactor LocalMemoryManager)
 4. [ ] Create `backends/null.py`
 5. [ ] Modify `manager.py` to use backend protocol
 6. [ ] Modify `sync/memories.py` → backup-only
@@ -535,22 +535,22 @@ src/gobby/memory/
 
 ## Migration from V2
 
-Memory V3 is **additive** to V2. Existing features remain in SQLite backend:
+Memory V3 is **additive** to V2. Existing features remain in PostgreSQL backend:
 
 | V2 Feature | V3 Location |
 |------------|-------------|
-| TF-IDF search | SQLite backend (`KEYWORD_SEARCH`) |
-| Cross-references | SQLite backend (`CROSS_REFERENCES`) |
-| Importance decay | SQLite backend (`IMPORTANCE_DECAY`) |
+| TF-IDF search | PostgreSQL backend (`KEYWORD_SEARCH`) |
+| Cross-references | PostgreSQL backend (`CROSS_REFERENCES`) |
+| Importance decay | PostgreSQL backend (`IMPORTANCE_DECAY`) |
 | Visualization | Utility function (works with any backend) |
 
 ## Existing Features to Preserve
 
 | Feature | Location | Status |
 |---------|----------|--------|
-| Cross-references | `memory_crossrefs` table | Keep in SQLite backend |
-| TF-IDF search | `memory/search/tfidf.py` | Keep, SQLite uses it |
+| Cross-references | `memory_crossrefs` table | Keep in PostgreSQL backend |
+| TF-IDF search | `memory/search/tfidf.py` | Keep, PostgreSQL uses it |
 | Importance decay | `MemoryManager.decay_memories()` | Keep in facade |
 | Tag filtering | `tags_all/any/none` params | Keep in protocol |
 | Access tracking | `access_count`, `last_accessed_at` | Keep in record |
-| Content deduplication | Hash-based memory IDs | Keep in SQLite backend |
+| Content deduplication | Hash-based memory IDs | Keep in PostgreSQL backend |

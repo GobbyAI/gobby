@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import time
+from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -24,6 +25,26 @@ pytestmark = pytest.mark.unit
 class TestDaemonHealthWait:
     """Tests for daemon health polling."""
 
+    @pytest.mark.parametrize(
+        "side_effect",
+        [
+            httpx.TimeoutException("timed out"),
+            httpx.RequestError("request failed"),
+        ],
+    )
+    @patch("gobby.cli.daemon.httpx.get")
+    def test_is_daemon_healthy_returns_false_on_request_failures(
+        self,
+        mock_httpx_get: MagicMock,
+        side_effect: Exception,
+    ) -> None:
+        """Timeouts and request failures both mean the daemon is unhealthy."""
+        from gobby.cli.daemon import _is_daemon_healthy
+
+        mock_httpx_get.side_effect = side_effect
+
+        assert _is_daemon_healthy(60887) is False
+
     @patch("gobby.cli.daemon.time.sleep")
     @patch("gobby.cli.daemon.time.monotonic")
     @patch("gobby.cli.daemon.httpx.get")
@@ -38,6 +59,30 @@ class TestDaemonHealthWait:
 
         mock_httpx_get.side_effect = [
             httpx.ConnectError("daemon not ready"),
+            MagicMock(status_code=200),
+        ]
+        mock_monotonic.side_effect = [0.0, 0.0, 0.5, 1.0]
+
+        elapsed = _wait_for_daemon_health(60887, timeout=5.0, interval=0.5)
+
+        assert elapsed == pytest.approx(1.0)
+        assert mock_httpx_get.call_count == 2
+        mock_sleep.assert_called_once_with(0.5)
+
+    @patch("gobby.cli.daemon.time.sleep")
+    @patch("gobby.cli.daemon.time.monotonic")
+    @patch("gobby.cli.daemon.httpx.get")
+    def test_wait_for_daemon_health_treats_read_error_as_not_ready(
+        self,
+        mock_httpx_get: MagicMock,
+        mock_monotonic: MagicMock,
+        mock_sleep: MagicMock,
+    ) -> None:
+        """Connection resets during restart health polling are transient."""
+        from gobby.cli.daemon import _wait_for_daemon_health
+
+        mock_httpx_get.side_effect = [
+            httpx.ReadError("[Errno 54] Connection reset by peer"),
             MagicMock(status_code=200),
         ]
         mock_monotonic.side_effect = [0.0, 0.0, 0.5, 1.0]
@@ -94,6 +139,30 @@ class TestDaemonHealthWait:
 
     @patch("gobby.cli.daemon.time.sleep")
     @patch("gobby.cli.daemon.time.monotonic")
+    @patch("gobby.cli.daemon.httpx.get")
+    def test_wait_for_daemon_unhealthy_treats_read_error_as_stopped(
+        self,
+        mock_httpx_get: MagicMock,
+        mock_monotonic: MagicMock,
+        mock_sleep: MagicMock,
+    ) -> None:
+        """Connection resets during stop polling mean the old daemon is no longer healthy."""
+        from gobby.cli.daemon import _wait_for_daemon_unhealthy
+
+        mock_httpx_get.side_effect = [
+            MagicMock(status_code=200),
+            httpx.ReadError("[Errno 54] Connection reset by peer"),
+        ]
+        mock_monotonic.side_effect = [0.0, 0.0, 0.25, 0.5]
+
+        elapsed = _wait_for_daemon_unhealthy(60887, timeout=5.0, interval=0.25)
+
+        assert elapsed == pytest.approx(0.5)
+        assert mock_httpx_get.call_count == 2
+        mock_sleep.assert_called_once_with(0.25)
+
+    @patch("gobby.cli.daemon.time.sleep")
+    @patch("gobby.cli.daemon.time.monotonic")
     @patch("gobby.cli.daemon._is_daemon_healthy")
     @patch("gobby.cli.daemon.get_service_status")
     @patch("gobby.cli.daemon._is_process_alive")
@@ -125,6 +194,33 @@ class TestDaemonHealthWait:
         assert mock_get_service_status.call_count == 4
         assert mock_is_daemon_healthy.call_count == 4
         assert mock_sleep.call_count == 3
+
+
+class TestStartupProgressPolling:
+    """Tests for daemon startup progress polling."""
+
+    @pytest.mark.parametrize(
+        "side_effect",
+        [
+            httpx.DecodingError("invalid json"),
+            httpx.ProtocolError("bad protocol"),
+            httpx.TooManyRedirects("redirect loop"),
+            httpx.RequestError("request failed"),
+            RuntimeError("unexpected"),
+        ],
+    )
+    @patch("gobby.cli.daemon.httpx.get")
+    def test_non_retryable_startup_progress_errors_return_false(
+        self,
+        mock_httpx_get: MagicMock,
+        side_effect: Exception,
+    ) -> None:
+        """Non-retryable startup progress failures are reported without escaping."""
+        from gobby.cli.daemon import _poll_startup_progress
+
+        mock_httpx_get.side_effect = side_effect
+
+        assert _poll_startup_progress(60887, max_wait=5.0) is False
 
 
 class TestStartCommand:
@@ -226,7 +322,7 @@ class TestStartCommand:
             result = runner.invoke(cli, ["start"], env={"HOME": str(temp_dir)})
 
             assert result.exit_code == 0
-            assert "Local storage initialized" in result.output
+            assert "PostgreSQL hub initialized" in result.output
             mock_init_storage.assert_called_once()
             mock_popen.assert_called_once()
 
@@ -482,8 +578,10 @@ class TestStartCommand:
         mock_kill_daemons.return_value = 0
 
         # HTTP port available, WS port not
-        def port_available_side_effect(port):
-            return port == mock_daemon_config.daemon_port
+        daemon_port = int(mock_daemon_config.daemon_port)
+
+        def port_available_side_effect(port: int) -> bool:
+            return port == daemon_port
 
         mock_is_port_available.side_effect = port_available_side_effect
         mock_wait_port.return_value = False
@@ -1405,7 +1503,7 @@ class TestDaemonCommandsIntegration:
         return CliRunner()
 
     @pytest.fixture
-    def clean_pid_file(self, temp_dir: Path):
+    def clean_pid_file(self, temp_dir: Path) -> Generator[Path]:
         """Ensure temp PID file location is clean (does NOT touch real PID file)."""
         pid_file = temp_dir / ".gobby" / "gobby.pid"
         pid_file.parent.mkdir(parents=True, exist_ok=True)
@@ -1434,7 +1532,7 @@ class TestDaemonCommandsIntegration:
         runner: CliRunner,
         mock_daemon_config: MagicMock,
         temp_dir: Path,
-        clean_pid_file,
+        clean_pid_file: Path,
     ) -> None:
         """Test that start command displays startup summary."""
         mock_load_config.return_value = mock_daemon_config
@@ -1482,7 +1580,7 @@ class TestEdgeCases:
         return CliRunner()
 
     @pytest.fixture
-    def clean_pid_file(self, temp_dir: Path):
+    def clean_pid_file(self, temp_dir: Path) -> Generator[Path]:
         """Ensure temp PID file location is clean (does NOT touch real PID file)."""
         pid_file = temp_dir / ".gobby" / "gobby.pid"
         pid_file.parent.mkdir(parents=True, exist_ok=True)
@@ -1515,7 +1613,7 @@ class TestEdgeCases:
         runner: CliRunner,
         mock_daemon_config: MagicMock,
         temp_dir: Path,
-        clean_pid_file,
+        clean_pid_file: Path,
     ) -> None:
         """Test start handles health check timeout gracefully."""
         mock_load_config.return_value = mock_daemon_config
@@ -1565,7 +1663,7 @@ class TestEdgeCases:
         runner: CliRunner,
         mock_daemon_config: MagicMock,
         temp_dir: Path,
-        clean_pid_file,
+        clean_pid_file: Path,
     ) -> None:
         """Test start retries when health check returns non-200."""
         mock_load_config.return_value = mock_daemon_config
@@ -1622,7 +1720,7 @@ class TestEdgeCases:
         runner: CliRunner,
         mock_daemon_config: MagicMock,
         temp_dir: Path,
-        clean_pid_file,
+        clean_pid_file: Path,
     ) -> None:
         """Test start handles Popen exception."""
         mock_load_config.return_value = mock_daemon_config
@@ -1677,6 +1775,14 @@ class TestEdgeCases:
             "process": {"memory_rss_mb": 128.5, "cpu_percent": 2.5},
             "sessions": {"active": 3, "paused": 0},
             "tasks": {"open": 5, "in_progress": 2},
+            "postgres": {
+                "mode": "docker",
+                "dsn_host": "localhost",
+                "dsn_db": "gobby",
+                "database_url": "postgresql://gobby:secret@localhost:60891/gobby",
+                "healthy": True,
+                "extensions": {"pg_search": True, "pgaudit": True},
+            },
         }
 
         mock_proc = MagicMock()
@@ -1696,6 +1802,9 @@ class TestEdgeCases:
 
             assert result.exit_code == 0
             assert "LM Studio (running)" in result.output
+            assert "PostgreSQL:" in result.output
+            assert "postgresql://" not in result.output
+            assert "secret" not in result.output
             mock_fetch_status.assert_called_once_with(mock_daemon_config.daemon_port, timeout=3.0)
 
 
@@ -1708,7 +1817,7 @@ class TestCommandBuilding:
         return CliRunner()
 
     @pytest.fixture
-    def clean_pid_file(self, temp_dir: Path):
+    def clean_pid_file(self, temp_dir: Path) -> Generator[Path]:
         """Ensure temp PID file location is clean (does NOT touch real PID file)."""
         pid_file = temp_dir / ".gobby" / "gobby.pid"
         pid_file.parent.mkdir(parents=True, exist_ok=True)
@@ -1739,7 +1848,7 @@ class TestCommandBuilding:
         runner: CliRunner,
         mock_daemon_config: MagicMock,
         temp_dir: Path,
-        clean_pid_file,
+        clean_pid_file: Path,
     ) -> None:
         """Test that start command builds correct subprocess command."""
         mock_load_config.return_value = mock_daemon_config
@@ -1795,7 +1904,7 @@ class TestCommandBuilding:
         runner: CliRunner,
         mock_daemon_config: MagicMock,
         temp_dir: Path,
-        clean_pid_file,
+        clean_pid_file: Path,
     ) -> None:
         """Test that start command uses correct subprocess options."""
         mock_load_config.return_value = mock_daemon_config

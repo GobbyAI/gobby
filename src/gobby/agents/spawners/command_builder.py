@@ -1,7 +1,7 @@
 """CLI command building for agent spawning.
 
-Provides functions to construct CLI commands for Claude, Gemini, Qwen, Codex,
-and Droid with proper flags for prompts, permissions, and session management.
+    Provides functions to construct CLI commands for Claude, Gemini, Grok, Qwen,
+Codex, and Droid with proper flags for prompts, permissions, and session management.
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ def build_cli_command(
       [--reasoning-effort <level>] --auto <low|high> [PROMPT]
 
     Args:
-        cli: CLI name (claude, gemini, qwen, codex, droid)
+        cli: CLI name (claude, gemini, grok, qwen, codex, droid)
         prompt: Optional prompt to pass (agent mode)
         session_id: Optional session ID
         auto_approve: If True, add flags to auto-approve actions/permissions
@@ -94,6 +94,26 @@ def build_cli_command(
             command.append("--acp")
             if session_id:
                 command.extend(["--resume", session_id])
+
+    elif cli == "grok":
+        if mode == "interactive":
+            command.extend(["agent", "--no-leader", "--always-approve"])
+            if model:
+                command.extend(["--model", model])
+            if reasoning_effort:
+                command.extend(["--reasoning-effort", reasoning_effort])
+            command.append("stdio")
+        else:
+            if auto_approve:
+                command.append("--always-approve")
+            command.append("--no-alt-screen")
+            if working_directory:
+                command.extend(["--cwd", working_directory])
+            if model:
+                command.extend(["--model", model])
+            if reasoning_effort:
+                command.extend(["--reasoning-effort", reasoning_effort])
+            command.append("--single")
 
     elif cli == "codex":
         # Codex CLI flags

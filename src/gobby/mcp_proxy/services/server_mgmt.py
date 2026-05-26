@@ -5,6 +5,10 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.mcp_proxy.models import MCPServerConfig
+from gobby.mcp_proxy.services._manager_compat import (
+    disconnect_manager_server,
+    manager_is_connected,
+)
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
@@ -116,18 +120,9 @@ class ServerManagementService:
         """
         try:
             # First disconnect if connected
-            if name in self._mcp_manager._connections:
+            if await manager_is_connected(self._mcp_manager, name):
                 try:
-                    connection = self._mcp_manager._connections[name]
-                    if connection.is_connected:
-                        await connection.disconnect()
-                    # Update health state
-                    if name in self._mcp_manager.health:
-                        from gobby.mcp_proxy.models import ConnectionState
-
-                        self._mcp_manager.health[name].state = ConnectionState.DISCONNECTED
-                    # Remove from connections
-                    del self._mcp_manager._connections[name]
+                    await disconnect_manager_server(self._mcp_manager, name)
                     logger.info(f"Disconnected server {name} before removal")
                 except Exception as e:
                     logger.warning(f"Error disconnecting server {name}: {e}")

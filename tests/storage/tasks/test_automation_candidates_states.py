@@ -26,7 +26,7 @@ def _task_at_stage(temp_db, sample_project, stage_state: str):
     initialize_manifest(temp_db, task.id, [spec("planning", 0)])
     set_stage_state(temp_db, task.id, "planning", stage_state)
     temp_db.execute(
-        "UPDATE tasks SET allow_automation = 1, isolation = ? WHERE id = ?",
+        "UPDATE tasks SET allow_automation = TRUE, isolation = ? WHERE id = ?",
         (Isolation.none.value, task.id),
     )
     return task
@@ -60,7 +60,7 @@ def test_list_automation_candidates_excludes_done_and_null_current_stage(
         task_type="task",
     )
     temp_db.execute(
-        "UPDATE tasks SET allow_automation = 1, isolation = ? WHERE id = ?",
+        "UPDATE tasks SET allow_automation = TRUE, isolation = ? WHERE id = ?",
         (Isolation.none.value, no_manifest.id),
     )
     temp_db.execute("DELETE FROM task_stage_states WHERE task_id = ?", (no_manifest.id,))

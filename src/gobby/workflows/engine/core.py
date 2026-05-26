@@ -20,7 +20,7 @@ from pydantic import ValidationError
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.storage.config_store import ConfigStore
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_audit import WorkflowAuditManager
 from gobby.storage.workflow_definitions import (
     LocalWorkflowDefinitionManager,
@@ -242,7 +242,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
 
     def __init__(
         self,
-        db: DatabaseProtocol,
+        db: HubDatabase,
         skill_manager: Any | None = None,
         metrics_event_store: "MetricsEventStore | None" = None,
         mcp_dispatcher: Any | None = None,
@@ -431,7 +431,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                 if is_turn_end:
                     variables["stop_attempts"] = variables.get("stop_attempts", 0) + 1
                     logger.debug(
-                        f"TURN_END gate diagnostics: session_id={session_id}, raw_event={raw_event_value}, auto_task_ref={variables.get('auto_task_ref')!r}, stop_attempts={variables['stop_attempts']}, task_claimed={variables.get('task_claimed')}, claimed_tasks={variables.get('claimed_tasks')}, errors_resolved={variables.get('errors_resolved')}, error_triage_blocks={variables.get('error_triage_blocks', 0)}, edit_write_pending={variables.get('edit_write_pending')}, tool_block_pending={variables.get('tool_block_pending')}",
+                        f"TURN_END gate diagnostics: session_id={session_id}, raw_event={raw_event_value}, auto_task_ref={variables.get('auto_task_ref')!r}, stop_attempts={variables['stop_attempts']}, task_claimed={variables.get('task_claimed')}, claimed_tasks={variables.get('claimed_tasks')}, edit_write_pending={variables.get('edit_write_pending')}, tool_block_pending={variables.get('tool_block_pending')}",
                     )
 
                 # 1. Load enabled rules for this event, sorted by priority

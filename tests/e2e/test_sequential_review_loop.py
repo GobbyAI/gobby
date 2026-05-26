@@ -84,6 +84,7 @@ class TestSequentialReviewLoopE2E:
                 "description": "Epic task for testing sequential review loop",
                 "task_type": "epic",
                 "category": "code",
+                "implementation_domain": "backend",
                 "validation_criteria": "Tests pass and task is functional",
             },
         )
@@ -103,6 +104,7 @@ class TestSequentialReviewLoopE2E:
                     "task_type": "task",
                     "parent_task_id": epic_id,
                     "category": "code",
+                    "implementation_domain": "backend",
                     "validation_criteria": "Tests pass and task is functional",
                 },
             )
@@ -264,6 +266,7 @@ class TestSequentialReviewLoopE2E:
                 "title": "Epic with Dependencies",
                 "task_type": "epic",
                 "category": "code",
+                "implementation_domain": "backend",
                 "validation_criteria": "Tests pass and task is functional",
             },
         )
@@ -279,6 +282,7 @@ class TestSequentialReviewLoopE2E:
                 "task_type": "task",
                 "parent_task_id": epic_id,
                 "category": "code",
+                "implementation_domain": "backend",
                 "validation_criteria": "Tests pass and task is functional",
             },
         )
@@ -295,6 +299,7 @@ class TestSequentialReviewLoopE2E:
                 "task_type": "task",
                 "parent_task_id": epic_id,
                 "category": "code",
+                "implementation_domain": "backend",
                 "validation_criteria": "Tests pass and task is functional",
             },
         )
@@ -412,6 +417,7 @@ class TestSequentialReviewLoopE2E:
                 "title": "Suggest Sequence Epic",
                 "task_type": "epic",
                 "category": "code",
+                "implementation_domain": "backend",
                 "validation_criteria": "Tests pass and task is functional",
             },
         )
@@ -428,6 +434,7 @@ class TestSequentialReviewLoopE2E:
                 "parent_task_id": epic_id,
                 "priority": 1,
                 "category": "code",
+                "implementation_domain": "backend",
                 "validation_criteria": "Tests pass and task is functional",
             },
         )
@@ -444,6 +451,7 @@ class TestSequentialReviewLoopE2E:
                 "parent_task_id": epic_id,
                 "priority": 3,
                 "category": "code",
+                "implementation_domain": "backend",
                 "validation_criteria": "Tests pass and task is functional",
             },
         )
@@ -504,6 +512,7 @@ class TestReviewStepE2E:
                 "title": "Task for Skip Reason Test",
                 "task_type": "task",
                 "category": "code",
+                "implementation_domain": "backend",
                 "validation_criteria": "Tests pass and task is functional",
             },
         )
@@ -574,6 +583,7 @@ class TestReviewStepE2E:
                 "title": "Task for Review Close Test",
                 "task_type": "task",
                 "category": "code",
+                "implementation_domain": "backend",
                 "validation_criteria": "Tests pass and task is functional",
             },
         )

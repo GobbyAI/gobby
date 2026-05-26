@@ -27,7 +27,7 @@ from gobby.workflows.pipeline_state import (
 )
 
 if TYPE_CHECKING:
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.pipelines import LocalPipelineExecutionManager
     from gobby.workflows.definitions import PipelineDefinition
     from gobby.workflows.templates import TemplateEngine
@@ -79,7 +79,7 @@ class PipelineExecutor:
 
     def __init__(
         self,
-        db: DatabaseProtocol,
+        db: HubDatabase,
         execution_manager: LocalPipelineExecutionManager,
         llm_service: Any,
         template_engine: TemplateEngine | None = None,
@@ -105,7 +105,7 @@ class PipelineExecutor:
             tool_proxy_getter: Optional callable returning ToolProxyService for MCP steps
             session_manager: Optional SessionManager for session creation
             completion_registry: Optional CompletionEventRegistry for wait steps
-            run_db: Optional bounded executor bridge for SQLite work
+            run_db: Optional bounded executor bridge for hub database work
         """
         self.db = db
         self.execution_manager = execution_manager

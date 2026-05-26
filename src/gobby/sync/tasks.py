@@ -1,7 +1,7 @@
 import asyncio
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 # happens on-demand via pre-push hook, CLI, and MCP tools. JSONL import is explicit.
 
 
-def _parse_timestamp(ts: str) -> datetime:
+def _parse_timestamp(ts: str | datetime) -> datetime:
     """Parse ISO 8601 timestamp string to datetime.
 
     Handles both Z suffix and +HH:MM offset formats for compatibility
@@ -28,9 +28,12 @@ def _parse_timestamp(ts: str) -> datetime:
     Returns:
         Timezone-aware datetime object in UTC
     """
-    # Handle Z suffix for fromisoformat compatibility
-    parse_ts = ts[:-1] + "+00:00" if ts.endswith("Z") else ts
-    dt = datetime.fromisoformat(parse_ts)
+    if isinstance(ts, datetime):
+        dt = ts
+    else:
+        # Handle Z suffix for fromisoformat compatibility
+        parse_ts = ts[:-1] + "+00:00" if ts.endswith("Z") else ts
+        dt = datetime.fromisoformat(parse_ts)
 
     # Ensure timezone is UTC
     if dt.tzinfo is None:
@@ -38,7 +41,7 @@ def _parse_timestamp(ts: str) -> datetime:
     return dt.astimezone(UTC)
 
 
-def _normalize_timestamp(ts: str | None) -> str | None:
+def _normalize_timestamp(ts: str | datetime | None) -> str | None:
     """Normalize timestamp to consistent RFC 3339 format.
 
     Ensures all timestamps have:
@@ -58,11 +61,30 @@ def _normalize_timestamp(ts: str | None) -> str | None:
         dt = _parse_timestamp(ts)
     except ValueError:
         # If parsing fails, return original (shouldn't happen with valid ISO 8601)
-        return ts
+        return ts.isoformat() if isinstance(ts, datetime) else ts
 
     # Format with consistent microseconds and +00:00 suffix
     base = dt.strftime("%Y-%m-%dT%H:%M:%S")
     return f"{base}.{dt.microsecond:06d}+00:00"
+
+
+def _normalize_date(value: str | date | datetime | None) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    return value
+
+
+def _known_session_id(value: str | None, existing_session_ids: set[str]) -> str | None:
+    if value is None:
+        return None
+    if value in existing_session_ids:
+        return value
+    logger.warning("Dropping task sync session reference for unknown session %s", value)
+    return None
 
 
 class TaskSyncManager:
@@ -131,10 +153,11 @@ class TaskSyncManager:
 
             # Build dependency map: task_id -> list[depends_on]
             deps_map: dict[str, list[str]] = {}
-            for task_id, depends_on in deps_rows:
+            for row in deps_rows:
+                task_id = row["task_id"]
                 if task_id not in deps_map:
                     deps_map[task_id] = []
-                deps_map[task_id].append(depends_on)
+                deps_map[task_id].append(row["depends_on"])
 
             # Sort tasks by ID for deterministic output
             tasks.sort(key=lambda t: t.id)
@@ -189,8 +212,8 @@ class TaskSyncManager:
                     "linear_issue_id": task.linear_issue_id,
                     "linear_team_id": task.linear_team_id,
                     # Scheduling fields
-                    "start_date": task.start_date,
-                    "due_date": task.due_date,
+                    "start_date": _normalize_date(task.start_date),
+                    "due_date": _normalize_date(task.due_date),
                     # Escalation fields (normalize timestamps)
                     "escalated_at": _normalize_timestamp(task.escalated_at),
                     "escalation_reason": task.escalation_reason,
@@ -215,7 +238,7 @@ class TaskSyncManager:
 
     def import_from_jsonl(self, project_id: str | None = None) -> None:
         """
-        Import tasks from JSONL file into SQLite.
+        Import tasks from JSONL file into the hub database.
         Uses Last-Write-Wins conflict resolution based on updated_at.
 
         Args:
@@ -266,248 +289,237 @@ class TaskSyncManager:
                     occupied_seq_nums.setdefault(pid, set()).add(sn)
                     max_seq_tracker[pid] = max(max_seq_tracker.get(pid, 0), sn)
             batch_claimed: dict[str | None, set[int]] = {}
+            existing_session_ids = {
+                row["id"] for row in self.db.fetchall("SELECT id FROM sessions")
+            }
 
-            # Temporarily disable foreign keys to allow inserting child tasks
-            # before their parents (JSONL order may not be parent-first)
-            self.db.execute("PRAGMA foreign_keys = OFF")
+            with self.db.transaction() as conn:
+                conn.execute("SET CONSTRAINTS ALL DEFERRED")
+                for line in lines:
+                    if not line.strip():
+                        continue
 
-            try:
-                with self.db.transaction() as conn:
-                    for line in lines:
-                        if not line.strip():
-                            continue
+                    data = json.loads(line)
+                    task_id = data["id"]
+                    # Guard against None/missing updated_at in JSONL
+                    raw_updated_at = data.get("updated_at")
+                    if raw_updated_at is None:
+                        # Skip tasks without timestamps or use a safe default
+                        logger.warning(f"Task {task_id} missing updated_at, skipping")
+                        skipped_count += 1
+                        continue
+                    try:
+                        updated_at_file = _parse_timestamp(raw_updated_at)
+                    except ValueError as e:
+                        logger.warning(
+                            f"Task {task_id}: malformed timestamp '{raw_updated_at}': {e}, skipping"
+                        )
+                        skipped_count += 1
+                        continue
 
-                        data = json.loads(line)
-                        task_id = data["id"]
-                        # Guard against None/missing updated_at in JSONL
-                        raw_updated_at = data.get("updated_at")
-                        if raw_updated_at is None:
-                            # Skip tasks without timestamps or use a safe default
-                            logger.warning(f"Task {task_id} missing updated_at, skipping")
-                            skipped_count += 1
-                            continue
-                        try:
-                            updated_at_file = _parse_timestamp(raw_updated_at)
-                        except ValueError as e:
-                            logger.warning(
-                                f"Task {task_id}: malformed timestamp '{raw_updated_at}': {e}, skipping"
-                            )
-                            skipped_count += 1
-                            continue
+                    # Check against bulk-loaded existing task data
+                    existing_row = existing_tasks.get(task_id)
 
-                        # Check against bulk-loaded existing task data
-                        existing_row = existing_tasks.get(task_id)
-
-                        should_update = False
-                        existing_seq_num = None
-                        existing_path_cache = None
-                        if not existing_row:
-                            should_update = True
-                            imported_count += 1
+                    should_update = False
+                    existing_seq_num = None
+                    existing_path_cache = None
+                    if not existing_row:
+                        should_update = True
+                        imported_count += 1
+                    else:
+                        # Handle NULL timestamps in DB (treat as infinitely old)
+                        db_updated_at = existing_row["updated_at"]
+                        if db_updated_at is None:
+                            updated_at_db = datetime.min.replace(tzinfo=UTC)
                         else:
-                            # Handle NULL timestamps in DB (treat as infinitely old)
-                            db_updated_at = existing_row["updated_at"]
-                            if db_updated_at is None:
+                            try:
+                                updated_at_db = _parse_timestamp(db_updated_at)
+                            except ValueError as e:
+                                logger.warning(
+                                    f"Task {task_id}: failed to parse DB timestamp "
+                                    f"'{db_updated_at}': {e}, treating as old"
+                                )
                                 updated_at_db = datetime.min.replace(tzinfo=UTC)
-                            else:
-                                try:
-                                    updated_at_db = _parse_timestamp(db_updated_at)
-                                except ValueError as e:
-                                    logger.warning(
-                                        f"Task {task_id}: failed to parse DB timestamp "
-                                        f"'{db_updated_at}': {e}, treating as old"
-                                    )
-                                    updated_at_db = datetime.min.replace(tzinfo=UTC)
-                            existing_seq_num = existing_row["seq_num"]
-                            existing_path_cache = existing_row["path_cache"]
-                            if updated_at_file > updated_at_db:
-                                should_update = True
-                                updated_count += 1
-                            else:
-                                skipped_count += 1
+                        existing_seq_num = existing_row["seq_num"]
+                        existing_path_cache = existing_row["path_cache"]
+                        if updated_at_file > updated_at_db:
+                            should_update = True
+                            updated_count += 1
+                        else:
+                            skipped_count += 1
 
-                        if should_update:
-                            state = data.get("state") or {}
+                    if should_update:
+                        state = data.get("state") or {}
 
-                            # Handle commits array (stored as JSON in SQLite)
-                            commits_json = (
-                                json.dumps(data["commits"]) if data.get("commits") else None
+                        # Handle commits array stored as JSON in the hub.
+                        commits_json = json.dumps(data["commits"]) if data.get("commits") else None
+
+                        # Handle validation object (extract fields)
+                        validation = data.get("validation") or {}
+                        validation_status = validation.get("state") or validation.get("status")
+                        validation_feedback = validation.get("feedback")
+                        validation_fail_count = validation.get("fail_count", 0)
+                        validation_criteria = validation.get("criteria")
+                        validation_override_reason = validation.get("override_reason")
+
+                        # Handle labels stored as JSON in the hub.
+                        labels_raw = data.get("labels")
+                        labels_json = json.dumps(labels_raw) if labels_raw else None
+
+                        claimed_by_session_id = data.get("claimed_by_session_id")
+                        if claimed_by_session_id is None:
+                            claimed_by_session_id = state.get("owner_session_id")
+                        if claimed_by_session_id is None and existing_row:
+                            claimed_by_session_id = existing_row["claimed_by_session_id"]
+
+                        created_in_session_id = data.get("created_in_session_id")
+                        if created_in_session_id is None and existing_row:
+                            created_in_session_id = existing_row["created_in_session_id"]
+
+                        closed_in_session_id = data.get("closed_in_session_id")
+                        if closed_in_session_id is None:
+                            closed_in_session_id = state.get("closed_in_session_id")
+                        if closed_in_session_id is None and existing_row:
+                            closed_in_session_id = existing_row["closed_in_session_id"]
+
+                        claimed_by_session_id = _known_session_id(
+                            claimed_by_session_id,
+                            existing_session_ids,
+                        )
+                        created_in_session_id = _known_session_id(
+                            created_in_session_id,
+                            existing_session_ids,
+                        )
+                        closed_in_session_id = _known_session_id(
+                            closed_in_session_id,
+                            existing_session_ids,
+                        )
+
+                        # Common synced field values
+                        synced_values = {
+                            "project_id": data.get("project_id"),
+                            "title": data["title"],
+                            "description": data.get("description"),
+                            "parent_task_id": data.get("parent_id"),
+                            "priority": data.get("priority", 2),
+                            "task_type": data.get("task_type", "task"),
+                            "created_at": data["created_at"],
+                            "updated_at": data["updated_at"],
+                            "created_in_session_id": created_in_session_id,
+                            "claimed_by_session_id": claimed_by_session_id,
+                            "commits": commits_json,
+                            "closed_at": data.get("closed_at", state.get("closed_at")),
+                            "closed_reason": data.get("closed_reason", state.get("closed_reason")),
+                            "closed_in_session_id": closed_in_session_id,
+                            "closed_commit_sha": data.get(
+                                "closed_commit_sha", state.get("closed_commit_sha")
+                            ),
+                            "labels": labels_json,
+                            "validation_status": validation_status,
+                            "validation_feedback": validation_feedback,
+                            "validation_fail_count": validation_fail_count,
+                            "validation_criteria": validation_criteria,
+                            "validation_override_reason": validation_override_reason,
+                            "category": data.get("category"),
+                            "github_issue_number": data.get("github_issue_number"),
+                            "github_pr_number": data.get("github_pr_number"),
+                            "github_repo": data.get("github_repo"),
+                            "linear_issue_id": data.get("linear_issue_id"),
+                            "linear_team_id": data.get("linear_team_id"),
+                            "start_date": data.get("start_date"),
+                            "due_date": data.get("due_date"),
+                            "escalated_at": data.get("escalated_at", state.get("escalated_at")),
+                            "escalation_reason": data.get(
+                                "escalation_reason", state.get("escalation_reason")
+                            ),
+                            "seq_num": data["seq_num"] if "seq_num" in data else existing_seq_num,
+                            "path_cache": (
+                                data["path_cache"] if "path_cache" in data else existing_path_cache
+                            ),
+                        }
+
+                        if not existing_row:
+                            # New task: preserve JSONL seq_num if available and unclaimed.
+                            task_project_id = synced_values.get("project_id")
+                            jsonl_seq = synced_values.get("seq_num")
+                            occupied = occupied_seq_nums.get(
+                                task_project_id, set()
+                            ) | batch_claimed.get(task_project_id, set())
+
+                            if jsonl_seq is not None and jsonl_seq not in occupied:
+                                final_seq = jsonl_seq
+                            else:
+                                current_max = max_seq_tracker.get(task_project_id, 0)
+                                final_seq = current_max + 1
+
+                            synced_values["seq_num"] = final_seq
+                            batch_claimed.setdefault(task_project_id, set()).add(final_seq)
+                            max_seq_tracker[task_project_id] = max(
+                                max_seq_tracker.get(task_project_id, 0), final_seq
                             )
 
-                            # Handle validation object (extract fields)
-                            validation = data.get("validation") or {}
-                            validation_status = validation.get("state") or validation.get("status")
-                            validation_feedback = validation.get("feedback")
-                            validation_fail_count = validation.get("fail_count", 0)
-                            validation_criteria = validation.get("criteria")
-                            validation_override_reason = validation.get("override_reason")
+                            # Rebuild path_cache from the final seq_num
+                            parent_id = synced_values.get("parent_task_id")
+                            path_parts: list[str] = [str(final_seq)]
+                            current_parent = parent_id
+                            max_depth = 100
+                            depth = 0
+                            while current_parent and depth < max_depth:
+                                parent_row = conn.execute(
+                                    "SELECT seq_num, parent_task_id FROM tasks WHERE id = ?",
+                                    (current_parent,),
+                                ).fetchone()
+                                if not parent_row or parent_row["seq_num"] is None:
+                                    break
+                                path_parts.insert(0, str(parent_row["seq_num"]))
+                                current_parent = parent_row["parent_task_id"]
+                                depth += 1
+                            synced_values["path_cache"] = ".".join(path_parts)
 
-                            # Handle labels (stored as JSON in SQLite)
-                            labels_raw = data.get("labels")
-                            labels_json = json.dumps(labels_raw) if labels_raw else None
+                            # INSERT with all synced fields
+                            columns = ", ".join(["id"] + list(synced_values.keys()))
+                            placeholders = ", ".join(["?"] * (1 + len(synced_values)))
+                            conn.execute(
+                                f"INSERT INTO {'tasks'} ({columns}) VALUES ({placeholders})",
+                                (task_id, *synced_values.values()),
+                            )
+                        else:
+                            # Existing task: update synced fields while preserving local state.
+                            set_clause = ", ".join(f"{col} = ?" for col in synced_values)
+                            conn.execute(
+                                f"UPDATE tasks SET {set_clause} WHERE id = ?",
+                                (*synced_values.values(), task_id),
+                            )
 
-                            claimed_by_session_id = data.get("claimed_by_session_id")
-                            if claimed_by_session_id is None:
-                                claimed_by_session_id = state.get("owner_session_id")
-                            if claimed_by_session_id is None and existing_row:
-                                claimed_by_session_id = existing_row["claimed_by_session_id"]
-
-                            created_in_session_id = data.get("created_in_session_id")
-                            if created_in_session_id is None and existing_row:
-                                created_in_session_id = existing_row["created_in_session_id"]
-
-                            closed_in_session_id = data.get("closed_in_session_id")
-                            if closed_in_session_id is None:
-                                closed_in_session_id = state.get("closed_in_session_id")
-                            if closed_in_session_id is None and existing_row:
-                                closed_in_session_id = existing_row["closed_in_session_id"]
-
-                            # Common synced field values
-                            synced_values = {
-                                "project_id": data.get("project_id"),
-                                "title": data["title"],
-                                "description": data.get("description"),
-                                "parent_task_id": data.get("parent_id"),
-                                "priority": data.get("priority", 2),
-                                "task_type": data.get("task_type", "task"),
-                                "created_at": data["created_at"],
-                                "updated_at": data["updated_at"],
-                                "created_in_session_id": created_in_session_id,
-                                "claimed_by_session_id": claimed_by_session_id,
-                                "commits": commits_json,
-                                "closed_at": data.get("closed_at", state.get("closed_at")),
-                                "closed_reason": data.get(
-                                    "closed_reason", state.get("closed_reason")
-                                ),
-                                "closed_in_session_id": closed_in_session_id,
-                                "closed_commit_sha": data.get(
-                                    "closed_commit_sha", state.get("closed_commit_sha")
-                                ),
-                                "labels": labels_json,
-                                "validation_status": validation_status,
-                                "validation_feedback": validation_feedback,
-                                "validation_fail_count": validation_fail_count,
-                                "validation_criteria": validation_criteria,
-                                "validation_override_reason": validation_override_reason,
-                                "category": data.get("category"),
-                                "github_issue_number": data.get("github_issue_number"),
-                                "github_pr_number": data.get("github_pr_number"),
-                                "github_repo": data.get("github_repo"),
-                                "linear_issue_id": data.get("linear_issue_id"),
-                                "linear_team_id": data.get("linear_team_id"),
-                                "start_date": data.get("start_date"),
-                                "due_date": data.get("due_date"),
-                                "escalated_at": data.get("escalated_at", state.get("escalated_at")),
-                                "escalation_reason": data.get(
-                                    "escalation_reason", state.get("escalation_reason")
-                                ),
-                                "seq_num": (
-                                    data["seq_num"] if "seq_num" in data else existing_seq_num
-                                ),
-                                "path_cache": (
-                                    data["path_cache"]
-                                    if "path_cache" in data
-                                    else existing_path_cache
-                                ),
-                            }
-
-                            if not existing_row:
-                                # New task — preserve JSONL seq_num if available
-                                # and not already occupied; assign fresh only on collision
-                                task_project_id = synced_values.get("project_id")
-                                jsonl_seq = synced_values.get("seq_num")
-                                occupied = occupied_seq_nums.get(
-                                    task_project_id, set()
-                                ) | batch_claimed.get(task_project_id, set())
-
-                                if jsonl_seq is not None and jsonl_seq not in occupied:
-                                    final_seq = jsonl_seq
-                                else:
-                                    current_max = max_seq_tracker.get(task_project_id, 0)
-                                    final_seq = current_max + 1
-
-                                synced_values["seq_num"] = final_seq
-                                batch_claimed.setdefault(task_project_id, set()).add(final_seq)
-                                max_seq_tracker[task_project_id] = max(
-                                    max_seq_tracker.get(task_project_id, 0), final_seq
-                                )
-
-                                # Rebuild path_cache from the final seq_num
-                                parent_id = synced_values.get("parent_task_id")
-                                path_parts: list[str] = [str(final_seq)]
-                                current_parent = parent_id
-                                max_depth = 100
-                                depth = 0
-                                while current_parent and depth < max_depth:
-                                    parent_row = conn.execute(
-                                        "SELECT seq_num, parent_task_id FROM tasks WHERE id = ?",
-                                        (current_parent,),
-                                    ).fetchone()
-                                    if not parent_row or parent_row["seq_num"] is None:
-                                        break
-                                    path_parts.insert(0, str(parent_row["seq_num"]))
-                                    current_parent = parent_row["parent_task_id"]
-                                    depth += 1
-                                synced_values["path_cache"] = ".".join(path_parts)
-
-                                # INSERT with all synced fields
-                                columns = ", ".join(["id"] + list(synced_values.keys()))
-                                placeholders = ", ".join(["?"] * (1 + len(synced_values)))
-                                conn.execute(
-                                    f"INSERT INTO {'tasks'} ({columns}) VALUES ({placeholders})",
-                                    (task_id, *synced_values.values()),
-                                )
-                            else:
-                                # Existing task — UPDATE only synced fields,
-                                # preserving session-local columns (assignee,
-                                # created_in_session_id, closed_in_session_id,
-                                # compacted_at, summary)
-                                set_clause = ", ".join(f"{col} = ?" for col in synced_values)
-                                conn.execute(
-                                    f"UPDATE tasks SET {set_clause} WHERE id = ?",
-                                    (*synced_values.values(), task_id),
-                                )
-
-                        # Collect dependencies for Phase 2
-                        if "deps_on" in data:
-                            for dep_id in data["deps_on"]:
-                                pending_deps.append((task_id, dep_id))
+                    # Collect dependencies for Phase 2
+                    if "deps_on" in data:
+                        for dep_id in data["deps_on"]:
+                            pending_deps.append((task_id, dep_id))
 
                 # Phase 2: Import Dependencies
-                # We blindly re-insert dependencies. Since we can't easily track deletion
-                # of dependencies without full diff, we'll ensure they exist.
-                # To handle strict syncing, we might want to clear existing deps for these
-                # tasks, but that's risky. For now, additive only for deps (or ignore if exist).
+                for task_id, depends_on in pending_deps:
+                    conn.execute(
+                        """
+                        INSERT INTO task_dependencies (
+                            task_id, depends_on, dep_type, created_at
+                        ) VALUES (?, ?, 'blocks', ?)
+                        ON CONFLICT (task_id, depends_on, dep_type) DO NOTHING
+                        """,
+                        (task_id, depends_on, datetime.now(UTC).isoformat()),
+                    )
 
-                with self.db.transaction() as conn:
-                    for task_id, depends_on in pending_deps:
-                        # Check if both exist (they should, unless depends_on is missing)
-                        conn.execute(
-                            """
-                            INSERT OR IGNORE INTO task_dependencies (
-                                task_id, depends_on, dep_type, created_at
-                            ) VALUES (?, ?, 'blocks', ?)
-                            """,
-                            (task_id, depends_on, datetime.now(UTC).isoformat()),
-                        )
+            logger.info(
+                f"Import complete: {imported_count} imported, "
+                f"{updated_count} updated, {skipped_count} skipped"
+            )
 
-                logger.info(
-                    f"Import complete: {imported_count} imported, "
-                    f"{updated_count} updated, {skipped_count} skipped"
-                )
-
-                # Rebuild search index to include imported tasks
-                if imported_count > 0 or updated_count > 0:
-                    try:
-                        stats = self.task_manager.reindex_search(project_id)
-                        logger.debug(
-                            f"Search index rebuilt with {stats.get('item_count', 0)} tasks"
-                        )
-                    except Exception as e:
-                        logger.warning(f"Failed to rebuild search index: {e}")
-            finally:
-                # Re-enable foreign keys
-                self.db.execute("PRAGMA foreign_keys = ON")
+            # Rebuild search index to include imported tasks
+            if imported_count > 0 or updated_count > 0:
+                try:
+                    stats = self.task_manager.reindex_search(project_id)
+                    logger.debug(f"Search index rebuilt with {stats.get('item_count', 0)} tasks")
+                except Exception as e:
+                    logger.warning(f"Failed to rebuild search index: {e}")
 
         except Exception as e:
             logger.error(f"Failed to import tasks: {e}", exc_info=True)

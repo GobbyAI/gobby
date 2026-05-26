@@ -2,11 +2,12 @@
 
 Covers: get_memory_manager, create, recall tag parsing, list tag parsing,
         export, dedupe, fix-null-project, backup, rebuild-crossrefs,
-        clear-graph, and rebuild-graph.
+        clear-graph, graph-counts, and rebuild-graph.
 """
 
 from __future__ import annotations
 
+import json
 from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -15,6 +16,7 @@ import pytest
 from click.testing import CliRunner
 
 from gobby.cli.memory import memory
+from gobby.cli.memory.maintenance import _list_all_memories
 
 pytestmark = pytest.mark.unit
 
@@ -32,6 +34,27 @@ def mock_manager() -> Generator[MagicMock]:
         yield mgr
 
 
+def test_memory_package_exports_compatibility_symbols() -> None:
+    from gobby.cli.memory import (
+        MemoryManager,
+        __all__,
+        _get_daemon_client,
+        get_memory_manager,
+        memory,
+        resolve_memory_id,
+        resolve_project_ref,
+    )
+
+    assert memory.name == "memory"
+    assert callable(get_memory_manager)
+    assert callable(_get_daemon_client)
+    assert callable(resolve_memory_id)
+    assert callable(resolve_project_ref)
+    assert MemoryManager is not None
+    assert "_get_daemon_client" not in __all__
+    assert "time" not in __all__
+
+
 # =============================================================================
 # get_memory_manager
 # =============================================================================
@@ -46,10 +69,11 @@ class TestGetMemoryManager:
         mock_ctx.obj = {"config": mock_config}
 
         with (
-            patch("gobby.cli.memory.LocalDatabase"),
+            patch("gobby.cli.memory.open_runtime_hub_database") as mock_open,
             patch("gobby.cli.memory.MemoryManager") as mock_mm,
         ):
             result = get_memory_manager(mock_ctx)
+            mock_open.assert_called_once_with(apply_migrations=False)
             mock_mm.assert_called_once()
             assert mock_mm.call_count == 1
             assert mock_mm.call_args is not None
@@ -151,6 +175,27 @@ class TestExportMemories:
 
 
 class TestDedupeMemories:
+    def test_list_all_memories_bounds_results_and_stops_on_listing_errors(self) -> None:
+        manager = MagicMock()
+        manager.list_memories.side_effect = [
+            ["mem-1", "mem-2"],
+            RuntimeError("backend unavailable"),
+        ]
+
+        assert _list_all_memories(manager, page_size=2) == ["mem-1", "mem-2"]
+        assert manager.list_memories.call_args_list[0].kwargs == {"limit": 2, "offset": 0}
+        assert manager.list_memories.call_args_list[1].kwargs == {"limit": 2, "offset": 2}
+
+        manager.reset_mock()
+        manager.list_memories.side_effect = [["mem-1", "mem-2", "mem-3"]]
+
+        assert _list_all_memories(manager, page_size=5, max_results=3) == [
+            "mem-1",
+            "mem-2",
+            "mem-3",
+        ]
+        assert manager.list_memories.call_args.kwargs == {"limit": 3, "offset": 0}
+
     def test_dedupe_no_memories(self, runner: CliRunner, mock_manager: MagicMock) -> None:
         mock_manager.list_memories.return_value = []
         result = runner.invoke(memory, ["dedupe"])
@@ -280,6 +325,77 @@ class TestRebuildCrossrefs:
 # =============================================================================
 
 
+class TestGraphCounts:
+    @patch("gobby.cli.memory._get_daemon_client")
+    def test_graph_counts_json(
+        self, mock_client_fn: MagicMock, runner: CliRunner, mock_manager: MagicMock
+    ) -> None:
+        client = MagicMock()
+        client.check_health.return_value = (True, None)
+        resp = MagicMock()
+        resp.is_success = True
+        resp.json.return_value = {
+            "graph": "gobby_kg",
+            "project_id": None,
+            "memory_nodes": 3,
+            "entity_nodes": 7,
+        }
+        client.call_http_api.return_value = resp
+        mock_client_fn.return_value = client
+
+        result = runner.invoke(memory, ["graph-counts", "--json"])
+
+        assert result.exit_code == 0
+        assert json.loads(result.output) == {
+            "entity_nodes": 7,
+            "graph": "gobby_kg",
+            "memory_nodes": 3,
+            "project_id": None,
+        }
+        client.call_http_api.assert_called_once_with(
+            "/api/memories/graph/counts",
+            method="GET",
+            timeout=30.0,
+        )
+
+    @patch("gobby.cli.memory.resolve_project_ref", return_value="proj-1")
+    @patch("gobby.cli.memory._get_daemon_client")
+    def test_graph_counts_project_human_output(
+        self,
+        mock_client_fn: MagicMock,
+        mock_resolve: MagicMock,
+        runner: CliRunner,
+        mock_manager: MagicMock,
+    ) -> None:
+        client = MagicMock()
+        client.check_health.return_value = (True, None)
+        resp = MagicMock()
+        resp.is_success = True
+        resp.json.return_value = {
+            "graph": "gobby_kg",
+            "project_id": "proj-1",
+            "total_nodes": 10,
+            "memory_nodes": 3,
+            "entity_nodes": 7,
+            "code_symbol_nodes": 0,
+            "relationships": 8,
+            "entity_relationships": 5,
+            "mentioned_in_relationships": 3,
+            "relates_to_code_relationships": 0,
+        }
+        client.call_http_api.return_value = resp
+        mock_client_fn.return_value = client
+
+        result = runner.invoke(memory, ["graph-counts", "--project", "myproj"])
+
+        assert result.exit_code == 0
+        call_args = client.call_http_api.call_args
+        assert "project_id=proj-1" in call_args[0][0]
+        assert "Knowledge graph counts for project proj-1:" in result.output
+        assert "Memory: 3" in result.output
+        assert "Entity: 7" in result.output
+
+
 class TestRebuildGraph:
     @patch("gobby.cli.memory._get_daemon_client")
     def test_rebuild_graph_success(
@@ -350,7 +466,7 @@ class TestRebuildGraph:
         assert "background=true" in call_args[0][0]
         assert "gobby memory rebuild-graph --wait -p myproj" in result.output
 
-    @patch("gobby.cli.memory.time.time", side_effect=[0, 11])
+    @patch("gobby.cli.memory.graph.time.time", side_effect=[0, 11])
     @patch("gobby.cli.memory._get_daemon_client")
     def test_rebuild_graph_wait_times_out(
         self,

@@ -388,7 +388,7 @@ steps:
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**Storage**: SQLite table `inter_session_messages` with:
+**Storage**: PostgreSQL table `inter_session_messages` with:
 
 - `id` (UUID)
 - `from_session` (session_id of sender)

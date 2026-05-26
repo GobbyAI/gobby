@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.skills.formatting import skill_fetch_directive
 
 pytestmark = pytest.mark.unit
 
@@ -516,7 +517,7 @@ class TestFormatDiscoveryResult:
             },
         }
         formatted = HookManager._format_discovery_result(dr)
-        assert formatted == 'Call get_skill(name="python") on gobby-skills, then continue.'
+        assert formatted == skill_fetch_directive("python")
         assert "# Python Best Practices" not in formatted
         assert "<skill" not in formatted
 
@@ -528,7 +529,7 @@ class TestFormatDiscoveryResult:
             "result": {"skill": {"name": "empty", "content": ""}},
         }
         formatted = HookManager._format_discovery_result(dr)
-        assert formatted == 'Call get_skill(name="empty") on gobby-skills, then continue.'
+        assert formatted == skill_fetch_directive("empty")
 
     def test_format_list_hubs(self) -> None:
         from gobby.hooks.hook_manager import HookManager

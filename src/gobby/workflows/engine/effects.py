@@ -19,9 +19,25 @@ from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 logger = logging.getLogger(__name__)
 
 
+def _is_empty_inject_payload(result: Any) -> bool:
+    """Decide whether an mcp_call result represents nothing worth injecting."""
+    if not isinstance(result, dict):
+        return result is None or not result
+    if result.get("count") == 0:
+        return True
+    bookkeeping = {"success", "count", "response_time_ms"}
+    content_keys = {key for key in result if key not in bookkeeping}
+    if content_keys == {"messages"} and not result.get("messages"):
+        return True
+    if content_keys == {"memories"} and not result.get("memories"):
+        return True
+    return False
+
+
 class EffectsMixin:
     """Mixin providing effect handling methods for RuleEngine."""
 
+    db: Any
     _skill_manager: Any
     _mcp_dispatcher: Any
 
@@ -115,11 +131,46 @@ class EffectsMixin:
                     )
                     success = isinstance(dr, dict) and dr.get("success", False)
                     if success and dr.get("result"):
-                        from gobby.hooks.dispatchers.mcp import format_discovery_result
-
-                        formatted = format_discovery_result(
-                            {"tool": effect.tool, "result": dr["result"]}
+                        raw_result = dr["result"]
+                        formatted: str | None = None
+                        event_obj = ctx.get("event")
+                        platform_session_id = (
+                            event_obj.metadata.get("_platform_session_id")
+                            if isinstance(event_obj, HookEvent) and event_obj.metadata
+                            else None
                         )
+
+                        if (
+                            effect.server,
+                            effect.tool,
+                        ) == ("gobby-agents", "deliver_pending_messages") and isinstance(
+                            raw_result, dict
+                        ):
+                            formatted = self._format_delivery_result(
+                                raw_result,
+                                platform_session_id,
+                                variables,
+                            )
+                        elif (
+                            effect.server,
+                            effect.tool,
+                        ) == ("gobby-memory", "search_memories") and isinstance(raw_result, dict):
+                            formatted = self._format_search_memories_result(
+                                raw_result,
+                                platform_session_id,
+                                variables,
+                            )
+                        elif (effect.server, effect.tool) == (
+                            "gobby-agents",
+                            "cancel_stale_helpers",
+                        ):
+                            formatted = None
+                        elif not _is_empty_inject_payload(raw_result):
+                            from gobby.hooks.dispatchers.mcp import format_discovery_result
+
+                            formatted = format_discovery_result(
+                                {"tool": effect.tool, "result": raw_result}
+                            )
                         if formatted:
                             context_parts.append(formatted)
                     elif not success:
@@ -253,6 +304,223 @@ class EffectsMixin:
                 context_parts.append(skill_fetch_directive(effect.skill))
 
         return True
+
+    def _format_delivery_result(
+        self,
+        result: dict[str, Any],
+        platform_session_id: str | None,
+        variables: dict[str, Any],
+    ) -> str | None:
+        """Inline delivery-time pipeline for deliver_pending_messages results."""
+        from gobby.hooks.dispatchers.mcp import format_discovery_result
+        from gobby.storage.agents import LocalAgentRunManager
+
+        if _is_empty_inject_payload(result):
+            return None
+
+        messages = result.get("messages") or []
+        helper_memories: dict[str, dict[str, Any]] = {}
+        other_messages: list[Any] = []
+
+        run_storage = LocalAgentRunManager(self.db)
+        helper_cancelled_sessions: set[str] = set()
+        cancelled_lookup_failed = False
+        cancel_incomplete = False
+        if messages:
+            try:
+                helper_cancelled_sessions = run_storage.get_cancelled_session_ids(
+                    agent_name="memory-recall-helper",
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "cancelled-session lookup failed: %s; dropping all memory_recall payloads",
+                    exc,
+                )
+                cancelled_lookup_failed = True
+
+            if not cancelled_lookup_failed and platform_session_id:
+                try:
+                    still_running = [
+                        run
+                        for run in run_storage.list_by_parent(platform_session_id)
+                        if run.agent_name == "memory-recall-helper"
+                        and run.status in ("pending", "running")
+                    ]
+                    cancel_incomplete = bool(still_running)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Failed to check for still-running helpers: %s; "
+                        "dropping all memory_recall payloads",
+                        exc,
+                    )
+                    cancel_incomplete = True
+
+        current_turn_seq = variables.get("parent_turn_seq")
+        expected_origin_turn_seq = (
+            current_turn_seq - 1 if isinstance(current_turn_seq, int) else None
+        )
+        helper_enabled = variables.get("memory_recall_helper_enabled", True)
+
+        for msg in messages:
+            if not isinstance(msg, dict):
+                other_messages.append(msg)
+                continue
+
+            content = msg.get("content")
+            parsed: Any = None
+            if isinstance(content, dict):
+                parsed = content
+            elif isinstance(content, str):
+                try:
+                    parsed = json.loads(content)
+                except (json.JSONDecodeError, ValueError):
+                    parsed = None
+
+            if not (isinstance(parsed, dict) and parsed.get("type") == "memory_recall"):
+                other_messages.append(msg)
+                continue
+
+            if not helper_enabled:
+                logger.debug("Dropping memory_recall: memory_recall_helper_enabled is False")
+                continue
+            if cancelled_lookup_failed:
+                logger.warning(
+                    "Dropping memory_recall: cancelled-session lookup failed (from_session=%r)",
+                    msg.get("from_session"),
+                )
+                continue
+            if cancel_incomplete:
+                logger.warning(
+                    "Dropping memory_recall: stale helper still running after cancel attempt "
+                    "(from_session=%r)",
+                    msg.get("from_session"),
+                )
+                continue
+            if msg.get("from_session") in helper_cancelled_sessions:
+                logger.debug(
+                    "Dropping memory_recall from cancelled helper session %r",
+                    msg.get("from_session"),
+                )
+                continue
+            if expected_origin_turn_seq is None:
+                logger.warning(
+                    "Dropping memory_recall: parent_turn_seq missing or non-int "
+                    "- cannot verify freshness",
+                )
+                continue
+            payload_origin = parsed.get("origin_turn_seq")
+            if not isinstance(payload_origin, int) or payload_origin != expected_origin_turn_seq:
+                logger.debug(
+                    "Dropping stale memory_recall: origin=%r expected=%r",
+                    payload_origin,
+                    expected_origin_turn_seq,
+                )
+                continue
+
+            for mem in parsed.get("memories") or []:
+                mid = mem.get("id") if isinstance(mem, dict) else None
+                if isinstance(mid, str) and mid:
+                    helper_memories[mid] = mem
+
+        new_memories = self._filter_and_track_new_memories(
+            list(helper_memories.values()),
+            platform_session_id,
+            max_memories=3,
+        )
+
+        parts: list[str] = []
+        if new_memories:
+            memory_formatted = format_discovery_result(
+                {"tool": "search_memories", "result": {"memories": new_memories}},
+            )
+            if memory_formatted:
+                parts.append(memory_formatted)
+        if other_messages:
+            message_formatted = format_discovery_result(
+                {
+                    "tool": "deliver_pending_messages",
+                    "result": {"messages": other_messages, "count": len(other_messages)},
+                },
+            )
+            if message_formatted:
+                parts.append(message_formatted)
+
+        return "\n\n".join(parts) if parts else None
+
+    def _format_search_memories_result(
+        self,
+        result: dict[str, Any],
+        platform_session_id: str | None,
+        variables: dict[str, Any],
+    ) -> str | None:
+        """Inline pipeline for search_memories results."""
+        del variables
+        from gobby.hooks.dispatchers.mcp import format_discovery_result
+
+        if _is_empty_inject_payload(result):
+            return None
+
+        memories = result.get("memories") or []
+        if not memories:
+            return None
+        new_memories = self._filter_and_track_new_memories(memories, platform_session_id)
+        if not new_memories:
+            return None
+        return format_discovery_result(
+            {"tool": "search_memories", "result": {"memories": new_memories}}
+        )
+
+    def _filter_and_track_new_memories(
+        self,
+        memories: list[Any],
+        platform_session_id: str | None,
+        *,
+        max_memories: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Filter already-injected memory ids and append newly-rendered ids atomically."""
+        from gobby.workflows.state_manager import SessionVariableManager
+
+        new_memories: list[dict[str, Any]] = []
+        if not memories:
+            return new_memories
+
+        sv_mgr = SessionVariableManager(self.db) if platform_session_id else None
+        already: set[str] = set()
+        if sv_mgr is not None and platform_session_id:
+            try:
+                existing_vars = sv_mgr.get_variables(platform_session_id)
+                already = set(existing_vars.get("injected_memory_ids", []) or [])
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Failed to read injected_memory_ids for dedup: %s", exc)
+
+        seen: set[str] = set()
+        for memory in memories:
+            if not isinstance(memory, dict):
+                continue
+            memory_id = memory.get("id")
+            if not isinstance(memory_id, str) or not memory_id:
+                continue
+            if memory_id in seen or memory_id in already:
+                continue
+            seen.add(memory_id)
+            new_memories.append(memory)
+
+        if max_memories is not None and len(new_memories) > max_memories:
+            logger.debug(
+                "Capping helper memories from %d to %d",
+                len(new_memories),
+                max_memories,
+            )
+            new_memories = new_memories[:max_memories]
+
+        new_ids = [memory["id"] for memory in new_memories if memory.get("id")]
+        if new_ids and sv_mgr is not None and platform_session_id:
+            try:
+                sv_mgr.append_to_set_variable(platform_session_id, "injected_memory_ids", new_ids)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Failed to append injected_memory_ids: %s", exc)
+
+        return new_memories
 
     def _effect_matches_event(self, effect: Any, event: HookEvent) -> bool:
         """Check whether an effect's tool and command selectors match this event."""

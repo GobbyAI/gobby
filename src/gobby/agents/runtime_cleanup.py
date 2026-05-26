@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.workflows.state_manager import WorkflowInstanceManager
 
@@ -22,7 +22,7 @@ class AgentRuntimeCleanupResult:
 
 
 def cleanup_agent_runtime_state(
-    db: DatabaseProtocol | None,
+    db: HubDatabase | None,
     *,
     run_id: str | None,
     child_session_id: str | None,

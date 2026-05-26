@@ -33,7 +33,7 @@ from starlette.requests import ClientDisconnect
 
 from gobby.app_context import ServiceContainer
 from gobby.servers.http import HTTPServer
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from tests.servers.conftest import create_http_server
@@ -45,14 +45,20 @@ pytestmark = pytest.mark.unit
 # ============================================================================
 
 
+def _mock_hook_manager() -> MagicMock:
+    manager = MagicMock()
+    manager.shutdown_async = AsyncMock()
+    return manager
+
+
 @pytest.fixture
-def session_storage(temp_db: LocalDatabase) -> SessionManager:
+def session_storage(temp_db: HubDatabase) -> SessionManager:
     """Create session storage."""
     return SessionManager(temp_db)
 
 
 @pytest.fixture
-def project_storage(temp_db: LocalDatabase) -> LocalProjectManager:
+def project_storage(temp_db: HubDatabase) -> LocalProjectManager:
     """Create project storage."""
     return LocalProjectManager(temp_db)
 
@@ -102,6 +108,7 @@ def client(basic_http_server: HTTPServer) -> Iterator[TestClient]:
         mock_instance = MockHM.return_value
         mock_instance._stop_registry = MagicMock()
         mock_instance.shutdown = MagicMock()
+        mock_instance.shutdown_async = AsyncMock()
         with TestClient(basic_http_server.app) as c:
             yield c
 
@@ -2201,7 +2208,7 @@ class TestHooksEndpoints:
             test_mode=True,
             session_manager=session_storage,
         )
-        server.app.state.hook_manager = MagicMock()
+        server.app.state.hook_manager = _mock_hook_manager()
 
         with TestClient(server.app) as client:
             response = client.post(
@@ -2242,7 +2249,7 @@ class TestHooksEndpoints:
             test_mode=True,
             session_manager=session_storage,
         )
-        mock_hook_manager = MagicMock()
+        mock_hook_manager = _mock_hook_manager()
         server.app.state.hook_manager = mock_hook_manager
 
         with (
@@ -2272,7 +2279,7 @@ class TestHooksEndpoints:
             test_mode=True,
             session_manager=session_storage,
         )
-        mock_hook_manager = MagicMock()
+        mock_hook_manager = _mock_hook_manager()
         server.app.state.hook_manager = mock_hook_manager
 
         with (
@@ -2311,7 +2318,7 @@ class TestHooksEndpoints:
             test_mode=True,
             session_manager=session_storage,
         )
-        mock_hook_manager = MagicMock()
+        mock_hook_manager = _mock_hook_manager()
         server.app.state.hook_manager = mock_hook_manager
 
         with (
@@ -2339,7 +2346,7 @@ class TestHooksEndpoints:
             test_mode=True,
             session_manager=session_storage,
         )
-        mock_hook_manager = MagicMock()
+        mock_hook_manager = _mock_hook_manager()
         server.app.state.hook_manager = mock_hook_manager
 
         with (
@@ -2378,7 +2385,7 @@ class TestHooksEndpoints:
             test_mode=True,
             session_manager=session_storage,
         )
-        mock_hook_manager = MagicMock()
+        mock_hook_manager = _mock_hook_manager()
         mock_hook_manager.handle.side_effect = RuntimeError("droid adapter failed")
         server.app.state.hook_manager = mock_hook_manager
 
@@ -2420,7 +2427,7 @@ class TestHooksEndpoints:
             test_mode=True,
             session_manager=session_storage,
         )
-        mock_hook_manager = MagicMock()
+        mock_hook_manager = _mock_hook_manager()
         server.app.state.hook_manager = mock_hook_manager
 
         with (
@@ -2465,7 +2472,7 @@ class TestHooksEndpoints:
             test_mode=True,
             session_manager=session_storage,
         )
-        mock_hook_manager = MagicMock()
+        mock_hook_manager = _mock_hook_manager()
         server.app.state.hook_manager = mock_hook_manager
 
         with (
@@ -2504,7 +2511,7 @@ class TestHooksEndpoints:
             test_mode=True,
             session_manager=session_storage,
         )
-        mock_hook_manager = MagicMock()
+        mock_hook_manager = _mock_hook_manager()
         server.app.state.hook_manager = mock_hook_manager
 
         with (
@@ -2542,7 +2549,7 @@ class TestHooksEndpoints:
             test_mode=True,
             session_manager=session_storage,
         )
-        mock_hook_manager = MagicMock()
+        mock_hook_manager = _mock_hook_manager()
         server.app.state.hook_manager = mock_hook_manager
 
         with (
@@ -2581,7 +2588,7 @@ class TestHooksEndpoints:
             test_mode=True,
             session_manager=session_storage,
         )
-        mock_hook_manager = MagicMock()
+        mock_hook_manager = _mock_hook_manager()
         mock_hook_manager.handle.side_effect = RuntimeError("compact failed")
         server.app.state.hook_manager = mock_hook_manager
 
@@ -2612,7 +2619,7 @@ class TestHooksEndpoints:
             test_mode=True,
             session_manager=session_storage,
         )
-        mock_hook_manager = MagicMock()
+        mock_hook_manager = _mock_hook_manager()
         server.app.state.hook_manager = mock_hook_manager
 
         with (
@@ -2653,7 +2660,7 @@ class TestHooksEndpoints:
             test_mode=True,
             session_manager=session_storage,
         )
-        server.app.state.hook_manager = MagicMock()
+        server.app.state.hook_manager = _mock_hook_manager()
 
         with TestClient(server.app) as client:
             response = client.post(
@@ -2676,7 +2683,7 @@ class TestHooksEndpoints:
             test_mode=True,
             session_manager=session_storage,
         )
-        server.app.state.hook_manager = MagicMock()
+        server.app.state.hook_manager = _mock_hook_manager()
 
         with TestClient(server.app) as client:
             response = client.post(
@@ -2700,7 +2707,7 @@ class TestHooksEndpoints:
             test_mode=True,
             session_manager=session_storage,
         )
-        server.app.state.hook_manager = MagicMock()
+        server.app.state.hook_manager = _mock_hook_manager()
 
         with TestClient(server.app) as client:
             response = client.post(
@@ -2724,7 +2731,7 @@ class TestHooksEndpoints:
             test_mode=True,
             session_manager=session_storage,
         )
-        mock_hook_manager = MagicMock()
+        mock_hook_manager = _mock_hook_manager()
         server.app.state.hook_manager = mock_hook_manager
 
         with (
@@ -2775,7 +2782,7 @@ class TestHooksEndpoints:
             test_mode=True,
             session_manager=session_storage,
         )
-        mock_hook_manager = MagicMock()
+        mock_hook_manager = _mock_hook_manager()
         server.app.state.hook_manager = mock_hook_manager
 
         with (
@@ -2819,7 +2826,7 @@ class TestHooksEndpoints:
             test_mode=True,
             session_manager=session_storage,
         )
-        mock_hook_manager = MagicMock()
+        mock_hook_manager = _mock_hook_manager()
         server.app.state.hook_manager = mock_hook_manager
 
         with (
@@ -2867,7 +2874,7 @@ class TestHooksEndpoints:
             test_mode=True,
             session_manager=session_storage,
         )
-        mock_hook_manager = MagicMock()
+        mock_hook_manager = _mock_hook_manager()
         server.app.state.hook_manager = mock_hook_manager
         # Simulate connected app-server adapter on app.state
         ws_adapter = MagicMock(name="WebSocketCodexAdapter")
@@ -2912,7 +2919,7 @@ class TestHooksEndpoints:
             test_mode=True,
             session_manager=session_storage,
         )
-        mock_hook_manager = MagicMock()
+        mock_hook_manager = _mock_hook_manager()
         server.app.state.hook_manager = mock_hook_manager
 
         with (

@@ -92,7 +92,7 @@ Keep the body reusable:
 - Move heavy references, scripts, or templates into `references/`, `scripts/`, or
   `assets/` only when inline text would become bulky.
 - Cross-reference other skills by name, such as
-  `REQUIRED SKILL: verification-before-completion`.
+  `REQUIRED SKILL: task-transitions`.
 
 ## Common Failures
 

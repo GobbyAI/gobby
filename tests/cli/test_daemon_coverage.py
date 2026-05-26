@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -16,8 +17,22 @@ from gobby.cli.daemon import (
     status,
     stop,
 )
+from gobby.config.persistence import DatabasesConfig
 
 pytestmark = pytest.mark.unit
+
+
+def _service_config(
+    *,
+    falkordb_password: str | None = None,
+    qdrant_url: str | None = None,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        databases=DatabasesConfig(
+            falkordb={"requirepass": falkordb_password},
+            qdrant={"url": qdrant_url},
+        )
+    )
 
 
 @pytest.fixture
@@ -32,45 +47,53 @@ class TestServicesStart:
     def test_no_compose_file(self, tmp_path: Path) -> None:
         """No compose file → early return, no error."""
         _services_start(tmp_path)
-        assert not (tmp_path / "services" / "neo4j" / "docker-compose.yml").exists()
+        assert not (tmp_path / "services" / "docker-compose.yml").exists()
 
     @patch("gobby.cli.daemon.subprocess.run")
     @patch("gobby.config.app.load_config")
     def test_compose_exists_success(
         self, mock_config: MagicMock, mock_run: MagicMock, tmp_path: Path
     ) -> None:
-        compose = tmp_path / "services" / "neo4j" / "docker-compose.yml"
+        compose = tmp_path / "services" / "docker-compose.yml"
         compose.parent.mkdir(parents=True)
         compose.write_text("version: '3'")
 
-        cfg = MagicMock()
-        cfg.databases.neo4j.auth = "neo4j:password123"
-        mock_config.return_value = cfg
+        mock_config.return_value = _service_config(
+            falkordb_password="password123",
+            qdrant_url=None,
+        )
         mock_run.return_value = MagicMock(returncode=0)
 
-        _services_start(tmp_path)
+        with patch("gobby.cli.daemon._open_services_config_db", return_value=MagicMock()):
+            _services_start(tmp_path)
         mock_run.assert_called_once()
         assert mock_run.call_count == 1
         assert mock_run.call_args is not None
+        cmd = mock_run.call_args.args[0]
+        assert "falkordb" in cmd
+        assert mock_run.call_args.kwargs["env"]["GOBBY_FALKORDB_PASSWORD"] == "password123"
 
     @patch("gobby.cli.daemon.subprocess.run")
     @patch("gobby.config.app.load_config")
     def test_compose_exists_failure(
         self, mock_config: MagicMock, mock_run: MagicMock, tmp_path: Path
     ) -> None:
-        compose = tmp_path / "services" / "neo4j" / "docker-compose.yml"
+        compose = tmp_path / "services" / "docker-compose.yml"
         compose.parent.mkdir(parents=True)
         compose.write_text("version: '3'")
 
-        cfg = MagicMock()
-        cfg.databases.neo4j.auth = None
-        mock_config.return_value = cfg
+        mock_config.return_value = _service_config(
+            falkordb_password=None,
+            qdrant_url="http://localhost:6333",
+        )
         mock_run.return_value = MagicMock(returncode=1, stderr="err", stdout="")
 
-        _services_start(tmp_path)
+        with patch("gobby.cli.daemon._open_services_config_db", return_value=MagicMock()):
+            _services_start(tmp_path)
         mock_run.assert_called_once()
         assert mock_run.call_count == 1
         assert mock_run.call_args is not None
+        assert "qdrant" in mock_run.call_args.args[0]
         assert mock_run.call_args.kwargs["cwd"] == str(tmp_path / "services")
 
     @patch("gobby.cli.daemon.subprocess.run")
@@ -78,13 +101,17 @@ class TestServicesStart:
     def test_compose_timeout(
         self, mock_config: MagicMock, mock_run: MagicMock, tmp_path: Path
     ) -> None:
-        compose = tmp_path / "services" / "neo4j" / "docker-compose.yml"
+        compose = tmp_path / "services" / "docker-compose.yml"
         compose.parent.mkdir(parents=True)
         compose.write_text("version: '3'")
 
-        mock_config.return_value = MagicMock(memory=MagicMock(neo4j_auth=None))
+        mock_config.return_value = _service_config(
+            falkordb_password=None,
+            qdrant_url="http://localhost:6333",
+        )
         mock_run.side_effect = subprocess.TimeoutExpired(cmd="docker", timeout=120)
-        result = _services_start(tmp_path)
+        with patch("gobby.cli.daemon._open_services_config_db", return_value=MagicMock()):
+            result = _services_start(tmp_path)
         assert result is None
         mock_run.assert_called_once()
         assert mock_run.call_count == 1
@@ -92,27 +119,29 @@ class TestServicesStart:
 
     @patch("gobby.config.app.load_config")
     def test_config_error(self, mock_config: MagicMock, tmp_path: Path) -> None:
-        compose = tmp_path / "services" / "neo4j" / "docker-compose.yml"
+        compose = tmp_path / "services" / "docker-compose.yml"
         compose.parent.mkdir(parents=True)
         compose.write_text("version: '3'")
 
         mock_config.side_effect = RuntimeError("config error")
-        # Should still try to run docker compose even on config error
+        # Without resolved service config there are no profiles to start.
         with patch("gobby.cli.daemon.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
-            result = _services_start(tmp_path)
+            with patch("gobby.cli.daemon._open_services_config_db", return_value=MagicMock()):
+                result = _services_start(tmp_path)
             assert result is None
-            mock_run.assert_called_once()
+            assert compose.exists()
+            mock_run.assert_not_called()
 
 
 class TestServicesStop:
     def test_no_compose_file(self, tmp_path: Path) -> None:
         _services_stop(tmp_path)
-        assert not (tmp_path / "services" / "neo4j" / "docker-compose.yml").exists()
+        assert not (tmp_path / "services" / "docker-compose.yml").exists()
 
     @patch("gobby.cli.daemon.subprocess.run")
     def test_stop_success(self, mock_run: MagicMock, tmp_path: Path) -> None:
-        compose = tmp_path / "services" / "neo4j" / "docker-compose.yml"
+        compose = tmp_path / "services" / "docker-compose.yml"
         compose.parent.mkdir(parents=True)
         compose.write_text("version: '3'")
         mock_run.return_value = MagicMock(returncode=0)
@@ -123,7 +152,7 @@ class TestServicesStop:
 
     @patch("gobby.cli.daemon.subprocess.run")
     def test_stop_timeout(self, mock_run: MagicMock, tmp_path: Path) -> None:
-        compose = tmp_path / "services" / "neo4j" / "docker-compose.yml"
+        compose = tmp_path / "services" / "docker-compose.yml"
         compose.parent.mkdir(parents=True)
         compose.write_text("version: '3'")
         mock_run.side_effect = subprocess.TimeoutExpired(cmd="docker", timeout=60)
@@ -133,7 +162,7 @@ class TestServicesStop:
 
     @patch("gobby.cli.daemon.subprocess.run")
     def test_stop_exception(self, mock_run: MagicMock, tmp_path: Path) -> None:
-        compose = tmp_path / "services" / "neo4j" / "docker-compose.yml"
+        compose = tmp_path / "services" / "docker-compose.yml"
         compose.parent.mkdir(parents=True)
         compose.write_text("version: '3'")
         mock_run.side_effect = FileNotFoundError("docker not found")
@@ -146,9 +175,14 @@ class TestServicesStop:
 # stop command
 # ---------------------------------------------------------------------------
 class TestStopCommand:
+    @patch(
+        "gobby.cli.daemon.get_service_status",
+        return_value={"installed": False, "running": False},
+    )
     @patch("gobby.cli.daemon.stop_daemon_util", return_value=True)
-    def test_stop_success(self, _stop: MagicMock, runner: CliRunner) -> None:
+    def test_stop_success(self, _stop: MagicMock, _svc: MagicMock, runner: CliRunner) -> None:
         config = MagicMock()
+        config.daemon_port = 60887
         result = runner.invoke(stop, [], obj={"config": config}, catch_exceptions=False)
         assert result.exit_code == 0
 
@@ -164,11 +198,21 @@ class TestStopCommand:
 
     @patch("gobby.cli.daemon._services_stop")
     @patch("gobby.cli.daemon.get_gobby_home", return_value=Path("/fake"))
+    @patch(
+        "gobby.cli.daemon.get_service_status",
+        return_value={"installed": False, "running": False},
+    )
     @patch("gobby.cli.daemon.stop_daemon_util", return_value=True)
     def test_stop_with_docker(
-        self, _stop: MagicMock, _home: MagicMock, mock_services: MagicMock, runner: CliRunner
+        self,
+        _stop: MagicMock,
+        _svc: MagicMock,
+        _home: MagicMock,
+        mock_services: MagicMock,
+        runner: CliRunner,
     ) -> None:
         config = MagicMock()
+        config.daemon_port = 60887
         result = runner.invoke(stop, ["--docker"], obj={"config": config}, catch_exceptions=False)
         assert result.exit_code == 0
         mock_services.assert_called_once()
@@ -181,20 +225,35 @@ class TestStopCommand:
 # ---------------------------------------------------------------------------
 class TestStatusCommand:
     @patch("gobby.cli.daemon.get_gobby_home")
+    @patch("gobby.cli.daemon.get_service_status", return_value={"running": False})
     @patch("gobby.cli.daemon.format_status_message", return_value="Not running")
     def test_status_no_pid_file(
-        self, _fmt: MagicMock, mock_home: MagicMock, runner: CliRunner, tmp_path: Path
+        self,
+        _fmt: MagicMock,
+        _svc: MagicMock,
+        mock_home: MagicMock,
+        runner: CliRunner,
+        tmp_path: Path,
     ) -> None:
         mock_home.return_value = tmp_path
         config = MagicMock()
         config.logging.client = str(tmp_path / "gobby.log")
         result = runner.invoke(status, [], obj={"config": config}, catch_exceptions=False)
         assert result.exit_code == 0
+        assert "Not running" in result.output
+        _fmt.assert_called_once()
+        _svc.assert_called_once()
 
     @patch("gobby.cli.daemon.get_gobby_home")
+    @patch("gobby.cli.daemon.get_service_status", return_value={"running": False})
     @patch("gobby.cli.daemon.format_status_message", return_value="Not running")
     def test_status_invalid_pid_file(
-        self, _fmt: MagicMock, mock_home: MagicMock, runner: CliRunner, tmp_path: Path
+        self,
+        _fmt: MagicMock,
+        _svc: MagicMock,
+        mock_home: MagicMock,
+        runner: CliRunner,
+        tmp_path: Path,
     ) -> None:
         mock_home.return_value = tmp_path
         (tmp_path / "gobby.pid").write_text("not-a-number")
@@ -202,6 +261,9 @@ class TestStatusCommand:
         config.logging.client = str(tmp_path / "gobby.log")
         result = runner.invoke(status, [], obj={"config": config}, catch_exceptions=False)
         assert result.exit_code == 0
+        assert "Not running" in result.output
+        _fmt.assert_called_once()
+        _svc.assert_called_once()
 
     @patch("gobby.utils.deps.check_config_mismatches", return_value=[])
     @patch(
@@ -266,14 +328,14 @@ class TestStatusCommand:
 # ---------------------------------------------------------------------------
 class TestGetMergeStatus:
     @patch("gobby.storage.merge_resolutions.MergeResolutionManager")
-    @patch("gobby.storage.database.LocalDatabase")
+    @patch("gobby.storage.hub.runtime.open_runtime_hub_database")
     def test_no_active_resolution(self, _db: MagicMock, mock_mgr_cls: MagicMock) -> None:
         mock_mgr_cls.return_value.get_active_resolution.return_value = None
         result = get_merge_status()
         assert result["active"] is False
 
     @patch("gobby.storage.merge_resolutions.MergeResolutionManager")
-    @patch("gobby.storage.database.LocalDatabase")
+    @patch("gobby.storage.hub.runtime.open_runtime_hub_database")
     def test_active_resolution(self, _db: MagicMock, mock_mgr_cls: MagicMock) -> None:
         resolution = MagicMock()
         resolution.id = "res-123"
@@ -292,7 +354,9 @@ class TestGetMergeStatus:
         assert result["pending_conflicts"] == 1
         assert result["total_conflicts"] == 2
 
-    @patch("gobby.storage.database.LocalDatabase", side_effect=RuntimeError("db error"))
+    @patch(
+        "gobby.storage.hub.runtime.open_runtime_hub_database", side_effect=RuntimeError("db error")
+    )
     def test_exception_returns_inactive(self, _db: MagicMock) -> None:
         result = get_merge_status()
         assert result["active"] is False

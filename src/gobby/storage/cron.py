@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from croniter import croniter
 
 from gobby.storage.cron_models import CronJob, CronRun
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.id import generate_prefixed_id
 
 logger = logging.getLogger(__name__)
@@ -132,7 +132,7 @@ def compute_next_run(job: CronJob) -> datetime | None:
 class CronJobStorage:
     """Manager for cron job storage."""
 
-    def __init__(self, db: DatabaseProtocol):
+    def __init__(self, db: HubDatabase):
         self.db = db
 
     def create_job(
@@ -202,8 +202,8 @@ class CronJobStorage:
                 job.timezone,
                 job.action_type,
                 json.dumps(job.action_config),
-                1 if job.enabled else 0,
-                1 if job.is_system else 0,
+                bool(job.enabled),
+                bool(job.is_system),
                 job.next_run_at,
                 job.last_run_at,
                 job.last_status,
@@ -234,7 +234,7 @@ class CronJobStorage:
 
     def mark_as_system_job(self, job_id: str) -> None:
         """Mark an existing cron row as gobby-managed system infrastructure."""
-        self.db.execute("UPDATE cron_jobs SET is_system = 1 WHERE id = ?", (job_id,))
+        self.db.execute("UPDATE cron_jobs SET is_system = TRUE WHERE id = ?", (job_id,))
 
     def list_jobs(
         self,
@@ -252,10 +252,10 @@ class CronJobStorage:
             params.append(project_id)
         if enabled is not None:
             conditions.append("enabled = ?")
-            params.append(1 if enabled else 0)
+            params.append(bool(enabled))
         if is_system is not None:
             conditions.append("is_system = ?")
-            params.append(1 if is_system else 0)
+            params.append(bool(is_system))
 
         where_clause = " AND ".join(conditions) if conditions else "1=1"
         params.append(limit)
@@ -509,7 +509,7 @@ class CronJobStorage:
             return None
 
         new_enabled = not job.enabled
-        updates: dict[str, Any] = {"enabled": 1 if new_enabled else 0}
+        updates: dict[str, Any] = {"enabled": bool(new_enabled)}
 
         # Recompute next_run when enabling
         if new_enabled:
@@ -542,7 +542,7 @@ class CronJobStorage:
         rows = self.db.fetchall(
             """
             SELECT * FROM cron_jobs
-            WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= ?
+            WHERE enabled = TRUE AND next_run_at IS NOT NULL AND next_run_at <= ?
             ORDER BY next_run_at ASC, created_at ASC
             """,
             (now,),
@@ -685,6 +685,26 @@ class CronJobStorage:
                 f"Cron run exceeded running timeout ({timeout_seconds}s)",
                 cutoff,
             ),
+        )
+        return cursor.rowcount
+
+    def fail_running_runs(self, error: str) -> int:
+        """Mark all currently running cron runs failed.
+
+        This is used when a scheduler process starts. In-process cron tasks do not
+        survive daemon restart, so any persisted running row at scheduler startup is
+        orphaned and must not keep consuming concurrency slots.
+        """
+        now = datetime.now(UTC).isoformat()
+        cursor = self.db.execute(
+            """
+            UPDATE cron_runs
+               SET status = 'failed',
+                   completed_at = ?,
+                   error = ?
+             WHERE status = 'running'
+            """,
+            (now, error[:5000]),
         )
         return cursor.rowcount
 

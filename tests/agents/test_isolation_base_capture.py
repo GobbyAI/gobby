@@ -2,13 +2,22 @@
 
 from __future__ import annotations
 
+import logging
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.agents.isolation import CloneIsolationHandler, SpawnConfig, WorktreeIsolationHandler
+from gobby.agents.isolation import (
+    CloneIsolationHandler,
+    IsolationContext,
+    IsolationHandler,
+    SpawnConfig,
+    WorktreeIsolationHandler,
+    repair_isolation_environment,
+)
 from gobby.storage.tasks import LocalTaskManager, TaskArtifactManager
 
 pytestmark = pytest.mark.unit
@@ -22,7 +31,7 @@ async def test_worktree_handler_captures_base(temp_db, sample_project, tmp_path:
     )
     handler, worktree_path = _worktree_handler(temp_db, tmp_path)
 
-    await _prepare_with_git_head(
+    ctx = await _prepare_with_git_head(
         handler,
         _config(task.id, sample_project["id"], tmp_path),
         expected_git_cwd=worktree_path,
@@ -32,6 +41,7 @@ async def test_worktree_handler_captures_base(temp_db, sample_project, tmp_path:
     assert artifacts.worktree_path == worktree_path
     assert artifacts.worktree_id == "wt-123"
     assert artifacts.base_commit_sha == "abc123"
+    assert ctx.extra["base_commit_sha"] == "abc123"
 
 
 @pytest.mark.asyncio
@@ -42,7 +52,7 @@ async def test_clone_handler_captures_base(temp_db, sample_project, tmp_path: Pa
     )
     handler, clone_path = _clone_handler(temp_db, tmp_path)
 
-    await _prepare_with_git_head(
+    ctx = await _prepare_with_git_head(
         handler,
         _config(task.id, sample_project["id"], tmp_path),
         expected_git_cwd=clone_path,
@@ -52,6 +62,7 @@ async def test_clone_handler_captures_base(temp_db, sample_project, tmp_path: Pa
     assert artifacts.clone_path == clone_path
     assert artifacts.clone_id == "clone-123"
     assert artifacts.base_commit_sha == "abc123"
+    assert ctx.extra["base_commit_sha"] == "abc123"
 
 
 @pytest.mark.asyncio
@@ -84,21 +95,51 @@ async def test_base_captured_before_first_agent_run(
     assert artifacts.worktree_id == "wt-123"
 
 
+@pytest.mark.asyncio
+async def test_repair_isolation_environment_logs_git_hygiene_failures(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Git hygiene failures are logged and do not block isolation repair."""
+    with (
+        patch("gobby.agents.isolation._copy_cli_hooks", new=AsyncMock()),
+        patch("gobby.agents.isolation._patch_mcp_config_for_isolation", new=AsyncMock()),
+        patch("gobby.utils.project_context.ensure_project_json_for_isolation"),
+        patch(
+            "gobby.agents.isolation.preseed_isolated_python_environment",
+            new=AsyncMock(return_value=SimpleNamespace(attempted=False, success=True)),
+        ),
+        patch(
+            "gobby.agents.isolation.apply_isolation_git_hygiene",
+            side_effect=RuntimeError("git hygiene failed"),
+        ),
+        caplog.at_level(logging.WARNING, logger="gobby.agents.isolation"),
+    ):
+        result = await repair_isolation_environment(
+            main_repo_path="/tmp/main",
+            isolated_path="/tmp/isolated",
+            provider="codex",
+        )
+
+    assert result is None
+    assert "Failed to apply isolation git hygiene for /tmp/isolated" in caplog.text
+
+
 async def _prepare_with_git_head(
-    handler,
+    handler: IsolationHandler,
     config: SpawnConfig,
     *,
     expected_git_cwd: str,
-) -> None:
+) -> IsolationContext:
     with (
         patch("gobby.agents.isolation._copy_cli_hooks", new=AsyncMock()),
         patch("gobby.agents.isolation._patch_mcp_config_for_isolation", new=AsyncMock()),
         patch("gobby.agents.isolation.subprocess.run", return_value=_git_head("abc123")) as run,
     ):
-        await handler.prepare_environment(config)
+        ctx = await handler.prepare_environment(config)
 
     run.assert_called_once()
     assert run.call_args.args[0] == ["git", "-C", expected_git_cwd, "rev-parse", "HEAD"]
+    return ctx
 
 
 def _worktree_handler(temp_db, tmp_path: Path) -> tuple[WorktreeIsolationHandler, str]:

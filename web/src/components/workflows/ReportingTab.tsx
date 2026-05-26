@@ -2,7 +2,7 @@ import { useState, useMemo, useCallback } from "react";
 import { usePipelineExecutions } from "../../hooks/usePipelineExecutions";
 import type { PipelineExecutionRecord } from "../../hooks/usePipelineExecutions";
 import { useAgentRuns } from "../../hooks/useAgentRuns";
-import type { AgentRunRecord, AgentRunDetail } from "../../hooks/useAgentRuns";
+import type { AgentRunRecord } from "../../hooks/useAgentRuns";
 import {
   StepDisplay,
   ChevronIcon,
@@ -93,9 +93,6 @@ export function ReportingTab({
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [agentDetails, setAgentDetails] = useState<
-    Record<string, AgentRunDetail>
-  >({});
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   const {
@@ -109,7 +106,6 @@ export function ReportingTab({
     runs: agentRuns,
     isLoading: agentsLoading,
     cancelRun,
-    fetchRunDetail,
   } = useAgentRuns(projectId);
 
   // Compute counts for stat chips
@@ -180,25 +176,17 @@ export function ReportingTab({
     return entries.sort((a, b) => b.created_at.localeCompare(a.created_at));
   }, [pipelineExecutions, agentRuns, typeFilter, statusFilter, searchText]);
 
-  const toggleExpanded = useCallback(
-    (id: string, kind: "pipeline" | "agent") => {
-      setExpanded((prev) => {
-        const next = new Set(prev);
-        if (next.has(id)) {
-          next.delete(id);
-        } else {
-          next.add(id);
-        }
-        return next;
-      });
-      if (kind === "agent" && !agentDetails[id]) {
-        fetchRunDetail(id).then((detail) => {
-          if (detail) setAgentDetails((prev) => ({ ...prev, [id]: detail }));
-        });
+  const toggleExpanded = useCallback((id: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
       }
-    },
-    [agentDetails, fetchRunDetail],
-  );
+      return next;
+    });
+  }, []);
 
   const handleApprove = async (token: string) => {
     setActionLoading(token);
@@ -309,11 +297,11 @@ export function ReportingTab({
                 className="reporting-row"
                 role="button"
                 tabIndex={0}
-                onClick={() => toggleExpanded(entry.id, entry.kind)}
+                onClick={() => toggleExpanded(entry.id)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" || e.key === " ") {
                     e.preventDefault();
-                    toggleExpanded(entry.id, entry.kind);
+                    toggleExpanded(entry.id);
                   }
                 }}
               >
@@ -383,7 +371,6 @@ export function ReportingTab({
                 entry.agent && (
                   <AgentDrillDown
                     run={entry.agent}
-                    detail={agentDetails[entry.id]}
                     actionLoading={actionLoading}
                     onCancel={handleCancel}
                   />
@@ -552,12 +539,10 @@ function PipelineDrillDown({
 
 function AgentDrillDown({
   run,
-  detail,
   actionLoading,
   onCancel,
 }: {
   run: AgentRunRecord;
-  detail?: AgentRunDetail;
   actionLoading: string | null;
   onCancel: (runId: string) => Promise<void>;
 }) {
@@ -707,27 +692,6 @@ function AgentDrillDown({
       {(run.status === "error" || run.status === "timeout") && run.error && (
         <div className={PIPELINE_ERROR_CLS}>
           <span>Error: {run.error}</span>
-        </div>
-      )}
-
-      {/* Commands */}
-      {detail?.commands && detail.commands.length > 0 && (
-        <div className="reporting-section">
-          <span className="reporting-section-label">
-            Commands ({detail.commands.length})
-          </span>
-          <div className="reporting-commands-list">
-            {detail.commands.map((cmd) => (
-              <div key={cmd.id} className="reporting-command-entry">
-                <span className="reporting-command-type">
-                  {cmd.command_text}
-                </span>
-                <span className="reporting-command-time">
-                  {formatTime(cmd.created_at)}
-                </span>
-              </div>
-            ))}
-          </div>
         </div>
       )}
 

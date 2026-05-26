@@ -23,13 +23,12 @@ Assign an agent for every automated leaf in these categories:
 - `code`
 - `config`
 - `docs`
-- `planning`
 - `refactor`
-- `research`
 - `test`
 
-Reject `category: manual` leaves. Manual is valid for direct task creation, but
-automated expansion manifests must compile to deterministic leaf work.
+Reject `category: manual`, `category: planning`, and `category: research`
+leaves. Those categories are valid for direct task creation, but automated
+expansion manifests must compile to deterministic development-forward leaf work.
 
 ## Label Vocabulary
 
@@ -46,7 +45,7 @@ ESLint.
 ### Backend indicators
 
 Prefer `backend-developer` for APIs, CLIs, storage, migrations, schedulers,
-workers, servers, daemon code, Python modules, pytest, mypy, Ruff, SQL, sqlite3,
+workers, servers, daemon code, Python modules, pytest, mypy, Ruff, SQL,
 psql, MCP tools, workflow engines, and infrastructure tests.
 
 ### Fullstack indicators

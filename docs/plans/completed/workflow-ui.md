@@ -2,7 +2,7 @@
 
 ## Context
 
-Workflow definitions currently live as YAML files on disk, loaded by `WorkflowLoader` with filesystem scanning. This works for power users but prevents building a visual editor. This plan moves definitions into SQLite as the source of truth, adds REST API routes for CRUD, builds a list page UI, and (in a future epic) a visual drag-and-drop builder using React Flow.
+Workflow definitions currently live as YAML files on disk, loaded by `WorkflowLoader` with filesystem scanning. This works for power users but prevents building a visual editor. This plan moves definitions into PostgreSQL as the source of truth, adds REST API routes for CRUD, builds a list page UI, and (in a future epic) a visual drag-and-drop builder using React Flow.
 
 **User decisions:**
 - Single `workflow_definitions` table for both workflows and pipelines (type discriminator)
@@ -37,7 +37,7 @@ Workflow definitions currently live as YAML files on disk, loaded by `WorkflowLo
 
 ## Phase 1: Database Storage Layer
 
-**Goal**: Workflow definitions stored in SQLite with CRUD operations, bundled YAMLs imported.
+**Goal**: Workflow definitions stored in PostgreSQL with CRUD operations, bundled YAMLs imported.
 
 **Tasks:**
 - [ ] Add migration 102 — `workflow_definitions` table + bundled YAML import (code)
@@ -113,7 +113,7 @@ class WorkflowDefinitionRow:
     updated_at: str = ""
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row) -> "WorkflowDefinitionRow":
+    def from_row(cls, row: psycopg.Row) -> "WorkflowDefinitionRow":
         """Convert DB row to dataclass, with JSON parsing for sources/tags."""
         ...
 
@@ -122,7 +122,7 @@ class WorkflowDefinitionRow:
         ...
 
 class LocalWorkflowDefinitionManager:
-    def __init__(self, db: DatabaseProtocol):
+    def __init__(self, db: HubDatabase):
         self.db = db
 
     def create(name, workflow_type, definition_json, ...) -> WorkflowDefinitionRow
@@ -140,7 +140,7 @@ class LocalWorkflowDefinitionManager:
 
 **File:** `src/gobby/workflows/loader.py`
 
-- Add optional `db: DatabaseProtocol | None = None` parameter to `__init__`
+- Add optional `db: HubDatabase | None = None` parameter to `__init__`
 - In `load_workflow()` (line ~110): before filesystem search, if `self.db` is set, query DB via `LocalWorkflowDefinitionManager.get_by_name(name, project_path)`. If found, deserialize `definition_json` and return as `WorkflowDefinition`/`PipelineDefinition`. Cache with `updated_at` as staleness key.
 - In `discover_workflows()` (line ~700): merge DB results with filesystem. DB entries shadow filesystem entries with same name.
 - **File:** `src/gobby/runner.py` (line 305): pass `db=self.database` when constructing `WorkflowLoader()`

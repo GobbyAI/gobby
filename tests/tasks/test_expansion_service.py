@@ -116,7 +116,8 @@ async def test_compile_run_does_not_short_circuit_from_legacy_skip_labels(
 
     assert raw_spec.await_count == 1
     assert refreshed.status == "completed"
-    assert len(refreshed.created_task_ids) == 3
+    assert len(refreshed.created_task_ids) == 1
+    assert refreshed.checkpoints.get("dev_only_skip") is not True
 
 
 def test_apply_run_persists_agent_selection_fields_to_created_leaf(

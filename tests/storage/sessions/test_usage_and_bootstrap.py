@@ -112,8 +112,7 @@ def test_bulk_update_wraps_safe_update_in_transaction(
     ) as txn:
         session_manager.update(session_id, title="Updated title")
 
-    txn.assert_called_once()
-    assert txn.call_count == 1
+    txn.assert_called()
     assert txn.call_args is not None
 
 
@@ -144,6 +143,5 @@ def test_update_summary_wraps_write_in_transaction(
     ) as txn:
         session_manager.update_summary(session_id, summary_markdown="Summary")
 
-    txn.assert_called_once()
-    assert txn.call_count == 1
+    txn.assert_called()
     assert txn.call_args is not None

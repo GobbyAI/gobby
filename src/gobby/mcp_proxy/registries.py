@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from gobby.memory.manager import MemoryManager
     from gobby.storage.clones import LocalCloneManager
     from gobby.storage.config_store import ConfigStore
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.inter_session_messages import InterSessionMessageManager
     from gobby.storage.merge_resolutions import MergeResolutionManager
     from gobby.storage.pipelines import LocalPipelineExecutionManager
@@ -43,7 +43,7 @@ def setup_internal_registries(
     _session_manager: SessionManager | None = None,
     memory_manager: MemoryManager | None = None,
     task_manager: LocalTaskManager | None = None,
-    db: DatabaseProtocol | None = None,
+    db: HubDatabase | None = None,
     sync_manager: TaskSyncManager | None = None,
     task_validator: TaskValidator | None = None,
     session_manager: SessionManager | None = None,
@@ -84,7 +84,7 @@ def setup_internal_registries(
         _session_manager: Session manager (reserved for future use)
         memory_manager: Memory manager for memory operations
         task_manager: Task storage manager
-        db: Database connection for registries that only need storage (skills)
+        db: Active hub database connection for registries that need storage
         sync_manager: Task sync manager for git sync
         task_validator: Task validator for validation
         session_manager: Session manager for session CRUD
@@ -105,7 +105,7 @@ def setup_internal_registries(
         hook_manager_resolver: Lazy callable returning HookManager (or None).
             Solves timing: registries init before HookManager is created in HTTP lifespan.
         wake_dispatcher: Dispatcher used to wake live sessions after mailbox messages.
-        run_db: Optional bounded executor bridge for SQLite storage calls.
+        run_db: Optional bounded executor bridge for blocking database calls.
 
     Returns:
         InternalRegistryManager containing all registries
@@ -275,15 +275,11 @@ def setup_internal_registries(
             and db is not None
         ):
             from gobby.mcp_proxy.tools.agent_messaging import add_messaging_tools
-            from gobby.storage.agent_commands import AgentCommandManager
-            from gobby.workflows.state_manager import SessionVariableManager
 
             add_messaging_tools(
                 registry=agents_registry,
                 message_manager=inter_session_message_manager,
                 session_manager=session_manager,
-                command_manager=AgentCommandManager(db),
-                session_var_manager=SessionVariableManager(db),
                 db=db,
                 wake_dispatcher=wake_dispatcher,
             )
@@ -343,14 +339,11 @@ def setup_internal_registries(
         manager.add_registry(merge_registry)
         logger.debug("Merge registry initialized")
 
-    # Initialize hub registry (cross-project queries) if config has database_path
-    if _config is not None and hasattr(_config, "database_path"):
-        from pathlib import Path
-
+    # Initialize hub registry (cross-project queries) from the active runtime database.
+    if db is not None:
         from gobby.mcp_proxy.tools.hub import create_hub_registry
 
-        hub_db_path = Path(_config.database_path).expanduser()
-        hub_registry = create_hub_registry(hub_db_path=hub_db_path, db=db)
+        hub_registry = create_hub_registry(db=db)
         manager.add_registry(hub_registry)
         logger.debug("Hub registry initialized")
 

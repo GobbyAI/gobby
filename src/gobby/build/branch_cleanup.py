@@ -7,14 +7,14 @@ import subprocess  # nosec B404 # git subprocesses use fixed argument vectors.
 from pathlib import Path
 
 from gobby.storage.clones import LocalCloneManager
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.worktrees import LocalWorktreeManager
 
 
 def delete_orphan_build_branches(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str,
     tasks: list[Task],
 ) -> tuple[int, list[str]]:
@@ -44,7 +44,7 @@ def delete_orphan_build_branches(
 
 
 def build_branch_candidates(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str,
     tasks: list[Task],
     *,
@@ -123,7 +123,7 @@ def current_branch(repo_path: Path) -> str | None:
     return branch or None
 
 
-def project_path(db: DatabaseProtocol, project_id: str) -> Path:
+def project_path(db: HubDatabase, project_id: str) -> Path:
     project = LocalProjectManager(db).get(project_id)
     if project is not None and project.repo_path:
         return Path(project.repo_path)

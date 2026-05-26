@@ -7,7 +7,7 @@ This module provides:
 
 import uuid
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._models import TaskNotFoundError
 
 
@@ -33,7 +33,7 @@ def generate_task_id(project_id: str, salt: str = "") -> str:
     return str(uuid.uuid4())
 
 
-def resolve_task_reference(db: DatabaseProtocol, ref: str, project_id: str) -> str:
+def resolve_task_reference(db: HubDatabase, ref: str, project_id: str) -> str:
     """Resolve a task reference to its UUID.
 
     Accepts multiple reference formats:

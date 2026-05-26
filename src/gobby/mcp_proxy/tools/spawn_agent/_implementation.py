@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 from gobby.agents.isolation import (
     SpawnConfig,
-    ensure_isolation_code_index,
     get_isolation_handler,
     provider_mcp_config_error,
     repair_isolation_environment,
@@ -30,7 +29,15 @@ from gobby.utils.project_context import get_project_context
 from gobby.workflows.definitions import AgentDefinitionBody
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 
+from ._code_index import (
+    append_code_index_warning,
+    prepare_spawn_code_index,
+    without_code_index_skill,
+)
 from ._health import TMUX_HEALTH_CHECK_DELAY, _check_tmux_session_alive, _health_check_tasks
+from ._idempotency import active_task_spawn_response, non_actionable_task_spawn_response
+from ._provider_resolution import defaulted_provider, provider_prefixed_model
+from ._worktree_reuse import prepare_reused_worktree
 
 if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
@@ -43,6 +50,65 @@ def _normalize_string_list(value: Any) -> list[str]:
     if not isinstance(value, Iterable) or isinstance(value, str | bytes | dict):
         return []
     return [item for item in value if isinstance(item, str)]
+
+
+def _normalize_optional_model(value: str | None) -> str | None:
+    if value is None:
+        return None
+    value = value.strip()
+    return value or None
+
+
+def _run_string_attr(run: Any, name: str) -> str | None:
+    value = getattr(run, name, None)
+    return value if isinstance(value, str) and value else None
+
+
+def _is_parent_merge_orchestrator_run(
+    run: Any,
+    *,
+    requested_agent_name: str | None,
+    parent_session_id: str,
+) -> bool:
+    return (
+        requested_agent_name == "merge-worker"
+        and _run_string_attr(run, "agent_name") == "merge-orchestrator"
+        and _run_string_attr(run, "child_session_id") == parent_session_id
+    )
+
+
+def _active_task_spawn_blocker(
+    run_storage: Any,
+    task_id: str,
+    *,
+    requested_agent_name: str | None,
+    parent_session_id: str,
+) -> Any | None:
+    """Return an active run that should block spawning another agent for a task."""
+    if not run_storage.has_active_run_for_task(task_id):
+        return None
+
+    active_runs: list[Any] = []
+    try:
+        maybe_runs = run_storage.list_active(task_ids=[task_id], limit=100)
+    except (AttributeError, TypeError):
+        maybe_runs = None
+    if isinstance(maybe_runs, list | tuple):
+        active_runs = list(maybe_runs)
+
+    if not active_runs:
+        active_run = run_storage.get_active_run_for_task(task_id)
+        active_runs = [active_run] if active_run is not None else []
+
+    for active_run in active_runs:
+        if _is_parent_merge_orchestrator_run(
+            active_run,
+            requested_agent_name=requested_agent_name,
+            parent_session_id=parent_session_id,
+        ):
+            continue
+        return active_run
+    return None
 
 
 def _transition_condition_met(condition: str | None, variables: dict[str, Any]) -> bool:
@@ -196,7 +262,7 @@ async def spawn_agent_impl(
     project_path: str | None = None,
     initial_variables: dict[str, Any] | None = None,
     session_manager: Any | None = None,  # SessionManager
-    db: Any | None = None,  # DatabaseProtocol
+    db: Any | None = None,  # HubDatabase
     daemon_config: Any | None = None,  # DaemonConfig
     code_index: Any | None = None,  # CodeIndexContext
 ) -> dict[str, Any]:
@@ -229,7 +295,7 @@ async def spawn_agent_impl(
         project_path: Project path override
         initial_variables: Pre-built initial variables from factory (merged with impl's own)
         session_manager: SessionManager for mode=self
-        db: DatabaseProtocol for mode=self
+        db: HubDatabase for mode=self
 
     Returns:
         Dict with success status, run_id, child_session_id, isolation metadata
@@ -260,17 +326,34 @@ async def spawn_agent_impl(
         _raw_isolation if _raw_isolation in ("none", "worktree", "clone") else "none",
     )
 
+    provider_was_overridden = provider is not None
+    model_from_prefix = provider_prefixed_model(_normalize_optional_model(model))
     _raw_provider: str | None = provider
+    if _raw_provider is None and model_from_prefix is not None:
+        _raw_provider = model_from_prefix[0]
     if _raw_provider is None and agent_body:
         _raw_provider = agent_body.provider
-    if _raw_provider in (None, "inherit"):
-        _raw_provider = "claude"
-    assert _raw_provider is not None  # guaranteed by fallback above
-    effective_provider: str = _raw_provider
+    effective_provider = defaulted_provider(_raw_provider)
 
-    effective_model = model
-    if effective_model is None and agent_body:
-        effective_model = agent_body.model
+    if provider_was_overridden and model_from_prefix and model_from_prefix[0] != effective_provider:
+        return {
+            "success": False,
+            "error": (
+                "model provider prefix "
+                f"'{model_from_prefix[0]}' does not match explicit provider "
+                f"'{effective_provider}'"
+            ),
+        }
+
+    provider_differs_from_agent = False
+    if provider_was_overridden and agent_body:
+        provider_differs_from_agent = effective_provider != defaulted_provider(agent_body.provider)
+
+    effective_model = (
+        model_from_prefix[1] if model_from_prefix else _normalize_optional_model(model)
+    )
+    if effective_model is None and agent_body and not provider_differs_from_agent:
+        effective_model = _normalize_optional_model(agent_body.model)
     from gobby.llm.local_detection import is_local_agent_definition
 
     is_local_run = is_local_agent_definition(effective_provider, effective_model)
@@ -312,7 +395,7 @@ async def spawn_agent_impl(
 
     # Resolve model: local from daemon config
     if effective_model == "local":
-        from gobby.config.app import LocalConfig
+        from gobby.config.local import LocalConfig
 
         local_cfg: LocalConfig | None = (
             getattr(daemon_config, "local", None) if daemon_config else None
@@ -362,6 +445,7 @@ async def spawn_agent_impl(
 
     # Daemon-owned agent sandboxes inherit from config-store defaults only.
     effective_sandbox_config: SandboxConfig = agent_sandbox_config(daemon_config)
+    requested_agent_name = agent_lookup_name or (agent_body.name if agent_body else None)
 
     # 2. Resolve project context
     ctx = get_project_context(Path(project_path) if project_path else None)
@@ -392,33 +476,53 @@ async def spawn_agent_impl(
     task_additional_skills: list[str] | None = None
     claimed_session_id: str | None = None
     task_owned_by_child = False
+    resolved_task: Any | None = None
 
     if task_id and task_manager:
         try:
             resolved_task_id = resolve_task_id_for_mcp(task_manager, task_id, project_id)
-            task = task_manager.get_task(resolved_task_id)
-            if task:
-                task_title = task.title
-                task_seq_num = task.seq_num
-                task_category = getattr(task, "category", None)
-                if task.additional_skills is not None:
-                    task_additional_skills = _normalize_string_list(task.additional_skills)
-                claimed_session_id = get_claimed_session_id(task)
+            resolved_task = task_manager.get_task(resolved_task_id)
+            if resolved_task:
+                task_title = resolved_task.title
+                task_seq_num = resolved_task.seq_num
+                task_category = getattr(resolved_task, "category", None)
+                if resolved_task.additional_skills is not None:
+                    task_additional_skills = _normalize_string_list(resolved_task.additional_skills)
+                claimed_session_id = get_claimed_session_id(resolved_task)
         except Exception as e:
             logger.warning(f"Failed to resolve task_id {task_id}: {e}")
 
-    # 4b. Dedup check — idempotent: return success if agent already running
+    # 4b. Dedup check: return success if an agent already owns the task.
     if resolved_task_id and runner.run_storage:
-        if runner.run_storage.has_active_run_for_task(resolved_task_id):
-            active_run = runner.run_storage.get_active_run_for_task(resolved_task_id)
-            return {
-                "success": True,
-                "skipped": True,
-                "run_id": active_run.id if active_run else None,
-                "message": f"Agent already running for task {task_id}",
-            }
+        active_run = _active_task_spawn_blocker(
+            runner.run_storage,
+            resolved_task_id,
+            requested_agent_name=requested_agent_name,
+            parent_session_id=parent_session_id,
+        )
+        if active_run is not None:
+            return active_task_spawn_response(active_run, task_id)
 
-    # 5. Handle worktree_id/clone_id reuse: skip isolation creation when existing resource provided
+    if resolved_task_id and resolved_task is not None and not is_task_actionable(resolved_task):
+        return non_actionable_task_spawn_response(
+            resolved_task, task_ref=task_id, resolved_task_id=resolved_task_id
+        )
+    # 5. Build spawn config and handle worktree_id/clone_id reuse.
+    spawn_config = SpawnConfig(
+        prompt=prompt,
+        task_id=resolved_task_id,
+        task_title=task_title,
+        task_seq_num=task_seq_num,
+        branch_name=branch_name,
+        branch_prefix=None,
+        base_branch=effective_base_branch,
+        project_id=project_id,
+        project_path=resolved_project_path,
+        provider=effective_provider,
+        parent_session_id=parent_session_id,
+    )
+
+    # Explicit reuse skips isolation creation when the existing resource can be prepared.
     isolation_ctx = None
     if worktree_id and worktree_storage:
         existing_worktree = worktree_storage.get(worktree_id)
@@ -433,26 +537,22 @@ async def spawn_agent_impl(
                 "error": f"Worktree directory missing: {existing_worktree.worktree_path} (stale record cleaned up)",
             }
 
+        if git_manager is None:
+            return {"success": False, "error": "git_manager is required to reuse a worktree"}
+
         try:
-            await repair_isolation_environment(
+            isolation_ctx, handler = await prepare_reused_worktree(
+                existing_worktree=existing_worktree,
+                git_manager=git_manager,
+                worktree_storage=worktree_storage,
+                clone_manager=clone_manager,
+                clone_storage=clone_storage,
+                spawn_config=spawn_config,
                 main_repo_path=resolved_project_path,
-                isolated_path=existing_worktree.worktree_path,
-                provider=effective_provider,
             )
+            effective_isolation = "worktree"
         except Exception as e:
-            return {"success": False, "error": f"Failed to repair worktree isolation: {e}"}
-
-        from gobby.agents.isolation import IsolationContext
-
-        isolation_ctx = IsolationContext(
-            cwd=existing_worktree.worktree_path,
-            branch_name=existing_worktree.branch_name,
-            worktree_id=existing_worktree.id,
-            isolation_type="worktree",
-            extra={"main_repo_path": resolved_project_path, "reused_worktree": True},
-        )
-        effective_isolation = "worktree"
-        handler = get_isolation_handler("none")
+            return {"success": False, "error": f"Failed to prepare reused worktree: {e}"}
     elif clone_id and clone_storage:
         existing_clone = clone_storage.get(clone_id)
         if not existing_clone:
@@ -496,21 +596,6 @@ async def spawn_agent_impl(
             clone_storage=clone_storage,
         )
 
-    # 6. Build spawn config
-    spawn_config = SpawnConfig(
-        prompt=prompt,
-        task_id=resolved_task_id,
-        task_title=task_title,
-        task_seq_num=task_seq_num,
-        branch_name=branch_name,
-        branch_prefix=None,
-        base_branch=effective_base_branch,
-        project_id=project_id,
-        project_path=resolved_project_path,
-        provider=effective_provider,
-        parent_session_id=parent_session_id,
-    )
-
     # 7. Prepare environment (worktree/clone creation) — skipped if clone_id was reused
     if isolation_ctx is None:
         try:
@@ -527,30 +612,23 @@ async def spawn_agent_impl(
         config_error = provider_mcp_config_error(isolation_ctx.cwd, effective_provider)
         if config_error is not None:
             return {"success": False, "error": config_error}
-        if task_category != "docs":
-            try:
-                await ensure_isolation_code_index(isolation_ctx.cwd)
-            except Exception as e:
-                reason = str(e)
-                logger.warning(
-                    "Code index preflight failed for isolated agent cwd=%s: %s",
-                    isolation_ctx.cwd,
-                    reason,
-                )
-                # Keep code_index preflight failures structured so callers can distinguish
-                # isolation failures from normal spawn failures without parsing text.
-                return {
-                    "success": False,
-                    "error": "code_index_preflight_failed",
-                    "message": reason,
-                    "details": {
-                        "preflight": "code_index",
-                        "cwd": isolation_ctx.cwd,
-                    },
-                }
+    code_index_preflight = await prepare_spawn_code_index(
+        cwd=isolation_ctx.cwd,
+        daemon_config=daemon_config,
+        isolation=effective_isolation,
+        agent_name=requested_agent_name,
+        initial_variables=initial_variables,
+        task_category=task_category,
+    )
+    if code_index_preflight.error is not None:
+        return {"success": False, "error": code_index_preflight.error}
+    code_index_preflight_warning = code_index_preflight.warning
+    code_index_preflight_env = code_index_preflight.env or {}
 
     # 8. Build enhanced prompt with isolation context
     enhanced_prompt = handler.build_context_prompt(prompt, isolation_ctx)
+    if code_index_preflight_warning is not None:
+        enhanced_prompt = append_code_index_warning(enhanced_prompt, code_index_preflight_warning)
 
     # 9. Generate session and run IDs
     session_id = str(uuid.uuid4())
@@ -575,9 +653,13 @@ async def spawn_agent_impl(
         )
     if enhanced_prompt:
         effective_initial_variables["prompt"] = enhanced_prompt
+    if code_index_preflight_warning is not None:
+        effective_initial_variables["code_index_preflight_warning"] = code_index_preflight_warning
     additional_skills = _normalize_string_list(effective_initial_variables.get("additional_skills"))
     if task_additional_skills is not None:
         additional_skills = task_additional_skills
+    if code_index_preflight_warning is not None:
+        additional_skills = without_code_index_skill(additional_skills)
     effective_initial_variables["additional_skills"] = additional_skills
 
     # 10b. Inject isolation context so workflow variables can reference them
@@ -587,9 +669,12 @@ async def spawn_agent_impl(
         effective_initial_variables["worktree_id"] = isolation_ctx.worktree_id
     if isolation_ctx.branch_name:
         effective_initial_variables["branch_name"] = isolation_ctx.branch_name
+    base_commit_sha = isolation_ctx.extra.get("base_commit_sha")
+    if isinstance(base_commit_sha, str) and base_commit_sha:
+        effective_initial_variables["base_commit_sha"] = base_commit_sha
 
     # 11. Build a meaningful session title from agent name and/or task
-    agent_display_name = agent_lookup_name or (agent_body.name if agent_body else None)
+    agent_display_name = requested_agent_name
     if agent_display_name and task_title:
         spawn_title = f"{agent_display_name}: {task_title}"
     elif agent_display_name:
@@ -632,6 +717,7 @@ async def spawn_agent_impl(
         reasoning_status=reasoning.status,
         reasoning_message=reasoning.message,
         sandbox_config=effective_sandbox_config,
+        extra_env=code_index_preflight_env or None,
         timeout_seconds=effective_timeout,
         daemon_config=daemon_config,
     )
@@ -855,7 +941,7 @@ async def spawn_agent_impl(
             "reasoning": reasoning.to_dict(),
         }
 
-    return {
+    response = {
         "success": True,
         "run_id": run_id,
         "child_session_id": spawn_result.child_session_id,
@@ -865,6 +951,8 @@ async def spawn_agent_impl(
         "worktree_id": isolation_ctx.worktree_id,
         "worktree_path": isolation_ctx.cwd if effective_isolation == "worktree" else None,
         "clone_id": isolation_ctx.clone_id,
+        "clone_path": isolation_ctx.cwd if effective_isolation == "clone" else None,
+        "base_commit_sha": base_commit_sha if isinstance(base_commit_sha, str) else None,
         "pid": spawn_result.pid,
         "tmux_session_name": tmux_session_name,
         "tmux_socket_name": tmux_socket_name,
@@ -872,3 +960,6 @@ async def spawn_agent_impl(
         "message": spawn_result.message,
         "reasoning": reasoning.to_dict(),
     }
+    if code_index_preflight_warning is not None:
+        response["warnings"] = [code_index_preflight_warning]
+    return response

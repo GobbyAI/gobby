@@ -13,21 +13,50 @@ via the downstream proxy pattern (call_tool, list_tools, get_tool_schema).
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from datetime import UTC
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from gobby.agents.kill import kill_agent as _kill_agent_process
 from gobby.agents.run_completion import complete_and_notify_agent_run
 from gobby.agents.runtime_cleanup import cleanup_agent_runtime_state
+from gobby.mcp_proxy.tools.agent_cancellation import (
+    stop_agent_run,
+    terminalize_killed_agent_run,
+)
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.agents import AgentRunStatus, LocalAgentRunManager
 
 if TYPE_CHECKING:
     from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
     from gobby.agents.runner import AgentRunner
 
 logger = logging.getLogger(__name__)
+
+_TERMINAL_AGENT_STATUSES = {"success", "error", "timeout", "cancelled"}
+_WAIT_FOR_AGENT_MAX_TIMEOUT_SECONDS = 1800.0
+_WAIT_FOR_AGENT_TRANSPORT_BOUNDARY_SECONDS = 120.0
+_WAIT_FOR_AGENT_TRANSPORT_HEADROOM_SECONDS = 5.0
+
+
+def _agent_result_payload(run: Any) -> dict[str, Any]:
+    return {
+        "run_id": run.id,
+        "status": run.status,
+        "result": run.result,
+        "error": run.error,
+        "provider": run.provider,
+        "model": run.model,
+        "prompt": run.prompt,
+        "tool_calls_count": run.tool_calls_count,
+        "turns_used": run.turns_used,
+        "started_at": run.started_at,
+        "completed_at": run.completed_at,
+        "child_session_id": run.child_session_id,
+        "terminal_reason": run.terminal_reason,
+    }
 
 
 def _fire_synthetic_stop(
@@ -257,22 +286,61 @@ def create_agents_registry(
         if not run:
             return {"success": False, "error": f"Agent run {run_id} not found"}
 
-        return {
-            "success": True,
-            "run_id": run.id,
-            "status": run.status,
-            "result": run.result,
-            "error": run.error,
-            "provider": run.provider,
-            "model": run.model,
-            "prompt": run.prompt,
-            "tool_calls_count": run.tool_calls_count,
-            "turns_used": run.turns_used,
-            "started_at": run.started_at,
-            "completed_at": run.completed_at,
-            "child_session_id": run.child_session_id,
-            "terminal_reason": run.terminal_reason,
-        }
+        return {"success": True, **_agent_result_payload(run)}
+
+    @registry.tool(
+        name="wait_for_agent",
+        description=(
+            "Block until an agent run reaches a terminal status or the timeout expires. "
+            "Use this instead of shell sleeps, tmux polling, or provider Monitor waits."
+        ),
+    )
+    async def wait_for_agent(
+        run_id: str,
+        timeout_seconds: float = 300.0,
+        poll_interval_seconds: float = 2.0,
+    ) -> dict[str, Any]:
+        """
+        Wait for an agent run to finish without forcing callers to spin in the terminal.
+
+        Args:
+            run_id: Agent run ID to wait for.
+            timeout_seconds: Maximum time to wait, capped at 30 minutes.
+            poll_interval_seconds: Delay between status checks, capped to a sane range.
+
+        Returns:
+            Dict with completed=true and the terminal run payload, or completed=false
+            with the latest run payload when the timeout expires.
+        """
+        requested_timeout = max(
+            0.0, min(float(timeout_seconds), _WAIT_FOR_AGENT_MAX_TIMEOUT_SECONDS)
+        )
+        timeout = requested_timeout
+        if timeout >= _WAIT_FOR_AGENT_TRANSPORT_BOUNDARY_SECONDS:
+            timeout = max(0.0, timeout - _WAIT_FOR_AGENT_TRANSPORT_HEADROOM_SECONDS)
+        interval = max(0.1, min(float(poll_interval_seconds), 30.0))
+        deadline = time.monotonic() + timeout
+
+        while True:
+            run = runner.get_run(run_id)
+            if not run:
+                return {"success": False, "error": f"Agent run {run_id} not found"}
+
+            payload = _agent_result_payload(run)
+            if run.status in _TERMINAL_AGENT_STATUSES:
+                return {"success": True, "completed": True, **payload}
+
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return {
+                    "success": True,
+                    "completed": False,
+                    "timeout_seconds": timeout,
+                    "requested_timeout_seconds": requested_timeout,
+                    **payload,
+                }
+
+            await asyncio.sleep(min(interval, remaining))
 
     @registry.tool(
         name="list_agent_runs",
@@ -344,65 +412,74 @@ def create_agents_registry(
         Returns:
             Dict with success status.
         """
-        run = runner.get_run(run_id)
-        if not run:
-            return {"success": False, "error": f"Agent run {run_id} not found"}
-        if run.status not in ("pending", "running"):
-            return {"success": False, "error": f"Cannot stop agent in status: {run.status}"}
-
-        kill_db = db or agent_run_manager.db
-        result = await _kill_agent_process(
-            run,
-            kill_db,
-            signal_name="TERM",
-            close_terminal=True,
-        )
-        if not result.get("success") and result.get("error") != "No target PID found":
-            return result
-
-        transitioned = False
-        if lifecycle_monitor is not None:
-            transitioned = await lifecycle_monitor.terminalize_cancelled_run(
-                run_id,
-                terminal_reason="user_cancelled",
-            )
-        else:
-            transitioned = runner.cancel_run(run_id)
-            if transitioned and completion_registry is not None:
-                await completion_registry.notify(
-                    run_id,
-                    {
-                        "status": "cancelled",
-                        "terminal_reason": "user_cancelled",
-                        "run_id": run_id,
-                    },
-                    message=f"Agent {run_id} cancelled",
-                )
-
-        if not transitioned:
-            current = runner.get_run(run_id)
-            logger.debug(
-                "stop_agent no-op for run %s; current status=%s",
-                run_id,
-                current.status if current else "missing",
-            )
-
-        await _cleanup_terminal_artifacts(
-            run_id=run.id,
-            db=kill_db,
-            tmux_session_name=run.tmux_session_name,
-            agent_session_id=run.child_session_id,
-            debug=False,
+        return await stop_agent_run(
+            run_id=run_id,
+            runner=runner,
+            agent_run_manager=agent_run_manager,
+            db=db,
+            lifecycle_monitor=lifecycle_monitor,
+            completion_registry=completion_registry,
+            task_manager=task_manager,
             session_manager=session_manager,
             hook_manager_resolver=hook_manager_resolver,
-            result=result,
+            kill_agent_process=_kill_agent_process,
+            cleanup_terminal_artifacts=_cleanup_terminal_artifacts,
         )
+
+    @registry.tool(
+        name="cancel_stale_helpers",
+        description=(
+            "Cancel all still-running runs of an agent spawned by a parent session. "
+            "Used by freshness rules before parent turn delivery."
+        ),
+    )
+    async def cancel_stale_helpers(
+        parent_session_id: str,
+        agent_name: str,
+    ) -> dict[str, Any]:
+        """Cancel active helper runs for a parent session, continuing after per-run errors."""
+        if not parent_session_id:
+            return {"success": False, "error": "parent_session_id is required"}
+        if not agent_name:
+            return {"success": False, "error": "agent_name is required"}
+
+        resolved_parent = _resolve_session_id(parent_session_id)
+        stale = [
+            run
+            for run in agent_run_manager.list_by_parent(resolved_parent)
+            if run.agent_name == agent_name and run.status in ("pending", "running")
+        ]
+
+        cancelled: list[str] = []
+        errors: list[dict[str, str]] = []
+        for run in stale:
+            try:
+                result = await stop_agent_run(
+                    run_id=run.id,
+                    runner=runner,
+                    agent_run_manager=agent_run_manager,
+                    db=db,
+                    lifecycle_monitor=lifecycle_monitor,
+                    completion_registry=completion_registry,
+                    task_manager=task_manager,
+                    session_manager=session_manager,
+                    hook_manager_resolver=hook_manager_resolver,
+                    kill_agent_process=_kill_agent_process,
+                    cleanup_terminal_artifacts=_cleanup_terminal_artifacts,
+                )
+                if result.get("success"):
+                    cancelled.append(run.id)
+                else:
+                    errors.append({"run_id": run.id, "error": str(result.get("error", "unknown"))})
+            except Exception as e:  # noqa: BLE001 - best-effort cancellation
+                errors.append({"run_id": run.id, "error": str(e)})
+                logger.warning("cancel_stale_helpers: failed to stop %s: %s", run.id, e)
+
         return {
             "success": True,
-            "message": f"Agent run {run_id} stopped",
-            "run_id": run_id,
-            "status": "cancelled",
-            "terminal_reason": "user_cancelled",
+            "cancelled": cancelled,
+            "errors": errors,
+            "count": len(cancelled),
         }
 
     @registry.tool(
@@ -457,6 +534,7 @@ def create_agents_registry(
         session_id: str | None = None,
         signal: str = "TERM",
         force: bool = False,
+        stop: bool = True,
         debug: bool = False,
         status: str | None = None,
     ) -> dict[str, Any]:
@@ -472,6 +550,7 @@ def create_agents_registry(
                        Falls back to SessionContext if not provided and run_id is None.
             signal: Signal to send (TERM, KILL, INT, HUP, QUIT). Default: TERM
             force: Use SIGKILL immediately (equivalent to signal="KILL")
+            stop: Also terminalize workflow state. Defaults true for direct MCP compatibility.
             debug: If True, kill agent process but preserve workflow state and leave
                 terminal open for inspection. Default: False (full cleanup).
             status: Completion status for the agent run. Self-termination defaults
@@ -563,55 +642,20 @@ def create_agents_registry(
         if not result.get("success"):
             return result
 
-        if effective_status == "cancelled":
-            transitioned = False
-            if lifecycle_monitor is not None:
-                transitioned = await lifecycle_monitor.terminalize_cancelled_run(
-                    run_id,
-                    terminal_reason="user_cancelled",
-                )
-            else:
-                transitioned = runner.cancel_run(run_id)
-                if transitioned and completion_registry is not None:
-                    await completion_registry.notify(
-                        run_id,
-                        {
-                            "status": "cancelled",
-                            "terminal_reason": "user_cancelled",
-                            "run_id": run_id,
-                        },
-                    )
-            if not transitioned:
-                current = runner.get_run(run_id)
-                logger.debug(
-                    "Cancelled terminalization no-op for run %s; current status=%s",
-                    run_id,
-                    current.status if current else "missing",
-                )
-            result["status"] = "cancelled"
-            result["terminal_reason"] = "user_cancelled"
-        elif effective_status == "error":
-            failed_run = runner.run_storage.fail(run_id, error="Agent self-reported error")
-            if failed_run is None:
-                current = runner.get_run(run_id)
-                logger.debug(
-                    "Error terminalization no-op for run %s; current status=%s",
-                    run_id,
-                    current.status if current else "missing",
-                )
-            result["status"] = "error"
-        else:
-            fallback_cancelled = runner.cancel_run(run_id)
-            if not fallback_cancelled:
-                current = runner.get_run(run_id)
-                logger.debug(
-                    "Fallback cancelled terminalization no-op for run %s; current status=%s",
-                    run_id,
-                    current.status if current else "missing",
-                )
-            effective_status = "cancelled"
-            result["status"] = "cancelled"
-            result["terminal_reason"] = "user_cancelled"
+        if not stop:
+            result["workflow_stopped"] = False
+            return result
+
+        result.update(
+            await terminalize_killed_agent_run(
+                runner=runner,
+                run_id=run_id,
+                effective_status=effective_status,
+                lifecycle_monitor=lifecycle_monitor,
+                completion_registry=completion_registry,
+                task_manager=task_manager,
+            )
+        )
 
         await _cleanup_terminal_artifacts(
             run_id=run_id,
@@ -668,37 +712,67 @@ def create_agents_registry(
 
     @registry.tool(
         name="list_running_agents",
-        description="List all currently running agents. Optionally filter by parent session (defaults to current session). Accepts #N, N, UUID, or prefix for session_id.",
+        description=(
+            "List active agent runs. Defaults to build-wide scope. Pass "
+            "scope='parent' or parent_session_id to filter by parent session; "
+            "pass status='running' to match `gobby agents runs list --status running`."
+        ),
     )
     async def list_running_agents(
         parent_session_id: str | None = None,
+        scope: str = "all",
+        status: str = "active",
+        limit: int = 100,
     ) -> dict[str, Any]:
-        """
-        List all currently running agents.
+        """List active agent runs across the build or under one parent session."""
 
-        Args:
-            parent_session_id: Optional session reference (#N, N, UUID, or prefix) to filter by parent.
-                               Falls back to SessionContext if no filter provided.
+        scope_key = scope.strip().lower().replace("_", "-")
+        if scope_key in {"build", "build-wide"}:
+            scope_key = "all"
+        if parent_session_id is not None or scope_key == "current":
+            scope_key = "parent"
+        if scope_key not in {"all", "parent"}:
+            return {
+                "success": False,
+                "error": "scope must be one of: all, build, build-wide, parent, current",
+            }
 
-        Returns:
-            Dict with list of running agents.
-        """
+        status_key = status.strip().lower()
+        if status_key not in {"active", "pending", "running"}:
+            return {"success": False, "error": "status must be one of: active, pending, running"}
 
-        effective_parent_ref = parent_session_id or get_current_session_id()
-
-        if effective_parent_ref:
+        resolved_parent_id = None
+        if scope_key == "parent":
+            effective_parent_ref = parent_session_id or get_current_session_id()
+            if not effective_parent_ref:
+                return {
+                    "success": False,
+                    "error": "No parent_session_id or session context available",
+                }
             try:
                 resolved_parent_id = _resolve_session_id(effective_parent_ref)
             except ValueError as e:
                 return {"success": False, "error": str(e)}
-            runs = agent_run_manager.list_by_parent(resolved_parent_id)
+            parent_status = None if status_key == "active" else cast(AgentRunStatus, status_key)
+            runs = agent_run_manager.list_by_parent(
+                resolved_parent_id,
+                limit=limit,
+                status=parent_status,
+            )
+        elif status_key == "active":
+            runs = agent_run_manager.list_active(limit=limit)
+        elif status_key == "running":
+            runs = agent_run_manager.list_running(limit=limit)
         else:
-            runs = agent_run_manager.list_active()
+            runs = agent_run_manager.list_by_status(status="pending", limit=limit)
 
         return {
             "success": True,
             "agents": [run.to_brief() for run in runs],
             "count": len(runs),
+            "scope": scope_key,
+            "status": status_key,
+            "parent_session_id": resolved_parent_id,
         }
 
     @registry.tool(

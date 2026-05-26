@@ -11,12 +11,26 @@ export interface ProjectWithStats {
   linear_team_id: string | null
   linear_project_id: string | null
   approval_rules: string[]
+  validation_detection: Record<string, unknown> | null
   created_at: string
   updated_at: string
   session_count: number
   open_task_count: number
   last_activity_at: string | null
 }
+
+export type ProjectUpdateFields = Partial<
+  Pick<
+    ProjectWithStats,
+    | 'name'
+    | 'github_url'
+    | 'github_repo'
+    | 'linear_team_id'
+    | 'linear_project_id'
+    | 'approval_rules'
+    | 'validation_detection'
+  >
+>
 
 export type ProjectSubTab = 'overview' | 'code' | 'settings'
 
@@ -87,7 +101,7 @@ export function useProjects() {
 
   const updateProject = useCallback(async (
     projectId: string,
-    fields: Partial<Pick<ProjectWithStats, 'name' | 'github_url' | 'github_repo' | 'linear_team_id' | 'linear_project_id' | 'approval_rules'>>
+    fields: ProjectUpdateFields
   ): Promise<boolean> => {
     try {
       const res = await fetch(`${baseUrl}/api/projects/${encodeURIComponent(projectId)}`, {

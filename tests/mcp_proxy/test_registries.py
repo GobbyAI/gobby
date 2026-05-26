@@ -8,6 +8,11 @@ from gobby.storage.worktrees import LocalWorktreeManager
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture
+def temp_db(hub_db):
+    return hub_db
+
+
 def test_setup_internal_registries_with_merge() -> None:
     merge_storage = MagicMock()
     merge_resolver = MagicMock()
@@ -195,17 +200,27 @@ def test_setup_sessions_with_session_manager() -> None:
     assert "gobby-sessions" in registry_names
 
 
-def test_setup_hub_registry_with_database_path() -> None:
-    """Test hub registry is created when config has database_path."""
+def test_setup_hub_registry_with_active_database(temp_db) -> None:
+    """Test hub registry is created from the active runtime database."""
     mock_config = MagicMock()
     mock_config.get_gobby_tasks_config.return_value.enabled = False
-    mock_config.database_path = "/tmp/test.db"
 
-    manager = setup_internal_registries(_config=mock_config)
+    manager = setup_internal_registries(_config=mock_config, db=temp_db)
 
     registries = manager.get_all_registries()
     registry_names = [r.name for r in registries]
     assert "gobby-hub" in registry_names
+
+
+def test_setup_hub_registry_not_created_without_active_database() -> None:
+    """Test hub registry is not created without an active runtime database."""
+    mock_config = MagicMock()
+    mock_config.get_gobby_tasks_config.return_value.enabled = False
+
+    manager = setup_internal_registries(_config=mock_config)
+
+    registry_names = [r.name for r in manager.get_all_registries()]
+    assert "gobby-hub" not in registry_names
 
 
 def test_setup_tasks_disabled_by_config() -> None:
@@ -321,21 +336,14 @@ def test_setup_merge_requires_both_storage_and_resolver() -> None:
 # --- Skills Registry Tests ---
 
 
-def test_setup_with_database_path(tmp_path) -> None:
-    """Test registries are created when config has database_path."""
-    from gobby.storage.database import LocalDatabase
-    from gobby.storage.migrations import run_migrations
-
-    # Create a real test database with migrations applied
-    db_path = tmp_path / "test.db"
-    db = LocalDatabase(db_path)
-    run_migrations(db)
+def test_setup_with_active_database(hub_db) -> None:
+    """Test registries are created when an active database is provided."""
+    db = hub_db
 
     mock_config = MagicMock()
     mock_config.get_gobby_tasks_config.return_value.enabled = False
-    mock_config.database_path = str(db_path)
 
-    manager = setup_internal_registries(_config=mock_config)
+    manager = setup_internal_registries(_config=mock_config, db=db)
 
     registries = manager.get_all_registries()
     registry_names = [r.name for r in registries]
@@ -353,11 +361,10 @@ def test_setup_skills_registry_not_created_without_config() -> None:
     assert "gobby-skills" not in registry_names
 
 
-def test_setup_skills_registry_not_created_without_database_path() -> None:
-    """Test skills registry is not created when database_path is missing."""
+def test_setup_skills_registry_not_created_without_database() -> None:
+    """Test skills registry is not created when database is missing."""
     mock_config = MagicMock(spec=["get_gobby_tasks_config"])
     mock_config.get_gobby_tasks_config.return_value.enabled = False
-    # Note: mock_config does NOT have database_path attribute
 
     manager = setup_internal_registries(_config=mock_config)
 
@@ -366,21 +373,14 @@ def test_setup_skills_registry_not_created_without_database_path() -> None:
     assert "gobby-skills" not in registry_names
 
 
-def test_setup_hub_registry_has_expected_tools(tmp_path) -> None:
+def test_setup_hub_registry_has_expected_tools(hub_db) -> None:
     """Test hub registry has expected tools."""
-    from gobby.storage.database import LocalDatabase
-    from gobby.storage.migrations import run_migrations
-
-    # Create a real test database with migrations applied
-    db_path = tmp_path / "test.db"
-    db = LocalDatabase(db_path)
-    run_migrations(db)
+    db = hub_db
 
     mock_config = MagicMock()
     mock_config.get_gobby_tasks_config.return_value.enabled = False
-    mock_config.database_path = str(db_path)
 
-    manager = setup_internal_registries(_config=mock_config)
+    manager = setup_internal_registries(_config=mock_config, db=db)
 
     # Find the hub registry
     hub_registry = None
@@ -397,29 +397,22 @@ def test_setup_hub_registry_has_expected_tools(tmp_path) -> None:
     assert len(tool_names) > 0
 
 
-def test_setup_hub_registry_accepts_project_id(tmp_path) -> None:
+def test_setup_hub_registry_accepts_project_id(hub_db) -> None:
     """Test hub registry accepts project_id when provided."""
-    from gobby.storage.database import LocalDatabase
-    from gobby.storage.migrations import run_migrations
-
-    # Create a real test database
-    db_path = tmp_path / "test.db"
-    db = LocalDatabase(db_path)
-    run_migrations(db)
+    db = hub_db
 
     mock_config = MagicMock()
     mock_config.get_gobby_tasks_config.return_value.enabled = False
-    mock_config.database_path = str(db_path)
-
     # Create a project in the database for foreign key constraint
     project_id = "test-project-123"
     db.execute(
-        "INSERT INTO projects (id, name, repo_path, github_url, created_at, updated_at) VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))",
+        "INSERT INTO projects (id, name, repo_path, github_url, created_at, updated_at) VALUES (?, ?, ?, ?, NOW(), NOW())",
         (project_id, "Test Project", "/tmp/test", None),
     )
 
     manager = setup_internal_registries(
         _config=mock_config,
+        db=db,
         project_id=project_id,
     )
 
@@ -602,14 +595,9 @@ class TestHubApiKeyResolution:
 
         return captured
 
-    def test_hub_api_key_resolution_ignores_environment(self, tmp_path, monkeypatch) -> None:
+    def test_hub_api_key_resolution_ignores_environment(self, hub_db, monkeypatch) -> None:
         """Env vars are never consulted for hub auth — only SecretStore."""
-        from gobby.storage.database import LocalDatabase
-        from gobby.storage.migrations import run_migrations
-
-        db_path = tmp_path / "test.db"
-        db = LocalDatabase(db_path)
-        run_migrations(db)
+        db = hub_db
         try:
             # Env has a value but SecretStore does NOT.
             monkeypatch.setenv("SKILLSMP_API_KEY", "env-bogus-should-be-ignored")
@@ -621,15 +609,11 @@ class TestHubApiKeyResolution:
         finally:
             db.close()
 
-    def test_hub_api_key_resolution_reads_secret_store(self, tmp_path) -> None:
+    def test_hub_api_key_resolution_reads_secret_store(self, hub_db) -> None:
         """When a secret is stored in SecretStore, the HubManager receives it."""
-        from gobby.storage.database import LocalDatabase
-        from gobby.storage.migrations import run_migrations
         from gobby.storage.secrets import SecretStore
 
-        db_path = tmp_path / "test.db"
-        db = LocalDatabase(db_path)
-        run_migrations(db)
+        db = hub_db
         try:
             SecretStore(db).set(
                 name="SKILLSMP_API_KEY",

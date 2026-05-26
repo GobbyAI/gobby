@@ -6,6 +6,10 @@ spawned terminal processes. When an agent spawns a child in terminal
 mode, these environment variables are set in the child process.
 """
 
+import re
+import tempfile
+from pathlib import Path
+
 # ============================================================================
 # Terminal Mode Environment Variables
 # ============================================================================
@@ -49,6 +53,24 @@ GOBBY_PROMPT = "GOBBY_PROMPT"
 # Takes precedence over GOBBY_PROMPT if both are set
 GOBBY_PROMPT_FILE = "GOBBY_PROMPT_FILE"
 
+# uv cache path for validation commands run by spawned agents.
+UV_CACHE_DIR = "UV_CACHE_DIR"
+
+
+def get_agent_uv_cache_dir(session_id: str) -> str:
+    """Return a writable, per-session uv cache directory for spawned agents."""
+    safe_session_id = re.sub(r"[^a-zA-Z0-9_-]", "-", session_id).strip("-")
+    if not safe_session_id:
+        safe_session_id = "unknown-session"
+    return str(Path(tempfile.gettempdir()) / "gobby" / "uv-cache" / safe_session_id)
+
+
+def ensure_agent_uv_cache_dir(session_id: str) -> str:
+    """Create and return the spawned agent's uv cache directory."""
+    cache_dir = Path(get_agent_uv_cache_dir(session_id))
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return str(cache_dir)
+
 
 def get_terminal_env_vars(
     session_id: str,
@@ -84,6 +106,7 @@ def get_terminal_env_vars(
         GOBBY_PROJECT_ID: project_id,
         GOBBY_AGENT_DEPTH: str(agent_depth),
         GOBBY_MAX_AGENT_DEPTH: str(max_agent_depth),
+        UV_CACHE_DIR: ensure_agent_uv_cache_dir(session_id),
     }
 
     if parent_session_id:
@@ -116,4 +139,5 @@ ALL_TERMINAL_ENV_VARS = [
     GOBBY_MAX_AGENT_DEPTH,
     GOBBY_PROMPT,
     GOBBY_PROMPT_FILE,
+    UV_CACHE_DIR,
 ]

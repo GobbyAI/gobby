@@ -7,6 +7,15 @@ from gobby.utils.status import format_startup_summary, format_status_message
 pytestmark = pytest.mark.unit
 
 
+def _status_line(output: str, label: str) -> str:
+    prefix = f"{label}:"
+    for line in output.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(prefix):
+            return stripped
+    raise AssertionError(f"missing status line for {label}")
+
+
 class TestFormatStatusMessage:
     """Tests for format_status_message function."""
 
@@ -146,11 +155,11 @@ class TestFormatStatusMessage:
             api_data={
                 "memory": {
                     "qdrant": {"configured": True, "healthy": True},
-                    "neo4j": {
+                    "falkordb": {
                         "configured": True,
                         "installed": True,
                         "healthy": True,
-                        "url": "bolt://localhost:7687",
+                        "url": "redis://127.0.0.1:16379",
                     },
                 },
             },
@@ -159,9 +168,28 @@ class TestFormatStatusMessage:
         assert "Services:" in result
         assert "Qdrant" in result
         assert "healthy" in result
-        assert "Neo4j" in result
+        assert "FalkorDB" in result
 
-    def test_provider_model_services_and_health_issues(self) -> None:
+    def test_services_section_distinguishes_installed_unconfigured_falkordb(self) -> None:
+        result = format_status_message(
+            running=True,
+            api_data={
+                "memory": {
+                    "falkordb": {
+                        "configured": False,
+                        "installed": True,
+                        "healthy": False,
+                        "url": "redis://127.0.0.1:16379",
+                    },
+                },
+            },
+        )
+
+        assert "FalkorDB" in result
+        assert "installed, not configured" in result
+        assert "redis://127.0.0.1:16379" in result
+
+    def test_provider_model_counts_attach_to_coding_clis_and_health_issues(self) -> None:
         result = format_status_message(
             running=True,
             api_data={
@@ -172,13 +200,30 @@ class TestFormatStatusMessage:
                         "model_count": 4,
                         "error": "probe failed",
                     },
+                    "gemini": {"source": "live", "model_count": 9, "error": None},
+                },
+            },
+            deps_info={
+                "coding_clis": {
+                    "claude": "installed",
+                    "codex": "installed",
+                    "droid": None,
+                    "gemini": "0.43.0",
+                    "qwen": None,
+                    "hooks": {"claude": True, "gemini": True},
                 },
             },
         )
 
-        assert "Models claude:" in result
-        assert "3 models (live)" in result
-        assert "Models codex:" in result
+        assert "Claude Code:" in result
+        assert "hooks installed, 3 models available" in _status_line(result, "Claude Code")
+        assert "Codex CLI:" in result
+        assert "4 models available" in _status_line(result, "Codex CLI")
+        gemini_line = _status_line(result, "Gemini CLI")
+        assert "0.43.0 (deprecated, hooks installed, 9 models available)" in gemini_line
+        assert "Gemini CLI (deprecated):" not in result
+        assert "Models claude:" not in result
+        assert "(live)" not in result
         assert "using cache (probe failed)" in result
 
     def test_config_issues(self) -> None:
@@ -203,12 +248,12 @@ class TestFormatStatusMessage:
                     "gsqz": None,
                     "gsqz_path": None,
                 },
-                "coding_clis": {"claude": "1.0.12", "gemini": None, "codex": None, "hooks": {}},
+                "coding_clis": {"claude": "installed", "gemini": None, "codex": None, "hooks": {}},
                 "dependencies": {
-                    "tmux": "3.4",
+                    "tmux": "installed",
                     "docker": None,
                     "docker_running": False,
-                    "git": "2.44.0",
+                    "git": "installed",
                     "node": None,
                     "tailscale": None,
                     "ollama": None,
@@ -220,29 +265,52 @@ class TestFormatStatusMessage:
         assert "Gobby:" in result
         assert "0.3.6" in result
         assert "Coding CLIs:" in result
-        assert "1.0.12" in result
+        assert "Claude Code:" in result
         assert "Dependencies:" in result
-        assert "3.4" in result
+        assert "tmux:" in result
+        assert "git:" in result
 
     def test_coding_clis_include_qwen_and_droid(self) -> None:
         result = format_status_message(
             running=True,
+            api_data={
+                "provider_models": {
+                    "droid": {"source": "live", "model_count": 24, "error": None},
+                    "qwen": {"source": "live", "model_count": 3, "error": None},
+                },
+            },
             deps_info={
                 "coding_clis": {
-                    "claude": "1.0.12",
-                    "codex": "0.125.0",
-                    "droid": "0.106.0",
-                    "gemini": "0.38.2",
-                    "qwen": "0.15.3",
+                    "claude": "installed",
+                    "codex": "installed",
+                    "droid": "installed",
+                    "gemini": "installed",
+                    "qwen": "installed",
                     "hooks": {"droid": True, "qwen": True},
                 },
             },
         )
 
         assert "Qwen CLI:" in result
-        assert "0.15.3 (hooks installed)" in result
+        assert "hooks installed, 3 models available" in _status_line(result, "Qwen CLI")
         assert "Droid CLI:" in result
-        assert "0.106.0 (hooks installed)" in result
+        assert "hooks installed, 24 models available" in _status_line(result, "Droid CLI")
+
+    def test_services_place_postgres_after_docker(self) -> None:
+        result = format_status_message(
+            running=True,
+            api_data={
+                "postgres": {
+                    "mode": "docker",
+                    "dsn_host": "localhost",
+                    "dsn_db": "gobby",
+                    "healthy": True,
+                }
+            },
+            deps_info={"dependencies": {"docker": "installed", "docker_running": True}},
+        )
+
+        assert result.index("Docker:") < result.index("PostgreSQL:")
 
 
 class TestFormatStartupSummary:

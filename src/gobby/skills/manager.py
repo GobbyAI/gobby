@@ -22,7 +22,7 @@ from gobby.storage.skills import (
 )
 
 if TYPE_CHECKING:
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -33,15 +33,15 @@ class SkillManager:
     This class provides a unified interface for skill management,
     wiring together:
     - LocalSkillManager for persistent storage
-    - SkillSearch for keyword-based search (FTS5)
+    - SkillSearch for keyword-based search
     - SkillChangeNotifier for automatic reindex tracking
 
     Example usage:
         ```python
         from gobby.skills.manager import SkillManager
-        from gobby.storage.database import LocalDatabase
+        from gobby.storage.hub.postgres import PostgresHubDatabase
 
-        db = LocalDatabase("gobby-hub.db")
+        db = PostgresHubDatabase(database_url)
         manager = SkillManager(db)
 
         # Create a skill
@@ -59,7 +59,7 @@ class SkillManager:
 
     def __init__(
         self,
-        db: DatabaseProtocol,
+        db: HubDatabase | HubDatabase,
         project_id: str | None = None,
         search_config: SearchConfig | None = None,
         embedding_model: str = "nomic-embed-text",

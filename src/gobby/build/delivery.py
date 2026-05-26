@@ -8,8 +8,8 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from gobby.build.options import BuildOptions
-from gobby.storage.database import DatabaseProtocol
 from gobby.storage.delivery import TaskDeliveryStateManager
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.utils.git import get_github_url
 
@@ -20,7 +20,7 @@ _GITHUB_REPO_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 def record_build_delivery_campaign(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     *,
     project_id: str,
     task_id: str,
@@ -54,7 +54,7 @@ def record_build_delivery_campaign(
     )
 
 
-def resolve_project_source_repo(db: DatabaseProtocol, project_id: str) -> str:
+def resolve_project_source_repo(db: HubDatabase, project_id: str) -> str:
     """Resolve the GitHub source repo for a project as owner/repo."""
     project = LocalProjectManager(db).get(project_id)
     if project is None:

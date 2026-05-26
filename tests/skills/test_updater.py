@@ -1,25 +1,19 @@
 """Tests for SkillUpdater (TDD - written before implementation)."""
 
-from collections.abc import Iterator
-from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
 
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.skills import LocalSkillManager
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path: Path) -> Iterator[LocalDatabase]:
-    """Create a fresh database with migrations applied."""
-    database = LocalDatabase(tmp_path / "gobby-hub.db")
-    run_migrations(database)
-    yield database
-    database.close()
+def db(temp_db: HubDatabase) -> HubDatabase:
+    """Create a fresh database for skill updater tests."""
+    return temp_db
 
 
 @pytest.fixture

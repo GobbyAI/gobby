@@ -19,7 +19,7 @@ LEAF_PRIMARY_STAGE_BY_CATEGORY = {
     "research": "research",
     "planning": "planning",
 }
-InputKind = Literal["plan_file", "epic", "leaf"]
+InputKind = Literal["plan_file", "epic", "expanded_epic", "leaf"]
 
 if AUTOMATED_LEAF_CATEGORIES != frozenset(LEAF_PRIMARY_STAGE_BY_CATEGORY):
     raise RuntimeError("automated leaf category map drifted from shared category contract")
@@ -122,10 +122,16 @@ def _initial_stage_names(
         manifest = [_canonical_stage_name(override.stage_name) for override in opts.stage_caps]
     elif input_kind == "leaf":
         manifest = [_leaf_primary_stage(task)]
+    elif input_kind == "plan_file" and opts.planning_seed_state == "approved" and opts.quick:
+        manifest = ["expansion"]
+    elif input_kind == "plan_file" and opts.planning_seed_state == "approved":
+        manifest = ["expansion", "development", "holistic_qa", "pr", "merge"]
     elif input_kind == "plan_file" and opts.quick:
         manifest = ["planning"]
     elif input_kind == "plan_file":
         manifest = ["planning", "expansion", "development", "holistic_qa", "pr", "merge"]
+    elif input_kind == "expanded_epic":
+        manifest = ["development", "holistic_qa", "pr", "merge"]
     else:
         defaults = task_manager.stages_registry.list_default_stages(task.task_type)
         if not defaults and task.task_type != "task":

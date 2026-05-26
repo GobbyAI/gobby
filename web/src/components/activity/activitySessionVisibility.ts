@@ -33,13 +33,16 @@ export function getVisibleActivitySessions(
   }: ActivitySessionVisibilityOptions = {},
 ): GobbySession[] {
   const query = search.trim().toLowerCase();
-  return sessions
+  return [...sessions]
     .filter(
       (session) =>
         session.id !== chatSessionId &&
         !expiringIds?.has(session.id) &&
         !HIDDEN_ACTIVITY_SESSION_SOURCES.has(session.source) &&
-        (!liveOnly || DEFAULT_LIVE_STATUSES.some((status) => status === session.status)) &&
+        (!liveOnly ||
+          DEFAULT_LIVE_STATUSES.includes(
+            session.status as (typeof DEFAULT_LIVE_STATUSES)[number],
+          )) &&
         matchesActivitySessionSearch(session, query) &&
         (!filters || matchesSessionsFilters(session, filters, now)),
     )
@@ -78,7 +81,7 @@ function compareActivitySessions(a: GobbySession, b: GobbySession): number {
 }
 
 function parseTimestamp(value: string | null | undefined): number {
-  if (!value) return 0;
+  if (!value) return -Infinity;
   const parsed = new Date(value).getTime();
-  return Number.isFinite(parsed) ? parsed : 0;
+  return Number.isFinite(parsed) ? parsed : -Infinity;
 }

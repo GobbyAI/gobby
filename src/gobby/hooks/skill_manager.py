@@ -17,7 +17,7 @@ from gobby.skills.parser import ParsedSkill, extract_audience_config
 
 if TYPE_CHECKING:
     from gobby.metrics.event_store import MetricsEventStore
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +90,7 @@ class HookSkillManager:
 
     def __init__(
         self,
-        db: DatabaseProtocol | None = None,
+        db: HubDatabase | None = None,
         metrics_event_store: MetricsEventStore | None = None,
         project_id: str | None = None,
     ) -> None:

@@ -8,11 +8,11 @@ from typing import TYPE_CHECKING, Any, Protocol
 from gobby.storage.session_models import Session
 
 if TYPE_CHECKING:
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
 
 
 class _ManagerState(Protocol):
-    db: DatabaseProtocol
+    db: HubDatabase
 
     def get(self, session_id: str) -> Session | None: ...
 
@@ -88,7 +88,7 @@ class _TerminalMixin:
         if agent_run_id is not None:
             values["agent_run_id"] = agent_run_id
         if context_injected is not None:
-            values["context_injected"] = 1 if context_injected else 0
+            values["context_injected"] = bool(context_injected)
         if original_prompt is not None:
             values["original_prompt"] = original_prompt
 
@@ -115,8 +115,8 @@ class _TerminalMixin:
         with self.db.transaction():
             for name in skill_names:
                 cursor = self.db.execute(
-                    "INSERT OR IGNORE INTO session_skills (session_id, skill_name, created_at) "
-                    "VALUES (?, ?, ?)",
+                    "INSERT INTO session_skills (session_id, skill_name, created_at) "
+                    "VALUES (?, ?, ?) ON CONFLICT (session_id, skill_name) DO NOTHING",
                     (session_id, name, now),
                 )
                 if cursor.rowcount == 1:

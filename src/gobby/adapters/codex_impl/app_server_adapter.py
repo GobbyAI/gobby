@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import logging
 import platform
 import re
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from gobby.adapters.base import BaseAdapter
 from gobby.adapters.codex_impl.client import (
@@ -161,6 +164,26 @@ class CodexAdapter(BaseAdapter):
         self._attached = False
         self._machine_id: str | None = None
 
+    async def _dispatch_hook_event(self, event: HookEvent) -> HookResponse:
+        """Dispatch through sync or async hook managers."""
+        if self._hook_manager is None:
+            raise RuntimeError("hook manager is not configured")
+
+        handle_async = getattr(self._hook_manager, "handle_async", None)
+        if handle_async is not None and inspect.iscoroutinefunction(handle_async):
+            async_handler = cast(Callable[[HookEvent], Awaitable[HookResponse]], handle_async)
+            return await async_handler(event)
+
+        handle = getattr(self._hook_manager, "handle", None)
+        if handle is not None:
+            response = handle(event)
+        else:
+            raise RuntimeError("hook manager has no handle method")
+
+        if inspect.isawaitable(response):
+            return await cast(Awaitable[HookResponse], response)
+        return cast(HookResponse, response)
+
     @staticmethod
     def _compose_mcp_tool_name(server_name: str, tool_name: str) -> str:
         """Return the canonical MCP tool name used by shared hook logic."""
@@ -297,11 +320,26 @@ class CodexAdapter(BaseAdapter):
             hook_event = self.translate_to_hook_event({"method": method, "params": params})
 
             if hook_event and self._hook_manager:
-                # Process through HookManager (fire-and-forget for notifications)
-                self._hook_manager.handle(hook_event)
-                logger.debug(f"Processed Codex event: {method} -> {hook_event.event_type}")
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    asyncio.run(self._dispatch_hook_event(hook_event))
+                    logger.debug("Processed Codex event: %s -> %s", method, hook_event.event_type)
+                    return
+
+                task = loop.create_task(self._dispatch_hook_event(hook_event))
+
+                def _log_notification_result(done_task: asyncio.Task[HookResponse]) -> None:
+                    try:
+                        done_task.result()
+                    except asyncio.CancelledError:
+                        logger.debug("Codex notification task cancelled for %s", method)
+                    except Exception:
+                        logger.exception("Codex notification task failed for %s", method)
+
+                task.add_done_callback(_log_notification_result)
         except Exception as e:
-            logger.error(f"Error handling Codex notification {method}: {e}")
+            logger.error("Error handling Codex notification %s: %s", method, e, exc_info=True)
 
     async def handle_approval_request(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         """Handle an incoming approval request from Codex.
@@ -328,9 +366,9 @@ class CodexAdapter(BaseAdapter):
         is_safe_auto_approved = self._is_safe_auto_approved_tool(hook_event)
 
         try:
-            hook_response = self._hook_manager.handle(hook_event)
+            hook_response = await self._dispatch_hook_event(hook_event)
         except Exception as e:
-            logger.error(f"Error processing approval request {method}: {e}")
+            logger.error("Error processing approval request %s: %s", method, e, exc_info=True)
             if is_safe_auto_approved:
                 if method == "mcpServer/elicitation/request":
                     return self._translate_mcp_elicitation_response()
@@ -791,7 +829,7 @@ class CodexAdapter(BaseAdapter):
                             "synced_from_existing": True,
                         },
                     )
-                    self._hook_manager.handle(event)
+                    await self._dispatch_hook_event(event)
                     synced += 1
                 except Exception as e:
                     logger.error(f"Failed to sync thread {thread.id}: {e}")

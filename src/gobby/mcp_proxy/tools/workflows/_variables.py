@@ -17,7 +17,7 @@ from gobby.mcp_proxy.tools.workflows._resolution import (
     resolve_session_id,
     resolve_session_task_value,
 )
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.workflow_definitions import (
     LocalWorkflowDefinitionManager,
@@ -30,6 +30,13 @@ from gobby.workflows.state_manager import (
 )
 
 logger = logging.getLogger(__name__)
+
+PROTECTED_VERIFICATION_VARIABLES: frozenset[str] = frozenset(
+    {
+        "verification_evidence",
+        "verification_evidence_recorded",
+    }
+)
 
 
 def _coerce_value(
@@ -62,7 +69,7 @@ def _coerce_value(
 
 def set_variable(
     session_manager: SessionManager,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     name: str,
     value: str | int | float | bool | list[Any] | dict[str, Any] | None,
     session_id: str,
@@ -79,7 +86,7 @@ def set_variable(
 
     Args:
         session_manager: SessionManager instance
-        db: LocalDatabase instance
+        db: Hub database adapter
         name: Variable name (e.g., "session_epic", "is_worktree")
         value: Variable value (string, number, boolean, or null)
         session_id: Session reference (accepts #N, N, UUID, or prefix). Required to prevent cross-session variable bleed.
@@ -99,6 +106,15 @@ def set_variable(
 
     # Coerce value types
     value = _coerce_value(value)
+
+    if name in PROTECTED_VERIFICATION_VARIABLES:
+        return {
+            "success": False,
+            "error": (
+                f"{name} is managed by verification observers. Run a validation command "
+                "or use gobby-sessions:record_verification_evidence for non-command evidence."
+            ),
+        }
 
     # Resolve session_task references (#N or N) to UUIDs upfront
     if name == "session_task" and isinstance(value, str):
@@ -139,7 +155,7 @@ def set_variable(
 
 def get_variable(
     session_manager: SessionManager,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     name: str | None = None,
     session_id: str = "",
     workflow: str | None = None,
@@ -154,7 +170,7 @@ def get_variable(
 
     Args:
         session_manager: SessionManager instance
-        db: LocalDatabase instance
+        db: Hub database adapter
         name: Variable name to get (if None, returns all variables)
         session_id: Session reference (accepts #N, N, UUID, or prefix). Required to prevent cross-session variable bleed.
         workflow: Optional workflow name to scope the read to
@@ -231,7 +247,7 @@ def get_variable(
 
 
 def save_variable_template(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     name: str,
     definition: dict[str, Any],
     *,

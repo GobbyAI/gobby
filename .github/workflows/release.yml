@@ -4,23 +4,51 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      gate_only:
+        description: "Run the release CI gate without publishing artifacts"
+        required: false
+        default: true
+        type: boolean
 
-# NOTE: No "test" job here. ci.yml runs the full pytest matrix on every PR
-# and push to the same product tree this tag points at; re-running it on the
-# tag only adds ~55min and re-rolls flaky dice (it blocked run 26053017263
-# for v0.4.6). Hardening to gate publish on the tagged SHA's ci.yml
-# conclusion is tracked in #14821.
 jobs:
+  verify-ci:
+    name: Verify CI gate
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Require successful CI for release SHA
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          python scripts/ci/verify_ci_gate.py
+          --repo "$GITHUB_REPOSITORY"
+          --sha "$GITHUB_SHA"
+          --workflow "CI"
+          --timeout-seconds 7200
+          --poll-interval-seconds 30
+
   build:
     name: Build package
+    needs: verify-ci
+    if: ${{ github.event_name == 'push' && !inputs.gate_only }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a
         with:
-          enable-cache: true
+          enable-cache: false
 
       - name: Set up Python
         run: uv python install 3.13
@@ -29,7 +57,7 @@ jobs:
         run: uv build
 
       - name: Upload dist artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: dist
           path: dist/
@@ -37,6 +65,7 @@ jobs:
   publish:
     name: Publish to PyPI
     needs: build
+    if: ${{ github.event_name == 'push' && !inputs.gate_only }}
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -44,7 +73,7 @@ jobs:
 
     steps:
       - name: Download dist artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: dist
           path: dist/
@@ -52,35 +81,38 @@ jobs:
       # Option 1: Trusted publishing (recommended, no token needed)
       # Just configure at https://pypi.org/manage/account/publishing/
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b
         with:
           skip-existing: true
 
   github-release:
     name: Create GitHub Release
     needs: publish
+    if: ${{ github.event_name == 'push' && !inputs.gate_only }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
 
       - name: Download dist artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: dist
           path: dist/
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/*
-          generate_release_notes: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --generate-notes
 
   dispatch-homebrew-tap:
     name: Dispatch Homebrew tap update
     needs: github-release
+    if: ${{ github.event_name == 'push' && !inputs.gate_only }}
     runs-on: ubuntu-latest
     steps:
       - name: Dispatch tap workflow
@@ -95,13 +127,21 @@ jobs:
 
           version="${TAG_NAME#v}"
           api_status=0
-          api_response=$(gh api repos/GobbyAI/homebrew-tap/dispatches \
+          payload=$(jq -nc \
+            --arg tag "$TAG_NAME" \
+            --arg version "$version" \
+            '{
+              event_type: "gobby-release",
+              client_payload: {
+                tag: $tag,
+                version: $version,
+                gobby_repo: "GobbyAI/gobby",
+                helper_repo: "GobbyAI/gobby-cli"
+              }
+            }')
+          api_response=$(printf '%s' "$payload" | gh api repos/GobbyAI/homebrew-tap/dispatches \
             --method POST \
-            -f event_type=gobby-release \
-            -F client_payload[tag]="$TAG_NAME" \
-            -F client_payload[version]="$version" \
-            -F client_payload[gobby_repo]="GobbyAI/gobby" \
-            -F client_payload[helper_repo]="GobbyAI/gobby-cli" 2>&1) || api_status=$?
+            --input - 2>&1) || api_status=$?
 
           if [ "$api_status" -ne 0 ]; then
             echo "::error::Failed to dispatch Homebrew tap update for ${TAG_NAME} (${version})"

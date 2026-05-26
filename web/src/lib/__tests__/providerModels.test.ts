@@ -8,6 +8,7 @@ import {
   getOrderedProviders,
   getPreferredModelForProvider,
   getProviderDisplayName,
+  getProviderDisplayNameFromEntry,
   getPreferredReasoningEffort,
   getReasoningOptionsForModel,
   resolveProviderModelPair,
@@ -202,13 +203,58 @@ describe("providerModels", () => {
 
   it("labels and sorts known providers alphabetically by display name", () => {
     expect(getProviderDisplayName("droid")).toBe("Droid");
-    expect(getOrderedProviders(["qwen", "droid", "claude", "gemini", "codex"])).toEqual([
-      "claude",
-      "codex",
-      "droid",
+    expect(
+      getOrderedProviders(["qwen", "droid", "claude", "gemini", "codex"]),
+    ).toEqual(["claude", "codex", "droid", "gemini", "qwen"]);
+  });
+
+  it("handles Grok, AGY, and provider metadata fields", () => {
+    const entries: ProviderModelEntry[] = [
+      {
+        provider: "grok",
+        available: true,
+        source: "live",
+        display_name: "Grok",
+        installed: true,
+        supports_web_chat: true,
+        supports_agent_spawn: true,
+        models: [{ value: "grok-build", label: "Grok Build" }],
+      },
+      {
+        provider: "agy",
+        available: false,
+        source: "unsupported",
+        display_name: "AGY",
+        installed: true,
+        supports_web_chat: false,
+        supports_agent_spawn: false,
+        unavailable_reason: "No documented machine transport",
+        models: [],
+      },
+      {
+        provider: "gemini",
+        available: true,
+        source: "static",
+        deprecated: true,
+        deprecation_message: "Prefer Grok for new launches",
+        models: [],
+      },
+    ];
+
+    expect(getProviderDisplayName("grok")).toBe("Grok");
+    expect(getProviderDisplayName("agy")).toBe("AGY");
+    expect(getProviderDisplayNameFromEntry(entries[1])).toBe("AGY");
+    expect(getOrderedProviders(["qwen", "agy", "grok", "gemini"])).toEqual([
+      "agy",
       "gemini",
+      "grok",
       "qwen",
     ]);
+    expect(getModelsForProvider(entries, "grok").map(({ value, label }) => ({ value, label }))).toEqual([
+      { value: "grok-build", label: "Grok Build" },
+    ]);
+    expect(entries[1].source).toBe("unsupported");
+    expect(entries[2].deprecated).toBe(true);
   });
 
   it("strips Qwen transport suffixes from live catalog labels", () => {

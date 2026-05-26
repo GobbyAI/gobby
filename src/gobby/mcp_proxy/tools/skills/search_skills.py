@@ -125,7 +125,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                 )
 
             # Ensure index is fresh before searching (run in thread to avoid blocking event loop)
-            await ctx.run_sqlite(indexer.ensure_fresh)
+            await ctx.run_db(indexer.ensure_fresh)
 
             # Over-fetch when we'll post-filter internal skills, so top_k survives the trim.
             search_top_k = top_k * 3 if not include_internal else top_k
@@ -143,7 +143,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
             # Batch-fetch skills to avoid N+1 queries
             skill_ids = [r.skill_id for r in results]
             skills_by_id = {
-                s.id: s for s in await ctx.run_sqlite(ctx.storage.get_skills_by_ids, skill_ids)
+                s.id: s for s in await ctx.run_db(ctx.storage.get_skills_by_ids, skill_ids)
             }
 
             if not include_internal:

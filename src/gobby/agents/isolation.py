@@ -24,6 +24,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from gobby.agents.code_index import CodeIndexPreflightResult
+from gobby.agents.code_index import ensure_isolation_code_index as _ensure_isolation_code_index
+from gobby.agents.isolation_git_hygiene import apply_isolation_git_hygiene
+from gobby.agents.python_env_seed import preseed_isolated_python_environment
+from gobby.agents.worktree_reuse import sync_reused_worktree_to_base
 from gobby.storage.tasks import TaskArtifactManager
 
 logger = logging.getLogger(__name__)
@@ -206,23 +211,36 @@ class WorktreeIsolationHandler(IsolationHandler):
         self._created_worktree_id = None
 
         branch_name = generate_branch_name(config)
+        base_branch = config.base_branch
+        current_branch = self._git_manager.get_current_branch()
+        if current_branch and base_branch == "main" and current_branch != "main":
+            base_branch = current_branch
 
         # Check if worktree already exists for this branch
         existing = self._worktree_storage.get_by_branch(config.project_id, branch_name)
         if existing:
             if Path(existing.worktree_path).is_dir():
+                sync_result = await sync_reused_worktree_to_base(
+                    git_manager=self._git_manager,
+                    worktree_path=existing.worktree_path,
+                    base_branch=base_branch,
+                )
                 await repair_isolation_environment(
                     main_repo_path=str(self._git_manager.repo_path),
                     isolated_path=existing.worktree_path,
                     provider=config.provider,
                 )
+                extra = {"main_repo_path": str(self._git_manager.repo_path)}
+                existing_base_commit_sha = getattr(sync_result, "base_commit_sha", None)
+                if isinstance(existing_base_commit_sha, str) and existing_base_commit_sha:
+                    extra["base_commit_sha"] = existing_base_commit_sha
                 # Use existing worktree
                 return IsolationContext(
                     cwd=existing.worktree_path,
                     branch_name=existing.branch_name,
                     worktree_id=existing.id,
                     isolation_type="worktree",
-                    extra={"main_repo_path": str(self._git_manager.repo_path)},
+                    extra=extra,
                 )
             else:
                 # Stale record — directory gone, clean up and fall through to create new
@@ -232,15 +250,7 @@ class WorktreeIsolationHandler(IsolationHandler):
                 )
                 self._worktree_storage.delete(existing.id)
 
-        # Determine base branch - use parent's current branch if default "main" was passed
-        base_branch = config.base_branch
         use_local = False
-
-        # If base_branch is the default "main", check if parent is on a different branch
-        current_branch = self._git_manager.get_current_branch()
-        if current_branch and base_branch == "main" and current_branch != "main":
-            # Use parent's current branch instead
-            base_branch = current_branch
 
         # Check for unpushed commits on the base branch
         has_unpushed, unpushed_count = self._git_manager.has_unpushed_commits(base_branch)
@@ -277,21 +287,24 @@ class WorktreeIsolationHandler(IsolationHandler):
             project_id=config.project_id,
             branch_name=branch_name,
             worktree_path=worktree_path,
-            base_branch=config.base_branch,
+            base_branch=base_branch,
             task_id=config.task_id,
         )
 
         # Track storage record for cleanup
         self._created_worktree_id = worktree.id
 
+        created_base_commit_sha: str | None = None
         if config.task_id is not None:
-            base_commit_sha = await asyncio.to_thread(_capture_base_commit_sha, worktree_path)
+            created_base_commit_sha = await asyncio.to_thread(
+                _capture_base_commit_sha, worktree_path
+            )
             await asyncio.to_thread(
                 TaskArtifactManager(self._worktree_storage.db).set_artifacts_atomic,
                 config.task_id,
                 worktree_path=worktree_path,
                 worktree_id=worktree.id,
-                base_commit_sha=base_commit_sha,
+                base_commit_sha=created_base_commit_sha,
             )
 
         await repair_isolation_environment(
@@ -309,7 +322,10 @@ class WorktreeIsolationHandler(IsolationHandler):
             branch_name=worktree.branch_name,
             worktree_id=worktree.id,
             isolation_type="worktree",
-            extra={"main_repo_path": str(self._git_manager.repo_path)},
+            extra={
+                "main_repo_path": str(self._git_manager.repo_path),
+                **({"base_commit_sha": created_base_commit_sha} if created_base_commit_sha else {}),
+            },
         )
 
     async def cleanup_environment(self, config: SpawnConfig) -> None:
@@ -496,6 +512,7 @@ class CloneIsolationHandler(IsolationHandler):
         # Track storage record for cleanup
         self._created_clone_id = clone.id
 
+        base_commit_sha: str | None = None
         if config.task_id is not None:
             base_commit_sha = await asyncio.to_thread(_capture_base_commit_sha, clone_path)
             await asyncio.to_thread(
@@ -521,7 +538,10 @@ class CloneIsolationHandler(IsolationHandler):
             branch_name=clone.branch_name,
             clone_id=clone.id,
             isolation_type="clone",
-            extra={"source_repo": config.project_path},
+            extra={
+                "source_repo": config.project_path,
+                **({"base_commit_sha": base_commit_sha} if base_commit_sha else {}),
+            },
         )
 
     async def cleanup_environment(self, config: SpawnConfig) -> None:
@@ -596,54 +616,54 @@ async def repair_isolation_environment(
         main_repo_path,
         isolated_path,
     )
+    seed_result = await preseed_isolated_python_environment(isolated_path)
+    if seed_result.attempted and not seed_result.success:
+        logger.warning(
+            "Failed to pre-seed isolated Python environment for %s: %s",
+            isolated_path,
+            seed_result.error,
+        )
     await _patch_mcp_config_for_isolation(
         main_repo_path=main_repo_path,
         isolated_path=isolated_path,
         provider=provider,
     )
+    try:
+        await asyncio.to_thread(
+            apply_isolation_git_hygiene,
+            isolated_path,
+            main_repo_path=main_repo_path,
+        )
+    except Exception:
+        logger.warning(
+            "Failed to apply isolation git hygiene for %s",
+            isolated_path,
+            exc_info=True,
+        )
 
 
 async def ensure_isolation_code_index(
     isolated_path: str,
     *,
     timeout: float = 120.0,
-) -> None:
-    """Run gcode indexing inside an isolated workspace before spawning an agent."""
-    workspace = Path(isolated_path)
-    if not workspace.is_dir():
-        raise RuntimeError(f"gcode_index_workspace_missing:{isolated_path}")
-
-    from gobby.utils.native_bin import resolve_native_bin
-
-    gcode_bin = resolve_native_bin("gcode")
-    if gcode_bin is None:
-        raise RuntimeError("gcode_not_installed")
-
-    proc: asyncio.subprocess.Process | None = None
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            gcode_bin,
-            "index",
-            "--quiet",
-            cwd=str(workspace),
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except TimeoutError as exc:
-        if proc is not None:
-            try:
-                proc.kill()
-                await proc.wait()
-            except ProcessLookupError:
-                pass
-        raise RuntimeError(f"gcode_index_timeout:{timeout:g}s") from exc
-    except OSError as exc:
-        raise RuntimeError(f"gcode_index_failed:{exc}") from exc
-
-    if proc.returncode != 0:
-        detail = stderr.decode(errors="replace").strip() if stderr else "<no stderr>"
-        raise RuntimeError(f"gcode_index_failed:{proc.returncode}:{detail}")
+    database_url: str | None = None,
+    daemon_bind_host: str | None = None,
+    daemon_port: int | None = None,
+    runtime_root: Path | None = None,
+    config_probe_timeout: float = 5.0,
+    search_smoke_timeout: float = 10.0,
+) -> CodeIndexPreflightResult:
+    """Run and verify gcode indexing inside an isolated workspace before spawn."""
+    return await _ensure_isolation_code_index(
+        isolated_path,
+        timeout=timeout,
+        database_url=database_url,
+        daemon_bind_host=daemon_bind_host,
+        daemon_port=daemon_port,
+        runtime_root=runtime_root,
+        config_probe_timeout=config_probe_timeout,
+        search_smoke_timeout=search_smoke_timeout,
+    )
 
 
 async def _copy_cli_hooks(

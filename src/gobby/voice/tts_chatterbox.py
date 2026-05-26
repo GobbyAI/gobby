@@ -171,13 +171,12 @@ class ChatterboxTurboProvider(BaseTTSProvider):
         self._runtime_primed = False
 
     def _availability(self) -> tuple[bool, str]:
-        runtime_error = _runtime_import_error()
-        if runtime_error is not None:
-            return False, runtime_error
-
         reference_error = _reference_availability_error(self._reference_audio)
         if reference_error is not None:
             return False, reference_error
+        runtime_error = _runtime_import_error()
+        if runtime_error is not None:
+            return False, runtime_error
         return True, ""
 
     def _status_details(self) -> dict[str, Any]:

@@ -15,12 +15,12 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from gobby.servers.http import HTTPServer
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
 
-def _get_session_stats(db: "DatabaseProtocol", session: Any) -> dict[str, int]:
+def _get_session_stats(db: "HubDatabase", session: Any) -> dict[str, int]:
     """Get activity stats for a session (tasks closed, memories, commits).
 
     Args:
@@ -35,20 +35,24 @@ def _get_session_stats(db: "DatabaseProtocol", session: Any) -> dict[str, int]:
     # Tasks closed in this session
     try:
         row = db.fetchone(
-            "SELECT COUNT(*) FROM session_tasks WHERE session_id = ? AND action = 'closed'",
+            """
+            SELECT COUNT(*) AS count
+              FROM session_tasks
+             WHERE session_id = ? AND action = 'closed'
+            """,
             (session.id,),
         )
-        stats["tasks_closed"] = row[0] if row else 0
+        stats["tasks_closed"] = row["count"] if row else 0
     except Exception:
         stats["tasks_closed"] = 0
 
     # Memories created by this session
     try:
         row = db.fetchone(
-            "SELECT COUNT(*) FROM memories WHERE source_session_id = ?",
+            "SELECT COUNT(*) AS count FROM memories WHERE source_session_id = ?",
             (session.id,),
         )
-        stats["memories_created"] = row[0] if row else 0
+        stats["memories_created"] = row["count"] if row else 0
     except Exception:
         stats["memories_created"] = 0
 
@@ -60,10 +64,14 @@ def _get_session_stats(db: "DatabaseProtocol", session: Any) -> dict[str, int]:
     # Skills injected in this session
     try:
         row = db.fetchone(
-            "SELECT COUNT(DISTINCT skill_name) FROM session_skills WHERE session_id = ?",
+            """
+            SELECT COUNT(DISTINCT skill_name) AS count
+              FROM session_skills
+             WHERE session_id = ?
+            """,
             (session.id,),
         )
-        stats["skills_used"] = row[0] if row else 0
+        stats["skills_used"] = row["count"] if row else 0
     except Exception:
         stats["skills_used"] = 0
 
@@ -105,7 +113,7 @@ def register_lifecycle_routes(
                             errors.append(f"Session {sid} not found")
                             continue
                         server.session_manager.db.execute(
-                            "UPDATE sessions SET project_id = ?, updated_at = datetime('now') WHERE id = ?",
+                            "UPDATE sessions SET project_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                             (target_project_id, sid),
                         )
                         moved_ids.append(sid)

@@ -8,13 +8,13 @@ from gobby.storage.build_profiles import (
     BuildProfileLoader,
     BuildProfileManager,
 )
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 
 def resolve_build_profile_options(
     opts: BuildOptions,
     *,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str,
 ) -> BuildOptions:
     """Overlay DB-backed profile defaults with explicit build request fields."""
@@ -49,6 +49,10 @@ def resolve_build_profile_options(
         reset_expansion_output=opts.reset_expansion_output,
         max_active_agents=opts.max_active_agents,
         max_retries=opts.max_retries,
+        planning_seed_state=opts.planning_seed_state,
+        completed_plan_review_rounds=opts.completed_plan_review_rounds,
+        dry_run=opts.dry_run,
+        coordinator_session_ref=opts.coordinator_session_ref,
     )
 
 

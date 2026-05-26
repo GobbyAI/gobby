@@ -214,7 +214,7 @@ Reduce from 1,101 lines to ~300 lines.
 - **Project Overview** (~50 lines): What Gobby is, architecture
 - **Directory Structure** (~50 lines): Source tree, key files
 - **Development Commands** (~30 lines): uv, pytest, ruff, mypy
-- **Code Conventions** (~50 lines): Types, async, SQLite patterns
+- **Code Conventions** (~50 lines): Types, async, PostgreSQL patterns
 - **Testing Patterns** (~50 lines): Fixtures, markers, async tests
 - **Troubleshooting** (~50 lines): Common dev issues
 
@@ -240,7 +240,7 @@ src/gobby/
 ├── cli/           # CLI commands (Click)
 ├── mcp_proxy/     # MCP server and tool proxying
 ├── hooks/         # Hook event system
-├── storage/       # SQLite storage layer
+├── storage/       # PostgreSQL storage layer
 ...
 
 ## Development Commands
@@ -252,7 +252,7 @@ uv run mypy src/           # Type check
 ## Code Conventions
 - All functions require type hints
 - Use async for I/O-bound operations
-- Always use connection context manager for SQLite
+- Always use connection context manager for PostgreSQL
 - Use structured logging with context
 
 ## Testing Patterns

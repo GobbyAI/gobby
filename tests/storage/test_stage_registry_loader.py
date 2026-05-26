@@ -8,8 +8,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
 
@@ -35,12 +34,6 @@ def _loader_types():
     )
 
     return StageRegistryLoader, StageRegistryLoadError
-
-
-def _fresh_db(tmp_path: Path) -> LocalDatabase:
-    db = LocalDatabase(tmp_path / "registry-loader.db")
-    run_migrations(db)
-    return db
 
 
 def test_parses_bundled_yaml() -> None:
@@ -223,9 +216,9 @@ def test_reviewer_selector_validation_errors(
         StageRegistryLoader(path=broken).load()
 
 
-def test_sync_no_op_when_hash_matches_seed(tmp_path: Path) -> None:
+def test_sync_no_op_when_hash_matches_seed(temp_db: HubDatabase) -> None:
     StageRegistryLoader, _ = _loader_types()
-    db = _fresh_db(tmp_path)
+    db = temp_db
     before = db.fetchall(
         "SELECT name, bundled_hash, updated_at FROM task_stages_registry ORDER BY name"
     )
@@ -242,9 +235,9 @@ def test_sync_no_op_when_hash_matches_seed(tmp_path: Path) -> None:
     ]
 
 
-def test_sync_upserts_on_hash_drift(tmp_path: Path) -> None:
+def test_sync_upserts_on_hash_drift(temp_db: HubDatabase) -> None:
     StageRegistryLoader, _ = _loader_types()
-    db = _fresh_db(tmp_path)
+    db = temp_db
     db.execute(
         """
         UPDATE task_stages_registry
@@ -272,15 +265,15 @@ def test_sync_upserts_on_hash_drift(tmp_path: Path) -> None:
     assert row["dispatch_type"] is None
 
 
-def test_user_added_stage_preserved(tmp_path: Path) -> None:
+def test_user_added_stage_preserved(temp_db: HubDatabase) -> None:
     StageRegistryLoader, _ = _loader_types()
-    db = _fresh_db(tmp_path)
+    db = temp_db
     db.execute(
         """
         INSERT INTO task_stages_registry (
             name, display_label, description, category, position_hint, requires_human,
             is_terminal, bundled_hash, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         """,
         (
             "operator_review",
@@ -288,8 +281,8 @@ def test_user_added_stage_preserved(tmp_path: Path) -> None:
             "A local operator-added stage.",
             "verification",
             999,
-            1,
-            0,
+            True,
+            False,
             None,
         ),
     )

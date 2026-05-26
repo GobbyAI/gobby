@@ -2,8 +2,7 @@
 
 import pytest
 
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.prompts import (
     LocalPromptManager,
     PromptChangeEvent,
@@ -15,12 +14,10 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path):
+def db(temp_db: HubDatabase):
     """Create a fresh database with migrations applied."""
-    database = LocalDatabase(tmp_path / "test.db")
-    run_migrations(database)
+    database = temp_db
     yield database
-    database.close()
 
 
 @pytest.fixture

@@ -13,6 +13,7 @@ Provides fixtures for:
 import json
 import os
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -82,7 +83,7 @@ def prepare_daemon_env(
 
     This handles the critical setup that's easy to miss when manually spawning daemons:
     1. Sets PYTHONPATH to include the src directory
-    2. Removes GOBBY_DATABASE_PATH so daemon uses its config file's database_path
+    2. Removes GOBBY_DATABASE_PATH so daemon uses its config file's database_url
     3. Clears LLM API keys to avoid external calls
     4. Overrides HOME to isolate the daemon from the real ~/.gobby/
 
@@ -113,16 +114,19 @@ def prepare_daemon_env(
     env.pop("GOBBY_DATABASE_PATH", None)
     env.pop("GOBBY_CONFIG_FILE", None)
 
-    # Disable any LLM providers to avoid external calls
-    env["ANTHROPIC_API_KEY"] = ""
-    env["OPENAI_API_KEY"] = ""
-    env["GEMINI_API_KEY"] = ""
+    # Disable any LLM providers to avoid external calls. The memory-helper
+    # live smoke is explicitly opt-in and needs the real provider credentials.
+    if env.get("GOBBY_LIVE_MEMORY_HELPER_E2E") != "1":
+        env["ANTHROPIC_API_KEY"] = ""
+        env["OPENAI_API_KEY"] = ""
+        env["GEMINI_API_KEY"] = ""
 
     # Override HOME so that ~/.gobby resolves to <temp>/.gobby instead of
     # the user's real home directory. This is the single most effective
     # isolation measure: it catches every expanduser() call in the daemon.
     if home_dir is not None:
-        env["HOME"] = str(home_dir)
+        home_path = Path(home_dir)
+        env["HOME"] = str(home_path)
 
     return env
 
@@ -168,6 +172,11 @@ def find_free_port(max_retries: int = 20) -> int:
     raise RuntimeError("Could not find free port for e2e test")
 
 
+def _postgres_url_for_schema(database_url: str, schema: str) -> str:
+    separator = "&" if "?" in database_url else "?"
+    return f"{database_url}{separator}options=-csearch_path%3D{schema}"
+
+
 def wait_for_port(port: int, timeout: float = 10.0) -> bool:
     """Wait for a port to become available for connection."""
     start = time.time()
@@ -208,7 +217,29 @@ def terminate_process_tree(pid: int, timeout: float = 5.0) -> None:
 
     try:
         parent = psutil.Process(pid)
-        children = parent.children(recursive=True)
+        try:
+            children = parent.children(recursive=True)
+        except (psutil.AccessDenied, PermissionError):
+            # macOS sandboxing can block full process enumeration. E2E daemons
+            # start in their own session, so the process group is a safe fallback.
+            try:
+                os.killpg(pid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                pass
+            try:
+                parent.wait(timeout=timeout / 2)
+            except psutil.TimeoutExpired:
+                try:
+                    os.killpg(pid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    pass
+                try:
+                    parent.wait(timeout=1.0)
+                except psutil.NoSuchProcess:
+                    pass
+            except psutil.NoSuchProcess:
+                pass
+            return
 
         # Terminate children first
         for child in children:
@@ -325,8 +356,15 @@ def e2e_project_dir() -> Generator[Path]:
 
 
 @pytest.fixture(scope="function")
-def e2e_config(e2e_project_dir: Path) -> Generator[tuple[Path, int, int]]:
+def e2e_config(
+    e2e_project_dir: Path,
+    postgres_database_url: str,
+    postgres_schema: str,
+    postgres_db: Any,
+) -> Generator[tuple[Path, int, int]]:
     """Create an isolated config file with unique ports."""
+    _ = postgres_db  # Fixture side effect: migrated and reset isolated Postgres schema.
+
     http_port = find_free_port()
     ws_port = find_free_port()
 
@@ -334,14 +372,16 @@ def e2e_config(e2e_project_dir: Path) -> Generator[tuple[Path, int, int]]:
     gobby_home.mkdir(parents=True, exist_ok=True)
 
     config_path = gobby_home / "config.yaml"
-    db_path = gobby_home / "gobby-hub.db"
+    db_path = gobby_home / "hub-postgres.db"
     log_dir = gobby_home / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
+
+    postgres_url = _postgres_url_for_schema(postgres_database_url, postgres_schema)
 
     config_content = f"""
 daemon_port: {http_port}
 test_mode: true
-database_path: "{db_path}"
+database_url: "{db_path}"
 
 websocket:
   enabled: true
@@ -374,26 +414,36 @@ session_summary:
     # (load_config Phase 1 reads bootstrap.yaml, not config.yaml)
     bootstrap_path = gobby_home / "bootstrap.yaml"
     bootstrap_content = f"""
+hub_backend: postgres
+database_url: {postgres_url}
+postgres_install_mode: external
 daemon_port: {http_port}
-database_path: "{db_path}"
 bind_host: localhost
 websocket_port: {ws_port}
 """
     bootstrap_path.write_text(bootstrap_content)
+    bootstrap_path.chmod(0o600)
 
     yield config_path, http_port, ws_port
+
+
+@pytest.fixture(scope="function")
+def e2e_pre_daemon_setup() -> None:
+    """Optional per-test setup that must run after DB reset and before daemon start."""
 
 
 @pytest.fixture(scope="function")
 def daemon_instance(
     e2e_project_dir: Path,
     e2e_config: tuple[Path, int, int],
+    e2e_pre_daemon_setup: None,
 ) -> Generator[DaemonInstance]:
     """
     Spawn an isolated daemon instance for E2E testing.
 
     Yields a DaemonInstance with running daemon, then cleans up on teardown.
     """
+    _ = e2e_pre_daemon_setup
     config_path, http_port, ws_port = e2e_config
     gobby_home = config_path.parent
     log_dir = gobby_home / "logs"
@@ -438,7 +488,7 @@ def daemon_instance(
         gobby_dir=e2e_project_dir / ".gobby",
         log_file=log_file,
         error_log_file=error_log_file,
-        db_path=gobby_home / "gobby-hub.db",
+        db_path=gobby_home / "hub-postgres.db",
         config_path=config_path,
     )
 
@@ -548,14 +598,20 @@ class CLIEventSimulator:
         machine_id: str = "test-machine",
         source: str = "claude",
         project_id: str | None = None,
+        cwd: str | None = None,
+        terminal_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Simulate session start hook event via /hooks/execute endpoint."""
-        input_data = {
+        input_data: dict[str, Any] = {
             "session_id": session_id,
             "machine_id": machine_id,
         }
         if project_id:
             input_data["project_id"] = project_id
+        if cwd:
+            input_data["cwd"] = cwd
+        if terminal_context:
+            input_data["terminal_context"] = terminal_context
 
         payload = {
             "hook_type": "session-start",
@@ -609,12 +665,57 @@ class CLIEventSimulator:
         response.raise_for_status()
         return response.json()
 
+    def user_prompt_submit(
+        self,
+        session_id: str,
+        prompt: str,
+        source: str = "claude",
+        machine_id: str = "test-machine",
+        cwd: str | None = None,
+        project_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Simulate a provider-specific turn-start/user-prompt hook."""
+        hook_type_by_source = {
+            "claude": "user-prompt-submit",
+            "codex": "UserPromptSubmit",
+            "droid": "UserPromptSubmit",
+            "gemini": "BeforeAgent",
+        }
+        hook_type = hook_type_by_source[source]
+        input_data: dict[str, Any] = {
+            "session_id": session_id,
+            "machine_id": machine_id,
+        }
+        if cwd:
+            input_data["cwd"] = cwd
+        if project_id:
+            input_data["project_id"] = project_id
+
+        if source in {"claude", "droid"}:
+            input_data["user_prompt"] = prompt
+        else:
+            input_data["prompt"] = prompt
+        if source == "gemini":
+            input_data["hook_event_name"] = hook_type
+
+        payload = {
+            "hook_type": hook_type,
+            "source": source,
+            "input_data": input_data,
+        }
+
+        response = self.client.post("/api/hooks/execute", json=payload)
+        response.raise_for_status()
+        return response.json()
+
     def register_test_agent(
         self,
         run_id: str,
         session_id: str,
         parent_session_id: str,
         mode: str = "interactive",
+        agent_name: str | None = None,
+        status: str = "running",
     ) -> dict[str, Any]:
         """Register a test agent in the running agent registry.
 
@@ -626,7 +727,10 @@ class CLIEventSimulator:
             "session_id": session_id,
             "parent_session_id": parent_session_id,
             "mode": mode,
+            "status": status,
         }
+        if agent_name is not None:
+            payload["agent_name"] = agent_name
 
         response = self.client.post("/api/admin/test/register-agent", json=payload)
         response.raise_for_status()
@@ -949,6 +1053,13 @@ _ALWAYS_EXEMPT_BASENAMES = {"shutdown_source.json"}
 _ALWAYS_EXEMPT_PREFIXES = ("hooks/inbox/",)
 
 
+def _is_worktree_bytecode_artifact(rel_path: str) -> bool:
+    """Return true for Python bytecode created by running tests from a task worktree."""
+    return rel_path.startswith("worktrees/") and (
+        "/__pycache__/" in rel_path or rel_path.endswith((".pyc", ".pyo"))
+    )
+
+
 @pytest.fixture(autouse=True)
 def assert_no_external_writes() -> Generator[None]:
     """Fail the test if the E2E daemon created new files in real ~/.gobby/.
@@ -986,6 +1097,8 @@ def assert_no_external_writes() -> Generator[None]:
             basename = Path(rel_path).name
             if rel_path.startswith(_ALWAYS_EXEMPT_PREFIXES):
                 continue
+            if _is_worktree_bytecode_artifact(rel_path):
+                continue
             if basename in _ALWAYS_EXEMPT_BASENAMES:
                 continue  # Transient per-daemon file — see _ALWAYS_EXEMPT_BASENAMES
             if prod_running and (
@@ -1002,9 +1115,11 @@ def assert_no_external_writes() -> Generator[None]:
             # since a running daemon continuously writes to its db and logs.
             # Log file mtime changes are always the production daemon (test
             # daemon writes to its temp dir), so exempt them unconditionally.
-            # SQLite WAL/SHM files can be touched by any process that opens
+            # PostgreSQL WAL/SHM files can be touched by any process that opens
             # the database (even read-only), so exempt them as well.
             basename = Path(rel_path).name
+            if _is_worktree_bytecode_artifact(rel_path):
+                continue
             if basename.endswith(("-shm", "-wal", "-journal")):
                 continue
             leaked.append(f"  MODIFIED: ~/.gobby/{rel_path}")

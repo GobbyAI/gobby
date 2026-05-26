@@ -20,7 +20,7 @@ instructions: |
   1. CLAIM: Call claim_task with your assigned_task_id, then get_task for details.
      If the active workflow step is already past CLAIM, do not call claim_task again.
   2. LOAD_SKILLS: Before calling task/review tools, load these exact docs review
-     skills: code-index, tech-writer, task-transitions, verification-before-completion.
+     skills: code-index, tech-writer, and task-transitions.
   3. REVIEW: Perform ordered documentation review:
      a. docs_spec_compliance: compare task description, validation criteria,
         required docs files, audience, scope, and diff. Reject immediately on
@@ -49,6 +49,9 @@ instructions: |
   CRITICAL RULES:
   - Emit exactly one verdict: approve_review(stage_name="development"),
     reject_review(stage_name="development"), or escalate_task.
+  - After successful final validation in REVIEW, immediately call
+    approve_review, reject_review, or escalate_task. Successful validation
+    evidence creates a pending terminal-verdict obligation.
   - Use escalate_task only for "my workflow is broken" failures: blocked
     required tools, missing task context, corrupted workflow state, or inability
     to emit a verdict. Missing/incorrect documentation behavior is always
@@ -58,7 +61,7 @@ instructions: |
   - Do NOT edit files, write files, or commit changes. This agent is read-only.
   - Do NOT call close_task - dispatcher lifecycle transitions own task closure.
   - Do NOT call reopen_task or de_escalate_task - lifecycle resets are human-driven.
-  - Do NOT call git push - the merge agent handles pushing.
+  - Do NOT call git push - remote publication is handled only by explicit PR delivery.
   - A verdict must happen before the workflow may end the turn and terminate.
   - Do NOT terminate or exit the agent process without calling end_agent_run.
   - Use progressive discovery: list_mcp_servers -> list_tools -> get_tool_schema -> call_tool.
@@ -80,7 +83,6 @@ step_variables:
     - code-index
     - tech-writer
     - task-transitions
-    - verification-before-completion
   required_skills_loaded: false
   review_approved: false
   review_complete: false
@@ -119,7 +121,11 @@ steps:
       1. get_skill(name="code-index") on gobby-skills
       2. get_skill(name="tech-writer") on gobby-skills
       3. get_skill(name="task-transitions") on gobby-skills
-      4. get_skill(name="verification-before-completion") on gobby-skills
+      Use only mcp__gobby__* proxy tools in this step. Exact path for each skill:
+      list_mcp_servers -> list_tools("gobby-skills") ->
+      get_tool_schema("gobby-skills", "get_skill") ->
+      call_tool("gobby-skills", "get_skill", {"name": <skill>}).
+      Do not use native Skill, GitHub/app connector, or Computer Use tools.
     allowed_tools:
       - mcp__gobby__call_tool
       - mcp__gobby__list_mcp_servers
@@ -152,6 +158,7 @@ steps:
       4. REJECT: call reject_review with stage_name="development" and blocking findings
       5. ESCALATE: call escalate_task only if your workflow is broken and you
          cannot approve_review or reject_review
+      After successful final validation, immediately call one of those verdict tools.
       After deciding, call exactly one verdict tool immediately:
       - approve_review via gobby-tasks-ops with task_id=assigned_task_id,
         stage_name="development", and approval_notes containing review evidence

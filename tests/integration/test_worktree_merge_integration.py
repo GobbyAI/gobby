@@ -12,10 +12,12 @@ functionality that doesn't exist yet. The green phase implementation will make
 these tests pass.
 """
 
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.merge_resolutions import MergeConflict, MergeResolution, MergeResolutionManager
 
 pytestmark = pytest.mark.integration
@@ -26,7 +28,7 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def mock_resolution():
+def mock_resolution() -> Any:
     """Create a mock merge resolution."""
     resolution = MagicMock()
     resolution.id = "mr-abc123"
@@ -39,7 +41,7 @@ def mock_resolution():
 
 
 @pytest.fixture
-def mock_conflict():
+def mock_conflict() -> Any:
     """Create a mock merge conflict."""
     conflict = MagicMock()
     conflict.id = "mc-conflict1"
@@ -161,18 +163,13 @@ class TestTaskStatusDuringMerge:
 class TestMergeStatePersistence:
     """Tests for merge state persistence across daemon restarts."""
 
-    def test_merge_resolution_persists(self, tmp_path) -> None:
+    def test_merge_resolution_persists(self, hub_db: HubDatabase) -> None:
         """Merge resolution should persist in database."""
-        from gobby.storage.database import LocalDatabase
         from gobby.storage.merge_resolutions import MergeResolutionManager
-        from gobby.storage.migrations import run_migrations
         from gobby.storage.projects import LocalProjectManager
         from gobby.storage.worktrees import LocalWorktreeManager
 
-        # Create real database
-        db_path = tmp_path / "test.db"
-        db = LocalDatabase(db_path)
-        run_migrations(db)
+        db = hub_db
 
         # Create prerequisite data (project and worktree for foreign key)
         project_manager = LocalProjectManager(db)
@@ -201,8 +198,6 @@ class TestMergeStatePersistence:
         assert retrieved.worktree_id == worktree.id
         assert retrieved.source_branch == "feature/test"
 
-        db.close()
-
     def test_worktree_merge_state_in_database_schema(self) -> None:
         """Database schema should include merge_state column in worktrees table."""
         # This test verifies the schema includes merge_state
@@ -221,7 +216,7 @@ class TestConcurrentMerges:
     """Tests for concurrent merges in different worktrees."""
 
     @patch("gobby.storage.merge_resolutions.MergeResolutionManager.list_resolutions")
-    def test_list_active_merges_method_exists(self, mock_list) -> None:
+    def test_list_active_merges_method_exists(self, mock_list: Any) -> None:
         """MergeResolutionManager should have list_resolutions method."""
 
         assert hasattr(MergeResolutionManager, "list_resolutions")
@@ -255,7 +250,7 @@ class TestCLIMergeStatusOutput:
             pytest.fail("get_merge_status not found in gobby.cli.daemon")
 
     @patch("gobby.cli.daemon.get_merge_status")
-    def test_status_command_includes_merge_info(self, mock_get_merge) -> None:
+    def test_status_command_includes_merge_info(self, mock_get_merge: Any) -> None:
         """gobby status command should include merge information."""
         from click.testing import CliRunner
 
@@ -338,7 +333,7 @@ class TestMergeManagerHelperMethods:
 
         assert hasattr(MergeResolutionManager, "get_conflict_by_path")
 
-    def test_get_active_resolution_returns_pending_resolution(self, mock_resolution) -> None:
+    def test_get_active_resolution_returns_pending_resolution(self, mock_resolution: Any) -> None:
         """get_active_resolution should return the current pending resolution."""
 
         db = MagicMock()
@@ -351,7 +346,7 @@ class TestMergeManagerHelperMethods:
         assert result is mock_resolution
         assert "status = 'pending'" in db.fetchone.call_args.args[0]
 
-    def test_get_conflict_by_path_finds_conflict(self, mock_conflict) -> None:
+    def test_get_conflict_by_path_finds_conflict(self, mock_conflict: Any) -> None:
         """get_conflict_by_path should find conflict by file path."""
 
         db = MagicMock()

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Iterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -17,6 +18,13 @@ from gobby.agents.tmux.output_reader import TmuxOutputReader
 from gobby.agents.tmux.pty_bridge import TmuxPTYBridge
 from gobby.agents.tmux.session_manager import TmuxSessionInfo, TmuxSessionManager
 from gobby.agents.tmux.spawner import TmuxSpawner
+from gobby.agents.tmux.text_injection import (
+    TmuxPaneModeUnavailableError,
+    TmuxTargetUnavailableError,
+    TmuxTextInjectionTimeout,
+    classify_tmux_text_injection_error,
+    send_literal_text_to_tmux_target,
+)
 from gobby.config.tmux import TmuxConfig
 from gobby.config.tmux import TmuxConfig as TmuxConfigCanonical
 
@@ -119,6 +127,126 @@ class TestTmuxErrors:
         assert err.session_name is None
 
 
+class TestTmuxTextInjection:
+    """Tests for literal tmux text injection."""
+
+    @pytest.mark.asyncio
+    async def test_uses_buffer_paste_with_configured_tmux_args(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        commands: list[list[str]] = []
+
+        async def fake_exec(*args: str, **_kwargs: object) -> MagicMock:
+            commands.append(list(args))
+            proc = MagicMock()
+            proc.returncode = 0
+            proc.communicate = AsyncMock(return_value=(b"", b""))
+            return proc
+
+        monkeypatch.setattr(
+            "gobby.agents.tmux.text_injection.asyncio.create_subprocess_exec",
+            fake_exec,
+        )
+
+        tmux_cmd = ["/opt/tmux", "-S", "/tmp/tmux-501/gobby", "-f", "/tmp/tmux.conf"]
+        await send_literal_text_to_tmux_target(
+            "%12",
+            "-X message\n",
+            tmux_cmd=tmux_cmd,
+            enter_delay_seconds=0,
+        )
+
+        assert len(commands) == 4
+        buffer_name = commands[0][7]
+        assert commands[0][:5] == tmux_cmd
+        assert commands[0][5:] == ["set-buffer", "-b", buffer_name, "--", "-X message"]
+        assert commands[1] == [
+            *tmux_cmd,
+            "paste-buffer",
+            "-d",
+            "-b",
+            buffer_name,
+            "-t",
+            "%12",
+        ]
+        assert commands[2] == [*tmux_cmd, "delete-buffer", "-b", buffer_name]
+        assert commands[3] == [*tmux_cmd, "send-keys", "-t", "%12", "Enter"]
+        assert not any("send-keys" in command and "-l" in command for command in commands)
+
+    @pytest.mark.asyncio
+    async def test_paste_failure_still_deletes_tmux_buffer(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        commands: list[list[str]] = []
+
+        async def fake_exec(*args: str, **_kwargs: object) -> MagicMock:
+            commands.append(list(args))
+            proc = MagicMock()
+            proc.returncode = 1 if "paste-buffer" in args else 0
+            proc.communicate = AsyncMock(return_value=(b"", b"can't find pane: %12"))
+            return proc
+
+        monkeypatch.setattr(
+            "gobby.agents.tmux.text_injection.asyncio.create_subprocess_exec",
+            fake_exec,
+        )
+
+        with pytest.raises(TmuxTargetUnavailableError):
+            await send_literal_text_to_tmux_target(
+                "%12",
+                "hello",
+                enter_delay_seconds=0,
+            )
+
+        buffer_name = commands[0][3]
+        assert commands[1][:4] == ["tmux", "paste-buffer", "-d", "-b"]
+        assert commands[1][4] == buffer_name
+        assert commands[2] == ["tmux", "delete-buffer", "-b", buffer_name]
+
+    @pytest.mark.asyncio
+    async def test_timeout_is_expected_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        proc = MagicMock()
+        proc.communicate = AsyncMock(side_effect=[TimeoutError, (b"", b"")])
+        proc.kill = MagicMock()
+
+        async def fake_exec(*_args: str, **_kwargs: object) -> MagicMock:
+            return proc
+
+        monkeypatch.setattr(
+            "gobby.agents.tmux.text_injection.asyncio.create_subprocess_exec",
+            fake_exec,
+        )
+
+        with pytest.raises(TmuxTextInjectionTimeout) as exc_info:
+            await send_literal_text_to_tmux_target("%12", "hello", timeout=0.01)
+
+        assert exc_info.value.expected is True
+        assert exc_info.value.error_code == "tmux_command_timeout"
+        proc.kill.assert_called_once()
+
+    @pytest.mark.parametrize(
+        ("stderr", "expected_type", "error_code"),
+        [
+            ("can't find pane: %12", TmuxTargetUnavailableError, "tmux_target_unavailable"),
+            ("pane is dead", TmuxTargetUnavailableError, "tmux_target_unavailable"),
+            ("not in a mode", TmuxPaneModeUnavailableError, "tmux_pane_mode_unavailable"),
+        ],
+    )
+    def test_classifies_expected_tmux_failures(
+        self,
+        stderr: str,
+        expected_type: type[Exception],
+        error_code: str,
+    ) -> None:
+        error = classify_tmux_text_injection_error(("tmux", "paste-buffer"), 1, stderr)
+
+        assert isinstance(error, expected_type)
+        assert error.expected is True
+        assert error.error_code == error_code
+
+
 # =============================================================================
 # TmuxSessionManager
 # =============================================================================
@@ -158,17 +286,17 @@ class TestTmuxSessionManager:
         assert args == ["tmux", "-S", "/tmp/tmux-1000/gobby", "-f", "/dev/null"]
 
     @patch("shutil.which", return_value="/usr/bin/tmux")
-    def test_is_available_true(self, mock_which) -> None:
+    def test_is_available_true(self, mock_which: MagicMock) -> None:
         mgr = TmuxSessionManager()
         assert mgr.is_available() is True
 
     @patch("shutil.which", return_value=None)
-    def test_is_available_false(self, mock_which) -> None:
+    def test_is_available_false(self, mock_which: MagicMock) -> None:
         mgr = TmuxSessionManager()
         assert mgr.is_available() is False
 
     @patch("shutil.which", return_value=None)
-    def test_require_available_raises(self, mock_which) -> None:
+    def test_require_available_raises(self, mock_which: MagicMock) -> None:
         mgr = TmuxSessionManager()
         with pytest.raises(TmuxNotFoundError):
             mgr.require_available()
@@ -213,7 +341,10 @@ class TestTmuxSessionManager:
             assert result == []
 
     @pytest.mark.asyncio
-    async def test_run_timeout_handles_already_exited_process(self, caplog) -> None:
+    async def test_run_timeout_handles_already_exited_process(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
         mgr = TmuxSessionManager()
         proc = MagicMock()
         proc.pid = 12345
@@ -312,6 +443,10 @@ class TestTmuxSessionManager:
             assert await mgr.kill_session("missing") is False
             assert await mgr.kill_session("missing", missing_ok=True) is True
 
+            mock_run.return_value = (1, "", "no server running on /tmp/tmux-123/gobby")
+            assert await mgr.kill_session("missing-server") is False
+            assert await mgr.kill_session("missing-server", missing_ok=True) is True
+
         assert not [record for record in caplog.records if record.levelname == "WARNING"]
 
     @pytest.mark.asyncio
@@ -351,18 +486,44 @@ class TestTmuxSessionManager:
             )
 
     @pytest.mark.asyncio
-    async def test_rename_window_failure(self) -> None:
+    async def test_rename_window_missing_pane_logs_debug(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        mgr = TmuxSessionManager()
+        with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = (1, "", "can't find pane: %53")
+
+            with caplog.at_level("DEBUG", logger="gobby.agents.tmux.session_manager"):
+                assert await mgr.rename_window("%53", "Title") is False
+
+        assert "Skipping tmux window rename for missing target '%53'" in caplog.text
+        assert not [record for record in caplog.records if record.levelname == "WARNING"]
+
+    @pytest.mark.asyncio
+    async def test_rename_window_failure(self, caplog: pytest.LogCaptureFixture) -> None:
         mgr = TmuxSessionManager()
         with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
             mock_run.return_value = (1, "", "no such window")
-            assert await mgr.rename_window("%99", "Title") is False
+
+            with caplog.at_level("WARNING", logger="gobby.agents.tmux.session_manager"):
+                assert await mgr.rename_window("%99", "Title") is False
+
+        assert "Failed to rename tmux window for '%99': no such window" in caplog.text
 
     @pytest.mark.asyncio
     async def test_send_keys(self) -> None:
         mgr = TmuxSessionManager()
-        with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
-            mock_run.return_value = (0, "", "")
+        with patch(
+            "gobby.agents.tmux.session_manager.send_literal_text_to_tmux_target",
+            new_callable=AsyncMock,
+        ) as mock_send:
             assert await mgr.send_keys("test", "hello") is True
+        mock_send.assert_awaited_once_with(
+            "test",
+            "hello",
+            tmux_cmd=["tmux", "-L", "gobby", "-f", "/dev/null"],
+        )
 
     @pytest.mark.asyncio
     async def test_get_pane_pid(self) -> None:
@@ -420,9 +581,8 @@ class TestTmuxOutputReader:
     @pytest.mark.asyncio
     async def test_stop_all_empty(self) -> None:
         reader = TmuxOutputReader()
-        result = await reader.stop_all()
+        await reader.stop_all()
 
-        assert result is None
         assert reader._reader_tasks == {}
 
 
@@ -450,7 +610,7 @@ class TestSingletons:
     """Tests for module-level singleton getters."""
 
     @pytest.fixture(autouse=True)
-    def reset_singletons(self) -> None:
+    def reset_singletons(self) -> Iterator[None]:
         """Reset module-level singletons before and after each test."""
         import gobby.agents.tmux as mod
 
@@ -543,17 +703,15 @@ class TestTmuxPTYBridge:
     @pytest.mark.asyncio
     async def test_detach_missing_is_noop(self) -> None:
         bridge = TmuxPTYBridge()
-        result = await bridge.detach("nonexistent")
+        await bridge.detach("nonexistent")
 
-        assert result is None
         assert await bridge.list_bridges() == {}
 
     @pytest.mark.asyncio
     async def test_detach_all_empty(self) -> None:
         bridge = TmuxPTYBridge()
-        result = await bridge.detach_all()
+        await bridge.detach_all()
 
-        assert result is None
         assert await bridge.list_bridges() == {}
 
     @pytest.mark.asyncio
@@ -628,7 +786,7 @@ class TestTmuxSpawner:
             patch.object(
                 spawner._session_manager, "get_session", new_callable=AsyncMock
             ) as mock_get,
-            patch("gobby.agents.tmux.spawner.tempfile.gettempdir", return_value="/tmp/test-tmp"),
+            patch("gobby.agents.constants.tempfile.gettempdir", return_value="/tmp/test-tmp"),
         ):
             mock_create.return_value = TmuxSessionInfo(name="test-session", pane_pid=123)
             mock_get.return_value = TmuxSessionInfo(name="test-session", pane_pid=123)
@@ -666,6 +824,33 @@ class TestTmuxSpawner:
 
             env_arg = mock_create.call_args[1].get("env")
             assert env_arg["UV_CACHE_DIR"] == "/custom/uv-cache"
+
+    @pytest.mark.asyncio
+    async def test_uv_cache_dir_empty_value_gets_default(self) -> None:
+        """Empty UV_CACHE_DIR values are treated as missing."""
+        spawner = TmuxSpawner()
+        with (
+            patch.object(
+                spawner._session_manager, "create_session", new_callable=AsyncMock
+            ) as mock_create,
+            patch.object(
+                spawner._session_manager, "get_session", new_callable=AsyncMock
+            ) as mock_get,
+            patch("gobby.agents.constants.tempfile.gettempdir", return_value="/tmp/test-tmp"),
+        ):
+            mock_create.return_value = TmuxSessionInfo(name="test-session", pane_pid=123)
+            mock_get.return_value = TmuxSessionInfo(name="test-session", pane_pid=123)
+            await spawner._async_spawn(
+                command=["echo", "hello"],
+                cwd="/tmp",
+                env={
+                    "GOBBY_SESSION_ID": "sess-1",
+                    "UV_CACHE_DIR": "",
+                },
+            )
+
+            env_arg = mock_create.call_args[1].get("env")
+            assert env_arg["UV_CACHE_DIR"] == "/tmp/test-tmp/gobby/uv-cache/sess-1"
 
     @pytest.mark.asyncio
     async def test_unset_in_shell_command(self) -> None:
@@ -776,6 +961,7 @@ class TestTmuxSpawner:
             )
 
             assert result.success is False
+            assert result.error is not None
             assert "tmux not found" in result.error
 
     @pytest.mark.asyncio
@@ -1019,44 +1205,63 @@ class TestTmuxSessionManagerExtended:
 
     @pytest.mark.asyncio
     async def test_send_keys_with_newline(self) -> None:
-        """send_keys with trailing newline sends Enter separately."""
-        mgr = TmuxSessionManager()
-        with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
-            mock_run.return_value = (0, "", "")
+        """send_keys delegates literal text, including trailing newline, to the helper."""
+        config = TmuxConfig(socket_name="ignored", socket_path="/tmp/tmux-501/gobby")
+        mgr = TmuxSessionManager(config)
+        with patch(
+            "gobby.agents.tmux.session_manager.send_literal_text_to_tmux_target",
+            new_callable=AsyncMock,
+        ) as mock_send:
             result = await mgr.send_keys("test-sess", "hello\n")
         assert result is True
-        assert mock_run.call_count == 2  # one for text, one for Enter
+        mock_send.assert_awaited_once_with(
+            "test-sess",
+            "hello\n",
+            tmux_cmd=["tmux", "-S", "/tmp/tmux-501/gobby", "-f", "/dev/null"],
+        )
 
     @pytest.mark.asyncio
     async def test_send_keys_without_newline(self) -> None:
-        """send_keys without trailing newline only sends text."""
+        """send_keys without trailing newline still uses paste-buffer helper."""
         mgr = TmuxSessionManager()
-        with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
-            mock_run.return_value = (0, "", "")
+        with patch(
+            "gobby.agents.tmux.session_manager.send_literal_text_to_tmux_target",
+            new_callable=AsyncMock,
+        ) as mock_send:
             result = await mgr.send_keys("test-sess", "hello")
         assert result is True
-        assert mock_run.call_count == 1
+        mock_send.assert_awaited_once_with(
+            "test-sess",
+            "hello",
+            tmux_cmd=["tmux", "-L", "gobby", "-f", "/dev/null"],
+        )
 
     @pytest.mark.asyncio
     async def test_send_keys_text_failure(self) -> None:
-        """send_keys returns False when send-keys fails."""
+        """send_keys returns False when literal text injection fails."""
         mgr = TmuxSessionManager()
-        with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
-            mock_run.return_value = (1, "", "no such session")
+        with patch(
+            "gobby.agents.tmux.session_manager.send_literal_text_to_tmux_target",
+            new_callable=AsyncMock,
+        ) as mock_send:
+            mock_send.side_effect = TmuxTargetUnavailableError(
+                "tmux target is unavailable: no such session",
+                command=("tmux", "paste-buffer"),
+                stderr="no such session",
+                returncode=1,
+            )
             result = await mgr.send_keys("missing", "text")
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_send_keys_enter_failure(self) -> None:
-        """send_keys returns False when Enter send fails."""
+    async def test_send_keys_raw_key_mode_uses_send_keys(self) -> None:
+        """Raw key mode still sends tmux key names through send-keys."""
         mgr = TmuxSessionManager()
         with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
-            mock_run.side_effect = [
-                (0, "", ""),  # text succeeds
-                (1, "", "error"),  # Enter fails
-            ]
-            result = await mgr.send_keys("test", "text\n")
-        assert result is False
+            mock_run.return_value = (0, "", "")
+            result = await mgr.send_keys("test", "C-c", literal=False)
+        assert result is True
+        mock_run.assert_awaited_once_with("send-keys", "-t", "test", "C-c")
 
     @pytest.mark.asyncio
     async def test_get_pane_pid_invalid_output(self) -> None:

@@ -6,6 +6,8 @@ using mock-based TestClient approach.
 
 from __future__ import annotations
 
+import asyncio
+import threading
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -157,6 +159,50 @@ def test_app_wires_session_change_listener_to_websocket(session_storage, sample_
         assert ws_server.broadcast_session_event.await_args is not None
 
 
+def test_app_cancels_session_broadcast_tasks_on_shutdown(session_storage, sample_project) -> None:
+    """Shutdown cancels in-flight websocket session broadcasts."""
+    broadcast_started = threading.Event()
+    broadcast_cancelled = threading.Event()
+
+    async def _slow_broadcast(event: str, session_id: str) -> None:
+        broadcast_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            broadcast_cancelled.set()
+            raise
+
+    ws_server = MagicMock()
+    ws_server.broadcast_session_event = AsyncMock(side_effect=_slow_broadcast)
+    ws_server.cleanup_voice = None
+    services = ServiceContainer(
+        config=None,
+        database=session_storage.db,
+        session_manager=session_storage,
+        task_manager=MagicMock(),
+        websocket_server=ws_server,
+    )
+    server = HTTPServer(
+        services=services,
+        port=60887,
+        test_mode=True,
+    )
+
+    with TestClient(server.app):
+        session_storage.register(
+            external_id="app-session-shutdown-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        wait_for_condition(
+            broadcast_started.is_set,
+            description="session broadcast start",
+        )
+
+    assert broadcast_cancelled.is_set()
+
+
 # =============================================================================
 # _get_session_stats helper
 # =============================================================================
@@ -173,7 +219,7 @@ class TestGetSessionStats:
         # tasks_closed = 3
         # memories_created = 5
         # skills_used = 2
-        db.fetchone.side_effect = [(3,), (5,), (2,)]
+        db.fetchone.side_effect = [{"count": 3}, {"count": 5}, {"count": 2}]
 
         with patch("gobby.servers.routes.sessions.core._get_commit_count", return_value=7):
             stats = _get_session_stats(db, session)
@@ -538,7 +584,7 @@ class TestCreateWebChatSession:
         assert response.status_code == 400
         assert (
             response.json()["detail"]
-            == "Invalid provider. Must be one of: claude, gemini, qwen, codex, droid"
+            == "Invalid provider. Must be one of: claude, gemini, grok, qwen, codex, droid, agy"
         )
         mock_server.session_manager.create_web_chat_session.assert_not_called()
 

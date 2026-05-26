@@ -13,6 +13,7 @@ const BASE_PROJECT: ProjectWithStats = {
   linear_team_id: null,
   linear_project_id: null,
   approval_rules: [],
+  validation_detection: null,
   created_at: '2026-01-01T00:00:00Z',
   updated_at: '2026-01-01T00:00:00Z',
   session_count: 0,

@@ -5,20 +5,28 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Callable
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from gobby.build.controls import cleanup_successful_merge_artifacts
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+from gobby.mcp_proxy.tools.tasks._dispatch_mutex_release import (
+    _release_current_agent_dispatch_mutex,
+)
+from gobby.mcp_proxy.tools.tasks._lifecycle_status import (
+    _clear_prior_claim_session_variables,
+)
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.mcp_proxy.tools.tasks._stage_review import register_review_stage_tools
 from gobby.storage.delivery import TaskDeliveryStateManager
 from gobby.storage.tasks._stage_types import (
     IllegalManifestMutationError,
+    IllegalStageTransitionError,
     StageManifestSpec,
     StageState,
 )
 from gobby.storage.tasks._stage_views import stage_state_operation_view, stage_state_view
+from gobby.tasks.state_semantics import get_claimed_session_id
 from gobby.utils.session_context import get_current_session_id
 
 logger = logging.getLogger(__name__)
@@ -57,6 +65,99 @@ def _manifest_error(error: IllegalManifestMutationError) -> dict[str, Any]:
 
 def _operation_response(task_id: str, stage: StageState) -> dict[str, Any]:
     return {"ok": True, "task_id": task_id, "stage": stage_state_operation_view(stage)}
+
+
+def _idempotent_operation_response(task_id: str, stage: StageState) -> dict[str, Any]:
+    response = _operation_response(task_id, stage)
+    response["idempotent"] = True
+    return response
+
+
+def _get_stage_state(ctx: RegistryContext, task_id: str, stage_name: str) -> StageState | None:
+    getter = getattr(ctx.task_manager.stage_states, "get", None)
+    if not callable(getter):
+        return None
+    return cast(StageState | None, getter(task_id, stage_name))
+
+
+def _get_prior_claim(ctx: RegistryContext, task_id: str) -> str | None:
+    task = ctx.task_manager.get_task(task_id)
+    return get_claimed_session_id(task) if task is not None else None
+
+
+def _release_prior_claim(
+    ctx: RegistryContext,
+    task_id: str,
+    prior_assignee: str | None,
+    *,
+    action: str,
+) -> None:
+    if not prior_assignee:
+        return
+    ctx.task_manager.release_task_claim(task_id)
+    _clear_prior_claim_session_variables(ctx, task_id, prior_assignee, action=action)
+
+
+def _delivery_campaign(delivery: TaskDeliveryStateManager, task_id: str) -> dict[str, Any]:
+    campaign = delivery.get_state(task_id).get("campaign")
+    if not isinstance(campaign, dict):
+        return {}
+    return campaign
+
+
+def _campaign_merge_sha(campaign: dict[str, Any]) -> str | None:
+    value = campaign.get("merge_sha")
+    return value if isinstance(value, str) and value else None
+
+
+def _is_completed_merge_transition(error: IllegalStageTransitionError) -> bool:
+    return (
+        error.stage_name == "merge"
+        and error.current_state == "done"
+        and error.attempted_transition == "complete_stage"
+    )
+
+
+def _is_ready_merge_transition(error: IllegalStageTransitionError) -> bool:
+    return (
+        error.stage_name == "merge"
+        and error.current_state == "ready"
+        and error.attempted_transition == "complete_stage"
+    )
+
+
+def _can_reconcile_ready_merge(
+    previous_campaign: dict[str, Any],
+    merge_sha: str,
+) -> bool:
+    state = previous_campaign.get("state")
+    previous_sha = _campaign_merge_sha(previous_campaign)
+    if state == "failed":
+        return previous_sha in (None, merge_sha)
+    if state == "merged":
+        return previous_sha == merge_sha
+    return False
+
+
+def _complete_ready_merge_stage(
+    ctx: RegistryContext,
+    *,
+    task_id: str,
+    session_id: str | None,
+    merge_sha: str,
+) -> StageState:
+    ctx.task_manager.stage_states.start_stage(
+        task_id,
+        "merge",
+        by_session_id=session_id,
+        notes="Reconciling successful merge result after a prior merge attempt.",
+    )
+    return ctx.task_manager.stage_states.complete_stage(
+        task_id,
+        "merge",
+        by_session_id=session_id,
+        commit_sha=merge_sha,
+    )
 
 
 def _findings_text(findings: str | dict[str, Any] | list[Any]) -> str:
@@ -174,14 +275,23 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
     ) -> dict[str, Any]:
         """Complete a stage according to its review policy."""
         resolved_id = _resolve_task(ctx, task_id)
+        resolved_session_id = _session_id(ctx)
+        prior_assignee = _get_prior_claim(ctx, resolved_id)
+        if resolved_session_id:
+            _release_current_agent_dispatch_mutex(
+                ctx,
+                task_id=resolved_id,
+                session_id=resolved_session_id,
+            )
         stage = ctx.task_manager.stage_states.complete_stage(
             resolved_id,
             stage_name,
-            by_session_id=_session_id(ctx),
+            by_session_id=resolved_session_id,
             commit_sha=commit_sha,
             artifact_updates=artifact_updates,
             validation_override_reason=validation_override_reason,
         )
+        _release_prior_claim(ctx, resolved_id, prior_assignee, action="complete_stage")
         return _operation_response(resolved_id, stage)
 
     _register_stage_tool(
@@ -208,6 +318,14 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
     ) -> dict[str, Any]:
         """Return a failed in-progress stage to ready or escalate after caps."""
         resolved_id = _resolve_task(ctx, task_id)
+        resolved_session_id = _session_id(ctx)
+        prior_assignee = _get_prior_claim(ctx, resolved_id)
+        if resolved_session_id:
+            _release_current_agent_dispatch_mutex(
+                ctx,
+                task_id=resolved_id,
+                session_id=resolved_session_id,
+            )
         cited_ids = (
             [_resolve_task(ctx, cited_subtask) for cited_subtask in cited_subtasks]
             if cited_subtasks
@@ -218,9 +336,10 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
             stage_name,
             reason=reason,
             needs_human=needs_human,
-            by_session_id=_session_id(ctx),
+            by_session_id=resolved_session_id,
             cited_subtasks=cited_ids,
         )
+        _release_prior_claim(ctx, resolved_id, prior_assignee, action="fail_stage")
         return _operation_response(resolved_id, stage)
 
     _register_stage_tool(
@@ -325,18 +444,32 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
             last_error="" if verdict == "approve" else findings_body,
         )
         if verdict == "approve":
+            resolved_session_id = _session_id(ctx)
+            if resolved_session_id:
+                _release_current_agent_dispatch_mutex(
+                    ctx,
+                    task_id=resolved_id,
+                    session_id=resolved_session_id,
+                )
             stage = ctx.task_manager.stage_states.approve_review(
                 resolved_id,
                 "pr",
-                by_session_id=_session_id(ctx),
+                by_session_id=resolved_session_id,
                 notes=findings_body,
             )
         elif verdict == "request_changes":
+            resolved_session_id = _session_id(ctx)
+            if resolved_session_id:
+                _release_current_agent_dispatch_mutex(
+                    ctx,
+                    task_id=resolved_id,
+                    session_id=resolved_session_id,
+                )
             stage = ctx.task_manager.stage_states.reject_review(
                 resolved_id,
                 "pr",
                 reason=findings_body,
-                by_session_id=_session_id(ctx),
+                by_session_id=resolved_session_id,
                 notes=findings_body,
             )
         else:
@@ -452,17 +585,42 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 merge_report_ref=report_ref or failure_reason,
                 last_error=failure_reason,
             )
+            resolved_session_id = _session_id(ctx)
+            if resolved_session_id:
+                _release_current_agent_dispatch_mutex(
+                    ctx,
+                    task_id=resolved_id,
+                    session_id=resolved_session_id,
+                )
             stage = ctx.task_manager.stage_states.fail_stage(
                 resolved_id,
                 "merge",
                 reason=failure_reason,
                 needs_human=False,
-                by_session_id=_session_id(ctx),
+                by_session_id=resolved_session_id,
             )
             return _operation_response(resolved_id, stage)
 
         if not merge_sha:
             raise ValueError("merge_sha is required when recording a successful merge")
+        previous_campaign = _delivery_campaign(delivery, resolved_id)
+        previous_state = previous_campaign.get("state")
+        previous_sha = _campaign_merge_sha(previous_campaign)
+        if previous_state == "merged" and previous_sha and previous_sha != merge_sha:
+            raise ValueError(
+                "merge stage is already recorded with a different merge_sha "
+                f"({previous_sha}); refusing to overwrite it with {merge_sha}"
+            )
+        existing_stage = _get_stage_state(ctx, resolved_id, "merge")
+        if existing_stage is not None and existing_stage.state == "done":
+            delivery.record_campaign(
+                resolved_id,
+                state="merged",
+                merge_sha=merge_sha,
+                merge_report_ref=report_ref or "",
+                last_error="",
+            )
+            return _idempotent_operation_response(resolved_id, existing_stage)
         delivery.record_campaign(
             resolved_id,
             state="merged",
@@ -470,12 +628,40 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
             merge_report_ref=report_ref or "",
             last_error="",
         )
-        stage = ctx.task_manager.stage_states.complete_stage(
-            resolved_id,
-            "merge",
-            by_session_id=_session_id(ctx),
-            commit_sha=merge_sha,
-        )
+        resolved_session_id = _session_id(ctx)
+        if resolved_session_id:
+            _release_current_agent_dispatch_mutex(
+                ctx,
+                task_id=resolved_id,
+                session_id=resolved_session_id,
+            )
+        reconciled_ready_merge = False
+        try:
+            stage = ctx.task_manager.stage_states.complete_stage(
+                resolved_id,
+                "merge",
+                by_session_id=resolved_session_id,
+                commit_sha=merge_sha,
+            )
+        except IllegalStageTransitionError as exc:
+            if _is_ready_merge_transition(exc) and _can_reconcile_ready_merge(
+                previous_campaign,
+                merge_sha,
+            ):
+                stage = _complete_ready_merge_stage(
+                    ctx,
+                    task_id=resolved_id,
+                    session_id=resolved_session_id,
+                    merge_sha=merge_sha,
+                )
+                reconciled_ready_merge = True
+            elif not _is_completed_merge_transition(exc):
+                raise
+            else:
+                completed_stage = _get_stage_state(ctx, resolved_id, "merge")
+                if completed_stage is None:
+                    raise
+                return _idempotent_operation_response(resolved_id, completed_stage)
         try:
             cleanup_successful_merge_artifacts(ctx.task_manager.db, resolved_id)
         except Exception:
@@ -484,7 +670,10 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 extra={"task_id": resolved_id, "merge_sha": merge_sha},
                 exc_info=True,
             )
-        return _operation_response(resolved_id, stage)
+        response = _operation_response(resolved_id, stage)
+        if reconciled_ready_merge:
+            response["reconciled"] = True
+        return response
 
     _register_stage_tool(
         registry,

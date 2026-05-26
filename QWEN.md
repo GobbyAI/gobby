@@ -58,7 +58,7 @@ A local-first daemon to unify your AI coding tools. Session tracking and handoff
 
 - Python 3.13+ package, distributed via PyPI
 - Local daemon with HTTP, WebSocket, and MCP endpoints — no cloud dependency
-- SQLite-backed storage with a sophisticated rule engine, workflow/pipeline system, and memory system (FTS5 + vector search via Qdrant)
+- PostgreSQL-backed hub storage with a sophisticated rule engine, workflow/pipeline system, and memory system (keyword + vector search via Qdrant)
 - Built with extensive type hints, async/await throughout, and full test coverage (80%+ enforced)
 - "Built with Gobby" — most of the codebase was written by AI agents using Gobby's own task system
 
@@ -75,7 +75,7 @@ A local-first daemon to unify your AI coding tools. Session tracking and handoff
 | `tasks/` | Task system with dependency graphs, TDD expansion, validation |
 | `workflows/` | Rule engine, workflow engine, pipeline executor (~47 modules) |
 | `memory/` | Persistent memory with semantic + keyword search |
-| `storage/` | SQLite storage layer with migrations (~20 modules) |
+| `storage/` | Hub storage layer with migrations and backend adapters (~20 modules) |
 | `skills/` | Skill management (SKILL.md format, filesystem/GitHub/ZIP sources) |
 | `config/` | YAML-based daemon configuration (~15 modules) |
 | `llm/` | Multi-provider LLM abstraction (Claude, Gemini, OpenAI-compatible) |
@@ -167,7 +167,7 @@ uv run gobby pipelines reject <token>  # Reject waiting pipeline
 
 Use specific exceptions, never bare `except`. Use structured logging with context.
 
-### SQLite
+### Database Access
 
 Always use connection context managers:
 
@@ -198,8 +198,8 @@ Files in `src/gobby/install/shared/` (rules/, workflows/, agents/, pipelines/) a
 
 | Path | Purpose |
 |---|---|
-| `~/.gobby/bootstrap.yaml` | Pre-DB bootstrap settings (ports, db_path, bind_host) |
-| `~/.gobby/gobby-hub.db` | SQLite database |
+| `~/.gobby/bootstrap.yaml` | Pre-DB bootstrap settings (ports, database URL, bind_host) |
+| `bootstrap.yaml` `database_url` | Runtime hub database connection |
 | `~/.gobby/logs/` | Log files |
 | `.gobby/project.json` | Project metadata |
 | `.gobby/tasks.jsonl` | Task sync file (git-native) |

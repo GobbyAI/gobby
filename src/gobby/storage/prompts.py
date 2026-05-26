@@ -1,19 +1,20 @@
 """Prompt storage and management.
 
 This module provides the PromptRecord dataclass and LocalPromptManager for
-storing and retrieving prompts from SQLite, with three-tier scope precedence
-(project > global > bundled) and read-only enforcement for bundled prompts.
+storing and retrieving prompts from the hub database, with three-tier scope
+precedence (project > global > bundled) and read-only enforcement for bundled
+prompts.
 """
 
 import json
 import logging
-import sqlite3
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal
 
 from gobby.prompts.models import PromptTemplate, VariableSpec
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.id import generate_prefixed_id
 
 __all__ = [
@@ -65,7 +66,7 @@ class PromptRecord:
     updated_at: str = ""
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row) -> "PromptRecord":
+    def from_row(cls, row: Mapping[str, Any]) -> "PromptRecord":
         """Create a PromptRecord from a database row."""
         variables_json = row["variables"]
         variables = json.loads(variables_json) if variables_json else None
@@ -209,7 +210,7 @@ class PromptChangeNotifier:
 
 
 class LocalPromptManager:
-    """Manages prompt storage in SQLite.
+    """Manages prompt storage in the hub database.
 
     Provides CRUD operations with three-tier scope precedence
     (project > global > bundled) and read-only enforcement for bundled prompts.
@@ -217,7 +218,7 @@ class LocalPromptManager:
 
     def __init__(
         self,
-        db: DatabaseProtocol,
+        db: HubDatabase,
         dev_mode: bool = False,
         notifier: PromptChangeNotifier | None = None,
     ) -> None:

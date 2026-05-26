@@ -17,14 +17,20 @@ instructions: |
   Your task ID is in your session variables as assigned_task_id.
 
   Your behavior is enforced by a step workflow. Follow the step prompts:
-  1. CLAIM: Call claim_task with your assigned_task_id, then get_task for details
-     If the active workflow step is already past CLAIM, do not call claim_task again.
+  1. CLAIM: Spawn-time auto-claim normally completes this before you start.
+     Only call claim_task when the active step prompt says the current step is
+     CLAIM. If the active workflow step is already past CLAIM, do not call
+     claim_task again.
   2. LOAD_SKILLS: Before calling task/review tools, load these exact QA session
-     skills: code-index, task-transitions, verification-before-completion.
+     skills: code-index and task-transitions.
   3. REVIEW: Perform ordered leaf review:
      a. spec_compliance: compare task description, validation criteria, coverage labels,
         required files/tests, and diff. Reject immediately on missing or incorrect
         required behavior.
+        If the task has label `tdd:required`, additional skill
+        `test-driven-development`, or validation criteria requiring TDD, verify
+        red evidence, minimal green evidence, refactor/final-green evidence,
+        exact test commands, and test-quality audit output before approval.
      b. code_quality: only after spec_compliance passes, review tests,
         maintainability, regressions, safety, style, and repo fit.
   4. DECIDE:
@@ -48,6 +54,9 @@ instructions: |
   CRITICAL RULES:
   - Emit exactly one verdict: approve_review(stage_name="development"),
     reject_review(stage_name="development"), or escalate_task.
+  - After successful final validation in REVIEW, immediately call
+    approve_review, reject_review, or escalate_task. Successful validation
+    evidence creates a pending terminal-verdict obligation.
   - Use escalate_task only for "my workflow is broken" failures: blocked
     required tools, missing task context, corrupted workflow state, or inability
     to emit a verdict. Missing/incorrect implementation behavior is always
@@ -56,8 +65,21 @@ instructions: |
     artifacts, wait for mutexes, wait for merges, or use `gobby tasks` CLI.
   - Do NOT edit files, write files, or commit changes. This agent is read-only.
   - Do NOT call close_task — dispatcher lifecycle transitions own task closure.
+  - Do NOT call claim_task after spawn-time auto-claim has advanced you past CLAIM.
+  - Do NOT call get_workflow_status; the active step prompt is authoritative.
   - Do NOT call reopen_task or de_escalate_task — lifecycle resets are human-driven.
-  - Do NOT call git push — the merge agent handles pushing.
+  - Do NOT call git push — remote publication is handled only by explicit PR delivery.
+  - Do NOT run full pytest, Vitest, or Jest suites. Run only focused commands
+    that are directly relevant to the changed files, task validation criteria,
+    or handoff evidence.
+  - If a worker-safety hook blocks a validation command, read the block reason,
+    switch to a focused file/filter command, and never retry that blocked command.
+  - Run validation commands in the foreground. Do NOT use shell backgrounding,
+    detached commands, shell sleep loops, Monitor, TaskOutput, or tmux polling
+    to observe validation.
+  - If validation cannot complete or be observed promptly, interrupt or abandon
+    it once, record the limitation in the verdict evidence, and do not launch
+    duplicate validation commands.
   - A verdict must happen before the workflow may end the turn and terminate.
   - Do NOT terminate or exit the agent process without calling end_agent_run.
   - Always use `uv run` for Python commands.
@@ -79,7 +101,6 @@ step_variables:
   required_skills:
     - code-index
     - task-transitions
-    - verification-before-completion
   required_skills_loaded: false
   review_approved: false
   review_complete: false
@@ -117,7 +138,11 @@ steps:
       Call these exact tools before reviewing:
       1. get_skill(name="code-index") on gobby-skills
       2. get_skill(name="task-transitions") on gobby-skills
-      3. get_skill(name="verification-before-completion") on gobby-skills
+      Use only mcp__gobby__* proxy tools in this step. Exact path for each skill:
+      list_mcp_servers -> list_tools("gobby-skills") ->
+      get_tool_schema("gobby-skills", "get_skill") ->
+      call_tool("gobby-skills", "get_skill", {"name": <skill>}).
+      Do not use native Skill, GitHub/app connector, or Computer Use tools.
     allowed_tools:
       - mcp__gobby__call_tool
       - mcp__gobby__list_mcp_servers
@@ -141,15 +166,24 @@ steps:
     description: "Review spec compliance first, then code quality, and emit verdict"
     status_message: |
       Review the code changes for the assigned task.
+      Do not call claim_task or get_workflow_status in REVIEW.
       1. spec_compliance: compare task description, validation criteria, coverage labels,
          required files/tests, and diff. Reject before code_quality if required behavior
          is missing or incorrect.
-      2. code_quality: after spec_compliance passes, review tests, maintainability,
+      2. tdd_required: when the task is marked `tdd:required` or requests
+         test-driven-development, reject unless the implementation handoff
+         contains red, green, refactor/final-green, exact test command, and
+         test-quality audit evidence.
+      3. code_quality: after spec_compliance passes, review tests, maintainability,
          regressions, safety, style, and repo fit.
-      3. APPROVE: call approve_review with stage_name="development" only when both pass
-      4. REJECT: call reject_review with stage_name="development" and blocking findings
-      5. ESCALATE: call escalate_task only if your workflow is broken and you
+      4. APPROVE: call approve_review with stage_name="development" only when all pass
+      5. REJECT: call reject_review with stage_name="development" and blocking findings
+      6. ESCALATE: call escalate_task only if your workflow is broken and you
          cannot approve_review or reject_review
+      After successful final validation, immediately call one of those verdict tools.
+      If get_task shows the task is no longer at development:needs_review,
+      this reviewer is stale. Do not emit a second verdict; call end_agent_run
+      after the workflow transitions to terminate.
       After deciding, call exactly one verdict tool immediately:
       - approve_review via gobby-tasks-ops with task_id=assigned_task_id,
         stage_name="development", and approval_notes containing review evidence
@@ -159,6 +193,15 @@ steps:
         only for "my workflow is broken" tooling failures
       Do not poll artifacts, wait for mutexes, wait for merges, or use the
       `gobby tasks` CLI. Dispatcher lifecycle owns post-verdict merge/closure.
+      Do not run full pytest, Vitest, or Jest suites; use focused validation
+      commands only. If a worker-safety hook blocks a command, read the block
+      reason once, switch to a focused file/filter command, and never retry that
+      blocked command.
+      Run validation commands in the foreground. Do not use shell backgrounding,
+      detached commands, shell sleep loops, Monitor, TaskOutput, or tmux polling
+      to observe validation. If validation cannot complete or be observed
+      promptly, interrupt or abandon it once, record the limitation in verdict
+      evidence, and do not launch duplicate validation commands.
     allowed_tools:
       - Bash
       - Read
@@ -183,6 +226,19 @@ steps:
       - "gobby-tasks-ops:reject_review"
       - "gobby-tasks:escalate_task"
     on_mcp_success:
+      - server: gobby-tasks
+        tool: get_task
+        when: >-
+          tool_output.get('success') is not False
+          and bool(tool_output.get('result'))
+          and (
+            tool_output.get('result', {}).get('state', {}).get('is_closed')
+            or tool_output.get('result', {}).get('state', {}).get('current_stage', {}).get('name') != 'development'
+            or tool_output.get('result', {}).get('state', {}).get('current_stage', {}).get('state') != 'needs_review'
+          )
+        action: set_variable
+        variable: review_complete
+        value: true
       - server: gobby-tasks-ops
         tool: approve_review
         action: set_variable

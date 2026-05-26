@@ -348,13 +348,13 @@ export function useMemory(projectId?: string | null) {
   }
 }
 
-export interface Neo4jStatus {
+export interface FalkorStatus {
   configured: boolean
   url?: string
 }
 
-export function useNeo4jStatus() {
-  const [neo4jStatus, setNeo4jStatus] = useState<Neo4jStatus | null>(null)
+export function useFalkorStatus() {
+  const [falkorStatus, setFalkorStatus] = useState<FalkorStatus | null>(null)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -364,19 +364,19 @@ export function useNeo4jStatus() {
         const response = await fetch(`${baseUrl}/api/admin/status`, { signal: controller.signal })
         if (response.ok) {
           const data = await response.json()
-          const neo4j = data.memory?.neo4j
-          if (neo4j) {
-            setNeo4jStatus(neo4j)
+          const falkordb = data.memory?.falkordb
+          if (falkordb) {
+            setFalkorStatus(falkordb)
           }
         }
       } catch (e) {
         if (e instanceof DOMException && e.name === 'AbortError') return
-        console.warn('Failed to fetch neo4j status:', e)
+        console.warn('Failed to fetch falkordb status:', e)
       }
     }
     fetchStatus()
     return () => controller.abort()
   }, [])
 
-  return neo4jStatus
+  return falkorStatus
 }

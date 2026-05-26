@@ -66,6 +66,7 @@ export function TaskTextField({
 
   const commit = useCallback(() => {
     const next = draft.trim();
+    setDraft(next);
     if (next === committed) return;
     setCommitted(next);
     onCommit(next);
@@ -141,9 +142,11 @@ export function TaskTextAreaField({
 
   const commit = useCallback(
     (next: string) => {
-      if (next === committed) return;
-      setCommitted(next);
-      onCommit(next);
+      const committedNext = next.trim();
+      setDraft(committedNext);
+      if (committedNext === committed) return;
+      setCommitted(committedNext);
+      onCommit(committedNext);
     },
     [committed, onCommit],
   );

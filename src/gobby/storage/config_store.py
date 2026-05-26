@@ -1,6 +1,6 @@
 """DB-first configuration storage.
 
-Stores config key-value pairs in SQLite as flattened dotted paths.
+Stores config key-value pairs in the hub database as flattened dotted paths.
 Values are JSON-encoded so types are preserved (strings, bools, numbers, lists).
 
 Resolution order: DB config_store > Pydantic defaults.
@@ -14,7 +14,7 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 if TYPE_CHECKING:
     from gobby.storage.secrets import SecretStore
@@ -29,6 +29,7 @@ _SECRET_SUFFIXES = (
     "_secret",
     "_password",
     "password",
+    "requirepass",
     "_access_token",
     "_auth_token",
     "_secret_key",
@@ -51,13 +52,13 @@ def is_secret_key_name(key: str) -> bool:
 
 
 class ConfigStore:
-    """Key-value config storage backed by SQLite.
+    """Key-value config storage backed by the hub database.
 
     Keys are flattened dotted paths (e.g. "llm_providers.claude.models").
     Values are JSON-encoded for type preservation.
     """
 
-    def __init__(self, db: DatabaseProtocol):
+    def __init__(self, db: HubDatabase):
         self.db = db
 
     def get(self, key: str) -> Any | None:
@@ -141,7 +142,7 @@ class ConfigStore:
     ) -> None:
         """Encrypt a config value via SecretStore and store a reference.
 
-        Stores ``$secret:<natural_name>`` in config_store with ``is_secret=1``.
+        Stores ``$secret:<natural_name>`` in config_store with ``is_secret=true``.
         The actual value is encrypted in the ``secrets`` table.
         Both writes happen in a single transaction for consistency.
         """
@@ -157,18 +158,21 @@ class ConfigStore:
             )
             self.db.execute(
                 """INSERT INTO config_store (key, value, source, is_secret, updated_at)
-                   VALUES (?, ?, ?, 1, ?)
+                   VALUES (?, ?, ?, ?, ?)
                    ON CONFLICT(key) DO UPDATE SET
                        value = excluded.value,
                        source = excluded.source,
-                       is_secret = 1,
+                       is_secret = excluded.is_secret,
                        updated_at = excluded.updated_at""",
-                (key, json.dumps(ref), source, now),
+                (key, json.dumps(ref), source, True, now),
             )
 
     def get_secret_keys(self) -> list[str]:
         """Return all config keys flagged as secrets."""
-        rows = self.db.fetchall("SELECT key FROM config_store WHERE is_secret = 1 ORDER BY key")
+        rows = self.db.fetchall(
+            "SELECT key FROM config_store WHERE is_secret = ? ORDER BY key",
+            (True,),
+        )
         return [row["key"] for row in rows]
 
     def clear_secret(self, key: str, secret_store: SecretStore) -> None:

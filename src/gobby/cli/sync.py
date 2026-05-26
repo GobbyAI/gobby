@@ -124,20 +124,14 @@ def sync(
             skip_types = BUNDLED_SYNC_CONTENT_TYPES - requested
 
     # --- Initialize DB and sync ---
-    from gobby.config.app import load_config
-    from gobby.storage.database import LocalDatabase
-    from gobby.storage.migrations import run_migrations
-
-    config = load_config()
-    db_path = Path(config.database_path).expanduser()
-    if not db_path.exists():
-        click.echo(f"Database not found at {db_path}. Run 'gobby install' first.")
-        sys.exit(1)
-
-    db = LocalDatabase(db_path)
-    run_migrations(db)
-
     from gobby.cli.installers.shared import sync_bundled_content_to_db
+    from gobby.storage.hub.runtime import open_runtime_hub_database
+
+    try:
+        db = open_runtime_hub_database(apply_migrations=False)
+    except RuntimeError as exc:
+        click.echo(f"Database unavailable: {exc}", err=True)
+        sys.exit(1)
 
     click.echo("Syncing bundled content to database...")
     sync_result = sync_bundled_content_to_db(db, skip_types=skip_types)

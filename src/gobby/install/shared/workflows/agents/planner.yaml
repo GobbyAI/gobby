@@ -29,8 +29,10 @@ instructions: |
 
   METHODOLOGY:
   After claiming your task, your first action MUST be to load the `plan-draft`
-  skill. Call get_skill(name="plan-draft") on gobby-skills, then continue. Follow that
-  skill's methodology EXACTLY when drafting or revising the plan artifact —
+  skill. Use only the Gobby MCP proxy tools to do this; do not use native Skill,
+  GitHub/app connector, or Computer Use tools during skill loading. Call
+  get_skill(name="plan-draft") on gobby-skills, then continue. Follow that skill's
+  methodology EXACTLY when drafting or revising the plan artifact —
   phase structure, task format, TDD compatibility, categories, hierarchy,
   dependency notation, and verification checklist. Do not invent alternative
   formats.
@@ -57,7 +59,8 @@ instructions: |
   same revision before resubmitting.
 
   WORKFLOW:
-  - Read the parent task first, then any referenced supporting docs, then
+  - After `plan-draft` is loaded and the workflow has advanced to `plan`, read
+    the parent task first, then any referenced supporting docs, then
     draft or revise the plan artifact requested in your prompt. If this is a
     revision round, the planning task description contains one or more
     `## Adversary Findings — Round N` sections — you MUST address every
@@ -141,6 +144,11 @@ steps:
     description: "Load the plan-draft methodology skill"
     status_message: |
       Call get_skill(name="plan-draft") on gobby-skills, then continue before drafting.
+      Use only mcp__gobby__* proxy tools in this step. Exact path:
+      list_mcp_servers -> list_tools("gobby-skills") ->
+      get_tool_schema("gobby-skills", "get_skill") ->
+      call_tool("gobby-skills", "get_skill", {"name": "plan-draft"}).
+      Do not use native Skill, GitHub/app connector, or Computer Use tools.
       The returned skill content is the authoritative methodology for this
       agent and must be followed exactly.
     allowed_tools:

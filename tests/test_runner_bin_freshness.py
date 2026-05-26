@@ -120,6 +120,7 @@ async def test_bin_freshness_loop_default_jitter_uses_system_random_source() -> 
 
 @pytest.mark.asyncio
 async def test_bin_freshness_loop_shutdown_exit_before_initial_delay() -> None:
+    """Shutdown is checked before initial sleep so no freshness update is scheduled."""
     updates = 0
 
     def update_once(db: object, config: BinFreshnessConfig) -> list[object]:
@@ -199,3 +200,55 @@ def test_disabled_config_skips_periodic_task_registration() -> None:
         )
 
     assert runner._bin_freshness_task is None
+
+
+def test_chat_attachment_periodic_defaults_are_explicit() -> None:
+    runner = SimpleNamespace(
+        metrics_manager=object(),
+        metrics_event_store=object(),
+        database=object(),
+        memory_manager=None,
+        http_server=SimpleNamespace(app=object()),
+        pipeline_execution_manager=None,
+        _shutdown_requested=False,
+        config=SimpleNamespace(
+            telemetry=SimpleNamespace(trace_retention_days=7),
+            bin_freshness=BinFreshnessConfig(enabled=False),
+            chat=None,
+        ),
+    )
+    cleanup_kwargs: dict[str, object] = {}
+
+    async def noop(*args: object, **kwargs: object) -> None:
+        return None
+
+    def cleanup_chat_attachments_loop(*args: object, **kwargs: object) -> object:
+        cleanup_kwargs.update(kwargs)
+        return noop()
+
+    def fake_create_task(coro: object, *, name: str | None = None) -> MagicMock:
+        close = getattr(coro, "close", None)
+        if close is not None:
+            close()
+        task = MagicMock()
+        task.name = name
+        return task
+
+    with patch("gobby.runner_lifecycle_periodic.asyncio.create_task", side_effect=fake_create_task):
+        start_periodic_tasks(
+            runner,
+            tracker=None,
+            metrics_cleanup_loop=noop,
+            metrics_archive_loop=noop,
+            span_cleanup_loop=noop,
+            cleanup_zombie_messages_loop=noop,
+            cleanup_comms_messages_loop=noop,
+            cleanup_chat_attachments_loop=cleanup_chat_attachments_loop,
+            cleanup_expired_isolation_loop=noop,
+            metric_snapshot_loop=noop,
+            drain_hook_inbox_loop=noop,
+            expire_approval_timeouts_loop=noop,
+        )
+
+    assert cleanup_kwargs["retention_hours"] == 24
+    assert cleanup_kwargs["interval_minutes"] == 60

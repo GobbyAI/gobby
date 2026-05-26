@@ -8,23 +8,19 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.state_manager import SessionVariableManager
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def temp_db(tmp_path) -> LocalDatabase:
-    db_path = tmp_path / "test_tool_proxy_invalid_arguments_schema.db"
-    database = LocalDatabase(db_path)
-    run_migrations(database)
-    return database
+def temp_db(postgres_db: HubDatabase) -> HubDatabase:
+    return postgres_db
 
 
 @pytest.fixture
-def proxy_parts(temp_db: LocalDatabase):
+def proxy_parts(temp_db: HubDatabase):
     mcp_manager = MagicMock()
     mcp_manager.project_id = "test-project"
     mcp_manager.has_server.return_value = True
@@ -138,7 +134,7 @@ async def test_leaked_routing_fields_are_invalid_target_arguments(proxy_parts) -
 
 
 @pytest.mark.asyncio
-async def test_missing_target_session_id_returns_schema_once(proxy_parts) -> None:
+async def test_required_session_id_injected_from_wrapper_context(proxy_parts) -> None:
     proxy, mcp_manager, _db = proxy_parts
     input_schema = {
         "type": "object",
@@ -154,19 +150,13 @@ async def test_missing_target_session_id_returns_schema_once(proxy_parts) -> Non
         session_id="session-wrapper",
     )
 
-    assert result["success"] is False
-    assert result["error_code"] == "invalid_arguments"
-    assert "arguments.session_id" in result["error"]
-    assert result["schema"] == input_schema
-
-    second = await proxy.call_tool(
+    assert result["success"] is True
+    mcp_manager.call_tool.assert_awaited_once_with(
         "gobby-sessions",
         "needs_session",
-        {},
+        {"session_id": "session-wrapper"},
         session_id="session-wrapper",
     )
-    assert "schema" not in second
-    assert second["schema_already_shown"] is True
 
 
 @pytest.mark.asyncio

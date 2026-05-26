@@ -64,7 +64,7 @@ Clean break — remove `send_to_parent`, `send_to_child`, `broadcast_to_children
 
 | Tool | Description |
 |------|-------------|
-| `send_message(from_session, to_session, content, *, priority, metadata)` | P2P message to any session in same project. `metadata` is agent-facing structured data (task refs, file paths, context) stored as JSON and included in push delivery injection. |
+| `send_message(from_session, to_session, content)` | P2P message to any session in same project. |
 | `send_command(to_session, command_text, allowed_tools, allowed_mcp_tools, exit_condition)` | Directed execution (ancestor-only). No timeout — commands run until `complete_command` or `exit_condition` is met or session ends. |
 | `complete_command(result)` | Signal command completion, restore original workflow. `result` sent as a message back to the command sender. |
 

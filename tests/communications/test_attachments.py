@@ -12,7 +12,7 @@ import pytest
 from gobby.communications.attachments import PLATFORM_SIZE_LIMITS, AttachmentManager
 from gobby.communications.models import CommsAttachment, CommsMessage
 from gobby.storage.communications import LocalCommunicationsStore
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 
 
 @pytest.fixture
@@ -132,7 +132,7 @@ def test_comms_attachment_from_row_defaults() -> None:
 
 
 @pytest.fixture
-def comms_store(temp_db: LocalDatabase) -> LocalCommunicationsStore:
+def comms_store(temp_db: HubDatabase) -> LocalCommunicationsStore:
     return LocalCommunicationsStore(temp_db, project_id="00000000-0000-0000-0000-000000000000")
 
 

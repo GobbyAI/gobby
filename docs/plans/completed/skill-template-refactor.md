@@ -133,7 +133,7 @@ uv run pytest tests/mcp_proxy/tools/test_skills_coverage.py -v
 uv run pytest tests/servers/routes/test_skills_routes.py -v
 
 # Fresh DB sync
-uv run gobby stop && rm ~/.gobby/gobby-hub.db && uv run gobby start --verbose
+uv run gobby stop && rm ~/.gobby/PostgreSQL hub && uv run gobby start --verbose
 
 # Verify: all bundled skills source=installed, enabled=true, tagged gobby
 uv run gobby skills list

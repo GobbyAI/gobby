@@ -1,6 +1,6 @@
 """Secrets store with Fernet encryption tied to machine identity.
 
-Provides encrypted storage for API keys and sensitive values in SQLite.
+Provides encrypted storage for API keys and sensitive values in the hub database.
 Values are encrypted using a key derived from the machine ID, so secrets
 are bound to the current machine. Agents never see raw values — the daemon
 resolves `$secret:NAME` references internally at connection time.
@@ -19,7 +19,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.machine_id import get_machine_id
 
 logger = logging.getLogger(__name__)
@@ -101,7 +101,7 @@ def _derive_fernet_key(machine_id: str, salt: bytes) -> bytes:
 
 
 class SecretStore:
-    """Encrypted secret storage backed by SQLite.
+    """Encrypted secret storage backed by the hub database.
 
     Secrets are encrypted with a Fernet key derived from the machine ID.
     The API is write-only from outside the daemon — values can be set and
@@ -111,7 +111,7 @@ class SecretStore:
     All secret names are normalized to lowercase for case-insensitive matching.
     """
 
-    def __init__(self, db: DatabaseProtocol):
+    def __init__(self, db: HubDatabase):
         self.db = db
         self._fernet: Fernet | None = None
 

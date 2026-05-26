@@ -136,7 +136,15 @@ async def test_hook_manager_instrumentation(tracer_provider):
     from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
     from gobby.hooks.hook_manager import HookManager
 
-    manager = HookManager(daemon_host="localhost", daemon_port=1234)
+    db = MagicMock()
+    session_manager = MagicMock()
+    session_manager.db = db
+    manager = HookManager(
+        daemon_host="localhost",
+        daemon_port=1234,
+        database=db,
+        session_manager=session_manager,
+    )
     # Mock _handle_internal
     with patch.object(manager, "_handle_internal", return_value=HookResponse(decision="allow")):
         with patch.object(

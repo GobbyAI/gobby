@@ -43,8 +43,8 @@ if TYPE_CHECKING:
     from gobby.storage.config_store import ConfigStore
     from gobby.storage.cron import CronJobStorage
     from gobby.storage.cron_models import CronJob
-    from gobby.storage.database import DatabaseProtocol, LocalDatabase
     from gobby.storage.executor import DatabaseExecutor
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.mcp import LocalMCPManager
     from gobby.storage.pipelines import LocalPipelineExecutionManager
     from gobby.storage.prompts import LocalPromptManager
@@ -69,7 +69,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 # was started/restarted from within a Claude Code session.
 os.environ.pop("CLAUDECODE", None)
 
-# Silence noisy third-party HTTP loggers (httpx logs every Neo4j query at INFO)
+# Silence noisy third-party HTTP loggers.
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
@@ -82,17 +82,18 @@ DISPATCHER_CRON_INTERVAL_SECONDS = 60
 DISPATCHER_CRON_ACTION_CONFIG: dict[str, Any] = {"handler": DISPATCHER_CRON_HANDLER}
 
 
-def _ensure_dispatcher_project_row(db: DatabaseProtocol, project_id: str) -> None:
+def _ensure_dispatcher_project_row(db: HubDatabase, project_id: str) -> None:
     db.execute(
         """
-        INSERT OR IGNORE INTO projects (id, name, created_at, updated_at)
-        VALUES (?, ?, datetime('now'), datetime('now'))
+        INSERT INTO projects (id, name, created_at, updated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ON CONFLICT (id) DO NOTHING
         """,
         (project_id, f"project:{project_id}"),
     )
 
 
-def install_dispatcher_cron_row(db: DatabaseProtocol, *, project_id: str) -> CronJob:
+def install_dispatcher_cron_row(db: HubDatabase, *, project_id: str) -> CronJob:
     """Install or reconcile the bundled dispatcher cron row."""
     from gobby.storage.cron import CronJobStorage
 
@@ -167,7 +168,7 @@ class GobbyRunner:
     _memory_reconcile_task: asyncio.Task[None] | None
     _approval_timeout_task: asyncio.Task[None] | None
     _expired_isolation_task: asyncio.Task[None] | None
-    database: LocalDatabase
+    database: HubDatabase
     db_executor: DatabaseExecutor
     secret_store: SecretStore
     config_store: ConfigStore
@@ -272,7 +273,7 @@ def _raise_fd_limit(target: int = 10240) -> None:
     """Raise the soft file-descriptor limit for the daemon process.
 
     macOS/Linux set low default soft limits which are far too low for a daemon
-    managing WebSocket connections, MCP subprocess transports, SQLite, and HTTP
+    managing WebSocket connections, MCP subprocess transports, database pools, and HTTP
     clients.  We raise the soft limit to *target* (or hard limit, whichever is
     smaller).  No-op on platforms without the resource module (e.g. Windows).
     """

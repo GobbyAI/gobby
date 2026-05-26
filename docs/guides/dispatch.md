@@ -67,6 +67,28 @@ Content-Type: application/json
 `POST /api/build/restart`. The task-scoped forms accept an `input_ref`; the
 project-wide stop and resume forms omit it.
 
+Read-only build observability is exposed through `gobby-tasks` and HTTP:
+
+```json
+{
+  "server": "gobby-tasks",
+  "tool": "get_build_status",
+  "arguments": {
+    "input_ref": "#14354"
+  }
+}
+```
+
+```http
+GET /api/build/status?input_ref=%2314354
+GET /api/build/dispatch/explain?task_id=%2314354
+GET /api/build/history?input_ref=%2314354
+```
+
+Use these surfaces for coordinator diagnosis. They report task-tree state,
+active agents, dispatch mutexes, artifact health, recent lifecycle events, and
+build run history without requiring raw database inspection.
+
 Build profiles are DB-backed presets over `skip_stages`, `isolation`,
 `unattended`, and delivery intent. `delivery_mode` is `auto` or
 `pull_request`; `delivery_target_repo` is an optional PR base repository in
@@ -200,6 +222,10 @@ side effects for the same task.
 The default active-agent cap is 10. When the cap is reached, the heartbeat stops
 early and the next heartbeat re-evaluates the same manifest state. There is no
 separate persistent queue for skipped work.
+
+Build runs and heartbeat/control events are recorded in `build_runs` and
+`build_history_events`. History writes are best-effort: they are useful for
+diagnosis and resumption, but they do not block build execution.
 
 ## Isolation
 

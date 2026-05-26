@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from gobby.autonomous.progress_tracker import ProgressTracker
-    from gobby.storage.database import LocalDatabase
+    from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +29,58 @@ class TaskSelectionEvent:
     task_id: str
     selected_at: datetime
     context: dict[str, Any] | None = None
+
+
+def migrate_task_selection_history_contexts(db: "HubDatabase") -> int:
+    """Migrate legacy Python-literal selection contexts to JSON strings."""
+    migrated = 0
+    rows = db.fetchall(
+        """
+        SELECT id, context
+          FROM task_selection_history
+         WHERE context IS NOT NULL
+        """
+    )
+    for row in rows:
+        context = row["context"]
+        if not isinstance(context, str):
+            continue
+        try:
+            json.loads(context)
+            continue
+        except json.JSONDecodeError:
+            pass
+        try:
+            parsed = ast.literal_eval(context)
+            context_json = json.dumps(parsed)
+        except (SyntaxError, ValueError, TypeError):
+            continue
+        db.execute(
+            "UPDATE task_selection_history SET context = $1 WHERE id = $2",
+            (context_json, row["id"]),
+        )
+        migrated += 1
+    return migrated
+
+
+def _decode_task_selection_context(raw_context: Any) -> dict[str, Any] | None:
+    if not raw_context:
+        return None
+    if isinstance(raw_context, dict):
+        return raw_context
+    if not isinstance(raw_context, str):
+        return None
+    try:
+        decoded = json.loads(raw_context)
+    except json.JSONDecodeError:
+        logger.warning(
+            "Failed to parse task selection context: type=%s length=%s",
+            type(raw_context).__name__,
+            len(raw_context),
+            exc_info=True,
+        )
+        return None
+    return decoded if isinstance(decoded, dict) else None
 
 
 @dataclass
@@ -70,7 +122,7 @@ class StuckDetector:
 
     def __init__(
         self,
-        db: "LocalDatabase",
+        db: "HubDatabase",
         progress_tracker: "ProgressTracker | None" = None,
         task_loop_threshold: int | None = None,
         task_window_size: int | None = None,
@@ -90,11 +142,21 @@ class StuckDetector:
         self.db = db
         self.progress_tracker = progress_tracker
         self._lock = threading.Lock()
+        self._task_selection_contexts_migrated = False
 
         self.task_loop_threshold = task_loop_threshold or self.DEFAULT_TASK_LOOP_THRESHOLD
         self.task_window_size = task_window_size or self.DEFAULT_TASK_WINDOW_SIZE
         self.tool_loop_threshold = tool_loop_threshold or self.DEFAULT_TOOL_LOOP_THRESHOLD
         self.tool_window_size = tool_window_size or self.DEFAULT_TOOL_WINDOW_SIZE
+
+    def _ensure_task_selection_contexts_migrated(self) -> None:
+        if self._task_selection_contexts_migrated:
+            return
+        with self._lock:
+            if self._task_selection_contexts_migrated:
+                return
+            migrate_task_selection_history_contexts(self.db)
+            self._task_selection_contexts_migrated = True
 
     def record_task_selection(
         self,
@@ -125,13 +187,13 @@ class StuckDetector:
                 """
                 INSERT INTO task_selection_history (
                     session_id, task_id, selected_at, context
-                ) VALUES (?, ?, ?, ?)
+                ) VALUES ($1, $2, $3, $4)
                 """,
                 (
                     session_id,
                     task_id,
                     now.isoformat(),
-                    str(context) if context else None,
+                    json.dumps(context) if context else None,
                 ),
             )
 
@@ -163,10 +225,10 @@ class StuckDetector:
             FROM (
                 SELECT task_id
                 FROM task_selection_history
-                WHERE session_id = ?
-                AND selected_at > ?
+                WHERE session_id = $1
+                AND selected_at > $2
                 ORDER BY selected_at DESC
-                LIMIT ?
+                LIMIT $3
             )
             GROUP BY task_id
             ORDER BY count DESC
@@ -326,7 +388,7 @@ class StuckDetector:
         """
         with self._lock:
             result = self.db.execute(
-                "DELETE FROM task_selection_history WHERE session_id = ?",
+                "DELETE FROM task_selection_history WHERE session_id = $1",
                 (session_id,),
             )
 
@@ -347,31 +409,21 @@ class StuckDetector:
         Returns:
             List of recent TaskSelectionEvents
         """
+        self._ensure_task_selection_contexts_migrated()
         rows = self.db.fetchall(
             """
             SELECT session_id, task_id, selected_at, context
             FROM task_selection_history
-            WHERE session_id = ?
+            WHERE session_id = $1
             ORDER BY selected_at DESC
-            LIMIT ?
+            LIMIT $2
             """,
             (session_id, limit),
         )
 
         events = []
         for row in rows:
-            context = None
-            if row["context"]:
-                try:
-                    context = ast.literal_eval(row["context"])
-                except (ValueError, SyntaxError):
-                    try:
-                        context = json.loads(row["context"])
-                    except json.JSONDecodeError:
-                        logger.warning(
-                            f"Failed to parse context for task selection: {row['context'][:100]}"
-                        )
-                        context = None
+            context = _decode_task_selection_context(row["context"])
             events.append(
                 TaskSelectionEvent(
                     session_id=row["session_id"],

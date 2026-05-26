@@ -3,7 +3,7 @@
 Tests the pluggable backend system:
 - get_backend() factory function (null, unknown types)
 - NullBackend CRUD operations (no persistence)
-- StorageAdapter for local SQLite storage (CRUD, search, list)
+- StorageAdapter for hub storage (CRUD, search, list)
 - StorageAdapter media attachment support
 - Module exports
 """
@@ -20,14 +20,14 @@ from gobby.memory.protocol import MemoryBackendProtocol, MemoryCapability
 from gobby.storage.memories import LocalMemoryManager
 
 if TYPE_CHECKING:
-    from gobby.storage.database import LocalDatabase
+    from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
 
 
-def _make_adapter(temp_db: LocalDatabase) -> StorageAdapter:
+def _make_adapter(hub_db: HubDatabase) -> StorageAdapter:
     """Create a StorageAdapter wrapping a fresh LocalMemoryManager."""
-    return StorageAdapter(LocalMemoryManager(temp_db))
+    return StorageAdapter(LocalMemoryManager(hub_db))
 
 
 # =============================================================================
@@ -52,10 +52,10 @@ class TestGetBackend:
         backend = get_backend("null")
         assert isinstance(backend, MemoryBackendProtocol)
 
-    def test_get_backend_sqlite_raises(self) -> None:
-        """Test that 'sqlite' backend type is no longer supported via factory."""
+    def test_get_backend_postgres_raises(self) -> None:
+        """Test that 'postgres' backend type is no longer supported via factory."""
         with pytest.raises(ValueError, match="Unknown backend type"):
-            get_backend("sqlite")
+            get_backend("postgres")
 
 
 # =============================================================================
@@ -122,11 +122,11 @@ class TestNullBackend:
 
 
 class TestStorageAdapter:
-    """Tests for the StorageAdapter (local SQLite storage via MemoryBackendProtocol)."""
+    """Tests for the StorageAdapter (hub storage via MemoryBackendProtocol)."""
 
-    def test_storage_adapter_capabilities(self, temp_db: LocalDatabase) -> None:
+    def test_storage_adapter_capabilities(self, hub_db: HubDatabase) -> None:
         """Test that StorageAdapter declares full capabilities."""
-        backend = _make_adapter(temp_db)
+        backend = _make_adapter(hub_db)
         caps = backend.capabilities()
         assert isinstance(caps, set)
         assert MemoryCapability.CREATE in caps
@@ -137,9 +137,9 @@ class TestStorageAdapter:
         assert MemoryCapability.TAGS in caps
 
     @pytest.mark.asyncio
-    async def test_storage_adapter_create_and_get(self, temp_db: LocalDatabase):
+    async def test_storage_adapter_create_and_get(self, hub_db: HubDatabase):
         """Test StorageAdapter create and get operations."""
-        backend = _make_adapter(temp_db)
+        backend = _make_adapter(hub_db)
 
         # Create a memory
         record = await backend.create(
@@ -158,9 +158,9 @@ class TestStorageAdapter:
         assert retrieved.content == record.content
 
     @pytest.mark.asyncio
-    async def test_storage_adapter_update(self, temp_db: LocalDatabase):
+    async def test_storage_adapter_update(self, hub_db: HubDatabase):
         """Test StorageAdapter update operation."""
-        backend = _make_adapter(temp_db)
+        backend = _make_adapter(hub_db)
 
         # Create a memory
         record = await backend.create(content="Original content")
@@ -173,9 +173,9 @@ class TestStorageAdapter:
         assert updated.content == "Updated content"
 
     @pytest.mark.asyncio
-    async def test_storage_adapter_delete(self, temp_db: LocalDatabase):
+    async def test_storage_adapter_delete(self, hub_db: HubDatabase):
         """Test StorageAdapter delete operation."""
-        backend = _make_adapter(temp_db)
+        backend = _make_adapter(hub_db)
 
         # Create a memory
         record = await backend.create(content="To be deleted")
@@ -189,11 +189,11 @@ class TestStorageAdapter:
         assert retrieved is None
 
     @pytest.mark.asyncio
-    async def test_storage_adapter_search(self, temp_db: LocalDatabase):
+    async def test_storage_adapter_search(self, hub_db: HubDatabase):
         """Test StorageAdapter search operation."""
         from gobby.memory.protocol import MemoryQuery
 
-        backend = _make_adapter(temp_db)
+        backend = _make_adapter(hub_db)
 
         # Create some memories
         await backend.create(content="Python programming language")
@@ -208,9 +208,9 @@ class TestStorageAdapter:
         assert all("Python" in r.content for r in results)
 
     @pytest.mark.asyncio
-    async def test_storage_adapter_list_memories(self, temp_db: LocalDatabase):
+    async def test_storage_adapter_list_memories(self, hub_db: HubDatabase):
         """Test StorageAdapter list_memories operation."""
-        backend = _make_adapter(temp_db)
+        backend = _make_adapter(hub_db)
 
         # Create some memories
         await backend.create(content="Memory 1", memory_type="fact")
@@ -226,9 +226,9 @@ class TestStorageAdapter:
         assert all(r.memory_type == "fact" for r in facts)
 
     @pytest.mark.asyncio
-    async def test_storage_adapter_list_with_limit(self, temp_db: LocalDatabase):
+    async def test_storage_adapter_list_with_limit(self, hub_db: HubDatabase):
         """Test StorageAdapter list_memories with limit."""
-        backend = _make_adapter(temp_db)
+        backend = _make_adapter(hub_db)
 
         # Create several memories
         for i in range(5):
@@ -280,11 +280,11 @@ class TestStorageAdapterMediaSupport:
     """
 
     @pytest.mark.asyncio
-    async def test_create_with_media_stores_attachment(self, temp_db: LocalDatabase):
+    async def test_create_with_media_stores_attachment(self, hub_db: HubDatabase):
         """Test that creating a memory with media stores the media attachment."""
         from gobby.memory.protocol import MediaAttachment
 
-        backend = _make_adapter(temp_db)
+        backend = _make_adapter(hub_db)
 
         media = [
             MediaAttachment(
@@ -308,11 +308,11 @@ class TestStorageAdapterMediaSupport:
         assert record.media[0].mime_type == "image/png"
 
     @pytest.mark.asyncio
-    async def test_get_returns_media_attachment(self, temp_db: LocalDatabase):
+    async def test_get_returns_media_attachment(self, hub_db: HubDatabase):
         """Test that get() retrieves the stored media attachment."""
         from gobby.memory.protocol import MediaAttachment
 
-        backend = _make_adapter(temp_db)
+        backend = _make_adapter(hub_db)
 
         media = [
             MediaAttachment(
@@ -338,11 +338,11 @@ class TestStorageAdapterMediaSupport:
         assert retrieved.media[0].description == "Architecture diagram"
 
     @pytest.mark.asyncio
-    async def test_list_memories_includes_media(self, temp_db: LocalDatabase):
+    async def test_list_memories_includes_media(self, hub_db: HubDatabase):
         """Test that list_memories returns memories with their media attachments."""
         from gobby.memory.protocol import MediaAttachment
 
-        backend = _make_adapter(temp_db)
+        backend = _make_adapter(hub_db)
 
         # Create memory with media
         media = [
@@ -373,11 +373,11 @@ class TestStorageAdapterMediaSupport:
         assert without_media.media == []
 
     @pytest.mark.asyncio
-    async def test_search_returns_media_attachments(self, temp_db: LocalDatabase):
+    async def test_search_returns_media_attachments(self, hub_db: HubDatabase):
         """Test that search() returns memories with their media attachments."""
         from gobby.memory.protocol import MediaAttachment, MemoryQuery
 
-        backend = _make_adapter(temp_db)
+        backend = _make_adapter(hub_db)
 
         # Create memory with media
         media = [
@@ -402,20 +402,20 @@ class TestStorageAdapterMediaSupport:
         assert auth_memory.media[0].description == "Authentication error"
 
     @pytest.mark.asyncio
-    async def test_create_without_media_returns_empty_list(self, temp_db: LocalDatabase):
+    async def test_create_without_media_returns_empty_list(self, hub_db: HubDatabase):
         """Test that creating without media returns empty media list."""
-        backend = _make_adapter(temp_db)
+        backend = _make_adapter(hub_db)
 
         record = await backend.create(content="No media attached")
 
         assert record.media == []
 
     @pytest.mark.asyncio
-    async def test_multiple_media_attachments(self, temp_db: LocalDatabase):
+    async def test_multiple_media_attachments(self, hub_db: HubDatabase):
         """Test that multiple media attachments can be stored and retrieved."""
         from gobby.memory.protocol import MediaAttachment
 
-        backend = _make_adapter(temp_db)
+        backend = _make_adapter(hub_db)
 
         media = [
             MediaAttachment(

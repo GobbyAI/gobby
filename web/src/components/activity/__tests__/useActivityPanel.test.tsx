@@ -176,6 +176,13 @@ describe('useActivityPanel — mobile', () => {
     expect(result.current.effectiveMode).toBe('chat')
   })
 
+  it('does not write the desktop layout key on initial mobile render', () => {
+    const { result } = renderHook(() => useActivityPanel(true))
+
+    expect(result.current.effectiveMode).toBe('chat')
+    expect(localStorage.getItem(LAYOUT_KEY)).toBeNull()
+  })
+
   it('split desktop preference collapses to chat on mobile', () => {
     localStorage.setItem(LAYOUT_KEY, 'split')
     const { result } = renderHook(() => useActivityPanel(true))

@@ -107,7 +107,7 @@ async def _batch_load_session_info(
 
     Returns dict mapping session_id to enrichment fields.
     """
-    import sqlite3
+    import psycopg
 
     if not session_ids:
         return {}
@@ -140,7 +140,7 @@ async def _batch_load_session_info(
                 "git_branch": row["git_branch"],
             }
         return result
-    except sqlite3.Error:
+    except psycopg.Error:
         logger.warning("Failed to load session info for agent runs", exc_info=True)
         return {}
 
@@ -624,7 +624,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
 
     @router.get("/runs/{run_id}")
     async def get_agent_run_detail(run_id: str) -> dict[str, Any]:
-        """Get detailed agent run info with session enrichment and commands."""
+        """Get detailed agent run info with session enrichment."""
         try:
             from gobby.storage.agents import LocalAgentRunManager
 
@@ -642,23 +642,6 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                 )
                 if run.child_session_id in session_info:
                     d.update(session_info[run.child_session_id])
-
-                # Load agent commands sent to this agent
-                try:
-                    commands = server.services.database.fetchall(
-                        """
-                        SELECT id, from_session, command_text, allowed_tools,
-                               allowed_mcp_tools, exit_condition, status, created_at
-                        FROM agent_commands
-                        WHERE to_session = ?
-                        ORDER BY created_at ASC
-                        """,
-                        (run.child_session_id,),
-                    )
-                    d["commands"] = [dict(row) for row in commands]
-                except Exception as e:
-                    logger.debug(f"Failed to fetch commands for agent run: {e}")
-                    d["commands"] = []
 
             return {"status": "success", "run": d}
         except HTTPException:

@@ -128,16 +128,16 @@ class TestStatusUtils:
                     "gloc_path": "/Users/test/.gobby/bin/gloc",
                 },
                 "coding_clis": {
-                    "claude": "1.0.12",
+                    "claude": "installed",
                     "gemini": None,
                     "codex": None,
                     "hooks": {"claude": True, "gemini": False, "codex": False},
                 },
                 "dependencies": {
-                    "tmux": "3.4",
+                    "tmux": "installed",
                     "docker": None,
                     "docker_running": False,
-                    "git": "2.44.0",
+                    "git": "installed",
                     "node": None,
                     "tailscale": None,
                     "ollama": None,
@@ -149,9 +149,9 @@ class TestStatusUtils:
         assert "0.2.1" in msg
         assert "0.2.0" in msg
         assert "0.1.1" in msg
-        assert "1.0.12" in msg
-        assert "3.4" in msg
-        assert "2.44.0" in msg
+        assert "Claude Code:" in msg
+        assert "tmux:" in msg
+        assert "git:" in msg
 
     def test_format_status_message_prefers_configured_embeddings_provider(self) -> None:
         msg = format_status_message(
@@ -165,6 +165,63 @@ class TestStatusUtils:
             },
         )
         assert "LM Studio (running)" in msg
+
+    def test_format_status_message_postgres_healthy(self) -> None:
+        msg = format_status_message(
+            running=True,
+            api_data={
+                "postgres": {
+                    "mode": "docker",
+                    "dsn_host": "localhost",
+                    "dsn_db": "gobby",
+                    "database_url": "postgresql://gobby:secret@localhost:60891/gobby",
+                    "healthy": True,
+                    "extensions": {"pg_search": True, "pgaudit": True},
+                }
+            },
+        )
+
+        assert "PostgreSQL:" in msg
+        assert "healthy (docker; localhost/gobby; extensions ok)" in msg
+        assert "postgresql://" not in msg
+        assert "secret" not in msg
+
+    def test_format_status_message_postgres_unhealthy(self) -> None:
+        msg = format_status_message(
+            running=True,
+            api_data={
+                "postgres": {
+                    "mode": "external",
+                    "dsn_host": "db.example.com",
+                    "dsn_db": "gobby",
+                    "healthy": False,
+                    "extensions": {"pg_search": False, "pgaudit": False},
+                }
+            },
+        )
+
+        assert "unhealthy (external; db.example.com/gobby" in msg
+        assert "missing pg_search, pgaudit" in msg
+        assert "Health Issues:" in msg
+        assert "PostgreSQL: unhealthy" in msg
+
+    def test_format_status_message_postgres_unavailable(self) -> None:
+        msg = format_status_message(
+            running=True,
+            api_data={
+                "postgres": {
+                    "available": False,
+                    "mode": "native",
+                    "healthy": False,
+                    "error": "BootstrapConfigError",
+                }
+            },
+        )
+
+        assert "PostgreSQL:" in msg
+        assert "unavailable (native; BootstrapConfigError)" in msg
+        assert "Health Issues:" in msg
+        assert "PostgreSQL: BootstrapConfigError" in msg
 
     def test_format_status_message_config_issues(self) -> None:
         msg = format_status_message(

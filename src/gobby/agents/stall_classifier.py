@@ -52,6 +52,7 @@ _PROVIDER_ERROR_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b503\b.*(?:service|unavailable|overloaded)", re.IGNORECASE),
     re.compile(r"\b502\b.*(?:bad gateway|upstream)", re.IGNORECASE),
     re.compile(r"\b500\b.*(?:internal server error)", re.IGNORECASE),
+    re.compile(r"\b529\b.*(?:overloaded|server-side|server side)", re.IGNORECASE),
     # Rate limiting — require error/exception context to avoid matching
     # code that discusses rate limiting (task titles, variable names, etc.)
     re.compile(r"(?:error|failed|exception|raise|fatal|❌).*rate.?limit", re.IGNORECASE),

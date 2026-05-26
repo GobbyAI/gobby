@@ -149,7 +149,7 @@ provider.generate_text() → anthropic.messages.create()
 1. `uv sync --extra llm-tracing` installs OpenLLMetry instrumentors
 2. Configure `telemetry.llm_tracing.enabled: true` in daemon config
 3. Make an LLM call (e.g., via pipeline prompt step or agent execution)
-4. Check local SQLite `spans` table — LLM call span exists with `gen_ai.*` attributes + `gobby.*` context
+4. Check local PostgreSQL `spans` table — LLM call span exists with `gen_ai.*` attributes + `gobby.*` context
 5. Configure `telemetry.exporter.otlp_endpoint` to a LangWatch instance
 6. Make another LLM call — span appears in LangWatch dashboard with Gobby context
 7. Verify `capture_content: false` (default) does NOT send prompt/completion text

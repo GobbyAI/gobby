@@ -1,8 +1,10 @@
 import json
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.sync.tasks import TaskSyncManager
 from gobby.tasks.state_semantics import is_task_closed
@@ -11,16 +13,37 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def sync_manager(temp_db, tmp_path):
+def sync_manager(hub_db, tmp_path):
     export_path = tmp_path / ".gobby" / "tasks.jsonl"
-    task_manager = LocalTaskManager(temp_db)
+    task_manager = LocalTaskManager(hub_db)
     manager = TaskSyncManager(task_manager, str(export_path))
     yield manager
 
 
 @pytest.fixture
-def task_manager(temp_db):
-    return LocalTaskManager(temp_db)
+def task_manager(hub_db):
+    return LocalTaskManager(hub_db)
+
+
+@pytest.fixture
+def sample_project(hub_db):
+    project = LocalProjectManager(hub_db).create(
+        name="test-project",
+        repo_path="/tmp/test-project",
+        github_url="https://github.com/test/test-project",
+    )
+    return project.to_dict()
+
+
+def _insert_session(db, session_id: str, project_id: str) -> None:
+    db.execute(
+        """
+        INSERT INTO sessions (id, external_id, machine_id, source, project_id)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT (id) DO NOTHING
+        """,
+        (session_id, session_id, "test-machine", "test", project_id),
+    )
 
 
 class TestTaskSyncManager:
@@ -398,6 +421,7 @@ class TestImportEdgeCases:
         with open(sync_manager.export_path, "w") as f:
             f.write(json.dumps(tasks_data) + "\n")
 
+        _insert_session(sync_manager.db, "session-123", sample_project["id"])
         sync_manager.import_from_jsonl()
 
         task = task_manager.get_task("task-canonical-state")
@@ -493,9 +517,7 @@ class TestClosedStateRoundTrip:
         assert data["due_date"] == "2026-01-20"
 
         # Delete task from DB to simulate fresh import
-        sync_manager.db.execute("PRAGMA foreign_keys = OFF")
         sync_manager.db.execute("DELETE FROM tasks WHERE id = ?", (task.id,))
-        sync_manager.db.execute("PRAGMA foreign_keys = ON")
         row = sync_manager.db.fetchone("SELECT 1 FROM tasks WHERE id = ?", (task.id,))
         assert row is None
 
@@ -506,8 +528,10 @@ class TestClosedStateRoundTrip:
         reimported = task_manager.get_task(task.id)
         assert reimported is not None
         assert is_task_closed(reimported)
-        # closed_at is normalized with microsecond precision during export
-        assert reimported.closed_at == "2026-01-15T10:00:00.000000+00:00"
+        assert reimported.closed_at is not None
+        assert datetime.fromisoformat(reimported.closed_at) == datetime.fromisoformat(
+            "2026-01-15T10:00:00+00:00"
+        )
         assert reimported.closed_reason == "completed"
         assert reimported.closed_commit_sha == "abc123def456"
         assert reimported.labels == ["bug", "p0"]
@@ -528,8 +552,8 @@ class TestClosedStateRoundTrip:
         task = task_manager.create_task(sample_project["id"], "Session task")
 
         # Set session-local fields that should NOT be wiped by import
-        # Disable FK checks since session IDs reference sessions table
-        sync_manager.db.execute("PRAGMA foreign_keys = OFF")
+        _insert_session(sync_manager.db, "session-aaa", sample_project["id"])
+        _insert_session(sync_manager.db, "session-bbb", sample_project["id"])
         sync_manager.db.execute(
             """UPDATE tasks SET
                 assignee = 'session-uuid-123',
@@ -540,7 +564,6 @@ class TestClosedStateRoundTrip:
             WHERE id = ?""",
             (task.id,),
         )
-        sync_manager.db.execute("PRAGMA foreign_keys = ON")
 
         # Create JSONL with newer timestamp to trigger UPDATE path
         jsonl_data = {

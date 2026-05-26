@@ -11,7 +11,7 @@ import pytest
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.hook_manager import HookManager
 from gobby.sessions.processor import SessionMessageProcessor
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from tests._timing import wait_for_async_condition
 
 pytestmark = pytest.mark.unit
@@ -20,68 +20,67 @@ pytestmark = pytest.mark.unit
 class MockWebSocketServer:
     def __init__(self) -> None:
         self.broadcasted_messages: list[dict[str, Any]] = []
+        self.tts_events: list[tuple[str, dict[str, Any], bool]] = []
 
     async def broadcast(self, message: dict[str, Any]) -> None:
         self.broadcasted_messages.append(message)
 
+    # TODO: Exercise MockWebSocketServer.feed_attached_session_tts in future TTS E2E coverage.
+    async def feed_attached_session_tts(
+        self,
+        session_id: str,
+        rendered: dict[str, Any],
+        *,
+        complete: bool = False,
+    ) -> None:
+        self.tts_events.append((session_id, rendered, complete))
+
 
 @pytest.fixture
-def mock_db(tmp_path: Path) -> LocalDatabase:
-    # Use file-based DB for tests (in-memory doesn't work with asyncio.to_thread))
-    db = LocalDatabase(tmp_path / "test.db")
-    return db
+async def env(tmp_path: Path, hub_db: HubDatabase) -> AsyncGenerator[dict[str, Any]]:
+    db = hub_db
+    # Mock WebSocket
+    ws = MockWebSocketServer()
 
+    processor = SessionMessageProcessor(db, poll_interval=0.1, websocket_server=ws)
 
-@pytest.fixture
-async def env(tmp_path: Path) -> AsyncGenerator[dict[str, Any]]:
-    # Use file-based DB because each to_thread connection would get a separate in-memory DB.
-    db = LocalDatabase(tmp_path / "test.db")
+    # Configure mock config
+    mock_config = MagicMock()
+    mock_config.workflow.timeout = 0.0
+    mock_config.workflow.enabled = True
+    # Also need daemon config
+    mock_config.daemon_health_check_interval = 10.0
+    # Memory config must be None (not MagicMock) so default MemoryConfig is used
+    mock_config.memory = None
 
-    # Initialize migrations manually for this memory DB
-    # Using run_migrations to ensure schema is correct
-    from gobby.storage.migrations import run_migrations
+    # Create HookManager
+    hm = HookManager(
+        daemon_host="test",
+        message_processor=processor,
+        config=mock_config,
+        database=db,
+    )
 
-    run_migrations(db)
+    # Force daemon status to be ready for tests
+    with patch.object(
+        hm,
+        "_get_cached_daemon_status",
+        MagicMock(return_value=(True, "OK", "running", None)),
+    ):
+        # Insert a valid project for FK constraints
+        db.execute(
+            "INSERT INTO projects (id, name, repo_path, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("proj-1", "Test Project", str(tmp_path), datetime.now(), datetime.now()),
+        )
 
-    # Patch LocalDatabase in hook_manager to return our shared db instance
-    with patch("gobby.storage.database.LocalDatabase", return_value=db):
-        # Mock WebSocket
-        ws = MockWebSocketServer()
+        # Start processor
+        await processor.start()
 
-        processor = SessionMessageProcessor(db, poll_interval=0.1, websocket_server=ws)
+        yield {"hm": hm, "proc": processor, "ws": ws, "db": db, "tmp": tmp_path}
 
-        # Configure mock config
-        mock_config = MagicMock()
-        mock_config.workflow.timeout = 0.0
-        mock_config.workflow.enabled = True
-        # Also need daemon config
-        mock_config.daemon_health_check_interval = 10.0
-        # Memory config must be None (not MagicMock) so default MemoryConfig is used
-        mock_config.memory = None
-
-        # Create HookManager
-        hm = HookManager(daemon_host="test", message_processor=processor, config=mock_config)
-
-        # Force daemon status to be ready for tests
-        with patch.object(
-            hm,
-            "_get_cached_daemon_status",
-            MagicMock(return_value=(True, "OK", "running", None)),
-        ):
-            # Insert a valid project for FK constraints
-            db.execute(
-                "INSERT INTO projects (id, name, repo_path, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                ("proj-1", "Test Project", str(tmp_path), datetime.now(), datetime.now()),
-            )
-
-            # Start processor
-            await processor.start()
-
-            yield {"hm": hm, "proc": processor, "ws": ws, "db": db, "tmp": tmp_path}
-
-            await processor.stop()
-            hm.shutdown()
+        await processor.stop()
+        hm.shutdown()
 
 
 @pytest.mark.e2e

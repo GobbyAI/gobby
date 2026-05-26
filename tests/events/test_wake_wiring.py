@@ -2,31 +2,66 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
+from typing import Protocol
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.events.wake import CONTINUE_WAKE_SIGNAL, WakeDispatcher
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path) -> LocalDatabase:
+def db(hub_db: HubDatabase) -> HubDatabase:
     """Create a fresh database with migrations applied and test project seeded."""
-    db_path = tmp_path / "test.db"
-    database = LocalDatabase(db_path)
-    run_migrations(database)
+    database = hub_db
     # Seed a project so FK constraints pass for pipeline_executions
     database.execute(
         "INSERT INTO projects (id, name, created_at, updated_at) "
-        "VALUES (?, ?, datetime('now'), datetime('now'))",
+        "VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
         ("test-project", "Test Project"),
     )
     return database
+
+
+class _ColumnLookupDatabase(Protocol):
+    dialect: object
+
+    def fetchone(
+        self,
+        sql: str,
+        params: Sequence[object] = (),
+    ) -> Mapping[str, object] | None: ...
+
+    def fetchall(
+        self,
+        sql: str,
+        params: Sequence[object] = (),
+    ) -> list[Mapping[str, object]]: ...
+
+
+def _has_column(db: _ColumnLookupDatabase, table: str, column: str) -> bool:
+    """Return whether a backend table exposes a column.
+
+    Uses the Postgres catalog when available.
+    """
+    if str(getattr(db, "dialect", "")).startswith("postgres"):
+        row = db.fetchone(
+            """
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_name = ? AND column_name = ?
+            """,
+            (table, column),
+        )
+        return row is not None
+
+    rows = db.fetchall(f"PRAGMA table_info({table})")
+    return any(row["name"] == column for row in rows)
 
 
 class TestWakeDispatcherSdkResume:
@@ -45,11 +80,12 @@ class TestWakeDispatcherSdkResume:
         agent_run_mgr = MagicMock()
         agent_run_mgr.get_sdk_session_id_for_session.return_value = "sdk-abc123"
 
+        ism_mgr = MagicMock()
         sdk_resumer = AsyncMock()
 
         dispatcher = WakeDispatcher(
             session_manager=session_mgr,
-            ism_manager=MagicMock(),
+            ism_manager=ism_mgr,
             sdk_resumer=sdk_resumer,
             agent_run_manager=agent_run_mgr,
         )
@@ -57,6 +93,9 @@ class TestWakeDispatcherSdkResume:
         await dispatcher.wake("sess-1", "Pipeline done", {"status": "completed"})
 
         sdk_resumer.assert_awaited_once_with("sdk-abc123", CONTINUE_WAKE_SIGNAL)
+        assert "Task completed" not in sdk_resumer.await_args.args[1]
+        ism_mgr.create_message.assert_called_once()
+        assert ism_mgr.create_message.call_args.kwargs["content"] == "Pipeline done"
         assert sdk_resumer.await_count == 1
         assert sdk_resumer.await_args is not None
 
@@ -173,7 +212,7 @@ class TestRegistryWakeCallback:
 class TestContinuationPromptStorage:
     """continuation_prompt persisted in pipeline_executions and agent_runs."""
 
-    def test_pipeline_execution_stores_continuation_prompt(self, db) -> None:
+    def test_pipeline_execution_stores_continuation_prompt(self, db: HubDatabase) -> None:
         """continuation_prompt column stored and retrieved."""
         from gobby.storage.pipelines import LocalPipelineExecutionManager
 
@@ -187,7 +226,7 @@ class TestContinuationPromptStorage:
         assert fetched is not None
         assert fetched.continuation_prompt == "Review the results and create subtasks"
 
-    def test_pipeline_execution_no_continuation_prompt(self, db) -> None:
+    def test_pipeline_execution_no_continuation_prompt(self, db: HubDatabase) -> None:
         """continuation_prompt defaults to None."""
         from gobby.storage.pipelines import LocalPipelineExecutionManager
 
@@ -219,7 +258,7 @@ class TestContinuationPromptStorage:
 class TestAutoSubscribeLineage:
     """Auto-subscribe wires completion events when run_pipeline is called."""
 
-    def test_auto_subscribe_registers_and_persists(self, db) -> None:
+    def test_auto_subscribe_registers_and_persists(self, db: HubDatabase) -> None:
         """_auto_subscribe_lineage registers event and persists to DB."""
         from gobby.mcp_proxy.tools.workflows._pipelines import _auto_subscribe_lineage
         from gobby.storage.pipelines import LocalPipelineExecutionManager
@@ -283,7 +322,7 @@ class TestStartupRecovery:
     """Startup recovery notifies subscribers of interrupted pipelines."""
 
     @pytest.mark.asyncio
-    async def test_interrupted_pipeline_wakes_subscribers(self, db) -> None:
+    async def test_interrupted_pipeline_wakes_subscribers(self, db: HubDatabase) -> None:
         """Subscribers of interrupted pipelines are notified on startup."""
         from gobby.storage.pipelines import LocalPipelineExecutionManager
         from gobby.workflows.pipeline_state import ExecutionStatus
@@ -302,6 +341,7 @@ class TestStartupRecovery:
 
         # Verify it's interrupted
         updated = em.get_execution(exe.id)
+        assert updated is not None
         assert updated.status == ExecutionStatus.INTERRUPTED
 
         # Now simulate the startup recovery wake
@@ -331,14 +371,10 @@ class TestStartupRecovery:
 class TestMigration137:
     """Migration 137 adds continuation_prompt columns."""
 
-    def test_pipeline_execution_has_continuation_prompt(self, db) -> None:
+    def test_pipeline_execution_has_continuation_prompt(self, db: HubDatabase) -> None:
         """pipeline_executions table has continuation_prompt column."""
-        row = db.fetchone(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND name='pipeline_executions'"
-        )
-        assert "continuation_prompt" in row["sql"]
+        assert _has_column(db, "pipeline_executions", "continuation_prompt")
 
-    def test_agent_runs_has_continuation_prompt(self, db) -> None:
+    def test_agent_runs_has_continuation_prompt(self, db: HubDatabase) -> None:
         """agent_runs table has continuation_prompt column."""
-        row = db.fetchone("SELECT sql FROM sqlite_master WHERE type='table' AND name='agent_runs'")
-        assert "continuation_prompt" in row["sql"]
+        assert _has_column(db, "agent_runs", "continuation_prompt")

@@ -358,14 +358,16 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
         """Request body for setting a session variable."""
 
         name: str
-        value: str | int | float | bool | None = None
+        value: Any = None
         session_id: str
+        workflow: str | None = None
 
     class GetVariableRequest(BaseModel):
         """Request body for getting session variable(s)."""
 
         name: str | None = None
         session_id: str
+        workflow: str | None = None
 
     @router.post("/variables/set")
     async def set_variable(request: SetVariableRequest) -> dict[str, Any]:
@@ -374,6 +376,11 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=503, detail="Session manager not available")
         try:
             from gobby.mcp_proxy.tools.workflows._variables import set_variable as _set_var
+            from gobby.workflows.state_manager import WorkflowInstanceManager
+
+            instance_manager = (
+                WorkflowInstanceManager(server.session_manager.db) if request.workflow else None
+            )
 
             return _set_var(
                 server.session_manager,
@@ -381,7 +388,8 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
                 name=request.name,
                 value=request.value,
                 session_id=request.session_id,
-                workflow=None,
+                workflow=request.workflow,
+                instance_manager=instance_manager,
             )
         except Exception as e:
             logger.error(f"Error setting variable: {e}", exc_info=True)
@@ -394,13 +402,19 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=503, detail="Session manager not available")
         try:
             from gobby.mcp_proxy.tools.workflows._variables import get_variable as _get_var
+            from gobby.workflows.state_manager import WorkflowInstanceManager
+
+            instance_manager = (
+                WorkflowInstanceManager(server.session_manager.db) if request.workflow else None
+            )
 
             return _get_var(
                 server.session_manager,
                 server.session_manager.db,
                 name=request.name,
                 session_id=request.session_id,
-                workflow=None,
+                workflow=request.workflow,
+                instance_manager=instance_manager,
             )
         except Exception as e:
             logger.error(f"Error getting variable: {e}", exc_info=True)

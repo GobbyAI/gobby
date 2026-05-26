@@ -5,25 +5,21 @@ from pathlib import Path
 
 import pytest
 
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.skills import LocalSkillManager
 
 pytestmark = [pytest.mark.integration]
 
 
 @pytest.fixture
-def db(tmp_path: Path) -> Generator[LocalDatabase]:
+def db(temp_db: HubDatabase) -> Generator[HubDatabase]:
     """Create a fresh database with migrations applied."""
-    db_path = tmp_path / "test.db"
-    database = LocalDatabase(db_path)
-    run_migrations(database)
+    database = temp_db
     yield database
-    database.close()
 
 
 @pytest.fixture
-def storage(db: LocalDatabase) -> LocalSkillManager:
+def storage(db: HubDatabase) -> LocalSkillManager:
     """Create a LocalSkillManager for storage operations."""
     return LocalSkillManager(db)
 
@@ -47,7 +43,7 @@ Original content.
 
 
 @pytest.fixture
-def populated_db(db: LocalDatabase, storage: LocalSkillManager, skill_dir: Path) -> LocalDatabase:
+def populated_db(db: HubDatabase, storage: LocalSkillManager, skill_dir: Path) -> HubDatabase:
     """Create database with test skills."""
     storage.create_skill(
         name="git-commit",

@@ -10,7 +10,7 @@ All public methods are inherited; see individual modules for details:
 import logging
 from typing import Any
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.skills._files import SkillFilesMixin
 from gobby.storage.skills._metadata import SkillMetadataMixin
 
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 class LocalSkillManager(SkillMetadataMixin, SkillFilesMixin):
-    """Manages skill storage in SQLite.
+    """Manages skill storage in the hub database.
 
     Provides CRUD operations for skills with support for:
     - Project-scoped uniqueness (UNIQUE(name, project_id, source))
@@ -29,7 +29,7 @@ class LocalSkillManager(SkillMetadataMixin, SkillFilesMixin):
 
     def __init__(
         self,
-        db: DatabaseProtocol,
+        db: HubDatabase,
         notifier: Any | None = None,  # SkillChangeNotifier, avoid circular import
     ):
         """Initialize the skill manager.

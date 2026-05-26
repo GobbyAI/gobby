@@ -10,6 +10,7 @@ import json
 
 import pytest
 
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.loader import WorkflowLoader
 
 pytestmark = pytest.mark.unit
@@ -21,14 +22,9 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path):
+def db(temp_db: HubDatabase):
     """Create a fresh database with migrations applied."""
-    from gobby.storage.database import LocalDatabase
-    from gobby.storage.migrations import run_migrations
-
-    db_path = tmp_path / "test_wf_vars.db"
-    database = LocalDatabase(db_path)
-    run_migrations(database)
+    database = temp_db
     return database
 
 

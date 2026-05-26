@@ -61,6 +61,24 @@ def _is_session_control_host(value: Any) -> TypeGuard[SessionControlMixin]:
     return hasattr(value, "session_manager") and callable(getattr(value, "_send_error", None))
 
 
+def _resolve_target_session_id(
+    clients: dict[Any, dict[str, Any]],
+    websocket: Any,
+    conversation_id: str,
+    raw_target_session_id: Any,
+) -> str | None:
+    """Resolve the attached CLI target session for voice routing."""
+    if isinstance(raw_target_session_id, str) and raw_target_session_id.strip():
+        return raw_target_session_id.strip()
+
+    try:
+        client_meta = clients.get(websocket) or {}
+    except TypeError:
+        client_meta = {}
+    attached = client_meta.get("attached_session_id")
+    return attached if isinstance(attached, str) and attached == conversation_id else None
+
+
 class VoiceMixin(VoiceWarmupMixin):
     """Mixin providing voice chat methods for WebSocketServer.
 
@@ -197,23 +215,12 @@ class VoiceMixin(VoiceWarmupMixin):
         request_id_raw = data.get("request_id", "")
         request_id = request_id_raw if isinstance(request_id_raw, str) else ""
         project_id = data.get("project_id")
-        target_session_raw = data.get("target_session_id")
-        target_session_id = (
-            target_session_raw.strip()
-            if isinstance(target_session_raw, str) and target_session_raw.strip()
-            else None
+        target_session_id = _resolve_target_session_id(
+            self.clients,
+            websocket,
+            conversation_id,
+            data.get("target_session_id"),
         )
-        if target_session_id is None:
-            try:
-                client_meta = self.clients.get(websocket) or {}
-            except TypeError:
-                client_meta = {}
-            attached = client_meta.get("attached_session_id")
-            target_session_id = (
-                attached
-                if isinstance(attached, str) and attached and attached == conversation_id
-                else None
-            )
 
         logger.info(
             f"Voice audio received: {len(audio_data_b64)} chars b64, "

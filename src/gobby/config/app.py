@@ -2,7 +2,7 @@
 Configuration management for Gobby daemon.
 
 Runtime config: DB config_store + Pydantic defaults.
-Pre-DB bootstrap: ~/.gobby/bootstrap.yaml (5 settings).
+Pre-DB bootstrap: ~/.gobby/bootstrap.yaml.
 YAML export: export_config_to_yaml() for backup/migration.
 """
 
@@ -38,6 +38,7 @@ from gobby.config.features import (
     ToolSummarizerConfig,
 )
 from gobby.config.llm_providers import LLMProvidersConfig
+from gobby.config.local import LocalConfig, LocalLLMConfig
 from gobby.config.persistence import (
     DatabasesConfig,
     EmbeddingsConfig,
@@ -50,6 +51,7 @@ from gobby.config.sessions import (
     ChatHistoryConfig,
     ContextInjectionConfig,
     DigestConfig,
+    MemoryRecallHelperConfig,
     MessageTrackingConfig,
     SessionLifecycleConfig,
     SessionSummaryConfig,
@@ -57,138 +59,21 @@ from gobby.config.sessions import (
 from gobby.config.skills import SkillsConfig
 from gobby.config.tasks import CompactHandoffConfig, GobbyTasksConfig, WorkflowConfig
 from gobby.config.tmux import TmuxConfig
+from gobby.config.ui import (
+    AuthConfig,
+    ToolApprovalConfig,
+    UIConfig,
+)
+from gobby.config.ui import (
+    ToolApprovalPolicy as ToolApprovalPolicy,
+)
+from gobby.config.validation_detection import (
+    ValidationDetectionConfig,
+    default_validation_detection_config,
+)
 from gobby.config.voice import VoiceConfig
 from gobby.search.models import SearchConfig
 from gobby.telemetry.config import TelemetrySettings
-
-
-class LocalConfig(BaseModel):
-    """Configuration for local model endpoint (e.g., LMStudio)."""
-
-    url: str = Field(
-        description="Local model API endpoint (e.g., http://localhost:1234/v1)",
-    )
-    model: str = Field(
-        description="Model name to load/use at the local endpoint",
-    )
-    api_key: str | None = Field(
-        default=None,
-        description="API key for the local endpoint. Use $secret:NAME for encrypted secrets store.",
-    )
-
-
-class LocalLLMConfig(BaseModel):
-    """Configuration for routing providers through a local LLM endpoint.
-
-    When enabled, sets ANTHROPIC_BASE_URL for the specified providers so that
-    Claude Code (or other tools) routes API traffic through the local endpoint
-    (e.g., LMStudio, Ollama, llama.cpp server).
-    """
-
-    enabled: bool = Field(default=False, description="Enable local LLM endpoint override")
-    endpoint: str = Field(
-        default="",
-        description="Base URL for the local LLM (e.g., http://localhost:1234/v1)",
-    )
-    providers: list[str] = Field(
-        default_factory=lambda: ["claude"],
-        description="Providers to route through the local endpoint",
-    )
-
-    @model_validator(mode="after")
-    def validate_enabled_endpoint(self) -> LocalLLMConfig:
-        """Require a non-empty endpoint when local routing is enabled."""
-        if self.enabled and not self.endpoint.strip():
-            raise ValueError("endpoint must be set when enabled is True")
-        return self
-
-
-class ToolApprovalPolicy(BaseModel):
-    """A single tool approval policy matching server/tool glob patterns."""
-
-    server_pattern: str = Field(default="*", description="Glob pattern for server name")
-    tool_pattern: str = Field(default="*", description="Glob pattern for tool name")
-    policy: Literal["auto", "approve_once", "always_ask"] = Field(
-        default="always_ask",
-        description="Approval policy: 'auto', 'approve_once', or 'always_ask'",
-    )
-
-
-class ToolApprovalConfig(BaseModel):
-    """Configuration for tool approval UI in web chat."""
-
-    enabled: bool = Field(default=False, description="Enable tool approval prompts")
-    default_policy: Literal["auto", "approve_once", "always_ask"] = Field(
-        default="auto",
-        description="Default policy: 'auto' (no prompts), 'approve_once', or 'always_ask'",
-    )
-    policies: list[ToolApprovalPolicy] = Field(
-        default_factory=list,
-        description="Per-tool approval policies (server/tool glob patterns)",
-    )
-
-
-class AuthConfig(BaseModel):
-    """Basic authentication for the web UI.
-
-    Leave username and password empty to disable auth (default).
-    Once both are set, the UI requires login. Password is encrypted
-    via Fernet in the secrets table.
-    """
-
-    username: str = Field(
-        default="",
-        description="Username for web UI login. Leave empty to disable auth.",
-    )
-    password: str = Field(
-        default="",
-        description="Password for web UI login (encrypted in secrets table).",
-    )
-    session_secret: str = Field(
-        default="",
-        description="HMAC signing key for session cookies (auto-generated on first login).",
-        json_schema_extra={"ui_hidden": True},
-    )
-
-
-class UIConfig(BaseModel):
-    """Configuration for the web UI."""
-
-    enabled: bool = Field(default=False, description="Enable web UI serving")
-    mode: str = Field(default="production", description="'production' or 'dev'")
-    port: int = Field(default=60889, description="Dev server port (dev mode only)")
-    host: str = Field(default="localhost", description="Dev server host (dev mode only)")
-    web_dir: str | None = Field(
-        default=None, description="Path to web/ dir (auto-detected if None)"
-    )
-    memory_graph_limit: int = Field(
-        default=5000,
-        ge=50,
-        le=5000,
-        description="Default display limit for the 2D memory graph (nodes)",
-    )
-    knowledge_graph_limit: int = Field(
-        default=5000,
-        ge=50,
-        le=5000,
-        description="Default display limit for the 3D knowledge graph (entities)",
-    )
-
-    @field_validator("port")
-    @classmethod
-    def validate_port(cls, v: int) -> int:
-        """Validate port number is in valid range."""
-        if not (1024 <= v <= 65535):
-            raise ValueError("Port must be between 1024 and 65535")
-        return v
-
-    @field_validator("mode")
-    @classmethod
-    def validate_mode(cls, v: str) -> str:
-        if v not in ("production", "dev"):
-            raise ValueError("UI mode must be 'production' or 'dev'")
-        return v
-
 
 __all__ = [
     "CompactHandoffConfig",
@@ -297,8 +182,9 @@ class DaemonConfig(BaseModel):
     2. DB config_store (runtime settings)
     3. Pydantic defaults (lowest)
 
-    Pre-DB bootstrap settings (daemon_port, bind_host, database_path,
-    websocket_port, ui_port) are read from ~/.gobby/bootstrap.yaml.
+    Pre-DB bootstrap settings (daemon_port, bind_host, websocket_port, ui_port,
+    hub_backend, database_url, and postgres_install_mode) are read from
+    ~/.gobby/bootstrap.yaml.
 
     Note: machine_id is stored separately in ~/.gobby/machine_id
     """
@@ -340,11 +226,24 @@ class DaemonConfig(BaseModel):
         "Add your Tailscale hostname (e.g., 'https://myhost.tail*.ts.net') for remote access.",
     )
 
-    # Local storage
-    database_path: str = Field(
-        default="~/.gobby/gobby-hub.db",
-        description="Path to hub database for cross-project queries.",
+    # Hub connection settings
+    hub_backend: Literal["postgres"] = Field(
+        default="postgres",
+        description=(
+            'hub_backend (Literal["postgres"]) selected by bootstrap.yaml; only "postgres" '
+            "is supported; use `gobby postgres install`."
+        ),
     )
+    database_url: str | None = Field(
+        default=None,
+        description="PostgreSQL DSN selected by bootstrap.yaml when hub_backend is postgres.",
+        exclude=True,
+    )
+    postgres_install_mode: Literal["docker", "native", "external"] | None = Field(
+        default=None,
+        description="PostgreSQL install mode recorded by gobby postgres install.",
+    )
+
     # Sub-configs
     websocket: WebSocketSettings = Field(
         default_factory=WebSocketSettings,
@@ -398,6 +297,10 @@ class DaemonConfig(BaseModel):
         default_factory=DigestConfig,
         description="Rolling digest and title generation configuration",
     )
+    memory_recall_helper: MemoryRecallHelperConfig = Field(
+        default_factory=MemoryRecallHelperConfig,
+        description="Backgrounded Haiku memory-recall helper agent configuration",
+    )
     recommend_tools: RecommendToolsConfig = Field(
         default_factory=RecommendToolsConfig,
         description="Tool recommendation configuration",
@@ -424,7 +327,7 @@ class DaemonConfig(BaseModel):
     )
     databases: DatabasesConfig = Field(
         default_factory=DatabasesConfig,
-        description="Shared database connections (Qdrant, Neo4j)",
+        description="Shared database connections (Qdrant, FalkorDB)",
     )
     embeddings: EmbeddingsConfig = Field(
         default_factory=EmbeddingsConfig,
@@ -461,6 +364,10 @@ class DaemonConfig(BaseModel):
     verification_defaults: ProjectVerificationConfig = Field(
         default_factory=ProjectVerificationConfig,
         description="Default verification commands for projects without auto-detected config",
+    )
+    validation_detection: ValidationDetectionConfig = Field(
+        default_factory=default_validation_detection_config,
+        description="Validation command detection matchers for completion evidence",
     )
     search: SearchConfig = Field(
         default_factory=SearchConfig,
@@ -738,6 +645,7 @@ def _resolve_config_values(
 _LEGACY_KEYS_TO_DROP = frozenset(
     {"_meta", "review", "task_description", "title_synthesis", "rules", "ui_settings"}
 )
+_LEGACY_NEO4J_CONFIG_PREFIX = "databases.neo4j."
 
 # Mapping from old logging.* field names to new telemetry.* field names
 _LOGGING_TO_TELEMETRY_FIELDS: dict[str, str] = {
@@ -796,23 +704,57 @@ def _migrate_legacy_config(config_dict: dict[str, Any]) -> dict[str, Any]:
     return config_dict
 
 
+def _drop_legacy_neo4j_config_store_keys(
+    flat_config: dict[str, Any], config_store: Any | None
+) -> dict[str, Any]:
+    """Ignore and delete stale Neo4j config_store keys after the FalkorDB migration."""
+    legacy_keys = sorted(key for key in flat_config if key.startswith(_LEGACY_NEO4J_CONFIG_PREFIX))
+    if not legacy_keys:
+        return flat_config
+
+    logger.warning(
+        "Ignoring stale Neo4j config_store keys after FalkorDB migration: %s",
+        ", ".join(legacy_keys),
+    )
+    migrated = dict(flat_config)
+    for key in legacy_keys:
+        migrated.pop(key, None)
+        delete = getattr(config_store, "delete", None)
+        if callable(delete):
+            try:
+                delete(key)
+            except Exception as exc:
+                logger.debug("Failed to delete stale Neo4j config key %s: %s", key, exc)
+    return migrated
+
+
+_BOOTSTRAP_BACKEND_KEYS = ("hub_backend", "database_url", "postgres_install_mode")
+
+
+def _restore_bootstrap_backend_selection(config_dict: dict[str, Any], bootstrap: Any) -> None:
+    for key in _BOOTSTRAP_BACKEND_KEYS:
+        config_dict[key] = getattr(bootstrap, key)
+
+
 def load_config(
     config_file: str | None = None,
     cli_overrides: dict[str, Any] | None = None,
     secret_resolver: Callable[[str], str | None] | None = None,
     config_store: Any | None = None,
+    resolve_database_url: bool = False,
 ) -> DaemonConfig:
     """
     Load configuration with hierarchy: CLI > DB > bootstrap > Pydantic defaults.
 
     When config_store is provided (Phase 2), config is loaded from the database.
-    Otherwise reads bootstrap.yaml for the 5 pre-DB settings (Phase 1).
+    Otherwise reads bootstrap.yaml for pre-DB settings (Phase 1).
 
     Args:
         config_file: Path hint for locating bootstrap.yaml (default: ~/.gobby/)
         cli_overrides: Dictionary of CLI argument overrides
         secret_resolver: Optional callable for resolving secrets (checked before env vars)
         config_store: Optional ConfigStore instance for DB-first resolution
+        resolve_database_url: Require bootstrap database_url for runtime DB startup
 
     Returns:
         Validated DaemonConfig instance
@@ -826,8 +768,8 @@ def load_config(
         from gobby.config.bootstrap import load_bootstrap
         from gobby.storage.config_store import unflatten_config
 
-        # Layer 1: bootstrap values (ports, db_path, bind_host)
-        bootstrap = load_bootstrap(config_file)
+        # Layer 1: bootstrap values (ports, db_path, bind_host, hub backend)
+        bootstrap = load_bootstrap(config_file, resolve_database_url=resolve_database_url)
         config_dict: dict[str, Any] = bootstrap.to_config_dict()
 
         # Layer 2: config file values (non-bootstrap settings like test_mode,
@@ -846,6 +788,7 @@ def load_config(
 
         # Layer 3: DB values (runtime overrides via config_store)
         flat_db = config_store.get_all()
+        flat_db = _drop_legacy_neo4j_config_store_keys(flat_db, config_store)
         if flat_db:
             db_dict = unflatten_config(flat_db)
             # Resolve $secret:NAME and ${VAR} patterns in DB values
@@ -855,11 +798,12 @@ def load_config(
                 db_dict = _resolve_config_values(db_dict, secret_resolver)
             # Deep merge: DB values override config file and bootstrap
             deep_merge(config_dict, db_dict)
+        _restore_bootstrap_backend_selection(config_dict, bootstrap)
     else:
-        # Phase 1: bootstrap.yaml for pre-DB settings (database_path, ports)
+        # Phase 1: bootstrap.yaml for pre-DB settings (ports and hub connection).
         from gobby.config.bootstrap import load_bootstrap
 
-        bootstrap = load_bootstrap(config_file)
+        bootstrap = load_bootstrap(config_file, resolve_database_url=resolve_database_url)
         config_dict = bootstrap.to_config_dict()
 
     # Apply CLI argument overrides
@@ -868,10 +812,6 @@ def load_config(
     # SAFETY SWITCH: Protect production resources during tests
     # If GOBBY_TEST_PROTECT is set, force safe paths from environment
     if os.environ.get("GOBBY_TEST_PROTECT") == "1":
-        # Override database path
-        if safe_db := os.environ.get("GOBBY_DATABASE_PATH"):
-            config_dict["database_path"] = safe_db
-
         # Override telemetry logging paths
         telemetry_config = config_dict.setdefault("telemetry", {})
         if safe_client := os.environ.get("GOBBY_LOGGING_CLIENT"):

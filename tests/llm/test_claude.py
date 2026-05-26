@@ -5,6 +5,7 @@ _retry_async logic, _format_summary_context, _prepare_image_data,
 generate_json, stream_with_mcp_tools, and describe_image.
 """
 
+import logging
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
@@ -47,9 +48,17 @@ class MockToolUseBlock:
 class MockClaudeAgentOptions:
     def __init__(self, **kwargs: object) -> None:
         self.kwargs = kwargs
+        for key, value in kwargs.items():
+            setattr(self, key, value)
         self.settings: str | None = None
         self.setting_sources: list[str] | None = None
         self.stderr: object = None
+
+
+class MockExitCodeError(Exception):
+    def __init__(self, message: str, exit_code: int) -> None:
+        super().__init__(message)
+        self.exit_code = exit_code
 
 
 @pytest.fixture
@@ -120,6 +129,25 @@ class TestIsTransientError:
         assert ClaudeLLMProvider._is_transient_error(Exception("rate limit exceeded")) is True
         assert ClaudeLLMProvider._is_transient_error(Exception("500 Internal Server Error")) is True
         assert ClaudeLLMProvider._is_transient_error(Exception("connection reset")) is True
+
+    def test_error_result_success_is_not_retried(self) -> None:
+        """Known Claude SDK error-result-success failures are not retried noisily."""
+        from gobby.llm.claude import ClaudeLLMProvider
+
+        error = Exception("Claude Code returned an error result: success")
+        assert ClaudeLLMProvider._is_transient_error(error) is False
+
+    def test_sigterm_exit_code_is_not_retried(self) -> None:
+        """Claude SDK SIGTERM exits are shutdown cancellation, not transient LLM errors."""
+        from gobby.llm.claude import ClaudeLLMProvider
+
+        attr_error = MockExitCodeError("Claude process exited", 143)
+        message_error = Exception("Claude process exited with exit code 143")
+
+        assert ClaudeLLMProvider._is_sdk_sigterm_shutdown(attr_error) is True
+        assert ClaudeLLMProvider._is_sdk_sigterm_shutdown(message_error) is True
+        assert ClaudeLLMProvider._is_transient_error(attr_error) is False
+        assert ClaudeLLMProvider._is_transient_error(message_error) is False
 
 
 # ─── _retry_async tests ─────────────────────────────────────────────────
@@ -223,6 +251,49 @@ class TestRetryAsync:
             assert len(retry_calls) == 2
             assert retry_calls[0][0] == 0
             assert retry_calls[1][0] == 1
+
+
+class TestExecuteSdkQuery:
+    """Tests for SDK query execution failure classification."""
+
+    @pytest.mark.asyncio
+    async def test_sigterm_exit_does_not_retry_or_warn(
+        self, claude_config: DaemonConfig, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Exit code 143 is raised as cancellation without retry warning noise."""
+        with patch("gobby.llm.claude_cli.shutil.which", return_value=None):
+            from gobby.llm.claude import ClaudeLLMProvider, ClaudeSDKShutdownCancellation
+
+            provider = ClaudeLLMProvider(claude_config)
+            options = MockClaudeAgentOptions()
+            call_count = 0
+            caplog.clear()
+
+            async def terminated() -> str:
+                nonlocal call_count
+                call_count += 1
+                raise MockExitCodeError("Claude process exited", 143)
+
+            with (
+                patch("gobby.llm.claude.asyncio.sleep", new_callable=AsyncMock) as sleep,
+                caplog.at_level(logging.INFO, logger="gobby.llm.claude"),
+                pytest.raises(ClaudeSDKShutdownCancellation, match="generate_json cancelled"),
+            ):
+                await provider._execute_sdk_query(
+                    "generate_json",
+                    terminated,
+                    options,
+                    max_retries=3,
+                    retry_delay=0.01,
+                )
+
+        sleep.assert_not_awaited()
+        assert call_count == 1
+        assert "retrying" not in caplog.text
+        assert not any(
+            record.name == "gobby.llm.claude" and record.levelno >= logging.WARNING
+            for record in caplog.records
+        )
 
 
 # ─── _format_summary_context tests ──────────────────────────────────────
@@ -379,6 +450,46 @@ class TestGenerateJson:
         assert captured_sources == [[]]
 
     @pytest.mark.asyncio
+    async def test_generate_json_sdk_passes_system_prompt_output_format_and_caller(
+        self, claude_config: DaemonConfig
+    ) -> None:
+        """Feature JSON calls should make their instruction contract visible to Claude."""
+        captured: dict[str, object] = {}
+
+        async def mock_query(prompt: str, options: Any) -> object:
+            captured["prompt"] = prompt
+            captured["system_prompt"] = options.system_prompt
+            captured["output_format"] = options.output_format
+            yield MockAssistantMessage([MockTextBlock('{"entities": []}')])
+
+        async def execute_sdk_query(
+            operation: str,
+            query_fn: Any,
+            options: object,
+            **kwargs: object,
+        ) -> str:
+            captured["operation"] = operation
+            return await query_fn()
+
+        with mock_claude_sdk(mock_query):
+            from gobby.llm.claude import ClaudeLLMProvider
+
+            provider = ClaudeLLMProvider(claude_config)
+            with patch.object(provider, "_execute_sdk_query", side_effect=execute_sdk_query):
+                result = await provider._generate_json_sdk(
+                    "rendered entity extraction prompt",
+                    "strict entity extraction system prompt",
+                    "haiku",
+                    caller="memory.kg.extract_entities",
+                )
+
+        assert result == {"entities": []}
+        assert captured["prompt"] == "rendered entity extraction prompt"
+        assert captured["system_prompt"] == "strict entity extraction system prompt"
+        assert captured["output_format"] == {"type": "json_object"}
+        assert captured["operation"] == "generate_json[memory.kg.extract_entities]"
+
+    @pytest.mark.asyncio
     async def test_generate_json_sdk_invalid_json(self, claude_config: DaemonConfig) -> None:
         """SDK path raises ValueError with response snippet on invalid JSON."""
 
@@ -409,6 +520,70 @@ class TestGenerateJson:
             result = await provider._generate_json_sdk("Generate JSON")
 
             assert result == {"entities": []}
+
+    @pytest.mark.asyncio
+    async def test_generate_json_sdk_classifies_error_result_success(
+        self, claude_config: DaemonConfig, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Known SDK error-result-success failures log one warning and no traceback."""
+
+        async def mock_query(prompt: str, options: object) -> object:
+            raise Exception("Claude Code returned an error result: success")
+            yield
+
+        with mock_claude_sdk(mock_query):
+            from gobby.llm.claude import ClaudeLLMProvider, ClaudeSDKProviderFailure
+
+            provider = ClaudeLLMProvider(claude_config)
+
+            with (
+                patch("gobby.llm.claude.asyncio.sleep", new_callable=AsyncMock) as sleep,
+                caplog.at_level(logging.WARNING, logger="gobby.llm.claude"),
+                pytest.raises(ClaudeSDKProviderFailure, match="generate_json provider degraded"),
+            ):
+                await provider._generate_json_sdk("Generate JSON")
+
+        sleep.assert_not_awaited()
+        assert "provider degraded: Claude SDK returned error-result-success" in caplog.text
+        assert "retrying" not in caplog.text
+        assert not any(record.levelno >= logging.ERROR for record in caplog.records)
+
+
+class TestGenerateTextProviderFailures:
+    """Tests for generate_text provider failure classification."""
+
+    @pytest.mark.asyncio
+    async def test_code_index_summary_failure_classified_without_retry_noise(
+        self, claude_config: DaemonConfig, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """code_index.symbol_summary calls get one typed degradation warning."""
+
+        async def mock_query(prompt: str, options: object) -> object:
+            raise Exception("Claude Code returned an error result: success")
+            yield
+
+        with mock_claude_sdk(mock_query):
+            from gobby.llm.claude import ClaudeLLMProvider, ClaudeSDKProviderFailure
+
+            provider = ClaudeLLMProvider(claude_config)
+
+            with (
+                patch("gobby.llm.claude.asyncio.sleep", new_callable=AsyncMock) as sleep,
+                caplog.at_level(logging.WARNING, logger="gobby.llm.claude"),
+                pytest.raises(
+                    ClaudeSDKProviderFailure,
+                    match=r"generate_text\[code_index\.symbol_summary\] provider degraded",
+                ),
+            ):
+                await provider.generate_text(
+                    "Summarize",
+                    caller="code_index.symbol_summary",
+                )
+
+        sleep.assert_not_awaited()
+        assert "provider degraded: Claude SDK returned error-result-success" in caplog.text
+        assert "retrying" not in caplog.text
+        assert not any(record.levelno >= logging.ERROR for record in caplog.records)
 
 
 # ─── describe_image tests ───────────────────────────────────────────────

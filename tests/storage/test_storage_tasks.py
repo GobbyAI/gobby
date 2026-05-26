@@ -190,9 +190,9 @@ class TestLocalTaskManager:
         existing_task = task_manager.create_task(project_id=project_id, title="Existing")
 
         # Mock generate_task_id to return existing ID once, then a new one
-        # Patch where it's used (_crud.py), not where it's re-exported
+        # Patch where it's used, not where it's re-exported.
         with patch(
-            "gobby.storage.tasks._crud.generate_task_id",
+            "gobby.storage.tasks._creation.generate_task_id",
             side_effect=[existing_task.id, "gt-newunique"],
         ) as mock_gen:
             new_task = task_manager.create_task(project_id=project_id, title="New Task")
@@ -207,8 +207,8 @@ class TestLocalTaskManager:
         existing_task = task_manager.create_task(project_id=project_id, title="Existing")
 
         # Mock to always return existing ID
-        # Patch where it's used (_crud.py), not where it's re-exported
-        with patch("gobby.storage.tasks._crud.generate_task_id", return_value=existing_task.id):
+        # Patch where it's used, not where it's re-exported.
+        with patch("gobby.storage.tasks._creation.generate_task_id", return_value=existing_task.id):
             with pytest.raises(TaskIDCollisionError):
                 task_manager.create_task(project_id=project_id, title="Doom")
 
@@ -1864,6 +1864,20 @@ class TestCreateTaskWithDecomposition:
         assert result["task"]["priority"] == 1
         assert result["task"]["task_type"] == "feature"
         assert result["task"]["category"] == "unit"
+
+    def test_create_task_rejects_unexpected_decomposition_fields(
+        self, task_manager, project_id
+    ) -> None:
+        """Unexpected decomposition tool fields should fail loudly."""
+        with pytest.raises(
+            ValueError,
+            match="Unexpected decomposition task fields: unknown_field",
+        ):
+            task_manager.create_task_with_decomposition(
+                project_id=project_id,
+                title="Unexpected Field",
+                unknown_field="ignored",
+            )
 
 
 @pytest.mark.integration

@@ -2,8 +2,7 @@
 
 import pytest
 
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.skills import (
     ChangeEvent,
     LocalSkillManager,
@@ -50,12 +49,10 @@ class TestSkillSourceType:
 
 
 @pytest.fixture
-def db(tmp_path):
+def db(temp_db: HubDatabase):
     """Create a fresh database with migrations applied."""
-    database = LocalDatabase(tmp_path / "gobby-hub.db")
-    run_migrations(database)
+    database = temp_db
     yield database
-    database.close()
 
 
 @pytest.fixture
@@ -517,11 +514,11 @@ class TestSkillProjectScope:
         # Create two projects
         with db.transaction() as conn:
             conn.execute(
-                "INSERT INTO projects (id, name, created_at, updated_at) VALUES (?, ?, datetime('now'), datetime('now'))",
+                "INSERT INTO projects (id, name, created_at, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
                 ("proj-1", "project-1"),
             )
             conn.execute(
-                "INSERT INTO projects (id, name, created_at, updated_at) VALUES (?, ?, datetime('now'), datetime('now'))",
+                "INSERT INTO projects (id, name, created_at, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
                 ("proj-2", "project-2"),
             )
 
@@ -549,7 +546,7 @@ class TestSkillProjectScope:
         """Test global skills vs project-scoped skills."""
         with db.transaction() as conn:
             conn.execute(
-                "INSERT INTO projects (id, name, created_at, updated_at) VALUES (?, ?, datetime('now'), datetime('now'))",
+                "INSERT INTO projects (id, name, created_at, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
                 ("proj-test", "test-project"),
             )
 

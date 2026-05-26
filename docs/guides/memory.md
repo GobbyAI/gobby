@@ -151,7 +151,8 @@ gobby memory restore [--input PATH] [--quiet]
 ```
 
 The default JSONL path is `.gobby/memories.jsonl`. Backup is a filesystem
-export for disaster recovery or migration. SQLite remains the source of truth.
+export for disaster recovery or migration. The PostgreSQL hub remains the
+source of truth.
 
 ### Maintenance
 
@@ -186,12 +187,12 @@ for the authoritative signature before calling a tool.
 | `memory_stats` | Return counts and summary stats. |
 | `remember_with_image` | Store an image-derived memory using the configured LLM service. |
 | `remember_screenshot` | Store a base64 screenshot-derived memory. |
-| `search_knowledge_graph` | Search extracted Neo4j memory entities. |
+| `search_knowledge_graph` | Search extracted FalkorDB memory entities. |
 | `rebuild_crossrefs` | Rebuild memory-to-memory cross-reference edges. |
-| `rebuild_knowledge_graph` | Extract entities and relationships into Neo4j. |
+| `rebuild_knowledge_graph` | Extract entities and relationships into FalkorDB. |
 | `reindex_embeddings` | Regenerate embedding vectors for stored memories. |
-| `sync_import` | Import `.gobby/memories.jsonl` into SQLite. |
-| `sync_export` | Export project memories from SQLite to `.gobby/memories.jsonl`. |
+| `sync_import` | Import `.gobby/memories.jsonl` into the hub database. |
+| `sync_export` | Export project memories from the hub database to `.gobby/memories.jsonl`. |
 | `audit_memories` | Report stale, duplicate, code-derivable, and orphaned memory candidates. |
 | `cleanup_memories` | Delete or dry-run cleanup of problematic memories. |
 | `bootstrap_session_title` | System lifecycle tool for heuristic session titles. |
@@ -249,17 +250,17 @@ The daemon exposes memory routes under `/api/memories`.
 | `GET /api/memories/graph/entities` | Search extracted knowledge-graph entities. |
 | `GET /api/memories/graph/entities/{entity_key}/neighbors` | Return entity neighbors. |
 | `POST /api/memories/crossrefs/rebuild` | Rebuild memory cross-references. |
-| `POST /api/memories/graph/clear` | Clear the Neo4j memory graph projection. |
+| `POST /api/memories/graph/clear` | Clear the FalkorDB memory graph projection. |
 | `POST /api/memories/graph/rebuild` | Rebuild the knowledge graph, optionally in the background. |
 | `GET /api/memories/graph/rebuild/status` | Inspect background rebuild status. |
 | `POST /api/memories/embeddings/reindex` | Regenerate embedding vectors. |
-| `POST /api/memories/reconcile` | Reconcile Qdrant and Neo4j with SQLite. |
+| `POST /api/memories/reconcile` | Reconcile Qdrant and FalkorDB with the hub database. |
 | `POST /api/memories/invalidate` | Clear secondary indices and start a background rebuild. |
 
 ## Architecture
 
-SQLite in `~/.gobby/gobby-hub.db` is the source of truth. The default path can
-move when `GOBBY_HOME` or bootstrap `database_path` is configured.
+The PostgreSQL hub is the source of truth. Runtime connection details come from
+the `database_url` in `~/.gobby/bootstrap.yaml`.
 
 ```mermaid
 flowchart LR
@@ -268,16 +269,16 @@ flowchart LR
     MCP --> Manager[MemoryManager]
     CLI --> Manager
     HTTP[/api/memories] --> Manager
-    Manager --> SQLite[(SQLite hub DB)]
-    Manager --> FTS[SQLite FTS5]
+    Manager --> Hub[(PostgreSQL hub)]
+    Manager --> BM25[pg_search BM25]
     Manager --> Qdrant[Qdrant vectors]
-    Manager --> Neo4j[Neo4j knowledge graph]
+    Manager --> FalkorDB[FalkorDB knowledge graph]
     Manager --> JSONL[.gobby/memories.jsonl backup]
 ```
 
-`MemoryManager` coordinates storage, FTS search, vector search, cross-references,
-image ingestion, cleanup, and the optional knowledge graph. `StorageAdapter`
-provides the async backend interface over the local SQLite storage layer.
+`MemoryManager` coordinates storage, keyword search, vector search,
+cross-references, image ingestion, cleanup, and the optional knowledge graph.
+`StorageAdapter` provides the async backend interface over the hub storage layer.
 
 ### Search
 
@@ -285,10 +286,10 @@ Search uses the best available local infrastructure:
 
 1. With Qdrant and embeddings configured, the query is embedded and matched
    against memory vectors.
-2. If Neo4j graph search is available, graph matches join vector and FTS results
-   through reciprocal-rank fusion.
-3. FTS5 keyword search participates when semantic search is available and is the
-   fallback when vectors are unavailable.
+2. If FalkorDB graph search is available, graph matches join vector and keyword
+   results through reciprocal-rank fusion.
+3. pg_search BM25 keyword search participates when semantic search is available
+   and is the fallback when vectors are unavailable.
 4. Result metadata can include `similarity`, `search_via`, `ranking_score`,
    `raw_semantic_score`, `temporal_decay_factor`, and `ranking_mode`.
 
@@ -298,9 +299,9 @@ memory-recall rule currently uses `limit: 2` and `min_score: 0.7`.
 ### Knowledge Graph
 
 The knowledge graph extracts entities and relationships from memories into
-Neo4j. It is optional and depends on an LLM service, embeddings, a vector store,
-and Neo4j. Use it for relationship exploration, graph visualization, and
-entity-oriented recall. SQLite memories remain authoritative.
+FalkorDB. It is optional and depends on an LLM service, embeddings, a vector
+store, and FalkorDB. Use it for relationship exploration, graph visualization, and
+entity-oriented recall. Hub memories remain authoritative.
 
 ## Configuration
 
@@ -339,10 +340,11 @@ databases:
     url: http://localhost:6333
     port: 6333
     collection_prefix: code_symbols_
-  neo4j:
-    url: http://localhost:8474
-    auth: ${NEO4J_AUTH:-}
-    database: neo4j
+  falkordb:
+    host: 127.0.0.1
+    port: 16379
+    requirepass: ${GOBBY_FALKORDB_PASSWORD:-}
+    graph_name: gobby_kg
     graph_search: true
     graph_min_score: 0.5
     rrf_k: 60
@@ -432,7 +434,7 @@ Use `gobby memory backup` or MCP `sync_export` to write the file. Use
 - Rebuild cross-references after large imports or cleanup.
 - Reindex embeddings after changing embedding providers or models.
 - Rebuild or clear the knowledge graph when entity extraction changes.
-- Reconcile stores when Qdrant or Neo4j may contain orphaned records.
+- Reconcile stores when Qdrant or FalkorDB may contain orphaned records.
 
 ## Troubleshooting
 
@@ -452,7 +454,7 @@ call_tool(server_name="gobby-memory", tool_name="search_memories", arguments={
 ### Search quality is poor
 
 Run a tag-filtered search to confirm the memory exists, then verify embeddings
-and Qdrant are available. Without embeddings, Gobby falls back to FTS5 keyword
+and Qdrant are available. Without embeddings, Gobby falls back to keyword
 search.
 
 ```bash
@@ -473,7 +475,7 @@ run `gobby memory restore --input .gobby/memories.jsonl`.
 
 ### Graph views are empty
 
-The knowledge graph is optional. Verify Neo4j, embeddings, and an LLM provider
+The knowledge graph is optional. Verify FalkorDB, embeddings, and an LLM provider
 are configured, then rebuild:
 
 ```bash
@@ -484,8 +486,8 @@ gobby memory rebuild-graph --wait
 
 | Path | Description |
 | --- | --- |
-| `~/.gobby/gobby-hub.db` | Default SQLite hub database. |
-| `~/.gobby/bootstrap.yaml` | Bootstrap settings, including `database_path`. |
+| `~/.gobby/bootstrap.yaml` `database_url` | Runtime PostgreSQL hub DSN. |
+| `~/.gobby/bootstrap.yaml` | Bootstrap settings, including Postgres install metadata. |
 | `.gobby/memories.jsonl` | JSONL memory backup/export file. |
 | `.gobby/resources/` | Screenshot/image resources created by multimodal memory tools. |
 | `src/gobby/memory/` | Memory manager, search, graph, indexing, cleanup, and ingestion code. |
@@ -501,4 +503,4 @@ gobby memory rebuild-graph --wait
 - [MCP Tools](./mcp-tools.md) - Progressive discovery and internal MCP tool usage.
 - [Workflow Rules](./workflow-rules.md) - Semantic lifecycle events and rule effects.
 
-_Last verified: 2026-05-07_
+_Last verified: 2026-05-23_

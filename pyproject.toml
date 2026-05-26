@@ -1,6 +1,6 @@
 [project]
 name = "gobby"
-version = "0.4.6"
+version = "0.4.9"
 description = "The bottleneck in AI coding isn't the model: It's the babysitting. Gobby is a local daemon that turns a task into a PR across Claude Code, Codex, Gemini, Qwen, and Droid. Stage dispatch, hook-time rules, progressive MCP proxy, and more. Gobby built Gobby."
 readme = "README.md"
 license = "Apache-2.0"
@@ -22,11 +22,12 @@ dependencies = [
     "aiohttp>=3.11.0",
     "anthropic>=0.75.0",
     "click>=8.1.0",
-    "fastapi>=0.115.0",
+    "fastapi>=0.136.0,!=0.136.3",
     # fastmcp <3.2.0 has CVE-2025-64340, CVE-2026-27124
     "fastmcp>=3.2.0",
     "httpx>=0.27.0",
     "psutil>=6.1.0",
+    "psycopg[binary,pool]>=3.2",
     "py-machineid>=0.6.0",
     "pydantic>=2.9.0",
     "uvicorn[standard]>=0.30.0",
@@ -40,6 +41,7 @@ dependencies = [
     "msgspec>=0.20.0",
     # croniter for cron expression parsing (scheduler)
     "croniter>=6.0.0",
+    "falkordb>=1.1.0",
     "qdrant-client>=1.12.0",
     # python-multipart <0.0.27 has CVE-2026-24486, CVE-2026-40347, CVE-2026-42561
     "python-multipart>=0.0.27",
@@ -86,6 +88,12 @@ Issues = "https://github.com/GobbyAI/gobby/issues"
 # (missing project.version in pyproject.toml). Force >=0.21.
 constraint-dependencies = [
     "tokenizers>=0.21",
+    # idna <3.15 has CVE-2026-45409 (transitive via HTTP clients)
+    "idna>=3.15",
+    # starlette <1.0.1 has CVE-2025-62727; keep the ASGI stack on compatible floors.
+    "mcp>=1.27.1",
+    "sse-starlette>=3.4.4",
+    "starlette>=1.0.1",
     # authlib <=1.6.11 has GHSA-r95x-qfjj-fjj2 (medium); <1.6.11 also had
     # GHSA-jj8c-mmj3-mmgv. Transitive via fastmcp.
     "authlib>=1.6.12",
@@ -108,6 +116,10 @@ override-dependencies = [
     "torchaudio==2.11.0",
     # diffusers <0.38.0 has CVE-2026-44513 (transitive via chatterbox-tts voice extra)
     "diffusers>=0.38.0",
+    # chatterbox-tts==0.1.7 pins gradio==6.8.0, which keeps Starlette below
+    # the audit-safe floor. Voice extra is opt-in; force the current compatible
+    # Gradio line until chatterbox relaxes its pin.
+    "gradio>=6.14.0",
     # Temporary chatterbox-tts==0.1.7 override; keep until the checklist above passes.
     "safetensors>=0.8.0rc0",
 ]
@@ -132,7 +144,8 @@ gobby = [
     "install/bundled_content_manifest.json",
     "install/shared/**/*",
     "storage/*.sql",
-    "data/*",
+    "storage/migrations/*",
+    "data/**/*",
     "ui/web/dist/**/*",
 ]
 
@@ -229,7 +242,7 @@ exclude_dirs = ["tests", ".venv", "build", "examples"]
 # B110, B112: try_except_pass/continue (cleanup/fallback code)
 # B307: eval (workflow condition evaluator with controlled globals)
 # B404, B602, B603, B606, B607: subprocess/exec usage expected for CLI tool
-# B608: sql_expressions (local SQLite with parameterized queries)
+# B608: sql_expressions (hub SQL uses parameterized queries)
 # B701: jinja2 autoescape (not used for HTML)
 skips = ["B101", "B104", "B105", "B108", "B110", "B112", "B307", "B404", "B602", "B603", "B606", "B607", "B608", "B701"]
 

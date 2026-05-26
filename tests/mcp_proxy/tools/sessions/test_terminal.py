@@ -185,3 +185,92 @@ class TestRegisterTerminalTools:
         assert result == {"success": True}
         mock_get_tmux_manager.assert_called_once_with(session.terminal_context)
         tmux_manager.send_keys.assert_awaited_once_with("%12", "hello", literal=True)
+
+    def test_capture_output_uses_tmux_when_pane_exists(self) -> None:
+        """capture_output reads the live pane when a tmux target is available."""
+        registry = _TestRegistry(name="test", description="test")
+        session = MagicMock()
+        session.terminal_context = {"tmux_pane": "%12"}
+
+        session_manager = MagicMock()
+        session_manager.get.return_value = session
+        agent_run_manager = MagicMock()
+        agent_run_manager.get_by_session.return_value = None
+        tmux_manager = MagicMock()
+        tmux_manager.capture_pane = AsyncMock(return_value="live output")
+
+        with patch(
+            "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
+            return_value=agent_run_manager,
+        ):
+            register_terminal_tools(registry, session_manager, MagicMock())
+
+        capture_output = registry.get_tool("capture_output")
+        assert capture_output is not None
+
+        with patch(
+            "gobby.mcp_proxy.tools.sessions._terminal.get_tmux_manager_for_context",
+            return_value=tmux_manager,
+        ):
+            result = asyncio.run(capture_output(session_id="session-1", lines=20))
+
+        assert result == {"success": True, "output": "live output", "via": "tmux"}
+        tmux_manager.capture_pane.assert_awaited_once_with("%12", 20)
+
+    def test_capture_output_falls_back_to_transcript_tail(self, tmp_path) -> None:
+        """When no tmux target exists, capture_output returns a transcript tail."""
+        registry = _TestRegistry(name="test", description="test")
+        transcript = tmp_path / "codex.jsonl"
+        transcript.write_text("one\n-two\nthree\n", encoding="utf-8")
+
+        session = MagicMock()
+        session.terminal_context = {"parent_pid": 12345}
+        session.transcript_path = str(transcript)
+
+        session_manager = MagicMock()
+        session_manager.get.return_value = session
+        agent_run_manager = MagicMock()
+        agent_run_manager.get_by_session.return_value = None
+
+        with patch(
+            "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
+            return_value=agent_run_manager,
+        ):
+            register_terminal_tools(registry, session_manager, MagicMock())
+
+        capture_output = registry.get_tool("capture_output")
+        assert capture_output is not None
+
+        result = asyncio.run(capture_output(session_id="session-1", lines=2))
+
+        assert result["success"] is True
+        assert result["via"] == "transcript"
+        assert result["output"] == "-two\nthree"
+        assert "No live tmux pane" in result["note"]
+
+    def test_capture_output_reports_no_pane_or_transcript(self) -> None:
+        """Missing tmux target plus missing transcript returns structured failure."""
+        registry = _TestRegistry(name="test", description="test")
+        session = MagicMock()
+        session.terminal_context = {"parent_pid": 12345}
+        session.transcript_path = None
+
+        session_manager = MagicMock()
+        session_manager.get.return_value = session
+        agent_run_manager = MagicMock()
+        agent_run_manager.get_by_session.return_value = None
+
+        with patch(
+            "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
+            return_value=agent_run_manager,
+        ):
+            register_terminal_tools(registry, session_manager, MagicMock())
+
+        capture_output = registry.get_tool("capture_output")
+        assert capture_output is not None
+
+        result = asyncio.run(capture_output(session_id="session-1", lines=20))
+
+        assert result["success"] is False
+        assert result["error_code"] == "no_live_pane_or_transcript"
+        assert result["transcript_error"] == "missing_transcript_path"

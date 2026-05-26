@@ -5,12 +5,14 @@ dependency analysis and contention detection between concurrent tasks.
 """
 
 import logging
-import sqlite3
 from collections import defaultdict
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from gobby.storage.database import DatabaseProtocol
+import psycopg
+
+from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +28,7 @@ class TaskAffectedFile:
     created_at: str
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row) -> "TaskAffectedFile":
+    def from_row(cls, row: Mapping[str, Any]) -> "TaskAffectedFile":
         return cls(
             id=row["id"],
             task_id=row["task_id"],
@@ -46,7 +48,7 @@ class TaskAffectedFile:
 
 
 class TaskAffectedFileManager:
-    def __init__(self, db: DatabaseProtocol):
+    def __init__(self, db: HubDatabase):
         self.db = db
 
     def set_files(
@@ -68,18 +70,17 @@ class TaskAffectedFileManager:
             results = []
             for file_path in files:
                 try:
-                    cursor = conn.execute(
-                        "INSERT INTO task_affected_files (task_id, file_path, annotation_source) "
-                        "VALUES (?, ?, ?)",
-                        (task_id, file_path, source),
-                    )
                     row = conn.execute(
-                        "SELECT * FROM task_affected_files WHERE id = ?",
-                        (cursor.lastrowid,),
+                        """
+                        INSERT INTO task_affected_files (task_id, file_path, annotation_source)
+                        VALUES (?, ?, ?)
+                        RETURNING id, task_id, file_path, annotation_source, created_at
+                        """,
+                        (task_id, file_path, source),
                     ).fetchone()
-                    if row:
+                    if row is not None:
                         results.append(TaskAffectedFile.from_row(row))
-                except sqlite3.IntegrityError:
+                except psycopg.IntegrityError:
                     # UNIQUE constraint — file already exists from another source
                     logger.debug(f"File {file_path} already tracked for task {task_id}")
             return results
@@ -104,17 +105,16 @@ class TaskAffectedFileManager:
         """
         try:
             with self.db.transaction() as conn:
-                cursor = conn.execute(
-                    "INSERT INTO task_affected_files (task_id, file_path, annotation_source) "
-                    "VALUES (?, ?, ?)",
-                    (task_id, file_path, source),
-                )
                 row = conn.execute(
-                    "SELECT * FROM task_affected_files WHERE id = ?",
-                    (cursor.lastrowid,),
+                    """
+                    INSERT INTO task_affected_files (task_id, file_path, annotation_source)
+                    VALUES (?, ?, ?)
+                    RETURNING id, task_id, file_path, annotation_source, created_at
+                    """,
+                    (task_id, file_path, source),
                 ).fetchone()
-                return TaskAffectedFile.from_row(row) if row else None
-        except sqlite3.IntegrityError:
+                return TaskAffectedFile.from_row(row) if row is not None else None
+        except psycopg.IntegrityError:
             logger.debug(f"File {file_path} already tracked for task {task_id}")
             return None
 

@@ -1,27 +1,29 @@
 """Authentication store for web UI sessions.
 
-Manages auth sessions in SQLite for cookie-based login.
+Manages auth sessions in the hub database for cookie-based login.
 Passwords are encrypted via Fernet in the secrets table (same as API keys).
 Sessions are random tokens with expiry.
 """
 
-import logging
+import hashlib
 import os
 from datetime import UTC, datetime, timedelta
 
-from gobby.storage.database import DatabaseProtocol
-
-logger = logging.getLogger(__name__)
+from gobby.storage.hub.protocol import HubDatabase
 
 # Session durations
 SESSION_DURATION = timedelta(hours=12)  # Default (no remember-me)
 REMEMBER_ME_DURATION = timedelta(days=30)  # Remember me checked
 
 
-class AuthStore:
-    """Manages auth sessions in SQLite."""
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
-    def __init__(self, db: DatabaseProtocol) -> None:
+
+class AuthStore:
+    """Manages auth sessions in the hub database."""
+
+    def __init__(self, db: HubDatabase) -> None:
         self.db = db
 
     def create_session(self, remember_me: bool = False) -> tuple[str, datetime]:
@@ -35,8 +37,8 @@ class AuthStore:
         expires_at = datetime.now(UTC) + duration
 
         self.db.execute(
-            "INSERT INTO auth_sessions (token, expires_at, remember_me) VALUES (?, ?, ?)",
-            (token, expires_at.isoformat(), 1 if remember_me else 0),
+            "INSERT INTO auth_sessions (token_hash, expires_at, remember_me) VALUES (?, ?, ?)",
+            (_hash_token(token), expires_at.isoformat(), bool(remember_me)),
         )
 
         # Opportunistically clean up expired sessions
@@ -50,8 +52,8 @@ class AuthStore:
             return False
 
         row = self.db.fetchone(
-            "SELECT expires_at FROM auth_sessions WHERE token = ?",
-            (token,),
+            "SELECT expires_at FROM auth_sessions WHERE token_hash = ?",
+            (_hash_token(token),),
         )
         if not row:
             return False
@@ -68,7 +70,7 @@ class AuthStore:
 
     def delete_session(self, token: str) -> bool:
         """Delete a session (logout)."""
-        self.db.execute("DELETE FROM auth_sessions WHERE token = ?", (token,))
+        self.db.execute("DELETE FROM auth_sessions WHERE token_hash = ?", (_hash_token(token),))
         return True
 
     def _cleanup_expired(self) -> None:

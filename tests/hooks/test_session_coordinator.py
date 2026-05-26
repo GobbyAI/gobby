@@ -16,20 +16,70 @@ Test categories:
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
-from typing import TYPE_CHECKING
+from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 # This import should fail initially (red phase) - module doesn't exist yet
 from gobby.hooks.session_coordinator import SessionCoordinator
+from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
 
-if TYPE_CHECKING:
-    pass
+
+def _create_session_row(db: HubDatabase, session_id: str) -> None:
+    db.execute(
+        """
+        INSERT INTO projects (id, name, created_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT (id) DO NOTHING
+        """,
+        ("project-1", "test-project"),
+    )
+    db.execute(
+        "INSERT INTO sessions "
+        "(id, external_id, machine_id, source, project_id, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
+        "ON CONFLICT (id) DO NOTHING",
+        (session_id, f"ext-{session_id}", "machine-1", "claude", "project-1"),
+    )
+
+
+def _install_step_workflow(db: HubDatabase, session_id: str, current_step: str) -> None:
+    from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+    from gobby.workflows.definitions import WorkflowInstance
+    from gobby.workflows.state_manager import WorkflowInstanceManager
+
+    definition = {
+        "name": "merge-worker",
+        "version": "1.0",
+        "enabled": True,
+        "steps": [
+            {"name": "resolve_conflicts"},
+            {"name": "terminate"},
+        ],
+        "exit_condition": "current_step == 'terminate'",
+    }
+    LocalWorkflowDefinitionManager(db).create(
+        name="merge-worker",
+        definition_json=json.dumps(definition),
+        workflow_type="workflow",
+        enabled=True,
+    )
+    WorkflowInstanceManager(db).save_instance(
+        WorkflowInstance(
+            id=f"inst-{session_id}",
+            session_id=session_id,
+            workflow_name="merge-worker",
+            current_step=current_step,
+            variables={},
+        )
+    )
 
 
 class TestSessionRegistrationTracking:
@@ -423,6 +473,85 @@ class TestAgentRunCompletion:
         assert "no activity" in fail_kwargs["error"].lower()
         mock_agent_run_manager.complete.assert_not_called()
 
+    def test_complete_agent_run_fails_incomplete_step_workflow(
+        self,
+        temp_db: HubDatabase,
+    ) -> None:
+        """SESSION_END does not mark a live step workflow as successful."""
+        from gobby.storage.agents import LocalAgentRunManager
+
+        _create_session_row(temp_db, "parent-session")
+        _create_session_row(temp_db, "child-session")
+        _install_step_workflow(temp_db, "child-session", "resolve_conflicts")
+
+        run_manager = LocalAgentRunManager(temp_db)
+        run = run_manager.create(
+            parent_session_id="parent-session",
+            provider="claude",
+            prompt="resolve merge conflicts",
+            workflow_name="merge-worker",
+            agent_name="merge-worker",
+            child_session_id="child-session",
+        )
+        run_manager.start(run.id)
+
+        coordinator = SessionCoordinator(agent_run_manager=run_manager)
+        session = SimpleNamespace(
+            id="child-session",
+            agent_run_id=run.id,
+            summary_markdown="Blocked by step enforcement.",
+            tool_call_count=7,
+            turn_count=3,
+        )
+
+        coordinator.complete_agent_run(session)
+
+        updated = run_manager.get(run.id)
+        assert updated is not None
+        assert updated.status == "error"
+        assert updated.error is not None
+        assert "before step workflow completed" in updated.error
+        assert "workflow=merge-worker" in updated.error
+        assert "current_step=resolve_conflicts" in updated.error
+
+    def test_complete_agent_run_allows_completed_step_workflow(
+        self,
+        temp_db: HubDatabase,
+    ) -> None:
+        """A leftover terminal-step workflow instance does not force failure."""
+        from gobby.storage.agents import LocalAgentRunManager
+
+        _create_session_row(temp_db, "parent-session")
+        _create_session_row(temp_db, "child-session")
+        _install_step_workflow(temp_db, "child-session", "terminate")
+
+        run_manager = LocalAgentRunManager(temp_db)
+        run = run_manager.create(
+            parent_session_id="parent-session",
+            provider="claude",
+            prompt="resolve merge conflicts",
+            workflow_name="merge-worker",
+            agent_name="merge-worker",
+            child_session_id="child-session",
+        )
+        run_manager.start(run.id)
+
+        coordinator = SessionCoordinator(agent_run_manager=run_manager)
+        session = SimpleNamespace(
+            id="child-session",
+            agent_run_id=run.id,
+            summary_markdown="Done",
+            tool_call_count=7,
+            turn_count=3,
+        )
+
+        coordinator.complete_agent_run(session)
+
+        updated = run_manager.get(run.id)
+        assert updated is not None
+        assert updated.status == "success"
+        assert updated.error is None
+
     def test_complete_agent_run_defaults_counts_when_missing(self) -> None:
         """Stats attributes from session are passed through to complete()."""
         mock_agent_run_manager = MagicMock()
@@ -562,7 +691,7 @@ class TestConcurrentOperations:
         coordinator = SessionCoordinator()
         errors: list[Exception] = []
 
-        def register_sessions():
+        def register_sessions() -> Any:
             try:
                 for i in range(100):
                     coordinator.register_session(f"session-{threading.current_thread().name}-{i}")
@@ -583,7 +712,7 @@ class TestConcurrentOperations:
         coordinator = SessionCoordinator()
         errors: list[Exception] = []
 
-        def cache_messages():
+        def cache_messages() -> Any:
             try:
                 for i in range(50):
                     session_id = f"session-{i % 10}"
@@ -605,7 +734,7 @@ class TestConcurrentOperations:
         coordinator = SessionCoordinator()
         call_count = {"count": 0}
 
-        def increment_with_lock():
+        def increment_with_lock() -> Any:
             with coordinator.get_lookup_lock():
                 # Simulate work
                 current = call_count["count"]
@@ -675,16 +804,16 @@ class TestIntegrationWithHookManager:
         class MockHookManager:
             """Simulates how HookManager would use SessionCoordinator."""
 
-            def __init__(self):
+            def __init__(self) -> None:
                 self._session_coordinator = SessionCoordinator()
 
-            def handle_session_start(self, session_id: str):
+            def handle_session_start(self, session_id: str) -> Any:
                 if not self._session_coordinator.is_registered(session_id):
                     self._session_coordinator.register_session(session_id)
                     return "Session registered"
                 return "Already registered"
 
-            def handle_session_end(self, session):
+            def handle_session_end(self, session: Any) -> Any:
                 self._session_coordinator.complete_agent_run(session)
                 self._session_coordinator.unregister_session(session.id)
 

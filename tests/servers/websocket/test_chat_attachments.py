@@ -17,7 +17,7 @@ from gobby.servers.websocket.chat_attachments import (
     prepare_message_attachments,
 )
 from gobby.storage.config_store import ConfigStore
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 
 pytestmark = pytest.mark.unit
@@ -36,14 +36,14 @@ def test_chat_attachment_limits_reject_non_positive_values(kwargs: dict[str, int
         ChatAttachmentLimits(**kwargs)
 
 
-def _owner(temp_db: LocalDatabase) -> SimpleNamespace:
+def _owner(temp_db: HubDatabase) -> SimpleNamespace:
     return SimpleNamespace(
         session_manager=SimpleNamespace(db=temp_db), daemon_config=DaemonConfig()
     )
 
 
 def _attachment(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     tmp_path: Path,
     *,
     attachment_id: str = "att-1",
@@ -67,7 +67,7 @@ def _attachment(
 
 @pytest.mark.asyncio
 async def test_prepare_message_attachments_binds_ids_and_formats_safe_context(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     attachment_id = _attachment(temp_db, tmp_path)
@@ -94,7 +94,7 @@ async def test_prepare_message_attachments_binds_ids_and_formats_safe_context(
 
 @pytest.mark.asyncio
 async def test_prepare_message_attachments_honors_config_store_file_count(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     ConfigStore(temp_db).set("chat.attachment_max_files_per_message", 1)
@@ -107,7 +107,7 @@ async def test_prepare_message_attachments_honors_config_store_file_count(
 
 @pytest.mark.asyncio
 async def test_prepare_message_attachments_checks_current_file_size_limit_before_binding(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     ConfigStore(temp_db).set("chat.attachment_max_file_bytes", 4)
@@ -129,7 +129,7 @@ async def test_prepare_message_attachments_checks_current_file_size_limit_before
 
 @pytest.mark.asyncio
 async def test_prepare_message_attachments_checks_current_total_size_limit_before_binding(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     ConfigStore(temp_db).set("chat.attachment_max_total_bytes_per_message", 8)

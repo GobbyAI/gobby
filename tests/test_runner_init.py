@@ -1,6 +1,11 @@
 """Initialization and configuration tests for GobbyRunner."""
 
+import json
+import logging
 from contextlib import ExitStack
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -10,6 +15,23 @@ from gobby.runner_init import resolve_embedding_api_key
 from tests.runner_helpers import create_base_patches, set_mock_default
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("fast_stop_hook_grace_window")]
+
+
+def _set_config_value(db: Any, key: str, value: Any, *, is_secret: bool = False) -> None:
+    db.execute(
+        """
+        INSERT INTO config_store (key, value, source, is_secret, updated_at)
+        VALUES (?, ?, 'test', ?, CURRENT_TIMESTAMP)
+        """,
+        (key, json.dumps(value), is_secret),
+    )
+
+
+def _config_value(db: Any, key: str) -> Any | None:
+    row = db.fetchone("SELECT value FROM config_store WHERE key = ?", (key,))
+    if row is None:
+        return None
+    return json.loads(row["value"])
 
 
 class TestGobbyRunnerInit:
@@ -37,8 +59,83 @@ class TestGobbyRunnerInit:
             mock_ws_cls.assert_called_once()
 
 
+class TestStaleNeo4jConfigStartup:
+    """Startup cleanup for stale Neo4j config rows."""
+
+    def test_init_storage_warns_and_cleans_stale_neo4j_config_before_final_load(
+        self,
+        tmp_path: Path,
+        temp_db: Any,
+        caplog: pytest.LogCaptureFixture,
+        enable_log_propagation: None,
+    ) -> None:
+        """Stale Neo4j config is warned, cleaned, and migrated before services read config."""
+        from gobby.runner_init.storage import init_storage_and_config
+
+        temp_db.execute(
+            "DELETE FROM config_store WHERE key = ?",
+            ("databases.falkordb.rrf_k",),
+        )
+        _set_config_value(temp_db, "databases.neo4j.rrf_k", 80)
+        _set_config_value(temp_db, "databases.neo4j.auth", "$secret:auth", is_secret=True)
+        _set_config_value(temp_db, "mock.test.auth", "$secret:auth", is_secret=True)
+        _set_config_value(temp_db, "databases.falkordb.host", "127.0.0.1")
+        _set_config_value(temp_db, "databases.falkordb.port", 16379)
+        _set_config_value(temp_db, "databases.falkordb.requirepass", "safe-pass")
+        temp_db.execute(
+            """
+            INSERT INTO secrets (id, name, encrypted_value, category, description, created_at, updated_at)
+            VALUES ('secret-auth', 'auth', 'encrypted', 'general', 'shared auth', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """
+        )
+
+        class FakeSecretStore:
+            def __init__(self, db: Any) -> None:
+                self.db = db
+
+            def get(self, name: str) -> str | None:
+                return "shared-pass" if name == "auth" else None
+
+        class FakeModelCostStore:
+            def __init__(self, db: Any) -> None:
+                self.db = db
+
+            def populate(self) -> None:
+                return None
+
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("{}\n")
+        runner = SimpleNamespace()
+
+        with (
+            patch("gobby.runner_init.storage.init_telemetry"),
+            patch("gobby.runner_init.storage.get_machine_id", return_value="test-machine"),
+            patch("gobby.runner_init.storage.init_hub_database", return_value=temp_db),
+            patch("gobby.storage.secrets.SecretStore", FakeSecretStore),
+            patch("gobby.storage.model_costs.ModelCostStore", FakeModelCostStore),
+            patch("gobby.utils.dev.is_dev_mode", return_value=False),
+        ):
+            with caplog.at_level(logging.WARNING, logger="gobby"):
+                init_storage_and_config(runner, config_file, verbose=False)
+
+        assert "Detected stale Neo4j config keys" in caplog.text
+        assert "databases.neo4j.rrf_k" in caplog.text
+        assert "databases.neo4j.auth" in caplog.text
+        assert "Cleaning them up now" in caplog.text
+
+        assert runner.config.databases.falkordb.rrf_k == 80
+        assert _config_value(temp_db, "databases.falkordb.rrf_k") == 80
+        assert _config_value(temp_db, "databases.neo4j.rrf_k") is None
+        assert _config_value(temp_db, "databases.neo4j.auth") is None
+        assert _config_value(temp_db, "mock.test.auth") == "$secret:auth"
+        assert temp_db.fetchone("SELECT name FROM secrets WHERE name = ?", ("auth",)) is not None
+
+
 class TestSetMockDefault:
+    """Tests for test helper default assignment behavior."""
+
     def test_preserves_asyncmock_overrides(self) -> None:
+        """Existing AsyncMock attributes are not replaced by default values."""
         obj = MagicMock()
         existing = AsyncMock()
         obj.child = existing
@@ -47,7 +144,7 @@ class TestSetMockDefault:
 
         assert obj.child is existing
 
-    def test_init_without_websocket(self, mock_config) -> None:
+    def test_init_without_websocket(self, mock_config: Any) -> None:
         """Test init when WebSocket is disabled."""
         mock_config.websocket = MagicMock()
         mock_config.websocket.enabled = False
@@ -63,7 +160,7 @@ class TestSetMockDefault:
             assert runner.websocket_server is None
             mock_ws_cls.assert_not_called()
 
-    def test_init_websocket_none_config(self, mock_config) -> None:
+    def test_init_websocket_none_config(self, mock_config: Any) -> None:
         """Test init when websocket config is None."""
         patches = create_base_patches(mock_config)
 
@@ -73,6 +170,90 @@ class TestSetMockDefault:
             runner = GobbyRunner()
 
             assert runner.websocket_server is None
+
+
+class TestInitHubDatabase:
+    """Tests for hub database initialization helpers."""
+
+    def test_rejects_non_postgres_backend(self) -> None:
+        """Non-PostgreSQL hub backends are rejected by the runtime."""
+        from gobby.runner_init import helpers
+
+        config = SimpleNamespace(
+            hub_backend="local",
+            database_url=None,
+        )
+
+        with pytest.raises(ValueError, match="postgres"):
+            helpers.init_hub_database(config)
+
+    def test_uses_postgres_backend_when_selected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """PostgreSQL backend opens the configured DSN and applies migrations."""
+        from gobby.runner_init import helpers
+
+        with patch("gobby.storage.hub.postgres.PostgresHubDatabase") as postgres_database:
+            db = MagicMock()
+            postgres_database.return_value = db
+            config = SimpleNamespace(
+                hub_backend="postgres",
+                database_url="postgresql://gobby:secret@localhost:60891/gobby",
+            )
+
+            result = helpers.init_hub_database(config)
+
+        assert result is db
+        postgres_database.assert_called_once_with("postgresql://gobby:secret@localhost:60891/gobby")
+        db.apply_migrations.assert_called_once_with()
+
+    def test_postgres_startup_retries_transient_connection_failure(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """PostgreSQL startup retries transient pool/connection failures."""
+        import psycopg
+
+        from gobby.runner_init import helpers
+
+        sleeps: list[float] = []
+
+        class FakePostgresDatabase:
+            calls = 0
+
+            def __init__(self, _dsn: str) -> None:
+                pass
+
+            def apply_migrations(self) -> None:
+                self.calls += 1
+                if self.calls < 3:
+                    raise psycopg.OperationalError("database is starting")
+
+        monkeypatch.setattr(
+            "gobby.storage.hub.postgres.PostgresHubDatabase",
+            FakePostgresDatabase,
+        )
+        monkeypatch.setattr(helpers.time, "sleep", sleeps.append)
+        config = SimpleNamespace(
+            hub_backend="postgres",
+            database_url="postgresql://gobby:secret@localhost:60891/gobby",
+        )
+
+        result = helpers.init_hub_database(config)
+
+        assert isinstance(result, FakePostgresDatabase)
+        assert result.calls == 3
+        assert sleeps == [0.25, 0.5]
+
+    def test_postgres_backend_requires_database_url(self) -> None:
+        """PostgreSQL backend requires a configured database_url."""
+        from gobby.runner_init import helpers
+
+        config = SimpleNamespace(
+            hub_backend="postgres",
+            database_url=None,
+        )
+
+        with pytest.raises(ValueError, match="database_url"):
+            helpers.init_hub_database(config)
 
 
 class TestGobbyRunnerInitialization:

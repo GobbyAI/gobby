@@ -8,37 +8,48 @@ import pytest
 from gobby.mcp_proxy.metrics_store import ToolMetricsStore
 
 if TYPE_CHECKING:
-    from gobby.storage.database import LocalDatabase
+    from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def metrics_store(temp_db: "LocalDatabase") -> ToolMetricsStore:
+def metrics_store(temp_db: "HubDatabase") -> ToolMetricsStore:
     """Create a metrics store with temp database."""
     # Create test projects for foreign key constraints
     temp_db.execute(
         """
         INSERT INTO projects (id, name, repo_path, created_at, updated_at)
-        VALUES (?, ?, ?, datetime('now'), datetime('now'))
+        VALUES (?, ?, ?, NOW(), NOW())
         """,
         ("proj-1", "Test Project 1", "/tmp/test1"),
     )
     temp_db.execute(
         """
         INSERT INTO projects (id, name, repo_path, created_at, updated_at)
-        VALUES (?, ?, ?, datetime('now'), datetime('now'))
+        VALUES (?, ?, ?, NOW(), NOW())
         """,
         ("proj-2", "Test Project 2", "/tmp/test2"),
     )
     return ToolMetricsStore(temp_db)
 
 
+def _insert_postgres_project(db: "HubDatabase", project_id: str) -> None:
+    now = datetime.now(UTC).isoformat()
+    db.execute(
+        """
+        INSERT INTO projects (id, name, repo_path, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (project_id, f"{project_id}-name", f"/tmp/{project_id}", now, now),
+    )
+
+
 class TestToolMetricsStore:
     """Tests for ToolMetricsStore class."""
 
     def test_record_call(self, metrics_store: ToolMetricsStore) -> None:
-        """Test recording a call in SQLite."""
+        """Test recording a call in PostgreSQL."""
         metrics_store.record_call(
             server_name="test-server",
             tool_name="test_tool",
@@ -112,7 +123,7 @@ class TestToolMetricsStore:
         assert len(metrics_store.get_metrics()) == 0
 
     def test_cleanup_and_aggregate(
-        self, metrics_store: ToolMetricsStore, temp_db: "LocalDatabase"
+        self, metrics_store: ToolMetricsStore, temp_db: "HubDatabase"
     ) -> None:
         """Test aggregation to daily and cleanup."""
         old_time = (datetime.now(UTC) - timedelta(days=10)).isoformat()
@@ -138,3 +149,81 @@ class TestToolMetricsStore:
         deleted = metrics_store.cleanup_old_metrics(retention_days=7)
         assert deleted == 1
         assert len(metrics_store.get_metrics()) == 0
+
+
+class TestPostgresToolMetricsStore:
+    """PostgreSQL regressions for ON CONFLICT metric upserts."""
+
+    pytestmark = pytest.mark.integration
+
+    def test_record_call_upsert_merges_existing_row(self, postgres_db: "HubDatabase") -> None:
+        project_id = "proj-pg-record-call"
+        _insert_postgres_project(postgres_db, project_id)
+        store = ToolMetricsStore(postgres_db)
+
+        store.record_call("context7", "resolve-library-id", project_id, 10.0, True)
+        store.record_call("context7", "resolve-library-id", project_id, 20.0, False)
+
+        row = postgres_db.fetchone(
+            """
+            SELECT call_count, success_count, failure_count, total_latency_ms, avg_latency_ms
+            FROM tool_metrics
+            WHERE project_id = ? AND server_name = ? AND tool_name = ?
+            """,
+            (project_id, "context7", "resolve-library-id"),
+        )
+
+        assert row is not None
+        assert row["call_count"] == 2
+        assert row["success_count"] == 1
+        assert row["failure_count"] == 1
+        assert row["total_latency_ms"] == 30.0
+        assert row["avg_latency_ms"] == 15.0
+
+    def test_aggregate_to_daily_upsert_merges_existing_row(
+        self, postgres_db: "HubDatabase"
+    ) -> None:
+        project_id = "proj-pg-daily-aggregate"
+        _insert_postgres_project(postgres_db, project_id)
+        store = ToolMetricsStore(postgres_db)
+        old_time = datetime(2020, 1, 2, 12, tzinfo=UTC).isoformat()
+
+        postgres_db.execute(
+            """
+            INSERT INTO tool_metrics (
+                id, project_id, server_name, tool_name,
+                call_count, success_count, failure_count,
+                total_latency_ms, avg_latency_ms,
+                last_called_at, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, 2, 1, 1, 300.0, 150.0, ?, ?, ?)
+            """,
+            ("tm-pg-daily", project_id, "context7", "get-docs", old_time, old_time, old_time),
+        )
+        postgres_db.execute(
+            """
+            INSERT INTO tool_metrics_daily (
+                project_id, server_name, tool_name, date,
+                call_count, success_count, failure_count,
+                total_latency_ms, avg_latency_ms, created_at
+            ) VALUES (?, ?, ?, ?, 3, 2, 1, 300.0, 100.0, ?)
+            """,
+            (project_id, "context7", "get-docs", "2020-01-02", old_time),
+        )
+
+        assert store.aggregate_to_daily(retention_days=7) == 1
+
+        row = postgres_db.fetchone(
+            """
+            SELECT call_count, success_count, failure_count, total_latency_ms, avg_latency_ms
+            FROM tool_metrics_daily
+            WHERE project_id = ? AND server_name = ? AND tool_name = ? AND date = ?
+            """,
+            (project_id, "context7", "get-docs", "2020-01-02"),
+        )
+
+        assert row is not None
+        assert row["call_count"] == 5
+        assert row["success_count"] == 3
+        assert row["failure_count"] == 2
+        assert row["total_latency_ms"] == 600.0
+        assert row["avg_latency_ms"] == 120.0

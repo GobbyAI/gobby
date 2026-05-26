@@ -155,6 +155,34 @@ class TestSessionManagerLifecycle:
         pending = session_manager.get_pending_transcript_sessions()
         assert len(pending) == 1
 
+    def test_revive_expired_terminal_session(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Fresh activity revives expired terminal sessions and reopens transcript processing."""
+        session = session_manager.register(
+            external_id="revive-test",
+            machine_id="machine",
+            source="codex",
+            project_id=sample_project["id"],
+            transcript_path="/tmp/test.jsonl",
+        )
+        session_manager.update_status(session.id, "expired")
+        session_manager.mark_transcript_processed(session.id)
+
+        revived = session_manager.revive_expired_terminal_session(session.id)
+
+        assert revived is not None
+        assert revived.status == "active"
+        row = session_manager.db.fetchone(
+            "SELECT transcript_processed FROM sessions WHERE id = ?",
+            (session.id,),
+        )
+        assert row["transcript_processed"] == 0
+        pending = session_manager.get_pending_transcript_sessions()
+        assert pending == []
+
     def test_update_parent_session_id(
         self,
         session_manager: SessionManager,

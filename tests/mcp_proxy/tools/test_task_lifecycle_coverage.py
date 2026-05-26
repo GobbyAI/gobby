@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import ANY, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -111,7 +111,11 @@ def mock_sync_manager() -> MagicMock:
     return MagicMock(spec=TaskSyncManager)
 
 
-def _create_registry(task_manager: MagicMock, sync_manager: MagicMock) -> Any:
+def _create_registry(
+    task_manager: MagicMock,
+    sync_manager: MagicMock,
+    task_validator: AsyncMock | None = None,
+) -> Any:
     """Create registry with patches for context managers."""
     with (
         patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"),
@@ -120,7 +124,7 @@ def _create_registry(task_manager: MagicMock, sync_manager: MagicMock) -> Any:
         mock_sm = MagicMock()
         mock_sm.resolve_session_reference.return_value = "resolved-session"
         MockSM.return_value = mock_sm
-        return create_task_registry(task_manager, sync_manager)
+        return create_task_registry(task_manager, sync_manager, task_validator=task_validator)
 
 
 def _create_stage_ops_registry(task_manager: MagicMock, sync_manager: MagicMock) -> Any:
@@ -329,6 +333,113 @@ class TestCloseTask:
         assert call_kwargs is not None
         assert "cwd" in call_kwargs.kwargs
 
+    @pytest.mark.asyncio
+    async def test_close_task_valid_llm_result_closes_when_feedback_satisfies_criteria(
+        self, mock_task_manager, mock_sync_manager
+    ) -> None:
+        """A clean valid validator result allows close_task to close."""
+        task = _make_task(validation_criteria="Strict mypy and focused tests are clean")
+        mock_task_manager.get_task.return_value = task
+        mock_task_manager.list_tasks.return_value = []
+        mock_task_manager.close_task.return_value = task
+        task_validator = AsyncMock()
+        task_validator.validate_task.return_value = MagicMock(
+            status="valid",
+            feedback="All criteria satisfied. Strict mypy and focused tests are clean.",
+        )
+
+        registry = _create_registry(mock_task_manager, mock_sync_manager, task_validator)
+
+        with patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close.validate_commit_requirements"
+        ) as mock_vcr:
+            mock_vcr.return_value = MagicMock(can_close=True)
+            result = await registry.call(
+                "close_task",
+                {"task_id": task.id, "changes_summary": "Implemented and verified"},
+            )
+
+        assert result == {"success": True}
+        mock_task_manager.update_task.assert_called_once_with(
+            task.id,
+            validation_status="valid",
+            validation_feedback="All criteria satisfied. Strict mypy and focused tests are clean.",
+        )
+        mock_task_manager.close_task.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_close_task_valid_llm_result_rejected_when_feedback_says_mypy_failed(
+        self, mock_task_manager, mock_sync_manager
+    ) -> None:
+        """A valid status is rejected when feedback admits a required mypy gate failed."""
+        task = _make_task(validation_criteria="Strict mypy on touched tests is clean")
+        mock_task_manager.get_task.return_value = task
+        mock_task_manager.list_tasks.return_value = []
+        task_validator = AsyncMock()
+        feedback = (
+            "All migration behavior passed. The only gap is the mypy criterion: "
+            "typing errors prevented a clean mypy gate."
+        )
+        task_validator.validate_task.return_value = MagicMock(status="valid", feedback=feedback)
+
+        registry = _create_registry(mock_task_manager, mock_sync_manager, task_validator)
+
+        with patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close.validate_commit_requirements"
+        ) as mock_vcr:
+            mock_vcr.return_value = MagicMock(can_close=True)
+            result = await registry.call(
+                "close_task",
+                {"task_id": task.id, "changes_summary": "Implemented and verified"},
+            )
+
+        assert result["success"] is False
+        assert result["error"] == "validation_failed"
+        assert result["validation_status"] == "invalid"
+        assert "mypy criterion" in result["message"]
+        mock_task_manager.update_task.assert_called_once_with(
+            task.id,
+            validation_status="invalid",
+            validation_feedback=feedback,
+        )
+        mock_task_manager.close_task.assert_not_called()
+
+    @pytest.mark.parametrize("status", ["invalid", "pending"])
+    @pytest.mark.asyncio
+    async def test_close_task_invalid_and_pending_llm_results_remain_rejected(
+        self, mock_task_manager, mock_sync_manager, status: str
+    ) -> None:
+        """Existing invalid and pending validator statuses still block close_task."""
+        task = _make_task(validation_criteria="Focused tests pass")
+        mock_task_manager.get_task.return_value = task
+        mock_task_manager.list_tasks.return_value = []
+        task_validator = AsyncMock()
+        task_validator.validate_task.return_value = MagicMock(
+            status=status,
+            feedback=f"{status} feedback",
+        )
+
+        registry = _create_registry(mock_task_manager, mock_sync_manager, task_validator)
+
+        with patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close.validate_commit_requirements"
+        ) as mock_vcr:
+            mock_vcr.return_value = MagicMock(can_close=True)
+            result = await registry.call(
+                "close_task",
+                {"task_id": task.id, "changes_summary": "Implemented and verified"},
+            )
+
+        assert result["success"] is False
+        assert result["error"] == "validation_failed"
+        assert result["validation_status"] == status
+        mock_task_manager.update_task.assert_called_once_with(
+            task.id,
+            validation_status=status,
+            validation_feedback=f"{status} feedback",
+        )
+        mock_task_manager.close_task.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # validate_commit_requirements stale SHA tests
@@ -443,8 +554,6 @@ class TestReopenTask:
 
             assert "error" not in result
             mock_remove.assert_called_once_with(mock_svm.get_variables.return_value, task_id)
-            assert mock_remove.call_count == 1
-            assert mock_remove.call_args is not None
 
     @pytest.mark.asyncio
     async def test_reopen_value_error(self, mock_task_manager, mock_sync_manager):

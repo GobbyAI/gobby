@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -15,7 +15,7 @@ pytestmark = pytest.mark.unit
 
 
 def _make_manager(
-    neo4j_url: str | None = None,
+    falkordb_host: str | None = None,
     llm_service: MagicMock | None = None,
     vector_store: AsyncMock | None = None,
     embed_fn: AsyncMock | None = None,
@@ -31,18 +31,23 @@ def _make_manager(
 
     config = MemoryConfig()
 
-    return MemoryManager(
-        db=db,
-        config=config,
-        llm_service=llm_service,
-        vector_store=vector_store,
-        embed_fn=embed_fn,
-        neo4j_url=neo4j_url,
-        neo4j_auth="neo4j:password" if neo4j_url else None,
-        neo4j_graph_search=graph_search,
-        neo4j_graph_min_score=graph_min_score,
-        neo4j_rrf_k=rrf_k,
-    )
+    kwargs = {
+        "db": db,
+        "config": config,
+        "llm_service": llm_service,
+        "vector_store": vector_store,
+        "embed_fn": embed_fn,
+        "falkordb_host": falkordb_host,
+        "falkordb_password": "secret" if falkordb_host else None,
+        "falkordb_graph_search": graph_search,
+        "falkordb_graph_min_score": graph_min_score,
+        "falkordb_rrf_k": rrf_k,
+    }
+    if falkordb_host:
+        with patch("gobby.memory.manager.FalkorClient") as falkor_cls:
+            falkor_cls.return_value = AsyncMock()
+            return MemoryManager(**kwargs)
+    return MemoryManager(**kwargs)
 
 
 def _mock_memory(
@@ -118,7 +123,7 @@ class TestRRFMerge:
         assert set(result_low_k) == {"a", "b"}
 
     def test_three_sources(self) -> None:
-        """RRF with three sources (Qdrant + graph + FTS5)."""
+        """RRF with three sources (Qdrant + graph + keyword)."""
         result = MemoryManager._rrf_merge(
             ["a", "b"],
             ["b", "c"],
@@ -138,7 +143,7 @@ class TestSearchGraphForMemories:
         llm_service.get_provider_for_feature = MagicMock(return_value=(AsyncMock(), "haiku", None))
 
         manager = _make_manager(
-            neo4j_url="http://localhost:7474",
+            falkordb_host="127.0.0.1",
             llm_service=llm_service,
             vector_store=AsyncMock(),
             embed_fn=AsyncMock(return_value=[0.1]),
@@ -184,7 +189,7 @@ class TestSearchGraphForMemories:
         llm_service.get_provider_for_feature = MagicMock(return_value=(AsyncMock(), "haiku", None))
 
         manager = _make_manager(
-            neo4j_url="http://localhost:7474",
+            falkordb_host="127.0.0.1",
             llm_service=llm_service,
             vector_store=AsyncMock(),
             embed_fn=AsyncMock(return_value=[0.1]),
@@ -220,7 +225,7 @@ class TestSearchGraphForMemories:
         llm_service.get_provider_for_feature = MagicMock(return_value=(AsyncMock(), "haiku", None))
 
         manager = _make_manager(
-            neo4j_url="http://localhost:7474",
+            falkordb_host="127.0.0.1",
             llm_service=llm_service,
             vector_store=AsyncMock(),
             embed_fn=AsyncMock(return_value=[0.1]),
@@ -250,7 +255,7 @@ class TestSearchMemoriesGraphIntegration:
         embed_fn = AsyncMock(return_value=[0.1, 0.2])
 
         manager = _make_manager(
-            neo4j_url="http://localhost:7474",
+            falkordb_host="127.0.0.1",
             llm_service=llm_service,
             vector_store=vs,
             embed_fn=embed_fn,
@@ -296,7 +301,7 @@ class TestSearchMemoriesGraphIntegration:
         embed_fn = AsyncMock(return_value=[0.1])
 
         manager = _make_manager(
-            neo4j_url="http://localhost:7474",
+            falkordb_host="127.0.0.1",
             llm_service=llm_service,
             vector_store=vs,
             embed_fn=embed_fn,
@@ -307,7 +312,7 @@ class TestSearchMemoriesGraphIntegration:
 
         # Graph search fails
         manager._kg_service.search_entities_by_vector = AsyncMock(
-            side_effect=Exception("Neo4j down")
+            side_effect=Exception("FalkorDB down")
         )
 
         manager.storage.get_memory = MagicMock(
@@ -321,7 +326,7 @@ class TestSearchMemoriesGraphIntegration:
         assert result[0].id == "mem-1"
 
     async def test_qdrant_only_when_graph_search_disabled(self) -> None:
-        """search_memories skips graph search when neo4j_graph_search is False."""
+        """search_memories skips graph search when falkordb_graph_search is False."""
         llm_service = MagicMock()
         llm_service.get_provider_for_feature = MagicMock(return_value=(AsyncMock(), "haiku", None))
 
@@ -329,7 +334,7 @@ class TestSearchMemoriesGraphIntegration:
         embed_fn = AsyncMock(return_value=[0.1])
 
         manager = _make_manager(
-            neo4j_url="http://localhost:7474",
+            falkordb_host="127.0.0.1",
             llm_service=llm_service,
             vector_store=vs,
             embed_fn=embed_fn,
@@ -360,7 +365,7 @@ class TestSearchMemoriesGraphIntegration:
         embed_fn = AsyncMock(return_value=[0.1])
 
         manager = _make_manager(
-            neo4j_url=None,  # No Neo4j
+            falkordb_host=None,  # No FalkorDB
             vector_store=vs,
             embed_fn=embed_fn,
         )
@@ -384,7 +389,7 @@ class TestSearchMemoriesGraphIntegration:
         embed_fn = AsyncMock(return_value=[0.1])
 
         manager = _make_manager(
-            neo4j_url="http://localhost:7474",
+            falkordb_host="127.0.0.1",
             llm_service=llm_service,
             vector_store=vs,
             embed_fn=embed_fn,
@@ -421,7 +426,7 @@ class TestGraphSearchProjectIdScoping:
         llm_service.get_provider_for_feature = MagicMock(return_value=(AsyncMock(), "haiku", None))
 
         manager = _make_manager(
-            neo4j_url="http://localhost:7474",
+            falkordb_host="127.0.0.1",
             llm_service=llm_service,
             vector_store=AsyncMock(),
             embed_fn=AsyncMock(return_value=[0.1]),
@@ -464,7 +469,7 @@ class TestGraphSearchProjectIdScoping:
         embed_fn = AsyncMock(return_value=[0.1])
 
         manager = _make_manager(
-            neo4j_url="http://localhost:7474",
+            falkordb_host="127.0.0.1",
             llm_service=llm_service,
             vector_store=vs,
             embed_fn=embed_fn,
@@ -514,7 +519,7 @@ class TestGraphSearchProjectIdScoping:
         embed_fn = AsyncMock(return_value=[0.1])
 
         manager = _make_manager(
-            neo4j_url="http://localhost:7474",
+            falkordb_host="127.0.0.1",
             llm_service=llm_service,
             vector_store=vs,
             embed_fn=embed_fn,
@@ -549,7 +554,7 @@ class TestCreateMemoryPassesMemoryId:
         llm_service.get_provider_for_feature = MagicMock(return_value=(AsyncMock(), "haiku", None))
 
         manager = _make_manager(
-            neo4j_url="http://localhost:7474",
+            falkordb_host="127.0.0.1",
             llm_service=llm_service,
             vector_store=AsyncMock(),
             embed_fn=AsyncMock(return_value=[0.1]),
@@ -599,7 +604,7 @@ class TestTemporalDecayIntegration:
         embed_fn = AsyncMock(return_value=[0.1])
 
         manager = _make_manager(
-            neo4j_url="http://localhost:7474",
+            falkordb_host="127.0.0.1",
             llm_service=llm_service,
             vector_store=vs,
             embed_fn=embed_fn,
@@ -609,7 +614,7 @@ class TestTemporalDecayIntegration:
         vs.search = AsyncMock(return_value=[("mem-1", 0.675)])
         manager._kg_service.search_entities_by_vector = AsyncMock(return_value=[])
         manager._kg_service.find_related_memory_ids = AsyncMock(return_value=[])
-        manager._search_service._fts5_ranked = AsyncMock(return_value=[])
+        manager._search_service._keyword_ranked = AsyncMock(return_value=[])
 
         mem = _mock_memory("mem-1", "content")
         mem.source_type = "agent"
@@ -633,7 +638,7 @@ class TestTemporalDecayIntegration:
         embed_fn = AsyncMock(return_value=[0.1])
 
         manager = _make_manager(
-            neo4j_url="http://localhost:7474",
+            falkordb_host="127.0.0.1",
             llm_service=llm_service,
             vector_store=vs,
             embed_fn=embed_fn,

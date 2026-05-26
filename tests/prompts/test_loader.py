@@ -4,20 +4,16 @@ import pytest
 
 from gobby.prompts import PromptLoader, PromptTemplate
 from gobby.prompts.sync import sync_bundled_prompts
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.prompts import LocalPromptManager, PromptChangeNotifier
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path):
-    """Create a fresh database with migrations applied."""
-    database = LocalDatabase(tmp_path / "test.db")
-    run_migrations(database)
-    yield database
-    database.close()
+def db(temp_db: HubDatabase) -> HubDatabase:
+    """Use the migrated PostgreSQL hub database fixture."""
+    return temp_db
 
 
 @pytest.fixture
@@ -187,7 +183,7 @@ class TestPromptLoader:
         loader = PromptLoader()
         # The loader should have been created without error
         assert loader._db is None
-        # Accessing _get_db() would create a LocalDatabase, but we don't
+        # Accessing _get_db() would create a HubDatabase, but we don't
         # test that here to avoid side effects on the real database
 
 

@@ -160,6 +160,13 @@ class ManagedChatSessionBase:
     async def switch_model(self, new_model: str) -> None:
         await self._backend.switch_model(self, new_model)
 
+    def add_output_tokens(self, tokens: int) -> int:
+        self._accumulated_output_tokens += max(0, tokens)
+        return self._accumulated_output_tokens
+
+    def set_accumulated_output_tokens(self, tokens: int) -> None:
+        self._accumulated_output_tokens = max(0, tokens)
+
     def set_chat_mode(self, mode: str) -> None:
         self.chat_mode = mode
         if self._on_mode_persist:

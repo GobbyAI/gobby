@@ -31,8 +31,6 @@ from gobby.plans.evidence import (
     InvalidEvidenceError,
     resolve_evidence,
 )
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
 from gobby.storage.tasks import LocalTaskManager
 from gobby.tasks.commits import get_task_diff
 
@@ -171,8 +169,9 @@ class _CliEvidenceContext:
 
     @cached_property
     def task_manager(self) -> LocalTaskManager:
-        db = LocalDatabase()
-        run_migrations(db)
+        from gobby.storage.hub.runtime import open_runtime_hub_database
+
+        db = open_runtime_hub_database(apply_migrations=False)
         return LocalTaskManager(db)
 
     def get_task_diff(self, task_ref: str) -> str:

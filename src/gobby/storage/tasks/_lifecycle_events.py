@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import sqlite3
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import Any
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 # Reason recorded by ``gobby build`` (see gobby.build.lifecycle._record_build_event).
 # This is the durable, append-only signal that automation was ever started for a
@@ -26,7 +26,7 @@ class TaskLifecycleEvent:
     created_at: str
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row) -> TaskLifecycleEvent:
+    def from_row(cls, row: Mapping[str, Any]) -> TaskLifecycleEvent:
         return cls(
             id=int(row["id"]),
             task_id=row["task_id"],
@@ -41,7 +41,7 @@ class TaskLifecycleEvent:
 class TaskLifecycleEventManager:
     """Append-only lifecycle event audit storage."""
 
-    def __init__(self, db: DatabaseProtocol):
+    def __init__(self, db: HubDatabase):
         self.db = db
 
     def ensure_table(self) -> None:
@@ -56,7 +56,7 @@ class TaskLifecycleEventManager:
                     to_state TEXT NOT NULL,
                     reason TEXT NOT NULL,
                     by_actor TEXT NOT NULL,
-                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
                 """
             )
@@ -84,18 +84,19 @@ class TaskLifecycleEventManager:
             raise ValueError("by_actor is required")
 
         with self.db.transaction() as conn:
-            cursor = conn.execute(
+            row = conn.execute(
                 """
                 INSERT INTO task_lifecycle_events (
                     task_id, from_state, to_state, reason, by_actor
                 )
                 VALUES (?, ?, ?, ?, ?)
+                RETURNING id
                 """,
                 (task_id, from_state, to_state, reason, actor),
-            )
-            event_id = cursor.lastrowid
-            if event_id is None:
-                raise RuntimeError("SQLite did not return a lifecycle event id")
+            ).fetchone()
+            if row is None:
+                raise RuntimeError("PostgreSQL hub did not return a lifecycle event id")
+            event_id = int(row["id"])
 
         row = self.db.fetchone("SELECT * FROM task_lifecycle_events WHERE id = ?", (event_id,))
         if row is None:
@@ -186,7 +187,7 @@ class TaskLifecycleEventManager:
 
 
 def record_lifecycle_event(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task_id: str,
     from_state: str | None,
     to_state: str,
@@ -210,7 +211,7 @@ def record_lifecycle_event(
 
 
 def list_lifecycle_events(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task_id: str,
     *,
     limit: int | None = None,

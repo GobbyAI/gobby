@@ -10,7 +10,7 @@ import pytest
 import yaml
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleEvent
 from gobby.workflows.engine.core import RuleEngine
 
@@ -37,7 +37,7 @@ def test_build_rules_autonomous_only() -> None:
         assert raw["audience"] == "autonomous", path
 
 
-def test_build_rules_sync_with_audience(temp_db: LocalDatabase) -> None:
+def test_build_rules_sync_with_audience(temp_db: HubDatabase) -> None:
     from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
     from gobby.workflows.sync_rules import sync_bundled_rules
 
@@ -52,7 +52,7 @@ def test_build_rules_sync_with_audience(temp_db: LocalDatabase) -> None:
 
 @pytest.mark.asyncio
 async def test_autonomous_audience_rules_skip_interactive_sessions(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
 ) -> None:
     from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 

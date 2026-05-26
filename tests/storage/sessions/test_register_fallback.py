@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 
@@ -15,18 +15,18 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def project_id(temp_db: LocalDatabase) -> str:
+def project_id(temp_db: HubDatabase) -> str:
     """Create a project and return its ID."""
     return LocalProjectManager(temp_db).create(name="test-project", repo_path="/tmp/test").id
 
 
 @pytest.fixture
-def session_mgr(temp_db: LocalDatabase) -> SessionManager:
+def session_mgr(temp_db: HubDatabase) -> SessionManager:
     """Create the canonical storage SessionManager under test."""
     return SessionManager(temp_db)
 
 
-def test_register_session_returns_uuid_str_on_storage_failure(
+def test_register_session_returns_empty_str_on_storage_failure(
     session_mgr: SessionManager,
     project_id: str,
 ) -> None:
@@ -38,8 +38,7 @@ def test_register_session_returns_uuid_str_on_storage_failure(
             project_id=project_id,
         )
 
-    assert isinstance(session_id, str)
-    assert len(session_id) == 36
+    assert session_id == ""
 
 
 def test_register_session_fallback_does_not_persist(
@@ -54,6 +53,7 @@ def test_register_session_fallback_does_not_persist(
             project_id=project_id,
         )
 
+    assert session_id == ""
     assert session_mgr.get(session_id) is None
 
 
@@ -79,10 +79,35 @@ def test_register_session_fallback_does_not_populate_caches(
         )
         is None
     )
-    # Intentional white-box assertion: register_session() owns cache population,
-    # and this regression specifically guards that its private metadata cache stays
-    # empty on fallback. The coupling is deliberate because that's the bug surface.
-    assert session_id not in session_mgr._session_metadata
+    assert session_id == ""
+    assert session_mgr._session_metadata == {}
+
+
+def test_register_session_failure_returns_existing_canonical_session(
+    session_mgr: SessionManager,
+    project_id: str,
+) -> None:
+    canonical_id = session_mgr.register_session(
+        external_id="resumed-codex",
+        machine_id="machine-1",
+        source="codex",
+        project_id=project_id,
+    )
+
+    with patch.object(session_mgr, "register", side_effect=RuntimeError("boom")):
+        session_id = session_mgr.register_session(
+            external_id="resumed-codex",
+            machine_id="machine-1",
+            source="codex",
+            project_id=project_id,
+            transcript_path="/tmp/resumed-codex.jsonl",
+        )
+
+    assert session_id == canonical_id
+    assert session_mgr.get_session_id("resumed-codex", "codex") == canonical_id
+    assert session_mgr._session_metadata[canonical_id]["transcript_path"] == (
+        "/tmp/resumed-codex.jsonl"
+    )
 
 
 def test_register_session_happy_path_populates_caches(
@@ -162,8 +187,8 @@ def test_register_raises_on_storage_failure(
             return getattr(self._conn, name)
 
     @contextmanager
-    def transaction_with_insert_failure():
-        with original_transaction() as conn:
+    def transaction_with_insert_failure(lock: object | None = None):
+        with original_transaction(lock) as conn:
             yield FailingConnection(conn)
 
     with patch.object(session_mgr.db, "transaction_immediate", transaction_with_insert_failure):

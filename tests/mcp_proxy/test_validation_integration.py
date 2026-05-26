@@ -829,12 +829,12 @@ async def test_close_task_uses_commit_diff_when_commits_linked(
             "close_task", {"task_id": "t1", "changes_summary": "test changes"}
         )
 
-        # changes_summary is provided, so get_task_diff is NOT called
-        # (changes_summary takes precedence over commit-based diff)
-        mock_diff.assert_not_called()
-        # Validator should have received the provided changes_summary
+        mock_diff.assert_called_once()
         validator_call = mock_task_validator.validate_task.call_args
-        assert "test changes" in validator_call.kwargs["changes_summary"]
+        changes_summary = validator_call.kwargs["changes_summary"]
+        assert "Commit-based diff (2 commits, 3 files):" in changes_summary
+        assert "diff content from commits" in changes_summary
+        assert "Agent changes summary:\ntest changes" in changes_summary
         assert result.get("validated", True) is True
 
 

@@ -10,7 +10,7 @@ from typing import Any, cast
 
 import httpx
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import SecretStore
 
 __all__ = ["LinearGraphQLClient", "LinearGraphQLError"]
@@ -42,7 +42,7 @@ class LinearGraphQLClient:
         self.timeout = timeout
 
     @classmethod
-    def from_database(cls, db: DatabaseProtocol) -> LinearGraphQLClient | None:
+    def from_database(cls, db: HubDatabase) -> LinearGraphQLClient | None:
         """Build a client from the stored Linear API key, if configured."""
         api_key = SecretStore(db).get("linear_api_key")
         if not api_key:

@@ -163,7 +163,10 @@ class TestMemorySyncExport:
         assert "sync_export" in memory_registry._tools
 
     @pytest.mark.asyncio
-    async def test_calls_sync_manager(self, memory_registry, mock_memory_sync_manager) -> None:
+    async def test_calls_sync_manager(
+        self, memory_registry, mock_memory_sync_manager, monkeypatch
+    ) -> None:
+        monkeypatch.setenv("GOBBY_JSONL_EXPORT_CONTEXT", "pre-push")
         result = await memory_registry.call("sync_export", {})
         assert result["success"] is True
         assert result["exported"] == 3

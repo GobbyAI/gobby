@@ -5,11 +5,11 @@ preserving their uncommitted work as hidden git refs.
 """
 
 import logging
-import sqlite3
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ class Checkpoint:
     created_at: str
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row) -> "Checkpoint":
+    def from_row(cls, row: Mapping[str, Any]) -> "Checkpoint":
         return cls(
             id=row["id"],
             task_id=row["task_id"],
@@ -49,14 +49,14 @@ class Checkpoint:
 class LocalCheckpointManager:
     """CRUD operations for shadow git checkpoints."""
 
-    def __init__(self, db: DatabaseProtocol) -> None:
+    def __init__(self, db: HubDatabase) -> None:
         self.db = db
 
     def create(self, checkpoint: Checkpoint) -> Checkpoint:
         """Insert a new checkpoint record.
 
         Raises:
-            sqlite3.IntegrityError: If a checkpoint with the same ID already exists.
+            psycopg.IntegrityError: If a checkpoint with the same ID already exists.
         """
         self.db.execute(
             """INSERT INTO checkpoints

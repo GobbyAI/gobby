@@ -10,6 +10,7 @@ import pytest
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.sessions._terminal import register_terminal_tools
+from gobby.utils.session_context import session_context_for_test
 
 pytestmark = pytest.mark.unit
 
@@ -62,8 +63,9 @@ async def test_terminal_compact_self_schedules_pending_marker_fallback() -> None
             "gobby.mcp_proxy.tools.sessions._terminal.schedule_compact_self_continuation_fallback",
             return_value=True,
         ) as mock_schedule,
+        session_context_for_test("s1"),
     ):
-        result = await compact_self(session_id="s1")
+        result = await compact_self()
 
     assert result["compacted"] is True
     assert result["continuation_pending"] is True

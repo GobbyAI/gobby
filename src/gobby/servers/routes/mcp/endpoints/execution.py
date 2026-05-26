@@ -133,7 +133,8 @@ def _set_context_for_request(
     Priority:
       1. X-Gobby-Session-Id header (the caller/workflow context)
       2. session_id from tool arguments (the target tool parameter)
-      3. X-Gobby-Project-Id header (injected by stdio proxy from CWD project.json)
+      3. X-Gobby-Caller-Project-Id header for wrapper session scope
+      4. X-Gobby-Project-Id header for target project context
 
     The stdio process runs in the CLI's project directory, so its CWD-derived
     project_id is always correct. The daemon's CWD is NOT — it points to the
@@ -143,6 +144,7 @@ def _set_context_for_request(
     """
     header_session_id = request.headers.get("x-gobby-session-id") if request else None
     project_id_header = request.headers.get("x-gobby-project-id") if request else None
+    caller_project_id_header = request.headers.get("x-gobby-caller-project-id") if request else None
     argument_session_id = _get_argument_session_id(arguments)
 
     # Header session is wrapper/caller context. Body session_id remains a
@@ -150,11 +152,16 @@ def _set_context_for_request(
     # enforcement apply to the caller.
     session_id = header_session_id or argument_session_id
 
-    # HTTP-specific bootstrap: when the incoming session_id is #N/numeric and
-    # the X-Gobby-Project-Id header is missing, derive a project scope from the
-    # header-session UUID so the #N lookup can succeed. (After Change 1,
-    # resolve_session_reference handles external_id UUIDs in the header too.)
-    canonical_project_ref = project_id_header
+    # HTTP-specific bootstrap: old clients send only X-Gobby-Project-Id as a
+    # caller-project hint. New clients also send X-Gobby-Caller-Project-Id; when
+    # X-Gobby-Project-Id differs, it is an explicit target project override.
+    canonical_project_ref = project_id_header or caller_project_id_header
+    session_scope_ref = caller_project_id_header
+    project_ref_is_fallback = not (
+        bool(caller_project_id_header)
+        and bool(project_id_header)
+        and caller_project_id_header != project_id_header
+    )
     if not canonical_project_ref and header_session_id:
         canonical_project_ref = _derive_project_from_unique_session_seq(server, header_session_id)
     if (
@@ -179,7 +186,8 @@ def _set_context_for_request(
         session_ref=session_id,
         session_manager=server.session_manager if server.session_manager else None,
         project_ref=canonical_project_ref,
-        project_ref_is_fallback=True,
+        session_scope_ref=session_scope_ref,
+        project_ref_is_fallback=project_ref_is_fallback,
         db=db,
     )
 

@@ -10,12 +10,13 @@ import click
 
 from gobby.cli.utils import resolve_project_ref
 from gobby.storage.cron import CronJobStorage
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.runtime import open_runtime_hub_database
 
 
-def get_cron_storage() -> tuple[LocalDatabase, CronJobStorage]:
+def get_cron_storage() -> tuple[HubDatabase, CronJobStorage]:
     """Get initialized cron storage."""
-    db = LocalDatabase()
+    db = open_runtime_hub_database(apply_migrations=False)
     return db, CronJobStorage(db)
 
 

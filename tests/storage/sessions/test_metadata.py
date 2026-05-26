@@ -1,9 +1,9 @@
 """Focused tests for session storage behavior."""
 
-import sqlite3
 from unittest.mock import patch
 
 import pytest
+from psycopg.errors import RaiseException
 
 from gobby.storage.sessions import SessionManager
 
@@ -243,16 +243,29 @@ class TestSessionManagerMetadata:
         )
         session_manager.db.execute(
             """
+            CREATE OR REPLACE FUNCTION fail_digest_state_update_fn()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            AS $$
+            BEGIN
+                IF NEW.digest_markdown = 'boom' THEN
+                    RAISE EXCEPTION 'digest boom';
+                END IF;
+                RETURN NEW;
+            END;
+            $$
+            """
+        )
+        session_manager.db.execute(
+            """
             CREATE TRIGGER fail_digest_state_update
             BEFORE UPDATE OF digest_markdown ON sessions
-            WHEN NEW.digest_markdown = 'boom'
-            BEGIN
-                SELECT RAISE(ABORT, 'digest boom');
-            END
+            FOR EACH ROW
+            EXECUTE FUNCTION fail_digest_state_update_fn()
             """
         )
 
-        with pytest.raises(sqlite3.IntegrityError, match="digest boom"):
+        with pytest.raises(RaiseException, match="digest boom"):
             session_manager.persist_digest_state(
                 session.id,
                 last_turn_markdown="new turn",

@@ -7,10 +7,11 @@ agents that need to record task artifact pointers or append audit sections.
 from __future__ import annotations
 
 import re
-import sqlite3
 from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
+
+import psycopg
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
@@ -108,7 +109,7 @@ def create_ops_artifact_registry(ctx: RegistryContext) -> InternalToolRegistry:
             return resolved_id
         try:
             artifacts = artifact_manager.set_artifact(resolved_id, field, value)
-        except (TaskArtifactConstraintError, sqlite3.IntegrityError) as error:
+        except (TaskArtifactConstraintError, psycopg.IntegrityError) as error:
             return _constraint_error_result(error)
         except ValueError as error:
             return {"ok": False, "error": "invalid_artifact_value", "message": str(error)}
@@ -154,7 +155,7 @@ def create_ops_artifact_registry(ctx: RegistryContext) -> InternalToolRegistry:
             return resolved_id
         try:
             artifacts = artifact_manager.set_artifacts_atomic(resolved_id, **fields)
-        except (TaskArtifactConstraintError, sqlite3.IntegrityError) as error:
+        except (TaskArtifactConstraintError, psycopg.IntegrityError) as error:
             return _constraint_error_result(error)
         except ValueError as error:
             return {"ok": False, "error": "invalid_artifact_value", "message": str(error)}
@@ -190,7 +191,7 @@ def create_ops_artifact_registry(ctx: RegistryContext) -> InternalToolRegistry:
             return resolved_id
         try:
             artifacts = artifact_manager.clear_isolation_pair(resolved_id, family)
-        except (TaskArtifactConstraintError, sqlite3.IntegrityError) as error:
+        except (TaskArtifactConstraintError, psycopg.IntegrityError) as error:
             return _constraint_error_result(error)
         except ValueError as error:
             return {"ok": False, "error": "invalid_isolation_family", "message": str(error)}

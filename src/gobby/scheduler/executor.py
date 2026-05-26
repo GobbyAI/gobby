@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 # Type for registered cron handlers: async callables that receive a CronJob and return output.
 CronHandler = Callable[[CronJob], Awaitable[object]]
+DEFAULT_DISPATCHER_HEARTBEAT_TICKS = 3
 
 
 class CronExecutor:
@@ -212,8 +213,8 @@ class CronExecutor:
                     "SELECT repo_path FROM projects WHERE id = ?",
                     (job.project_id,),
                 ).fetchone()
-                if row and row[0]:
-                    project_ctx["project_path"] = row[0]
+                if row and row["repo_path"]:
+                    project_ctx["project_path"] = row["repo_path"]
             except Exception:
                 logger.debug(
                     f"Failed to resolve repo_path for project {job.project_id}", exc_info=True
@@ -312,28 +313,63 @@ class CronExecutor:
         from gobby.dispatch.dispatcher import run_heartbeat
 
         config = job.action_config
-        result = await run_heartbeat(
-            db=self.storage.db,
-            project_id=config.get("project_id", job.project_id),
-            startup=bool(config.get("startup", False)),
-            max_active_agents=config.get("max_active_agents"),
-            services=self.services,
-        )
+        project_id = config.get("project_id", job.project_id)
+        max_ticks = self._dispatcher_heartbeat_ticks(job)
+        ticks = 0
+        scanned = 0
+        executed = 0
+        skipped = 0
+        cap_reached = False
+        reason: str | None = None
+
+        for _ in range(max_ticks):
+            result = await run_heartbeat(
+                db=self.storage.db,
+                project_id=project_id,
+                startup=bool(config.get("startup", False)),
+                max_active_agents=config.get("max_active_agents"),
+                services=self.services,
+            )
+            ticks += 1
+            scanned += result.scanned
+            executed += result.executed
+            skipped += result.skipped
+            cap_reached = cap_reached or result.cap_reached
+            reason = result.reason or ("cap_reached" if result.cap_reached else reason)
+
+            if result.executed == 0 or result.cap_reached or result.reason:
+                break
+
         if (
             job.name == "gobby:dispatcher"
-            and result.scanned == 0
-            and result.executed == 0
-            and not result.cap_reached
-            and result.reason is None
+            and scanned == 0
+            and executed == 0
+            and not cap_reached
+            and reason is None
         ):
             self._park_system_job(job)
         return (
             "Dispatcher heartbeat completed: "
-            f"scanned={result.scanned}, "
-            f"executed={result.executed}, "
-            f"skipped={result.skipped}, "
-            f"cap_reached={result.cap_reached}"
+            f"ticks={ticks}, "
+            f"scanned={scanned}, "
+            f"executed={executed}, "
+            f"skipped={skipped}, "
+            f"cap_reached={cap_reached}, "
+            f"reason={reason}"
         )
+
+    def _dispatcher_heartbeat_ticks(self, job: CronJob) -> int:
+        config = job.action_config
+        raw = config.get("max_ticks")
+        if raw is None:
+            return DEFAULT_DISPATCHER_HEARTBEAT_TICKS if job.name == "gobby:dispatcher" else 1
+        try:
+            max_ticks = int(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("dispatcher action max_ticks must be a positive integer") from exc
+        if max_ticks < 1:
+            raise ValueError("dispatcher action max_ticks must be a positive integer")
+        return max_ticks
 
     def _park_pipeline_heartbeat_if_idle(self, job: CronJob, result: object) -> None:
         if job.name != "gobby:pipeline-heartbeat":

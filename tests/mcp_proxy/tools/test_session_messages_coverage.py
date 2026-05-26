@@ -89,6 +89,9 @@ class TestSetHandoffContext:
         session_manager.update_summary.assert_called_once_with(
             "sess-123", summary_markdown="## My Handoff"
         )
+        session_manager.update_last_turn_markdown.assert_called_once_with(
+            "sess-123", "## My Handoff"
+        )
         session_manager.update_status.assert_called_once_with("sess-123", "handoff_ready")
 
     @pytest.mark.asyncio
@@ -752,15 +755,16 @@ class TestSessionStats:
     def test_session_stats_basic(self) -> None:
         """Test basic session statistics."""
         session_manager = MagicMock()
-        # Count is called: 1x total + 6x sources (claude, gemini, codex, cursor, windsurf, copilot)
+        # Count is called once for total plus once per supported source.
         session_manager.count.side_effect = [
             100,  # Total
             50,  # claude
             30,  # gemini
+            0,  # grok (will be excluded)
+            0,  # qwen (will be excluded)
             0,  # codex (will be excluded)
-            0,  # cursor (will be excluded)
-            0,  # windsurf (will be excluded)
-            0,  # copilot (will be excluded)
+            0,  # droid (will be excluded)
+            0,  # agy (will be excluded)
         ]
         session_manager.count_by_status.return_value = {
             "active": 10,
@@ -956,7 +960,7 @@ class TestMarkLoopComplete:
         mark_complete = registry.get_tool("mark_loop_complete")
 
         with (
-            patch("gobby.storage.database.LocalDatabase"),
+            patch("gobby.storage.hub.protocol.HubDatabase"),
             patch("gobby.workflows.state_manager.SessionVariableManager") as mock_svm_class,
         ):
             mock_svm_class.return_value = mock_svm
@@ -994,7 +998,7 @@ class TestMarkLoopComplete:
         mark_complete = registry.get_tool("mark_loop_complete")
 
         with (
-            patch("gobby.storage.database.LocalDatabase"),
+            patch("gobby.storage.hub.protocol.HubDatabase"),
             patch("gobby.workflows.state_manager.SessionVariableManager") as mock_svm_class,
         ):
             mock_svm_class.return_value = mock_svm

@@ -7,8 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager, Project
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import PipelineDefinition, WorkflowDefinition
@@ -24,35 +23,33 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path: Path) -> LocalDatabase:
+def db(temp_db: HubDatabase) -> HubDatabase:
     """Create a fresh database with migrations applied."""
-    db_path = tmp_path / "test_loader.db"
-    database = LocalDatabase(db_path)
-    run_migrations(database)
+    database = temp_db
     return database
 
 
 @pytest.fixture(autouse=True)
-def _clean_bundled_workflows(db: LocalDatabase) -> None:
+def _clean_bundled_workflows(db: HubDatabase) -> None:
     """Remove bundled workflows imported by migrations so tests start clean."""
     db.execute("DELETE FROM workflow_definitions WHERE source = 'template'")
 
 
 @pytest.fixture
-def project(db: LocalDatabase) -> Project:
+def project(db: HubDatabase) -> Project:
     """Create a test project for FK-safe project-scoped workflow tests."""
     pm = LocalProjectManager(db)
     return pm.create(name="test-project", repo_path="/test/project")
 
 
 @pytest.fixture
-def def_manager(db: LocalDatabase) -> LocalWorkflowDefinitionManager:
+def def_manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
     """Create a workflow definition manager backed by the test database."""
     return LocalWorkflowDefinitionManager(db)
 
 
 @pytest.fixture
-def loader(db: LocalDatabase) -> WorkflowLoader:
+def loader(db: HubDatabase) -> WorkflowLoader:
     """Create a WorkflowLoader backed by the test database."""
     return WorkflowLoader(db=db)
 
@@ -77,7 +74,7 @@ class TestWorkflowLoader:
         loader = WorkflowLoader(workflow_dirs=custom_dirs)
         assert loader.global_dirs == custom_dirs
 
-    def test_init_accepts_db_param(self, db: LocalDatabase) -> None:
+    def test_init_accepts_db_param(self, db: HubDatabase) -> None:
         """Test that WorkflowLoader accepts a db parameter."""
         loader = WorkflowLoader(db=db)
         assert loader.db is db
@@ -124,10 +121,10 @@ class TestWorkflowLoader:
         loader: WorkflowLoader,
         def_manager: LocalWorkflowDefinitionManager,
     ) -> None:
-        """Test loading a workflow with invalid JSON returns None."""
+        """Test loading a workflow with an invalid JSON shape returns None."""
         def_manager.create(
             name="invalid",
-            definition_json="{bad json",
+            definition_json=json.dumps("bad workflow payload"),
             workflow_type="workflow",
         )
 
@@ -154,7 +151,7 @@ class TestWorkflowLoader:
     @pytest.mark.asyncio
     async def test_load_workflow_with_project_id(
         self,
-        db: LocalDatabase,
+        db: HubDatabase,
         project: Project,
         def_manager: LocalWorkflowDefinitionManager,
     ) -> None:
@@ -665,7 +662,7 @@ class TestDiscoverLifecycleWorkflows:
     @pytest.mark.asyncio
     async def test_discover_project_shadows_global(
         self,
-        db: LocalDatabase,
+        db: HubDatabase,
         project: Project,
         def_manager: LocalWorkflowDefinitionManager,
     ) -> None:
@@ -1149,7 +1146,7 @@ class TestDiscoverWorkflows:
     @pytest.mark.asyncio
     async def test_discover_project_shadows_global(
         self,
-        db: LocalDatabase,
+        db: HubDatabase,
         project: Project,
         def_manager: LocalWorkflowDefinitionManager,
     ) -> None:
@@ -1387,7 +1384,7 @@ class TestDBFirstLookup:
     @pytest.mark.asyncio
     async def test_discover_workflows_db_shadows_by_name(
         self,
-        db: LocalDatabase,
+        db: HubDatabase,
         project: Project,
         def_manager: LocalWorkflowDefinitionManager,
     ) -> None:

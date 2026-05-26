@@ -9,7 +9,6 @@ Tests cover:
 import threading
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 import pytest
 
@@ -26,8 +25,7 @@ from gobby.autonomous.stuck_detector import (
     StuckDetector,
     TaskSelectionEvent,
 )
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 
@@ -39,23 +37,19 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def test_db(temp_dir: Path) -> Iterator[LocalDatabase]:
-    """Create a test database with migrations applied."""
-    db_path = temp_dir / "test_autonomous.db"
-    db = LocalDatabase(db_path)
-    run_migrations(db)
-    yield db
-    db.close()
+def test_db(temp_db: HubDatabase) -> Iterator[HubDatabase]:
+    """Use the migrated PostgreSQL hub database fixture."""
+    yield temp_db
 
 
 @pytest.fixture
-def project_manager(test_db: LocalDatabase) -> LocalProjectManager:
+def project_manager(test_db: HubDatabase) -> LocalProjectManager:
     """Create a project manager."""
     return LocalProjectManager(test_db)
 
 
 @pytest.fixture
-def session_manager(test_db: LocalDatabase) -> SessionManager:
+def session_manager(test_db: HubDatabase) -> SessionManager:
     """Create a session manager."""
     return SessionManager(test_db)
 
@@ -83,19 +77,19 @@ def session_id(session_manager: SessionManager, test_project: dict) -> str:
 
 
 @pytest.fixture
-def progress_tracker(test_db: LocalDatabase) -> ProgressTracker:
+def progress_tracker(test_db: HubDatabase) -> ProgressTracker:
     """Create a ProgressTracker instance."""
     return ProgressTracker(test_db)
 
 
 @pytest.fixture
-def stop_registry(test_db: LocalDatabase) -> StopRegistry:
+def stop_registry(test_db: HubDatabase) -> StopRegistry:
     """Create a StopRegistry instance."""
     return StopRegistry(test_db)
 
 
 @pytest.fixture
-def stuck_detector(test_db: LocalDatabase, progress_tracker: ProgressTracker) -> StuckDetector:
+def stuck_detector(test_db: HubDatabase, progress_tracker: ProgressTracker) -> StuckDetector:
     """Create a StuckDetector instance with progress tracker."""
     return StuckDetector(test_db, progress_tracker=progress_tracker)
 
@@ -234,13 +228,13 @@ class TestProgressEvent:
 class TestProgressTracker:
     """Tests for ProgressTracker class."""
 
-    def test_init_with_defaults(self, test_db: LocalDatabase) -> None:
+    def test_init_with_defaults(self, test_db: HubDatabase) -> None:
         """Test initialization with default thresholds."""
         tracker = ProgressTracker(test_db)
         assert tracker.stagnation_threshold == ProgressTracker.DEFAULT_STAGNATION_THRESHOLD
         assert tracker.max_low_value_events == ProgressTracker.DEFAULT_MAX_LOW_VALUE_EVENTS
 
-    def test_init_with_custom_thresholds(self, test_db: LocalDatabase) -> None:
+    def test_init_with_custom_thresholds(self, test_db: HubDatabase) -> None:
         """Test initialization with custom thresholds."""
         tracker = ProgressTracker(
             test_db,
@@ -265,7 +259,7 @@ class TestProgressTracker:
         assert event.timestamp is not None
 
     def test_record_event_persists_to_database(
-        self, progress_tracker: ProgressTracker, test_db: LocalDatabase, session_id: str
+        self, progress_tracker: ProgressTracker, test_db: HubDatabase, session_id: str
     ) -> None:
         """Test that recorded events are persisted to database."""
         progress_tracker.record_event(
@@ -286,7 +280,7 @@ class TestProgressTracker:
         assert row["is_high_value"] == 1  # FILE_MODIFIED is high value
 
     def test_record_event_sets_is_high_value_correctly(
-        self, progress_tracker: ProgressTracker, test_db: LocalDatabase, session_id: str
+        self, progress_tracker: ProgressTracker, test_db: HubDatabase, session_id: str
     ) -> None:
         """Test that is_high_value flag is set correctly in database."""
         # Record high-value event
@@ -508,8 +502,8 @@ class TestProgressTrackerSummary:
         # Record high-value
         progress_tracker.record_event(session_id, ProgressType.FILE_MODIFIED)
         progress_tracker.db.execute(
-            "UPDATE loop_progress SET recorded_at = ? WHERE session_id = ? AND is_high_value = 1",
-            ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(), session_id),
+            "UPDATE loop_progress SET recorded_at = ? WHERE session_id = ? AND is_high_value = ?",
+            ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(), session_id, True),
         )
 
         # Record another low-value
@@ -539,7 +533,7 @@ class TestProgressTrackerStagnation:
 
         assert progress_tracker.is_stagnant(session_id) is False
 
-    def test_stagnant_by_event_count(self, test_db: LocalDatabase, session_id: str) -> None:
+    def test_stagnant_by_event_count(self, test_db: HubDatabase, session_id: str) -> None:
         """Test stagnation detection by low-value event count."""
         # Create tracker with low threshold for testing
         tracker = ProgressTracker(
@@ -557,7 +551,7 @@ class TestProgressTrackerStagnation:
         assert summary.high_value_events == 0
         assert summary.total_events == 6
 
-    def test_not_stagnant_with_mixed_events(self, test_db: LocalDatabase, session_id: str) -> None:
+    def test_not_stagnant_with_mixed_events(self, test_db: HubDatabase, session_id: str) -> None:
         """Test that high-value events prevent stagnation detection."""
         tracker = ProgressTracker(
             test_db,
@@ -575,7 +569,7 @@ class TestProgressTrackerStagnation:
         # Should not be stagnant because we have high-value events
         assert tracker.is_stagnant(session_id) is False
 
-    def test_stagnant_by_time(self, test_db: LocalDatabase, session_id: str) -> None:
+    def test_stagnant_by_time(self, test_db: HubDatabase, session_id: str) -> None:
         """Test stagnation detection by time threshold."""
         tracker = ProgressTracker(
             test_db,
@@ -586,8 +580,8 @@ class TestProgressTrackerStagnation:
         # Record a high-value event
         tracker.record_event(session_id, ProgressType.FILE_MODIFIED)
         tracker.db.execute(
-            "UPDATE loop_progress SET recorded_at = ? WHERE session_id = ? AND is_high_value = 1",
-            ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(), session_id),
+            "UPDATE loop_progress SET recorded_at = ? WHERE session_id = ? AND is_high_value = ?",
+            ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(), session_id, True),
         )
 
         # Record low-value events
@@ -602,7 +596,7 @@ class TestProgressTrackerClearSession:
     """Tests for ProgressTracker.clear_session method."""
 
     def test_clear_session_removes_events(
-        self, progress_tracker: ProgressTracker, test_db: LocalDatabase, session_id: str
+        self, progress_tracker: ProgressTracker, test_db: HubDatabase, session_id: str
     ) -> None:
         """Test that clear_session removes all events."""
         # Record some events
@@ -778,7 +772,7 @@ class TestStopRegistry:
     """Tests for StopRegistry class."""
 
     def test_signal_stop_creates_signal(
-        self, stop_registry: StopRegistry, test_db: LocalDatabase, session_id: str
+        self, stop_registry: StopRegistry, test_db: HubDatabase, session_id: str
     ) -> None:
         """Test that signal_stop creates a new stop signal."""
         signal = stop_registry.signal_stop(
@@ -879,7 +873,7 @@ class TestStopRegistry:
         assert second_ack is False  # Already acknowledged
 
     def test_clear_signal(
-        self, stop_registry: StopRegistry, test_db: LocalDatabase, session_id: str
+        self, stop_registry: StopRegistry, test_db: HubDatabase, session_id: str
     ) -> None:
         """Test clearing a stop signal."""
         stop_registry.signal_stop(session_id, source="test")
@@ -936,7 +930,7 @@ class TestStopRegistryCleanup:
     """Tests for StopRegistry.cleanup_stale method."""
 
     def test_cleanup_stale_removes_old_acknowledged(
-        self, stop_registry: StopRegistry, test_db: LocalDatabase, session_id: str
+        self, stop_registry: StopRegistry, test_db: HubDatabase, session_id: str
     ) -> None:
         """Test that cleanup removes old acknowledged signals."""
         # Create and acknowledge a signal
@@ -947,10 +941,10 @@ class TestStopRegistryCleanup:
         test_db.execute(
             """
             UPDATE session_stop_signals
-            SET acknowledged_at = datetime('now', '-48 hours')
+            SET acknowledged_at = ?
             WHERE session_id = ?
             """,
-            (session_id,),
+            ((datetime.now(UTC) - timedelta(hours=48)).isoformat(), session_id),
         )
 
         count = stop_registry.cleanup_stale(max_age_hours=24)
@@ -1067,7 +1061,7 @@ class TestTaskSelectionEvent:
 class TestStuckDetector:
     """Tests for StuckDetector class."""
 
-    def test_init_with_defaults(self, test_db: LocalDatabase) -> None:
+    def test_init_with_defaults(self, test_db: HubDatabase) -> None:
         """Test initialization with default thresholds."""
         detector = StuckDetector(test_db)
 
@@ -1076,7 +1070,7 @@ class TestStuckDetector:
         assert detector.tool_loop_threshold == StuckDetector.DEFAULT_TOOL_LOOP_THRESHOLD
         assert detector.tool_window_size == StuckDetector.DEFAULT_TOOL_WINDOW_SIZE
 
-    def test_init_with_custom_thresholds(self, test_db: LocalDatabase) -> None:
+    def test_init_with_custom_thresholds(self, test_db: HubDatabase) -> None:
         """Test initialization with custom thresholds."""
         detector = StuckDetector(
             test_db,
@@ -1092,7 +1086,7 @@ class TestStuckDetector:
         assert detector.tool_window_size == 30
 
     def test_record_task_selection(
-        self, stuck_detector: StuckDetector, test_db: LocalDatabase, session_id: str
+        self, stuck_detector: StuckDetector, test_db: HubDatabase, session_id: str
     ) -> None:
         """Test recording a task selection."""
         event = stuck_detector.record_task_selection(
@@ -1136,7 +1130,7 @@ class TestStuckDetectorTaskLoop:
 
         assert result.is_stuck is False
 
-    def test_task_loop_detected(self, test_db: LocalDatabase, session_id: str) -> None:
+    def test_task_loop_detected(self, test_db: HubDatabase, session_id: str) -> None:
         """Test task loop detection when same task selected repeatedly."""
         detector = StuckDetector(test_db, task_loop_threshold=3)
 
@@ -1151,7 +1145,7 @@ class TestStuckDetectorTaskLoop:
         assert "stuck-task-123" in result.reason
         assert result.suggested_action == "change_approach"
 
-    def test_task_loop_threshold_boundary(self, test_db: LocalDatabase, session_id: str) -> None:
+    def test_task_loop_threshold_boundary(self, test_db: HubDatabase, session_id: str) -> None:
         """Test task loop at exact threshold."""
         detector = StuckDetector(test_db, task_loop_threshold=3)
 
@@ -1169,7 +1163,7 @@ class TestStuckDetectorProgressStagnation:
     """Tests for StuckDetector progress stagnation detection."""
 
     def test_no_stagnation_without_progress_tracker(
-        self, test_db: LocalDatabase, session_id: str
+        self, test_db: HubDatabase, session_id: str
     ) -> None:
         """Test no stagnation detection without progress tracker."""
         detector = StuckDetector(test_db, progress_tracker=None)
@@ -1188,7 +1182,7 @@ class TestStuckDetectorProgressStagnation:
 
         assert result.is_stuck is False
 
-    def test_stagnation_detected(self, test_db: LocalDatabase, session_id: str) -> None:
+    def test_stagnation_detected(self, test_db: HubDatabase, session_id: str) -> None:
         """Test stagnation detection."""
         tracker = ProgressTracker(
             test_db,
@@ -1200,8 +1194,8 @@ class TestStuckDetectorProgressStagnation:
         # Record high-value event
         tracker.record_event(session_id, ProgressType.FILE_MODIFIED)
         tracker.db.execute(
-            "UPDATE loop_progress SET recorded_at = ? WHERE session_id = ? AND is_high_value = 1",
-            ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(), session_id),
+            "UPDATE loop_progress SET recorded_at = ? WHERE session_id = ? AND is_high_value = ?",
+            ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(), session_id, True),
         )
 
         # Record low-value event to update last_event_at
@@ -1218,7 +1212,7 @@ class TestStuckDetectorToolLoop:
     """Tests for StuckDetector tool loop detection."""
 
     def test_no_tool_loop_without_progress_tracker(
-        self, test_db: LocalDatabase, session_id: str
+        self, test_db: HubDatabase, session_id: str
     ) -> None:
         """Test no tool loop detection without progress tracker."""
         detector = StuckDetector(test_db, progress_tracker=None)
@@ -1241,7 +1235,7 @@ class TestStuckDetectorToolLoop:
 
         assert result.is_stuck is False
 
-    def test_tool_loop_detected(self, test_db: LocalDatabase, session_id: str) -> None:
+    def test_tool_loop_detected(self, test_db: HubDatabase, session_id: str) -> None:
         """Test tool loop detection with repeated identical calls."""
         tracker = ProgressTracker(test_db)
         detector = StuckDetector(
@@ -1287,7 +1281,7 @@ class TestStuckDetectorIsStuck:
         assert result.is_stuck is False
 
     def test_is_stuck_returns_first_detected_issue(
-        self, test_db: LocalDatabase, session_id: str
+        self, test_db: HubDatabase, session_id: str
     ) -> None:
         """Test is_stuck returns first detected stuck state."""
         tracker = ProgressTracker(test_db)
@@ -1312,7 +1306,7 @@ class TestStuckDetectorClearSession:
     """Tests for StuckDetector.clear_session method."""
 
     def test_clear_session(
-        self, stuck_detector: StuckDetector, test_db: LocalDatabase, session_id: str
+        self, stuck_detector: StuckDetector, test_db: HubDatabase, session_id: str
     ) -> None:
         """Test clearing session history."""
         stuck_detector.record_task_selection(session_id, "task-1")
@@ -1368,6 +1362,40 @@ class TestStuckDetectorSelectionHistory:
         history = stuck_detector.get_selection_history(session_id)
         assert history == []
 
+    def test_get_selection_history_migrates_legacy_python_literal_context(
+        self,
+        stuck_detector: StuckDetector,
+        test_db: HubDatabase,
+        session_id: str,
+    ) -> None:
+        """Legacy Python-literal contexts are migrated before JSON-only parsing."""
+        test_db.execute(
+            "ALTER TABLE task_selection_history ALTER COLUMN context TYPE TEXT USING context::text"
+        )
+        test_db.execute(
+            """
+            INSERT INTO task_selection_history (session_id, task_id, selected_at, context)
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                session_id,
+                "task-legacy",
+                datetime.now(UTC).isoformat(),
+                "{'method': 'suggest_next_task'}",
+            ),
+        )
+
+        history = stuck_detector.get_selection_history(session_id)
+        row = test_db.fetchone(
+            "SELECT context FROM task_selection_history WHERE session_id = ?",
+            (session_id,),
+        )
+
+        assert len(history) == 1
+        assert history[0].context == {"method": "suggest_next_task"}
+        assert row is not None
+        assert row["context"] == '{"method": "suggest_next_task"}'
+
 
 class TestStuckDetectorThreadSafety:
     """Tests for StuckDetector thread safety."""
@@ -1418,7 +1446,7 @@ class TestAutonomousIntegration:
 
     def test_full_autonomous_workflow(
         self,
-        test_db: LocalDatabase,
+        test_db: HubDatabase,
         progress_tracker: ProgressTracker,
         stop_registry: StopRegistry,
         stuck_detector: StuckDetector,
@@ -1460,7 +1488,7 @@ class TestAutonomousIntegration:
 
     def test_stuck_detection_leads_to_stop(
         self,
-        test_db: LocalDatabase,
+        test_db: HubDatabase,
         session_id: str,
     ) -> None:
         """Test that stuck detection can trigger a stop signal."""

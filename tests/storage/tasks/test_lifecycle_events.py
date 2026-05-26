@@ -75,9 +75,7 @@ def test_record_lifecycle_event_appends_ordered_audit_rows(temp_db, sample_proje
     assert not hasattr(manager, "delete_lifecycle_event")
 
 
-def test_has_build_event_only_true_after_a_gobby_build_event(
-    temp_db, sample_project
-) -> None:
+def test_has_build_event_only_true_after_a_gobby_build_event(temp_db, sample_project) -> None:
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Build state",
@@ -130,14 +128,10 @@ def test_build_event_survives_a_stop_so_state_reads_paused_not_never_started(
     assert manager.has_build_event(task.id) is True
 
 
-def test_tasks_with_build_event_is_a_batched_predicate(
-    temp_db, sample_project
-) -> None:
+def test_tasks_with_build_event_is_a_batched_predicate(temp_db, sample_project) -> None:
     task_manager = LocalTaskManager(temp_db)
     built = task_manager.create_task(project_id=sample_project["id"], title="Built")
-    untouched = task_manager.create_task(
-        project_id=sample_project["id"], title="Never built"
-    )
+    untouched = task_manager.create_task(project_id=sample_project["id"], title="Never built")
     other_event = task_manager.create_task(
         project_id=sample_project["id"], title="Has non-build event"
     )
@@ -157,9 +151,7 @@ def test_tasks_with_build_event_is_a_batched_predicate(
         by_actor="cli",
     )
 
-    result = manager.tasks_with_build_event(
-        [built.id, untouched.id, other_event.id]
-    )
+    result = manager.tasks_with_build_event([built.id, untouched.id, other_event.id])
 
     assert result == {built.id}
     assert manager.tasks_with_build_event([]) == set()

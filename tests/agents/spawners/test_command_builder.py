@@ -183,3 +183,45 @@ class TestBuildCliCommand:
         )
         assert cmd == ["gemini", "--acp", "--resume", "gem-session"]
         assert env == {"CUSTOM_VAR": "value"}
+
+    def test_grok_agent_command(self):
+        cmd, _env = build_cli_command(
+            "grok",
+            prompt="hello",
+            working_directory="/tmp/wt",
+            model="grok-build",
+            reasoning_effort="high",
+            auto_approve=True,
+        )
+        assert cmd == [
+            "grok",
+            "--always-approve",
+            "--no-alt-screen",
+            "--cwd",
+            "/tmp/wt",
+            "--model",
+            "grok-build",
+            "--reasoning-effort",
+            "high",
+            "--single",
+            "hello",
+        ]
+
+    def test_grok_interactive_mode_uses_acp_stdio(self):
+        cmd, _env = build_cli_command(
+            "grok",
+            mode="interactive",
+            model="grok-build",
+            reasoning_effort="medium",
+        )
+        assert cmd == [
+            "grok",
+            "agent",
+            "--no-leader",
+            "--always-approve",
+            "--model",
+            "grok-build",
+            "--reasoning-effort",
+            "medium",
+            "stdio",
+        ]

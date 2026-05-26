@@ -1,14 +1,11 @@
 import json
 
 from gobby.storage import chat_messages
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 
 
-def test_chat_messages_round_trip_content_blocks(tmp_path) -> None:
-    db = LocalDatabase(tmp_path / "chat_messages.db")
-    run_migrations(db)
-
+def test_chat_messages_round_trip_content_blocks(temp_db: HubDatabase) -> None:
+    db = temp_db
     blocks = [
         {"type": "text", "content": "Looking"},
         {"type": "thinking", "content": "Check state"},

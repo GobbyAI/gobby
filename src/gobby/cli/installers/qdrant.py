@@ -190,13 +190,10 @@ def _update_config(
 ) -> None:
     """Update daemon config with Qdrant settings via ConfigStore."""
     try:
-        from gobby.config.app import load_config
         from gobby.storage.config_store import ConfigStore
-        from gobby.storage.database import LocalDatabase
+        from gobby.storage.hub.runtime import open_runtime_hub_database
 
-        config = load_config()
-        db_path = Path(config.database_path).expanduser()
-        db = LocalDatabase(db_path)
+        db = open_runtime_hub_database(apply_migrations=False)
         try:
             store = ConfigStore(db)
             if qdrant_url:
@@ -208,5 +205,5 @@ def _update_config(
                 store.delete("databases.qdrant.port")
         finally:
             db.close()
-    except (ImportError, OSError, ValueError) as e:
+    except (ImportError, OSError, RuntimeError, ValueError) as e:
         logger.warning(f"Failed to update config: {e}")

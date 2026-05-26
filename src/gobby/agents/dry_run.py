@@ -16,7 +16,7 @@ from gobby.workflows.dry_run import EvaluationItem, WorkflowEvaluation
 if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
     from gobby.mcp_proxy.manager import MCPClientManager
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.workflows.loader import WorkflowLoader
 
 logger = logging.getLogger(__name__)
@@ -66,7 +66,7 @@ class SpawnEvaluation:
 
 def _load_agent_body(
     name: str,
-    db: DatabaseProtocol | None,
+    db: HubDatabase | None,
 ) -> Any:
     """Load an AgentDefinitionBody from the DB by name."""
     if db is None:
@@ -96,7 +96,7 @@ async def evaluate_spawn(
     parent_session_id: str | None = None,
     project_path: str | None = None,
     # Injected dependencies
-    db: DatabaseProtocol | None = None,
+    db: HubDatabase | None = None,
     workflow_loader: WorkflowLoader | None = None,
     runner: AgentRunner | None = None,
     session_manager: Any | None = None,

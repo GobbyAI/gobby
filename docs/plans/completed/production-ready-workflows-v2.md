@@ -861,7 +861,7 @@ if self._workflow_handler:
 ### Database migration v99
 
 ```python
-def _migrate_v99(db: LocalDatabase) -> None:
+def _migrate_v99(db: HubDatabase) -> None:
     """Migrate workflow_states to workflow_instances + session_variables."""
 
     with db.transaction():

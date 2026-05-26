@@ -43,7 +43,9 @@
 
 | Technology | Version | Purpose |
 |------------|---------|---------|
-| **SQLite** | stdlib | Local-first storage |
+| **PostgreSQL** | 18+ | Local runtime hub database |
+| **pg_search** | ParadeDB extension | BM25 keyword indexes |
+| **psycopg** | 3.x | PostgreSQL driver and pools |
 
 ### Configuration
 
@@ -107,7 +109,7 @@
 ### Concurrency Model
 
 - **Async/await** for I/O-bound operations
-- **Thread-local** SQLite connections
+- **PostgreSQL** transactions and connection pools
 - **Threading locks** for shared state
 - **Connection pooling** for MCP clients
 

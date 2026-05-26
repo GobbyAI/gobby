@@ -5,14 +5,14 @@ from __future__ import annotations
 import logging
 
 from gobby.savings.tracker import SavingsTracker
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.state_manager import SessionVariableManager
 
 logger = logging.getLogger(__name__)
 
 
 def record_discovery_savings(
-    db: DatabaseProtocol, session_id: str, project_id: str, model: str | None
+    db: HubDatabase, session_id: str, project_id: str, model: str | None
 ) -> None:
     """Calculate and record progressive discovery savings for a session.
 
@@ -22,7 +22,7 @@ def record_discovery_savings(
     try:
         # 1. Skills Calculation
         skills_rows = db.fetchall(
-            "SELECT name, content FROM skills WHERE enabled = 1 AND source != 'template'"
+            "SELECT name, content FROM skills WHERE enabled IS TRUE AND source != 'template'"
         )
         all_skills_chars = sum(len(row["content"] or "") for row in skills_rows)
 

@@ -383,6 +383,7 @@ class TestUiDev:
         mock_run.side_effect = KeyboardInterrupt
         result = runner.invoke(ui, ["dev"], obj={"config": MagicMock()}, catch_exceptions=False)
         assert result.exit_code == 0
+        assert result.exception is None
 
     @patch("gobby.cli.ui.subprocess.run")
     @patch("gobby.cli.ui._ensure_npm_deps_installed", return_value=True)
@@ -402,6 +403,7 @@ class TestUiDev:
         mock_run.side_effect = subprocess.CalledProcessError(returncode=2, cmd="npm")
         result = runner.invoke(ui, ["dev"], obj={"config": MagicMock()}, catch_exceptions=False)
         assert result.exit_code == 2
+        assert isinstance(result.exception, SystemExit)
 
 
 # ---------------------------------------------------------------------------

@@ -74,6 +74,14 @@ class GobbyDaemonTools:
             config=config.recommend_tools if config else None,
         )
 
+    def _caller_project_ref(self) -> str | None:
+        ctx = project_context_utils.get_project_context()
+        project_id = ctx.get("id") if ctx else None
+        if project_id:
+            return str(project_id)
+        manager_project_id = getattr(self._mcp_manager, "project_id", None)
+        return str(manager_project_id) if manager_project_id else None
+
     # --- System Tools ---
 
     async def status(self) -> dict[str, Any]:
@@ -163,17 +171,20 @@ class GobbyDaemonTools:
         properly signals errors to LLM clients instead of returning error dicts
         as successful responses.
 
-        When session_id is provided and a workflow is active, checks that the
-        tool is not blocked by the current workflow step's blocked_tools setting.
-        This wrapper context is not injected into target tool arguments.
+        When session_id is provided and a workflow is active, checks the current
+        workflow step's blocked_tools setting.
+        Same-repo calls can use wrapper or ambient session context; if the
+        target schema requires session_id, the resolved UUID is supplied to the
+        target arguments before validation.
 
         Args:
             server_name: Target MCP server name.
             tool_name: Tool to call on the server.
             arguments: Tool arguments (dict or JSON string).
             session_id: Wrapper context for context resolution and workflow checks.
-                Target tool parameters still belong in arguments; pass
-                arguments.session_id when the target tool schema requires it.
+                Use arguments.session_id only to target a different session.
+                Local #N refs resolve in the caller project; cross-project
+                target sessions should be supplied as UUIDs.
             project_id: Optional project UUID or name. When provided, overrides
                 session-derived project context, enabling cross-project tool
                 operations (e.g., an agent in project A creating a task in
@@ -225,10 +236,14 @@ class GobbyDaemonTools:
             )
 
         db = self._session_manager.db if self._session_manager else None
+        session_scope_ref = (
+            self._caller_project_ref() if session_id and session_id.lstrip("#").isdigit() else None
+        )
         tokens = resolve_and_seed_contexts(
             session_ref=session_id,
             session_manager=self._session_manager,
             project_ref=project_id,
+            session_scope_ref=session_scope_ref,
             db=db,
         )
 

@@ -12,7 +12,7 @@ export const TAB_CLS =
 export const TAB_ACTIVE_CLS = 'bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-[var(--shadow-sm)]'
 
 export const TOOLBAR_BTN_CLS =
-  'flex cursor-pointer items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-1.5 text-[length:var(--text-sm)] text-[var(--text-secondary)] transition-[background-color,color,border-color] duration-150 hover:border-[var(--border-active)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11'
+  'flex cursor-pointer items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-1.5 text-[length:var(--text-sm)] text-[var(--text-secondary)] transition-[background-color,color,border-color] duration-150 hover:border-[var(--text-muted)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11'
 export const TOOLBAR_BTN_PRIMARY_CLS =
   'border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-foreground)] hover:border-[var(--accent)] hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)] hover:opacity-90'
 export const TOOLBAR_BTN_DANGER_CLS =
@@ -33,14 +33,14 @@ export const SECTION_HEADER_STATIC_CLS =
   'flex select-none items-center justify-between border-b border-[var(--border)] bg-[var(--bg-secondary)] px-3.5 py-2.5'
 export const SECTION_TITLE_CLS = 'text-[length:var(--text-base)] font-semibold text-[var(--text-primary)]'
 export const SECTION_TOGGLE_CLS =
-  'text-[length:var(--text-xs)] text-[var(--text-tertiary)] transition-transform duration-200'
+  'text-[length:var(--text-xs)] text-[var(--text-muted)] transition-transform duration-200'
 export const SECTION_TOGGLE_OPEN_CLS = 'rotate-90'
 export const SECTION_BODY_CLS = 'flex flex-col gap-3 px-3.5 py-3'
 export const SECTION_BODY_COLLAPSED_CLS = 'hidden'
 
 export const FORM_FIELD_CLS = 'flex flex-col gap-1'
 export const FIELD_LABEL_CLS = 'text-[length:var(--text-md)] font-medium text-[var(--text-primary)]'
-export const FIELD_HELP_CLS = 'text-[length:var(--text-xs)] leading-[1.4] text-[var(--text-tertiary)]'
+export const FIELD_HELP_CLS = 'text-[length:var(--text-xs)] leading-[1.4] text-[var(--text-muted)]'
 export const INPUT_CLS =
   'rounded border border-[var(--border)] bg-[var(--bg-primary)] px-2.5 py-1.5 font-mono text-[length:var(--text-md)] text-[var(--text-primary)] outline-none focus:border-[var(--accent)] pointer-coarse:min-h-11'
 export const SELECT_CLS =
@@ -55,19 +55,19 @@ export const FORM_FOOTER_CLS =
   'sticky bottom-0 flex justify-end gap-2 border-t border-[var(--border)] bg-[var(--bg-secondary)] px-4 py-3'
 
 export const SECRET_BADGE_CLS =
-  'ml-1.5 inline-block rounded-sm bg-[var(--bg-tertiary)] px-1.5 py-px align-middle text-[length:var(--text-2xs)] font-medium text-[var(--text-tertiary)]'
+  'ml-1.5 inline-block rounded-sm bg-[var(--bg-tertiary)] px-1.5 py-px align-middle text-[length:var(--text-2xs)] font-medium text-[var(--text-muted)]'
 
 export const SECRETS_CLS = 'max-w-[800px] p-4 max-md:p-3'
 export const SECRETS_HEADER_CLS = 'mb-4 flex items-center justify-between'
 export const SECRETS_HEADER_H3_CLS = 'm-0 text-[length:var(--text-base)] font-semibold'
 
 export const SECRETS_TABLE_CLS =
-  'w-full border-collapse text-[length:var(--text-md)] max-md:text-[length:var(--text-sm)] max-sm:block [&_thead]:max-sm:hidden [&_tbody]:max-sm:block [&_tr]:max-sm:mb-2 [&_tr]:max-sm:block [&_tr]:max-sm:rounded-md [&_tr]:max-sm:border [&_tr]:max-sm:border-[var(--border)] [&_tr]:max-sm:bg-[var(--bg-secondary)] [&_tr]:max-sm:px-2.5 [&_tr]:max-sm:py-2 [&_td]:max-sm:block [&_td]:max-sm:border-b-0 [&_td]:max-sm:px-0 [&_td]:max-sm:py-1 [&_td]:max-sm:before:mb-0.5 [&_td]:max-sm:before:block [&_td]:max-sm:before:text-[length:var(--text-xs)] [&_td]:max-sm:before:uppercase [&_td]:max-sm:before:tracking-[0.5px] [&_td]:max-sm:before:text-[var(--text-tertiary)] [&_td]:max-sm:before:[content:attr(data-label)]'
+  'w-full border-collapse text-[length:var(--text-md)] max-md:text-[length:var(--text-sm)] max-sm:block [&_thead]:max-sm:hidden [&_tbody]:max-sm:block [&_tr]:max-sm:mb-2 [&_tr]:max-sm:block [&_tr]:max-sm:rounded-md [&_tr]:max-sm:border [&_tr]:max-sm:border-[var(--border)] [&_tr]:max-sm:bg-[var(--bg-secondary)] [&_tr]:max-sm:px-2.5 [&_tr]:max-sm:py-2 [&_td]:max-sm:block [&_td]:max-sm:border-b-0 [&_td]:max-sm:px-0 [&_td]:max-sm:py-1 [&_td]:max-sm:before:mb-0.5 [&_td]:max-sm:before:block [&_td]:max-sm:before:text-[length:var(--text-xs)] [&_td]:max-sm:before:uppercase [&_td]:max-sm:before:tracking-[0.5px] [&_td]:max-sm:before:text-[var(--text-muted)] [&_td]:max-sm:before:[content:attr(data-label)]'
 export const SECRETS_TH_CLS =
-  'border-b border-[var(--border)] px-2.5 py-2 text-left text-[length:var(--text-xs)] font-medium uppercase tracking-[0.5px] text-[var(--text-tertiary)] max-md:px-1.5 max-md:py-1.5'
+  'border-b border-[var(--border)] px-2.5 py-2 text-left text-[length:var(--text-xs)] font-medium uppercase tracking-[0.5px] text-[var(--text-muted)] max-md:px-1.5 max-md:py-1.5'
 export const SECRETS_TD_CLS = 'border-b border-[var(--border)] px-2.5 py-2 text-[var(--text-primary)] max-md:px-1.5 max-md:py-1.5'
 
-export const SECRET_MASKED_CLS = 'text-[length:var(--text-sm)] italic text-[var(--text-tertiary)]'
+export const SECRET_MASKED_CLS = 'text-[length:var(--text-sm)] italic text-[var(--text-muted)]'
 export const SECRET_ACTIONS_CLS = 'flex gap-1.5 max-sm:flex-wrap'
 export const SECRET_ACTION_BTN_CLS =
   'cursor-pointer rounded-sm border border-[var(--border)] bg-transparent px-2 py-0.5 text-[length:var(--text-xs)] text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11'
@@ -86,19 +86,19 @@ export const PROMPTS_CLS = 'flex flex-1 overflow-hidden max-sm:flex-col'
 export const PROMPTS_SIDEBAR_CLS =
   'flex w-[220px] min-w-[220px] flex-col overflow-y-auto border-r border-[var(--border)] bg-[var(--bg-secondary)] max-sm:w-full max-sm:min-w-0 max-sm:flex-row max-sm:overflow-x-auto max-sm:border-b max-sm:border-r-0 max-sm:border-b-[var(--border)]'
 export const PROMPTS_SIDEBAR_TITLE_CLS =
-  'border-b border-[var(--border)] px-3.5 py-2.5 text-[length:var(--text-sm)] font-semibold uppercase tracking-[0.5px] text-[var(--text-tertiary)] max-sm:hidden'
+  'border-b border-[var(--border)] px-3.5 py-2.5 text-[length:var(--text-sm)] font-semibold uppercase tracking-[0.5px] text-[var(--text-muted)] max-sm:hidden'
 export const PROMPT_CATEGORY_CLS =
   'flex cursor-pointer items-center justify-between px-3.5 py-2 text-[length:var(--text-md)] text-[var(--text-secondary)] transition-[background-color,color] duration-100 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] max-sm:whitespace-nowrap max-sm:px-3 pointer-coarse:min-h-11'
 export const PROMPT_CATEGORY_ACTIVE_CLS = 'bg-[var(--bg-tertiary)] font-medium text-[var(--text-primary)]'
 export const PROMPT_CATEGORY_COUNT_CLS =
-  'rounded-[10px] bg-[var(--bg-primary)] px-1.5 py-px text-[length:var(--text-xs)] text-[var(--text-tertiary)]'
+  'rounded-[10px] bg-[var(--bg-primary)] px-1.5 py-px text-[length:var(--text-xs)] text-[var(--text-muted)]'
 
 export const PROMPTS_MAIN_CLS = 'flex flex-1 flex-col overflow-hidden'
 export const PROMPTS_LIST_CLS = 'flex flex-1 flex-col gap-1.5 overflow-y-auto p-3'
 export const PROMPT_CARD_CLS =
-  'flex cursor-pointer items-center justify-between rounded-md border border-[var(--border)] px-3 py-2 transition-[background-color,border-color] duration-100 hover:border-[var(--border-active)] hover:bg-[var(--bg-secondary)]'
+  'flex cursor-pointer items-center justify-between rounded-md border border-[var(--border)] px-3 py-2 transition-[background-color,border-color] duration-100 hover:border-[var(--text-muted)] hover:bg-[var(--bg-secondary)]'
 export const PROMPT_CARD_NAME_CLS = 'text-[length:var(--text-md)] font-medium text-[var(--text-primary)]'
-export const PROMPT_CARD_DESC_CLS = 'mt-0.5 text-[length:var(--text-xs)] text-[var(--text-tertiary)]'
+export const PROMPT_CARD_DESC_CLS = 'mt-0.5 text-[length:var(--text-xs)] text-[var(--text-muted)]'
 
 export const PROMPT_BADGE_CLS =
   'shrink-0 rounded-[10px] px-2 py-0.5 text-[length:var(--text-2xs)] font-semibold uppercase tracking-[0.3px]'
@@ -115,7 +115,7 @@ export const PROMPT_DETAIL_HEADER_CLS =
 export const PROMPT_DETAIL_TITLE_CLS = 'text-[length:var(--text-base)] font-semibold'
 export const PROMPT_DETAIL_ACTIONS_CLS = 'flex gap-1.5'
 export const PROMPT_EDITOR_CLS = 'flex-1 overflow-hidden [&_.codemirror-container]:h-full'
-export const PROMPT_EMPTY_CLS = 'flex flex-1 items-center justify-center text-[length:var(--text-md)] text-[var(--text-tertiary)]'
+export const PROMPT_EMPTY_CLS = 'flex flex-1 items-center justify-center text-[length:var(--text-md)] text-[var(--text-muted)]'
 
 export const YAML_CLS = 'flex flex-1 flex-col overflow-hidden'
 export const YAML_EDITOR_CLS = 'flex-1 overflow-hidden [&_.codemirror-container]:h-full'
@@ -123,7 +123,7 @@ export const YAML_FOOTER_CLS =
   'flex items-center justify-between border-t border-[var(--border)] bg-[var(--bg-secondary)] px-4 py-2'
 export const YAML_ERRORS_CLS = 'text-[length:var(--text-sm)] text-[var(--color-error)]'
 
-export const EMPTY_CLS = 'flex flex-1 items-center justify-center text-[length:var(--text-base)] text-[var(--text-tertiary)]'
-export const LOADING_CLS = 'flex flex-1 items-center justify-center text-[length:var(--text-md)] text-[var(--text-tertiary)]'
+export const EMPTY_CLS = 'flex flex-1 items-center justify-center text-[length:var(--text-base)] text-[var(--text-muted)]'
+export const LOADING_CLS = 'flex flex-1 items-center justify-center text-[length:var(--text-md)] text-[var(--text-muted)]'
 
 export const ERRORS_CLS = 'mb-3 text-[length:var(--text-sm)] text-[var(--color-error)]'

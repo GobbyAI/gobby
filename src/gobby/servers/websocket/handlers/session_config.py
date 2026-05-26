@@ -11,6 +11,7 @@ import logging
 import os
 import re
 from shlex import quote
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 from gobby.servers.websocket.db import run_db
@@ -530,6 +531,13 @@ async def handle_set_agent(
                 db_session_id,
                 exc,
             )
+        if existing_row is None:
+            pending_providers = getattr(mixin, "_pending_providers", {})
+            pending_projects = getattr(mixin, "_pending_projects", {})
+            existing_row = SimpleNamespace(
+                source=pending_providers.get(conversation_id),
+                project_id=pending_projects.get(conversation_id),
+            )
         if not await _validate_persona_agent(
             mixin, websocket, session_manager, agent_name, existing_row
         ):
@@ -581,7 +589,7 @@ async def handle_set_provider(
     """Handle set_provider message to switch the provider for a conversation."""
     conversation_id = data.get("conversation_id")
     provider = data.get("provider")
-    valid_providers = {"claude", "gemini", "qwen", "codex", "droid"}
+    valid_providers = {"claude", "gemini", "grok", "qwen", "codex", "droid", "agy"}
 
     if not conversation_id or not provider:
         await mixin._send_error(websocket, "set_provider requires conversation_id and provider")

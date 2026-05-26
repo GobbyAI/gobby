@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
+from typing import Any
 
+from gobby.build.claim_recovery import recover_safe_build_claims
 from gobby.runner import install_dispatcher_cron_row
+from gobby.storage.build_history import best_effort_record_event, best_effort_record_run
 from gobby.storage.cron import CronJobStorage
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +30,114 @@ class DispatcherTickSummary:
     reason: str | None = None
 
 
+def schedule_dispatcher_tick_for_project(
+    db: HubDatabase | None,
+    *,
+    project_id: str | None,
+    reason: str,
+    services: Any | None = None,
+) -> bool:
+    """Schedule an immediate dispatcher tick for dispatchable project work."""
+    if db is None or not project_id:
+        return False
+
+    dispatcher_services = _dispatcher_services_for_db(db, services)
+    if dispatcher_services is None:
+        return False
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+
+    loop.create_task(
+        _run_scheduled_dispatcher_tick(
+            db=db,
+            project_id=project_id,
+            reason=reason,
+            services=dispatcher_services,
+        ),
+        name=f"gobby-dispatcher-tick-{reason}",
+    )
+    return True
+
+
+def schedule_dispatcher_tick_for_task(
+    db: HubDatabase | None,
+    *,
+    task_id: str | None,
+    reason: str,
+    services: Any | None = None,
+) -> bool:
+    """Schedule a dispatcher tick for the project that owns a task."""
+    if db is None or not task_id:
+        return False
+    dispatcher_services = _dispatcher_services_for_db(db, services)
+    if dispatcher_services is None:
+        return False
+    project_id = _project_id_for_task(db, task_id)
+    return schedule_dispatcher_tick_for_project(
+        db,
+        project_id=project_id,
+        reason=reason,
+        services=dispatcher_services,
+    )
+
+
+def _dispatcher_services_for_db(db: HubDatabase, services: Any | None) -> Any | None:
+    if services is None:
+        from gobby.app_context import get_app_context
+
+        services = get_app_context()
+    if services is None or getattr(services, "agent_runner", None) is None:
+        return None
+
+    service_db = getattr(services, "database", None)
+    service_task_manager = getattr(services, "task_manager", None)
+    service_task_db = getattr(service_task_manager, "db", None)
+    if service_db is not db and service_task_db is not db:
+        return None
+    return services
+
+
+def _project_id_for_task(db: HubDatabase, task_id: str) -> str | None:
+    try:
+        from gobby.storage.tasks import LocalTaskManager
+
+        task = LocalTaskManager(db).get_task(task_id)
+    except Exception:
+        logger.warning(
+            "dispatcher_tick_task_project_lookup_failed",
+            extra={"task_id": task_id},
+            exc_info=True,
+        )
+        return None
+    return getattr(task, "project_id", None) if task is not None else None
+
+
+async def _run_scheduled_dispatcher_tick(
+    *,
+    db: HubDatabase,
+    project_id: str,
+    reason: str,
+    services: Any,
+) -> None:
+    try:
+        await kick_dispatcher_tick(
+            db=db,
+            project_id=project_id,
+            services=services,
+        )
+    except Exception:
+        logger.warning(
+            "scheduled_dispatcher_tick_failed",
+            extra={"project_id": project_id, "reason": reason},
+            exc_info=True,
+        )
+
+
 async def kick_dispatcher_tick(
-    db: DatabaseProtocol | None = None,
+    db: HubDatabase | None = None,
     project_id: str | None = None,
     *,
     dispatcher_enabled: bool | None = None,
@@ -48,10 +158,14 @@ async def kick_dispatcher_tick(
             "dispatcher_tick_skipped",
             extra={"project_id": project_id, "reason": "dispatcher_cron_disabled"},
         )
-        return DispatcherTickSummary(reason="dispatcher_cron_disabled")
+        summary = DispatcherTickSummary(reason="dispatcher_cron_disabled")
+        _record_dispatcher_tick_history(db, project_id, summary)
+        return summary
 
     if db is None:
         return DispatcherTickSummary(ticks=0, reason="database_missing")
+
+    recover_safe_build_claims(db, project_id=project_id)
 
     from gobby.dispatch.dispatcher import run_heartbeat
 
@@ -76,10 +190,11 @@ async def kick_dispatcher_tick(
             break
     if woke_system_jobs:
         _wake_existing_system_job(CronJobStorage(db), PIPELINE_HEARTBEAT_CRON_JOB_NAME)
+    _record_dispatcher_tick_history(db, project_id, summary)
     return summary
 
 
-def _wake_build_system_jobs(db: DatabaseProtocol, project_id: str) -> bool:
+def _wake_build_system_jobs(db: HubDatabase, project_id: str) -> bool:
     storage = CronJobStorage(db)
     dispatcher = install_dispatcher_cron_row(db, project_id=project_id)
     if not dispatcher.enabled:
@@ -94,3 +209,37 @@ def _wake_existing_system_job(storage: CronJobStorage, name: str) -> None:
     if job is None or not job.is_system:
         return
     storage.wake_system_job(job.id)
+
+
+def _record_dispatcher_tick_history(
+    db: HubDatabase | None,
+    project_id: str | None,
+    summary: DispatcherTickSummary,
+) -> None:
+    if db is None or project_id is None:
+        return
+    payload = {
+        "ticks": summary.ticks,
+        "scanned": summary.scanned,
+        "executed": summary.executed,
+        "skipped": summary.skipped,
+        "cap_reached": summary.cap_reached,
+        "reason": summary.reason,
+    }
+    run = best_effort_record_run(
+        db,
+        project_id=project_id,
+        action="dispatcher_tick",
+        status="completed" if summary.reason is None else "skipped",
+        actor="dispatcher",
+        summary=payload,
+    )
+    best_effort_record_event(
+        db,
+        run_id=run.id if run is not None else None,
+        project_id=project_id,
+        event_type="dispatcher_tick",
+        action="dispatcher_tick",
+        message=summary.reason,
+        payload=payload,
+    )

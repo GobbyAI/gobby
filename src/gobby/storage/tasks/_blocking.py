@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._models import Task
 
 
-def _fetch_all_blocker_map(db: DatabaseProtocol, task_ids: Sequence[str]) -> dict[str, set[str]]:
+def _fetch_all_blocker_map(db: HubDatabase, task_ids: Sequence[str]) -> dict[str, set[str]]:
     """Return all direct blocker IDs for the given tasks."""
     if not task_ids:
         return {}
@@ -26,7 +26,7 @@ def _fetch_all_blocker_map(db: DatabaseProtocol, task_ids: Sequence[str]) -> dic
     return blocker_map
 
 
-def _fetch_active_blocker_map(db: DatabaseProtocol, task_ids: Sequence[str]) -> dict[str, set[str]]:
+def _fetch_active_blocker_map(db: HubDatabase, task_ids: Sequence[str]) -> dict[str, set[str]]:
     """Return unresolved external blocker IDs for the given tasks."""
     if not task_ids:
         return {}
@@ -62,7 +62,7 @@ def _fetch_active_blocker_map(db: DatabaseProtocol, task_ids: Sequence[str]) -> 
     return blocker_map
 
 
-def hydrate_task_blocking_state(db: DatabaseProtocol, tasks: Sequence[Task]) -> None:
+def hydrate_task_blocking_state(db: HubDatabase, tasks: Sequence[Task]) -> None:
     """Populate dependency-ordering and canonical blocked-state fields on tasks."""
     if not tasks:
         return

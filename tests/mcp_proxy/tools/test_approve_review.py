@@ -274,7 +274,7 @@ class TestMarkTaskReviewApproved:
         mutexes.clear_by_run_id.return_value = 1
 
         with patch(
-            "gobby.mcp_proxy.tools.tasks._stage_review.TaskDispatchMutexManager",
+            "gobby.mcp_proxy.tools.tasks._dispatch_mutex_release.TaskDispatchMutexManager",
             return_value=mutexes,
         ):
             tool_func = stage_ops_registry._tools["approve_review"].func
@@ -310,7 +310,7 @@ class TestMarkTaskReviewApproved:
         mutexes.get_mutex.return_value = SimpleNamespace(run_id="run-1")
 
         with patch(
-            "gobby.mcp_proxy.tools.tasks._stage_review.TaskDispatchMutexManager",
+            "gobby.mcp_proxy.tools.tasks._dispatch_mutex_release.TaskDispatchMutexManager",
             return_value=mutexes,
         ):
             tool_func = stage_ops_registry._tools["approve_review"].func

@@ -11,6 +11,7 @@ import pytest
 from gobby.cli._install_prompts import (
     _echo_install_summary,
     _prompt_hub_api_keys,
+    _run_falkordb_install,
     _run_voice_install,
 )
 from gobby.cli.install import install as install_command
@@ -22,17 +23,17 @@ pytestmark = pytest.mark.unit
 def _config_with_hubs(hubs: dict[str, HubConfig]) -> MagicMock:
     """Build a mock DaemonConfig exposing just the fields the prompt reads."""
     config = MagicMock()
-    config.database_path = "~/.gobby/test.db"
+    config.database_url = "~/.gobby/test.db"
     config.skills = SkillsConfig(hubs=hubs)
     return config
 
 
 @pytest.fixture
 def patched_deps():
-    """Patch SecretStore, LocalDatabase, and load_full_config_from_db at import sites."""
+    """Patch SecretStore, runtime hub open, and load_full_config_from_db."""
     with (
         patch("gobby.cli.utils.load_full_config_from_db") as mock_load,
-        patch("gobby.storage.database.LocalDatabase") as mock_db_cls,
+        patch("gobby.storage.hub.runtime.open_runtime_hub_database") as mock_db_cls,
         patch("gobby.storage.secrets.SecretStore") as mock_store_cls,
     ):
         mock_db = MagicMock()
@@ -197,19 +198,22 @@ class TestPromptHubApiKeys:
             "unresolved": [],
         }
 
-    def test_db_opens_resolved_config_path_not_default(self, patched_deps) -> None:
-        """LocalDatabase must open the resolved config's database_path, not the default ~/.gobby/gobby-hub.db."""
+    def test_opens_runtime_hub_without_removed_path(self, patched_deps) -> None:
+        """Prompt setup opens the active runtime hub instead of a configured PostgreSQL path."""
         config = MagicMock()
-        config.database_path = "/custom/path/to.db"
+        config.database_url = "/custom/path/to.db"
         config.skills = SkillsConfig(hubs={})
         patched_deps["load"].return_value = config
 
-        _prompt_hub_api_keys(no_interactive=False)
+        result = _prompt_hub_api_keys(no_interactive=False)
 
-        # LocalDatabase was constructed with the expanded custom path, not called with no args.
-        assert patched_deps["db_cls"].called
-        called_path = patched_deps["db_cls"].call_args.args[0]
-        assert str(called_path) == "/custom/path/to.db"
+        assert result == {
+            "stored": 0,
+            "skipped": 0,
+            "already_configured": 0,
+            "unresolved": [],
+        }
+        patched_deps["db_cls"].assert_called_once_with(apply_migrations=False)
 
     def test_uses_injected_db_and_secret_store(self, patched_deps) -> None:
         patched_deps["load"].return_value = _config_with_hubs(
@@ -305,19 +309,58 @@ class TestVoiceInstall:
         assert results["voice"]["success"] is True
 
 
+class TestFalkorDBInstallPrompt:
+    @pytest.mark.parametrize(
+        ("password_source", "password", "expected"),
+        [
+            ("generated", "generated-pw", "Generated FalkorDB password: generated-pw"),
+            ("provided", None, "Using provided FalkorDB password (not displayed)"),
+            ("reused", None, "Reusing existing FalkorDB password from config_store"),
+        ],
+    )
+    def test_discloses_password_by_source(
+        self,
+        password_source: str,
+        password: str | None,
+        expected: str,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        results: dict[str, dict[str, object]] = {}
+        installer = MagicMock(
+            return_value={
+                "success": True,
+                "password_source": password_source,
+                "password": password,
+                "url": "redis://localhost:16379",
+                "browser_url": "http://localhost:13000",
+            }
+        )
+
+        _run_falkordb_install(installer, "input-pw", results)
+
+        output = capsys.readouterr().out
+        installer.assert_called_once_with(password="input-pw")
+        assert expected in output
+        assert "Browser: http://localhost:13000" in output
+        assert results["falkordb"]["password_source"] == password_source
+
+
 class TestInstallCommandSharedStores:
     def test_embedding_provider_requires_embedding_url(self, tmp_path: Path) -> None:
         with pytest.raises(click.UsageError, match="--embedding-provider requires --embedding-url"):
             install_command.callback(
                 claude_flag=False,
                 gemini_flag=False,
+                grok_flag=False,
+                agy_flag=False,
                 codex_flag=True,
                 droid_flag=False,
                 qwen_flag=False,
                 hooks_flag=False,
                 all_flag=False,
                 no_ext_services_flag=True,
-                neo4j_password=None,
+                falkordb_flag=False,
+                falkordb_password=None,
                 voice_flag=False,
                 project_flag=False,
                 embedding_url=None,
@@ -330,7 +373,7 @@ class TestInstallCommandSharedStores:
 
     def test_builds_one_db_and_secret_store_and_reuses_them(self, tmp_path: Path) -> None:
         config = MagicMock()
-        config.database_path = str(tmp_path / "shared.db")
+        config.database_url = str(tmp_path / "shared.db")
         db = MagicMock()
         secret_store = MagicMock()
 
@@ -341,11 +384,15 @@ class TestInstallCommandSharedStores:
             # detection makes the callback sys.exit(1) (install.py:275).
             patch("gobby.cli.install._is_claude_code_installed", return_value=True),
             patch("gobby.cli.install._is_gemini_cli_installed", return_value=False),
+            patch("gobby.cli.install._is_grok_cli_installed", return_value=False),
+            patch("gobby.cli.install._is_agy_cli_installed", return_value=False),
             patch("gobby.cli.install._is_qwen_cli_installed", return_value=False),
             patch("gobby.cli.install._is_codex_cli_installed", return_value=False),
             patch("gobby.cli.install._is_droid_cli_installed", return_value=False),
             patch("gobby.cli.install.load_full_config_from_db", return_value=config),
-            patch("gobby.cli.install.LocalDatabase", return_value=db) as mock_db_cls,
+            patch(
+                "gobby.storage.hub.runtime.open_runtime_hub_database", return_value=db
+            ) as mock_db_cls,
             patch("gobby.cli.install.SecretStore", return_value=secret_store) as mock_store_cls,
             patch(
                 "gobby.cli.install._ensure_daemon_config",
@@ -361,13 +408,16 @@ class TestInstallCommandSharedStores:
             install_command.callback(
                 claude_flag=False,
                 gemini_flag=False,
+                grok_flag=False,
+                agy_flag=False,
                 codex_flag=True,
                 droid_flag=False,
                 qwen_flag=False,
                 hooks_flag=False,
                 all_flag=False,
                 no_ext_services_flag=True,
-                neo4j_password=None,
+                falkordb_flag=False,
+                falkordb_password=None,
                 voice_flag=False,
                 project_flag=False,
                 embedding_url=None,
@@ -378,8 +428,7 @@ class TestInstallCommandSharedStores:
                 working_dir=tmp_path,
             )
 
-        expected_path = Path(config.database_path).expanduser()
-        mock_db_cls.assert_called_once_with(expected_path)
+        mock_db_cls.assert_called_once_with(apply_migrations=False)
         mock_store_cls.assert_called_once_with(db)
         assert mock_voice_install.call_args.kwargs["db"] is db
         assert mock_voice_install.call_args.kwargs["secret_store"] is secret_store
@@ -391,7 +440,7 @@ class TestInstallCommandSharedStores:
         self, tmp_path: Path
     ) -> None:
         config = MagicMock()
-        config.database_path = str(tmp_path / "shared.db")
+        config.database_url = str(tmp_path / "shared.db")
         db = MagicMock()
         secret_store = MagicMock()
 
@@ -402,11 +451,15 @@ class TestInstallCommandSharedStores:
             # detection makes the callback sys.exit(1) (install.py:275).
             patch("gobby.cli.install._is_claude_code_installed", return_value=True),
             patch("gobby.cli.install._is_gemini_cli_installed", return_value=False),
+            patch("gobby.cli.install._is_grok_cli_installed", return_value=False),
+            patch("gobby.cli.install._is_agy_cli_installed", return_value=False),
             patch("gobby.cli.install._is_qwen_cli_installed", return_value=False),
             patch("gobby.cli.install._is_codex_cli_installed", return_value=False),
             patch("gobby.cli.install._is_droid_cli_installed", return_value=False),
             patch("gobby.cli.install.load_full_config_from_db", return_value=config),
-            patch("gobby.cli.install.LocalDatabase", return_value=db) as mock_db_cls,
+            patch(
+                "gobby.storage.hub.runtime.open_runtime_hub_database", return_value=db
+            ) as mock_db_cls,
             patch("gobby.cli.install.SecretStore", return_value=secret_store) as mock_store_cls,
             patch(
                 "gobby.cli.install._ensure_daemon_config",
@@ -422,18 +475,21 @@ class TestInstallCommandSharedStores:
             patch("gobby.cli.install._run_voice_install") as mock_voice_install,
             patch("gobby.cli.install._echo_install_summary", return_value=True) as mock_summary,
             patch("gobby.cli.install._run_qdrant_install"),
-            patch("gobby.cli.install._run_neo4j_install"),
+            patch("gobby.cli.install._run_falkordb_install"),
         ):
             install_command.callback(
                 claude_flag=False,
                 gemini_flag=False,
+                grok_flag=False,
+                agy_flag=False,
                 codex_flag=False,
                 droid_flag=False,
                 qwen_flag=False,
                 hooks_flag=False,
                 all_flag=True,
                 no_ext_services_flag=True,
-                neo4j_password=None,
+                falkordb_flag=False,
+                falkordb_password=None,
                 voice_flag=False,
                 project_flag=False,
                 embedding_url="http://lan:1234/v1",
@@ -444,8 +500,7 @@ class TestInstallCommandSharedStores:
                 working_dir=tmp_path,
             )
 
-        expected_path = Path(config.database_path).expanduser()
-        mock_db_cls.assert_called_once_with(expected_path)
+        mock_db_cls.assert_called_once_with(apply_migrations=False)
         mock_store_cls.assert_called_once_with(db)
         assert mock_embedding.call_args.kwargs["api_base_override"] == "http://lan:1234/v1"
         assert mock_embedding.call_args.kwargs["provider_override"] == "lmstudio"

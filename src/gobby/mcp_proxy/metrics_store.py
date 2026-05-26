@@ -1,4 +1,4 @@
-"""SQLite storage for tool call metrics."""
+"""Hub database storage for tool call metrics."""
 
 import logging
 import uuid
@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -70,17 +70,17 @@ class ToolMetrics:
 
 class ToolMetricsStore:
     """
-    Persistence layer for tool call metrics using SQLite.
+    Persistence layer for tool call metrics using the hub database.
 
     Handles all direct database interactions for recording and querying tool metrics.
     """
 
-    def __init__(self, db: DatabaseProtocol):
+    def __init__(self, db: HubDatabase):
         """
         Initialize the metrics store.
 
         Args:
-            db: LocalDatabase instance for persistence
+            db: Hub database adapter for persistence
         """
         self.db = db
 
@@ -93,7 +93,7 @@ class ToolMetricsStore:
         success: bool = True,
     ) -> None:
         """
-        Record a tool call with its metrics in SQLite.
+        Record a tool call with its metrics in the hub database.
 
         Args:
             server_name: Name of the MCP server
@@ -116,11 +116,12 @@ class ToolMetricsStore:
                 last_called_at, created_at, updated_at
             ) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(project_id, server_name, tool_name) DO UPDATE SET
-                call_count = call_count + 1,
-                success_count = success_count + ?,
-                failure_count = failure_count + ?,
-                total_latency_ms = total_latency_ms + ?,
-                avg_latency_ms = (total_latency_ms + ?) / (call_count + 1),
+                call_count = tool_metrics.call_count + 1,
+                success_count = tool_metrics.success_count + ?,
+                failure_count = tool_metrics.failure_count + ?,
+                total_latency_ms = tool_metrics.total_latency_ms + ?,
+                avg_latency_ms = (tool_metrics.total_latency_ms + ?) /
+                                 (tool_metrics.call_count + 1),
                 last_called_at = ?,
                 updated_at = ?
             """,
@@ -154,7 +155,7 @@ class ToolMetricsStore:
         tool_name: str | None = None,
     ) -> list[Any]:
         """
-        Get raw metrics rows from SQLite, optionally filtered.
+        Get raw metrics rows from the hub database, optionally filtered.
 
         Args:
             project_id: Filter by project ID
@@ -191,7 +192,7 @@ class ToolMetricsStore:
         order_by: str = "call_count",
     ) -> list[Any]:
         """
-        Get top tools from SQLite.
+        Get top tools from the hub database.
         """
         valid_order_columns = {"call_count", "success_count", "avg_latency_ms"}
         if order_by not in valid_order_columns:
@@ -215,7 +216,7 @@ class ToolMetricsStore:
         project_id: str,
     ) -> float | None:
         """
-        Get success rate for a specific tool from SQLite.
+        Get success rate for a specific tool from the hub database.
         """
         row = self.db.fetchone(
             """
@@ -237,7 +238,7 @@ class ToolMetricsStore:
         limit: int = 10,
     ) -> list[Any]:
         """
-        Get tools with failure rate above a threshold from SQLite.
+        Get tools with failure rate above a threshold from the hub database.
         """
         if project_id:
             return self.db.fetchall(
@@ -274,7 +275,7 @@ class ToolMetricsStore:
         tool_name: str | None = None,
     ) -> int:
         """
-        Reset/delete metrics in SQLite.
+        Reset/delete metrics in the hub database.
         """
         conditions = []
         params: list[Any] = []
@@ -343,12 +344,14 @@ class ToolMetricsStore:
                     total_latency_ms, avg_latency_ms, created_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(project_id, server_name, tool_name, date) DO UPDATE SET
-                    call_count = call_count + excluded.call_count,
-                    success_count = success_count + excluded.success_count,
-                    failure_count = failure_count + excluded.failure_count,
-                    total_latency_ms = total_latency_ms + excluded.total_latency_ms,
-                    avg_latency_ms = (total_latency_ms + excluded.total_latency_ms) /
-                                     (call_count + excluded.call_count)
+                    call_count = tool_metrics_daily.call_count + excluded.call_count,
+                    success_count = tool_metrics_daily.success_count + excluded.success_count,
+                    failure_count = tool_metrics_daily.failure_count + excluded.failure_count,
+                    total_latency_ms = tool_metrics_daily.total_latency_ms +
+                                       excluded.total_latency_ms,
+                    avg_latency_ms = (
+                        tool_metrics_daily.total_latency_ms + excluded.total_latency_ms
+                    ) / (tool_metrics_daily.call_count + excluded.call_count)
                 """,
                 (
                     row["project_id"],
@@ -393,7 +396,7 @@ class ToolMetricsStore:
         end_date: str | None = None,
     ) -> list[Any]:
         """
-        Get aggregated daily metrics from SQLite.
+        Get aggregated daily metrics from the hub database.
         """
         conditions = []
         params: list[Any] = []
@@ -423,7 +426,7 @@ class ToolMetricsStore:
 
     def get_retention_stats(self) -> Any:
         """
-        Get statistics about metrics retention from SQLite.
+        Get statistics about metrics retention from the hub database.
         """
         return self.db.fetchone(
             """

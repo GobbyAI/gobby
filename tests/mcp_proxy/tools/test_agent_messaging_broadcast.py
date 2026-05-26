@@ -1,7 +1,6 @@
 """Tests for WebSocket broadcast events in agent messaging.
 
-Verifies that send_message, send_command, and complete_command
-broadcast agent_message and agent_command events via WebSocket.
+Verifies that send_message broadcasts agent_message events via WebSocket.
 """
 
 from __future__ import annotations
@@ -56,28 +55,6 @@ class MockMessage:
         }
 
 
-@dataclass
-class MockCommand:
-    id: str = "cmd-1"
-    from_session: str = "s-parent"
-    to_session: str = "s-child"
-    command_text: str = "Run tests"
-    status: str = "pending"
-    created_at: str = "2026-01-01T00:00:00"
-    allowed_tools: str | None = None
-    allowed_mcp_tools: str | None = None
-    exit_condition: str | None = None
-
-    def to_dict(self) -> dict:
-        return {
-            "id": self.id,
-            "from_session": self.from_session,
-            "to_session": self.to_session,
-            "command_text": self.command_text,
-            "status": self.status,
-        }
-
-
 class MockWebSocket:
     """Mock WebSocket with subscription support."""
 
@@ -125,24 +102,6 @@ def mock_message_manager():
 
 
 @pytest.fixture
-def mock_command_manager():
-    mgr = MagicMock()
-    mgr.create_command = MagicMock(return_value=MockCommand())
-    mgr.get_command = MagicMock(return_value=None)
-    mgr.list_commands = MagicMock(return_value=[])
-    mgr.update_status = MagicMock(return_value=MockCommand(status="running"))
-    return mgr
-
-
-@pytest.fixture
-def mock_session_var_manager():
-    mgr = MagicMock()
-    mgr.merge_variables = MagicMock(return_value=True)
-    mgr.delete_variables = MagicMock()
-    return mgr
-
-
-@pytest.fixture
 def mock_db():
     db = MagicMock()
     db.fetchone = MagicMock(return_value=None)
@@ -159,8 +118,6 @@ def mock_broadcast_fn():
 def messaging_registry_with_broadcast(
     mock_session_manager,
     mock_message_manager,
-    mock_command_manager,
-    mock_session_var_manager,
     mock_db,
     mock_broadcast_fn,
 ):
@@ -175,8 +132,6 @@ def messaging_registry_with_broadcast(
         registry=registry,
         message_manager=mock_message_manager,
         session_manager=mock_session_manager,
-        command_manager=mock_command_manager,
-        session_var_manager=mock_session_var_manager,
         db=mock_db,
         broadcast_fn=mock_broadcast_fn,
     )
@@ -189,17 +144,12 @@ def messaging_registry_with_broadcast(
 
 
 class TestBroadcastMixinAgentMessaging:
-    """Test that BroadcastMixin has agent_message and agent_command methods."""
+    """Test that BroadcastMixin has an agent_message method."""
 
     def test_broadcast_agent_message_method_exists(self) -> None:
         from gobby.servers.websocket.broadcast import BroadcastMixin
 
         assert hasattr(BroadcastMixin, "broadcast_agent_message")
-
-    def test_broadcast_agent_command_method_exists(self) -> None:
-        from gobby.servers.websocket.broadcast import BroadcastMixin
-
-        assert hasattr(BroadcastMixin, "broadcast_agent_command")
 
     @pytest.mark.asyncio
     async def test_broadcast_agent_message_sends_correct_type(self) -> None:
@@ -223,33 +173,9 @@ class TestBroadcastMixinAgentMessaging:
         assert msgs[0]["to_session"] == "s-to"
         assert "timestamp" in msgs[0]
 
-    @pytest.mark.asyncio
-    async def test_broadcast_agent_command_sends_correct_type(self) -> None:
-        """broadcast_agent_command sends type=agent_command with fields."""
-        from gobby.servers.websocket.broadcast import BroadcastMixin
-
-        ws = MockWebSocket()
-        mixin = BroadcastMixin()
-        mixin.clients = {ws: {"id": "1"}}
-
-        await mixin.broadcast_agent_command(
-            event="command_sent",
-            from_session="s-parent",
-            to_session="s-child",
-            command_id="cmd-1",
-        )
-
-        msgs = ws.messages_of_type("agent_command")
-        assert len(msgs) == 1
-        assert msgs[0]["event"] == "command_sent"
-        assert msgs[0]["from_session"] == "s-parent"
-        assert msgs[0]["to_session"] == "s-child"
-        assert msgs[0]["command_id"] == "cmd-1"
-        assert "timestamp" in msgs[0]
-
 
 class TestSubscriptionFiltering:
-    """Test that agent_message and agent_command require explicit subscription."""
+    """Test that agent_message requires explicit subscription."""
 
     @pytest.mark.asyncio
     async def test_agent_message_requires_subscription(self) -> None:
@@ -275,29 +201,6 @@ class TestSubscriptionFiltering:
         assert len(ws_with_sub.sent_messages) == 1
 
     @pytest.mark.asyncio
-    async def test_agent_command_requires_subscription(self) -> None:
-        """Client without agent_command subscription does not receive it."""
-        from gobby.servers.websocket.broadcast import BroadcastMixin
-
-        ws_no_sub = MockWebSocket()
-        ws_no_sub.subscriptions = {"hook_event"}
-
-        ws_with_sub = MockWebSocket()
-        ws_with_sub.subscriptions = {"agent_command"}
-
-        mixin = BroadcastMixin()
-        mixin.clients = {ws_no_sub: {"id": "1"}, ws_with_sub: {"id": "2"}}
-
-        await mixin.broadcast_agent_command(
-            event="command_sent",
-            from_session="s-parent",
-            to_session="s-child",
-        )
-
-        assert len(ws_no_sub.sent_messages) == 0
-        assert len(ws_with_sub.sent_messages) == 1
-
-    @pytest.mark.asyncio
     async def test_wildcard_receives_agent_events(self) -> None:
         """Client with wildcard subscription receives agent events."""
         from gobby.servers.websocket.broadcast import BroadcastMixin
@@ -313,13 +216,8 @@ class TestSubscriptionFiltering:
             from_session="a",
             to_session="b",
         )
-        await mixin.broadcast_agent_command(
-            event="command_sent",
-            from_session="a",
-            to_session="b",
-        )
 
-        assert len(ws.sent_messages) == 2
+        assert len(ws.sent_messages) == 1
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -345,7 +243,12 @@ class TestSendMessageBroadcast:
 
         result = await messaging_registry_with_broadcast.call(
             "send_message",
-            {"from_session": "s-from", "to_session": "s-to", "content": "hello"},
+            {
+                "from_session": "s-from",
+                "target": "session",
+                "target_id": "s-to",
+                "content": "hello",
+            },
         )
 
         assert result["success"] is True
@@ -361,8 +264,6 @@ class TestSendMessageBroadcast:
         self,
         mock_session_manager,
         mock_message_manager,
-        mock_command_manager,
-        mock_session_var_manager,
         mock_db,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
@@ -378,8 +279,6 @@ class TestSendMessageBroadcast:
             registry=registry,
             message_manager=mock_message_manager,
             session_manager=mock_session_manager,
-            command_manager=mock_command_manager,
-            session_var_manager=mock_session_var_manager,
             db=mock_db,
             broadcast_fn=broadcast_fn,
         )
@@ -388,6 +287,9 @@ class TestSendMessageBroadcast:
             "s-child-1": MockSession(id="s-child-1", project_id="proj-1"),
             "s-child-2": MockSession(id="s-child-2", project_id="proj-1"),
         }.get(sid)
+        mock_db.fetchone.side_effect = lambda sql, params=(): (
+            {"id": "proj-1"} if "FROM projects" in sql else None
+        )
         mock_db.fetchall.return_value = [
             {
                 "child_session_id": "s-child-1",
@@ -417,7 +319,8 @@ class TestSendMessageBroadcast:
             "send_message",
             {
                 "from_session": "s-from",
-                "send_to_all": True,
+                "target": "project",
+                "target_id": "proj-1",
                 "content": "hello agents",
             },
         )
@@ -448,128 +351,12 @@ class TestSendMessageBroadcast:
 
         result = await messaging_registry_with_broadcast.call(
             "send_message",
-            {"from_session": "no-such", "to_session": "s-to", "content": "hi"},
-        )
-
-        assert result["success"] is False
-        mock_broadcast_fn.assert_not_called()
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# send_command broadcasts agent_command event
-# ═══════════════════════════════════════════════════════════════════════
-
-
-class TestSendCommandBroadcast:
-    """send_command calls broadcast_fn with agent_command event on success."""
-
-    @pytest.mark.asyncio
-    async def test_broadcast_on_success(
-        self,
-        messaging_registry_with_broadcast,
-        mock_session_manager,
-        mock_command_manager,
-        mock_broadcast_fn,
-    ) -> None:
-        """Successful send_command triggers agent_command broadcast."""
-        mock_session_manager.get.side_effect = lambda sid: {
-            "s-parent": MockSession(id="s-parent", agent_depth=0, project_id="proj-1"),
-            "s-child": MockSession(id="s-child", agent_depth=1, project_id="proj-1"),
-        }.get(sid)
-        mock_command_manager.list_commands.return_value = []
-
-        result = await messaging_registry_with_broadcast.call(
-            "send_command",
             {
-                "from_session": "s-parent",
-                "to_session": "s-child",
-                "command_text": "Run tests",
+                "from_session": "no-such",
+                "target": "session",
+                "target_id": "s-to",
+                "content": "hi",
             },
-        )
-
-        assert result["success"] is True
-        mock_broadcast_fn.assert_called_once()
-        call_kwargs = mock_broadcast_fn.call_args[1]
-        assert call_kwargs["msg_type"] == "agent_command"
-        assert call_kwargs["event"] == "command_sent"
-        assert call_kwargs["from_session"] == "s-parent"
-        assert call_kwargs["to_session"] == "s-child"
-
-    @pytest.mark.asyncio
-    async def test_no_broadcast_on_failure(
-        self,
-        messaging_registry_with_broadcast,
-        mock_session_manager,
-        mock_broadcast_fn,
-    ) -> None:
-        """Failed send_command does not broadcast."""
-        # Same-depth agents: should be rejected
-        mock_session_manager.get.side_effect = lambda sid: {
-            "s-unrelated": MockSession(id="s-unrelated", agent_depth=1, project_id="proj-1"),
-            "s-child": MockSession(id="s-child", agent_depth=1, project_id="proj-1"),
-        }.get(sid)
-
-        result = await messaging_registry_with_broadcast.call(
-            "send_command",
-            {
-                "from_session": "s-unrelated",
-                "to_session": "s-child",
-                "command_text": "Run tests",
-            },
-        )
-
-        assert result["success"] is False
-        mock_broadcast_fn.assert_not_called()
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# complete_command broadcasts agent_command event
-# ═══════════════════════════════════════════════════════════════════════
-
-
-class TestCompleteCommandBroadcast:
-    """complete_command calls broadcast_fn with agent_command event on success."""
-
-    @pytest.mark.asyncio
-    async def test_broadcast_on_success(
-        self,
-        messaging_registry_with_broadcast,
-        mock_command_manager,
-        mock_broadcast_fn,
-    ) -> None:
-        """Successful complete_command triggers agent_command broadcast."""
-        mock_command_manager.get_command.return_value = MockCommand(
-            id="cmd-1",
-            from_session="s-parent",
-            to_session="s-child",
-            status="running",
-        )
-
-        result = await messaging_registry_with_broadcast.call(
-            "complete_command",
-            {"target_session_id": "s-child", "command_id": "cmd-1", "result": "Done"},
-        )
-
-        assert result["success"] is True
-        mock_broadcast_fn.assert_called_once()
-        call_kwargs = mock_broadcast_fn.call_args[1]
-        assert call_kwargs["msg_type"] == "agent_command"
-        assert call_kwargs["event"] == "command_completed"
-        assert call_kwargs["command_id"] == "cmd-1"
-
-    @pytest.mark.asyncio
-    async def test_no_broadcast_on_failure(
-        self,
-        messaging_registry_with_broadcast,
-        mock_command_manager,
-        mock_broadcast_fn,
-    ) -> None:
-        """Failed complete_command does not broadcast."""
-        mock_command_manager.get_command.return_value = None
-
-        result = await messaging_registry_with_broadcast.call(
-            "complete_command",
-            {"target_session_id": "s-child", "command_id": "no-such", "result": "Done"},
         )
 
         assert result["success"] is False

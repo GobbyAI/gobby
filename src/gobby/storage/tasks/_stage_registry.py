@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import json
-import sqlite3
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sql_dialect import table_column_names
 from gobby.storage.tasks._stage_reviewer_selector import (
     ReviewerAgentSelectorError,
     validate_reviewer_agent_selector_json,
@@ -44,7 +44,7 @@ class StageRegistryEntry:
 
 
 class StageRegistryManager:
-    def __init__(self, db: DatabaseProtocol) -> None:
+    def __init__(self, db: HubDatabase) -> None:
         self.db = db
         self._ensure_phase2_columns()
 
@@ -56,7 +56,7 @@ class StageRegistryManager:
               FROM task_stages_registry
              {deleted_filter}
              ORDER BY position_hint, name
-            """  # nosec B608 - deleted_filter is controlled by a boolean.
+            """  # nosec B608 # deleted_filter is controlled by a boolean.
         )
         return [self._entry_from_row(row) for row in rows]
 
@@ -68,7 +68,7 @@ class StageRegistryManager:
               FROM task_stages_registry
              WHERE name = ?
                {deleted_filter}
-            """,  # nosec B608 - deleted_filter is controlled by a boolean.
+            """,  # nosec B608 # deleted_filter is controlled by a boolean.
             (name,),
         )
         return self._entry_from_row(row) if row is not None else None
@@ -85,7 +85,7 @@ class StageRegistryManager:
                     requires_human, is_terminal, default_max_work_attempts,
                     default_max_review_rounds, bundled_hash, deleted_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, datetime('now'))
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, CURRENT_TIMESTAMP)
                 ON CONFLICT(name) DO UPDATE SET
                     display_label = excluded.display_label,
                     description = excluded.description,
@@ -104,7 +104,7 @@ class StageRegistryManager:
                     default_max_review_rounds = excluded.default_max_review_rounds,
                     bundled_hash = COALESCE(excluded.bundled_hash, task_stages_registry.bundled_hash),
                     deleted_at = NULL,
-                    updated_at = datetime('now')
+                    updated_at = CURRENT_TIMESTAMP
                 """,
                 (
                     entry.name,
@@ -119,8 +119,8 @@ class StageRegistryManager:
                     entry.dispatch_target,
                     entry.dispatch_inputs_json,
                     entry.position_hint,
-                    1 if entry.requires_human else 0,
-                    1 if entry.is_terminal else 0,
+                    bool(entry.requires_human),
+                    bool(entry.is_terminal),
                     entry.default_max_work_attempts,
                     entry.default_max_review_rounds,
                     bundled_hash,
@@ -195,7 +195,7 @@ class StageRegistryManager:
                        is_terminal = ?,
                        default_max_work_attempts = ?,
                        default_max_review_rounds = ?,
-                       updated_at = datetime('now')
+                       updated_at = CURRENT_TIMESTAMP
                  WHERE name = ?
                    AND deleted_at IS NULL
                 """,
@@ -211,8 +211,8 @@ class StageRegistryManager:
                     entry.dispatch_target,
                     entry.dispatch_inputs_json,
                     entry.position_hint,
-                    1 if entry.requires_human else 0,
-                    1 if entry.is_terminal else 0,
+                    bool(entry.requires_human),
+                    bool(entry.is_terminal),
                     entry.default_max_work_attempts,
                     entry.default_max_review_rounds,
                     name,
@@ -249,7 +249,7 @@ class StageRegistryManager:
         self.db.execute(
             """
             UPDATE task_stages_registry
-               SET deleted_at = ?, updated_at = datetime('now')
+               SET deleted_at = ?, updated_at = CURRENT_TIMESTAMP
              WHERE name = ?
             """,
             (deleted_at, name),
@@ -259,7 +259,7 @@ class StageRegistryManager:
             raise ValueError(f"Stage '{name}' could not be deleted")
         return deleted
 
-    def _entry_from_row(self, row: sqlite3.Row) -> StageRegistryEntry:
+    def _entry_from_row(self, row: Mapping[str, Any]) -> StageRegistryEntry:
         review_policy = self._row_value(row, "review_policy")
         if review_policy not in {"none", "required", "optional"}:
             review_policy = "none"
@@ -318,29 +318,29 @@ class StageRegistryManager:
                     conn.execute(sql)
 
     def _columns(self, table_name: str) -> set[str]:
-        return {row["name"] for row in self.db.fetchall(f"PRAGMA table_info({table_name})")}
+        return table_column_names(self.db, table_name)
 
     @staticmethod
-    def _row_value(row: sqlite3.Row, column: str) -> Any:
+    def _row_value(row: Mapping[str, Any], column: str) -> Any:
         try:
             return row[column]
         except (IndexError, KeyError):
             return None
 
     @classmethod
-    def _dispatch_type_from_row(cls, row: sqlite3.Row) -> DispatchType | None:
+    def _dispatch_type_from_row(cls, row: Mapping[str, Any]) -> DispatchType | None:
         value = cls._row_value(row, "dispatch_type")
         return value if value in {"agent", "pipeline"} else None
 
     @classmethod
-    def _is_row_edited(cls, row: sqlite3.Row) -> bool:
+    def _is_row_edited(cls, row: Mapping[str, Any]) -> bool:
         bundled_hash = cls._row_value(row, "bundled_hash")
         if not bundled_hash:
             return False
         return cls.row_hash(row) != str(bundled_hash)
 
     @classmethod
-    def row_hash(cls, row: sqlite3.Row | dict[str, Any]) -> str:
+    def row_hash(cls, row: Mapping[str, Any]) -> str:
         import hashlib
 
         body = json.dumps(
@@ -351,10 +351,8 @@ class StageRegistryManager:
         return hashlib.sha256(body).hexdigest()
 
     @classmethod
-    def _row_canonical_payload(cls, row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
+    def _row_canonical_payload(cls, row: Mapping[str, Any]) -> dict[str, Any]:
         def value(key: str) -> Any:
-            if isinstance(row, dict):
-                return row.get(key)
             return cls._row_value(row, key)
 
         return {
@@ -417,7 +415,12 @@ class StageRegistryManager:
         if default_ref is not None:
             return f"Stage '{name}' is referenced by task type defaults"
         build_profiles = self.db.fetchone(
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'build_profiles'"
+            """
+            SELECT tablename AS name
+              FROM pg_tables
+             WHERE schemaname = current_schema()
+               AND tablename = 'build_profiles'
+            """
         )
         if build_profiles is None:
             return None
@@ -426,14 +429,10 @@ class StageRegistryManager:
             SELECT name
               FROM build_profiles
              WHERE deleted_at IS NULL
-               AND EXISTS (
-                   SELECT 1
-                     FROM json_each(skip_stages_json) AS skipped
-                    WHERE skipped.value = ?
-               )
+               AND skip_stages_json @> ?::jsonb
              LIMIT 1
             """,
-            (name,),
+            (json.dumps([name]),),
         )
         if profile_ref is not None:
             return f"Stage '{name}' is referenced by build profile '{profile_ref['name']}'"

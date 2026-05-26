@@ -230,9 +230,13 @@ def test_find_web_dir_require_source_accepts_package_json(tmp_path: Path) -> Non
 def test_is_port_available() -> None:
     from gobby.cli.utils import is_port_available
 
-    # Port 0 is a special case that always returns True
-    result = is_port_available(0, "127.0.0.1")
+    mock_sock = MagicMock()
+
+    with patch("socket.socket", return_value=mock_sock):
+        result = is_port_available(0, "127.0.0.1")
+
     assert result is True
+    mock_sock.bind.assert_called_once_with(("127.0.0.1", 0))
 
 
 # --- stop_ui_server ---
@@ -403,7 +407,7 @@ def test_load_full_config_from_db_no_db(tmp_path: Path) -> None:
     from gobby.cli.utils import load_full_config_from_db
 
     mock_config = MagicMock()
-    mock_config.database_path = str(tmp_path / "nonexistent.db")
+    mock_config.database_url = str(tmp_path / "nonexistent.db")
 
     with patch("gobby.cli.utils.load_config", return_value=mock_config) as mock_load:
         result = load_full_config_from_db()
@@ -414,17 +418,19 @@ def test_load_full_config_from_db_no_db(tmp_path: Path) -> None:
 def test_load_full_config_from_db_with_db(tmp_path: Path) -> None:
     from gobby.cli.utils import load_full_config_from_db
 
-    db_path = tmp_path / "test.db"
-    db_path.write_bytes(b"")  # Create empty file
-
     mock_config = MagicMock()
-    mock_config.database_path = str(db_path)
+    mock_config.hub_backend = "postgres"
+    mock_config.database_url = "postgresql://example"
 
     final_config = MagicMock()
+    mock_db = MagicMock()
+    runtime_cm = MagicMock()
+    runtime_cm.__enter__.return_value = mock_db
+    runtime_cm.__exit__.return_value = False
 
     with (
         patch("gobby.cli.utils.load_config") as mock_load,
-        patch("gobby.cli.utils.LocalDatabase"),
+        patch("gobby.storage.hub.runtime.runtime_hub_database", return_value=runtime_cm),
         patch("gobby.storage.config_store.ConfigStore"),
         patch("gobby.storage.secrets.SecretStore"),
     ):
@@ -436,32 +442,22 @@ def test_load_full_config_from_db_with_db(tmp_path: Path) -> None:
 
 @pytest.mark.no_config_protection
 def test_load_full_config_from_db_reads_ui_enabled_from_config_store(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, hub_db
 ) -> None:
     """Regression for GH #10: CLI must see ui.enabled=true written to config_store."""
     import yaml
 
     from gobby.cli.utils import load_full_config_from_db
     from gobby.storage.config_store import ConfigStore
-    from gobby.storage.database import LocalDatabase
-    from gobby.storage.migrations import run_migrations
 
-    db_path = tmp_path / "gobby.db"
-    db = LocalDatabase(db_path)
-    try:
-        run_migrations(db)
-        ConfigStore(db).set("ui.enabled", True, source="manual")
-    finally:
-        db.close()
-
-    # Steer GOBBY_TEST_PROTECT's database override at our tmp db, not the global one.
-    monkeypatch.setenv("GOBBY_DATABASE_PATH", str(db_path))
+    ConfigStore(hub_db).set("ui.enabled", True, source="manual")
 
     bootstrap_yaml = tmp_path / "bootstrap.yaml"
     bootstrap_yaml.write_text(
         yaml.safe_dump(
             {
-                "database_path": str(db_path),
+                "hub_backend": "postgres",
+                "database_url": "postgresql://example",
                 "daemon_port": 60887,
                 "websocket_port": 60888,
                 "ui_port": 60889,
@@ -469,8 +465,14 @@ def test_load_full_config_from_db_reads_ui_enabled_from_config_store(
             }
         )
     )
+    bootstrap_yaml.chmod(0o600)
 
-    result = load_full_config_from_db(config_file=str(bootstrap_yaml))
+    runtime_cm = MagicMock()
+    runtime_cm.__enter__.return_value = hub_db
+    runtime_cm.__exit__.return_value = False
+
+    with patch("gobby.storage.hub.runtime.runtime_hub_database", return_value=runtime_cm):
+        result = load_full_config_from_db(config_file=str(bootstrap_yaml))
     assert result.ui.enabled is True
 
 
@@ -509,7 +511,7 @@ def test_resolve_project_ref_by_uuid() -> None:
     mock_manager.get.return_value = mock_project
 
     with (
-        patch("gobby.cli.utils.LocalDatabase", return_value=mock_db),
+        patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=mock_db),
         patch("gobby.cli.utils.LocalProjectManager", return_value=mock_manager),
     ):
         result = resolve_project_ref("uuid-abc")
@@ -531,7 +533,7 @@ def test_resolve_project_ref_by_name() -> None:
     mock_manager.get_by_name.return_value = mock_project
 
     with (
-        patch("gobby.cli.utils.LocalDatabase", return_value=mock_db),
+        patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=mock_db),
         patch("gobby.cli.utils.LocalProjectManager", return_value=mock_manager),
     ):
         result = resolve_project_ref("my-project")
@@ -549,7 +551,7 @@ def test_resolve_project_ref_not_found_returns_none() -> None:
     mock_manager.get_by_name.return_value = None
 
     with (
-        patch("gobby.cli.utils.LocalDatabase", return_value=mock_db),
+        patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=mock_db),
         patch("gobby.cli.utils.LocalProjectManager", return_value=mock_manager),
     ):
         result = resolve_project_ref("nonexistent", exit_on_not_found=False)
@@ -567,7 +569,7 @@ def test_resolve_project_ref_not_found_exits() -> None:
     mock_manager.get_by_name.return_value = None
 
     with (
-        patch("gobby.cli.utils.LocalDatabase", return_value=mock_db),
+        patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=mock_db),
         patch("gobby.cli.utils.LocalProjectManager", return_value=mock_manager),
         pytest.raises(SystemExit),
     ):
@@ -604,13 +606,13 @@ def test_get_active_session_id_no_result() -> None:
 
 
 def test_get_active_session_id_creates_db() -> None:
-    """Creates and closes LocalDatabase when none provided."""
+    """Creates and closes the runtime hub database when none provided."""
     from gobby.cli.utils import get_active_session_id
 
     mock_db = MagicMock()
     mock_db.fetchone.return_value = {"id": "sess-auto"}
 
-    with patch("gobby.cli.utils.LocalDatabase", return_value=mock_db):
+    with patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=mock_db):
         result = get_active_session_id(None)
     assert result == "sess-auto"
     mock_db.close.assert_called_once()
@@ -628,7 +630,7 @@ def test_resolve_session_id_no_ref_active() -> None:
     mock_db = MagicMock()
 
     with (
-        patch("gobby.cli.utils.LocalDatabase", return_value=mock_db),
+        patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=mock_db),
         patch("gobby.cli.utils.get_active_session_id", return_value="sess-active"),
     ):
         result = resolve_session_id(None)
@@ -643,7 +645,7 @@ def test_resolve_session_id_no_ref_no_active() -> None:
     mock_db = MagicMock()
 
     with (
-        patch("gobby.cli.utils.LocalDatabase", return_value=mock_db),
+        patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=mock_db),
         patch("gobby.cli.utils.get_active_session_id", return_value=None),
         pytest.raises(click.ClickException, match="No active session"),
     ):
@@ -659,7 +661,7 @@ def test_resolve_session_id_with_ref() -> None:
     mock_manager.resolve_session_reference.return_value = "uuid-resolved"
 
     with (
-        patch("gobby.cli.utils.LocalDatabase", return_value=mock_db),
+        patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=mock_db),
         patch("gobby.cli.utils.get_project_context", return_value={"id": "proj-1"}),
         patch("gobby.cli.utils.SessionManager", return_value=mock_manager),
     ):
@@ -677,7 +679,7 @@ def test_resolve_session_id_value_error() -> None:
     mock_manager.resolve_session_reference.side_effect = ValueError("ambiguous")
 
     with (
-        patch("gobby.cli.utils.LocalDatabase", return_value=mock_db),
+        patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=mock_db),
         patch("gobby.cli.utils.get_project_context", return_value=None),
         patch("gobby.cli.utils.SessionManager", return_value=mock_manager),
         pytest.raises(click.ClickException, match="ambiguous"),
@@ -703,7 +705,7 @@ def test_list_project_names() -> None:
     mock_manager.list.return_value = [p1, p2]
 
     with (
-        patch("gobby.cli.utils.LocalDatabase", return_value=mock_db),
+        patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=mock_db),
         patch("gobby.cli.utils.LocalProjectManager", return_value=mock_manager),
     ):
         result = list_project_names()
@@ -819,25 +821,15 @@ def test_is_process_alive_no_such_process() -> None:
 def test_init_local_storage(tmp_path: Path) -> None:
     from gobby.cli.utils import init_local_storage
 
-    db_path = tmp_path / "sub" / "test.db"
-
-    mock_config = MagicMock()
-    mock_config.database_path = str(db_path)
-
     mock_db = MagicMock()
 
-    with (
-        patch("gobby.cli.utils.load_config", return_value=mock_config),
-        patch("gobby.storage.database.LocalDatabase", return_value=mock_db) as mock_db_cls,
-        patch("gobby.storage.migrations.run_migrations") as mock_migrate,
-    ):
+    with patch(
+        "gobby.storage.hub.runtime.open_runtime_hub_database", return_value=mock_db
+    ) as mock_open:
         result = init_local_storage()
 
     assert result is mock_db
-    mock_db_cls.assert_called_once_with(db_path)
-    mock_migrate.assert_called_once_with(mock_db)
-    # Directory should have been created
-    assert db_path.parent.exists()
+    mock_open.assert_called_once_with()
 
 
 # ---------------------------------------------------------------------------

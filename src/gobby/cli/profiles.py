@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import json
 import logging
-import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict
 from typing import Any, TypeGuard
 
 import click
+import psycopg
 
 from gobby.config.build import DeliveryMode, Isolation
 from gobby.storage.build_profiles import (
@@ -19,21 +19,19 @@ from gobby.storage.build_profiles import (
     BuildProfileManager,
     BuildProfileSource,
 )
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.runtime import open_runtime_hub_database
 
 logger = logging.getLogger(__name__)
 
 
 @contextmanager
 def _open_manager(*, sync: bool = True) -> Iterator[BuildProfileManager]:
-    db = LocalDatabase()
+    db = open_runtime_hub_database(apply_migrations=False)
     try:
-        run_migrations(db)
         if sync:
             BuildProfileLoader().sync(db)
         manager = BuildProfileManager(db)
-    except (OSError, RuntimeError, sqlite3.Error, BuildProfileError) as exc:
+    except (OSError, RuntimeError, psycopg.Error, BuildProfileError) as exc:
         logger.exception(
             "Failed to open build profile manager",
             extra={"sync": sync, "error_type": type(exc).__name__},

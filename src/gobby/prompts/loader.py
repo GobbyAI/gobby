@@ -14,7 +14,7 @@ import logging
 from typing import Any, cast
 
 from gobby.prompts.models import PromptTemplate
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -30,14 +30,14 @@ class PromptLoader:
 
     def __init__(
         self,
-        db: DatabaseProtocol | None = None,
+        db: HubDatabase | None = None,
         project_id: str | None = None,
         notifier: Any | None = None,
     ):
         """Initialize the prompt loader.
 
         Args:
-            db: Database connection (if None, lazily creates a LocalDatabase)
+            db: Database connection (if None, lazily creates an active hub handle)
             project_id: Project context for precedence resolution
             notifier: Optional PromptChangeNotifier for cache invalidation
         """
@@ -57,12 +57,12 @@ class PromptLoader:
         """Clear the template cache."""
         self._cache.clear()
 
-    def _get_db(self) -> DatabaseProtocol:
+    def _get_db(self) -> HubDatabase:
         """Get the database connection, lazily creating one if needed."""
         if self._db is None:
-            from gobby.storage.database import LocalDatabase
+            from gobby.storage.hub.runtime import open_runtime_hub_database
 
-            self._db = LocalDatabase()
+            self._db = open_runtime_hub_database(apply_migrations=False)
         return self._db
 
     def _get_manager(self) -> Any:

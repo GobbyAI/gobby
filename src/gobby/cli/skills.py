@@ -22,14 +22,14 @@ from gobby.skills.metadata import (
     set_nested_value,
     unset_nested_value,
 )
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.storage.skills import LocalSkillManager
 from gobby.utils.daemon_client import DaemonClient
 
 
 def get_skill_storage() -> LocalSkillManager:
     """Get skill storage manager."""
-    db = LocalDatabase()
+    db = open_runtime_hub_database(apply_migrations=False)
     return LocalSkillManager(db)
 
 
@@ -868,13 +868,9 @@ def hub_add(
 
     # Write hub config via ConfigStore (DB-first)
     try:
-        from gobby.cli.utils import load_full_config_from_db
         from gobby.storage.config_store import ConfigStore
-        from gobby.storage.database import LocalDatabase
 
-        config = load_full_config_from_db()
-        db_path = Path(config.database_path).expanduser()
-        db = LocalDatabase(db_path)
+        db = open_runtime_hub_database(apply_migrations=False)
         try:
             store = ConfigStore(db)
             # Check if hub already exists

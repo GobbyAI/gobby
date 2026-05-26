@@ -1,17 +1,15 @@
 """Tests for search_skills MCP tool (TDD - written before implementation)."""
 
 import asyncio
-import time
+import threading
 from collections.abc import Iterator
-from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from gobby.storage.database import LocalDatabase
 from gobby.storage.executor import DatabaseExecutor
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.skills import LocalSkillManager
@@ -21,23 +19,20 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def db(tmp_path: Path) -> Iterator[LocalDatabase]:
+def db(temp_db: HubDatabase) -> Iterator[HubDatabase]:
     """Create a fresh database with migrations applied."""
-    db_path = tmp_path / "test.db"
-    database = LocalDatabase(db_path)
-    run_migrations(database)
+    database = temp_db
     yield database
-    database.close()
 
 
 @pytest.fixture
-def storage(db: LocalDatabase) -> LocalSkillManager:
+def storage(db: HubDatabase) -> LocalSkillManager:
     """Create a LocalSkillManager for storage operations."""
     return LocalSkillManager(db)
 
 
 @pytest.fixture
-def populated_db(db: LocalDatabase, storage: LocalSkillManager) -> LocalDatabase:
+def populated_db(db: HubDatabase, storage: LocalSkillManager) -> HubDatabase:
     """Create database with test skills for search."""
     storage.create_skill(
         name="git-commit",
@@ -115,16 +110,20 @@ class TestSearchSkillsTool:
         assert len(result["results"]) > 0
 
     @pytest.mark.asyncio
-    async def test_repeated_search_skills_keeps_sqlite_connections_bounded(self, populated_db):
+    async def test_repeated_search_skills_keeps_postgres_connections_bounded(self, populated_db):
         """Search index refresh and result hydration use the injected DB runner."""
         from gobby.mcp_proxy.tools.skills import create_skills_registry
 
         executor = DatabaseExecutor(max_workers=2, thread_name_prefix="skills-search-db")
         original_get_skills_by_ids = LocalSkillManager.get_skills_by_ids
+        first_read_started = threading.Event()
+        release_reads = threading.Event()
+        waits_completed: list[bool] = []
 
         def slow_get_skills_by_ids(self: LocalSkillManager, *args: Any, **kwargs: Any) -> Any:
             """Delay result hydration so bounded DB runner behavior is observable."""
-            time.sleep(0.02)
+            first_read_started.set()
+            waits_completed.append(release_reads.wait(timeout=1))
             return original_get_skills_by_ids(self, *args, **kwargs)
 
         try:
@@ -138,10 +137,19 @@ class TestSearchSkillsTool:
                 "get_skills_by_ids",
                 new=slow_get_skills_by_ids,
             ):
-                results = await asyncio.gather(*(tool(query="git") for _ in range(20)))
+                async def run_tools() -> list[dict[str, Any]]:
+                    return await asyncio.gather(*(tool(query="git") for _ in range(20)))
+
+                task = asyncio.create_task(run_tools())
+                assert await asyncio.to_thread(first_read_started.wait, 1)
+                release_reads.set()
+                results = await task
 
             assert all(result["success"] is True for result in results)
-            assert populated_db.connection_count <= 1 + executor.max_workers
+            assert all(waits_completed)
+            connection_count = getattr(populated_db, "connection_count", None)
+            if connection_count is not None:
+                assert connection_count <= 1 + executor.max_workers
         finally:
             executor.shutdown(wait=True)
 

@@ -252,9 +252,9 @@ src/gobby/
 │   ├── parser.py         # SKILL.md parser
 │   └── sync.py           # Bundled skill sync on startup
 │
-├── storage/              # SQLite storage layer (~20 modules)
-│   ├── database.py       # LocalDatabase (connection management)
-│   ├── migrations.py     # Schema migrations
+├── storage/              # PostgreSQL hub storage and legacy import helpers
+│   ├── hub/postgres.py   # PostgresHubDatabase (connection management)
+│   ├── migrations.py     # PostgreSQL schema migrations
 │   ├── sessions.py       # Session CRUD
 │   ├── tasks.py          # Task CRUD
 │   └── ...               # Memory, skills, agents, workflows, etc.
@@ -284,8 +284,8 @@ src/gobby/
 
 | Path | Purpose |
 | --- | --- |
-| `~/.gobby/bootstrap.yaml` | Pre-DB bootstrap settings (5 fields: ports, db_path, bind_host) |
-| `~/.gobby/gobby-hub.db` | SQLite database |
+| `~/.gobby/bootstrap.yaml` | Pre-DB bootstrap settings, including ports, bind host, and Postgres install metadata |
+| OS keyring `gobby:postgres_database_url` / bootstrap `database_url_ref` | Runtime PostgreSQL hub DSN |
 | `~/.gobby/logs/` | Log files |
 | `.gobby/project.json` | Project metadata |
 | `.gobby/tasks.jsonl` | Task sync file (git-native) |
@@ -343,9 +343,11 @@ Build state is resolved before dispatch:
 dispatchable state. The CLI command, MCP tool (`gobby-build:build_task`), and HTTP
 route (`POST /api/build`) must all call the shared build service in
 `src/gobby/build/service.py`, returning the same `BuildResult`.
-`gobby unbuild <ref>` is the task-scoped CLI inverse for an existing built task:
-it stops automation for the resolved task or subtree through the shared build
-control path without deleting task history or build artifacts.
+`gobby build stop <ref> [--yes]` is the task-scoped CLI inverse for an
+existing built task: it stops automation for the resolved task or subtree
+through the shared build control path without deleting task history or build
+artifacts. Sibling lifecycle actions on the same command are `resume`,
+`clean`, and `restart`.
 
 Concurrency and audit data are adjacent to tasks:
 
@@ -413,14 +415,17 @@ async def fetch_data(url: str) -> dict[str, Any]:
         return response.json()
 ```
 
-### SQLite Connections
+### Database Access
 
-Always use connection context manager:
+Use the hub database transaction boundary and project-standard `$N` placeholders:
 
 ```python
 with self.db.transaction() as conn:
-    conn.execute("INSERT INTO tasks VALUES (?, ?)", (task_id, title))
+    conn.execute("INSERT INTO tasks (id, title) VALUES ($1, $2)", (task_id, title))
 ```
+
+Legacy SQLite access is limited to one-shot import tooling such as
+`gobby postgres migrate-from-sqlite`.
 
 ### Logging
 
@@ -501,7 +506,9 @@ def test_integration() -> None:
 | Type errors | Run `uv run mypy src/` |
 | Lint errors | Run `uv run ruff check src/ --fix` |
 | Daemon not starting | Check logs in `~/.gobby/logs/` |
-| MCP connection issues | Verify daemon is running: `gobby status` |
+| Postgres connection failures | Run `uv run gobby postgres status` and verify the keyring/bootstrap `database_url` |
+| Legacy SQLite hub import | Use `uv run gobby postgres migrate-from-sqlite` |
+| MCP connection issues | Verify daemon is running: `uv run gobby status` |
 
 ### Debugging Tips
 

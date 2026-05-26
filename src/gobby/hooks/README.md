@@ -117,7 +117,7 @@ from unittest.mock import patch, MagicMock
 @pytest.fixture
 def mock_hook_manager():
     with (
-        patch("gobby.hooks.hook_manager.LocalDatabase"),
+        patch("gobby.hooks.hook_manager.HubDatabase"),
         patch("gobby.hooks.hook_manager.DaemonClient"),
     ):
         manager = HookManager(log_file="/tmp/test.log")

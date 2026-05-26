@@ -23,7 +23,7 @@ class CodeIndexContext:
     """Daemon-side context for code index operations.
 
     Replaces the old CodeIndexer orchestrator — gcode now handles
-    parsing, hashing, chunking, and writing to SQLite. This object
+    parsing, hashing, chunking, and hub writes. This object
     provides access to storage/graph/vectors for the sync worker,
     maintenance loop, and HTTP invalidate endpoint.
     """
@@ -59,7 +59,7 @@ class CodeIndexContext:
         return self._config
 
     async def run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-        """Run code-index SQLite work on the daemon DB executor when available."""
+        """Run code-index hub work on the daemon DB executor when available."""
         if self._run_db is None:
             return await asyncio.to_thread(func, *args, **kwargs)
         return await self._run_db(func, *args, **kwargs)
@@ -80,8 +80,22 @@ class CodeIndexContext:
 
         logger.info(f"Invalidated code index for project {project_id}")
 
+    async def close_graph_client(self) -> None:
+        """Close and clear the code graph client."""
+        graph = self._graph
+        if graph is None:
+            return
+        try:
+            await graph.close()
+        finally:
+            self._graph = None
+
+    def clear_graph_client(self) -> None:
+        """Clear the code graph client reference without awaiting close."""
+        self._graph = None
+
     async def clear_graph(self, project_id: str) -> dict[str, Any]:
-        """Clear only the Neo4j code-graph projection for one project."""
+        """Clear only the FalkorDB code-graph projection for one project."""
         if self._graph is None or not self._graph.available:
             return {"success": False, "error": "Code graph not available", "project_id": project_id}
 
@@ -101,7 +115,7 @@ class CodeIndexContext:
             return {"success": False, "error": str(e), "project_id": project_id}
 
     async def rebuild_graph(self, project_id: str, limit: int = 10_000) -> dict[str, Any]:
-        """Rebuild the Neo4j code graph for a project from SQLite source data."""
+        """Rebuild the FalkorDB code graph for a project from indexed hub rows."""
         if self._graph is None or not self._graph.available:
             return {"success": False, "error": "Code graph not available", "project_id": project_id}
 

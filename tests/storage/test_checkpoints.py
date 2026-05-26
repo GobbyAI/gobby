@@ -5,13 +5,13 @@ from __future__ import annotations
 import pytest
 
 from gobby.storage.checkpoints import Checkpoint, LocalCheckpointManager
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture(autouse=True)
-def _seed_parents(temp_db: LocalDatabase) -> None:
+def _seed_parents(temp_db: HubDatabase) -> None:
     """Insert parent records so checkpoint FK constraints pass."""
     with temp_db.transaction() as conn:
         conn.execute(
@@ -23,11 +23,11 @@ def _seed_parents(temp_db: LocalDatabase) -> None:
         )
         conn.execute(
             "INSERT INTO tasks (id, project_id, title, task_type, category, created_at, updated_at) "
-            "VALUES ('task-1', 'proj-1', 'test task', 'task', 'code', datetime('now'), datetime('now'))"
+            "VALUES ('task-1', 'proj-1', 'test task', 'task', 'code', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
         )
         conn.execute(
             "INSERT INTO tasks (id, project_id, title, task_type, category, created_at, updated_at) "
-            "VALUES ('task-2', 'proj-1', 'test task 2', 'task', 'code', datetime('now'), datetime('now'))"
+            "VALUES ('task-2', 'proj-1', 'test task 2', 'task', 'code', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
         )
         for i in range(5):
             conn.execute(
@@ -59,7 +59,7 @@ def _make_checkpoint(
 
 
 @pytest.fixture
-def manager(temp_db: LocalDatabase) -> LocalCheckpointManager:
+def manager(temp_db: HubDatabase) -> LocalCheckpointManager:
     return LocalCheckpointManager(temp_db)
 
 

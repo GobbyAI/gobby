@@ -1,10 +1,200 @@
 """Focused tests for session storage behavior."""
 
+import inspect
+from collections.abc import Sequence
+
 import pytest
 
+from gobby.storage.session_models import Session
 from gobby.storage.sessions import SYSTEM_SESSION_ID, SessionManager
+from gobby.storage.sessions import _crud as session_crud
+from gobby.storage.sessions import _field_update as session_field_update
+from gobby.storage.sessions import _upsert as session_upsert
 
 pytestmark = pytest.mark.unit
+
+
+def test_session_registration_boolean_case_is_postgres_safe() -> None:
+    source = inspect.getsource(session_crud)
+    upsert_source = inspect.getsource(session_upsert)
+
+    assert "CASE WHEN ? THEN 1 ELSE is_local END" not in source
+    assert "CASE WHEN ? THEN TRUE ELSE is_local END" not in source
+    assert "is_local = ?" in source
+    assert "WHEN ? = -1 THEN is_local" not in upsert_source
+    assert "WHEN ? THEN TRUE" not in upsert_source
+    assert "WHEN ? THEN ?" in upsert_source
+    assert "?, 0, 0, 0, 0, NULL" not in source
+    assert "?, FALSE, 0, 0, 0, NULL" in source
+
+
+def test_session_had_edits_updates_use_boolean_literals() -> None:
+    source = inspect.getsource(session_field_update)
+
+    assert "had_edits = 1" not in source
+    assert "had_edits = 0" not in source
+    assert "had_edits = TRUE" in source
+    assert "had_edits = FALSE" in source
+
+
+def test_session_unique_conflict_detection_uses_integrity_error_args() -> None:
+    """Session unique-conflict matching must use exception args, not masked str()."""
+
+    class MaskedIntegrityError(Exception):
+        def __str__(self) -> str:
+            return "masked"
+
+    assert session_upsert.is_session_unique_conflict(
+        MaskedIntegrityError('duplicate key value violates unique constraint "idx_sessions_unique"')
+    )
+    assert not session_upsert.is_session_unique_conflict(
+        MaskedIntegrityError(
+            'duplicate key value violates unique constraint "idx_sessions_seq_num"'
+        )
+    )
+    assert not session_upsert.is_session_unique_conflict(
+        MaskedIntegrityError("UNIQUE constraint failed: other_table.external_id")
+    )
+
+
+def test_update_existing_session_can_set_clear_or_preserve_is_local(
+    session_manager: SessionManager,
+    sample_project: dict,
+) -> None:
+    session = session_manager.register(
+        external_id="local-flag",
+        machine_id="machine",
+        source="codex",
+        project_id=sample_project["id"],
+        is_local=True,
+    )
+
+    with session_manager.db.transaction() as conn:
+        cleared = session_upsert.update_existing_session(
+            session_manager,
+            conn,
+            session,
+            title=None,
+            transcript_path=None,
+            git_branch=None,
+            parent_session_id=None,
+            terminal_context_json=None,
+            workflow_name=None,
+            is_local=False,
+            sandbox_enabled=None,
+            sandbox_policy_hash=None,
+            now="2026-05-22T00:00:00+00:00",
+        )
+
+    assert cleared.is_local is False
+
+    with session_manager.db.transaction() as conn:
+        preserved = session_upsert.update_existing_session(
+            session_manager,
+            conn,
+            cleared,
+            title=None,
+            transcript_path=None,
+            git_branch=None,
+            parent_session_id=None,
+            terminal_context_json=None,
+            workflow_name=None,
+            is_local=None,
+            sandbox_enabled=None,
+            sandbox_policy_hash=None,
+            now="2026-05-22T00:00:01+00:00",
+        )
+
+    assert preserved.is_local is False
+
+
+class _CaptureConnection:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, tuple[object, ...]]] = []
+
+    def execute(self, sql: str, params: Sequence[object] = ()) -> object:
+        self.calls.append((sql, tuple(params)))
+        return object()
+
+
+class _StaticSessionGetter:
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def get(self, session_id: str) -> Session | None:
+        return self.session if session_id == self.session.id else None
+
+
+def _session_stub() -> Session:
+    return Session(
+        id="session-1",
+        external_id="external-1",
+        machine_id="machine-1",
+        source="codex",
+        project_id="project-1",
+        title=None,
+        status="active",
+        transcript_path=None,
+        summary_path=None,
+        summary_markdown=None,
+        git_branch=None,
+        parent_session_id=None,
+        created_at="2026-05-22T00:00:00+00:00",
+        updated_at="2026-05-22T00:00:00+00:00",
+    )
+
+
+def test_update_existing_session_binds_is_local_as_booleans_for_postgres() -> None:
+    session = _session_stub()
+    conn = _CaptureConnection()
+
+    session_upsert.update_existing_session(
+        _StaticSessionGetter(session),
+        conn,
+        session,
+        title=None,
+        transcript_path=None,
+        git_branch=None,
+        parent_session_id=None,
+        terminal_context_json=None,
+        workflow_name=None,
+        is_local=True,
+        sandbox_enabled=True,
+        sandbox_policy_hash=None,
+        now="2026-05-22T00:00:01+00:00",
+    )
+
+    params = conn.calls[0][1]
+
+    assert params[6:9] == (True, True, True)
+    assert all(type(value) is bool for value in params[6:9])
+
+
+def test_update_existing_session_preserve_is_local_uses_boolean_guard_param() -> None:
+    session = _session_stub()
+    conn = _CaptureConnection()
+
+    session_upsert.update_existing_session(
+        _StaticSessionGetter(session),
+        conn,
+        session,
+        title=None,
+        transcript_path=None,
+        git_branch=None,
+        parent_session_id=None,
+        terminal_context_json=None,
+        workflow_name=None,
+        is_local=None,
+        sandbox_enabled=None,
+        sandbox_policy_hash=None,
+        now="2026-05-22T00:00:01+00:00",
+    )
+
+    params = conn.calls[0][1]
+
+    assert params[6:9] == (False, False, None)
+    assert type(params[6]) is bool
+    assert type(params[7]) is bool
 
 
 class TestSessionManagerRegistration:
@@ -180,6 +370,40 @@ class TestSessionManagerRegistration:
         # Should be the same session with updated title
         assert session2.id == session1.id
         assert session2.title == "Updated"
+
+    def test_register_recovers_legacy_unique_conflict_across_session_types(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Older DBs had uniqueness without session_type; reuse that row on conflict."""
+        created = session_manager.register(
+            external_id="runtime-key",
+            machine_id="machine-1",
+            source="codex",
+            project_id=sample_project["id"],
+            title="Web chat",
+            session_type="web_chat",
+        )
+        session_manager.db.execute(
+            """
+            CREATE UNIQUE INDEX idx_sessions_unique_legacy_test
+            ON sessions(external_id, machine_id, source, project_id)
+            """
+        )
+
+        recovered = session_manager.register(
+            external_id="runtime-key",
+            machine_id="machine-1",
+            source="codex",
+            project_id=sample_project["id"],
+            title="Recovered",
+            session_type="terminal",
+        )
+
+        assert recovered.id == created.id
+        assert recovered.session_type == "web_chat"
+        assert recovered.title == "Recovered"
 
     def test_get_session(
         self,

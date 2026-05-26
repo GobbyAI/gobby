@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from gobby.prompts.models import parse_frontmatter
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.prompts import LocalPromptManager
 
 __all__ = ["get_bundled_prompts_path", "sync_bundled_prompts"]
@@ -28,7 +28,7 @@ def get_bundled_prompts_path() -> Path:
     return get_install_dir() / "shared" / "prompts"
 
 
-def sync_bundled_prompts(db: DatabaseProtocol) -> dict[str, Any]:
+def sync_bundled_prompts(db: HubDatabase) -> dict[str, Any]:
     """Sync bundled prompts from install/shared/prompts/ to the database.
 
     This function:

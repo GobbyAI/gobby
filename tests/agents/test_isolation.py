@@ -5,6 +5,7 @@ Tests the isolation abstraction layer for spawn_agent unified API.
 """
 
 import json
+import subprocess
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -22,6 +23,7 @@ from gobby.agents.isolation import (
     generate_branch_name,
     get_isolation_handler,
     provider_mcp_config_error,
+    repair_isolation_environment,
 )
 
 pytestmark = pytest.mark.unit
@@ -70,40 +72,123 @@ class TestIsolationContext:
 class TestEnsureIsolationCodeIndex:
     """Tests for pre-spawn gcode indexing in isolated workspaces."""
 
+    @staticmethod
+    def _proc(returncode: int = 0, stderr: bytes = b"") -> AsyncMock:
+        proc = AsyncMock()
+        proc.returncode = returncode
+        proc.communicate.return_value = (b"", stderr)
+        return proc
+
     @pytest.mark.asyncio
     async def test_runs_gcode_index_in_workspace(self, tmp_path: Path) -> None:
-        proc = AsyncMock()
-        proc.returncode = 0
-        proc.communicate.return_value = (b"", b"")
+        proc = self._proc()
 
         with (
-            patch("gobby.utils.native_bin.resolve_native_bin", return_value="/tmp/gcode"),
+            patch("gobby.agents.code_index.resolve_native_bin", return_value="/tmp/gcode"),
             patch(
-                "gobby.agents.isolation.asyncio.create_subprocess_exec",
+                "gobby.agents.code_index.asyncio.create_subprocess_exec",
                 new=AsyncMock(return_value=proc),
             ) as create_proc,
         ):
-            await ensure_isolation_code_index(str(tmp_path))
+            result = await ensure_isolation_code_index(str(tmp_path))
 
-        create_proc.assert_awaited_once()
-        assert create_proc.call_args.args[:3] == ("/tmp/gcode", "index", "--quiet")
-        assert create_proc.call_args.kwargs["cwd"] == str(tmp_path)
+        assert result.env == {}
+        assert create_proc.await_count == 3
+        calls = create_proc.await_args_list
+        assert calls[0].args[:4] == ("/tmp/gcode", "projects", "--quiet", "--format")
+        assert calls[1].args[:4] == ("/tmp/gcode", "index", "--quiet", "--project")
+        assert calls[1].args[4] == str(tmp_path)
+        assert calls[2].args[:3] == ("/tmp/gcode", "search-content", "__gobby_code_index_smoke__")
+        assert calls[0].kwargs["cwd"] == str(tmp_path)
+
+    @pytest.mark.asyncio
+    async def test_database_url_creates_gcode_wrapper_runtime(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        proc = self._proc()
+        runtime_root = tmp_path / "runtime"
+        workspace = tmp_path / "workspace"
+        source_home = tmp_path / "home"
+        monkeypatch.setenv("GOBBY_HOME", str(source_home))
+        workspace.mkdir()
+        subprocess.run(["git", "init"], cwd=workspace, check=True, capture_output=True)
+
+        with (
+            patch("gobby.agents.code_index.resolve_native_bin", return_value="/tmp/gcode"),
+            patch(
+                "gobby.agents.code_index.asyncio.create_subprocess_exec",
+                new=AsyncMock(return_value=proc),
+            ) as create_proc,
+        ):
+            result = await ensure_isolation_code_index(
+                str(workspace),
+                database_url="postgresql://gobby:secret@localhost/gobby",
+                daemon_bind_host="127.0.0.1",
+                daemon_port=61234,
+                runtime_root=runtime_root,
+            )
+
+        wrapper = workspace / ".gobby" / "bin" / "gcode"
+        assert result.wrapper_path == str(wrapper)
+        assert result.runtime_home is not None
+        assert result.env["PATH"].split(":")[0] == str(wrapper.parent)
+        assert wrapper.read_text() == (
+            f'#!/bin/sh\nexport GOBBY_HOME={result.runtime_home}\nexec /tmp/gcode "$@"\n'
+        )
+        bootstrap = Path(result.runtime_home) / "bootstrap.yaml"
+        bootstrap_text = bootstrap.read_text()
+        assert "database_url: postgresql://gobby:secret@localhost/gobby" in bootstrap_text
+        assert "database_url_ref" not in bootstrap_text
+        assert "bind_host: 127.0.0.1" in bootstrap_text
+        assert "daemon_port: 61234" in bootstrap_text
+        assert create_proc.await_args_list[0].args[0] == str(wrapper)
+        status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=workspace,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        assert status.stdout == ""
 
     @pytest.mark.asyncio
     async def test_raises_when_gcode_index_fails(self, tmp_path: Path) -> None:
-        proc = AsyncMock()
-        proc.returncode = 2
-        proc.communicate.return_value = (b"", b"parse failed")
+        proc_ok = self._proc()
+        proc_fail = self._proc(returncode=2, stderr=b"parse failed")
 
         with (
-            patch("gobby.utils.native_bin.resolve_native_bin", return_value="/tmp/gcode"),
+            patch("gobby.agents.code_index.resolve_native_bin", return_value="/tmp/gcode"),
             patch(
-                "gobby.agents.isolation.asyncio.create_subprocess_exec",
-                new=AsyncMock(return_value=proc),
+                "gobby.agents.code_index.asyncio.create_subprocess_exec",
+                new=AsyncMock(side_effect=[proc_ok, proc_fail]),
             ),
         ):
             with pytest.raises(RuntimeError, match="gcode_index_failed:2:parse failed"):
                 await ensure_isolation_code_index(str(tmp_path))
+
+
+class TestRepairIsolationEnvironment:
+    """Tests for shared isolated workspace repair."""
+
+    @pytest.mark.asyncio
+    async def test_preseeds_python_environment(self, tmp_path: Path) -> None:
+        with (
+            patch("gobby.agents.isolation._copy_cli_hooks", new=AsyncMock()),
+            patch("gobby.utils.project_context.ensure_project_json_for_isolation"),
+            patch(
+                "gobby.agents.isolation.preseed_isolated_python_environment", new=AsyncMock()
+            ) as preseed,
+            patch("gobby.agents.isolation._patch_mcp_config_for_isolation", new=AsyncMock()),
+        ):
+            result = await repair_isolation_environment(
+                main_repo_path="/main/repo",
+                isolated_path=str(tmp_path),
+                provider="codex",
+            )
+
+        assert result is None
+        assert tmp_path.exists()
+        preseed.assert_awaited_once_with(str(tmp_path))
 
 
 class TestSpawnConfig:
@@ -408,6 +493,7 @@ class TestWorktreeIsolationHandler:
         """Test prepare_environment reuses existing worktree for same branch."""
         mock_git_manager = MagicMock()
         mock_git_manager.repo_path = "/path/to/main/repo"
+        mock_git_manager.get_current_branch.return_value = "main"
 
         mock_worktree_storage = MagicMock()
         mock_worktree_storage.get_by_branch.return_value = MagicMock(
@@ -441,11 +527,20 @@ class TestWorktreeIsolationHandler:
                 "gobby.agents.isolation.repair_isolation_environment",
                 new=AsyncMock(),
             ) as repair,
+            patch(
+                "gobby.agents.isolation.sync_reused_worktree_to_base",
+                new=AsyncMock(),
+            ) as sync,
         ):
             ctx = await handler.prepare_environment(config)
 
         assert ctx.worktree_id == "existing-wt-456"
         assert ctx.cwd == "/tmp/worktrees/existing-branch"
+        sync.assert_awaited_once_with(
+            git_manager=mock_git_manager,
+            worktree_path="/tmp/worktrees/existing-branch",
+            base_branch="main",
+        )
         repair.assert_awaited_once_with(
             main_repo_path="/path/to/main/repo",
             isolated_path="/tmp/worktrees/existing-branch",

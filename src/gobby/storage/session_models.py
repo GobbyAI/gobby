@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -83,7 +84,7 @@ class Session:
     closed_task_refs: list[int] = field(default_factory=list)
 
     @classmethod
-    def from_row(cls, row: Any) -> Session:
+    def from_row(cls, row: Mapping[str, Any]) -> Session:
         """Create Session from database row."""
         is_local: bool
         if "is_local" in row.keys() and row["is_local"] is not None:
@@ -172,7 +173,7 @@ class Session:
             return None
 
     @classmethod
-    def _parse_json_field(cls, row: Any, field_name: str) -> dict[str, Any] | None:
+    def _parse_json_field(cls, row: Mapping[str, Any], field_name: str) -> dict[str, Any] | None:
         """Parse a JSON field from a database row, returning None on missing/malformed data."""
         if field_name not in row.keys():
             return None

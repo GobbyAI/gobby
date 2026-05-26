@@ -7,12 +7,13 @@ Clones are full repository copies while worktrees share a single .git directory.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.id import generate_prefixed_id
 
 logger = logging.getLogger(__name__)
@@ -48,7 +49,7 @@ class Clone:
     workspace_role: str = "task"
 
     @classmethod
-    def from_row(cls, row: Any) -> Clone:
+    def from_row(cls, row: Mapping[str, Any]) -> Clone:
         """Create Clone from database row."""
 
         def _safe_get(field: str) -> Any:
@@ -113,7 +114,7 @@ class Clone:
 class LocalCloneManager:
     """Manager for local clone storage."""
 
-    def __init__(self, db: DatabaseProtocol):
+    def __init__(self, db: HubDatabase):
         """Initialize with database connection."""
         self.db = db
 

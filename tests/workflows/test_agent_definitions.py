@@ -46,12 +46,14 @@ def _blocked_mcp_tools(step: dict[str, Any]) -> set[str]:
 def test_build_smoke_agent_runtime_mappings() -> None:
     expected = {
         "backend-developer": ("codex", "gpt-5.5", "xhigh"),
+        "fullstack-developer": ("codex", "gpt-5.5", "xhigh"),
+        "frontend-developer": ("codex", "gpt-5.5", "high"),
         "tech-writer": ("codex", "gpt-5.5", "high"),
         "qa-reviewer": ("claude", "opus", "xhigh"),
         "doc-reviewer": ("claude", "opus", "xhigh"),
         "holistic-reviewer": ("codex", "gpt-5.5", "xhigh"),
         "merge-orchestrator": ("claude", "opus", "xhigh"),
-        "merge-worker": ("gemini", "gemini-3.1-pro-preview", "high"),
+        "merge-worker": ("claude", "sonnet", "high"),
     }
 
     for agent_name, (provider, model, reasoning_effort) in expected.items():
@@ -61,6 +63,31 @@ def test_build_smoke_agent_runtime_mappings() -> None:
         assert agent["provider"] == provider
         assert agent["model"] == model
         assert agent["reasoning_effort"] == reasoning_effort
+
+
+def test_restricted_skill_load_steps_use_gobby_proxy_guidance() -> None:
+    """Restricted load-skill steps should instruct agents to use the Gobby proxy."""
+    for path in AGENTS_DIR.glob("*.yaml"):
+        agent = _load_yaml(path)
+        for step in agent.get("steps") or []:
+            allowed_mcp_tools = step.get("allowed_mcp_tools")
+            allowed_tools = step.get("allowed_tools")
+            if not (
+                isinstance(allowed_mcp_tools, list)
+                and "gobby-skills:get_skill" in allowed_mcp_tools
+                and allowed_tools != "all"
+            ):
+                continue
+
+            status = step.get("status_message") or ""
+            label = f"{path.name}:{step.get('name')}"
+            assert "mcp__gobby__* proxy tools" in status, label
+            assert 'list_tools("gobby-skills")' in status, label
+            assert 'get_tool_schema("gobby-skills", "get_skill")' in status, label
+            assert 'call_tool("gobby-skills", "get_skill"' in status, label
+            assert "native Skill" in status, label
+            assert "GitHub/app connector" in status, label
+            assert "Computer Use tools" in status, label
 
 
 def test_holistic_review_skill_defines_methodology_and_verdict_block() -> None:
@@ -101,11 +128,14 @@ def test_holistic_reviewer_loads_skill_reads_files_and_terminates_cleanly() -> N
     terminate = _step(agent, "terminate")
 
     assert "gobby-skills:get_skill" in _allowed_mcp_tools(load_skill)
-    assert {"holistic-review", "tech-writer"}.issubset(
-        set(agent["step_variables"]["required_skills"])
-    )
-    assert 'get_skill(name="holistic-review")' in load_skill["status_message"]
-    assert 'get_skill(name="tech-writer")' in load_skill["status_message"]
+    assert {
+        "code-index",
+        "holistic-review",
+        "tech-writer",
+        "task-transitions",
+    }.issubset(set(agent["step_variables"]["required_skills"]))
+    for skill_name in agent["step_variables"]["required_skills"]:
+        assert f'get_skill(name="{skill_name}")' in load_skill["status_message"]
     assert "Discovery Brief" in agent["instructions"]
     assert "descendant task set" in agent["instructions"]
     assert review["allowed_tools"] == "all"
@@ -172,7 +202,8 @@ def test_qa_reviewer_records_review_verdict_without_closing_task() -> None:
     ("agent_name", "tool_words"),
     [
         ("frontend-developer", {"npm", "pnpm", "yarn", "playwright", "vite", "eslint"}),
-        ("backend-developer", {"pytest", "mypy", "ruff", "sqlite3", "uv", "poetry"}),
+        ("backend-developer", {"pytest", "mypy", "ruff", "psql", "uv", "poetry"}),
+        ("fullstack-developer", {"pytest", "ruff", "npm", "pnpm", "playwright", "uv"}),
     ],
 )
 def test_developer_agents_support_toolchain_allowlists_and_additional_skills(
@@ -180,12 +211,23 @@ def test_developer_agents_support_toolchain_allowlists_and_additional_skills(
     tool_words: set[str],
 ) -> None:
     agent = _agent(agent_name)
+    load_required = _step(agent, "load_required_skills")
     load_skills = _step(agent, "load_additional_skills")
     implement = _step(agent, "implement")
     terminate = _step(agent, "terminate")
 
     tool_allowlist = set(agent["skills"]["tool_allowlist"])
     assert tool_words.issubset(tool_allowlist)
+    assert agent["step_variables"]["required_skills"] == [
+        "development-discipline",
+        "task-transitions",
+    ]
+    assert "gobby-skills:get_skill" in _allowed_mcp_tools(load_required)
+    for skill_name in agent["step_variables"]["required_skills"]:
+        assert f'get_skill(name="{skill_name}")' in load_required["status_message"]
+    assert "development-discipline" in agent["instructions"]
+    assert "task-transitions" in agent["instructions"]
+    assert "test-driven-development" in agent["instructions"]
     assert "gobby-skills:get_skill" in _allowed_mcp_tools(load_skills)
     assert "additional_skills" in load_skills["status_message"]
     assert "additional_skills_loaded" in agent["step_variables"]
@@ -197,6 +239,39 @@ def test_developer_agents_support_toolchain_allowlists_and_additional_skills(
     assert "submit_for_review" in implement["status_message"]
     assert "gobby-agents:end_agent_run" in _allowed_mcp_tools(terminate)
     assert "gobby-agents:kill_agent" not in _allowed_mcp_tools(terminate)
+
+
+def test_tdd_discipline_skills_are_bundled() -> None:
+    discipline = (SKILLS_DIR / "development-discipline/SKILL.md").read_text()
+    tdd = (SKILLS_DIR / "test-driven-development/SKILL.md").read_text()
+
+    assert "test judgment" in discipline.lower()
+    assert "test-driven-development" in discipline
+    assert "red" in tdd.lower()
+    assert "minimal green" in tdd.lower()
+    assert "refactor/final-green" in tdd.lower()
+    assert "test-quality audit" in tdd.lower()
+
+
+def test_qa_and_holistic_reviewers_check_tdd_required_evidence() -> None:
+    qa = _agent("qa-reviewer")
+    holistic = _agent("holistic-reviewer")
+    qa_skill = (SKILLS_DIR / "qa/SKILL.md").read_text()
+    holistic_skill = (SKILLS_DIR / "holistic-review/SKILL.md").read_text()
+
+    for text in (
+        qa["instructions"],
+        _step(qa, "review")["status_message"],
+        holistic["instructions"],
+        _step(holistic, "review")["status_message"],
+        qa_skill,
+        holistic_skill,
+    ):
+        assert "tdd:required" in text
+        assert "test-driven-development" in text
+        assert "red" in text.lower()
+        assert "green" in text.lower()
+        assert "test-quality" in text.lower()
 
 
 def test_agent_definition_model_preserves_skills_blocks() -> None:
@@ -247,7 +322,7 @@ def test_tech_writer_loads_methodology_skill_after_claim() -> None:
 
     assert claim["transitions"] == [{"to": "load_skills", "when": "vars.task_claimed"}]
     assert "gobby-skills:get_skill" in _allowed_mcp_tools(load_skill)
-    assert {"tech-writer", "task-transitions", "verification-before-completion"}.issubset(
+    assert {"tech-writer", "task-transitions"}.issubset(
         set(agent["step_variables"]["required_skills"])
     )
     assert 'get_skill(name="tech-writer")' in load_skill["status_message"]

@@ -9,7 +9,8 @@ This module provides query operations for listing and filtering tasks:
 
 from typing import Any
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sql_dialect import json_array_contains_condition
 from gobby.storage.tasks._blocking import hydrate_task_blocking_state
 from gobby.storage.tasks._models import Task, task_type_filter_values
 from gobby.storage.tasks._ordering import order_tasks_hierarchically
@@ -82,7 +83,7 @@ def _not_closed_or_escalated_sql(task_alias: str = "t") -> str:
     return (
         f"{task_alias}.closed_at IS NULL "
         f"AND {task_alias}.escalated_at IS NULL "
-        f"AND COALESCE({task_alias}.is_escalated, 0) = 0"
+        f"AND COALESCE({task_alias}.is_escalated, FALSE) IS FALSE"
     )
 
 
@@ -114,7 +115,7 @@ def _no_external_blocker_sql(task_alias: str = "t") -> str:
 
 
 def list_tasks(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str | None = None,
     current_stage_state: str | list[str] | None = None,
     priority: int | None = None,
@@ -192,9 +193,9 @@ def list_tasks(
         query += f" AND task_type IN ({placeholders})"
         params.extend(task_type_values)
     if label:
-        # tasks.labels is a JSON list. We use json_each to find if the label is in the list.
-        query += " AND EXISTS (SELECT 1 FROM json_each(tasks.labels) WHERE value = ?)"
-        params.append(label)
+        label_clause, label_params = json_array_contains_condition(db, "tasks.labels", label)
+        query += f" AND {label_clause}"
+        params.extend(label_params)
     if parent_task_id:
         query += " AND parent_task_id = ?"
         params.append(parent_task_id)
@@ -229,7 +230,7 @@ def list_tasks(
 
 
 def list_ready_tasks(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str | None = None,
     priority: int | None = None,
     task_type: str | None = None,
@@ -324,7 +325,7 @@ def list_ready_tasks(
 
 
 def list_blocked_tasks(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str | None = None,
     parent_task_id: str | None = None,
     limit: int = 50,
@@ -346,7 +347,7 @@ def list_blocked_tasks(
     WHERE t.closed_at IS NULL
     AND (
         t.escalated_at IS NOT NULL
-        OR COALESCE(t.is_escalated, 0) = 1
+        OR COALESCE(t.is_escalated, FALSE) IS TRUE
         OR {_external_blocker_exists_sql("t")}
     )
     """

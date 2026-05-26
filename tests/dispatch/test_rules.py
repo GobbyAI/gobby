@@ -74,7 +74,13 @@ def _registry(stage_name: str, **overrides):
 def _agents(**overrides):
     agents = {
         agent_slug: SimpleNamespace(name=agent_slug, enabled=True)
-        for agent_slug in {*_STAGE_AGENTS.values(), *_REVIEW_AGENTS.values(), "doc-reviewer"}
+        for agent_slug in {
+            *_STAGE_AGENTS.values(),
+            *_REVIEW_AGENTS.values(),
+            "doc-reviewer",
+            "frontend-developer",
+            "fullstack-developer",
+        }
     }
     agents.update(overrides)
     return agents
@@ -297,6 +303,75 @@ def test_development_work_rule_allows_first_counted_attempt_at_cap() -> None:
     assert action.agent_slug == "backend-developer"
 
 
+def test_development_rule_falls_back_from_missing_assigned_agent() -> None:
+    from gobby.dispatch.actions import SpawnAgentAction
+
+    action = _evaluate(_task_at("development", "in_progress", assigned_agent="test-architect"))
+
+    assert isinstance(action, SpawnAgentAction)
+    assert action.agent_slug == "backend-developer"
+    assert "Follow the developer agent contract" in action.prompt
+    assert "default.yaml agent" not in action.prompt
+
+
+def test_development_rule_falls_back_from_agent_without_prompt_builder() -> None:
+    from gobby.dispatch.actions import SpawnAgentAction
+
+    action = _evaluate(
+        _task_at("development", "in_progress", assigned_agent="custom-agent"),
+        _context(
+            agents=_agents(
+                **{
+                    "custom-agent": SimpleNamespace(name="custom-agent", enabled=True),
+                }
+            )
+        ),
+    )
+
+    assert isinstance(action, SpawnAgentAction)
+    assert action.agent_slug == "backend-developer"
+
+
+@pytest.mark.parametrize(
+    ("implementation_domain", "agent_slug"),
+    [
+        ("backend", "backend-developer"),
+        ("frontend", "frontend-developer"),
+        ("fullstack", "fullstack-developer"),
+    ],
+)
+def test_development_rule_routes_code_by_implementation_domain(
+    implementation_domain: str,
+    agent_slug: str,
+) -> None:
+    from gobby.dispatch.actions import SpawnAgentAction
+
+    action = _evaluate(
+        _task_at(
+            "development",
+            "in_progress",
+            category="code",
+            assigned_agent=None,
+            implementation_domain=implementation_domain,
+        )
+    )
+
+    assert isinstance(action, SpawnAgentAction)
+    assert action.agent_slug == agent_slug
+
+
+def test_development_rule_escalates_when_no_dispatchable_fallback_agent() -> None:
+    from gobby.dispatch.actions import EscalateAction
+
+    action = _evaluate(
+        _task_at("development", "in_progress", assigned_agent="test-architect"),
+        _context(agents=_agents(**{"backend-developer": None})),
+    )
+
+    assert isinstance(action, EscalateAction)
+    assert action.reason == "development_no_agent"
+
+
 def test_expansion_review_rule_escalates_when_review_cap_reached() -> None:
     from gobby.dispatch.actions import EscalateAction
 
@@ -375,6 +450,24 @@ def test_non_root_leaf_merge_uses_workspace_merge_action() -> None:
     assert action.backend == "worktree"
     assert action.source_workspace_id == "wt-1"
     assert action.target_branch == "integration/root"
+
+
+def test_workspace_merge_conflict_label_routes_to_merge_orchestrator() -> None:
+    from gobby.dispatch.actions import SpawnAgentAction
+    from gobby.dispatch.merge_recovery import WORKSPACE_MERGE_CONFLICT_LABEL
+
+    action = _evaluate(
+        _task_at(
+            "merge",
+            "in_progress",
+            parent_task_id="epic-1",
+            labels=[WORKSPACE_MERGE_CONFLICT_LABEL],
+        ),
+        _context(artifacts=_artifacts(worktree_id="wt-1", target_branch="integration/root")),
+    )
+
+    assert isinstance(action, SpawnAgentAction)
+    assert action.agent_slug == "merge-orchestrator"
 
 
 def test_root_merge_still_routes_to_merge_orchestrator() -> None:

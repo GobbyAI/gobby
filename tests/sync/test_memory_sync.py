@@ -567,11 +567,66 @@ class TestExportMerge:
 
         # B overridden by DB version
         assert "memory B" in results
-        assert results["memory B"]["tags"] == ["db"]
+        assert results["memory B"]["tags"] == ["db", "file"]
         assert results["memory B"]["id"] == "m-b"
 
         # C added from DB
         assert "memory C" in results
+
+    def test_export_deduplicates_near_duplicate_memory_records(self, manager_with_memories) -> None:
+        """Near-identical cross-machine records collapse into one canonical memory."""
+        old_record = {
+            "id": "57d7158b-caf9-59d7-9ef5-971f9b7ab8bb",
+            "content": (
+                "PostgreSQL migrations are flattened at baseline version 260. "
+                "`src/gobby/storage/migrations.py` has `BASELINE_VERSION = 260`, "
+                "`_MIN_MIGRATION_VERSION = 260`, and an empty `MIGRATIONS` list; "
+                "historical PostgreSQL upgrade support below v260 is intentionally "
+                "unsupported/reset-required. Fresh databases rely on `baseline_schema.sql`, "
+                "which already includes the folded v259/v260 objects such as "
+                "`idx_ism_completion_lookup`, `idx_chat_attachments_local_path`, "
+                "`trg_chat_attachments_bound_at_write_once`, and "
+                "`trg_chat_attachments_updated_at_touch`."
+            ),
+            "created_at": "2026-05-18T14:43:36.509768+00:00",
+            "tags": ["storage", "postgres", "migrations"],
+            "type": "codebase_fact",
+            "updated_at": "2026-05-18T14:43:36.509768+00:00",
+        }
+        newer_record = {
+            "id": "e720187e-e971-5d3b-a999-1f25acf0e39c",
+            "content": (
+                "PostgreSQL migrations are flattened at baseline version 260. "
+                "`src/gobby/storage/migrations.py` has `BASELINE_VERSION = 260`, "
+                "`_MIN_MIGRATION_VERSION = 260`, and an empty `MIGRATIONS` list; "
+                "historical PostgreSQL upgrade support below v260 is intentionally "
+                "unsupported/reset-required. Fresh databases rely on `baseline_schema.sql`, "
+                "which includes the folded v259/v260 objects: "
+                "`idx_ism_completion_lookup`, `idx_chat_attachments_local_path`, "
+                "`trg_chat_attachments_bound_at_write_once`, and "
+                "`trg_chat_attachments_updated_at_touch`."
+            ),
+            "created_at": "2026-05-17T20:19:19.756488+00:00",
+            "tags": ["storage", "migrations", "baseline", "postgres", "v260"],
+            "type": "decision",
+            "updated_at": "2026-05-18T15:43:00.273039+00:00",
+        }
+
+        deduped = manager_with_memories._deduplicate_records_by_id([old_record, newer_record])
+
+        assert len(deduped) == 1
+        [merged] = deduped
+        assert merged["id"] == newer_record["id"]
+        assert merged["created_at"] == newer_record["created_at"]
+        assert merged["updated_at"] == newer_record["updated_at"]
+        assert merged["type"] == "codebase_fact"
+        assert merged["tags"] == [
+            "baseline",
+            "migrations",
+            "postgres",
+            "storage",
+            "v260",
+        ]
 
     def test_export_preserves_file_only_records(self, mock_db, tmp_path) -> None:
         """File-only records survive even when DB is empty."""

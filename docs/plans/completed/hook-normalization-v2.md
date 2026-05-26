@@ -365,7 +365,7 @@ Apply these changes across all bundled agent YAMLs:
 - `docs/guides/variables.md`
   - change `stop_attempts` wording from raw `stop`/`before_agent` language to
     semantic `turn_end` / `turn_start`
-  - correct any stale statements about resetting `errors_resolved`
+  - correct stale completion-readiness evidence wording
 - `docs/references/session-lifecycle.yaml`
   - convert semantic sections from `on_before_agent` to `on_turn_start`
   - convert semantic end-of-turn policy from `on_stop` to `on_turn_end`

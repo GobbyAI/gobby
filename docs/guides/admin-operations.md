@@ -126,7 +126,7 @@ POST /api/config/import
 `gobby pack` creates a broader snapshot than resource export. It can include the
 database, bootstrap config, machine ID, secret salt, transcripts, summaries,
 services, hooks, certs, canvas files, scripts, current project `.gobby`, and
-Docker volumes such as Qdrant and Neo4j data.
+Docker volumes such as Qdrant and FalkorDB data.
 
 Common commands:
 
@@ -221,4 +221,4 @@ Use progressive discovery before calling any server.
 - [prompts.md](prompts.md)
 - [cron-scheduler.md](cron-scheduler.md)
 
-_Last verified: 2026-05-08_
+_Last verified: 2026-05-23_

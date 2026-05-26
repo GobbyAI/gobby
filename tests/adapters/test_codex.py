@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -27,7 +28,8 @@ from gobby.adapters.codex_impl.types import (
     CodexTurn,
 )
 from gobby.hooks.event_handlers import EventHandlers
-from gobby.hooks.events import HookEventType, HookResponse, SessionSource
+from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.llm.sdk_utils import ADDITIONAL_CONTEXT_LIMIT
 from tests._timing import wait_forever
 
 pytestmark = pytest.mark.unit
@@ -1628,6 +1630,47 @@ class TestCodexAdapterHandleNotification:
         assert mock_hook_manager.handle.call_count == 1
 
 
+class TestCodexAdapterDispatchHookEvent:
+    """Tests for CodexAdapter hook dispatch fallback behavior."""
+
+    @staticmethod
+    def _event() -> HookEvent:
+        return HookEvent(
+            event_type=HookEventType.BEFORE_AGENT,
+            session_id="thr-dispatch",
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={},
+        )
+
+    @pytest.mark.asyncio
+    async def test_dispatch_ignores_non_coroutine_handle_async(self) -> None:
+        """Non-coroutine handle_async is ignored in favor of the sync handler."""
+        mock_hook_manager = MagicMock()
+        mock_hook_manager.handle.return_value = HookResponse(decision="allow")
+        mock_hook_manager.handle_async = MagicMock(return_value=HookResponse(decision="deny"))
+        adapter = CodexAdapter(hook_manager=mock_hook_manager)
+
+        response = await adapter._dispatch_hook_event(self._event())
+
+        assert response.decision == "allow"
+        mock_hook_manager.handle.assert_called_once()
+        mock_hook_manager.handle_async.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_dispatch_rejects_non_coroutine_handle_async_without_handle(self) -> None:
+        """Non-coroutine handle_async alone is not treated as a valid handler."""
+
+        class NonAsyncOnlyHookManager:
+            def handle_async(self, _event: HookEvent) -> HookResponse:
+                return HookResponse(decision="allow")
+
+        adapter = CodexAdapter(hook_manager=NonAsyncOnlyHookManager())
+
+        with pytest.raises(RuntimeError, match="hook manager has no handle method"):
+            await adapter._dispatch_hook_event(self._event())
+
+
 class TestCodexAdapterSyncExistingSessions:
     """Tests for sync_existing_sessions method."""
 
@@ -2027,7 +2070,7 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
         from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
-        response = HookResponse(decision="allow")
+        response = HookResponse(decision="allow", modified_input={"command": "echo rewritten"})
         result = adapter.translate_from_hook_response(response, hook_type="PermissionRequest")
 
         assert result["continue"] is True
@@ -2110,6 +2153,7 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
             reason="Tool not allowed",
             system_message="Use MCP instead",
             context="Run create_task first",
+            modified_input={"command": "echo rewritten"},
         )
         result = adapter.translate_from_hook_response(response, hook_type="PreToolUse")
 
@@ -2119,28 +2163,34 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
         assert result["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
         assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
         assert result["hookSpecificOutput"]["permissionDecisionReason"] == "Tool not allowed"
+        assert "updatedInput" not in result
+        assert "updatedInput" not in result["hookSpecificOutput"]
         assert "Use MCP instead" in result["systemMessage"]
         assert "Run create_task first" in result["systemMessage"]
 
     def test_pre_tool_use_rewrite_does_not_surface_retry_input(self) -> None:
-        """PreToolUse rewrites proceed without telling Codex to retry."""
+        """PreToolUse rewrites use native updatedInput without retry instructions."""
         from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
+        rewritten = {"command": "uv run python hello.py"}
         response = HookResponse(
             decision="allow",
             context="Bare python is not allowed",
-            modified_input={"command": "uv run python hello.py"},
+            modified_input=rewritten,
             auto_approve=True,
         )
         result = adapter.translate_from_hook_response(response, hook_type="PreToolUse")
 
         assert result["continue"] is True
         assert "decision" not in result
-        assert "hookSpecificOutput" not in result
         assert "updatedInput" not in result
         assert "updatedPermissions" not in result
         assert "interrupt" not in result
+        hso = result["hookSpecificOutput"]
+        assert hso["hookEventName"] == "PreToolUse"
+        assert hso["permissionDecision"] == "allow"
+        assert hso["updatedInput"] == rewritten
         assert "Bare python is not allowed" in result["systemMessage"]
         assert "uv run python hello.py" not in result["systemMessage"]
 
@@ -2174,9 +2224,13 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
         assert result["continue"] is True
         assert "decision" not in result
         assert "systemMessage" not in result
+        hso = result["hookSpecificOutput"]
+        assert hso["hookEventName"] == "PreToolUse"
+        assert hso["permissionDecision"] == "allow"
+        assert hso["updatedInput"] == response.modified_input
 
-    def test_pre_tool_use_ignores_modified_input_without_rewrite_signal(self) -> None:
-        """modified_input alone should not block ordinary Codex commands."""
+    def test_pre_tool_use_modified_input_emits_native_updated_input(self) -> None:
+        """modified_input alone becomes native Codex updatedInput."""
         from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
@@ -2188,7 +2242,11 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
 
         assert result["continue"] is True
         assert "decision" not in result
-        assert "hookSpecificOutput" not in result
+        assert result["hookSpecificOutput"] == {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+            "updatedInput": {"command": "sed -n '1,20p' file.txt"},
+        }
 
     def test_context_injection_session_start(self) -> None:
         """SessionStart uses hookSpecificOutput.additionalContext."""
@@ -2306,10 +2364,12 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
             decision="allow",
             system_message="Gate note",
             context="Rule constraint",
+            modified_input={"command": "uv run python check.py"},
         )
         result = adapter.translate_from_hook_response(response, hook_type="PreToolUse")
 
-        assert "hookSpecificOutput" not in result
+        assert result["hookSpecificOutput"]["updatedInput"] == {"command": "uv run python check.py"}
+        assert result["hookSpecificOutput"]["permissionDecision"] == "allow"
         assert "Gate note" in result["systemMessage"]
         assert "Rule constraint" in result["systemMessage"]
 
@@ -2379,6 +2439,54 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
         result = adapter.translate_from_hook_response(response, hook_type="PostToolUse")
 
         assert "hookSpecificOutput" not in result
+
+    def test_additional_context_trims_oversized_response_context_without_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Oversized low-priority context is bounded before the warning safety net."""
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+
+        adapter = CodexHooksAdapter()
+        response = HookResponse(
+            decision="allow",
+            system_message="Session-critical note",
+            context="x" * (ADDITIONAL_CONTEXT_LIMIT + 3_000),
+        )
+
+        with caplog.at_level(logging.WARNING, logger="gobby.adapters.codex_impl.hooks_adapter"):
+            result = adapter.translate_from_hook_response(response, hook_type="UserPromptSubmit")
+
+        ctx = result["hookSpecificOutput"]["additionalContext"]
+        assert len(ctx) == ADDITIONAL_CONTEXT_LIMIT
+        assert ctx.startswith("Session-critical note\n\n")
+        assert ctx.endswith("\n... [truncated]")
+        assert "additionalContext truncated" not in caplog.text
+
+    def test_session_metadata_precedes_oversized_response_context(self) -> None:
+        """Session metadata remains visible when response.context is over budget."""
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+
+        adapter = CodexHooksAdapter()
+        response = HookResponse(
+            decision="allow",
+            context="x" * (ADDITIONAL_CONTEXT_LIMIT + 3_000),
+            metadata={
+                "session_id": "abc-123",
+                "session_ref": "#100",
+                "external_id": "codex-ext-id",
+                "_first_hook_for_session": True,
+                "project_id": "proj-1",
+            },
+        )
+
+        result = adapter.translate_from_hook_response(response, hook_type="SessionStart")
+
+        ctx = result["hookSpecificOutput"]["additionalContext"]
+        assert len(ctx) == ADDITIONAL_CONTEXT_LIMIT
+        assert "Gobby Session ID: #100 (abc-123)" in ctx
+        assert "codex-ext-id" in ctx
+        assert ctx.index("Gobby Session ID") < ctx.index("x")
+        assert ctx.endswith("\n... [truncated]")
 
 
 class TestCodexHooksAdapterHandleNative:

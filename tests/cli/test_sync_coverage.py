@@ -19,12 +19,19 @@ def runner() -> CliRunner:
     return CliRunner()
 
 
+@pytest.fixture(autouse=True)
+def mock_runtime_hub_database():
+    """Keep sync CLI tests isolated from the user's runtime hub config."""
+    with patch("gobby.storage.hub.runtime.open_runtime_hub_database") as mock_open:
+        mock_open.return_value = MagicMock()
+        yield mock_open
+
+
 # All lazy imports in sync() need to be patched at the source module:
 #   from gobby.utils.dev import is_dev_mode          -> gobby.utils.dev.is_dev_mode
 #   from gobby.sync.integrity import ...             -> gobby.sync.integrity.*
 #   from gobby.config.app import load_config         -> gobby.config.app.load_config
-#   from gobby.storage.database import LocalDatabase -> gobby.storage.database.LocalDatabase
-#   from gobby.storage.migrations import run_migrations -> gobby.storage.migrations.run_migrations
+#   from gobby.storage.hub.runtime import open_runtime_hub_database -> gobby.storage.hub.runtime.open_runtime_hub_database
 #   from gobby.cli.installers.shared import sync_bundled_content_to_db -> gobby.cli.installers.shared.sync_bundled_content_to_db
 
 
@@ -33,8 +40,6 @@ def runner() -> CliRunner:
 # ---------------------------------------------------------------------------
 class TestSyncDevMode:
     @patch("gobby.cli.installers.shared.sync_bundled_content_to_db")
-    @patch("gobby.storage.migrations.run_migrations")
-    @patch("gobby.storage.database.LocalDatabase")
     @patch("gobby.config.app.load_config")
     @patch("gobby.cli.sync.get_install_dir", return_value=Path("/fake/install"))
     @patch("gobby.utils.dev.is_dev_mode", return_value=True)
@@ -43,14 +48,12 @@ class TestSyncDevMode:
         _dev: MagicMock,
         _install: MagicMock,
         mock_load: MagicMock,
-        mock_db_cls: MagicMock,
-        _mig: MagicMock,
         mock_sync: MagicMock,
         runner: CliRunner,
         tmp_path: Path,
     ) -> None:
         mock_config = MagicMock()
-        mock_config.database_path = str(tmp_path / "test.db")
+        mock_config.database_url = str(tmp_path / "test.db")
         mock_load.return_value = mock_config
         (tmp_path / "test.db").write_text("")
 
@@ -60,8 +63,6 @@ class TestSyncDevMode:
         assert "Synced 5" in result.output
 
     @patch("gobby.cli.installers.shared.sync_bundled_content_to_db")
-    @patch("gobby.storage.migrations.run_migrations")
-    @patch("gobby.storage.database.LocalDatabase")
     @patch("gobby.config.app.load_config")
     @patch("gobby.cli.sync.get_install_dir", return_value=Path("/fake/install"))
     @patch("gobby.utils.dev.is_dev_mode", return_value=True)
@@ -70,14 +71,12 @@ class TestSyncDevMode:
         _dev: MagicMock,
         _install: MagicMock,
         mock_load: MagicMock,
-        mock_db_cls: MagicMock,
-        _mig: MagicMock,
         mock_sync: MagicMock,
         runner: CliRunner,
         tmp_path: Path,
     ) -> None:
         mock_config = MagicMock()
-        mock_config.database_path = str(tmp_path / "test.db")
+        mock_config.database_url = str(tmp_path / "test.db")
         mock_load.return_value = mock_config
         (tmp_path / "test.db").write_text("")
 
@@ -87,8 +86,6 @@ class TestSyncDevMode:
         assert "No changes" in result.output
 
     @patch("gobby.cli.installers.shared.sync_bundled_content_to_db")
-    @patch("gobby.storage.migrations.run_migrations")
-    @patch("gobby.storage.database.LocalDatabase")
     @patch("gobby.config.app.load_config")
     @patch("gobby.cli.sync.get_install_dir", return_value=Path("/fake/install"))
     @patch("gobby.utils.dev.is_dev_mode", return_value=True)
@@ -97,14 +94,12 @@ class TestSyncDevMode:
         _dev: MagicMock,
         _install: MagicMock,
         mock_load: MagicMock,
-        mock_db_cls: MagicMock,
-        _mig: MagicMock,
         mock_sync: MagicMock,
         runner: CliRunner,
         tmp_path: Path,
     ) -> None:
         mock_config = MagicMock()
-        mock_config.database_path = str(tmp_path / "test.db")
+        mock_config.database_url = str(tmp_path / "test.db")
         mock_load.return_value = mock_config
         (tmp_path / "test.db").write_text("")
 
@@ -118,8 +113,6 @@ class TestSyncDevMode:
         assert "skills: 2 items" in result.output
 
     @patch("gobby.cli.installers.shared.sync_bundled_content_to_db")
-    @patch("gobby.storage.migrations.run_migrations")
-    @patch("gobby.storage.database.LocalDatabase")
     @patch("gobby.config.app.load_config")
     @patch("gobby.cli.sync.get_install_dir", return_value=Path("/fake/install"))
     @patch("gobby.utils.dev.is_dev_mode", return_value=True)
@@ -128,14 +121,12 @@ class TestSyncDevMode:
         _dev: MagicMock,
         _install: MagicMock,
         mock_load: MagicMock,
-        mock_db_cls: MagicMock,
-        _mig: MagicMock,
         mock_sync: MagicMock,
         runner: CliRunner,
         tmp_path: Path,
     ) -> None:
         mock_config = MagicMock()
-        mock_config.database_path = str(tmp_path / "test.db")
+        mock_config.database_url = str(tmp_path / "test.db")
         mock_load.return_value = mock_config
         (tmp_path / "test.db").write_text("")
 
@@ -173,8 +164,6 @@ class TestSyncVerifyOnly:
 # ---------------------------------------------------------------------------
 class TestSyncProductionMode:
     @patch("gobby.cli.installers.shared.sync_bundled_content_to_db")
-    @patch("gobby.storage.migrations.run_migrations")
-    @patch("gobby.storage.database.LocalDatabase")
     @patch("gobby.config.app.load_config")
     @patch("gobby.sync.integrity.get_dirty_content_types", return_value=set())
     @patch("gobby.sync.integrity.verify_bundled_integrity")
@@ -187,8 +176,6 @@ class TestSyncProductionMode:
         mock_verify: MagicMock,
         _dirty: MagicMock,
         mock_load: MagicMock,
-        mock_db_cls: MagicMock,
-        _mig: MagicMock,
         mock_sync: MagicMock,
         runner: CliRunner,
         tmp_path: Path,
@@ -201,7 +188,7 @@ class TestSyncProductionMode:
         mock_verify.return_value = integrity_result
 
         mock_config = MagicMock()
-        mock_config.database_path = str(tmp_path / "test.db")
+        mock_config.database_url = str(tmp_path / "test.db")
         mock_load.return_value = mock_config
         (tmp_path / "test.db").write_text("")
 
@@ -313,8 +300,6 @@ class TestSyncProductionMode:
         assert "All bundled content is clean" in result.output
 
     @patch("gobby.cli.installers.shared.sync_bundled_content_to_db")
-    @patch("gobby.storage.migrations.run_migrations")
-    @patch("gobby.storage.database.LocalDatabase")
     @patch("gobby.config.app.load_config")
     @patch("gobby.sync.integrity.verify_bundled_integrity")
     @patch("gobby.cli.sync.get_install_dir", return_value=Path("/fake/install"))
@@ -325,8 +310,6 @@ class TestSyncProductionMode:
         _install: MagicMock,
         mock_verify: MagicMock,
         mock_load: MagicMock,
-        mock_db_cls: MagicMock,
-        _mig: MagicMock,
         mock_sync: MagicMock,
         runner: CliRunner,
         tmp_path: Path,
@@ -338,7 +321,7 @@ class TestSyncProductionMode:
             source="manifest",
         )
         mock_config = MagicMock()
-        mock_config.database_path = str(tmp_path / "test.db")
+        mock_config.database_url = str(tmp_path / "test.db")
         mock_load.return_value = mock_config
         (tmp_path / "test.db").write_text("")
         mock_sync.return_value = {"total_synced": 0, "errors": [], "details": {}}
@@ -350,8 +333,6 @@ class TestSyncProductionMode:
         assert mock_sync.call_args.kwargs["skip_types"] == {"pipelines"}
 
     @patch("gobby.cli.installers.shared.sync_bundled_content_to_db")
-    @patch("gobby.storage.migrations.run_migrations")
-    @patch("gobby.storage.database.LocalDatabase")
     @patch("gobby.config.app.load_config")
     @patch("gobby.sync.integrity.verify_bundled_integrity")
     @patch("gobby.cli.sync.get_install_dir", return_value=Path("/fake/install"))
@@ -362,8 +343,6 @@ class TestSyncProductionMode:
         _install: MagicMock,
         mock_verify: MagicMock,
         mock_load: MagicMock,
-        mock_db_cls: MagicMock,
-        _mig: MagicMock,
         mock_sync: MagicMock,
         runner: CliRunner,
         tmp_path: Path,
@@ -377,7 +356,7 @@ class TestSyncProductionMode:
             ],
         )
         mock_config = MagicMock()
-        mock_config.database_path = str(tmp_path / "test.db")
+        mock_config.database_url = str(tmp_path / "test.db")
         mock_load.return_value = mock_config
         (tmp_path / "test.db").write_text("")
         mock_sync.return_value = {"total_synced": 0, "errors": [], "details": {}}
@@ -394,8 +373,6 @@ class TestSyncProductionMode:
 # ---------------------------------------------------------------------------
 class TestSyncTypeFilter:
     @patch("gobby.cli.installers.shared.sync_bundled_content_to_db")
-    @patch("gobby.storage.migrations.run_migrations")
-    @patch("gobby.storage.database.LocalDatabase")
     @patch("gobby.config.app.load_config")
     @patch("gobby.cli.sync.get_install_dir", return_value=Path("/fake/install"))
     @patch("gobby.utils.dev.is_dev_mode", return_value=True)
@@ -404,14 +381,12 @@ class TestSyncTypeFilter:
         _dev: MagicMock,
         _install: MagicMock,
         mock_load: MagicMock,
-        mock_db_cls: MagicMock,
-        _mig: MagicMock,
         mock_sync: MagicMock,
         runner: CliRunner,
         tmp_path: Path,
     ) -> None:
         mock_config = MagicMock()
-        mock_config.database_path = str(tmp_path / "test.db")
+        mock_config.database_url = str(tmp_path / "test.db")
         mock_load.return_value = mock_config
         (tmp_path / "test.db").write_text("")
 
@@ -436,11 +411,13 @@ class TestSyncDbNotFound:
         _dev: MagicMock,
         _install: MagicMock,
         mock_load: MagicMock,
+        mock_runtime_hub_database: MagicMock,
         runner: CliRunner,
     ) -> None:
         mock_config = MagicMock()
-        mock_config.database_path = "/nonexistent/path/db.sqlite"
+        mock_config.database_url = "/nonexistent/path/db.postgres"
         mock_load.return_value = mock_config
+        mock_runtime_hub_database.side_effect = RuntimeError("not found")
 
         result = runner.invoke(sync, [], catch_exceptions=False)
         assert result.exit_code == 1
@@ -452,8 +429,6 @@ class TestSyncDbNotFound:
 # ---------------------------------------------------------------------------
 class TestSyncForce:
     @patch("gobby.cli.installers.shared.sync_bundled_content_to_db")
-    @patch("gobby.storage.migrations.run_migrations")
-    @patch("gobby.storage.database.LocalDatabase")
     @patch("gobby.config.app.load_config")
     @patch("gobby.cli.sync.get_install_dir", return_value=Path("/fake/install"))
     @patch("gobby.utils.dev.is_dev_mode", return_value=False)
@@ -462,14 +437,12 @@ class TestSyncForce:
         _dev: MagicMock,
         _install: MagicMock,
         mock_load: MagicMock,
-        mock_db_cls: MagicMock,
-        _mig: MagicMock,
         mock_sync: MagicMock,
         runner: CliRunner,
         tmp_path: Path,
     ) -> None:
         mock_config = MagicMock()
-        mock_config.database_path = str(tmp_path / "test.db")
+        mock_config.database_url = str(tmp_path / "test.db")
         mock_load.return_value = mock_config
         (tmp_path / "test.db").write_text("")
 

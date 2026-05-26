@@ -38,6 +38,18 @@ def _resolve_wheel_path() -> Path:
     return wheel.resolve()
 
 
+def _require_database_url() -> str:
+    database_url = os.environ.get("DATABASE_URL")
+    if not database_url:
+        pytest.fail(
+            "DATABASE_URL must point at an isolated PostgreSQL database for the "
+            "installed-wheel UI smoke test"
+        )
+    if not database_url.startswith(("postgresql://", "postgres://")):
+        pytest.fail("DATABASE_URL must use PostgreSQL for the installed-wheel UI smoke test")
+    return database_url
+
+
 def _venv_python(venv: Path) -> Path:
     if sys.platform == "win32":
         return venv / "Scripts" / "python.exe"
@@ -83,11 +95,11 @@ def _allocate_distinct_high_ports() -> tuple[int, int]:
     )
 
 
-def _write_config(config_path: Path, db_path: Path, http_port: int, ws_port: int) -> None:
+def _write_config(config_path: Path, database_url: str, http_port: int, ws_port: int) -> None:
     config_path.write_text(
         "\n".join(
             [
-                f'database_path: "{db_path}"',
+                f'database_url: "{database_url}"',
                 f"daemon_port: {http_port}",
                 'bind_host: "127.0.0.1"',
                 f"websocket_port: {ws_port}",
@@ -145,6 +157,7 @@ def test_installed_wheel_serves_packaged_index_html(tmp_path: Path) -> None:
     """Install a built wheel in an isolated venv and assert it serves packaged index.html."""
     _require_smoke_enabled()
     wheel = _resolve_wheel_path()
+    database_url = _require_database_url()
 
     venv = tmp_path / "venv"
     subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True, timeout=120)
@@ -158,15 +171,14 @@ def test_installed_wheel_serves_packaged_index_html(tmp_path: Path) -> None:
     home = tmp_path / "home"
     gobby_home = home / ".gobby"
     gobby_home.mkdir(parents=True)
-    db_path = gobby_home / "gobby-hub.db"
     config_path = tmp_path / "config.yaml"
     http_port, ws_port = _allocate_distinct_high_ports()
-    _write_config(config_path, db_path, http_port, ws_port)
+    _write_config(config_path, database_url, http_port, ws_port)
 
     env = os.environ.copy()
-    # The child daemon already has isolated HOME/GOBBY_HOME and an explicit
-    # temp config. Letting it inherit GOBBY_TEST_PROTECT makes the temp DB look
-    # like the protected production DB because Path.home() is also isolated.
+    # The child daemon already has isolated HOME/GOBBY_HOME and an explicit config.
+    # Letting it inherit GOBBY_TEST_PROTECT can reject this smoke daemon because
+    # Path.home() is also isolated.
     env.pop("GOBBY_TEST_PROTECT", None)
     env.pop("GOBBY_DATABASE_PATH", None)
     env.update(

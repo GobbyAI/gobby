@@ -20,7 +20,7 @@ from gobby.plans.parser import AcceptanceItem, PlanDocument, PlanSection, parse_
 from gobby.tasks.state_semantics import serialize_task_state
 
 if TYPE_CHECKING:
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
 
 _DOTTED_ID_PATTERN = r"(?:\d+[a-z]?|[A-Z]+[0-9]+[a-z]?)(?:\.(?:\d+[a-z]?|[A-Z]+[0-9]+[a-z]?))*"
 
@@ -221,7 +221,7 @@ def evaluate(
     task_tree: Literal[TaskTreeSource.db, "db"],
     root_task_ref: str,
     project_id: str,
-    db: DatabaseProtocol | None = None,
+    db: HubDatabase | None = None,
     task_records: Sequence[Mapping[str, object]] | None = None,
     task_tree_file: Path | str | None = None,
     evidence: Sequence[EvidenceRow] | None = None,
@@ -250,7 +250,7 @@ def evaluate(
     root_task_ref: str | None = None,
     project_id: str | None = None,
     matrix_file: Path | str | None = None,
-    db: DatabaseProtocol | None = None,
+    db: HubDatabase | None = None,
     task_records: Sequence[Mapping[str, object]] | None = None,
     task_tree_file: Path | str | None = None,
     evidence: Sequence[EvidenceRow] | None = None,
@@ -590,7 +590,7 @@ def _load_task_records(
     source: TaskTreeSource,
     *,
     project_id: str,
-    db: DatabaseProtocol | None,
+    db: HubDatabase | None,
     task_records: Sequence[Mapping[str, object]] | None,
     task_tree_file: Path | str | None,
 ) -> tuple[_TaskRecord, ...]:
@@ -608,17 +608,15 @@ def _load_task_records(
 def _load_db_task_records(
     project_id: str,
     *,
-    db: DatabaseProtocol | None,
+    db: HubDatabase | None,
 ) -> tuple[_TaskRecord, ...]:
-    from gobby.storage.database import LocalDatabase
-    from gobby.storage.migrations import run_migrations
+    from gobby.storage.hub.runtime import open_runtime_hub_database
 
     if db is not None:
         return _load_db_task_records_from_connection(project_id, db=db)
 
-    owned_db = LocalDatabase()
+    owned_db = open_runtime_hub_database(apply_migrations=False)
     try:
-        run_migrations(owned_db)
         return _load_db_task_records_from_connection(project_id, db=owned_db)
     finally:
         owned_db.close()
@@ -627,7 +625,7 @@ def _load_db_task_records(
 def _load_db_task_records_from_connection(
     project_id: str,
     *,
-    db: DatabaseProtocol,
+    db: HubDatabase,
 ) -> tuple[_TaskRecord, ...]:
     from gobby.storage.tasks import LocalTaskManager
 

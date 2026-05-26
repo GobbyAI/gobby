@@ -31,14 +31,14 @@ from gobby.install.bin_freshness_models import (
     managed_bin_specs,
 )
 from gobby.storage.bin_update_state import BinUpdateRecord, BinUpdateStateStore, BinUpdateStatus
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.native_bin import native_bin_dir
 
 logger = logging.getLogger(__name__)
 
 
 def update_all_managed_bins(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     config: BinFreshnessConfig,
     *,
     bin_dir: Path | None = None,
@@ -78,7 +78,7 @@ def update_all_managed_bins(
 
 
 def update_managed_bin(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     spec: ManagedBinSpec,
     config: BinFreshnessConfig,
     *,

@@ -287,9 +287,7 @@ class TestToolCallSucceeded:
         assert ev.evaluate("tool_call_succeeded()") is False
 
     @pytest.mark.parametrize("data", [{"success": True}, {"success": True, "tool_output": None}])
-    def test_accepts_missing_tool_output_with_top_level_success(
-        self, data: dict[str, Any]
-    ) -> None:
+    def test_accepts_missing_tool_output_with_top_level_success(self, data: dict[str, Any]) -> None:
         ev = self._eval(data)
 
         assert ev.evaluate("tool_call_succeeded()") is True

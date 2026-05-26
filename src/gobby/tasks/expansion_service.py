@@ -13,7 +13,7 @@ from gobby.storage.task_affected_files import TaskAffectedFileManager
 from gobby.storage.task_dependencies import TaskDependencyManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.tasks.categories import AUTOMATED_LEAF_CATEGORIES
+from gobby.tasks.categories import AUTOMATED_LEAF_CATEGORIES, DEVELOPMENT_FORWARD_LEAF_CATEGORIES
 from gobby.tasks.expansion import _apply, _compile, _contract, _reset, _validate
 from gobby.tasks.expansion._common import (
     _contract_single_task_id,
@@ -22,6 +22,7 @@ from gobby.tasks.expansion._common import (
 
 __all__ = [
     "AUTOMATED_LEAF_CATEGORIES",
+    "DEVELOPMENT_FORWARD_LEAF_CATEGORIES",
     "ExpansionService",
     "_contract_single_task_id",
     "compile_plan_to_spec",
@@ -57,7 +58,6 @@ class ExpansionService:
     _validate_contract_manifest = _contract._validate_contract_manifest
     _contract_deferrals = _contract._contract_deferrals
     _ensure_contract_phase = _contract._ensure_contract_phase
-    _build_contract_phase_sandwich_task = _contract._build_contract_phase_sandwich_task
     _build_contract_entry_work_task = _contract._build_contract_entry_work_task
     _contract_phase_index = _contract._contract_phase_index
     _parse_contract_plan = _contract._parse_contract_plan
@@ -79,12 +79,6 @@ class ExpansionService:
     apply_run = _apply.apply_run
     validate_applied_run = _apply.validate_applied_run
     _get_expansion_config = _apply._get_expansion_config
-    _phase_priority = _apply._phase_priority
-    _build_phase_test_description = _apply._build_phase_test_description
-    _build_phase_test_validation = _apply._build_phase_test_validation
-    _build_phase_refactor_description = _apply._build_phase_refactor_description
-    _external_blocker_id = _apply._external_blocker_id
-    _resolve_created_blocker = _apply._resolve_created_blocker
     _add_dependency = _apply._add_dependency
 
     reset_expansion_output = _reset.reset_expansion_output

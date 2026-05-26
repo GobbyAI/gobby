@@ -1782,26 +1782,15 @@ class TestWorktreeGitManagerMergeBranch:
         return subprocess.CompletedProcess(args=[args_hint], returncode=1, stdout="", stderr=stderr)
 
     @patch("subprocess.run")
-    def test_merge_success_with_push(self, mock_run, manager) -> None:
-        """Merge succeeds with push."""
-        mock_run.side_effect = [
-            self._mock_rev_parse("feature/test"),  # rev-parse HEAD
-            self._mock_success(),  # fetch origin
-            self._mock_success(),  # checkout main
-            self._mock_success(),  # pull origin main
-            subprocess.CompletedProcess(
-                args=["git", "merge"], returncode=0, stdout="Merge made by recursive\n", stderr=""
-            ),  # merge --no-ff
-            self._mock_success(),  # push origin main
-            self._mock_success(),  # checkout feature/test (finally)
-        ]
+    def test_merge_rejects_push(self, mock_run, manager) -> None:
+        """Merge rejects push=True before running git."""
 
         result = manager.merge_branch("feature/test", "main", push=True)
 
-        assert result.success is True
-        assert "Successfully merged" in result.message
-        assert "feature/test" in result.message
-        assert "main" in result.message
+        assert result.success is False
+        assert result.error == "push_not_supported"
+        assert "never pushes" in result.message
+        mock_run.assert_not_called()
 
     @patch("subprocess.run")
     def test_merge_success_no_push(self, mock_run, manager) -> None:
@@ -1953,29 +1942,13 @@ class TestWorktreeGitManagerMergeBranch:
 
     @patch("subprocess.run")
     def test_merge_push_failure(self, mock_run, manager) -> None:
-        """Merge succeeds but push fails (still reports success=True)."""
-        mock_run.side_effect = [
-            self._mock_rev_parse("feature/test"),  # rev-parse HEAD
-            self._mock_success(),  # fetch origin
-            self._mock_success(),  # checkout main
-            self._mock_success(),  # pull origin main
-            subprocess.CompletedProcess(
-                args=["git", "merge"], returncode=0, stdout="Merge made\n", stderr=""
-            ),  # merge succeeds
-            subprocess.CompletedProcess(
-                args=["git", "push"],
-                returncode=1,
-                stdout="",
-                stderr="error: push rejected",
-            ),  # push fails
-            self._mock_success(),  # checkout feature/test (finally)
-        ]
+        """push=True is rejected instead of attempting a remote push."""
 
         result = manager.merge_branch("feature/test", "main", push=True)
 
-        assert result.success is True
-        assert "push failed" in result.message
-        assert result.error == "error: push rejected"
+        assert result.success is False
+        assert result.error == "push_not_supported"
+        mock_run.assert_not_called()
 
     @patch("subprocess.run")
     def test_merge_timeout(self, mock_run, manager) -> None:
@@ -2026,11 +1999,10 @@ class TestWorktreeGitManagerMergeBranch:
             subprocess.CompletedProcess(
                 args=["git", "merge"], returncode=0, stdout="Merge made\n", stderr=""
             ),  # merge succeeds
-            self._mock_success(),  # push origin main
             self._mock_success(),  # checkout feature/other (finally)
         ]
 
-        result = manager.merge_branch("feature/test", "main", push=True)
+        result = manager.merge_branch("feature/test", "main")
 
         assert result.success is True
         # Verify the last call was checkout back to feature/other

@@ -135,12 +135,13 @@ export function useActivityPanel(isMobile: boolean) {
   const [activeTab, setActiveTab] = useState<ActivityTab>(loadActiveTab)
 
   useEffect(() => {
+    if (isMobile) return
     try {
       localStorage.setItem(STORAGE_KEY_LAYOUT, mode)
     } catch {
       /* ignore */
     }
-  }, [mode])
+  }, [isMobile, mode])
 
   useEffect(() => {
     try {

@@ -174,11 +174,11 @@ def _maybe_run_linear_setup(
 
     try:
         from gobby.cli.linear import _create_linear_mcp_manager, _run_linear_setup
-        from gobby.storage.database import LocalDatabase
+        from gobby.storage.hub.runtime import open_runtime_hub_database
         from gobby.storage.projects import LocalProjectManager
         from gobby.storage.tasks import LocalTaskManager
 
-        db = LocalDatabase()
+        db = open_runtime_hub_database(apply_migrations=False)
         project_manager = LocalProjectManager(db)
         result = asyncio.run(
             _run_linear_setup(

@@ -24,7 +24,7 @@ from .loader_validation import (
 __all__ = ["WorkflowLoader", "detect_override_conflict"]
 
 if TYPE_CHECKING:
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 
 logger = logging.getLogger(__name__)
@@ -70,7 +70,7 @@ def detect_override_conflict(user_row: Any, bundled_row: Any | None) -> None:
 class WorkflowLoader(WorkflowLoaderSyncMixin):
     def __init__(
         self,
-        db: "DatabaseProtocol | None" = None,
+        db: "HubDatabase | None" = None,
         # Legacy parameters kept for backward compatibility with tests
         workflow_dirs: list[Path] | None = None,
         bundled_dir: Path | None = None,
@@ -83,7 +83,7 @@ class WorkflowLoader(WorkflowLoaderSyncMixin):
         # Cache for discovered workflows per project path
         self._discovery_cache: dict[str, _CachedDiscovery] = {}
         # Database for DB-first workflow lookup (the only runtime source)
-        self.db: DatabaseProtocol | None = db
+        self.db: HubDatabase | None = db
         self._def_manager: LocalWorkflowDefinitionManager | None = None
 
     @property

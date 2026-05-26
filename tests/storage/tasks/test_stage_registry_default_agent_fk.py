@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from gobby.agents.sync import sync_bundled_agents
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._stage_registry_loader import StageRegistryLoader
 
 pytestmark = pytest.mark.unit
@@ -21,9 +18,8 @@ DISCOVERY_DEFAULT_AGENTS = {
 }
 
 
-def test_discovery_stage_default_agents_resolve(tmp_path: Path) -> None:
-    db = LocalDatabase(tmp_path / "default-agent-fk.db")
-    run_migrations(db)
+def test_discovery_stage_default_agents_resolve(temp_db: HubDatabase) -> None:
+    db = temp_db
     sync_bundled_agents(db)
     StageRegistryLoader().sync(db)
 

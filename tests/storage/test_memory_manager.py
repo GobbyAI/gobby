@@ -4,18 +4,15 @@ import pytest
 
 from gobby.config.persistence import MemoryConfig
 from gobby.memory.manager import MemoryManager
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path):
-    database = LocalDatabase(tmp_path / "gobby-hub.db")
-    run_migrations(database)
+def db(temp_db: HubDatabase):
+    database = temp_db
     yield database
-    database.close()
 
 
 @pytest.fixture
@@ -47,11 +44,11 @@ async def test_search_memories_no_query(memory_manager):
 
 @pytest.mark.asyncio
 async def test_search_memories_with_query(memory_manager):
-    """Without VectorStore, FTS5 keyword search is used."""
+    """Without VectorStore, keyword search is used."""
     await memory_manager.create_memory("The quick brown fox")
     await memory_manager.create_memory("The lazy dog")
 
-    # Without VectorStore, FTS5 handles keyword search
+    # Without VectorStore, the hub handles keyword search.
     memories = await memory_manager.search_memories(query="fox")
     assert len(memories) == 1
     assert "fox" in memories[0].content

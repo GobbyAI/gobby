@@ -9,7 +9,7 @@ import pytest
 import yaml
 
 from gobby.plans.coverage_manifest import coverage_manifest_path
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.plans import LocalPlanManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
@@ -44,11 +44,11 @@ def _write_plan(root: Path, name: str = "task-100-demo.md") -> Path:
     return path
 
 
-def _project(temp_db: LocalDatabase, root: Path) -> str:
+def _project(temp_db: HubDatabase, root: Path) -> str:
     return LocalProjectManager(temp_db).create(name="plans", repo_path=str(root)).id
 
 
-def test_create_plan_emits_initial_manifest(temp_db: LocalDatabase, tmp_path: Path) -> None:
+def test_create_plan_emits_initial_manifest(temp_db: HubDatabase, tmp_path: Path) -> None:
     project_id = _project(temp_db, tmp_path)
     LocalTaskManager(temp_db).create_task(project_id=project_id, title="Root")
     plan_path = _write_plan(tmp_path)
@@ -73,7 +73,7 @@ def test_create_plan_emits_initial_manifest(temp_db: LocalDatabase, tmp_path: Pa
     assert raw["rows"][0]["status"] == "missing"
 
 
-def test_update_plan_hash_regens_manifest(temp_db: LocalDatabase, tmp_path: Path) -> None:
+def test_update_plan_hash_regens_manifest(temp_db: HubDatabase, tmp_path: Path) -> None:
     project_id = _project(temp_db, tmp_path)
     plan_path = _write_plan(tmp_path)
     manager = LocalPlanManager(temp_db)
@@ -99,7 +99,7 @@ def test_update_plan_hash_regens_manifest(temp_db: LocalDatabase, tmp_path: Path
 
 
 def test_archive_plan_moves_file_and_removes_manifest(
-    temp_db: LocalDatabase, tmp_path: Path
+    temp_db: HubDatabase, tmp_path: Path
 ) -> None:
     project_id = _project(temp_db, tmp_path)
     plan_path = _write_plan(tmp_path)
@@ -129,7 +129,7 @@ def test_archive_plan_moves_file_and_removes_manifest(
 
 
 def test_archive_plan_preserves_nested_relative_paths(
-    temp_db: LocalDatabase, tmp_path: Path
+    temp_db: HubDatabase, tmp_path: Path
 ) -> None:
     project_id = _project(temp_db, tmp_path)
     alpha_path = _write_plan(tmp_path, "alpha/task.md")

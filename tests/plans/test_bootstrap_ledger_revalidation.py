@@ -11,7 +11,7 @@ from gobby.plans.bootstrap_ledger import (
     verify_bootstrap_ledger,
 )
 from gobby.plans.coverage_manifest import coverage_manifest_path
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager, Task
 
@@ -109,7 +109,7 @@ def _seed_plan_task_tree(
 
 
 def _write_plan_row(
-    temp_db: LocalDatabase, *, project_id: str, root_ref: str, plan_id: str
+    temp_db: HubDatabase, *, project_id: str, root_ref: str, plan_id: str
 ) -> None:
     temp_db.execute(
         """

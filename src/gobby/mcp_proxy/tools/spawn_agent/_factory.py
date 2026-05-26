@@ -6,10 +6,10 @@ and delegates to spawn_agent_impl for execution.
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import TYPE_CHECKING, Any, Literal
 
+from gobby.agents.completion_subscribers import subscribe_agent_completion
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.utils.project_context import get_project_context
 from gobby.workflows.definitions import AgentDefinitionBody
@@ -18,15 +18,63 @@ from ._implementation import spawn_agent_impl
 
 if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.tasks import LocalTaskManager
 
 logger = logging.getLogger(__name__)
 
 
+def _non_empty_string(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def _first_string(mapping: dict[str, Any], *keys: str) -> str | None:
+    for key in keys:
+        value = _non_empty_string(mapping.get(key))
+        if value:
+            return value
+    return None
+
+
+def _coalesce_string(mapping: dict[str, Any], key: str, fallback: str | None) -> str | None:
+    return _non_empty_string(mapping.get(key)) or fallback
+
+
+def _coalesce_bool(mapping: dict[str, Any], key: str, fallback: bool | None) -> bool | None:
+    value = mapping.get(key)
+    if isinstance(value, bool):
+        return value
+    return fallback
+
+
+def _coalesce_number(mapping: dict[str, Any], key: str, fallback: float | None) -> float | None:
+    value = mapping.get(key)
+    if isinstance(value, int | float):
+        return float(value)
+    return fallback
+
+
+def _suggestion_task_description(
+    task_manager: LocalTaskManager | None,
+    task_id: str | None,
+) -> str:
+    if not task_manager or not task_id:
+        return ""
+    try:
+        full_task = task_manager.get_task(task_id)
+    except Exception:
+        logger.debug("Failed to load dispatch suggestion task %s", task_id, exc_info=True)
+        return ""
+    description = getattr(full_task, "description", "") if full_task else ""
+    return description if isinstance(description, str) else ""
+
+
 def _load_agent_body(
     name: str,
-    db: DatabaseProtocol | None,
+    db: HubDatabase | None,
     project_id: str | None = None,
 ) -> AgentDefinitionBody | None:
     """Load an agent definition from workflow_definitions via direct lookup.
@@ -49,7 +97,7 @@ def _load_agent_body(
 
 def _register_agent_step_workflow(
     agent_body: AgentDefinitionBody,
-    db: DatabaseProtocol,
+    db: HubDatabase,
 ) -> str:
     """Register a synthetic WorkflowDefinition from agent's inline steps.
 
@@ -58,41 +106,9 @@ def _register_agent_step_workflow(
 
     Returns the workflow name.
     """
-    from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+    from gobby.agents.step_workflow import register_agent_step_workflow
 
-    step_workflow_name = f"{agent_body.name}-steps"
-    def_manager = LocalWorkflowDefinitionManager(db)
-
-    wf_data = {
-        "name": step_workflow_name,
-        "description": f"Auto-generated step workflow for {agent_body.name} agent",
-        "type": "step",
-        "version": "2.0",
-        "enabled": False,
-        "steps": [step.model_dump() for step in (agent_body.steps or [])],
-        "variables": agent_body.step_variables,
-        "exit_condition": agent_body.exit_condition,
-    }
-    definition_json = json.dumps(wf_data)
-
-    existing = def_manager.get_by_name(step_workflow_name)
-    if existing:
-        def_manager.update(
-            existing.id,
-            definition_json=definition_json,
-            workflow_type="workflow",
-            source="agent",
-        )
-    else:
-        def_manager.create(
-            name=step_workflow_name,
-            definition_json=definition_json,
-            workflow_type="workflow",
-            enabled=False,
-            source="agent",
-        )
-
-    return step_workflow_name
+    return register_agent_step_workflow(agent_body, db)
 
 
 def create_spawn_agent_registry(
@@ -103,7 +119,7 @@ def create_spawn_agent_registry(
     clone_storage: Any | None = None,
     clone_manager: Any | None = None,
     session_manager: Any | None = None,
-    db: DatabaseProtocol | None = None,
+    db: HubDatabase | None = None,
     completion_registry: Any | None = None,
     daemon_config: Any | None = None,
     code_index: Any | None = None,
@@ -166,6 +182,7 @@ def create_spawn_agent_registry(
         # Context
         parent_session_id: str | None = None,
         project_path: str | None = None,
+        notify_parent_on_completion: bool = True,
     ) -> dict[str, Any]:
         """
         Spawn a subagent with the specified configuration.
@@ -188,6 +205,7 @@ def create_spawn_agent_registry(
             max_turns: Maximum conversation turns
             parent_session_id: Session reference (accepts #N, N, UUID, or prefix) for the parent session
             project_path: Project path override
+            notify_parent_on_completion: Whether to notify the parent when the agent completes
 
         Returns:
             Dict with success status, run_id, child_session_id, isolation metadata
@@ -331,14 +349,27 @@ def create_spawn_agent_registry(
 
         # Auto-subscribe parent session + lineage to agent completion events
         run_id = result.get("run_id")
-        if result.get("success") and run_id and completion_registry and resolved_parent_session_id:
-            _auto_subscribe_agent(
-                completion_registry,
-                run_id,
-                resolved_parent_session_id,
-                session_manager,
-                db,
-            )
+        if (
+            notify_parent_on_completion
+            and result.get("success")
+            and run_id
+            and completion_registry
+            and resolved_parent_session_id
+        ):
+            try:
+                subscribe_agent_completion(
+                    completion_registry=completion_registry,
+                    run_id=str(run_id),
+                    subscriber_session_id=resolved_parent_session_id,
+                    session_manager=session_manager,
+                    db=db,
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to subscribe parent session to agent completion for run %s",
+                    run_id,
+                    exc_info=True,
+                )
 
         return result
 
@@ -364,6 +395,7 @@ def create_spawn_agent_registry(
         reasoning_required: bool | None = None,
         parent_session_id: str | None = None,
         timeout: float | None = None,
+        notify_parent_on_completion: bool = True,
     ) -> dict[str, Any]:
         """Dispatch multiple agents for non-conflicting tasks.
 
@@ -379,6 +411,7 @@ def create_spawn_agent_registry(
             model: Model override
             parent_session_id: Parent session reference
             timeout: Timeout in seconds for each agent
+            notify_parent_on_completion: Whether to notify parent sessions on completion
 
         Returns:
             Dict with dispatched count and per-task results
@@ -389,37 +422,81 @@ def create_spawn_agent_registry(
             return {"dispatched": 0, "results": []}
 
         async def _spawn_one(suggestion: dict[str, Any]) -> dict[str, Any]:
-            task_ref = suggestion.get("ref", suggestion.get("id", "unknown"))
-            task_title = suggestion.get("title", "")
-            task_id = suggestion.get("id")
-            # Fetch full description via task_manager (to_brief() intentionally omits it)
-            task_desc = ""
-            if task_id and task_manager:
-                full_task = task_manager.get_task(task_id)
-                if full_task and full_task.description:
-                    task_desc = full_task.description
-            desc_block = f"\n\nDescription:\n{task_desc}" if task_desc else ""
+            if not isinstance(suggestion, dict):
+                return {
+                    "task_ref": "",
+                    "run_id": "",
+                    "success": False,
+                    "error": "dispatch_batch suggestions must be objects",
+                }
+
+            task_id = _first_string(suggestion, "task_id", "id")
+            task_ref = _first_string(suggestion, "ref", "task_ref", "task_id", "id")
+            if not task_ref:
+                return {
+                    "task_ref": "",
+                    "run_id": "",
+                    "success": False,
+                    "error": (
+                        "dispatch_batch suggestion is missing ref, task_ref, task_id, or id; "
+                        "refusing to spawn an unknown task"
+                    ),
+                }
+            if not task_id:
+                task_id = task_ref
+
+            task_title = _first_string(suggestion, "title", "summary") or ""
+            prompt = _non_empty_string(suggestion.get("prompt"))
+            if prompt is None:
+                if not task_title:
+                    return {
+                        "task_ref": task_ref,
+                        "run_id": "",
+                        "success": False,
+                        "error": (
+                            "dispatch_batch suggestion is missing prompt and title; "
+                            f"refusing to spawn {task_ref}"
+                        ),
+                    }
+                task_desc = _suggestion_task_description(task_manager, task_id)
+                desc_block = f"\n\nDescription:\n{task_desc}" if task_desc else ""
+                prompt = f"Implement task {task_ref}: {task_title}{desc_block}"
+
+            suggestion_agent = _coalesce_string(suggestion, "agent", agent)
             try:
                 result = await spawn_agent(
-                    prompt=f"Implement task {task_ref}: {task_title}{desc_block}",
-                    agent=agent,
+                    prompt=prompt,
+                    agent=suggestion_agent or "backend-developer",
                     task_id=task_id,
-                    worktree_id=worktree_id,
-                    clone_id=clone_id,
-                    isolation=isolation,
-                    branch_name=branch_name,
-                    base_branch=base_branch,
-                    provider=provider,
-                    model=model,
-                    reasoning_effort=reasoning_effort,
-                    reasoning_required=reasoning_required,
-                    timeout=timeout,
-                    parent_session_id=parent_session_id,
+                    worktree_id=_coalesce_string(suggestion, "worktree_id", worktree_id),
+                    clone_id=_coalesce_string(suggestion, "clone_id", clone_id),
+                    isolation=_coalesce_string(suggestion, "isolation", isolation),
+                    branch_name=_coalesce_string(suggestion, "branch_name", branch_name),
+                    base_branch=_coalesce_string(suggestion, "base_branch", base_branch),
+                    provider=_coalesce_string(suggestion, "provider", provider),
+                    model=_coalesce_string(suggestion, "model", model),
+                    reasoning_effort=_coalesce_string(
+                        suggestion, "reasoning_effort", reasoning_effort
+                    ),
+                    reasoning_required=_coalesce_bool(
+                        suggestion, "reasoning_required", reasoning_required
+                    ),
+                    timeout=_coalesce_number(suggestion, "timeout", timeout),
+                    parent_session_id=_coalesce_string(
+                        suggestion, "parent_session_id", parent_session_id
+                    ),
+                    notify_parent_on_completion=_coalesce_bool(
+                        suggestion,
+                        "notify_parent_on_completion",
+                        notify_parent_on_completion,
+                    )
+                    is not False,
                 )
                 out: dict[str, Any] = {
                     "task_ref": task_ref,
                     "run_id": result.get("run_id", ""),
                     "success": result.get("success", False),
+                    "agent": suggestion_agent or "backend-developer",
                 }
                 if not out["success"] and result.get("error"):
                     out["error"] = result["error"]
@@ -442,45 +519,3 @@ def create_spawn_agent_registry(
         }
 
     return registry
-
-
-def _auto_subscribe_agent(
-    completion_registry: Any,
-    run_id: str,
-    parent_session_id: str,
-    session_manager: Any | None,
-    db: Any | None,
-) -> None:
-    """Register a completion event for an agent run and subscribe parent lineage."""
-    lineage_ids: list[str] = [parent_session_id]
-    if session_manager:
-        try:
-            from gobby.agents.session import ChildSessionManager
-
-            child_mgr = ChildSessionManager(session_manager)
-            lineage = child_mgr.get_session_lineage(parent_session_id)
-            lineage_ids = [s.id for s in lineage]
-            if parent_session_id not in lineage_ids:
-                lineage_ids.append(parent_session_id)
-        except Exception:
-            logger.debug(
-                f"Could not resolve session lineage for {parent_session_id}", exc_info=True
-            )
-
-    try:
-        completion_registry.register(run_id, subscribers=lineage_ids)
-    except Exception:
-        logger.debug(f"Failed to register completion event for run {run_id}", exc_info=True)
-        return
-
-    # Persist subscribers for restart recovery
-    if db is not None:
-        try:
-            from gobby.storage.pipelines import LocalPipelineExecutionManager
-
-            em = LocalPipelineExecutionManager(db=db, project_id="")
-            em.add_completion_subscribers(run_id, lineage_ids)
-        except Exception:
-            logger.debug(
-                f"Failed to persist completion subscribers for run {run_id}", exc_info=True
-            )

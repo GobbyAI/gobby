@@ -13,8 +13,8 @@ from datetime import UTC, datetime
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.skills.formatting import skill_fetch_directive
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
@@ -24,15 +24,13 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path) -> LocalDatabase:
-    db_path = tmp_path / "test_task_enforcement.db"
-    database = LocalDatabase(db_path)
-    run_migrations(database)
+def db(temp_db: HubDatabase) -> HubDatabase:
+    database = temp_db
     return database
 
 
 @pytest.fixture
-def manager(db: LocalDatabase) -> LocalWorkflowDefinitionManager:
+def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
     return LocalWorkflowDefinitionManager(db)
 
 
@@ -52,13 +50,13 @@ TASK_ENFORCEMENT_RULES = {
     "block-reopen-task",
     "require-task-creation-skill-on-schema",
     "require-task-transitions-skill-on-lifecycle",
-    "require-verification-before-completion-on-lifecycle-call",
-    "require-verification-before-completion-on-schema",
     "require-task-creation-skill-loaded",
     "require-task-transitions-skill-loaded",
     "require-task-before-edit",
     "require-commit-before-status",
+    "require-completion-readiness-evidence",
     "require-clean-tree-before-status",
+    "block-direct-verification-evidence-variable-set",
     "strip-skip-validation-with-commit",
     "block-ask-during-stop-compliance",
     "block-needs-review-interactive",
@@ -69,8 +67,6 @@ TASK_ENFORCEMENT_RULES = {
 REPLACED_TASK_SKILL_RULES = {
     "inject-task-creation-on-schema",
     "inject-transition-skill",
-    "inject-verification-before-completion-on-lifecycle-call",
-    "inject-verification-before-completion-on-schema",
 }
 
 
@@ -648,7 +644,7 @@ class TestBlockNeedsReviewInteractive:
         _sync_bundled(db)
         engine = RuleEngine(db)
         variables = {
-            "loaded_skills": ["task-transitions", "verification-before-completion"],
+            "loaded_skills": ["task-transitions"],
             "plan_review_mode": "delegated",
             "active_anchor_id": "anchor-1",
         }
@@ -663,11 +659,11 @@ class TestBlockNeedsReviewInteractive:
         assert "block-needs-review-interactive" in (response.reason or "")
 
     @pytest.mark.asyncio
-    async def test_submit_for_review_allows_active_plan_anchor(self, db) -> None:
+    async def test_submit_for_review_blocks_even_with_stale_plan_anchor_variables(self, db) -> None:
         _sync_bundled(db)
         engine = RuleEngine(db)
         variables = {
-            "loaded_skills": ["task-transitions", "verification-before-completion"],
+            "loaded_skills": ["task-transitions"],
             "plan_review_mode": "delegated",
             "active_anchor_id": "anchor-1",
         }
@@ -678,14 +674,15 @@ class TestBlockNeedsReviewInteractive:
             variables=variables,
         )
 
-        assert response.decision == "allow"
+        assert response.decision == "block"
+        assert "block-needs-review-interactive" in (response.reason or "")
 
     @pytest.mark.asyncio
     async def test_approve_review_stays_blocked_for_active_plan_anchor(self, db) -> None:
         _sync_bundled(db)
         engine = RuleEngine(db)
         variables = {
-            "loaded_skills": ["task-transitions", "verification-before-completion"],
+            "loaded_skills": ["task-transitions"],
             "plan_review_mode": "delegated",
             "active_anchor_id": "anchor-1",
         }
@@ -854,10 +851,7 @@ class TestRequireTaskCreationSkillOnSchema:
         assert "not skill_loaded('task-creation')" in (body.when or "")
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert (
-            body.effects[0].reason
-            == 'Call get_skill(name="task-creation") on gobby-skills, then continue.'
-        )
+        assert body.effects[0].reason == skill_fetch_directive("task-creation")
 
 
 class TestRequireTaskTransitionsSkillOnLifecycle:
@@ -891,10 +885,7 @@ class TestRequireTaskTransitionsSkillOnLifecycle:
         set_effects = [effect for effect in body.effects if effect.type == "set_variable"]
 
         assert len(block_effects) == 1
-        assert (
-            block_effects[0].reason
-            == 'Call get_skill(name="task-transitions") on gobby-skills, then continue.'
-        )
+        assert block_effects[0].reason == skill_fetch_directive("task-transitions")
         assert set_effects == []
 
 
@@ -909,10 +900,7 @@ class TestTaskLifecycleSkillGates:
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.event.value == "before_tool"
         assert "skill_loaded('task-creation')" in (body.when or "")
-        assert (
-            body.effects[0].reason
-            == 'Call get_skill(name="task-creation") on gobby-skills, then continue.'
-        )
+        assert body.effects[0].reason == skill_fetch_directive("task-creation")
 
     def test_transition_gate_blocks_without_loaded_skill(self, db, manager) -> None:
         _sync_bundled(db)
@@ -923,10 +911,7 @@ class TestTaskLifecycleSkillGates:
         assert body.event.value == "before_tool"
         assert "reopen_task" in (body.when or "")
         assert "skill_loaded('task-transitions')" in (body.when or "")
-        assert (
-            body.effects[0].reason
-            == 'Call get_skill(name="task-transitions") on gobby-skills, then continue.'
-        )
+        assert body.effects[0].reason == skill_fetch_directive("task-transitions")
 
     @pytest.mark.asyncio
     async def test_creation_schema_gate_blocks_until_loaded(self, db, manager) -> None:

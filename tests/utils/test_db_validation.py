@@ -1,5 +1,9 @@
 """Tests for task validation and maintenance."""
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+from typing import TYPE_CHECKING
+
 import pytest
 
 from gobby.storage.task_dependencies import TaskDependencyManager
@@ -7,6 +11,24 @@ from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.validation import TaskValidator
 
 pytestmark = pytest.mark.unit
+
+if TYPE_CHECKING:
+    from gobby.storage.hub.protocol import HubDatabase, Transaction
+
+
+class _RollbackInvalidRows(Exception):
+    """Roll back deliberately invalid rows after validation assertions."""
+
+
+@contextmanager
+def _deferred_constraints_rollback(db: "HubDatabase") -> Iterator["Transaction"]:
+    try:
+        with db.transaction() as conn:
+            conn.execute("SET CONSTRAINTS ALL DEFERRED")
+            yield conn
+            raise _RollbackInvalidRows
+    except _RollbackInvalidRows:
+        pass
 
 
 @pytest.fixture
@@ -29,25 +51,22 @@ def test_orphan_dependencies(manager, dep_manager, sample_project):
     # Create valid dependency
     dep_manager.add_dependency(t2.id, t1.id)
 
-    # Create orphan dependency by disabling FK checks temporarily
-    manager.db.execute("PRAGMA foreign_keys = OFF")
-    try:
+    with manager.db.transaction() as conn:
+        conn.execute("SET CONSTRAINTS ALL DEFERRED")
         manager.db.execute(
             "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (?, ?, ?, ?)",
             ("non_existent_task", t1.id, "blocks", "2023-01-01T00:00:00Z"),
         )
-    finally:
-        manager.db.execute("PRAGMA foreign_keys = ON")
 
-    validator = TaskValidator(manager)
-    orphans = validator.check_orphan_dependencies()
+        validator = TaskValidator(manager)
+        orphans = validator.check_orphan_dependencies()
 
-    assert len(orphans) == 1
-    # We can't assert ID equality easily since it's auto-increment, but we know it's there
-    assert orphans[0]["task_id"] == "non_existent_task"
+        assert len(orphans) == 1
+        # We can't assert ID equality easily since it's auto-increment, but we know it's there
+        assert orphans[0]["task_id"] == "non_existent_task"
 
-    # Clean
-    count = validator.clean_orphans()
+        # Clean before the deferred constraints are checked.
+        count = validator.clean_orphans()
     assert count == 1
 
     assert len(validator.check_orphan_dependencies()) == 0
@@ -61,9 +80,8 @@ def test_invalid_projects(manager, sample_project):
     proj_id = sample_project["id"]
     manager.create_task(proj_id, "Valid Task")
 
-    # Create task with invalid project manually
-    manager.db.execute("PRAGMA foreign_keys = OFF")
-    try:
+    validator = TaskValidator(manager)
+    with _deferred_constraints_rollback(manager.db):
         manager.db.execute(
             """
             INSERT INTO tasks (id, project_id, title, created_at, updated_at)
@@ -77,14 +95,11 @@ def test_invalid_projects(manager, sample_project):
                 "2023-01-01",
             ),
         )
-    finally:
-        manager.db.execute("PRAGMA foreign_keys = ON")
 
-    validator = TaskValidator(manager)
-    invalid = validator.check_invalid_projects()
+        invalid = validator.check_invalid_projects()
 
-    assert len(invalid) == 1
-    assert invalid[0]["id"] == "task_orphan_proj"
+        assert len(invalid) == 1
+        assert invalid[0]["id"] == "task_orphan_proj"
 
 
 @pytest.mark.integration

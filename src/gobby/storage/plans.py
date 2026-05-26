@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import shutil
 import uuid
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -13,7 +14,7 @@ from typing import Any, Literal
 from gobby.plans.coverage import evaluate
 from gobby.plans.coverage_manifest import coverage_manifest_path, write_manifest
 from gobby.plans.parser import PlanKind, parse_plan
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 
 PlanState = Literal["active", "archived"]
@@ -35,7 +36,7 @@ class PlanRecord:
     archived_at: str | None = None
 
     @classmethod
-    def from_row(cls, row: Any) -> PlanRecord:
+    def from_row(cls, row: Mapping[str, Any]) -> PlanRecord:
         return cls(
             id=row["id"],
             project_id=row["project_id"],
@@ -61,7 +62,7 @@ class PlanNotFoundError(ValueError):
 class LocalPlanManager:
     """CRUD wrapper for the DB-backed plan index."""
 
-    def __init__(self, db: DatabaseProtocol):
+    def __init__(self, db: HubDatabase):
         self.db = db
 
     def create_plan(

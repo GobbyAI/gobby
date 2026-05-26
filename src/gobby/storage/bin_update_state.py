@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import sqlite3
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 BinUpdateStatus = Literal[
     "updated",
@@ -38,12 +38,12 @@ CREATE TABLE IF NOT EXISTS bin_update_state (
     target TEXT,
     last_status TEXT NOT NULL CHECK (last_status IN ({_STATUS_SQL})),
     last_error TEXT,
-    checked_at TEXT NOT NULL DEFAULT (datetime('now')),
+    checked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     installed_at TEXT,
     source_url TEXT,
-    is_dev INTEGER NOT NULL DEFAULT 0 CHECK (is_dev IN (0, 1)),
-    floor_drift INTEGER NOT NULL DEFAULT 0 CHECK (floor_drift IN (0, 1)),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    is_dev BOOLEAN NOT NULL DEFAULT FALSE CHECK (is_dev IN (FALSE, TRUE)),
+    floor_drift BOOLEAN NOT NULL DEFAULT FALSE CHECK (floor_drift IN (FALSE, TRUE)),
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 """
 
@@ -64,7 +64,7 @@ _RECORD_COLUMNS = """
             floor_drift"""
 
 
-def _row_to_record(row: sqlite3.Row) -> BinUpdateRecord:
+def _row_to_record(row: Mapping[str, Any]) -> BinUpdateRecord:
     return BinUpdateRecord(
         tool_name=row["tool_name"],
         installed_version=row["installed_version"],
@@ -104,7 +104,7 @@ class BinUpdateRecord:
 class BinUpdateStateStore:
     """Read and write rows in ``bin_update_state``."""
 
-    def __init__(self, db: DatabaseProtocol) -> None:
+    def __init__(self, db: HubDatabase) -> None:
         self.db = db
 
     def upsert(
@@ -142,7 +142,7 @@ class BinUpdateStateStore:
                 floor_drift,
                 updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, datetime('now'))
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(tool_name) DO UPDATE SET
                 installed_version = excluded.installed_version,
                 floor_version = excluded.floor_version,
@@ -169,8 +169,8 @@ class BinUpdateStateStore:
                 last_error,
                 installed_at,
                 source_url,
-                int(is_dev),
-                int(floor_drift),
+                bool(is_dev),
+                bool(floor_drift),
             ),
         )
         record = self.get(tool_name)

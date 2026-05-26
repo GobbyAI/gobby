@@ -42,7 +42,7 @@ class TestMetricSnapshotStorage:
     def test_delete_old_snapshots(self, storage, sample_metrics, temp_db):
         storage.save_snapshot(sample_metrics)
         # Manually backdate the snapshot
-        temp_db.execute("UPDATE metric_snapshots SET timestamp = datetime('now', '-25 hours')")
+        temp_db.execute("UPDATE metric_snapshots SET timestamp = NOW() - INTERVAL '25 hours'")
         deleted = storage.delete_old_snapshots(retention_hours=24)
         assert deleted == 1
         assert storage.get_snapshot_count() == 0

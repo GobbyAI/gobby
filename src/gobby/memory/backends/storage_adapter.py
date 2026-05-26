@@ -1,12 +1,12 @@
 """Storage adapter for MemoryBackendProtocol.
 
 Wraps an existing LocalMemoryManager instance to provide the async
-MemoryBackendProtocol interface. Used by MemoryManager when operating
-in local/SQLite mode (the default).
+MemoryBackendProtocol interface. Used by MemoryManager to expose PostgreSQL
+hub-backed memory storage through the backend protocol.
 
-Unlike the old SQLiteBackend (deleted in Memory V4), this adapter does NOT
-create its own LocalMemoryManager — it reuses the one owned by MemoryManager,
-eliminating the duplicate-instance problem.
+Unlike the removed standalone backend, this adapter does NOT create its own
+LocalMemoryManager — it reuses the one owned by MemoryManager, eliminating the
+duplicate-instance problem.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ class StorageAdapter:
         self._storage = storage
         self._run_db = run_db
 
-    async def _run_sqlite(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    async def _run_storage(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         if self._run_db is None:
             return await asyncio.to_thread(func, *args, **kwargs)
         return await self._run_db(func, *args, **kwargs)
@@ -85,7 +85,7 @@ class StorageAdapter:
                 ]
             )
 
-        memory = await self._run_sqlite(
+        memory = await self._run_storage(
             self._storage.create_memory,
             content=content,
             memory_type=memory_type,
@@ -99,7 +99,7 @@ class StorageAdapter:
 
     async def get(self, memory_id: str) -> MemoryRecord | None:
         try:
-            memory = await self._run_sqlite(self._storage.get_memory, memory_id)
+            memory = await self._run_storage(self._storage.get_memory, memory_id)
             return self._to_record(memory)
         except ValueError:
             return None
@@ -110,7 +110,7 @@ class StorageAdapter:
         content: str | None = None,
         tags: list[str] | None = None,
     ) -> MemoryRecord:
-        memory = await self._run_sqlite(
+        memory = await self._run_storage(
             self._storage.update_memory,
             memory_id=memory_id,
             content=content,
@@ -121,10 +121,10 @@ class StorageAdapter:
         return self._to_record(memory)
 
     async def delete(self, memory_id: str) -> bool:
-        return cast(bool, await self._run_sqlite(self._storage.delete_memory, memory_id))
+        return cast(bool, await self._run_storage(self._storage.delete_memory, memory_id))
 
     async def search(self, query: MemoryQuery) -> list[MemoryRecord]:
-        memories = await self._run_sqlite(
+        memories = await self._run_storage(
             self._storage.search_memories,
             query_text=query.text,
             project_id=query.project_id,
@@ -145,7 +145,7 @@ class StorageAdapter:
         limit: int = 50,
         offset: int = 0,
     ) -> list[MemoryRecord]:
-        memories = await self._run_sqlite(
+        memories = await self._run_storage(
             self._storage.list_memories,
             project_id=project_id,
             memory_type=memory_type,
@@ -157,13 +157,13 @@ class StorageAdapter:
     async def content_exists(self, content: str, project_id: str | None = None) -> bool:
         return cast(
             bool,
-            await self._run_sqlite(self._storage.content_exists, content, project_id),
+            await self._run_storage(self._storage.content_exists, content, project_id),
         )
 
     async def get_memory_by_content(
         self, content: str, project_id: str | None = None
     ) -> MemoryRecord | None:
-        memory = await self._run_sqlite(self._storage.get_memory_by_content, content, project_id)
+        memory = await self._run_storage(self._storage.get_memory_by_content, content, project_id)
         if memory:
             return self._to_record(memory)
         return None

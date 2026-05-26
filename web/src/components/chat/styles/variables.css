@@ -1,8 +1,5 @@
-@import "tailwindcss";
-@config "../../../../tailwind.config.ts";
-
 /* Chat-surface aliases for shared design tokens. Actual values live in
-   web/src/styles/index.css; this file only maps legacy chat-specific names
+   web/src/styles/tokens.css; this file only maps legacy chat-specific names
    (--bg-code, --bg-muted, --border-color, --accent-color) onto the tokens
    from the global layer so chat CSS keeps compiling. The triplet
    --text-primary / --text-secondary / --text-muted is defined globally —

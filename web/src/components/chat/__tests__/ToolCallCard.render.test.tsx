@@ -34,6 +34,44 @@ describe('ToolCallCard rendering', () => {
     expect(screen.getByText('git status --short')).toBeInTheDocument()
   })
 
+  it('does not render completed tool calls that only carry a null result', () => {
+    const { container } = renderWithProviders(
+      <ToolCallCards
+        toolCalls={[
+          makeCall({
+            id: 'tool-null',
+            tool_name: 'exec_command',
+            result: null as never,
+          }),
+        ]}
+      />,
+    )
+
+    expect(container.textContent).toBe('')
+    expect(screen.queryByText('Bash')).toBeNull()
+    expect(screen.queryByText('Result')).toBeNull()
+  })
+
+  it('renders arguments without leaking Result null when a completed result is null', () => {
+    renderWithProviders(
+      <ToolCallCards
+        toolCalls={[
+          makeCall({
+            id: 'tool-null-with-args',
+            tool_name: 'exec_command',
+            arguments: { cmd: 'true' },
+            result: null as never,
+          }),
+        ]}
+      />,
+    )
+
+    expect(screen.getByText('Bash')).toBeInTheDocument()
+    expect(screen.getByText('true')).toBeInTheDocument()
+    expect(screen.queryByText('Result')).toBeNull()
+    expect(screen.queryByText('null')).toBeNull()
+  })
+
   it('renders 3+ same-tool runs through the quieter ToolCallGroupHeader (canonical Bash name)', () => {
     const { container } = renderWithProviders(
       <ToolCallCards
@@ -74,9 +112,19 @@ describe('ToolCallCard rendering', () => {
     const { rerender } = renderWithProviders(
       <ToolCallCards
         toolCalls={[
-          makeCall({ id: 'tool-1', tool_name: 'exec_command', status: 'completed' }),
+          makeCall({
+            id: 'tool-1',
+            tool_name: 'exec_command',
+            status: 'completed',
+            arguments: { cmd: 'true' },
+          }),
           makeCall({ id: 'tool-2', tool_name: 'exec_command', status: 'error' }),
-          makeCall({ id: 'tool-3', tool_name: 'exec_command', status: 'completed' }),
+          makeCall({
+            id: 'tool-3',
+            tool_name: 'exec_command',
+            status: 'completed',
+            arguments: { cmd: 'git status --short' },
+          }),
         ]}
       />,
     )
@@ -88,9 +136,19 @@ describe('ToolCallCard rendering', () => {
     rerender(
       <ToolCallCards
         toolCalls={[
-          makeCall({ id: 'tool-1', tool_name: 'exec_command', status: 'completed' }),
+          makeCall({
+            id: 'tool-1',
+            tool_name: 'exec_command',
+            status: 'completed',
+            arguments: { cmd: 'true' },
+          }),
           makeCall({ id: 'tool-2', tool_name: 'exec_command', status: 'calling' }),
-          makeCall({ id: 'tool-3', tool_name: 'exec_command', status: 'completed' }),
+          makeCall({
+            id: 'tool-3',
+            tool_name: 'exec_command',
+            status: 'completed',
+            arguments: { cmd: 'git status --short' },
+          }),
         ]}
       />,
     )

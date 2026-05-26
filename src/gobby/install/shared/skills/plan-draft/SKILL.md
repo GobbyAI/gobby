@@ -23,19 +23,13 @@ It is consumed from two places:
 - **Autonomous:** the spawned `planner` agent (`planner.yaml`) loads this as its
   first action so every round of autonomous drafting follows the same format.
 
-A plan written to this methodology is directly consumable by `/gobby expand`
-(which creates the task tree) and by `plan-review` (which reviews it adversarially).
+A plan written to this methodology is consumable by taskless `/gobby plan`,
+`gobby build`, `/gobby expand`, and `plan-review`.
 
-**Orchestration contract (cross-reference)**: this skill covers *how to write* a
-plan; the *spawn / verdict / wake* orchestration around it lives in `plan` (Step
-7.0a Anchor-task contract) and `plan-review` (Escalation Policy). Key invariants
-that affect drafting authors should know about: the parent session never claims
-a task during plan authoring (`.gobby/plans/*.md` is exempt from
-`require-task-before-edit`); each adversary or planner round spawns against a
-freshly-created per-round anchor task (NOT the planning epic); the parent
-fires-and-forgets after each spawn — daemon-wake on the anchor's terminal state
-is the only wake signal, no polling or `ScheduleWakeup`. See `plan/SKILL.md`
-Step 7 for the full contract.
+**Orchestration contract (cross-reference)**: this skill covers how to write a
+plan. The taskless draft/review/build orchestration lives in `plan/SKILL.md`.
+Plan authoring writes only `.gobby/plans/*.md`; it does not create planning
+epics, review anchors, or per-round tasks.
 
 ---
 
@@ -135,12 +129,10 @@ Planner authors **narrative sections only**: `# {Epic Title}`, `## Overview`,
 with `**Acceptance:**` blocks, `framing` / `verification` / `deferred` sections,
 and the `## Plan Changelog` rolling summary (per §2.23). Stop there.
 
-The `## M1 Task Manifest` section is **NOT** part of the planner's surface. It
-is written by `plan-adversary` as the final act of approval — the act of
-emitting the manifest is what forces the adversary to confront ambiguity it
-might otherwise wave through. If a planner draft includes a `## M1 Task
-Manifest` section, the adversary will replace it on approval. Drafts presented
-for review SHOULD NOT carry one.
+The `## M1 Task Manifest` section is not part of the first-draft narrative
+surface. It is written by the approving adversary or the interactive plan
+coordinator after final user approval. If a draft includes a manifest, it must
+pass expansion-mode validation.
 
 Why this split: the planner's job is to fill holes in narrative; the
 adversary's job is to commit to a typed, expansion-ready bridge between the
@@ -342,29 +334,19 @@ guess — and it will guess wrong.
 
 ## TDD Compatibility (IMPORTANT)
 
-When `/gobby expand` processes the plan, it applies TDD automatically to each
-`code`/`config` task.
+Expansion no longer creates default `[TDD]` / `[IMPL]` / `[REF]` wrapper
+children for new plans. Each manifest entry emits one implementation leaf.
+When the manifest sets `tdd: true`, that leaf receives:
 
-### TDD Triplet Pattern
-
-Each feature task (category `code` or `config`) gets expanded into three children:
-
-- **[TDD]** — write failing tests first
-- **[IMPL]** — make tests pass
-- **[REF]** — refactor while keeping tests green
-
-```text
-Feature Task
-├── [TDD] Write failing tests for feature
-├── [IMPL] Implement feature
-└── [REF] Refactor with green tests
-```
+- `additional_skills: ["test-driven-development"]`
+- label `tdd:required`
+- validation criteria requiring red, green, refactor/final-green, exact test
+  command, and test-quality audit evidence
 
 ### What the Plan MUST NOT Contain
 
-Drafts must never contain filler test tasks that duplicate TDD wrappers —
-expansion inserts those for every `code` and `config` deliverable. Scan and
-remove any of:
+Drafts must never contain filler test tasks that duplicate TDD-required
+implementation leaves. Scan and remove any of:
 
 - `"Write tests for..."` / `"Add tests for..."`
 - `"Test..."` as a task title prefix
@@ -387,20 +369,23 @@ criteria and are not substitutes for a sibling TDD wrapper:
 
 Expansion manifest category list:
 
-| Category | TDD sandwich? | Use for |
+| Category | TDD eligible? | Use for |
 |----------|---------------|---------|
-| `code` | yes | Implementation tasks (requires `validation_criteria` at task-create time) |
-| `config` | yes | Configuration file changes |
+| `code` | yes | Implementation tasks; manifest entries require `implementation_domain` |
+| `config` | conditional | Configuration changes; use `tdd: true` only for executable behavior |
 | `docs` | no | Documentation |
 | `refactor` | no | Code restructuring with no behavior change (includes updating existing tests) |
 | `test` | no | Standalone test infrastructure, parity, characterization, or regression suites with their own acceptance criteria |
-| `research` | no | Investigation, no code output expected |
-| `planning` | no | Design, architecture |
+
+For `category: code`, the manifest must include
+`implementation_domain: backend | frontend | fullstack`. The domain routes the
+leaf to `backend-developer`, `frontend-developer`, or `fullstack-developer`.
 
 Pick the most specific category that applies. A task that only moves code
 around without changing behavior is `refactor`, not `code`.
-`manual` remains valid for direct task creation outside expansion manifests; in
-plans that expand into tasks, live/manual verification belongs in `test`.
+`research`, `planning`, and `manual` remain valid for direct task creation
+outside expansion manifests. In plans that expand into tasks, discovery and
+design must already be resolved; live/manual verification belongs in `test`.
 
 ---
 
@@ -427,7 +412,7 @@ tasks will be dropped at expansion time):
 - `## Phase N — Name` and dash variants — same problem.
 - `## 1: Setup` — extracts section_id `"1"` (numeric) which does NOT match
   the phase regex `^P\d+$`. The validator returns `phase_count: 0` and the
-  expansion compiler cannot anchor TDD wrappers.
+  expansion compiler cannot build the phase hierarchy.
 
 Always prefer `## P<N>: Name`. Pair every phase heading with `` `kind: framing` ``
 on the next non-blank line — without it the parser treats the section as
@@ -464,14 +449,11 @@ list. `/gobby expand` creates this hierarchy automatically from the plan's
 L1: Root Epic (from plan title)
 └── L2: Phase Sub-Epic (from each ## P<N> section)
     └── L3: Feature Task (from each ### N.M task heading)
-        ├── [TDD] Write failing tests     ← TDD sandwich (auto-generated)
-        ├── [IMPL] Implement feature      ← TDD sandwich (auto-generated)
-        └── [REF] Refactor with green tests ← TDD sandwich (auto-generated)
 ```
 
 ### Why Phases Must Be Sub-Epics
 
-- **TDD sandwiches are per-phase** — each phase gets its own [TDD]/[REF] wrapper.
+- **One leaf per manifest entry** — TDD is enforced by task metadata and skills.
 - **Parallel dispatch** — phases with no cross-dependencies can be dispatched independently.
 - **Progress tracking** — phase completion is visible without scanning 30+ flat tasks.
 - **Dependency scoping** — intra-phase deps are local; cross-phase deps are explicit.
@@ -482,7 +464,7 @@ L1: Root Epic (from plan title)
 2. For each `## P<N>: Name` section:
    - Creates a phase sub-epic under the root.
    - Saves an expansion spec with that phase's `### N.M` tasks.
-   - Executes expansion with `tdd=true` — adds [TDD] and [REF] wrappers per phase.
+   - Emits one leaf per manifest entry.
 3. Wires cross-phase dependencies (e.g., `depends: P<N>` becomes a dependency
    on the phase sub-epic).
 
@@ -501,7 +483,8 @@ workflows or when debugging the expansion CLI path itself.
 
 Scan headings and bullets for forbidden duplicate TDD-wrapper patterns from the
 TDD Compatibility section above. Remove filler "write tests for X" tasks that
-belong inside the generated wrapper. Keep standalone `category: test`
+duplicate skill-backed TDD required on the implementation leaf. Keep standalone
+`category: test`
 deliverables when they have their own target, acceptance criteria, and
 behavior-pinning or test-infrastructure purpose.
 
@@ -570,20 +553,19 @@ revise until every check passes.
 
 ## Revision Round Mandate
 
-Planner revision rounds run in fresh context. Read only the current plan file,
-the cumulative `## Plan Changelog`, and the latest `## Adversary Findings —
-Round N` supplied by the coordinator.
+Planner revision rounds run in fresh context. Read the current plan file,
+the cumulative `## V1 Plan Changelog`, and the latest taskless adversary
+findings supplied by the coordinator.
 
 Apply surgical fixes: missing acceptance items, ambiguous wording, stale file
 paths, missing dependency annotations, and contradictions with the codebase.
 Do not redesign the plan in response to adversary findings. When a finding
-requires rejecting the premise or re-engineering a section, call
-`escalate_task(reason="needs_human:premise_disagreement:<section_id>:<details>")`.
+requires rejecting the premise or re-engineering a section, return a
+`needs_requirements:<section_id>:<details>` note to the coordinator.
 
-After a revision, append one concise bullet to `## Plan Changelog` describing
-the surgical fixes for that round, then resubmit with one atomic
-`submit_for_review(task_id=..., stage_name="planning", review_notes=...)` call. That transition
-clears `planning-current-verdict:rejected`; do not clear the label separately.
+After a revision, update `## V1 Plan Changelog` with resolution notes for the
+round, rerun plan validation, and hand the artifact back to the coordinator for
+the next taskless review round.
 
-Planners author narrative sections only. The `## M1 Task Manifest` is emitted
-by `plan-adversary` on approval.
+First drafts author narrative sections only. The `## M1 Task Manifest` is
+emitted by `plan-adversary-taskless` or the interactive coordinator on approval.

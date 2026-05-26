@@ -215,6 +215,7 @@ __marimo__/
 .agent/
 .agentvibes/
 .antigravity/
+.antigravitycli/
 .copilot/
 .windsurf/
 .agents/
@@ -225,6 +226,7 @@ __marimo__/
 .scripts/
 .gobby/config.yaml
 .gobby/agents/
+.gobby/bin/
 .gobby/workflows/
 .gobby/plugins/
 .gobby/prompts/

@@ -10,7 +10,7 @@ from gobby.app_context import ServiceContainer
 from gobby.servers.http import HTTPServer
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronJob, CronRun
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
@@ -62,7 +62,7 @@ def _make_run(**overrides: object) -> CronRun:
 
 
 @pytest.fixture
-def session_storage(temp_db: LocalDatabase) -> SessionManager:
+def session_storage(temp_db: HubDatabase) -> SessionManager:
     return SessionManager(temp_db)
 
 

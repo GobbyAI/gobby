@@ -4,15 +4,16 @@ from __future__ import annotations
 
 import json
 import logging
-import sqlite3
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from gobby.storage.skills._models import Skill, SkillSourceType
+from gobby.storage.sql_dialect import json_text_expr
 from gobby.utils.id import generate_prefixed_id
 
 if TYPE_CHECKING:
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +21,7 @@ _UNSET: Any = object()
 
 
 class _SkillMetadataHost(Protocol):
-    db: DatabaseProtocol
+    db: HubDatabase
 
     def _notify_change(
         self,
@@ -38,33 +39,33 @@ class _SkillMetadataHost(Protocol):
 class SkillMetadataMixin:
     """Mixin providing skill metadata CRUD operations.
 
-    Requires ``self.db`` (DatabaseProtocol) and ``self._notify_change()``.
+    Requires ``self.db`` (HubDatabase) and ``self._notify_change()``.
     """
 
-    db: DatabaseProtocol
+    db: HubDatabase
 
     def _host(self) -> _SkillMetadataHost:
         return cast(_SkillMetadataHost, self)
 
-    def _fetchone(self, query: str, params: tuple[Any, ...] = ()) -> sqlite3.Row | None:
+    def _fetchone(self, query: str, params: tuple[Any, ...] = ()) -> Mapping[str, Any] | None:
         """Run a read query in a new transaction.
 
         Callers that already own a transaction should execute on that connection
         directly to avoid nested transaction behavior.
         """
         with self.db.transaction() as conn:
-            row = conn.execute(query, params).fetchone()
-            return cast(sqlite3.Row | None, row)
+            row: Mapping[str, Any] | None = conn.execute(query, params).fetchone()
+            return row
 
-    def _fetchall(self, query: str, params: tuple[Any, ...] = ()) -> list[sqlite3.Row]:
+    def _fetchall(self, query: str, params: tuple[Any, ...] = ()) -> list[Mapping[str, Any]]:
         """Run a read query in a new transaction.
 
         Callers that already own a transaction should execute on that connection
         directly to avoid nested transaction behavior.
         """
         with self.db.transaction() as conn:
-            rows = conn.execute(query, params).fetchall()
-            return cast(list[sqlite3.Row], rows)
+            rows: list[Mapping[str, Any]] = conn.execute(query, params).fetchall()
+            return rows
 
     def create_skill(
         self,
@@ -576,14 +577,21 @@ class SkillMetadataMixin:
         # Filter by category using JSON extraction in SQL to avoid under-filled results
         # Check both top-level $.category and nested $.skillport.category
         if category:
-            query += """ AND (
-                json_extract(metadata, '$.category') = ?
-                OR json_extract(metadata, '$.skillport.category') = ?
-            )"""
+            category_sql = json_text_expr(self.db, "metadata", "category")
+            skillport_category_sql = json_text_expr(self.db, "metadata", "skillport", "category")
+            query += f""" AND (
+                {category_sql} = ?
+                OR {skillport_category_sql} = ?
+            )"""  # nosec B608 # JSON expressions are generated from static keys.
             params.extend([category, category])
 
-        query += " ORDER BY name ASC LIMIT ? OFFSET ?"
-        params.extend([limit, offset])
+        query += " ORDER BY name ASC"
+        if limit >= 0:
+            query += " LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
+        elif offset > 0:
+            query += " OFFSET ?"
+            params.append(offset)
 
         rows = self._fetchall(query, tuple(params))
         skills = [Skill.from_row(row) for row in rows]
@@ -609,8 +617,8 @@ class SkillMetadataMixin:
     ) -> list[Skill]:
         """Search skills by name and description.
 
-        This is a simple text search. For advanced search with keyword (FTS5)
-        and embeddings, use SkillSearch from the skills module.
+        This is a simple text search. For advanced keyword and embedding search,
+        use SkillSearch from the skills module.
 
         Args:
             query_text: Text to search for
@@ -653,7 +661,10 @@ class SkillMetadataMixin:
         Returns:
             List of core skills (always-apply skills)
         """
-        query = "SELECT * FROM skills WHERE always_apply = 1 AND enabled = 1 AND deleted_at IS NULL"
+        query = (
+            "SELECT * FROM skills "
+            "WHERE always_apply IS TRUE AND enabled IS TRUE AND deleted_at IS NULL"
+        )
         params: list[Any] = []
 
         if project_id:

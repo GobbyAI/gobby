@@ -7,23 +7,24 @@ via session_manager.  It does NOT write to a session_messages table.
 
 import json
 from collections.abc import AsyncGenerator
+from unittest.mock import MagicMock
 
 import pytest
 
 from gobby.sessions.processor import SessionMessageProcessor
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from tests._timing import wait_for_async_condition
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def mock_db(tmp_path) -> LocalDatabase:
-    return LocalDatabase(tmp_path / "test.db")
+def mock_db() -> HubDatabase:
+    return MagicMock(spec=HubDatabase)
 
 
 @pytest.fixture
-async def processor(mock_db: LocalDatabase) -> AsyncGenerator[SessionMessageProcessor]:
+async def processor(mock_db: HubDatabase) -> AsyncGenerator[SessionMessageProcessor]:
     proc = SessionMessageProcessor(mock_db, poll_interval=0.1)
     yield proc
     if proc._running:

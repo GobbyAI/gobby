@@ -349,23 +349,23 @@ Depends on A1.
 ```yaml
 - title: Create user model
   category: code
+  implementation_domain: backend
   task_type: task
   depends_on: []
   validation_criteria: User model exists and tests cover core behavior.
   labels:
     - covers:dark-mode:A1:A1.1
     - covers:dark-mode:A1:A1.2
-  assigned_agent: backend-developer
   tdd: true
   source_section: A1
 - title: Add authentication
   category: code
+  implementation_domain: backend
   task_type: task
   depends_on: [A1]
   validation_criteria: Auth handler exists.
   labels:
     - covers:dark-mode:A2:A2.1
-  assigned_agent: backend-developer
   tdd: true
   source_section: A2
 ```
@@ -376,6 +376,8 @@ Manifest rules:
 - Every `kind: deliverable` section must have exactly one manifest entry.
 - `depends_on` values reference manifest `source_section` IDs, not phase IDs.
 - `labels` use structured `covers:<plan-id>:<section-id>:<item-id>` records.
+- `implementation_domain` is required for `category: code` and drives
+  deterministic developer routing.
 - `tdd: true` is valid only for `code` and `config` categories.
 - Plan authors write narrative sections; plan review writes the final manifest
   before expansion.
@@ -385,14 +387,14 @@ expansion.
 
 ### What Plans Should Not Contain
 
-Plans should not include explicit TDD wrapper tasks. When TDD is enabled, the
-expansion system inserts those mechanically during apply or deterministic
-contract compilation.
+Plans should not include explicit TDD wrapper tasks. When TDD is enabled,
+expansion marks the implementation leaf with TDD metadata and evidence
+requirements.
 
 Forbidden patterns:
 
-- `"Write tests for..."` or `"Test..."` filler tasks that duplicate the TDD
-  wrapper.
+- `"Write tests for..."` or `"Test..."` filler tasks that duplicate the
+  implementation leaf's TDD requirements.
 - `"[TDD]"`, `"[IMPL]"`, or `"[REF]"` prefixes in authored task titles.
 - Separate test tasks alongside implementation tasks for the same `code` or
   `config` deliverable.
@@ -404,35 +406,31 @@ agent work.
 
 ## TDD Integration
 
-When TDD is enabled for `code` or `config` work, expansion emits a per-phase TDD
-sandwich:
+When TDD is enabled for `code` or executable-behavior `config` work, expansion
+emits one implementation leaf per manifest entry:
 
 ```text
 Epic #42 "User Authentication"
 ├── Phase 1: Core Infrastructure [subepic]
-│   ├── [TEST] Phase 1: Write failing tests
-│   ├── [IMPL] Create database schema
-│   ├── [IMPL] Implement data access layer
-│   └── [REF] Phase 1: Refactor with green tests
+│   ├── Create database schema          # additional_skills: test-driven-development
+│   └── Implement data access layer     # additional_skills: test-driven-development
 ├── Phase 2: API Layer [subepic]
-│   ├── [TEST] Phase 2: Write failing tests
-│   ├── [IMPL] Add API endpoints
-│   └── [REF] Phase 2: Refactor with green tests
+│   └── Add API endpoints               # additional_skills: test-driven-development
 └── Document the API
 ```
 
 Rules worth knowing:
 
 - Multi-phase plans create phase sub-epics.
-- Each TDD-enabled phase gets one `[TEST]` task and one `[REF]` task.
-- Implementation tasks in that phase depend on the phase's `[TEST]` task.
-- The phase's `[REF]` task depends on all TDD-eligible implementation tasks in
-  that phase.
-- Contract-plan compilation emits `[IMPL]` titles for TDD manifest entries.
+- Each manifest entry emits one leaf.
+- `tdd: true` adds `additional_skills: ["test-driven-development"]`, label
+  `tdd:required`, and validation criteria for red, green,
+  refactor/final-green, exact command, and test-quality audit evidence.
+- Code leaves require `implementation_domain`, which routes to
+  `backend-developer`, `frontend-developer`, or `fullstack-developer`.
 - Non-TDD categories such as `docs`, `refactor`, `test`, `research`, and
   `planning` expand as single tasks.
-- Cross-phase TDD sequencing avoids adding an implicit phase edge when it would
-  conflict with explicit manifest dependencies.
+- Dependencies follow manifest `depends_on` edges directly between leaves.
 
 See [TDD Enforcement](./tdd-enforcement.md) for the runtime rule layer.
 
@@ -529,7 +527,7 @@ Use:
 - [Dispatch](./dispatch.md) — Stage-manifest dispatch and lifecycle routing
 - [Orchestration](./orchestration.md) — Automation model around dispatch
 - [Spec Writing](./spec-writing.md) — Plan authoring workflow
-- [TDD Enforcement](./tdd-enforcement.md) — TDD sandwich pattern details
+- [TDD Enforcement](./tdd-enforcement.md) — Skill-backed TDD evidence details
 - [Pipelines](./pipelines.md) — Pipeline system reference
 - [Agents](./agents.md) — Agent definitions and step workflows
 

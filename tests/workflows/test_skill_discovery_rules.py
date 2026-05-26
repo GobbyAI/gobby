@@ -14,8 +14,8 @@ from typing import Any
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.skills.formatting import skill_fetch_directive
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
@@ -30,15 +30,13 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path) -> LocalDatabase:
-    db_path = tmp_path / "test_skill_discovery.db"
-    database = LocalDatabase(db_path)
-    run_migrations(database)
+def db(temp_db: HubDatabase) -> HubDatabase:
+    database = temp_db
     return database
 
 
 @pytest.fixture
-def manager(db: LocalDatabase) -> LocalWorkflowDefinitionManager:
+def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
     return LocalWorkflowDefinitionManager(db)
 
 
@@ -183,9 +181,7 @@ class TestDiscoverSkillHubsOnTurnStart:
         response = await engine.evaluate(event, session_id="sess-1", variables=variables)
 
         assert response.context is not None
-        assert 'Call get_skill(name="loading-skills") on gobby-skills, then continue.' in (
-            response.context
-        )
+        assert skill_fetch_directive("loading-skills") in response.context
         assert "<available-skill-hubs>" in response.context
         assert "- clawdhub (clawdhub, auth: not required)" in response.context
         assert variables["skill_discovery_instructions_shown"] is True
@@ -391,10 +387,7 @@ class TestRequirePythonSkillStructure:
 
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert (
-            body.effects[0].reason
-            == 'Call get_skill(name="python") on gobby-skills, then continue.'
-        )
+        assert body.effects[0].reason == skill_fetch_directive("python")
 
 
 # --- require-python-skill condition evaluation ---
@@ -485,9 +478,7 @@ class TestRequireRustSkillStructure:
 
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert (
-            body.effects[0].reason == 'Call get_skill(name="rust") on gobby-skills, then continue.'
-        )
+        assert body.effects[0].reason == skill_fetch_directive("rust")
 
 
 # --- require-rust-skill condition evaluation ---
@@ -556,7 +547,8 @@ class TestCodeIndexRuleCondition:
     """Test the code-index onboarding rule against canonical tool metadata."""
 
     CONDITION = (
-        "not skill_loaded('code-index') and ("
+        "not skill_loaded('code-index') "
+        "and not variables.get('code_index_preflight_warning') and ("
         "(event.data.get('canonical_tool_kind') == 'read' "
         "and event.data.get('canonical_file_path', '').rpartition('.')[2] "
         "in ('py', 'rs', 'ts', 'tsx', 'js', 'jsx', 'go', 'java', 'rb', "
@@ -571,8 +563,14 @@ class TestCodeIndexRuleCondition:
         canonical_file_path: str = "",
         loaded_skills: list[str] | None = None,
         injected_skills: list[str] | None = None,
+        code_index_preflight_warning: bool = False,
     ) -> bool:
         variables = {"loaded_skills": loaded_skills or []}
+        if code_index_preflight_warning:
+            variables["code_index_preflight_warning"] = {
+                "preflight": "code_index",
+                "message": "gcode_index_unavailable",
+            }
         if injected_skills is not None:
             variables["injected_skills"] = injected_skills
         context = {
@@ -606,6 +604,9 @@ class TestCodeIndexRuleCondition:
     def test_does_not_skip_when_legacy_injected(self) -> None:
         assert self._eval(canonical_tool_kind="search", injected_skills=["code-index"]) is True
 
+    def test_skips_when_isolated_code_index_preflight_failed(self) -> None:
+        assert self._eval(canonical_tool_kind="search", code_index_preflight_warning=True) is False
+
 
 class TestRequireCodeIndexSkillStructure:
     """Verify require-code-index-skill blocks with the canonical directive."""
@@ -620,12 +621,10 @@ class TestRequireCodeIndexSkillStructure:
         assert body.event.value == "before_tool"
         assert body.when is not None
         assert "not skill_loaded('code-index')" in body.when
+        assert "not variables.get('code_index_preflight_warning')" in body.when
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert (
-            body.effects[0].reason
-            == 'Call get_skill(name="code-index") on gobby-skills, then continue.'
-        )
+        assert body.effects[0].reason == skill_fetch_directive("code-index")
 
 
 class TestContext7RuleCondition:

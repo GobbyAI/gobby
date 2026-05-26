@@ -68,21 +68,21 @@ The shared `UnifiedSearcher` supports four modes:
 
 | Mode | Behavior | Fallback | Use case |
 |------|----------|----------|----------|
-| `keyword` | FTS5 keyword search only | None | Offline and deterministic search |
+| `keyword` | pg_search BM25 keyword search only | None | Deterministic PostgreSQL-backed search |
 | `embedding` | Embedding search only | Fails if unavailable | Strict semantic search |
-| `auto` | Try embeddings, then use FTS5 | Automatic | Default reliability |
-| `hybrid` | Combine FTS5 and embedding scores | Continues with FTS5 when embeddings fail | Higher quality when embeddings are available |
+| `auto` | Try embeddings, then use pg_search BM25 | Automatic | Default reliability |
+| `hybrid` | Combine pg_search BM25 and embedding scores | Continues with keyword search when embeddings fail | Higher quality when embeddings are available |
 
 Fallback in `auto` mode:
 
 ```text
 1. Probe the embedding endpoint
 2. If unavailable, emit a FallbackEvent
-3. Fit the FTS5 keyword backend
-4. Serve this and later searches through FTS5
+3. Fit the pg_search BM25 keyword backend
+4. Serve this and later searches through keyword search
 ```
 
-`hybrid` mode always indexes FTS5 first. If embedding indexing or searching
+`hybrid` mode always indexes keyword search first. If embedding indexing or searching
 fails, Gobby logs a fallback event and keeps returning keyword results.
 
 ## Configuration
@@ -135,8 +135,8 @@ uses `768`; `text-embedding-3-small` uses `1536`.
 Memory search combines the available memory stores:
 
 - Qdrant vector search when embeddings and the vector store are configured
-- FTS5 keyword search as local fallback
-- Neo4j graph search when memory graph search is enabled
+- pg_search BM25 keyword search as local fallback
+- FalkorDB graph search when memory graph search is enabled
 - Reciprocal Rank Fusion when multiple ranked lists are available
 
 MCP search supports tag filters and a score threshold:
@@ -172,8 +172,8 @@ memory:
 
 ## Task Search
 
-Task search is FTS5 full-text search over task title, description, labels, task
-type, and category. MCP supports more filters than the CLI:
+Task search is pg_search BM25 over task title, description, labels, task type,
+and category. MCP supports more filters than the CLI:
 
 ```python
 call_tool(server_name="gobby-tasks", tool_name="search_tasks", arguments={
@@ -326,4 +326,4 @@ and `ranking_mode`.
 - [code-index.md](./code-index.md) - Source code search
 - [configuration.md](./configuration.md) - Full config reference
 
-_Last verified: 2026-05-07_
+_Last verified: 2026-05-23_

@@ -36,6 +36,16 @@ _ALLOWED_VERIFICATION_COMMANDS = {
 _ALLOWED_GIT_VERIFICATION_SUBCOMMANDS = {"diff", "ls-files", "rev-parse", "status"}
 _BLOCKED_GIT_DIFF_FLAGS = {"--ext-diff", "--no-index"}
 _SAFE_ENV_KEYS = {"HOME", "LANG", "LC_ALL", "PATH", "TERM", "TMPDIR"}
+_BLOCKED_VERIFICATION_ENV_KEYS = {
+    "BASH_ENV",
+    "ENV",
+    "LD_LIBRARY_PATH",
+    "LD_PRELOAD",
+    "PATH",
+    "PYTHONHOME",
+    "PYTHONPATH",
+}
+_BLOCKED_VERIFICATION_ENV_PREFIXES = ("DYLD_",)
 
 
 class WorktreeManagerProtocol(Protocol):
@@ -48,6 +58,30 @@ class WorktreeManagerProtocol(Protocol):
         status: str | None = None,
         limit: int | None = None,
     ) -> list[Any]: ...
+
+
+class MergeStorageProtocol(Protocol):
+    def get_active_resolution(self, worktree_id: str | None = None) -> Any | None: ...
+
+    def get_latest_resolution(self, worktree_id: str) -> Any | None: ...
+
+    def list_conflicts(
+        self,
+        resolution_id: str | None = None,
+        file_path: str | None = None,
+        status: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[Any]: ...
+
+    def create_conflict(
+        self,
+        resolution_id: str,
+        file_path: str,
+        ours_content: str | None = None,
+        theirs_content: str | None = None,
+        status: str = "pending",
+    ) -> Any: ...
 
 
 def _git(
@@ -94,6 +128,58 @@ def _verification_environment() -> dict[str, str]:
     return env
 
 
+def _is_env_assignment(token: str) -> bool:
+    key, separator, _ = token.partition("=")
+    if not separator or not key:
+        return False
+    if not (key[0].isalpha() or key[0] == "_"):
+        return False
+    return all(char.isalnum() or char == "_" for char in key)
+
+
+def _reject_verification_env_key(key: str) -> str | None:
+    if key in _BLOCKED_VERIFICATION_ENV_KEYS:
+        return f"verification environment variable '{key}' is not permitted"
+    if any(key.startswith(prefix) for prefix in _BLOCKED_VERIFICATION_ENV_PREFIXES):
+        return f"verification environment variable '{key}' is not permitted"
+    return None
+
+
+def _consume_env_assignments(tokens: list[str]) -> tuple[dict[str, str], list[str], str | None]:
+    env: dict[str, str] = {}
+    index = 0
+    while index < len(tokens) and _is_env_assignment(tokens[index]):
+        key, _, value = tokens[index].partition("=")
+        rejection = _reject_verification_env_key(key)
+        if rejection:
+            return {}, [], rejection
+        env[key] = value
+        index += 1
+
+    return env, tokens[index:], None
+
+
+def _normalize_verification_command(
+    argv: list[str],
+) -> tuple[list[str], dict[str, str], str | None]:
+    if argv[0] == "env":
+        env, command_argv, rejection = _consume_env_assignments(argv[1:])
+        if rejection:
+            return [], {}, rejection
+        if not env:
+            return [], {}, "env wrapper requires KEY=VALUE assignments before the command"
+        if not command_argv:
+            return [], {}, "verification command is required after environment assignments"
+        return command_argv, env, None
+
+    env, command_argv, rejection = _consume_env_assignments(argv)
+    if rejection:
+        return [], {}, rejection
+    if env and not command_argv:
+        return [], {}, "verification command is required after environment assignments"
+    return command_argv, env, None
+
+
 def _reject_git_verification_args(args: list[str]) -> str | None:
     if not args:
         return "git verification requires a subcommand"
@@ -135,6 +221,7 @@ def register_merge_landscape_tools(
     *,
     worktree_manager: WorktreeManagerProtocol | None,
     git_manager: WorktreeGitManager | None,
+    merge_storage: MergeStorageProtocol | None = None,
 ) -> None:
     """Add merge-landscape analytics tools to an existing registry.
 
@@ -159,9 +246,10 @@ def register_merge_landscape_tools(
 
         worktrees = worktree_manager.list_worktrees(
             project_id=project_id,
-            status="active",
+            status=None,
             limit=200,
         )
+        worktrees = [wt for wt in worktrees if getattr(wt, "status", None) in {"active", "merged"}]
 
         out: list[dict[str, Any]] = []
         for wt in worktrees:
@@ -170,6 +258,7 @@ def register_merge_landscape_tools(
                 "branch": wt.branch_name,
                 "base": wt.base_branch,
                 "task_ref": wt.task_id,
+                "status": wt.status,
                 "merge_state": wt.merge_state,
                 "created_at": wt.created_at,
             }
@@ -217,6 +306,10 @@ def register_merge_landscape_tools(
                 entry["commits_behind"] = None
             ahead = entry["commits_ahead"]
             behind = entry["commits_behind"]
+            if wt.status == "merged" and ahead == 0:
+                continue
+            if wt.status == "merged" and isinstance(ahead, int) and ahead > 0:
+                entry["reactivation_required"] = True
             entry["divergence_commits"] = (
                 ahead + behind if isinstance(ahead, int) and isinstance(behind, int) else None
             )
@@ -246,13 +339,14 @@ def register_merge_landscape_tools(
         description=(
             "Run `git merge-tree` simulations between worktree branches to predict "
             "which pairs will conflict. Returns conflict file lists per pair, plus "
-            "predicted conflicts when each branch is merged into the target. No "
-            "side effects."
+            "predicted conflicts when each branch is merged into the target. If "
+            "target_branch is omitted, each worktree uses its stored base_branch. "
+            "No side effects."
         ),
     )
     async def predict_conflicts(
         worktree_ids: list[str],
-        target_branch: str = "main",
+        target_branch: str | None = None,
     ) -> dict[str, Any]:
         if not worktree_manager:
             return {"success": False, "error": "worktree_manager not configured"}
@@ -263,14 +357,19 @@ def register_merge_landscape_tools(
 
         repo_path = git_manager.repo_path
 
-        branches: list[tuple[str, str]] = []
+        branches: list[tuple[str, str, str]] = []
         errors: list[dict[str, str]] = []
         for wid in worktree_ids:
-            _, branch, err = _resolve_worktree_path(worktree_manager, wid)
-            if err or not branch:
-                errors.append({"worktree_id": wid, "error": err or "no branch"})
+            worktree = worktree_manager.get(wid)
+            if not worktree:
+                errors.append({"worktree_id": wid, "error": f"Worktree '{wid}' not found"})
                 continue
-            branches.append((wid, branch))
+            branch = getattr(worktree, "branch_name", None)
+            if not branch:
+                errors.append({"worktree_id": wid, "error": "no branch"})
+                continue
+            effective_target = target_branch or getattr(worktree, "base_branch", None) or "main"
+            branches.append((wid, branch, effective_target))
 
         async def merge_tree(a: str, b: str) -> tuple[bool, list[str]]:
             rc, stdout, stderr = await _git_async(
@@ -292,8 +391,8 @@ def register_merge_landscape_tools(
             return False, conflict_files
 
         pairs: list[dict[str, Any]] = []
-        for i, (a_id, a_branch) in enumerate(branches):
-            for b_id, b_branch in branches[i + 1 :]:
+        for i, (a_id, a_branch, _) in enumerate(branches):
+            for b_id, b_branch, _ in branches[i + 1 :]:
                 try:
                     clean, files = await merge_tree(a_branch, b_branch)
                 except RuntimeError as exc:
@@ -309,16 +408,16 @@ def register_merge_landscape_tools(
                 )
 
         target_predictions: list[dict[str, Any]] = []
-        for wid, branch in branches:
+        for wid, branch, effective_target in branches:
             try:
-                clean, files = await merge_tree(target_branch, branch)
+                clean, files = await merge_tree(effective_target, branch)
             except RuntimeError as exc:
                 return {"success": False, "error": "merge_tree_failed", "message": str(exc)}
             target_predictions.append(
                 {
                     "worktree_id": wid,
                     "branch": branch,
-                    "target_branch": target_branch,
+                    "target_branch": effective_target,
                     "clean": clean,
                     "conflict_files": files,
                     "conflict_files_count": len(files),
@@ -462,7 +561,6 @@ def register_merge_landscape_tools(
         timeout: int = 300,
         final: bool = False,
     ) -> dict[str, Any]:
-        _ = final
         if not command.strip():
             return {"success": False, "error": "command is required"}
         try:
@@ -471,6 +569,9 @@ def register_merge_landscape_tools(
             return {"success": False, "error": f"failed to parse command: {exc}"}
         if not argv:
             return {"success": False, "error": "command is required"}
+        argv, command_env, rejection = _normalize_verification_command(argv)
+        if rejection:
+            return {"success": False, "error": rejection}
         rejection = _reject_verification_command(argv)
         if rejection:
             return {"success": False, "error": rejection}
@@ -479,6 +580,7 @@ def register_merge_landscape_tools(
         if err or not wt_path:
             return {"success": False, "error": err}
         safe_env = _verification_environment()
+        safe_env.update(command_env)
 
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -500,11 +602,46 @@ def register_merge_landscape_tools(
                     "timed_out": True,
                 }
             exit_code = proc.returncode
+            stdout = stdout_b.decode("utf-8", errors="replace")
+            stderr = stderr_b.decode("utf-8", errors="replace")
+            if exit_code == 0 and final:
+                if not git_manager:
+                    return {
+                        "success": False,
+                        "exit_code": exit_code,
+                        "stdout": stdout,
+                        "stderr": stderr,
+                        "error": "git_manager not configured for final clean-tree check",
+                    }
+                status_rc, status_stdout, status_stderr = await _git_async(
+                    git_manager,
+                    ["status", "--porcelain"],
+                    cwd=wt_path,
+                    timeout=10,
+                )
+                if status_rc != 0:
+                    return {
+                        "success": False,
+                        "exit_code": exit_code,
+                        "stdout": stdout,
+                        "stderr": stderr,
+                        "error": f"git status failed after verification: {status_stderr.strip()}",
+                    }
+                dirty_files = [line for line in status_stdout.splitlines() if line.strip()]
+                if dirty_files:
+                    return {
+                        "success": False,
+                        "exit_code": exit_code,
+                        "stdout": stdout,
+                        "stderr": stderr,
+                        "error": "final verification failed: worktree is dirty",
+                        "dirty_files": dirty_files,
+                    }
             return {
                 "success": exit_code == 0,
                 "exit_code": exit_code,
-                "stdout": stdout_b.decode("utf-8", errors="replace"),
-                "stderr": stderr_b.decode("utf-8", errors="replace"),
+                "stdout": stdout,
+                "stderr": stderr,
             }
         except (OSError, ValueError) as e:
             logger.exception("verify_in_worktree subprocess failed for %s", worktree_id)
@@ -562,7 +699,7 @@ def register_merge_landscape_tools(
 
         can_resume = bool(conflicted_files) or state != "clean"
 
-        return {
+        result: dict[str, Any] = {
             "success": True,
             "state": state,
             "has_merge_head": has_merge_head,
@@ -571,3 +708,76 @@ def register_merge_landscape_tools(
             "conflicted_files": conflicted_files,
             "can_resume": can_resume,
         }
+        result.update(
+            _active_merge_resolution_payload(
+                merge_storage,
+                worktree_id,
+                conflicted_files=conflicted_files,
+            )
+        )
+        return result
+
+
+def _active_merge_resolution_payload(
+    merge_storage: MergeStorageProtocol | None,
+    worktree_id: str,
+    *,
+    conflicted_files: list[str],
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "active_resolution_id": None,
+        "source_branch": None,
+        "target_branch": None,
+        "conflicts": [],
+    }
+    if merge_storage is None:
+        return payload
+
+    resolution = merge_storage.get_active_resolution(worktree_id)
+    if resolution is None and conflicted_files:
+        resolution = merge_storage.get_latest_resolution(worktree_id)
+    if resolution is None:
+        return payload
+
+    unmerged = set(conflicted_files)
+    conflicts = merge_storage.list_conflicts(resolution_id=resolution.id)
+    missing_paths = sorted(unmerged - {conflict.file_path for conflict in conflicts})
+    for file_path in missing_paths:
+        try:
+            merge_storage.create_conflict(
+                resolution_id=resolution.id,
+                file_path=file_path,
+                status="pending",
+            )
+        except Exception as exc:
+            logger.debug(
+                "Failed to hydrate merge conflict row for %s in %s: %s",
+                file_path,
+                resolution.id,
+                exc,
+            )
+    if missing_paths:
+        conflicts = merge_storage.list_conflicts(resolution_id=resolution.id)
+    payload.update(
+        {
+            "active_resolution_id": resolution.id,
+            "source_branch": resolution.source_branch,
+            "target_branch": resolution.target_branch,
+            "conflicts": [
+                {
+                    "conflict_id": conflict.id,
+                    "file_path": conflict.file_path,
+                    "status": _inspect_conflict_status(conflict, unmerged),
+                    "has_resolved_content": conflict.resolved_content is not None,
+                }
+                for conflict in conflicts
+            ],
+        }
+    )
+    return payload
+
+
+def _inspect_conflict_status(conflict: Any, unmerged: set[str]) -> str:
+    if conflict.file_path in unmerged and conflict.resolved_content is None:
+        return "pending"
+    return str(conflict.status)

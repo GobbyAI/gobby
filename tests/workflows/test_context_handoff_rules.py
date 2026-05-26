@@ -19,8 +19,7 @@ from datetime import UTC, datetime
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
@@ -41,15 +40,13 @@ CONTEXT_HANDOFF_RULES = {
 
 
 @pytest.fixture
-def db(tmp_path) -> LocalDatabase:
-    db_path = tmp_path / "test_context_handoff.db"
-    database = LocalDatabase(db_path)
-    run_migrations(database)
+def db(temp_db: HubDatabase) -> HubDatabase:
+    database = temp_db
     return database
 
 
 @pytest.fixture
-def manager(db: LocalDatabase) -> LocalWorkflowDefinitionManager:
+def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
     return LocalWorkflowDefinitionManager(db)
 
 
@@ -342,6 +339,7 @@ class TestAutoCompactAfterTaskClose:
         assert compact_call.tool == "compact_self"
         assert compact_call.background is True
         assert compact_call.when is None
+        assert compact_call.arguments == {"rule_name": "auto-compact-after-task-close"}
 
         fallback_nudge = fallback_nudges[0]
         assert "compact_call_queue_failed" in (fallback_nudge.when or "")
@@ -398,6 +396,7 @@ class TestAutoCompactAfterTaskClose:
         ]
         assert len(compact_calls) == 1
         assert compact_calls[0]["background"] is True
+        assert compact_calls[0]["arguments"] == {"rule_name": "auto-compact-after-task-close"}
         assert response.context is None
         assert variables["_auto_compact_after_task_close_queued_for"] == "#123"
 

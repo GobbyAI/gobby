@@ -11,11 +11,11 @@ from ._bootstrap import TitleChangeCallback
 from ._constants import SYSTEM_SESSION_ID, ensure_system_session, get_logger
 
 if TYPE_CHECKING:
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
 
 
 class _ManagerState(Protocol):
-    db: DatabaseProtocol
+    db: HubDatabase
     _title_listeners: list[TitleChangeCallback]
     _VALID_CHAT_MODES: ClassVar[set[str]]
     _VALID_TITLE_SOURCES: ClassVar[set[str]]
@@ -47,12 +47,44 @@ class _FieldUpdateMixin:
             self._notify_session_change(event, session_id)
         return updated
 
+    def revive_expired_terminal_session(self: _ManagerState, session_id: str) -> Session | None:
+        """Mark an expired terminal session active when fresh activity arrives.
+
+        Hook and transcript activity are stronger liveness evidence than a stale
+        parent PID. Reset transcript_processed too so later finalization can
+        process any new transcript tail.
+        """
+        current = self.get(session_id)
+        if current is None:
+            return None
+        if current.status != "expired" or current.session_type != "terminal":
+            return current
+
+        now = datetime.now(UTC).isoformat()
+        with self.db.transaction():
+            self.db.execute(
+                """
+                UPDATE sessions
+                SET status = 'active',
+                    transcript_processed = FALSE,
+                    updated_at = ?
+                WHERE id = ?
+                  AND status = 'expired'
+                  AND session_type = 'terminal'
+                """,
+                (now, session_id),
+            )
+        updated = self.get(session_id)
+        if updated is not None and updated.status == "active":
+            self._notify_session_change("session_updated", session_id)
+        return updated
+
     def mark_had_edits(self: _ManagerState, session_id: str) -> Session | None:
         """Mark session as having edits."""
         now = datetime.now(UTC).isoformat()
         with self.db.transaction():
             self.db.execute(
-                "UPDATE sessions SET had_edits = 1, updated_at = ? WHERE id = ?",
+                "UPDATE sessions SET had_edits = TRUE, updated_at = ? WHERE id = ?",
                 (now, session_id),
             )
         return self.get(session_id)
@@ -62,7 +94,7 @@ class _FieldUpdateMixin:
         now = datetime.now(UTC).isoformat()
         with self.db.transaction():
             self.db.execute(
-                "UPDATE sessions SET had_edits = 0, updated_at = ? WHERE id = ?",
+                "UPDATE sessions SET had_edits = FALSE, updated_at = ? WHERE id = ?",
                 (now, session_id),
             )
 

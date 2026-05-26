@@ -3,7 +3,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase, TaskLifecycleMutation
 from gobby.storage.tasks._aggregates import (
     count_blocked_tasks as _count_blocked_tasks,
 )
@@ -20,23 +20,11 @@ from gobby.storage.tasks._aggregates import (
     count_tasks as _count_tasks,
 )
 from gobby.storage.tasks._artifacts import TaskArtifactManager
-from gobby.storage.tasks._crud import (
+from gobby.storage.tasks._build_cascade import (
     cascade_build_state_to_subtree as _cascade_build_state_to_subtree,
 )
-from gobby.storage.tasks._crud import (
+from gobby.storage.tasks._creation import (
     create_task as _create_task,
-)
-from gobby.storage.tasks._crud import (
-    find_task_by_prefix as _find_task_by_prefix,
-)
-from gobby.storage.tasks._crud import (
-    find_tasks_by_prefix as _find_tasks_by_prefix,
-)
-from gobby.storage.tasks._crud import (
-    get_task as _get_task,
-)
-from gobby.storage.tasks._crud import (
-    update_task_metadata as _update_task_metadata,
 )
 from gobby.storage.tasks._decomposition import TaskDecompositionMixin
 from gobby.storage.tasks._id import generate_task_id, resolve_task_reference
@@ -91,7 +79,16 @@ from gobby.storage.tasks._queries import (
 from gobby.storage.tasks._queries import (
     list_tasks as _list_tasks,
 )
-from gobby.storage.tasks._search import TaskFTS5Searcher
+from gobby.storage.tasks._read import (
+    find_task_by_prefix as _find_task_by_prefix,
+)
+from gobby.storage.tasks._read import (
+    find_tasks_by_prefix as _find_tasks_by_prefix,
+)
+from gobby.storage.tasks._read import (
+    get_task as _get_task,
+)
+from gobby.storage.tasks._search import TaskSearchBackend
 from gobby.storage.tasks._stage_manifest import initialize_task_manifest_for_task
 from gobby.storage.tasks._stage_registry import StageRegistryManager
 from gobby.storage.tasks._stage_states import StageStatesManager
@@ -119,6 +116,9 @@ from gobby.storage.tasks._transitions import (
 from gobby.storage.tasks._transitions import (
     submit_for_review as _submit_for_review,
 )
+from gobby.storage.tasks._updates import (
+    update_task_metadata as _update_task_metadata,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -142,10 +142,10 @@ __all__ = [
 
 
 class LocalTaskManager(TaskDecompositionMixin):
-    def __init__(self, db: DatabaseProtocol):
+    def __init__(self, db: HubDatabase):
         self.db = db
         self._change_listeners: list[Callable[[], Any]] = []
-        self._searcher: TaskFTS5Searcher | None = None
+        self._searcher: TaskSearchBackend | None = None
         self._artifact_manager: TaskArtifactManager | None = None
         self._lifecycle_event_manager: TaskLifecycleEventManager | None = None
         self._stage_registry_manager: StageRegistryManager | None = None
@@ -222,6 +222,7 @@ class LocalTaskManager(TaskDecompositionMixin):
         category: str | None = None,
         validation_criteria: str | None = None,
         assigned_agent: str | None = None,
+        implementation_domain: str | None = None,
         additional_skills: list[str] | None = None,
         github_issue_number: int | None = None,
         github_pr_number: int | None = None,
@@ -246,6 +247,7 @@ class LocalTaskManager(TaskDecompositionMixin):
             category=category,
             validation_criteria=validation_criteria,
             assigned_agent=assigned_agent,
+            implementation_domain=implementation_domain,
             additional_skills=additional_skills,
             github_issue_number=github_issue_number,
             github_pr_number=github_pr_number,
@@ -362,6 +364,7 @@ class LocalTaskManager(TaskDecompositionMixin):
         yolo: MaybeUnset[bool | None] = UNSET,
         isolation: MaybeUnset[Isolation | str | None] = UNSET,
         assigned_agent: MaybeUnset[str | None] = UNSET,
+        implementation_domain: MaybeUnset[str | None] = UNSET,
         additional_skills: MaybeUnset[list[str] | None] = UNSET,
         **kwargs: Any,
     ) -> Task:
@@ -404,6 +407,7 @@ class LocalTaskManager(TaskDecompositionMixin):
             yolo=yolo,
             isolation=isolation,
             assigned_agent=assigned_agent,
+            implementation_domain=implementation_domain,
             additional_skills=additional_skills,
             **kwargs,
         )
@@ -529,7 +533,7 @@ class LocalTaskManager(TaskDecompositionMixin):
         cwd: str | Path | None = None,
     ) -> Task:
         """Link a commit and close the task in one transaction."""
-        with self.db.transaction_immediate():
+        with self.db.transaction_immediate(TaskLifecycleMutation(task_id=task_id)):
             _link_commit(self.db, task_id, commit_sha, cwd)
             _close_task(
                 self.db,
@@ -590,6 +594,7 @@ class LocalTaskManager(TaskDecompositionMixin):
         task_id: str,
         reason: str,
         reset_validation: bool = False,
+        reset_stage_attempts: bool = False,
     ) -> Task:
         """Clear escalation state without mutating the task's current stage."""
         task = _de_escalate_task(
@@ -597,6 +602,7 @@ class LocalTaskManager(TaskDecompositionMixin):
             task_id=task_id,
             reason=reason,
             reset_validation=reset_validation,
+            reset_stage_attempts=reset_stage_attempts,
         )
         self._notify_listeners()
         return task
@@ -871,10 +877,10 @@ class LocalTaskManager(TaskDecompositionMixin):
 
     # --- Search Methods ---
 
-    def _ensure_searcher(self) -> TaskFTS5Searcher:
+    def _ensure_searcher(self) -> TaskSearchBackend:
         """Get or create the task searcher instance."""
         if self._searcher is None:
-            self._searcher = TaskFTS5Searcher(self.db)
+            self._searcher = TaskSearchBackend(self.db)
         return self._searcher
 
     def search_tasks(
@@ -889,10 +895,10 @@ class LocalTaskManager(TaskDecompositionMixin):
         limit: int = 20,
         min_score: float = 0.0,
     ) -> list[tuple[Task, float]]:
-        """Search tasks using FTS5 full-text search.
+        """Search tasks using PostgreSQL keyword search.
 
         Single-query search with SQL filter push-down — all filters
-        are applied in the FTS5 JOIN query.
+        are applied in the keyword query.
 
         Args:
             query: Search query text
@@ -937,9 +943,9 @@ class LocalTaskManager(TaskDecompositionMixin):
         return results
 
     def reindex_search(self, project_id: str | None = None) -> dict[str, Any]:
-        """Force rebuild of the FTS5 task search index.
+        """Return task search index statistics.
 
-        Normally triggers keep the index in sync. Use this for repair.
+        PostgreSQL keyword indexes are maintained by the database extension.
 
         Args:
             project_id: Unused - kept for API compatibility.

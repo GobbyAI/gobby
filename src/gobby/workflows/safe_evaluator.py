@@ -499,6 +499,9 @@ def build_condition_helpers(
         Dict of function_name -> callable, ready to pass as allowed_funcs.
     """
     from .condition_helpers import (
+        completion_evidence_ready,
+        is_gobby_build_command,
+        is_validation_command,
         task_needs_human_review,
         task_state_in,
         task_tree_complete,
@@ -516,6 +519,9 @@ def build_condition_helpers(
         "any": any,
         "all": all,
         "normalize_path": lambda p: p.replace("\\", "/"),
+        "completion_evidence_ready": completion_evidence_ready,
+        "is_gobby_build_command": is_gobby_build_command,
+        "is_validation_command": is_validation_command,
     }
 
     # --- Task helpers ---

@@ -6,6 +6,7 @@ import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -16,6 +17,7 @@ from gobby.dispatch.actions import (
     StartPipelineAction,
     StartStageAction,
 )
+from gobby.storage.task_affected_files import TaskAffectedFileManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._artifacts import TaskArtifactManager
 from gobby.storage.tasks._crud import get_task, update_task
@@ -84,6 +86,44 @@ def _audit_action(task_id: str) -> AppendAuditMarkerAction:
     return AppendAuditMarkerAction(task_id=task_id, heading="Dispatch", body="marker")
 
 
+def test_development_prompt_includes_persisted_holistic_failure_context(
+    temp_db,
+    sample_project,
+) -> None:
+    """Development prompt includes persisted holistic failure context."""
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.dispatch import rules
+    from gobby.dispatch.dispatcher import build_context
+
+    sync_bundled_agents(temp_db)
+    task = _task(
+        temp_db,
+        sample_project,
+        title="Reopened leaf",
+        stage_state="in_progress",
+        assigned_agent="backend-developer",
+    )
+    temp_db.execute(
+        """
+        INSERT INTO task_comments (
+            id, task_id, parent_comment_id, author, author_type, body, created_at, updated_at
+        )
+        VALUES (
+            'comment-holistic-followup', ?, NULL, 'holistic-reviewer', 'system',
+            '## Holistic QA Follow-Up\n\nFix the dialect parity suite.', CURRENT_TIMESTAMP,
+            CURRENT_TIMESTAMP
+        )
+        """,
+        (task.id,),
+    )
+
+    action = rules.development_rule(task, build_context(temp_db, task))
+
+    assert isinstance(action, SpawnAgentAction)
+    assert "Previous failure context for this follow-up work" in action.prompt
+    assert "Fix the dialect parity suite." in action.prompt
+
+
 class _FakePipeline:
     name = "expand-task"
     enabled = True
@@ -132,6 +172,7 @@ def _pipeline_action(task_id: str) -> StartPipelineAction:
 
 
 def test_candidate_filter_excludes_claimed_leased_blocked_terminal(temp_db, sample_project) -> None:
+    """Candidate filter excludes claimed leased blocked terminal."""
     from gobby.storage.tasks import _crud
 
     ready = _task(temp_db, sample_project, "ready")
@@ -168,6 +209,7 @@ def test_candidate_filter_excludes_claimed_leased_blocked_terminal(temp_db, samp
 
 
 def test_count_active_agents_scopes_by_parent_session_project(temp_db, sample_project) -> None:
+    """Count active agents scopes by parent session project."""
     from gobby.dispatch.dispatcher import count_active_agents
     from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.projects import LocalProjectManager
@@ -200,9 +242,11 @@ def test_count_active_agents_scopes_by_parent_session_project(temp_db, sample_pr
     assert count_active_agents(temp_db, project_id=other_project.id) == 1
 
 
+@pytest.mark.asyncio
 async def test_max_active_agents_cap(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
+    """Max active agents cap."""
     from gobby.dispatch import dispatcher
 
     _task(temp_db, sample_project)
@@ -217,9 +261,85 @@ async def test_max_active_agents_cap(
     assert spawned == []
 
 
+@pytest.mark.asyncio
+async def test_run_heartbeat_serializes_overlapping_development_start_actions(
+    temp_db,
+    sample_project,
+) -> None:
+    """Run heartbeat serializes overlapping development start actions."""
+    from gobby.dispatch import dispatcher
+
+    first = _task(temp_db, sample_project, "shared refactor", priority=1)
+    second = _task(temp_db, sample_project, "shared follow-up", priority=2)
+    af_manager = TaskAffectedFileManager(temp_db)
+    af_manager.set_files(first.id, ["src/gobby/config/bootstrap.py"], source="expansion")
+    af_manager.set_files(second.id, ["src/gobby/config/bootstrap.py"], source="expansion")
+
+    result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+
+    stage_states = LocalTaskManager(temp_db).stage_states
+    assert result.executed == 1
+    assert result.skipped == 1
+    assert stage_states.get(first.id, "development").state == "in_progress"
+    assert stage_states.get(second.id, "development").state == "ready"
+
+
+@pytest.mark.asyncio
+async def test_run_heartbeat_allows_disjoint_development_write_sets(
+    temp_db,
+    sample_project,
+) -> None:
+    """Run heartbeat allows disjoint development write sets."""
+    from gobby.dispatch import dispatcher
+
+    first = _task(temp_db, sample_project, "config refactor", priority=1)
+    second = _task(temp_db, sample_project, "routes follow-up", priority=2)
+    af_manager = TaskAffectedFileManager(temp_db)
+    af_manager.set_files(first.id, ["src/gobby/config/bootstrap.py"], source="expansion")
+    af_manager.set_files(second.id, ["src/gobby/servers/routes/build.py"], source="expansion")
+
+    result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+
+    stage_states = LocalTaskManager(temp_db).stage_states
+    assert result.executed == 2
+    assert result.skipped == 0
+    assert stage_states.get(first.id, "development").state == "in_progress"
+    assert stage_states.get(second.id, "development").state == "in_progress"
+
+
+@pytest.mark.asyncio
+async def test_run_heartbeat_blocks_ready_task_behind_active_overlapping_write_set(
+    temp_db,
+    sample_project,
+) -> None:
+    """Run heartbeat blocks ready task behind active overlapping write set."""
+    from gobby.dispatch import dispatcher
+
+    owner_session_id = _session(temp_db, sample_project, "owner-session")
+    active = _task(
+        temp_db,
+        sample_project,
+        "active config work",
+        stage_state="in_progress",
+        claimed_by_session_id=owner_session_id,
+    )
+    waiting = _task(temp_db, sample_project, "waiting config work")
+    af_manager = TaskAffectedFileManager(temp_db)
+    af_manager.set_files(active.id, ["src/gobby/config/bootstrap.py"], source="expansion")
+    af_manager.set_files(waiting.id, ["src/gobby/config/bootstrap.py"], source="expansion")
+
+    result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+
+    assert result.executed == 0
+    assert result.skipped == 1
+    assert LocalTaskManager(temp_db).stage_states.get(waiting.id, "development").state == "ready"
+
+
+@pytest.mark.asyncio
 async def test_run_heartbeat_skips_spawn_when_daemon_not_ready(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
+    """Run heartbeat skips spawn when daemon not ready."""
     from gobby.dispatch import dispatcher
 
     _task(temp_db, sample_project)
@@ -238,7 +358,50 @@ async def test_run_heartbeat_skips_spawn_when_daemon_not_ready(
     assert spawned == []
 
 
+@pytest.mark.asyncio
+async def test_cancelled_spawn_releases_no_run_mutex(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
+    """Cancelled spawn releases no run mutex."""
+    from gobby.dispatch import dispatcher
+    from gobby.dispatch.mutex import RuntimeDispatchMutex
+
+    task = _task(temp_db, sample_project, stage_state="in_progress")
+    storage = _mutex_storage(temp_db)
+    mutex = RuntimeDispatchMutex(
+        storage,
+        task_id=task.id,
+        holder="dispatcher",
+        action_kind="heartbeat",
+        ttl_seconds=600,
+    )
+    mutex.__enter__()
+
+    async def cancelled_spawn(*_args: object, **_kwargs: object) -> str:
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(dispatcher, "spawn_agent", cancelled_spawn)
+
+    with pytest.raises(asyncio.CancelledError):
+        await dispatcher.execute_action(
+            SpawnAgentAction(
+                task_id=task.id,
+                task_ref=f"#{task.seq_num}",
+                agent_slug="backend-developer",
+                prompt="do work",
+            ),
+            mutex=mutex,
+            db=temp_db,
+        )
+
+    assert storage.get_mutex(task.id) is None
+
+
+@pytest.mark.asyncio
 async def test_mutex_lifecycle(monkeypatch: pytest.MonkeyPatch, temp_db, sample_project) -> None:
+    """Mutex lifecycle."""
     from gobby.dispatch import dispatcher
 
     task = _task(temp_db, sample_project)
@@ -255,9 +418,11 @@ async def test_mutex_lifecycle(monkeypatch: pytest.MonkeyPatch, temp_db, sample_
     assert "### Dispatch" in get_task(temp_db, task.id).description
 
 
+@pytest.mark.asyncio
 async def test_toctou_skip_on_changed_tuple(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
+    """Toctou skip on changed tuple."""
     from gobby.dispatch import dispatcher
 
     _task(temp_db, sample_project)
@@ -282,9 +447,11 @@ def _task_changed(temp_db, task_id: str):
     return get_task(temp_db, task_id)
 
 
+@pytest.mark.asyncio
 async def test_first_match_action_executed(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
+    """First match action executed."""
     from gobby.dispatch import dispatcher
 
     task = _task(temp_db, sample_project)
@@ -300,9 +467,11 @@ async def test_first_match_action_executed(
     assert executed == [action]
 
 
+@pytest.mark.asyncio
 async def test_spawn_action_links_run_id(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
+    """Spawn action links run id."""
     from gobby.dispatch import dispatcher
 
     task = _task(temp_db, sample_project)
@@ -321,9 +490,11 @@ async def test_spawn_action_links_run_id(
     assert storage.get_mutex(task.id).run_id == "run-1"
 
 
+@pytest.mark.asyncio
 async def test_spawn_action_uses_services_and_records_agent_run(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
+    """Spawn action uses services and records agent run."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
     from gobby.storage.agents import LocalAgentRunManager
@@ -383,9 +554,938 @@ async def test_spawn_action_uses_services_and_records_agent_run(
     assert storage.get_mutex(task.id).run_id == "run-services"
 
 
+@pytest.mark.parametrize("agent_slug", ["planner", "plan-adversary"])
+@pytest.mark.asyncio
+async def test_planning_agents_use_main_context_despite_worktree_task(
+    agent_slug: str,
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
+    """Planning agents use main context despite worktree task."""
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.dispatch import dispatcher
+    from gobby.storage.agents import LocalAgentRunManager
+    from gobby.storage.sessions import SessionManager
+
+    sync_bundled_agents(temp_db)
+    task_manager = LocalTaskManager(temp_db)
+    session_manager = SessionManager(temp_db)
+    task = _task(
+        temp_db,
+        sample_project,
+        stage_name="planning",
+        stage_state="in_progress",
+        isolation="worktree",
+        assigned_agent=agent_slug,
+    )
+    stale_worktree_id = f"wt-{agent_slug}"
+    stale_worktree_path = f"/tmp/missing-{agent_slug}-worktree"
+    TaskArtifactManager(temp_db).set_artifacts_atomic(
+        task.id,
+        worktree_path=stale_worktree_path,
+        worktree_id=stale_worktree_id,
+        base_commit_sha="old-base",
+        target_branch="main",
+    )
+    action = SpawnAgentAction(
+        task_id=task.id,
+        task_ref=f"#{task.seq_num}",
+        agent_slug=agent_slug,
+        prompt="plan",
+        initial_variables={"stage_name": "planning", "stage_state": "in_progress"},
+    )
+    spawn_kwargs: dict[str, object] = {}
+
+    async def fake_spawn_agent_impl(**kwargs: object) -> dict[str, object]:
+        spawn_kwargs.update(kwargs)
+        run = LocalAgentRunManager(temp_db).create(
+            parent_session_id=str(kwargs["parent_session_id"]),
+            provider="codex",
+            prompt=str(kwargs["prompt"]),
+            agent_name=str(kwargs["agent_lookup_name"]),
+            task_id=task.id,
+            run_id=f"run-{agent_slug}",
+        )
+        return {"success": True, "run_id": run.id, "isolation": kwargs["isolation"]}
+
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+        fake_spawn_agent_impl,
+    )
+    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    services = SimpleNamespace(
+        database=temp_db,
+        task_manager=task_manager,
+        session_manager=session_manager,
+        agent_runner=SimpleNamespace(),
+    )
+
+    result = await dispatcher.run_heartbeat(
+        db=temp_db,
+        project_id=sample_project["id"],
+        services=services,
+    )
+    artifacts = TaskArtifactManager(temp_db).get_artifacts(task.id)
+
+    assert result.executed == 1
+    assert spawn_kwargs["isolation"] == "none"
+    assert spawn_kwargs["worktree_id"] is None
+    assert spawn_kwargs["clone_id"] is None
+    assert artifacts.worktree_id == stale_worktree_id
+    assert artifacts.worktree_path == stale_worktree_path
+    assert artifacts.base_commit_sha == "old-base"
+
+
+@pytest.mark.asyncio
+async def test_expansion_review_uses_main_context_despite_worktree_task(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
+    """Expansion review uses main context despite worktree task."""
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.dispatch import dispatcher
+    from gobby.storage.agents import LocalAgentRunManager
+    from gobby.storage.sessions import SessionManager
+
+    sync_bundled_agents(temp_db)
+    task_manager = LocalTaskManager(temp_db)
+    session_manager = SessionManager(temp_db)
+    task = _task(
+        temp_db,
+        sample_project,
+        stage_name="expansion",
+        stage_state="needs_review",
+        isolation="worktree",
+    )
+    TaskArtifactManager(temp_db).set_artifacts_atomic(
+        task.id,
+        worktree_path="/tmp/missing-expansion-worktree",
+        worktree_id="wt-expansion",
+        base_commit_sha="old-base",
+        target_branch="main",
+    )
+    action = SpawnAgentAction(
+        task_id=task.id,
+        task_ref=f"#{task.seq_num}",
+        agent_slug="expansion-qa",
+        prompt="review expansion",
+        initial_variables={"stage_name": "expansion", "stage_state": "needs_review"},
+    )
+    spawn_kwargs: dict[str, object] = {}
+
+    async def fake_spawn_agent_impl(**kwargs: object) -> dict[str, object]:
+        spawn_kwargs.update(kwargs)
+        run = LocalAgentRunManager(temp_db).create(
+            parent_session_id=str(kwargs["parent_session_id"]),
+            provider="codex",
+            prompt=str(kwargs["prompt"]),
+            agent_name=str(kwargs["agent_lookup_name"]),
+            task_id=task.id,
+            run_id="run-expansion-main",
+        )
+        return {"success": True, "run_id": run.id, "isolation": kwargs["isolation"]}
+
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+        fake_spawn_agent_impl,
+    )
+    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    services = SimpleNamespace(
+        database=temp_db,
+        task_manager=task_manager,
+        session_manager=session_manager,
+        agent_runner=SimpleNamespace(),
+    )
+
+    result = await dispatcher.run_heartbeat(
+        db=temp_db,
+        project_id=sample_project["id"],
+        services=services,
+    )
+    artifacts = TaskArtifactManager(temp_db).get_artifacts(task.id)
+
+    assert result.executed == 1
+    assert spawn_kwargs["isolation"] == "none"
+    assert spawn_kwargs["worktree_id"] is None
+    assert spawn_kwargs["clone_id"] is None
+    assert artifacts.worktree_id == "wt-expansion"
+    assert artifacts.worktree_path == "/tmp/missing-expansion-worktree"
+
+
+@pytest.mark.asyncio
+async def test_backend_developer_inherits_task_worktree_isolation(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
+    """Backend developer inherits task worktree isolation."""
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.dispatch import dispatcher
+    from gobby.storage.agents import LocalAgentRunManager
+    from gobby.storage.sessions import SessionManager
+
+    sync_bundled_agents(temp_db)
+    task_manager = LocalTaskManager(temp_db)
+    session_manager = SessionManager(temp_db)
+    task = _task(
+        temp_db,
+        sample_project,
+        stage_state="in_progress",
+        isolation="worktree",
+        assigned_agent="backend-developer",
+    )
+    action = SpawnAgentAction(
+        task_id=task.id,
+        task_ref=f"#{task.seq_num}",
+        agent_slug="backend-developer",
+        prompt="go",
+    )
+    spawn_kwargs: dict[str, object] = {}
+
+    async def fake_spawn_agent_impl(**kwargs: object) -> dict[str, object]:
+        spawn_kwargs.update(kwargs)
+        run = LocalAgentRunManager(temp_db).create(
+            parent_session_id=str(kwargs["parent_session_id"]),
+            provider="codex",
+            prompt=str(kwargs["prompt"]),
+            agent_name=str(kwargs["agent_lookup_name"]),
+            task_id=task.id,
+            run_id="run-backend-inherit",
+        )
+        return {"success": True, "run_id": run.id, "isolation": kwargs["isolation"]}
+
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+        fake_spawn_agent_impl,
+    )
+    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    services = SimpleNamespace(
+        database=temp_db,
+        task_manager=task_manager,
+        session_manager=session_manager,
+        agent_runner=SimpleNamespace(),
+    )
+
+    result = await dispatcher.run_heartbeat(
+        db=temp_db,
+        project_id=sample_project["id"],
+        services=services,
+    )
+
+    assert result.executed == 1
+    assert spawn_kwargs["isolation"] == "worktree"
+
+
+@pytest.mark.asyncio
+async def test_spawn_action_subscribes_build_coordinator_completion(
+    monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
+) -> None:
+    """Spawn action subscribes build coordinator completion."""
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.dispatch import dispatcher
+    from gobby.storage.agents import LocalAgentRunManager
+    from gobby.storage.build_history import BuildHistoryStorage
+    from gobby.storage.pipelines import LocalPipelineExecutionManager
+    from gobby.storage.sessions import SessionManager
+
+    sync_bundled_agents(temp_db)
+    task_manager = LocalTaskManager(temp_db)
+    session_manager = SessionManager(temp_db)
+    coordinator = session_manager.register(
+        external_id="coord-ext",
+        machine_id="machine-1",
+        source="codex",
+        project_id=sample_project["id"],
+        title="Coordinator",
+    )
+    task = _task(temp_db, sample_project, stage_state="in_progress")
+    BuildHistoryStorage(temp_db).record_run(
+        project_id=sample_project["id"],
+        root_task_id=task.id,
+        input_ref=f"#{task.seq_num}",
+        action="build",
+        summary={"coordinator_session_id": coordinator.id},
+    )
+    action = SpawnAgentAction(
+        task_id=task.id,
+        task_ref=f"#{task.seq_num}",
+        agent_slug="backend-developer",
+        prompt="go",
+    )
+
+    async def fake_spawn_agent_impl(**kwargs: object) -> dict[str, object]:
+        run = LocalAgentRunManager(temp_db).create(
+            parent_session_id=str(kwargs["parent_session_id"]),
+            provider="codex",
+            prompt=str(kwargs["prompt"]),
+            agent_name=str(kwargs["agent_lookup_name"]),
+            task_id=task.id,
+            run_id="run-coordinated",
+        )
+        return {"success": True, "run_id": run.id, "isolation": "none"}
+
+    completion_registry = MagicMock()
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+        fake_spawn_agent_impl,
+    )
+    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    services = SimpleNamespace(
+        database=temp_db,
+        task_manager=task_manager,
+        session_manager=session_manager,
+        agent_runner=SimpleNamespace(),
+        completion_registry=completion_registry,
+    )
+
+    result = await dispatcher.run_heartbeat(
+        db=temp_db,
+        project_id=sample_project["id"],
+        services=services,
+    )
+
+    assert result.executed == 1
+    completion_registry.register.assert_called_once_with(
+        "run-coordinated",
+        subscribers=[coordinator.id],
+    )
+    subscribers = LocalPipelineExecutionManager(temp_db, project_id="").get_completion_subscribers(
+        "run-coordinated"
+    )
+    assert subscribers == [coordinator.id]
+
+
+def test_spawn_action_skips_cross_project_build_coordinator_completion(
+    temp_db,
+    sample_project,
+) -> None:
+    """Spawn action skips cross project build coordinator completion."""
+    from gobby.dispatch.spawn import _subscribe_build_coordinator_completion
+    from gobby.storage.build_history import BuildHistoryStorage
+    from gobby.storage.pipelines import LocalPipelineExecutionManager
+    from gobby.storage.projects import LocalProjectManager
+    from gobby.storage.sessions import SessionManager
+
+    other_project = LocalProjectManager(temp_db).create(name="other-project")
+    session_manager = SessionManager(temp_db)
+    coordinator = session_manager.register(
+        external_id="coord-ext",
+        machine_id="machine-1",
+        source="codex",
+        project_id=other_project.id,
+        title="Coordinator",
+    )
+    task = _task(temp_db, sample_project, stage_state="in_progress")
+    BuildHistoryStorage(temp_db).record_run(
+        project_id=sample_project["id"],
+        root_task_id=task.id,
+        input_ref=f"#{task.seq_num}",
+        action="build",
+        summary={"coordinator_session_id": coordinator.id},
+    )
+    completion_registry = MagicMock()
+    services = SimpleNamespace(
+        session_manager=session_manager,
+        completion_registry=completion_registry,
+    )
+
+    _subscribe_build_coordinator_completion(
+        db=temp_db,
+        project_id=sample_project["id"],
+        task_id=task.id,
+        run_id="run-cross-project",
+        services=services,
+    )
+
+    completion_registry.register.assert_not_called()
+    subscribers = LocalPipelineExecutionManager(temp_db, project_id="").get_completion_subscribers(
+        "run-cross-project"
+    )
+    assert subscribers == []
+
+
+@pytest.mark.asyncio
+async def test_spawn_action_without_coordinator_does_not_subscribe_launcher(
+    monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
+) -> None:
+    """Spawn action without coordinator does not subscribe launcher."""
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.dispatch import dispatcher
+    from gobby.storage.agents import LocalAgentRunManager
+    from gobby.storage.pipelines import LocalPipelineExecutionManager
+    from gobby.storage.sessions import SessionManager
+
+    sync_bundled_agents(temp_db)
+    task_manager = LocalTaskManager(temp_db)
+    session_manager = SessionManager(temp_db)
+    task = _task(temp_db, sample_project, stage_state="in_progress")
+    action = SpawnAgentAction(
+        task_id=task.id,
+        task_ref=f"#{task.seq_num}",
+        agent_slug="backend-developer",
+        prompt="go",
+    )
+
+    async def fake_spawn_agent_impl(**kwargs: object) -> dict[str, object]:
+        run = LocalAgentRunManager(temp_db).create(
+            parent_session_id=str(kwargs["parent_session_id"]),
+            provider="codex",
+            prompt=str(kwargs["prompt"]),
+            agent_name=str(kwargs["agent_lookup_name"]),
+            task_id=task.id,
+            run_id="run-unattended",
+        )
+        return {"success": True, "run_id": run.id, "isolation": "none"}
+
+    completion_registry = MagicMock()
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+        fake_spawn_agent_impl,
+    )
+    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    services = SimpleNamespace(
+        database=temp_db,
+        task_manager=task_manager,
+        session_manager=session_manager,
+        agent_runner=SimpleNamespace(),
+        completion_registry=completion_registry,
+    )
+
+    result = await dispatcher.run_heartbeat(
+        db=temp_db,
+        project_id=sample_project["id"],
+        services=services,
+    )
+
+    assert result.executed == 1
+    completion_registry.register.assert_not_called()
+    subscribers = LocalPipelineExecutionManager(temp_db, project_id="").get_completion_subscribers(
+        "run-unattended"
+    )
+    assert subscribers == []
+
+
+@pytest.mark.asyncio
+async def test_spawn_action_clears_missing_worktree_artifact_before_reuse(
+    monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
+) -> None:
+    """Spawn action clears missing worktree artifact before reuse."""
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.dispatch import dispatcher
+    from gobby.storage.agents import LocalAgentRunManager
+    from gobby.storage.sessions import SessionManager
+
+    sync_bundled_agents(temp_db)
+    task_manager = LocalTaskManager(temp_db)
+    session_manager = SessionManager(temp_db)
+    task = _task(
+        temp_db,
+        sample_project,
+        stage_state="in_progress",
+        isolation="worktree",
+    )
+    TaskArtifactManager(temp_db).set_artifacts_atomic(
+        task.id,
+        worktree_path="/tmp/missing-worktree",
+        worktree_id="wt-missing",
+        base_commit_sha="old-base",
+        target_branch="main",
+    )
+    action = SpawnAgentAction(
+        task_id=task.id,
+        task_ref=f"#{task.seq_num}",
+        agent_slug="backend-developer",
+        prompt="go",
+    )
+    spawn_kwargs: dict[str, object] = {}
+
+    async def fake_spawn_agent_impl(**kwargs):
+        spawn_kwargs.update(kwargs)
+        run = LocalAgentRunManager(temp_db).create(
+            parent_session_id=kwargs["parent_session_id"],
+            provider="codex",
+            prompt=kwargs["prompt"],
+            agent_name=kwargs["agent_lookup_name"],
+            task_id=task.id,
+            run_id="run-fresh-worktree",
+        )
+        return {"success": True, "run_id": run.id, "isolation": "worktree"}
+
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+        fake_spawn_agent_impl,
+    )
+    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    services = SimpleNamespace(
+        database=temp_db,
+        task_manager=task_manager,
+        session_manager=session_manager,
+        agent_runner=SimpleNamespace(),
+    )
+
+    result = await dispatcher.run_heartbeat(
+        db=temp_db,
+        project_id=sample_project["id"],
+        services=services,
+    )
+    artifacts = TaskArtifactManager(temp_db).get_artifacts(task.id)
+
+    assert result.executed == 1
+    assert spawn_kwargs["worktree_id"] is None
+    assert artifacts.worktree_id is None
+    assert artifacts.worktree_path is None
+    assert artifacts.base_commit_sha is None
+    assert artifacts.target_branch == "main"
+
+
+@pytest.mark.asyncio
+async def test_leaf_spawn_recovers_parent_integration_target_branch(
+    monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
+) -> None:
+    """Leaf spawn recovers parent integration target branch."""
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.dispatch import dispatcher
+    from gobby.storage.agents import LocalAgentRunManager
+    from gobby.storage.sessions import SessionManager
+
+    sync_bundled_agents(temp_db)
+    task_manager = LocalTaskManager(temp_db)
+    session_manager = SessionManager(temp_db)
+    parent = _task(
+        temp_db,
+        sample_project,
+        title="Phase epic",
+        task_type="epic",
+        allow_automation=False,
+    )
+    leaf = _task(
+        temp_db,
+        sample_project,
+        title="Leaf implementation",
+        parent_task_id=parent.id,
+        stage_state="in_progress",
+        isolation="worktree",
+    )
+    TaskArtifactManager(temp_db).set_artifacts_atomic(
+        parent.id,
+        target_branch="main",
+        integration_branch="gobby/integration/phase",
+    )
+    action = SpawnAgentAction(
+        task_id=leaf.id,
+        task_ref=f"#{leaf.seq_num}",
+        agent_slug="backend-developer",
+        prompt="go",
+    )
+    spawn_kwargs: dict[str, object] = {}
+
+    def unexpected_prepare(**_kwargs: object) -> None:
+        raise AssertionError("leaf spawn should not use holistic epic workspace preparation")
+
+    async def fake_spawn_agent_impl(**kwargs: object) -> dict[str, object]:
+        spawn_kwargs.update(kwargs)
+        run = LocalAgentRunManager(temp_db).create(
+            parent_session_id=str(kwargs["parent_session_id"]),
+            provider="codex",
+            prompt=str(kwargs["prompt"]),
+            agent_name=str(kwargs["agent_lookup_name"]),
+            task_id=leaf.id,
+            run_id="run-leaf-integration-base",
+        )
+        return {"success": True, "run_id": run.id, "isolation": "worktree"}
+
+    monkeypatch.setattr(
+        "gobby.dispatch.spawn.ensure_epic_integration_workspaces",
+        unexpected_prepare,
+    )
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+        fake_spawn_agent_impl,
+    )
+    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    services = SimpleNamespace(
+        database=temp_db,
+        task_manager=task_manager,
+        session_manager=session_manager,
+        agent_runner=SimpleNamespace(),
+    )
+
+    result = await dispatcher.run_heartbeat(
+        db=temp_db,
+        project_id=sample_project["id"],
+        services=services,
+    )
+    artifacts = TaskArtifactManager(temp_db).get_artifacts(leaf.id)
+
+    assert result.executed == 1
+    assert spawn_kwargs["base_branch"] == "gobby/integration/phase"
+    assert spawn_kwargs["worktree_id"] is None
+    assert artifacts.target_branch == "gobby/integration/phase"
+
+
+@pytest.mark.asyncio
+async def test_epic_holistic_spawn_refreshes_and_reuses_integration_workspace(
+    monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
+) -> None:
+    """Epic holistic spawn refreshes and reuses integration workspace."""
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.dispatch import dispatcher
+    from gobby.storage.agents import LocalAgentRunManager
+    from gobby.storage.sessions import SessionManager
+
+    sync_bundled_agents(temp_db)
+    task_manager = LocalTaskManager(temp_db)
+    session_manager = SessionManager(temp_db)
+    task = _task(
+        temp_db,
+        sample_project,
+        stage_name="holistic_qa",
+        stage_state="in_progress",
+        task_type="epic",
+        isolation="worktree",
+        assigned_agent="holistic-reviewer",
+    )
+    TaskArtifactManager(temp_db).set_artifacts_atomic(
+        task.id,
+        worktree_path="/tmp/stale-parent",
+        worktree_id="wt-stale",
+        base_commit_sha="old-base",
+        target_branch="main",
+        integration_branch="gobby/integration/parent",
+        integration_workspace_id="wt-integration",
+    )
+    action = SpawnAgentAction(
+        task_id=task.id,
+        task_ref=f"#{task.seq_num}",
+        agent_slug="holistic-reviewer",
+        prompt="review",
+        initial_variables={"stage_name": "holistic_qa", "stage_state": "in_progress"},
+    )
+    prepare_calls: list[dict[str, object]] = []
+    spawn_kwargs: dict[str, object] = {}
+
+    def fake_prepare(**kwargs: object) -> None:
+        prepare_calls.append(kwargs)
+
+    async def fake_spawn_agent_impl(**kwargs: object) -> dict[str, object]:
+        spawn_kwargs.update(kwargs)
+        run = LocalAgentRunManager(temp_db).create(
+            parent_session_id=str(kwargs["parent_session_id"]),
+            provider="codex",
+            prompt=str(kwargs["prompt"]),
+            agent_name=str(kwargs["agent_lookup_name"]),
+            task_id=task.id,
+            run_id="run-holistic",
+        )
+        return {
+            "success": True,
+            "run_id": run.id,
+            "isolation": "worktree",
+            "worktree_id": kwargs["worktree_id"],
+            "worktree_path": "/tmp/integration-parent",
+        }
+
+    monkeypatch.setattr(
+        "gobby.dispatch.spawn.ensure_epic_integration_workspaces",
+        fake_prepare,
+    )
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+        fake_spawn_agent_impl,
+    )
+    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    services = SimpleNamespace(
+        database=temp_db,
+        task_manager=task_manager,
+        session_manager=session_manager,
+        agent_runner=SimpleNamespace(),
+    )
+
+    result = await dispatcher.run_heartbeat(
+        db=temp_db,
+        project_id=sample_project["id"],
+        services=services,
+    )
+    artifacts = TaskArtifactManager(temp_db).get_artifacts(task.id)
+
+    assert result.executed == 1
+    assert prepare_calls
+    assert prepare_calls[0]["root_task"].id == task.id
+    assert spawn_kwargs["worktree_id"] == "wt-integration"
+    assert spawn_kwargs["clone_id"] is None
+    assert artifacts.worktree_id is None
+    assert artifacts.worktree_path is None
+    assert artifacts.base_commit_sha is None
+
+
+@pytest.mark.asyncio
+async def test_epic_holistic_spawn_promotes_existing_worktree_when_target_missing(
+    monkeypatch: pytest.MonkeyPatch, temp_db, sample_project, tmp_path
+) -> None:
+    """Epic holistic spawn promotes existing worktree when target missing."""
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.dispatch import dispatcher
+    from gobby.storage.agents import LocalAgentRunManager
+    from gobby.storage.sessions import SessionManager
+    from gobby.storage.worktrees import LocalWorktreeManager
+
+    sync_bundled_agents(temp_db)
+    task_manager = LocalTaskManager(temp_db)
+    session_manager = SessionManager(temp_db)
+    task = _task(
+        temp_db,
+        sample_project,
+        stage_name="holistic_qa",
+        stage_state="in_progress",
+        task_type="epic",
+        isolation="worktree",
+        assigned_agent="holistic-reviewer",
+    )
+    worktree_path = tmp_path / "phase-worktree"
+    worktree_path.mkdir()
+    worktree = LocalWorktreeManager(temp_db).create(
+        project_id=sample_project["id"],
+        branch_name="task-phase",
+        worktree_path=str(worktree_path),
+        base_branch="main",
+        task_id=task.id,
+    )
+    TaskArtifactManager(temp_db).set_artifacts_atomic(
+        task.id,
+        worktree_path=str(worktree_path),
+        worktree_id=worktree.id,
+        base_commit_sha="old-base",
+    )
+    action = SpawnAgentAction(
+        task_id=task.id,
+        task_ref=f"#{task.seq_num}",
+        agent_slug="holistic-reviewer",
+        prompt="review",
+        initial_variables={"stage_name": "holistic_qa", "stage_state": "in_progress"},
+    )
+    prepare_calls: list[dict[str, object]] = []
+    spawn_kwargs: dict[str, object] = {}
+
+    def fake_prepare(**kwargs: object) -> None:
+        prepare_calls.append(kwargs)
+
+    async def fake_spawn_agent_impl(**kwargs: object) -> dict[str, object]:
+        spawn_kwargs.update(kwargs)
+        run = LocalAgentRunManager(temp_db).create(
+            parent_session_id=str(kwargs["parent_session_id"]),
+            provider="codex",
+            prompt=str(kwargs["prompt"]),
+            agent_name=str(kwargs["agent_lookup_name"]),
+            task_id=task.id,
+            run_id="run-holistic-recovered",
+        )
+        return {
+            "success": True,
+            "run_id": run.id,
+            "isolation": "worktree",
+            "worktree_id": kwargs["worktree_id"],
+            "worktree_path": str(worktree_path),
+        }
+
+    monkeypatch.setattr(
+        "gobby.dispatch.spawn.ensure_epic_integration_workspaces",
+        fake_prepare,
+    )
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+        fake_spawn_agent_impl,
+    )
+    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    services = SimpleNamespace(
+        database=temp_db,
+        task_manager=task_manager,
+        session_manager=session_manager,
+        agent_runner=SimpleNamespace(),
+    )
+
+    result = await dispatcher.run_heartbeat(
+        db=temp_db,
+        project_id=sample_project["id"],
+        services=services,
+    )
+    artifacts = TaskArtifactManager(temp_db).get_artifacts(task.id)
+    stored_worktree = LocalWorktreeManager(temp_db).get(worktree.id)
+
+    assert result.executed == 1
+    assert prepare_calls
+    assert prepare_calls[0]["target_branch"] == "main"
+    assert spawn_kwargs["worktree_id"] == worktree.id
+    assert artifacts.target_branch == "main"
+    assert artifacts.integration_branch == "task-phase"
+    assert artifacts.integration_workspace_id == worktree.id
+    assert artifacts.worktree_id is None
+    assert stored_worktree is not None
+    assert stored_worktree.workspace_role == "integration"
+
+
+@pytest.mark.asyncio
+async def test_epic_holistic_spawn_recovers_missing_target_from_current_branch(
+    monkeypatch: pytest.MonkeyPatch, temp_db, sample_project, tmp_path
+) -> None:
+    """Epic holistic spawn recovers missing target from current branch."""
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.dispatch import dispatcher
+    from gobby.storage.agents import LocalAgentRunManager
+    from gobby.storage.projects import LocalProjectManager
+    from gobby.storage.sessions import SessionManager
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-b", "main"], cwd=repo, check=True, capture_output=True)
+    LocalProjectManager(temp_db).update(sample_project["id"], repo_path=str(repo))
+    sync_bundled_agents(temp_db)
+    task_manager = LocalTaskManager(temp_db)
+    session_manager = SessionManager(temp_db)
+    task = _task(
+        temp_db,
+        sample_project,
+        stage_name="holistic_qa",
+        stage_state="in_progress",
+        task_type="epic",
+        isolation="worktree",
+        assigned_agent="holistic-reviewer",
+    )
+    action = SpawnAgentAction(
+        task_id=task.id,
+        task_ref=f"#{task.seq_num}",
+        agent_slug="holistic-reviewer",
+        prompt="review",
+        initial_variables={"stage_name": "holistic_qa", "stage_state": "in_progress"},
+    )
+    prepare_calls: list[dict[str, object]] = []
+
+    def fake_prepare(**kwargs: object) -> None:
+        prepare_calls.append(kwargs)
+
+    async def fake_spawn_agent_impl(**kwargs: object) -> dict[str, object]:
+        run = LocalAgentRunManager(temp_db).create(
+            parent_session_id=str(kwargs["parent_session_id"]),
+            provider="codex",
+            prompt=str(kwargs["prompt"]),
+            agent_name=str(kwargs["agent_lookup_name"]),
+            task_id=task.id,
+            run_id="run-holistic-current-branch",
+        )
+        return {"success": True, "run_id": run.id, "isolation": "worktree"}
+
+    monkeypatch.setattr(
+        "gobby.dispatch.spawn.ensure_epic_integration_workspaces",
+        fake_prepare,
+    )
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+        fake_spawn_agent_impl,
+    )
+    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    services = SimpleNamespace(
+        database=temp_db,
+        task_manager=task_manager,
+        session_manager=session_manager,
+        agent_runner=SimpleNamespace(),
+    )
+
+    result = await dispatcher.run_heartbeat(
+        db=temp_db,
+        project_id=sample_project["id"],
+        services=services,
+    )
+    artifacts = TaskArtifactManager(temp_db).get_artifacts(task.id)
+
+    assert result.executed == 1
+    assert prepare_calls[0]["target_branch"] == "main"
+    assert artifacts.target_branch == "main"
+
+
+@pytest.mark.asyncio
+async def test_epic_holistic_workspace_conflict_rolls_back_without_heartbeat_error(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    temp_db,
+    sample_project,
+) -> None:
+    """Epic holistic workspace conflict rolls back without heartbeat error."""
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.build.workspaces import BuildWorkspaceError
+    from gobby.dispatch import dispatcher
+    from gobby.storage.sessions import SessionManager
+
+    sync_bundled_agents(temp_db)
+    task_manager = LocalTaskManager(temp_db)
+    task = _task(
+        temp_db,
+        sample_project,
+        stage_name="holistic_qa",
+        stage_state="in_progress",
+        task_type="epic",
+        isolation="worktree",
+        assigned_agent="holistic-reviewer",
+    )
+    TaskArtifactManager(temp_db).set_artifacts_atomic(
+        task.id,
+        target_branch="main",
+        integration_branch="gobby/integration/phase",
+        integration_workspace_id="wt-integration",
+    )
+    action = SpawnAgentAction(
+        task_id=task.id,
+        task_ref=f"#{task.seq_num}",
+        agent_slug="holistic-reviewer",
+        prompt="review",
+        initial_variables={"stage_name": "holistic_qa", "stage_state": "in_progress"},
+    )
+
+    def fail_prepare(**_kwargs: object) -> None:
+        raise BuildWorkspaceError("failed to refresh integration workspace: CONFLICT")
+
+    async def unexpected_spawn_agent_impl(**_kwargs: object) -> dict[str, object]:
+        raise AssertionError("spawn should not run after workspace preparation failure")
+
+    monkeypatch.setattr(
+        "gobby.dispatch.spawn.ensure_epic_integration_workspaces",
+        fail_prepare,
+    )
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+        unexpected_spawn_agent_impl,
+    )
+    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    services = SimpleNamespace(
+        database=temp_db,
+        task_manager=task_manager,
+        session_manager=SessionManager(temp_db),
+        agent_runner=SimpleNamespace(),
+    )
+    storage = _mutex_storage(temp_db)
+    caplog.set_level(logging.ERROR, logger="gobby.dispatch.dispatcher")
+
+    result = await dispatcher.run_heartbeat(
+        db=temp_db,
+        project_id=sample_project["id"],
+        services=services,
+    )
+
+    updated = get_task(temp_db, task.id)
+    assert result.executed == 1
+    assert storage.get_mutex(task.id) is None
+    assert task_manager.stage_states.get(task.id, "holistic_qa").state == "ready"
+    assert updated.dispatch_failure_count == 1
+    assert "### Dispatch spawn failed" in updated.description
+    assert "failed to refresh integration workspace: CONFLICT" in updated.description
+    assert "Dispatcher heartbeat candidate failed" not in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_spawn_failure_rolls_stage_ready_and_releases(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
+    """Spawn failure rolls stage ready and releases."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
     from gobby.storage.agents import LocalAgentRunManager
@@ -427,11 +1527,13 @@ async def test_spawn_failure_rolls_stage_ready_and_releases(
     assert LocalAgentRunManager(temp_db).get("run-services") is None
 
 
+@pytest.mark.asyncio
 async def test_spawn_unavailable_does_not_mark_task_failed(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     sample_project,
 ) -> None:
+    """Spawn unavailable does not mark task failed."""
     from gobby.dispatch import dispatcher
 
     task_manager = LocalTaskManager(temp_db)
@@ -453,9 +1555,11 @@ async def test_spawn_unavailable_does_not_mark_task_failed(
     assert "### Dispatch spawn failed" not in (updated.description or "")
 
 
+@pytest.mark.asyncio
 async def test_unregistered_spawn_records_dispatch_failure_telemetry(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
+    """Unregistered spawn records dispatch failure telemetry."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
     from gobby.storage.sessions import SessionManager
@@ -497,9 +1601,66 @@ async def test_unregistered_spawn_records_dispatch_failure_telemetry(
     assert "agent_did_not_register" in updated.description
 
 
+@pytest.mark.asyncio
+async def test_spawn_failure_cleanup_tolerates_already_ready_stage(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    temp_db,
+    sample_project,
+) -> None:
+    """Spawn failure cleanup tolerates already ready stage."""
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.dispatch import dispatcher
+    from gobby.storage.sessions import SessionManager
+    from gobby.storage.tasks._stage_types import IllegalStageTransitionError
+
+    sync_bundled_agents(temp_db)
+    task_manager = LocalTaskManager(temp_db)
+    task = _task(temp_db, sample_project, stage_state="in_progress")
+    storage = _mutex_storage(temp_db)
+    action = SpawnAgentAction(task.id, f"#{task.seq_num}", "backend-developer", "go")
+
+    async def fake_spawn_agent_impl(**_kwargs):
+        return {"success": False, "error": "code_index_preflight_failed"}
+
+    def racing_fail_stage(*_args, **_kwargs):
+        set_stage_state(temp_db, task.id, "development", "ready")
+        raise IllegalStageTransitionError("development", "ready", "fail_stage", "required")
+
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+        fake_spawn_agent_impl,
+    )
+    monkeypatch.setattr(task_manager.stage_states, "fail_stage", racing_fail_stage)
+    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    services = SimpleNamespace(
+        database=temp_db,
+        task_manager=task_manager,
+        session_manager=SessionManager(temp_db),
+        agent_runner=SimpleNamespace(),
+    )
+
+    with caplog.at_level(logging.WARNING):
+        result = await dispatcher.run_heartbeat(
+            db=temp_db,
+            project_id=sample_project["id"],
+            services=services,
+        )
+
+    updated = get_task(temp_db, task.id)
+    assert result.executed == 1
+    assert storage.get_mutex(task.id) is None
+    assert task_manager.stage_states.get(task.id, "development").state == "ready"
+    assert updated.dispatch_failure_count == 1
+    assert "### Dispatch spawn failed" in updated.description
+    assert "Failed to roll back stage after dispatch spawn failure" not in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_third_spawn_failure_escalates(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
+    """Third spawn failure escalates."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
     from gobby.storage.sessions import SessionManager
@@ -531,9 +1692,69 @@ async def test_third_spawn_failure_escalates(
     assert updated.escalation_reason.startswith("dispatch_spawn_max_attempts:broken")
 
 
+@pytest.mark.asyncio
+async def test_spawn_prefers_project_scoped_git_manager(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+    tmp_path,
+) -> None:
+    """Spawn prefers project scoped git manager."""
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.dispatch.spawn import spawn_agent
+    from gobby.storage.sessions import SessionManager
+
+    sync_bundled_agents(temp_db)
+    task_manager = LocalTaskManager(temp_db)
+    task = _task(temp_db, sample_project, isolation="worktree")
+    TaskArtifactManager(temp_db).set_artifacts_atomic(task.id, target_branch="dev")
+
+    default_repo = tmp_path / "default-repo"
+    project_repo = tmp_path / "project-repo"
+    default_repo.mkdir()
+    project_repo.mkdir()
+    default_git = SimpleNamespace(repo_path=str(default_repo))
+    project_git = SimpleNamespace(repo_path=str(project_repo))
+    default_clone = object()
+    captured: dict[str, object] = {}
+
+    async def fake_spawn_agent_impl(**kwargs):
+        captured.update(kwargs)
+        return {"success": True, "run_id": "run-project-git"}
+
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+        fake_spawn_agent_impl,
+    )
+    services = SimpleNamespace(
+        database=temp_db,
+        task_manager=task_manager,
+        session_manager=SessionManager(temp_db),
+        agent_runner=SimpleNamespace(),
+        git_manager=default_git,
+        clone_manager=default_clone,
+        get_git_manager=lambda project_id: project_git,
+    )
+
+    run_id = await spawn_agent(
+        SpawnAgentAction(task.id, f"#{task.seq_num}", "backend-developer", "go"),
+        db=temp_db,
+        services=services,
+    )
+
+    assert run_id == "run-project-git"
+    assert captured["git_manager"] is project_git
+    assert captured["clone_manager"] is not default_clone
+    clone_manager = captured["clone_manager"]
+    assert str(clone_manager.repo_path) == project_git.repo_path
+    assert captured["base_branch"] == "dev"
+
+
+@pytest.mark.asyncio
 async def test_bad_candidate_is_skipped_and_next_candidate_executes(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
+    """Bad candidate is skipped and next candidate executes."""
     from gobby.dispatch import dispatcher
 
     first = _task(temp_db, sample_project, "first")
@@ -565,11 +1786,13 @@ async def test_bad_candidate_is_skipped_and_next_candidate_executes(
     assert "### Dispatch failed" in get_task(temp_db, first.id).description
 
 
+@pytest.mark.asyncio
 async def test_advance_action_releases_lease_immediately(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     sample_project,
 ) -> None:
+    """Advance action releases lease immediately."""
     from gobby.dispatch import dispatcher
 
     task = _task(temp_db, sample_project, stage_name="development")
@@ -585,11 +1808,13 @@ async def test_advance_action_releases_lease_immediately(
     assert storage.get_mutex(task.id) is None
 
 
+@pytest.mark.asyncio
 async def test_start_pipeline_action_links_execution_id(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     sample_project,
 ) -> None:
+    """Start pipeline action links execution id."""
     from gobby.dispatch import dispatcher
 
     task = _task(temp_db, sample_project, lifecycle="expanding")
@@ -610,6 +1835,7 @@ async def test_start_pipeline_action_links_execution_id(
 
 
 def test_dispatcher_run_heartbeat_cold_imports(repo_root) -> None:
+    """Dispatcher run heartbeat cold imports."""
     result = subprocess.run(
         [
             sys.executable,
@@ -630,6 +1856,7 @@ def test_dispatch_inputs_invalid_json_logs_debug(
     caplog: pytest.LogCaptureFixture,
     enable_log_propagation: None,
 ) -> None:
+    """Dispatch inputs invalid json logs debug."""
     from gobby.dispatch import rules
 
     registry_entry = SimpleNamespace(
@@ -653,6 +1880,7 @@ def test_dispatch_inputs_invalid_json_logs_debug(
 
 
 def test_build_context_loads_stage_registry_and_bundled_agents(temp_db, sample_project) -> None:
+    """Build context loads stage registry and bundled agents."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
 
@@ -667,6 +1895,7 @@ def test_build_context_loads_stage_registry_and_bundled_agents(temp_db, sample_p
 
 
 def test_build_context_project_disabled_agent_override_wins(temp_db, sample_project) -> None:
+    """Build context project disabled agent override wins."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
     from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
@@ -693,11 +1922,13 @@ def test_build_context_project_disabled_agent_override_wins(temp_db, sample_proj
     assert context.agents["merge-orchestrator"].project_id == sample_project["id"]
 
 
+@pytest.mark.asyncio
 async def test_real_heartbeat_pr_stage_spawns_merge_orchestrator_without_false_no_agent(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     sample_project,
 ) -> None:
+    """Real heartbeat pr stage spawns merge orchestrator without false no agent."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
 
@@ -717,11 +1948,13 @@ async def test_real_heartbeat_pr_stage_spawns_merge_orchestrator_without_false_n
     assert get_task(temp_db, task.id).is_escalated is False
 
 
+@pytest.mark.asyncio
 async def test_real_heartbeat_merge_ready_starts_then_spawns_merge_orchestrator(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     sample_project,
 ) -> None:
+    """Real heartbeat merge ready starts then spawns merge orchestrator."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
 
@@ -753,11 +1986,13 @@ async def test_real_heartbeat_merge_ready_starts_then_spawns_merge_orchestrator(
     assert spawned == ["merge-orchestrator"]
 
 
+@pytest.mark.asyncio
 async def test_dispatcher_starts_stage_pipeline_with_injected_services(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     sample_project,
 ) -> None:
+    """Dispatcher starts stage pipeline with injected services."""
     from gobby.dispatch import dispatcher
 
     task = _task(temp_db, sample_project, lifecycle="expanding")
@@ -791,9 +2026,11 @@ async def test_dispatcher_starts_stage_pipeline_with_injected_services(
     assert calls[0]["session_id"] == "session-1"
 
 
+@pytest.mark.asyncio
 async def test_expansion_terminal_event_releases_lease_via_handlers(
     temp_db, sample_project
 ) -> None:
+    """Expansion terminal event releases lease via handlers."""
     from gobby.hooks.event_handlers import _dispatch
 
     task = _task(temp_db, sample_project)
@@ -806,11 +2043,13 @@ async def test_expansion_terminal_event_releases_lease_via_handlers(
     assert storage.get_mutex(task.id) is None
 
 
+@pytest.mark.asyncio
 async def test_execution_id_attaches_before_background_pipeline_start(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     sample_project,
 ) -> None:
+    """Execution id attaches before background pipeline start."""
     from gobby.dispatch import dispatcher
 
     task = _task(temp_db, sample_project, lifecycle="expanding")
@@ -835,11 +2074,13 @@ async def test_execution_id_attaches_before_background_pipeline_start(
     assert storage.get_mutex(task.id).run_id == execution_id
 
 
+@pytest.mark.asyncio
 async def test_pipeline_terminal_handler_releases_lease(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     sample_project,
 ) -> None:
+    """Pipeline terminal handler releases lease."""
     from gobby.dispatch import dispatcher
     from gobby.hooks.event_handlers import _dispatch
 
@@ -870,6 +2111,7 @@ async def test_pipeline_terminal_handler_releases_lease(
 
 
 def test_terminal_handler_release_by_task_id_fallback(temp_db, sample_project) -> None:
+    """Terminal handler release by task id fallback."""
     from gobby.hooks.event_handlers import _dispatch
 
     task = _task(temp_db, sample_project)
@@ -882,11 +2124,13 @@ def test_terminal_handler_release_by_task_id_fallback(temp_db, sample_project) -
     assert storage.get_mutex(task.id) is None
 
 
+@pytest.mark.asyncio
 async def test_invalid_pipeline_target_escalates_and_releases(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     sample_project,
 ) -> None:
+    """Invalid pipeline target escalates and releases."""
     from gobby.dispatch import dispatcher
 
     task = _task(temp_db, sample_project, lifecycle="expanding")
@@ -910,11 +2154,13 @@ async def test_invalid_pipeline_target_escalates_and_releases(
     assert get_task(temp_db, task.id).is_escalated is True
 
 
+@pytest.mark.asyncio
 async def test_create_isolation_action_writes_artifact_pair_and_base_commit_sha_atomically(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     sample_project,
 ) -> None:
+    """Create isolation action writes artifact pair and base commit sha atomically."""
     from gobby.dispatch import dispatcher
 
     task = _task(temp_db, sample_project, isolation="worktree")
@@ -938,11 +2184,13 @@ async def test_create_isolation_action_writes_artifact_pair_and_base_commit_sha_
     assert artifacts.base_commit_sha == "abc123"
 
 
+@pytest.mark.asyncio
 async def test_create_isolation_action_resolves_base_commit_sha_from_target_branch(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     sample_project,
 ) -> None:
+    """Create isolation action resolves base commit sha from target branch."""
     from gobby.dispatch import dispatcher
 
     task = _task(temp_db, sample_project, isolation="worktree")
@@ -962,11 +2210,134 @@ async def test_create_isolation_action_resolves_base_commit_sha_from_target_bran
     assert resolved == ["main"]
 
 
+def test_persist_spawn_artifacts_writes_base_commit_sha(
+    temp_db,
+    sample_project,
+) -> None:
+    """Persist spawn artifacts writes base commit sha."""
+    from gobby.dispatch.spawn import _persist_spawn_artifacts
+
+    task = _task(temp_db, sample_project, isolation="worktree")
+
+    _persist_spawn_artifacts(
+        temp_db,
+        task.id,
+        {
+            "worktree_id": "wt-1",
+            "worktree_path": "/tmp/worktree",
+            "base_commit_sha": "base-sha",
+        },
+    )
+
+    artifacts = TaskArtifactManager(temp_db).get_artifacts(task.id)
+    assert artifacts.worktree_id == "wt-1"
+    assert artifacts.worktree_path == "/tmp/worktree"
+    assert artifacts.base_commit_sha == "base-sha"
+
+    clone_task = _task(temp_db, sample_project, isolation="clone", title="Clone dispatch task")
+    _persist_spawn_artifacts(
+        temp_db,
+        clone_task.id,
+        {
+            "clone_id": "clone-1",
+            "clone_path": "/tmp/clone",
+            "base_commit_sha": "clone-base",
+        },
+    )
+
+    clone_artifacts = TaskArtifactManager(temp_db).get_artifacts(clone_task.id)
+    assert clone_artifacts.clone_id == "clone-1"
+    assert clone_artifacts.clone_path == "/tmp/clone"
+    assert clone_artifacts.base_commit_sha == "clone-base"
+
+
+def test_persist_spawn_artifacts_updates_standalone_base_commit_sha(
+    temp_db,
+    sample_project,
+) -> None:
+    """A spawn result may only refresh the base SHA for an existing workspace."""
+    from gobby.dispatch.spawn import _persist_spawn_artifacts
+
+    task = _task(temp_db, sample_project, isolation="worktree")
+    TaskArtifactManager(temp_db).set_artifacts_atomic(
+        task.id,
+        worktree_id="wt-1",
+        worktree_path="/tmp/worktree",
+        base_commit_sha="old-base",
+    )
+
+    _persist_spawn_artifacts(temp_db, task.id, {"base_commit_sha": "new-base"})
+
+    artifacts = TaskArtifactManager(temp_db).get_artifacts(task.id)
+    assert artifacts.worktree_id == "wt-1"
+    assert artifacts.worktree_path == "/tmp/worktree"
+    assert artifacts.base_commit_sha == "new-base"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_spawn_tolerates_build_coordinator_subscription_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
+    """Agent spawn succeeds even when best-effort coordinator subscription fails."""
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.dispatch.spawn import spawn_agent
+    from gobby.storage.build_history import BuildHistoryStorage
+    from gobby.storage.sessions import SessionManager
+
+    sync_bundled_agents(temp_db)
+    task_manager = LocalTaskManager(temp_db)
+    task = _task(temp_db, sample_project, isolation="none")
+    sessions = SessionManager(temp_db)
+    coordinator = sessions.register(
+        external_id="coordinator-subscribe-failure",
+        machine_id="machine-1",
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    BuildHistoryStorage(temp_db).record_run(
+        project_id=sample_project["id"],
+        root_task_id=task.id,
+        input_ref=f"#{task.seq_num}",
+        action="build",
+        summary={"coordinator_session_id": coordinator.id},
+    )
+
+    async def fake_spawn_agent_impl(**_kwargs):
+        return {"success": True, "run_id": "run-subscribe-failure"}
+
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+        fake_spawn_agent_impl,
+    )
+    monkeypatch.setattr(
+        "gobby.dispatch.spawn.subscribe_agent_completion",
+        MagicMock(side_effect=RuntimeError("subscriber store unavailable")),
+    )
+    services = SimpleNamespace(
+        database=temp_db,
+        task_manager=task_manager,
+        session_manager=sessions,
+        agent_runner=SimpleNamespace(),
+    )
+
+    run_id = await spawn_agent(
+        SpawnAgentAction(task.id, f"#{task.seq_num}", "backend-developer", "go"),
+        db=temp_db,
+        services=services,
+    )
+
+    assert run_id == "run-subscribe-failure"
+
+
+@pytest.mark.asyncio
 async def test_create_isolation_action_missing_target_branch_escalates(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     sample_project,
 ) -> None:
+    """Create isolation action missing target branch escalates."""
     from gobby.dispatch import dispatcher
 
     task = _task(temp_db, sample_project, isolation="worktree")
@@ -983,13 +2354,17 @@ async def test_create_isolation_action_missing_target_branch_escalates(
     assert escalations[0]["reason"] == "isolation_missing_target_branch"
 
 
+@pytest.mark.asyncio
 async def test_dev_rule_fires_after_isolation_and_stage_start(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     sample_project,
 ) -> None:
+    """Dev rule fires after isolation and stage start."""
+    from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
 
+    sync_bundled_agents(temp_db)
     task = _task(temp_db, sample_project, isolation="worktree")
     TaskArtifactManager(temp_db).set_artifacts_atomic(task.id, target_branch="main")
     spawned: list[str] = []
@@ -1008,7 +2383,9 @@ async def test_dev_rule_fires_after_isolation_and_stage_start(
     assert spawned == [task.id]
 
 
+@pytest.mark.asyncio
 async def test_startup_sweep_clears_expired_leases(temp_db, sample_project) -> None:
+    """Startup sweep clears expired leases."""
     from gobby.dispatch import dispatcher
 
     task = _task(temp_db, sample_project, allow_automation=False)
@@ -1019,3 +2396,132 @@ async def test_startup_sweep_clears_expired_leases(temp_db, sample_project) -> N
     await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"], startup=True)
 
     assert storage.get_mutex(task.id) is None
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_preserves_no_run_mutex_with_live_lease(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
+    """Heartbeat preserves no-run mutexes while their lease is still active."""
+    from gobby.dispatch import dispatcher
+
+    task = _task(temp_db, sample_project, stage_state="in_progress")
+    storage = _mutex_storage(temp_db)
+    old_acquired_at = datetime.now(UTC) - timedelta(
+        seconds=dispatcher.ORPHAN_NO_RUN_MUTEX_GRACE_SECONDS + 5
+    )
+    assert storage.acquire_mutex(
+        task.id,
+        holder="dispatcher",
+        kind="heartbeat",
+        ttl_seconds=dispatcher.DISPATCH_TTL_SECONDS,
+        now=old_acquired_at,
+    )
+    spawned: list[str] = []
+    monkeypatch.setattr(
+        dispatcher.dispatch_rules,
+        "evaluate",
+        lambda *args, **kwargs: SpawnAgentAction(
+            task_id=task.id,
+            task_ref=f"#{task.seq_num}",
+            agent_slug="backend-developer",
+            prompt="resume work",
+        ),
+    )
+    monkeypatch.setattr(
+        dispatcher,
+        "spawn_agent",
+        lambda action, **kwargs: spawned.append(action.task_id) or "run-duplicate",
+    )
+
+    result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+
+    assert result.executed == 0
+    assert result.skipped == 0
+    assert spawned == []
+    mutex = storage.get_mutex(task.id)
+    assert mutex is not None
+    assert mutex.run_id is None
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_recovers_expired_no_run_mutex(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
+    """Heartbeat recovers no-run mutexes after their lease expires."""
+    from gobby.dispatch import dispatcher
+
+    task = _task(temp_db, sample_project, stage_state="in_progress")
+    storage = _mutex_storage(temp_db)
+    old_acquired_at = datetime.now(UTC) - timedelta(
+        seconds=dispatcher.ORPHAN_NO_RUN_MUTEX_GRACE_SECONDS + 5
+    )
+    assert storage.acquire_mutex(
+        task.id,
+        holder="dispatcher",
+        kind="heartbeat",
+        ttl_seconds=1,
+        now=old_acquired_at,
+    )
+    spawned: list[str] = []
+    monkeypatch.setattr(
+        dispatcher.dispatch_rules,
+        "evaluate",
+        lambda *args, **kwargs: SpawnAgentAction(
+            task_id=task.id,
+            task_ref=f"#{task.seq_num}",
+            agent_slug="backend-developer",
+            prompt="resume work",
+        ),
+    )
+    monkeypatch.setattr(
+        dispatcher,
+        "spawn_agent",
+        lambda action, **kwargs: spawned.append(action.task_id) or "run-recovered",
+    )
+
+    result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+
+    assert result.executed == 1
+    assert spawned == [task.id]
+    mutex = storage.get_mutex(task.id)
+    assert mutex is not None
+    assert mutex.run_id == "run-recovered"
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_preserves_fresh_no_run_mutex(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
+    """Heartbeat preserves fresh no run mutex."""
+    from gobby.dispatch import dispatcher
+
+    task = _task(temp_db, sample_project, stage_state="in_progress")
+    storage = _mutex_storage(temp_db)
+    assert storage.acquire_mutex(
+        task.id,
+        holder="dispatcher",
+        kind="heartbeat",
+        ttl_seconds=dispatcher.DISPATCH_TTL_SECONDS,
+        now=datetime.now(UTC),
+    )
+    spawned: list[str] = []
+    monkeypatch.setattr(
+        dispatcher,
+        "spawn_agent",
+        lambda action, **kwargs: spawned.append(action.task_id) or "run-too-soon",
+    )
+
+    result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+
+    assert result.executed == 0
+    assert spawned == []
+    mutex = storage.get_mutex(task.id)
+    assert mutex is not None
+    assert mutex.run_id is None

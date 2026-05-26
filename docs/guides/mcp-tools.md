@@ -259,7 +259,7 @@ artifacts. Use `clear_isolation_pair` when artifact cleanup is intended.
 
 | Tool | Description |
 | :--- | :--- |
-| `search_tasks` | FTS5 full-text search over titles, descriptions, and validation criteria. |
+| `search_tasks` | pg_search BM25 over titles, descriptions, and validation criteria. |
 
 ### Example: Task Workflow
 
@@ -375,6 +375,9 @@ point.
 | Tool | Description |
 | :--- | :--- |
 | `build_task` | Start lifecycle automation for a plan, epic, or leaf. The MCP entry to the same shared service used by CLI `gobby build` and HTTP `POST /api/build`. |
+| `get_build_status` | Read compact task-tree build state, agents, mutexes, artifact health, events, and recent history. |
+| `explain_dispatch` | Explain dispatcher eligibility and the action that would be chosen without mutating state. |
+| `list_build_history` | Read recent `build_runs` and `build_history_events` rows for a task tree or build input. |
 
 `build_task` requires `input_ref` and accepts the MCP-native automation options
 exposed by its schema: `quick`, `skip_stages`, `isolation` (`none`, `worktree`,
@@ -454,7 +457,7 @@ call_tool("gobby-sessions", "get_handoff_context", {})
 ## Memory (`gobby-memory`)
 
 20 tools for persistent knowledge across sessions, including embeddings
-and the optional Neo4j knowledge graph.
+and the optional FalkorDB knowledge graph.
 
 ### Core
 
@@ -480,7 +483,7 @@ and the optional Neo4j knowledge graph.
 
 | Tool | Description |
 | :--- | :--- |
-| `search_knowledge_graph` | Search the Neo4j knowledge graph for entities. |
+| `search_knowledge_graph` | Search the FalkorDB knowledge graph for entities. |
 | `rebuild_knowledge_graph` | Extract entities and relationships from all memories. |
 | `rebuild_crossrefs` | Rebuild cross-references via semantic similarity. |
 | `reindex_embeddings` | Regenerate embedding vectors for all memories. |
@@ -660,15 +663,11 @@ registry is the runtime side.
 | `end_agent_run` | Signal that the current run is complete and release its resources. |
 | `unregister_agent` | Internal registry cleanup helper. |
 
-### Messaging and Commands
+### Messaging
 
 | Tool | Description |
 | :--- | :--- |
-| `send_message` | P2P message between sessions. |
-| `send_command` | Send a constrained command to a descendant session. |
-| `activate_command` | Activate a pending command in the target session. |
-| `complete_command` | Mark a command complete and send the result back. |
-| `wait_for_command` | Block until a pending command arrives or the timeout fires. |
+| `send_message` | Message a `session`, `agent`, `project`, `build`, or `all` target. |
 | `deliver_pending_messages` | Fetch undelivered messages and mark them delivered. |
 | `get_inter_session_messages` | Read message history. |
 
@@ -677,6 +676,13 @@ Rule authors should treat `turn_start` and `turn_end` as the semantic
 lifecycle events. Provider/runtime hooks such as `before_agent`,
 `after_agent`, and `stop` are transport details. Agent termination is a
 separate runtime transition and still requires `end_agent_run`.
+
+`send_message` takes `from_session`, `target`, `content`, and optional
+`target_id`. Use `target="session"` with a session ref, `target="agent"` with
+an agent run id, `target="project"` with a project id or name, and
+`target="build"` with a build run id, build input ref, or root task ref.
+Use `target="all"` without `target_id` for every deliverable non-system
+session except the sender.
 
 ### Example: Agent Spawning
 
@@ -698,20 +704,22 @@ call_tool("gobby-agents", "apply_persona", {
 ### Example: Inter-Agent Messaging
 
 ```python
-# P2P message
+# P2P message to one session
 call_tool("gobby-agents", "send_message", {
     "from_session": "<your_session>",
-    "to_session": "<target_session>",
+    "target": "session",
+    "target_id": "<target_session>",
     "content": "Task completed. All tests pass.",
 })
 
-# Command coordination
-call_tool("gobby-agents", "send_command", {
-    "from_session": "<parent>",
-    "to_session": "<child>",
-    "command_text": "Run test suite",
-    "allowed_tools": ["Bash", "Read"],
+# Fan out to active agents working in a build subtree
+call_tool("gobby-agents", "send_message", {
+    "from_session": "<your_session>",
+    "target": "build",
+    "target_id": "#123",
+    "content": "Pause work before merge validation.",
 })
+
 ```
 
 ---
@@ -840,7 +848,7 @@ call_tool("gobby-merge", "merge_apply", {"resolution_id": "<id>"})
 ## Config (`gobby-config`)
 
 7 tools for runtime config (the layered Pydantic config tree backed by
-SQLite overrides).
+PostgreSQL hub overrides).
 
 | Tool | Description |
 | :--- | :--- |
@@ -1005,4 +1013,4 @@ retry without an extra `get_tool_schema` round-trip.
 - [orchestration.md](./orchestration.md) — Dispatch and automation model
 - [code-index.md](./code-index.md) — `gcode` for code search and retrieval
 
-_Last verified: 2026-05-07_
+_Last verified: 2026-05-23_

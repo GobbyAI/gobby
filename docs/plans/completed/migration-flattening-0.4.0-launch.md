@@ -39,7 +39,7 @@ upgrade support below `214` and align code, tests, and docs around that contract
 ### Task and setup
 
 - Create and claim a Gobby task through `gobby-tasks` MCP before editing.
-- Create a timestamped backup of `~/.gobby/gobby-hub.db` before changing migration code.
+- Create a timestamped backup of `~/.gobby/PostgreSQL hub` before changing migration code.
 - Do not mutate the live database in place during implementation.
 
 ### Storage baseline

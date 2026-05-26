@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import TYPE_CHECKING
 
@@ -40,41 +39,21 @@ def init_orchestration(runner: GobbyRunner) -> None:
         from gobby.agents.tmux import get_tmux_session_manager
 
         mgr = get_tmux_session_manager()
-        await mgr.send_keys(tmux_session_name, message)
+        if not await mgr.send_keys(tmux_session_name, message):
+            raise RuntimeError(f"tmux send-keys to {tmux_session_name} failed")
 
     async def _tmux_pane_send(
         pane_id: str,
         message: str,
         tmux_socket_path: str | None,
     ) -> None:
+        from gobby.agents.tmux.text_injection import send_literal_text_to_tmux_target
+
         tmux_cmd = ["tmux"]
         if tmux_socket_path:
             tmux_cmd.extend(["-S", tmux_socket_path])
 
-        async def _run_tmux_cmd(*args: str) -> None:
-            proc = await asyncio.create_subprocess_exec(
-                *tmux_cmd,
-                "send-keys",
-                "-t",
-                pane_id,
-                *args,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            try:
-                _, stderr = await asyncio.wait_for(proc.communicate(), timeout=10.0)
-            except TimeoutError:
-                proc.kill()
-                await proc.communicate()
-                raise RuntimeError(f"tmux send-keys to {pane_id} timed out after 10s") from None
-            if proc.returncode != 0:
-                raise RuntimeError(
-                    f"tmux send-keys to {pane_id} failed: {stderr.decode(errors='replace')}"
-                )
-
-        text = message.rstrip("\n")
-        await _run_tmux_cmd("-l", text)
-        await _run_tmux_cmd("Enter")
+        await send_literal_text_to_tmux_target(pane_id, message, tmux_cmd=tmux_cmd)
 
     runner.wake_dispatcher = WakeDispatcher(
         session_manager=runner.session_manager,

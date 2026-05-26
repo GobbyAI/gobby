@@ -174,7 +174,7 @@ LIMIT ?;
 .gobby/
 ├── tasks.jsonl           # Canonical task data
 ├── tasks_meta.json       # Sync metadata (last_export, hash)
-└── gobby-hub.db              # SQLite cache (not committed)
+└── PostgreSQL hub              # PostgreSQL cache (not committed)
 ```
 
 ### JSONL Format
@@ -187,18 +187,18 @@ Each line is a complete task record with embedded dependencies:
 
 ### Sync Behavior
 
-**Export (SQLite → JSONL):**
+**Export (PostgreSQL → JSONL):**
 
 - Triggered after task mutations (create/update/delete)
 - 5-second debounce to batch rapid changes
 - Writes to `.gobby/tasks.jsonl`
 - Updates `.gobby/tasks_meta.json` with export timestamp and content hash
 
-**Import (JSONL → SQLite):**
+**Import (JSONL → PostgreSQL):**
 
 - Triggered on daemon start
 - Triggered after `git pull` (via hook or manual)
-- Merges JSONL records into SQLite
+- Merges JSONL records into PostgreSQL
 - Conflict resolution: last-write-wins based on `updated_at`
 
 ### Git Hooks (Optional Enhancement)
@@ -349,7 +349,7 @@ def get_task_sessions(task_id: str) -> dict:
 ```python
 @mcp.tool()
 def sync_tasks(direction: str = "both") -> dict:
-    """Sync tasks between SQLite and JSONL. Direction: import, export, or both."""
+    """Sync tasks between PostgreSQL and JSONL. Direction: import, export, or both."""
 
 @mcp.tool()
 def get_sync_status() -> dict:
@@ -881,7 +881,7 @@ task_validation:
 - [x] Add `gobby tasks validate` CLI command (validate JSONL integrity)
 - [x] Add `gobby tasks clean` CLI command
   - Remove orphaned dependencies
-  - Compact SQLite database
+  - Compact PostgreSQL database
   - Clear stale sync metadata
 - [x] Add `validate_tasks` and `clean_tasks` MCP tools
 

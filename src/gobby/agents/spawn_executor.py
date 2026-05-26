@@ -11,13 +11,17 @@ import shutil
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
+from gobby.agents.constants import ALL_TERMINAL_ENV_VARS, UV_CACHE_DIR
 from gobby.agents.sandbox import (
     CodexSandboxResolver,
     GeminiSandboxResolver,
+    GrokSandboxResolver,
+    QwenSandboxResolver,
     SandboxConfig,
     compute_sandbox_paths,
 )
 from gobby.agents.trust import pre_approve_directory
+from gobby.providers import AGY_UNAVAILABLE_REASON
 
 if TYPE_CHECKING:
     from gobby.agents.session import ChildSessionManager
@@ -29,6 +33,7 @@ from gobby.agents.tmux.spawner import TmuxSpawner
 from gobby.config.tmux import TmuxConfig
 
 logger = logging.getLogger(__name__)
+_RESERVED_EXTRA_ENV_KEYS = frozenset((*ALL_TERMINAL_ENV_VARS, "GOBBY_MACHINE_ID"))
 
 
 @dataclass
@@ -78,6 +83,7 @@ class SpawnRequest:
     sandbox_config: SandboxConfig | None = None
     sandbox_args: list[str] | None = None
     sandbox_env: dict[str, str] | None = field(default=None)
+    extra_env: dict[str, str] | None = field(default=None)
 
     # Timeout
     timeout_seconds: float | None = None  # Agent timeout (persisted to DB for restart survival)
@@ -89,6 +95,31 @@ def _tmux_spawner_for_request(request: SpawnRequest) -> TmuxSpawner:
     tmux_config = getattr(daemon_config, "tmux", None)
 
     return TmuxSpawner(config=tmux_config if isinstance(tmux_config, TmuxConfig) else None)
+
+
+def _sandbox_config_for_spawn(
+    sandbox_config: SandboxConfig | None,
+    env_vars: dict[str, str],
+) -> SandboxConfig | None:
+    """Include the spawned agent's uv cache in sandbox writable paths."""
+    if sandbox_config is None:
+        return None
+
+    uv_cache_dir = env_vars.get(UV_CACHE_DIR)
+    if not uv_cache_dir or uv_cache_dir in sandbox_config.extra_write_paths:
+        return sandbox_config
+
+    extra_write_paths = [*sandbox_config.extra_write_paths, uv_cache_dir]
+    return sandbox_config.model_copy(update={"extra_write_paths": extra_write_paths})
+
+
+def _apply_extra_env(env: dict[str, str], request: SpawnRequest) -> None:
+    if request.extra_env:
+        for key, value in request.extra_env.items():
+            if key in _RESERVED_EXTRA_ENV_KEYS:
+                logger.warning("Ignoring reserved spawn environment override for %s", key)
+                continue
+            env[key] = value
 
 
 @dataclass
@@ -161,12 +192,22 @@ async def execute_spawn(request: SpawnRequest) -> SpawnResult:
     """
     if request.provider == "gemini":
         return await _spawn_gemini_terminal(request)
+    elif request.provider == "grok":
+        return await _spawn_grok_terminal(request)
     elif request.provider == "qwen":
         return await _spawn_qwen_terminal(request)
     elif request.provider == "codex":
         return await _spawn_codex_terminal(request)
     elif request.provider == "droid":
         return await _spawn_droid_terminal(request)
+    elif request.provider == "agy":
+        return SpawnResult(
+            success=False,
+            run_id=request.run_id,
+            child_session_id=None,
+            status="failed",
+            error=AGY_UNAVAILABLE_REASON,
+        )
     # Unknown providers intentionally preserve the historical Claude fallback.
     return await _spawn_claude_terminal(request)
 
@@ -227,24 +268,26 @@ async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
     )
 
     # Resolve sandbox config if provided
+    sandbox_config = _sandbox_config_for_spawn(request.sandbox_config, spawn_context.env_vars)
     sandbox_args: list[str] = []
     sandbox_env: dict[str, str] = {}
-    if request.sandbox_config and request.sandbox_config.enabled:
+    if sandbox_config and sandbox_config.enabled:
         # Claude uses its own sandbox resolver
         from gobby.agents.sandbox import ClaudeSandboxResolver
 
         resolver = ClaudeSandboxResolver()
         paths = compute_sandbox_paths(
-            config=request.sandbox_config,
+            config=sandbox_config,
             workspace_path=request.cwd,
         )
-        sandbox_args, sandbox_env = resolver.resolve(request.sandbox_config, paths)
+        sandbox_args, sandbox_env = resolver.resolve(sandbox_config, paths)
         cmd.extend(sandbox_args)
 
     # Merge env vars: spawn context + sandbox
     env = spawn_context.env_vars.copy()
     if sandbox_env:
         env.update(sandbox_env)
+    _apply_extra_env(env, request)
 
     # Map api_base/api_token to Claude-specific env vars
     if request.api_base:
@@ -336,33 +379,33 @@ async def _spawn_gemini_terminal(request: SpawnRequest) -> SpawnResult:
 
     gobby_session_id = spawn_context.session_id
 
+    sandbox_config = _sandbox_config_for_spawn(request.sandbox_config, spawn_context.env_vars)
+    sandbox_args: list[str] = []
+    sandbox_env: dict[str, str] = {}
+    if sandbox_config and sandbox_config.enabled:
+        resolver = GeminiSandboxResolver()
+        paths = compute_sandbox_paths(
+            config=sandbox_config,
+            workspace_path=request.cwd,
+        )
+        sandbox_args, sandbox_env = resolver.resolve(sandbox_config, paths)
+
     # Build command for fresh Gemini session (not resume)
-    # Session context is injected via additionalContext at SessionStart by the daemon
+    # Session context is injected via additionalContext at SessionStart by the daemon.
     cmd, _cmd_env = build_cli_command(
         cli="gemini",
         prompt=request.prompt,
         auto_approve=True,
         model=request.model,
         reasoning_effort=request.effective_reasoning_effort,
+        sandbox_args=sandbox_args or None,
     )
-
-    # Resolve sandbox config if provided
-    sandbox_args: list[str] = []
-    sandbox_env: dict[str, str] = {}
-    if request.sandbox_config and request.sandbox_config.enabled:
-        resolver = GeminiSandboxResolver()
-        paths = compute_sandbox_paths(
-            config=request.sandbox_config,
-            workspace_path=request.cwd,
-        )
-        sandbox_args, sandbox_env = resolver.resolve(request.sandbox_config, paths)
-        # Append sandbox args to command
-        cmd.extend(sandbox_args)
 
     # Merge env vars: spawn context + sandbox
     env = spawn_context.env_vars.copy()
     if sandbox_env:
         env.update(sandbox_env)
+    _apply_extra_env(env, request)
 
     # Map api_base/api_token to Gemini-specific env vars
     if request.api_base:
@@ -453,28 +496,30 @@ async def _spawn_qwen_terminal(request: SpawnRequest) -> SpawnResult:
 
     gobby_session_id = spawn_context.session_id
 
+    sandbox_config = _sandbox_config_for_spawn(request.sandbox_config, spawn_context.env_vars)
+    sandbox_args: list[str] = []
+    sandbox_env: dict[str, str] = {}
+    if sandbox_config and sandbox_config.enabled:
+        resolver = QwenSandboxResolver()
+        paths = compute_sandbox_paths(
+            config=sandbox_config,
+            workspace_path=request.cwd,
+        )
+        sandbox_args, sandbox_env = resolver.resolve(sandbox_config, paths)
+
     cmd, _cmd_env = build_cli_command(
         cli="qwen",
         prompt=request.prompt,
         auto_approve=True,
         model=request.model,
         reasoning_effort=request.effective_reasoning_effort,
+        sandbox_args=sandbox_args or None,
     )
-
-    sandbox_args: list[str] = []
-    sandbox_env: dict[str, str] = {}
-    if request.sandbox_config and request.sandbox_config.enabled:
-        resolver = GeminiSandboxResolver()
-        paths = compute_sandbox_paths(
-            config=request.sandbox_config,
-            workspace_path=request.cwd,
-        )
-        sandbox_args, sandbox_env = resolver.resolve(request.sandbox_config, paths)
-        cmd.extend(sandbox_args)
 
     env = spawn_context.env_vars.copy()
     if sandbox_env:
         env.update(sandbox_env)
+    _apply_extra_env(env, request)
 
     if request.api_base:
         env["QWEN_API_BASE"] = request.api_base
@@ -513,6 +558,104 @@ async def _spawn_qwen_terminal(request: SpawnRequest) -> SpawnResult:
         tmux_socket_name=terminal_result.tmux_socket_name,
         tmux_socket_path=terminal_result.tmux_socket_path,
         message=f"Qwen agent spawned in terminal with session {gobby_session_id}",
+    )
+
+
+async def _spawn_grok_terminal(request: SpawnRequest) -> SpawnResult:
+    """Spawn Grok agent in terminal with direct hook/env-based session linkage."""
+    if validation_error := _session_manager_validation_error(request, "Grok"):
+        return validation_error
+
+    spawn_context = prepare_terminal_spawn(
+        session_manager=cast("ChildSessionManager", request.session_manager),
+        parent_session_id=request.parent_session_id,
+        project_id=request.project_id,
+        machine_id=request.machine_id or "unknown",
+        source="grok",
+        workflow_name=request.workflow,
+        initial_variables=request.initial_variables,
+        prompt=request.prompt,
+        max_agent_depth=request.max_agent_depth,
+        git_branch=request.branch_name,
+        agent_run_id=request.agent_run_id,
+        task_id=request.task_id,
+        claimed_session_id=request.claimed_session_id,
+        title=request.title,
+        agent_name=request.agent_name,
+        model=request.model,
+        is_local=request.is_local,
+        timeout_seconds=request.timeout_seconds,
+        sandbox_enabled=bool(request.sandbox_config and request.sandbox_config.enabled),
+        requested_reasoning_effort=request.requested_reasoning_effort,
+        effective_reasoning_effort=request.effective_reasoning_effort,
+        reasoning_required=request.reasoning_required,
+        reasoning_status=request.reasoning_status,
+        reasoning_message=request.reasoning_message,
+    )
+
+    gobby_session_id = spawn_context.session_id
+    sandbox_config = _sandbox_config_for_spawn(request.sandbox_config, spawn_context.env_vars)
+    sandbox_args: list[str] = []
+    sandbox_env: dict[str, str] = {}
+    if sandbox_config and sandbox_config.enabled:
+        resolver = GrokSandboxResolver()
+        paths = compute_sandbox_paths(
+            config=sandbox_config,
+            workspace_path=request.cwd,
+        )
+        sandbox_args, sandbox_env = resolver.resolve(sandbox_config, paths)
+
+    cmd, _cmd_env = build_cli_command(
+        cli="grok",
+        prompt=request.prompt,
+        auto_approve=True,
+        working_directory=request.cwd,
+        model=request.model,
+        reasoning_effort=request.effective_reasoning_effort,
+        sandbox_args=sandbox_args or None,
+    )
+
+    env = spawn_context.env_vars.copy()
+    if sandbox_env:
+        env.update(sandbox_env)
+    _apply_extra_env(env, request)
+
+    if request.api_base:
+        env["GROK_API_BASE"] = request.api_base
+    if request.api_token:
+        env["XAI_API_KEY"] = request.api_token
+    if request.machine_id:
+        env["GOBBY_MACHINE_ID"] = request.machine_id
+
+    pre_approve_directory("grok", request.cwd)
+
+    terminal_spawner = _tmux_spawner_for_request(request)
+    terminal_result = terminal_spawner.spawn(
+        command=cmd,
+        cwd=request.cwd,
+        env=env,
+    )
+
+    if not terminal_result.success:
+        return SpawnResult(
+            success=False,
+            run_id=request.run_id,
+            child_session_id=gobby_session_id,
+            status="failed",
+            error=terminal_result.error or terminal_result.message,
+        )
+
+    return SpawnResult(
+        success=True,
+        run_id=spawn_context.agent_run_id,
+        child_session_id=gobby_session_id,
+        status="pending",
+        pid=terminal_result.pid,
+        terminal_type=terminal_result.terminal_type,
+        tmux_session_name=terminal_result.tmux_session_name,
+        tmux_socket_name=terminal_result.tmux_socket_name,
+        tmux_socket_path=terminal_result.tmux_socket_path,
+        message=f"Grok agent spawned in terminal with session {gobby_session_id}",
     )
 
 
@@ -562,14 +705,15 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
 
     gobby_session_id = spawn_context.session_id
 
+    sandbox_config = _sandbox_config_for_spawn(request.sandbox_config, spawn_context.env_vars)
     sandbox_args: list[str] = []
-    if request.sandbox_config and request.sandbox_config.enabled:
+    if sandbox_config and sandbox_config.enabled:
         resolver = CodexSandboxResolver()
         paths = compute_sandbox_paths(
-            config=request.sandbox_config,
+            config=sandbox_config,
             workspace_path=request.cwd,
         )
-        sandbox_args, _ = resolver.resolve(request.sandbox_config, paths)
+        sandbox_args, _ = resolver.resolve(sandbox_config, paths)
 
     cmd, _cmd_env = build_cli_command(
         cli="codex",
@@ -583,9 +727,12 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
     )
 
     env = spawn_context.env_vars.copy()
+    _apply_extra_env(env, request)
 
     if request.machine_id:
         env["GOBBY_MACHINE_ID"] = request.machine_id
+
+    pre_approve_directory("codex", request.cwd)
 
     terminal_spawner = _tmux_spawner_for_request(request)
     terminal_result = terminal_spawner.spawn(
@@ -681,6 +828,7 @@ async def _spawn_droid_terminal(request: SpawnRequest) -> SpawnResult:
     )
 
     env = spawn_context.env_vars.copy()
+    _apply_extra_env(env, request)
     if request.api_token:
         env["FACTORY_API_KEY"] = request.api_token
     if request.api_base:

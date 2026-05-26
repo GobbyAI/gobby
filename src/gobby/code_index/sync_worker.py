@@ -1,8 +1,8 @@
 """Background sync worker for code index external stores.
 
-Polls SQLite for files with vectors_synced=0 or graph_synced=0 and
-syncs them to Qdrant (embeddings) and Neo4j (graph edges) in-process.
-Replaces the old subprocess-based retry mechanism in maintenance.py.
+Polls hub-indexed files with unsynced vector or graph flags and syncs them
+to Qdrant (embeddings) and FalkorDB (graph edges) in-process. Replaces the old
+subprocess-based retry mechanism in maintenance.py.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from gobby.code_index.context import CodeIndexContext
     from gobby.code_index.graph import CodeGraph
     from gobby.code_index.models import IndexedFile
     from gobby.code_index.storage import CodeIndexStorage
@@ -37,13 +38,13 @@ async def _run_db(
 async def sync_worker_loop(
     storage: CodeIndexStorage,
     vector_store: Any | None,
-    graph: CodeGraph | None,
+    context: CodeIndexContext,
     config: CodeIndexConfig,
     embeddings_config: EmbeddingsConfig,
     shutdown_flag: asyncio.Event,
     run_db: Callable[..., Awaitable[Any]] | None = None,
 ) -> None:
-    """Continuous worker that syncs pending files to Qdrant and Neo4j.
+    """Continuous worker that syncs pending files to Qdrant and FalkorDB.
 
     Polls every config.sync_worker_interval_seconds (default 5s).
     Processes up to config.sync_worker_batch_size files per poll (default 50).
@@ -78,6 +79,7 @@ async def sync_worker_loop(
             logger.warning(f"Sync worker: embedding unavailable: {e}")
 
     while not shutdown_flag.is_set():
+        graph = context.graph
         try:
             await _sync_pass(
                 storage=storage,
@@ -307,8 +309,8 @@ async def _sync_graph(
     *,
     run_db: Callable[..., Awaitable[Any]] | None = None,
 ) -> None:
-    """Write Neo4j edges for a file from SQLite import/call/symbol data."""
-    # Read relations from SQLite
+    """Write FalkorDB edges for a file from indexed import/call/symbol data."""
+    # Read relations from the runtime hub.
     imports = await _run_db(run_db, storage.get_imports_for_file, project_id, file.file_path)
     calls = await _run_db(run_db, storage.get_calls_for_file, project_id, file.file_path)
     symbols = await _run_db(run_db, storage.get_symbols_for_file, project_id, file.file_path)
@@ -319,7 +321,7 @@ async def _sync_graph(
         for sym in symbols
     ]
 
-    # Write to Neo4j
+    # Write to FalkorDB
     await graph.sync_file(
         project_id=project_id,
         file_path=file.file_path,

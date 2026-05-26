@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from gobby.mcp_proxy.tools.plans import create_plan_registry
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 
 pytestmark = pytest.mark.unit
@@ -43,7 +43,7 @@ def _write_plan(root: Path) -> Path:
 
 
 @pytest.mark.asyncio
-async def test_plan_tool_schemas_and_happy_path(temp_db: LocalDatabase, tmp_path: Path) -> None:
+async def test_plan_tool_schemas_and_happy_path(temp_db: HubDatabase, tmp_path: Path) -> None:
     project_id = LocalProjectManager(temp_db).create(name="plans", repo_path=str(tmp_path)).id
     plan_path = _write_plan(tmp_path)
     registry = create_plan_registry(temp_db, default_project_id=project_id)
@@ -81,7 +81,7 @@ async def test_plan_tool_schemas_and_happy_path(temp_db: LocalDatabase, tmp_path
 
 @pytest.mark.asyncio
 async def test_plan_tools_return_invalid_ref_for_blank_plan_ref(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
 ) -> None:
     registry = create_plan_registry(temp_db, default_project_id="project-1")
 
@@ -93,7 +93,7 @@ async def test_plan_tools_return_invalid_ref_for_blank_plan_ref(
 
 @pytest.mark.asyncio
 async def test_create_plan_rejects_invalid_plan_kind(
-    temp_db: LocalDatabase, tmp_path: Path
+    temp_db: HubDatabase, tmp_path: Path
 ) -> None:
     project_id = LocalProjectManager(temp_db).create(name="plans", repo_path=str(tmp_path)).id
     plan_path = _write_plan(tmp_path)
@@ -117,7 +117,7 @@ async def test_create_plan_rejects_invalid_plan_kind(
 
 @pytest.mark.asyncio
 async def test_validate_plan_returns_valid_for_canonical_plan(
-    temp_db: LocalDatabase, tmp_path: Path
+    temp_db: HubDatabase, tmp_path: Path
 ) -> None:
     plan_path = _write_plan(tmp_path)
     registry = create_plan_registry(temp_db, default_project_id="project-1")
@@ -133,7 +133,7 @@ async def test_validate_plan_returns_valid_for_canonical_plan(
 
 @pytest.mark.asyncio
 async def test_validate_plan_returns_same_payload_as_tasks_ops(
-    temp_db: LocalDatabase, tmp_path: Path
+    temp_db: HubDatabase, tmp_path: Path
 ) -> None:
     """gobby-plans:validate_plan must mirror gobby-tasks-ops:validate_plan_file."""
     from unittest.mock import MagicMock
@@ -154,7 +154,7 @@ async def test_validate_plan_returns_same_payload_as_tasks_ops(
 
 @pytest.mark.asyncio
 async def test_validate_plan_rejects_plan_with_old_phase_form(
-    temp_db: LocalDatabase, tmp_path: Path
+    temp_db: HubDatabase, tmp_path: Path
 ) -> None:
     plan_dir = tmp_path / ".gobby" / "plans"
     plan_dir.mkdir(parents=True)
@@ -190,7 +190,7 @@ async def test_validate_plan_rejects_plan_with_old_phase_form(
 
 @pytest.mark.asyncio
 async def test_validate_plan_returns_semantic_lint_errors(
-    temp_db: LocalDatabase, tmp_path: Path
+    temp_db: HubDatabase, tmp_path: Path
 ) -> None:
     plan_path = _write_plan(tmp_path)
     text = plan_path.read_text(encoding="utf-8")

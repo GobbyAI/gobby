@@ -5,7 +5,7 @@ import type { StatusKind } from '../components/activity/ActivityRowStatusDot';
  *
  * Mirrors the languageColors.ts pattern (#13955): typed `{ dark, light }`
  * OKLCH pairs are the source of truth, mirrored by `--step-type-*` and
- * `--exec-status-*` CSS custom properties in `web/src/styles/index.css`.
+ * `--exec-status-*` CSS custom properties in `web/src/styles/tokens.css`.
  * Consumers call the helpers, which return `var(--…)` references; the
  * cascade picks the variant for the active `[data-theme]` — no JS theme
  * subscription needed.
@@ -32,7 +32,7 @@ export interface PipelineColorPair {
 }
 
 /** Step-type accent colours for PipelineEditor's step legend.
- *  Mirrored by `--step-type-<key>` tokens in styles/index.css. */
+ *  Mirrored by `--step-type-<key>` tokens in styles/tokens.css. */
 export const STEP_TYPE_COLORS: Record<string, PipelineColorPair> = {
   exec: { dark: "oklch(72% 0.13 200)", light: "oklch(45% 0.15 200)" },
   prompt: { dark: "oklch(70% 0.16 290)", light: "oklch(42% 0.18 290)" },
@@ -42,7 +42,7 @@ export const STEP_TYPE_COLORS: Record<string, PipelineColorPair> = {
 };
 
 /** Pipeline-execution status dot colours.
- *  Mirrored by `--exec-status-<key>` tokens in styles/index.css. */
+ *  Mirrored by `--exec-status-<key>` tokens in styles/tokens.css. */
 export const EXEC_STATUS_COLORS: Record<string, PipelineColorPair> = {
   running: { dark: "oklch(70% 0.14 240)", light: "oklch(42% 0.16 240)" },
   pending: { dark: "oklch(60% 0.005 125)", light: "oklch(40% 0.005 125)" },

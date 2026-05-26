@@ -929,6 +929,15 @@ class ChatSession(ChatSessionPermissionsMixin):
         await self._client.set_model(resolved_model)
         self._model = new_model
 
+    def add_output_tokens(self, tokens: int) -> int:
+        """Accumulate output token usage and return the new total."""
+        self._accumulated_output_tokens += max(0, tokens)
+        return self._accumulated_output_tokens
+
+    def set_accumulated_output_tokens(self, tokens: int) -> None:
+        """Restore accumulated output token usage from durable session state."""
+        self._accumulated_output_tokens = max(0, tokens)
+
     # Map Gobby chat_mode values to SDK PermissionMode values
     _MODE_TO_SDK: ClassVar[dict[str, PermissionMode]] = {
         "plan": "plan",

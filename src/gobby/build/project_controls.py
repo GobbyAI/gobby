@@ -7,13 +7,14 @@ from datetime import UTC, datetime
 
 from gobby.build.results import BuildControlResult, BuildLifecycleEvent
 from gobby.runner import install_dispatcher_cron_row
+from gobby.storage.build_history import best_effort_record_event, best_effort_record_run
 from gobby.storage.cron import CronJobStorage, compute_next_run
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 
 def build_stop(
     *,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str,
 ) -> BuildControlResult:
     """Stop future dispatcher ticks for the project build queue."""
@@ -22,7 +23,7 @@ def build_stop(
 
 def build_resume(
     *,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str,
 ) -> BuildControlResult:
     """Resume dispatcher ticks for the project build queue."""
@@ -31,7 +32,7 @@ def build_resume(
 
 def _set_dispatcher_enabled(
     *,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str,
     enabled: bool,
 ) -> BuildControlResult:
@@ -59,6 +60,23 @@ def _set_dispatcher_enabled(
         reason=reason,
         by_actor="build",
     )
+    run = best_effort_record_run(
+        db,
+        project_id=project_id,
+        action=event_name,
+        status="completed",
+        actor="build",
+        summary={"enabled": enabled, "cron_job_id": updated.id},
+    )
+    best_effort_record_event(
+        db,
+        run_id=run.id if run is not None else None,
+        project_id=project_id,
+        event_type="project_build_control",
+        action=event_name,
+        message=reason,
+        payload={"enabled": enabled, "cron_job_id": updated.id},
+    )
     return BuildControlResult(
         project_id=project_id,
         enabled=updated.enabled,
@@ -68,7 +86,7 @@ def _set_dispatcher_enabled(
 
 
 def _record_project_build_event(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     *,
     project_id: str,
     event: str,
@@ -76,18 +94,18 @@ def _record_project_build_event(
     by_actor: str,
 ) -> BuildLifecycleEvent:
     created_at = datetime.now(UTC).isoformat()
-    event_id: int | None = None
     with db.transaction() as conn:
-        cursor = conn.execute(
+        row = conn.execute(
             """
             INSERT INTO project_lifecycle_events (project_id, event, reason, by_actor, created_at)
             VALUES (?, ?, ?, ?, ?)
+            RETURNING id
             """,
             (project_id, event, reason, by_actor, created_at),
-        )
-        event_id = cursor.lastrowid
-    if event_id is None:
-        raise RuntimeError("SQLite did not return a project lifecycle event id")
+        ).fetchone()
+    if row is None:
+        raise RuntimeError("Database did not return a project lifecycle event id")
+    event_id = int(row["id"])
     return BuildLifecycleEvent(
         id=event_id,
         project_id=project_id,

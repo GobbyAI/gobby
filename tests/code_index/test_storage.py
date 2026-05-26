@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from gobby.code_index.models import (
@@ -168,6 +170,30 @@ def test_delete_symbols_for_file_returns_zero_for_missing(
 
 
 # ── Files ───────────────────────────────────────────────────────────────
+
+
+class _CaptureFetchallDb:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, tuple[Any, ...]]] = []
+
+    def fetchall(self, sql: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:
+        self.calls.append((sql, params))
+        return []
+
+
+def test_get_pending_sync_files_uses_boolean_literals_for_postgres() -> None:
+    """PostgreSQL BOOLEAN columns must not be compared to integer literals."""
+    db = _CaptureFetchallDb()
+    storage = CodeIndexStorage(db)  # type: ignore[arg-type]
+
+    assert storage.get_pending_sync_files("proj-1") == []
+
+    sql, params = db.calls[0]
+    assert params == ("proj-1", 50)
+    assert "vectors_synced IS FALSE" in sql
+    assert "graph_synced IS FALSE" in sql
+    assert "vectors_synced = 0" not in sql
+    assert "graph_synced = 0" not in sql
 
 
 def test_upsert_and_get_file(code_storage: CodeIndexStorage) -> None:
@@ -450,7 +476,7 @@ def test_delete_content_chunks_for_project(code_storage: CodeIndexStorage) -> No
 
 
 def test_search_content_fts_finds_text(code_storage: CodeIndexStorage) -> None:
-    """FTS search finds text in content chunks."""
+    """Keyword search finds text in content chunks."""
     code_storage.upsert_content_chunks(_make_chunks())
 
     results = code_storage.search_content_fts("greeting", "proj-1")
@@ -461,7 +487,7 @@ def test_search_content_fts_finds_text(code_storage: CodeIndexStorage) -> None:
 
 
 def test_search_content_fts_filter_by_file(code_storage: CodeIndexStorage) -> None:
-    """FTS search can be filtered to a specific file."""
+    """Keyword search can be filtered to a specific file."""
     chunks1 = _make_chunks(file_path="a.py")
     chunks2 = _make_chunks(file_path="b.py")
     code_storage.upsert_content_chunks(chunks1)

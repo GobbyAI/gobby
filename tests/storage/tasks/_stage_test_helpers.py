@@ -118,7 +118,7 @@ def set_stage_state(
         UPDATE task_stage_states
         SET {assignments}
         WHERE task_id = ? AND stage_name = ?
-        """,  # nosec B608 - test-only helper with static caller-owned columns.
+        """,  # nosec B608 # test-only helper with static caller-owned columns.
         (*updates.values(), task_id, stage_name),
     )
 

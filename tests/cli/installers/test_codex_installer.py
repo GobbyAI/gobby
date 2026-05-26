@@ -653,6 +653,30 @@ class TestInstallCodex:
         assert "uv" in content
         _assert_stable_hooks_feature(_load_toml_file(config_path))
 
+    def test_install_repairs_stale_uv_directory_mcp_entry(
+        self,
+        mock_home: Path,
+        mock_install_dir: Path,
+        mock_shared_content,
+    ) -> None:
+        """Install repairs old Codex MCP entries that pin Gobby's repo as the CWD."""
+        from gobby.cli.installers.codex import install_codex
+
+        codex_dir = mock_home / ".codex"
+        codex_dir.mkdir(parents=True, exist_ok=True)
+        config_path = codex_dir / "config.toml"
+        config_path.write_text(
+            '[mcp_servers.gobby]\ncommand = "uv"\n'
+            'args = ["run", "--directory", "/Users/test/gobby", "gobby", "mcp-server"]\n'
+        )
+
+        result = install_codex(mock_home)
+
+        assert result["success"] is True
+        config = _load_toml_file(config_path)
+        assert config["mcp_servers"]["gobby"]["command"] == "gobby"
+        assert list(config["mcp_servers"]["gobby"]["args"]) == ["mcp-server"]
+
     def test_backward_compat_alias(self) -> None:
         """Test that install_codex_notify is an alias for install_codex."""
         from gobby.cli.installers.codex import install_codex, install_codex_notify

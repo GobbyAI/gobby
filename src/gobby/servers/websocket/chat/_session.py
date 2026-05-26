@@ -41,7 +41,7 @@ def _normalize_web_chat_provider(provider: Any) -> str | None:
     normalized = provider.strip().lower()
     if normalized in {"", "inherit"}:
         return None
-    if normalized in {"claude", "gemini", "qwen", "codex", "droid"}:
+    if normalized in {"claude", "gemini", "grok", "qwen", "codex", "droid", "agy"}:
         return normalized
     return None
 
@@ -586,7 +586,7 @@ class ChatSessionMixin:
             if runtime_mode and runtime_mode != "plan":
                 session.chat_mode = runtime_mode
             if existing_db_session.usage_output_tokens:
-                session._accumulated_output_tokens = existing_db_session.usage_output_tokens
+                session.set_accumulated_output_tokens(existing_db_session.usage_output_tokens)
                 if existing_db_session.approved_tools_json:
                     try:
                         session._approved_tools = normalize_approved_tool_keys(
@@ -639,7 +639,7 @@ class ChatSessionMixin:
                 if runtime_mode and runtime_mode != "plan":
                     session.chat_mode = runtime_mode
                 if db_session.usage_output_tokens:
-                    session._accumulated_output_tokens = db_session.usage_output_tokens
+                    session.set_accumulated_output_tokens(db_session.usage_output_tokens)
                 if db_session.approved_tools_json:
                     try:
                         session._approved_tools = normalize_approved_tool_keys(
@@ -727,7 +727,7 @@ class ChatSessionMixin:
                         session.system_prompt_override = persona_context
                 else:
                     context_parts: list[str] = []
-                    if effective_provider in {"gemini", "qwen"}:
+                    if effective_provider in {"gemini", "grok", "qwen"}:
                         preamble = _build_agent_identity_preamble(agent_body)
                     else:
                         preamble = agent_body.build_prompt_preamble()

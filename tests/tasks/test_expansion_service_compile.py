@@ -53,37 +53,17 @@ def test_compile_contract_plan_emits_tdd_leaves_by_phase(
     assert len(plan_doc.manifest_entries) == deliverable_count
     assert spec["contract_plan"] is True
     assert spec["deliverable_count"] == 6
-    # Per-phase sandwich: phase-p1 = TEST + 1.1::impl + 1.2::impl + REF + 1.3a::single = 5
-    # phase-p2 = TEST + 2.1::impl + 2.2::impl + REF = 4
-    # phase-p3 = 3.1::single because category test is not TDD-eligible.
-    assert len(spec["tasks"]) == 10
+    assert len(spec["tasks"]) == deliverable_count
     assert {phase["id"]: len(phase["task_ids"]) for phase in spec["phases"]} == {
-        "phase-p1": 5,
-        "phase-p2": 4,
+        "phase-p1": 3,
+        "phase-p2": 2,
         "phase-p3": 1,
     }
-    assert {phase["id"]: phase["tdd_sandwich_emitted"] for phase in spec["phases"]} == {
-        "phase-p1": True,
-        "phase-p2": True,
-        "phase-p3": False,
-    }
-
-    # Each TDD phase emits exactly one phase-level [TEST] and one [REF] task.
-    test_titles_by_phase: dict[str, list[str]] = {}
-    ref_titles_by_phase: dict[str, list[str]] = {}
-    for task in spec["tasks"]:
-        if task["title"].startswith("[TEST] Phase"):
-            test_titles_by_phase.setdefault(task["phase_id"], []).append(task["title"])
-        elif task["title"].startswith("[REF] Phase"):
-            ref_titles_by_phase.setdefault(task["phase_id"], []).append(task["title"])
-    assert {phase: len(titles) for phase, titles in test_titles_by_phase.items()} == {
-        "phase-p1": 1,
-        "phase-p2": 1,
-    }
-    assert {phase: len(titles) for phase, titles in ref_titles_by_phase.items()} == {
-        "phase-p1": 1,
-        "phase-p2": 1,
-    }
+    assert all(not any(key.startswith("tdd_") for key in phase) for phase in spec["phases"])
+    assert spec["tdd_mode"] == "skill_backed"
+    assert not any(
+        task["title"].startswith(("[TEST]", "[REF]", "[IMPL]")) for task in spec["tasks"]
+    )
 
 
 def test_compile_contract_plan_emits_covers_labels_for_each_tdd_leaf(
@@ -104,23 +84,14 @@ def test_compile_contract_plan_emits_covers_labels_for_each_tdd_leaf(
 
     spec = service.compile_plan_to_spec(plan_doc, parent)
 
-    # Per-entry [IMPL]/single tasks carry their section's covers labels exactly.
-    # Phase-level [TEST]/[REF] tasks have source_section_id=None and carry the
-    # union of their phase's TDD entries' labels — verify they're a superset.
-    phase_label_unions: dict[str, set[str]] = {}
+    # Per-entry tasks carry their section's covers labels plus TDD metadata.
     for task in spec["tasks"]:
         section_id = task["source_section_id"]
-        if section_id is not None:
-            assert set(task["labels"]) == expected_labels[section_id]
-            assert expected_labels[section_id]
-        else:
-            phase_label_unions.setdefault(task["phase_id"], set()).update(task["labels"])
-
-    # phase-p1 sandwich aggregates 1.1 + 1.2 covers labels (TDD entries only —
-    # 1.3a is non-TDD and emitted as a single task outside the sandwich).
-    assert phase_label_unions["phase-p1"] == (expected_labels["1.1"] | expected_labels["1.2"])
-    assert phase_label_unions["phase-p2"] == (expected_labels["2.1"] | expected_labels["2.2"])
-    assert "phase-p3" not in phase_label_unions
+        expected = set(expected_labels[section_id])
+        if task["tdd_required"]:
+            expected.add("tdd:required")
+        assert set(task["labels"]) == expected
+        assert expected_labels[section_id]
 
 
 def test_compile_contract_plan_translates_section_dependencies(
@@ -130,24 +101,16 @@ def test_compile_contract_plan_translates_section_dependencies(
     parent = _parent(service, sample_project)
     spec = service.compile_plan_to_spec(_regression_plan_doc(), parent)
 
-    # Within-phase TDD sandwich edges: each [IMPL] depends on its phase [TEST];
-    # phase [REF] depends on each [IMPL].
-    assert _deps_for(spec, "1.1::impl") == {"phase-p1::__test"}
-    assert _deps_for(spec, "1.2::impl") == {"phase-p1::__test", "1.1::impl"}
-    assert {"1.1::impl", "1.2::impl"} <= _deps_for(spec, "phase-p1::__ref")
-
-    # Cross-phase chain: phase N+1's [TEST] depends on phase N's [REF].
-    assert "phase-p1::__ref" in _deps_for(spec, "phase-p2::__test")
-
-    # Cross-deliverable depends_on links IMPL/single → IMPL/single.
-    # 1.3a (non-TDD) depends_on 1.2 → single depends on impl.
-    assert "1.2::impl" in _deps_for(spec, "1.3a::single")
+    # Cross-deliverable depends_on links single-task leaves directly.
+    assert _deps_for(spec, "1.1::single") == set()
+    assert _deps_for(spec, "1.2::single") == {"1.1::single"}
+    assert "1.2::single" in _deps_for(spec, "1.3a::single")
     # 2.1 depends_on 1.3a (single).
-    assert "1.3a::single" in _deps_for(spec, "2.1::impl")
+    assert "1.3a::single" in _deps_for(spec, "2.1::single")
     # 2.2 depends_on 1.2.
-    assert "1.2::impl" in _deps_for(spec, "2.2::impl")
+    assert "1.2::single" in _deps_for(spec, "2.2::single")
     # 3.1 depends_on both 2.1 and 2.2.
-    assert {"2.1::impl", "2.2::impl"} <= _deps_for(spec, "3.1::single")
+    assert {"2.1::single", "2.2::single"} <= _deps_for(spec, "3.1::single")
 
 
 def test_compile_contract_plan_uses_manifest_agent_assignment(
@@ -170,7 +133,11 @@ def test_compile_contract_plan_uses_manifest_agent_assignment(
         for task in section_tasks
         if task["source_section_id"] not in frontend_sections
     } == {"backend-developer"}
-    assert all(task["additional_skills"] == [] for task in spec["tasks"])
+    assert {
+        task["source_section_id"]
+        for task in section_tasks
+        if task["additional_skills"] == ["test-driven-development"]
+    } == {"1.1", "1.2", "2.1", "2.2"}
     assert all("[category:" not in task["title"] for task in spec["tasks"])
     assert all("(depends:" not in task["title"] for task in spec["tasks"])
 
@@ -207,14 +174,14 @@ def test_compile_contract_plan_prefers_manifest_assigned_agent_over_prose_regex(
     plan_path = Path(__file__).resolve().parents[1] / "fixtures/plans/manifest-routing-bridge.md"
     spec = service.compile_plan_to_spec(parse_plan(plan_path, parse_mode="draft"), parent)
 
-    # Per-phase sandwich: section 2.1 emits one [IMPL] task.
+    # Section 2.1 emits one implementation leaf.
     section_tasks = [task for task in spec["tasks"] if task["source_section_id"] == "2.1"]
     assert len(section_tasks) == 1
     assert {task["assigned_agent"] for task in section_tasks} == {"backend-developer"}
-    assert all(task["additional_skills"] == [] for task in section_tasks)
+    assert all(task["additional_skills"] == ["test-driven-development"] for task in section_tasks)
 
 
-def test_compile_12898_contract_plan_requires_manifest(
+def test_compile_12898_contract_plan_preserves_manifest_deliverables(
     service: ExpansionService,
     sample_project,
 ) -> None:
@@ -222,8 +189,15 @@ def test_compile_12898_contract_plan_requires_manifest(
     plan_path = (
         Path(__file__).resolve().parents[2] / ".gobby/plans/task-12898-memory-recall-helper.md"
     )
-    with pytest.raises(ValueError, match="kind: deliverable sections without manifest entries"):
-        service.compile_plan_to_spec(parse_plan(plan_path, parse_mode="draft"), parent)
+    spec = service.compile_plan_to_spec(parse_plan(plan_path, parse_mode="expansion"), parent)
+
+    assert spec["deliverable_count"] == 14
+    assert len(spec["tasks"]) == 14
+    assert len(spec["phases"]) == 3
+    assert any(
+        task["source_section_id"] == "2.6" and "notify_parent_on_completion" in task["title"]
+        for task in spec["tasks"]
+    )
 
 
 def test_compile_rejects_missing_manifest_entry(

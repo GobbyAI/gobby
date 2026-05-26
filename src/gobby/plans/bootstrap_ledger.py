@@ -10,7 +10,7 @@ from typing import Any
 import yaml
 
 from gobby.plans.coverage_manifest import coverage_manifest_path
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 
 @dataclass(frozen=True)
@@ -53,7 +53,7 @@ class BootstrapLedgerMismatchError(ValueError):
         }
 
 
-def bootstrap_ledger_path_for_task(db: DatabaseProtocol, task_id: str) -> Path | None:
+def bootstrap_ledger_path_for_task(db: HubDatabase, task_id: str) -> Path | None:
     """Return the companion bootstrap ledger path for a root plan task, if one exists."""
     scope = _scope_for_task(db, task_id)
     if scope is None:
@@ -69,7 +69,7 @@ def bootstrap_ledger_path_for_task(db: DatabaseProtocol, task_id: str) -> Path |
     return None
 
 
-def verify_bootstrap_ledger(db: DatabaseProtocol, task_id: str) -> None:
+def verify_bootstrap_ledger(db: HubDatabase, task_id: str) -> None:
     """Verify any companion bootstrap ledger for the root task against its manifest."""
     scope = _scope_for_task(db, task_id)
     if scope is None:
@@ -108,7 +108,7 @@ def verify_bootstrap_ledger(db: DatabaseProtocol, task_id: str) -> None:
 
 
 def _verify_one_ledger(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     *,
     scope: _TaskPlanScope,
     entry: Mapping[str, object],
@@ -169,7 +169,7 @@ def _verify_one_ledger(
     return (mismatches, manifest_path)
 
 
-def _scope_for_task(db: DatabaseProtocol, task_id: str) -> _TaskPlanScope | None:
+def _scope_for_task(db: HubDatabase, task_id: str) -> _TaskPlanScope | None:
     row = db.fetchone(
         """
         SELECT t.project_id, t.seq_num, p.repo_path
@@ -190,7 +190,7 @@ def _scope_for_task(db: DatabaseProtocol, task_id: str) -> _TaskPlanScope | None
 
 
 def _matching_plan_entries(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     scope: _TaskPlanScope,
 ) -> tuple[Mapping[str, object], ...]:
     rows = db.fetchall(
@@ -242,7 +242,7 @@ def _header_mismatches(
 
 
 def _leaf_mismatches(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     ledger: Mapping[str, object],
     manifest: Mapping[str, object],
     *,
@@ -297,7 +297,7 @@ def _expected_leaf_titles(ledger: Mapping[str, object]) -> dict[tuple[str, str],
 
 
 def _manifest_leaf_titles(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     manifest: Mapping[str, object],
     *,
     project_id: str,
@@ -322,7 +322,7 @@ def _manifest_leaf_titles(
     return titles_by_item
 
 
-def _task_title(db: DatabaseProtocol, *, project_id: str, task_ref: str) -> str | None:
+def _task_title(db: HubDatabase, *, project_id: str, task_ref: str) -> str | None:
     normalized = _normalize_ref(task_ref)
     if normalized.isdigit():
         row = db.fetchone(

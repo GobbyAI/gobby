@@ -16,8 +16,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from gobby.search import SearchConfig, UnifiedSearcher
+from gobby.search.keyword import pick_search_backend
 
 if TYPE_CHECKING:
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.skills import Skill
 
 logger = logging.getLogger(__name__)
@@ -78,7 +80,7 @@ class SkillSearch:
     """Search skills using unified search with automatic fallback.
 
     Uses UnifiedSearcher to provide skill search with:
-    - Keyword mode (FTS5, always available)
+    - Keyword mode (PostgreSQL pg_search, always available)
     - Embedding mode (requires API key)
     - Auto mode (embedding with keyword fallback)
     - Hybrid mode (combines both with weighted scores)
@@ -103,7 +105,7 @@ class SkillSearch:
     def __init__(
         self,
         *,
-        db: Any,
+        db: HubDatabase | HubDatabase,
         config: SearchConfig | None = None,
         refit_threshold: int = 10,
         embedding_model: str = "nomic-embed-text",
@@ -114,7 +116,7 @@ class SkillSearch:
         """Initialize skill search.
 
         Args:
-            db: LocalDatabase instance for FTS5 backend (required)
+            db: HubDatabase or legacy HubDatabase instance for keyword search.
             config: Search configuration (defaults to auto mode).
             refit_threshold: Number of updates before automatic refit
             embedding_model: Embedding model name (from EmbeddingsConfig)
@@ -127,12 +129,10 @@ class SkillSearch:
 
         self._config = config
         self._refit_threshold = refit_threshold
-        self._db = db
+        self._db: Any = db
+        self._keyword_backend = pick_search_backend(db, "skills")
 
-        # Initialize unified searcher with FTS5 keyword backend
-        # bm25 weights: name(10), description(5), tags_text(2), category(2)
-        # skills_fts is contentless — we maintain a rowid→skill_id mapping
-        # in _rowid_to_id so the FTS5 backend can return skill IDs.
+        # Initialize unified searcher with the PostgreSQL keyword backend.
         self._searcher = UnifiedSearcher(
             self._config,
             db=db,
@@ -145,9 +145,6 @@ class SkillSearch:
             embedding_api_key=embedding_api_key,
             embedding_dim=embedding_dim,
         )
-
-        # Rowid → skill_id mapping for contentless FTS5 results
-        self._rowid_to_id: dict[str, str] = {}
 
         # Skill metadata tracking
         self._skill_names: dict[str, str] = {}  # skill_id -> skill_name
@@ -213,35 +210,6 @@ class SkillSearch:
 
         return " ".join(parts)
 
-    def _populate_skills_fts(self, skills: list[Skill]) -> None:
-        """Populate the skills_fts contentless FTS5 table.
-
-        Rebuilds the entire table from scratch. This is safe because
-        skills volume is small (typically < 200).
-
-        Maintains _rowid_to_id mapping so FTS5 rowid results can be
-        translated back to skill IDs.
-
-        Args:
-            skills: Skills to index in FTS5
-        """
-        try:
-            self._db.execute("INSERT INTO skills_fts(skills_fts) VALUES ('delete-all')")
-            self._rowid_to_id.clear()
-
-            for i, skill in enumerate(skills, start=1):
-                tags = skill.get_tags()
-                tags_text = " ".join(tags) if tags else ""
-                category = skill.get_category() or ""
-                self._db.execute(
-                    "INSERT INTO skills_fts(rowid, name, description, tags_text, category) "
-                    "VALUES (?, ?, ?, ?, ?)",
-                    (i, skill.name, skill.description, tags_text, category),
-                )
-                self._rowid_to_id[str(i)] = skill.id
-        except Exception as e:
-            logger.warning(f"Failed to populate skills_fts: {e}")
-
     def index_skills(self, skills: list[Skill]) -> None:
         """Build search index from skills (sync wrapper).
 
@@ -273,8 +241,7 @@ class SkillSearch:
         """Build search index from skills.
 
         Indexes skills using the configured search mode (auto, keyword,
-        embedding, or hybrid). When a database is available, also populates
-        the skills_fts FTS5 table for keyword fallback.
+        embedding, or hybrid).
 
         Args:
             skills: List of skills to index
@@ -287,10 +254,6 @@ class SkillSearch:
             self._indexed = False
             self._pending_updates = 0
             self._searcher.clear()
-            try:
-                self._db.execute("INSERT INTO skills_fts(skills_fts) VALUES ('delete-all')")
-            except Exception as e:
-                logger.debug(f"Failed to clear skills_fts: {e}")
             logger.debug("Skill search index cleared (no skills)")
             return
 
@@ -311,9 +274,6 @@ class SkillSearch:
 
         # Store for potential reindexing
         self._skill_items = items
-
-        # Populate FTS5 table
-        self._populate_skills_fts(skills)
 
         # Index using unified searcher (embedding backend)
         await self._searcher.fit_async(items)
@@ -345,7 +305,12 @@ class SkillSearch:
 
         # Get more results than top_k if filtering
         search_limit = top_k * 3 if filters else top_k
-        raw_results = await self._searcher.search_async(query, top_k=search_limit)
+        if self._config.mode == "keyword":
+            raw_results = self._local_keyword_search(query, search_limit)
+        else:
+            raw_results = await self._searcher.search_async(query, top_k=search_limit)
+            if not raw_results and self._searcher.is_using_fallback():
+                raw_results = self._local_keyword_search(query, search_limit)
 
         # Pre-compute allowed_names set to avoid rebuilding per result
         allowed_set: set[str] | None = None
@@ -353,11 +318,9 @@ class SkillSearch:
             allowed_set = set(filters.allowed_names)
 
         # Build results with filtering
-        # FTS5 contentless tables return rowids — map to skill IDs.
-        # Embedding backend returns skill IDs directly.
         results = []
         for raw_id, similarity in raw_results:
-            skill_id = self._rowid_to_id.get(raw_id, raw_id)
+            skill_id = raw_id
             if filters and not self._passes_filters(skill_id, filters, allowed_set):
                 continue
 
@@ -374,6 +337,29 @@ class SkillSearch:
                 break
 
         return results
+
+    def _local_keyword_search(self, query: str, limit: int) -> list[tuple[str, float]]:
+        terms = [term for term in query.lower().replace("-", " ").split() if term]
+        if not terms:
+            return []
+
+        results: list[tuple[str, float]] = []
+        for skill_id, content in self._skill_items:
+            content_text = content.lower()
+            name_text = self._skill_names.get(skill_id, "").lower().replace("-", " ")
+            content_matches = sum(1 for term in terms if term in content_text)
+            if content_matches == 0:
+                continue
+
+            name_matches = sum(1 for term in terms if term in name_text)
+            coverage = content_matches / len(terms)
+            name_coverage = name_matches / len(terms)
+            phrase_bonus = 0.1 if query.lower() in content_text else 0.0
+            score = min(1.0, (0.75 * coverage) + (0.15 * name_coverage) + phrase_bonus)
+            results.append((skill_id, score))
+
+        results.sort(key=lambda item: (-item[1], self._skill_names.get(item[0], item[0])))
+        return results[:limit]
 
     def search(
         self,
@@ -528,7 +514,7 @@ class SkillSearch:
         """Get the name of the currently active backend.
 
         Returns:
-            One of "fts5", "embedding", "hybrid", or "none"
+            One of "keyword", "embedding", "hybrid", or "none"
         """
         return self._searcher.get_active_backend()
 

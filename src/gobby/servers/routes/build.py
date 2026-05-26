@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from gobby.build import (
@@ -23,6 +25,11 @@ from gobby.build import (
     build_stop_target,
 )
 from gobby.build.dispatch_tick import kick_dispatcher_tick as _kick_dispatcher_tick
+from gobby.build.observability import (
+    explain_dispatch,
+    get_build_status,
+    list_build_history,
+)
 from gobby.build.options import resolve_build_isolation
 from gobby.build.profiles import BuildProfileError
 from gobby.config.build import StageCapOverride as BuildStageCapOverride
@@ -37,6 +44,8 @@ class BuildRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     input_ref: str
+    project_id: str | None = None
+    cwd: str | None = None
     profile: str | None = None
     quick: bool = False
     skip_stages: list[str] = Field(default_factory=list)
@@ -53,12 +62,18 @@ class BuildRequest(BaseModel):
     reset_expansion_output: bool = False
     max_active_agents: int | None = Field(default=None, ge=1)
     max_retries: int | None = Field(default=None, ge=0)
+    planning_seed_state: Literal["drafted", "needs_review", "approved"] = "drafted"
+    completed_plan_review_rounds: int = Field(default=0, ge=0)
+    dry_run: bool = False
+    coordinator: str | None = None
 
 
 class BuildControlRequest(BaseModel):
     """Request body for POST /api/build/{stop,resume,clean,restart}."""
 
     input_ref: str | None = None
+    project_id: str | None = None
+    cwd: str | None = None
     dry_run: bool = False
     force: bool = False
     yes: bool = False
@@ -91,6 +106,10 @@ def _build_options(request_data: BuildRequest) -> BuildOptions:
         reset_expansion_output=request_data.reset_expansion_output,
         max_active_agents=request_data.max_active_agents,
         max_retries=request_data.max_retries,
+        planning_seed_state=request_data.planning_seed_state,
+        completed_plan_review_rounds=request_data.completed_plan_review_rounds,
+        dry_run=request_data.dry_run,
+        coordinator_session_ref=request_data.coordinator,
     )
 
 
@@ -125,6 +144,16 @@ def _parse_stage_options(values: list[str]) -> list[BuildStageCapOverride]:
     ]
 
 
+def _resolve_request_project_id(
+    server: HTTPServer,
+    request_data: BuildRequest | BuildControlRequest,
+) -> str:
+    return server.resolve_project_id(
+        project_id=request_data.project_id,
+        cwd=request_data.cwd,
+    )
+
+
 def _build_result_json(result: BuildResult) -> dict[str, Any]:
     payload = asdict(result)
     dispatcher_tick = payload.get("dispatcher_tick")
@@ -146,6 +175,42 @@ def _result_json(result: BuildControlResult | BuildTargetControlResult) -> dict[
     return asdict(result)
 
 
+def _success_envelope(result: dict[str, Any]) -> dict[str, Any]:
+    return {"success": True, "result": result, "error": None}
+
+
+def _error_envelope(message: str, error_code: str) -> dict[str, Any]:
+    return {"success": False, "result": None, "error": message, "error_code": error_code}
+
+
+def _resume_result_json(
+    result: BuildControlResult | BuildTargetControlResult,
+    *,
+    dispatcher_tick: Any | None = None,
+) -> dict[str, Any]:
+    payload = _result_json(result)
+    if dispatcher_tick is not None:
+        payload["dispatcher_tick"] = asdict(dispatcher_tick)
+    _add_dispatch_summary(payload)
+    return payload
+
+
+def _add_dispatch_summary(payload: dict[str, Any]) -> None:
+    tick = payload.get("dispatcher_tick")
+    if not isinstance(tick, dict):
+        return
+    executed = tick.get("executed")
+    executed_count = executed if isinstance(executed, int) else 0
+    payload["dispatch"] = {
+        "status": "dispatched" if executed_count > 0 else "no_op",
+        "executed": executed_count,
+        "scanned": tick.get("scanned", 0),
+        "skipped": tick.get("skipped", 0),
+        "reason": tick.get("reason"),
+        "cap_reached": tick.get("cap_reached", False),
+    }
+
+
 def create_build_router(server: HTTPServer) -> APIRouter:
     """Create the build API router."""
     router = APIRouter(prefix="/api/build", tags=["build"])
@@ -154,7 +219,7 @@ def create_build_router(server: HTTPServer) -> APIRouter:
     async def post_build(request_data: BuildRequest) -> dict[str, Any]:
         """Start lifecycle automation for a plan, epic, or automated leaf task."""
         try:
-            project_id = server.resolve_project_id(project_id=None, cwd=None)
+            project_id = _resolve_request_project_id(server, request_data)
             result = await build(
                 request_data.input_ref,
                 _build_options(request_data),
@@ -176,7 +241,7 @@ def create_build_router(server: HTTPServer) -> APIRouter:
     async def post_build_stop(request_data: BuildControlRequest) -> dict[str, Any]:
         """Stop project-wide dispatcher ticks or task-scoped automation."""
         try:
-            project_id = server.resolve_project_id(project_id=None, cwd=None)
+            project_id = _resolve_request_project_id(server, request_data)
             if request_data.input_ref is None:
                 return _result_json(build_stop(db=server.services.database, project_id=project_id))
             result = await build_stop_target(
@@ -189,28 +254,31 @@ def create_build_router(server: HTTPServer) -> APIRouter:
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 
-    @router.post("/resume")
-    async def post_build_resume(request_data: BuildControlRequest) -> dict[str, Any]:
+    @router.post("/resume", response_model=None)
+    async def post_build_resume(request_data: BuildControlRequest) -> dict[str, Any] | JSONResponse:
         """Resume project-wide dispatcher ticks or task-scoped automation."""
         try:
-            project_id = server.resolve_project_id(project_id=None, cwd=None)
+            project_id = _resolve_request_project_id(server, request_data)
             if request_data.input_ref is None:
                 result = build_resume(db=server.services.database, project_id=project_id)
-                await _kick_dispatcher_tick(
+                tick = await _kick_dispatcher_tick(
                     server.services.database,
                     project_id,
                     services=server.services,
                 )
-                return _result_json(result)
+                return _success_envelope(_resume_result_json(result, dispatcher_tick=tick))
             target_result = await build_resume_target(
                 request_data.input_ref,
                 db=server.services.database,
                 project_id=project_id,
                 services=server.services,
             )
-            return _result_json(target_result)
+            return _success_envelope(_resume_result_json(target_result))
         except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
+            return JSONResponse(
+                status_code=400,
+                content=_error_envelope(str(e), "BUILD_RESUME_ERROR"),
+            )
 
     @router.post("/clean")
     async def post_build_clean(request_data: BuildControlRequest) -> dict[str, Any]:
@@ -218,7 +286,7 @@ def create_build_router(server: HTTPServer) -> APIRouter:
         if request_data.input_ref is None:
             raise HTTPException(status_code=400, detail="input_ref is required")
         try:
-            project_id = server.resolve_project_id(project_id=None, cwd=None)
+            project_id = _resolve_request_project_id(server, request_data)
             result = await build_clean_target(
                 request_data.input_ref,
                 db=server.services.database,
@@ -238,7 +306,7 @@ def create_build_router(server: HTTPServer) -> APIRouter:
         if request_data.input_ref is None:
             raise HTTPException(status_code=400, detail="input_ref is required")
         try:
-            project_id = server.resolve_project_id(project_id=None, cwd=None)
+            project_id = _resolve_request_project_id(server, request_data)
             result = await build_restart_target(
                 request_data.input_ref,
                 db=server.services.database,
@@ -250,6 +318,61 @@ def create_build_router(server: HTTPServer) -> APIRouter:
                 services=server.services,
             )
             return result.to_dict()
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @router.get("/status")
+    async def get_status(
+        input_ref: str,
+        history_limit: int = Query(5, ge=1, le=100),
+    ) -> dict[str, Any]:
+        """Return compact build status for a task tree or build input."""
+        try:
+            project_id = server.resolve_project_id(project_id=None, cwd=None)
+            return await asyncio.to_thread(
+                get_build_status,
+                input_ref,
+                db=server.services.database,
+                project_id=project_id,
+                history_limit=history_limit,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @router.get("/dispatch/explain")
+    async def get_dispatch_explain(
+        task_id: str,
+        max_active_agents: int | None = Query(default=None, ge=1),
+    ) -> dict[str, Any]:
+        """Explain dispatcher eligibility and proposed action without mutation."""
+        try:
+            project_id = server.resolve_project_id(project_id=None, cwd=None)
+            return await asyncio.to_thread(
+                explain_dispatch,
+                task_id,
+                db=server.services.database,
+                project_id=project_id,
+                max_active_agents=max_active_agents,
+                services=server.services,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @router.get("/history")
+    async def get_history(
+        input_ref: str,
+        limit: int = Query(20, ge=1, le=100),
+    ) -> dict[str, Any]:
+        """List recent build run and event rows."""
+        try:
+            project_id = server.resolve_project_id(project_id=None, cwd=None)
+            return await asyncio.to_thread(
+                list_build_history,
+                input_ref,
+                db=server.services.database,
+                project_id=project_id,
+                limit=limit,
+            )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 

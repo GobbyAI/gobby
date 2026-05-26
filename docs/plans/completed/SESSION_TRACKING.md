@@ -126,7 +126,7 @@ class SessionMessageProcessor:
 
     def __init__(
         self,
-        database: LocalDatabase,
+        database: HubDatabase,
         websocket_server: WebSocketServer | None = None,
         poll_interval: float = 5.0,
         debounce_delay: float = 1.0,
@@ -161,7 +161,7 @@ class SessionTracker:
 # src/storage/messages.py (NEW)
 
 class LocalMessageManager:
-    """SQLite storage for session messages."""
+    """PostgreSQL storage for session messages."""
 
     async def store_messages(session_id, messages: list[ParsedMessage]) -> int
     async def get_messages(session_id, limit, offset, role) -> list[dict]
@@ -318,7 +318,7 @@ class MessageTrackingConfig:
 
 ## Success Criteria
 
-- [ ] Messages from all CLIs stored in SQLite
+- [ ] Messages from all CLIs stored in PostgreSQL
 - [ ] Incremental processing (no full-file re-reads)
 - [ ] WebSocket broadcasts new messages in real-time
 - [ ] Search API returns messages across sessions

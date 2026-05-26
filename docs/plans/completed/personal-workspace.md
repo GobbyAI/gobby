@@ -140,7 +140,7 @@ Not needed now - UUIDs already provide sync identity.
 
 ## Design Decisions
 
-1. **Well-known UUID vs machine-specific IDs**: Chose well-known UUID for simplicity. Each machine has its own SQLite database, so personal workspace is inherently machine-scoped. Cloud sync maps the well-known UUID to the authenticated user's personal workspace.
+1. **Well-known UUID vs machine-specific IDs**: Chose well-known UUID for simplicity. Each machine has its own PostgreSQL database, so personal workspace is inherently machine-scoped. Cloud sync maps the well-known UUID to the authenticated user's personal workspace.
 
 2. **No schema changes**: The `_personal` project is just a row in the existing `projects` table, following the `_orphaned`/`_migrated` pattern.
 

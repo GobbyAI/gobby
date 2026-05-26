@@ -9,7 +9,11 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from filelock import FileLock
+
+# Schema-per-worker Postgres fixtures (postgres_schema, postgres_canonical_seed,
+# postgres_db). Tests that don't use them pay no runtime cost; the session
+# fixtures only fire on first request.
+pytest_plugins = ["tests.fixtures.postgres"]
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -40,7 +44,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
-    from gobby.storage.database import LocalDatabase
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.mcp import LocalMCPManager
     from gobby.storage.projects import LocalProjectManager
     from gobby.storage.sessions import SessionManager
@@ -129,20 +133,68 @@ def safe_gobby_home_dir() -> Iterator[Path]:
 
 
 @pytest.fixture
-def temp_db(temp_dir: Path) -> Iterator["LocalDatabase"]:
-    """Create a temporary database for testing."""
-    from gobby.storage.database import LocalDatabase
-    from gobby.storage.migrations import run_migrations
+def temp_db(postgres_db: "HubDatabase") -> Iterator["HubDatabase"]:
+    """Yield the PostgreSQL hub database used by storage tests."""
+    yield postgres_db
 
-    db_path = temp_dir / "test.db"
-    db = LocalDatabase(db_path)
-    run_migrations(db)
-    yield db
-    db.close()
+
+class NonLocalHubDatabase:
+    """HubDatabase proxy that is deliberately not a HubDatabase instance."""
+
+    dialect = "postgres"
+
+    def __init__(self, inner: "HubDatabase") -> None:
+        self._inner = inner
+
+    def transaction(self) -> Any:
+        return self._inner.transaction()
+
+    def transaction_immediate(self, lock: Any | None = None) -> Any:
+        return self._inner.transaction_immediate(lock)
+
+    def execute(self, sql: str, params: Any = ()) -> Any:
+        return self._inner.execute(sql, params)
+
+    def executemany(self, sql: str, rows: Any) -> Any:
+        return self._inner.executemany(sql, rows)
+
+    def fetchone(self, sql: str, params: Any = ()) -> Any:
+        return self._inner.fetchone(sql, params)
+
+    def fetchall(self, sql: str, params: Any = ()) -> Any:
+        return self._inner.fetchall(sql, params)
+
+    def safe_update(self, table: str, values: Any, where: str, where_params: Any = ()) -> Any:
+        return self._inner.safe_update(table, values, where, where_params)
+
+    def apply_migrations(self) -> None:
+        self._inner.apply_migrations()
+
+    def close(self) -> None:
+        self._inner.close()
 
 
 @pytest.fixture
-def session_manager(temp_db: "LocalDatabase") -> "SessionManager":
+def non_local_hub_db(hub_db: "HubDatabase") -> NonLocalHubDatabase:
+    """Wrap hub_db in an adapter that fails HubDatabase isinstance checks."""
+    return NonLocalHubDatabase(hub_db)
+
+
+@pytest.fixture(params=["postgres"])
+def hub_db(
+    request: pytest.FixtureRequest,
+) -> Iterator["HubDatabase"]:
+    """Yield a migrated PostgreSQL hub-database adapter.
+
+    Tests that work through the ``HubDatabase`` protocol depend on this fixture
+    instead of ``temp_db``. The fixture delegates to ``postgres_db`` (from
+    ``tests/fixtures/postgres.py``), which skips when ``DATABASE_URL`` is unset.
+    """
+    yield request.getfixturevalue("postgres_db")
+
+
+@pytest.fixture
+def session_manager(temp_db: "HubDatabase") -> "SessionManager":
     """Create a session manager with temp database."""
     from gobby.storage.sessions import SessionManager
 
@@ -150,7 +202,7 @@ def session_manager(temp_db: "LocalDatabase") -> "SessionManager":
 
 
 @pytest.fixture
-def project_manager(temp_db: "LocalDatabase") -> "LocalProjectManager":
+def project_manager(temp_db: "HubDatabase") -> "LocalProjectManager":
     """Create a project manager with temp database."""
     from gobby.storage.projects import LocalProjectManager
 
@@ -158,7 +210,7 @@ def project_manager(temp_db: "LocalDatabase") -> "LocalProjectManager":
 
 
 @pytest.fixture
-def mcp_manager(temp_db: "LocalDatabase") -> "LocalMCPManager":
+def mcp_manager(temp_db: "HubDatabase") -> "LocalMCPManager":
     """Create an MCP manager with temp database."""
     from gobby.storage.mcp import LocalMCPManager
 
@@ -256,8 +308,7 @@ def mock_daemon_config() -> "MagicMock":
         str(temp_root / "gobby_test_client_error.log"),
     )
     config.ui.enabled = False
-    config.databases.neo4j.url = None
-    config.databases.neo4j.auth = None
+    config.databases.falkordb.requirepass = None
     return config
 
 
@@ -265,17 +316,14 @@ def mock_daemon_config() -> "MagicMock":
 def protect_production_resources(
     request: pytest.FixtureRequest,
     temp_dir: Path,
-    safe_db_dir: Path,
     safe_gobby_home_dir: Path,
 ) -> Iterator[None]:
     """
     Defensive fixture to prevent tests from touching production resources.
 
-    Forces all tests to use temporary paths for database and logging,
+    Forces all tests to use temporary paths for home and logging,
     unless explicitly opting out with @pytest.mark.no_config_protection.
 
-    Uses a session-scoped directory for the database to avoid race conditions
-    where the database file gets deleted before all tests finish using it.
     """
     if request.node.get_closest_marker("no_config_protection"):
         yield
@@ -285,28 +333,9 @@ def protect_production_resources(
 
     from gobby.config.app import DaemonConfig
 
-    # Use session-scoped directory for database (persists for entire test session)
     # Use function-scoped temp_dir for logs (per-test isolation)
-    safe_db_path = safe_db_dir / "test-safe.db"
     safe_logs_dir = temp_dir / "logs"
     safe_logs_dir.mkdir(exist_ok=True)
-
-    # Run migrations on safe database - this is CRITICAL!
-    # Code that calls LocalDatabase() without arguments will use this path via GOBBY_DATABASE_PATH.
-    # Without migrations, queries will fail with "file is not a database" errors.
-    # Only run migrations if the database doesn't exist yet (session-scoped, reused across tests).
-    from gobby.storage.database import LocalDatabase
-    from gobby.storage.migrations import run_migrations
-
-    # Use file lock to prevent TOCTOU race condition during parallel test execution.
-    # Without this, multiple pytest workers can simultaneously check exists() -> False,
-    # then race to create the database, causing "file is not a database" errors.
-    lock_path = safe_db_dir / "test-safe.db.lock"
-    with FileLock(lock_path, timeout=60):
-        if not safe_db_path.exists():
-            safe_db = LocalDatabase(safe_db_path)
-            run_migrations(safe_db)
-            safe_db.close()
 
     safe_log_client = safe_logs_dir / "gobby.log"
     safe_log_error = safe_logs_dir / "gobby-error.log"
@@ -318,9 +347,8 @@ def protect_production_resources(
     # Set environment variables as a first line of defense
     safe_config_file = safe_logs_dir / "config-test.yaml"
     env_vars = {
-        "GOBBY_TEST_PROTECT": "1",  # Enable safety switch in app.py, database.py, and cli/utils.py
+        "GOBBY_TEST_PROTECT": "1",  # Enable safety switch in app.py and cli/utils.py
         "GOBBY_HOME": str(safe_gobby_home_dir),
-        "GOBBY_DATABASE_PATH": str(safe_db_path),
         "GOBBY_CONFIG_FILE": str(safe_config_file),  # Redirect config reads/writes
         "GOBBY_LOGGING_CLIENT": str(safe_log_client),
         "GOBBY_LOGGING_CLIENT_ERROR": str(safe_log_error),
@@ -346,10 +374,20 @@ def protect_production_resources(
             _real_load_config = None
 
         def safe_load_config(*args, **kwargs):
+            config_store = kwargs.get("config_store")
+            config_store_db = getattr(config_store, "db", None)
+            if (
+                config_store is not None
+                and _real_load_config is not None
+                and not isinstance(config_store_db, MagicMock)
+            ):
+                return _real_load_config(*args, **kwargs)
+
             # If creating default, let it happen but in safe location if possible
             # But simpler is to just return a safe config object
             config = DaemonConfig(
-                database_path=str(safe_db_path),
+                database_url="postgresql://test-safe-postgres.invalid/test-safe-postgres",
+                postgres_install_mode="external",
                 telemetry={
                     "log_file": str(safe_log_client),
                     "log_file_error": str(safe_log_error),
@@ -419,6 +457,7 @@ def protect_production_resources(
             "gobby.cli.utils",
             "gobby.cli.tasks._utils",
             "gobby.mcp_proxy.stdio",
+            "gobby.runner_init.storage",
         ]
 
         rogue_replacements: dict[int, tuple[Any, Any]] = {}

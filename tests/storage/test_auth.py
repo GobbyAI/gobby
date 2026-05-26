@@ -1,20 +1,19 @@
 """Tests for AuthStore session management and secret key detection."""
 
+import hashlib
+
 import pytest
 
 from gobby.storage.auth import AuthStore
 from gobby.storage.config_store import is_secret_key_name
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path) -> LocalDatabase:
-    db_path = tmp_path / "test.db"
-    database = LocalDatabase(db_path)
-    run_migrations(database)
+def db(temp_db: HubDatabase) -> HubDatabase:
+    database = temp_db
     return database
 
 
@@ -29,6 +28,23 @@ class TestAuthStoreCreateSession:
         assert isinstance(token, str)
         assert len(token) == 64  # 32 bytes hex
         assert expires_at is not None
+
+    def test_create_session_stores_only_token_hash(self, db: HubDatabase) -> None:
+        auth_store = AuthStore(db)
+        token, _ = auth_store.create_session()
+
+        columns = {
+            row["column_name"]
+            for row in db.fetchall(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = ?",
+                ("auth_sessions",),
+            )
+        }
+        row = db.fetchone("SELECT token_hash FROM auth_sessions")
+
+        assert "token" not in columns
+        assert row is not None
+        assert row["token_hash"] == hashlib.sha256(token.encode("utf-8")).hexdigest()
 
     def test_remember_me_extends_expiry(self, auth_store: AuthStore) -> None:
         _, short_exp = auth_store.create_session(remember_me=False)
@@ -57,13 +73,17 @@ class TestAuthStoreDeleteSession:
 
 
 class TestAuthStoreExpiry:
-    def test_expired_session_is_invalid(self, db: LocalDatabase) -> None:
+    def test_expired_session_is_invalid(self, db: HubDatabase) -> None:
         auth_store = AuthStore(db)
         token, _ = auth_store.create_session()
         # Manually expire the session
         db.execute(
-            "UPDATE auth_sessions SET expires_at = '2000-01-01T00:00:00+00:00' WHERE token = ?",
-            (token,),
+            """
+            UPDATE auth_sessions
+            SET expires_at = '2000-01-01T00:00:00+00:00'
+            WHERE token_hash = ?
+            """,
+            (hashlib.sha256(token.encode("utf-8")).hexdigest(),),
         )
         assert auth_store.validate_session(token) is False
 

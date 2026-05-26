@@ -4,6 +4,7 @@ Tests for agents.py MCP tools module.
 This file tests the agent-related MCP tools:
 - spawn_agent: Spawn a subagent with isolation support
 - get_agent_result: Get agent run result
+- wait_for_agent: Wait for agent run completion
 - list_agent_runs: List agent runs for a session
 - stop_agent: Stop a running agent (DB only)
 - end_agent_run: Complete the caller's own agent run
@@ -17,12 +18,16 @@ This file tests the agent-related MCP tools:
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gobby.agents.runtime_cleanup import AgentRuntimeCleanupResult
+from gobby.events import CompletionEventRegistry
+from gobby.events.wake import WakeDispatcher
 from gobby.mcp_proxy.tools.agents import create_agents_registry
+from gobby.storage.inter_session_messages import InterSessionMessageManager
 
 pytestmark = pytest.mark.unit
 
@@ -50,6 +55,7 @@ def _make_mock_agent_run(
     run.worktree_id = kwargs.get("worktree_id")
     run.clone_id = kwargs.get("clone_id")
     run.workflow_name = kwargs.get("workflow_name")
+    run.agent_name = kwargs.get("agent_name")
     run.model = kwargs.get("model")
 
     run.to_dict.return_value = {
@@ -59,7 +65,10 @@ def _make_mock_agent_run(
         "parent_session_id": parent_session_id,
         "status": status,
         "pid": pid,
+        "agent_name": kwargs.get("agent_name"),
+        "workflow_name": kwargs.get("workflow_name"),
         "provider": provider,
+        "model": kwargs.get("model"),
         "terminal_type": kwargs.get("terminal_type"),
     }
     run.to_brief.return_value = {
@@ -67,7 +76,10 @@ def _make_mock_agent_run(
         "session_id": session_id,
         "parent_session_id": parent_session_id,
         "pid": pid,
+        "agent_name": kwargs.get("agent_name"),
+        "workflow_name": kwargs.get("workflow_name"),
         "provider": provider,
+        "model": kwargs.get("model"),
         "status": status,
     }
     return run
@@ -103,8 +115,10 @@ class TestCreateAgentsRegistry:
         expected_tools = [
             "spawn_agent",  # Unified spawn with isolation support
             "get_agent_result",
+            "wait_for_agent",
             "list_agent_runs",
             "stop_agent",
+            "cancel_stale_helpers",
             "end_agent_run",
             "kill_agent",
             "can_spawn_agent",
@@ -119,6 +133,16 @@ class TestCreateAgentsRegistry:
 
         assert registry.get_schema("list_agents") is None
 
+    def test_kill_agent_schema_accepts_stop(self) -> None:
+        """Regression: CLI kill -s sends stop through MCP validation."""
+        runner = MagicMock()
+        registry = create_agents_registry(runner)
+
+        schema = registry.get_schema("kill_agent")
+
+        assert schema is not None
+        assert schema["inputSchema"]["properties"]["stop"]["type"] == "boolean"
+
     def test_accepts_running_registry_for_backward_compat(self) -> None:
         """Test that running_registry param is accepted but ignored."""
         runner = MagicMock()
@@ -126,6 +150,13 @@ class TestCreateAgentsRegistry:
         # Should not raise — param is accepted for backward compat
         registry = create_agents_registry(runner, running_registry=MagicMock())
         assert registry is not None
+
+    def test_agents_py_under_monolith_limit(self) -> None:
+        """Guard against growing the non-test agents module into a monolith."""
+        repo_root = Path(__file__).parents[3]
+        agents_py = repo_root / "src/gobby/mcp_proxy/tools/agents.py"
+
+        assert agents_py.read_text(encoding="utf-8").count("\n") < 1000
 
 
 class TestGetAgentResult:
@@ -179,6 +210,193 @@ class TestGetAgentResult:
         assert result["tool_calls_count"] == 5
         assert result["turns_used"] == 3
         assert result["child_session_id"] == "child-sess-456"
+
+
+class TestWaitForAgent:
+    """Tests for wait_for_agent MCP tool."""
+
+    @pytest.mark.asyncio
+    async def test_completed_run_returns_immediately(self):
+        mock_run = MagicMock()
+        mock_run.id = "run-123"
+        mock_run.status = "success"
+        mock_run.result = "done"
+        mock_run.error = None
+        mock_run.provider = "claude"
+        mock_run.model = "opus"
+        mock_run.prompt = "merge"
+        mock_run.tool_calls_count = 4
+        mock_run.turns_used = 2
+        mock_run.started_at = "2026-05-20T00:00:00Z"
+        mock_run.completed_at = "2026-05-20T00:01:00Z"
+        mock_run.child_session_id = "child-session"
+        mock_run.terminal_reason = None
+
+        runner = MagicMock()
+        runner.get_run.return_value = mock_run
+
+        registry = create_agents_registry(runner)
+        wait_for_agent = registry._tools["wait_for_agent"].func
+
+        result = await wait_for_agent(run_id="run-123", timeout_seconds=0)
+
+        assert result["success"] is True
+        assert result["completed"] is True
+        assert result["status"] == "success"
+        assert result["result"] == "done"
+
+    @pytest.mark.asyncio
+    async def test_running_run_times_out_with_latest_status(self):
+        mock_run = MagicMock()
+        mock_run.id = "run-123"
+        mock_run.status = "running"
+        mock_run.result = None
+        mock_run.error = None
+        mock_run.provider = "claude"
+        mock_run.model = "opus"
+        mock_run.prompt = "merge"
+        mock_run.tool_calls_count = 1
+        mock_run.turns_used = 1
+        mock_run.started_at = "2026-05-20T00:00:00Z"
+        mock_run.completed_at = None
+        mock_run.child_session_id = "child-session"
+        mock_run.terminal_reason = None
+
+        runner = MagicMock()
+        runner.get_run.return_value = mock_run
+
+        registry = create_agents_registry(runner)
+        wait_for_agent = registry._tools["wait_for_agent"].func
+
+        result = await wait_for_agent(run_id="run-123", timeout_seconds=0)
+
+        assert result["success"] is True
+        assert result["completed"] is False
+        assert result["status"] == "running"
+        assert result["timeout_seconds"] == 0.0
+        assert result["requested_timeout_seconds"] == 0.0
+
+    @pytest.mark.asyncio
+    async def test_long_running_wait_returns_before_transport_boundary(self):
+        mock_run = MagicMock()
+        mock_run.id = "run-123"
+        mock_run.status = "running"
+        mock_run.result = None
+        mock_run.error = None
+        mock_run.provider = "claude"
+        mock_run.model = "opus"
+        mock_run.prompt = "merge"
+        mock_run.tool_calls_count = 1
+        mock_run.turns_used = 1
+        mock_run.started_at = "2026-05-20T00:00:00Z"
+        mock_run.completed_at = None
+        mock_run.child_session_id = "child-session"
+        mock_run.terminal_reason = None
+
+        runner = MagicMock()
+        runner.get_run.return_value = mock_run
+
+        registry = create_agents_registry(runner)
+        wait_for_agent = registry._tools["wait_for_agent"].func
+
+        with patch("gobby.mcp_proxy.tools.agents.time.monotonic", side_effect=[0.0, 116.0]):
+            result = await wait_for_agent(
+                run_id="run-123",
+                timeout_seconds=120,
+                poll_interval_seconds=5,
+            )
+
+        assert result["success"] is True
+        assert result["completed"] is False
+        assert result["status"] == "running"
+        assert result["timeout_seconds"] == 115.0
+        assert result["requested_timeout_seconds"] == 120.0
+
+    @pytest.mark.asyncio
+    async def test_shorter_wait_timeout_is_not_reduced(self):
+        mock_run = MagicMock()
+        mock_run.id = "run-123"
+        mock_run.status = "running"
+        mock_run.result = None
+        mock_run.error = None
+        mock_run.provider = "claude"
+        mock_run.model = "opus"
+        mock_run.prompt = "merge"
+        mock_run.tool_calls_count = 1
+        mock_run.turns_used = 1
+        mock_run.started_at = "2026-05-20T00:00:00Z"
+        mock_run.completed_at = None
+        mock_run.child_session_id = "child-session"
+        mock_run.terminal_reason = None
+
+        runner = MagicMock()
+        runner.get_run.return_value = mock_run
+
+        registry = create_agents_registry(runner)
+        wait_for_agent = registry._tools["wait_for_agent"].func
+
+        with patch("gobby.mcp_proxy.tools.agents.time.monotonic", side_effect=[0.0, 5.1]):
+            result = await wait_for_agent(
+                run_id="run-123",
+                timeout_seconds=5,
+                poll_interval_seconds=1,
+            )
+
+        assert result["success"] is True
+        assert result["completed"] is False
+        assert result["status"] == "running"
+        assert result["timeout_seconds"] == 5.0
+        assert result["requested_timeout_seconds"] == 5.0
+
+    @pytest.mark.asyncio
+    async def test_wait_polls_until_run_completes(self):
+        running_run = MagicMock()
+        running_run.id = "run-123"
+        running_run.status = "running"
+        running_run.result = None
+        running_run.error = None
+        running_run.provider = "claude"
+        running_run.model = "opus"
+        running_run.prompt = "merge"
+        running_run.tool_calls_count = 1
+        running_run.turns_used = 1
+        running_run.started_at = "2026-05-20T00:00:00Z"
+        running_run.completed_at = None
+        running_run.child_session_id = "child-session"
+        running_run.terminal_reason = None
+
+        completed_run = MagicMock()
+        completed_run.id = "run-123"
+        completed_run.status = "success"
+        completed_run.result = "done"
+        completed_run.error = None
+        completed_run.provider = "claude"
+        completed_run.model = "opus"
+        completed_run.prompt = "merge"
+        completed_run.tool_calls_count = 3
+        completed_run.turns_used = 2
+        completed_run.started_at = "2026-05-20T00:00:00Z"
+        completed_run.completed_at = "2026-05-20T00:01:00Z"
+        completed_run.child_session_id = "child-session"
+        completed_run.terminal_reason = None
+
+        runner = MagicMock()
+        runner.get_run.side_effect = [running_run, completed_run]
+
+        registry = create_agents_registry(runner)
+        wait_for_agent = registry._tools["wait_for_agent"].func
+
+        with patch("gobby.mcp_proxy.tools.agents.asyncio.sleep", new_callable=AsyncMock) as sleep:
+            result = await wait_for_agent(
+                run_id="run-123",
+                timeout_seconds=5,
+                poll_interval_seconds=0.1,
+            )
+
+        assert result["success"] is True
+        assert result["completed"] is True
+        assert result["status"] == "success"
+        sleep.assert_awaited_once()
 
 
 class TestListAgentRuns:
@@ -297,6 +515,50 @@ class TestStopAgent:
         )
 
     @pytest.mark.asyncio
+    async def test_successful_stop_passes_task_manager_to_cancellation_helper(self):
+        """Test stop_agent wires task recovery dependencies into fallback cancellation."""
+        runner = _make_runner_with_run_storage()
+        runner.get_run.return_value = _make_mock_agent_run(status="running")
+        task_manager = MagicMock()
+
+        registry = create_agents_registry(runner, task_manager=task_manager)
+        stop_agent = registry._tools["stop_agent"].func
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.agents._kill_agent_process",
+                new_callable=AsyncMock,
+                return_value={"success": True},
+            ) as kill_process,
+            patch(
+                "gobby.mcp_proxy.tools.agent_cancellation.terminalize_cancelled_agent_run",
+                new_callable=AsyncMock,
+                return_value=True,
+            ) as terminalize,
+            patch("gobby.mcp_proxy.tools.agents.cleanup_agent_runtime_state"),
+        ):
+            result = await stop_agent(run_id="run-123")
+
+        assert result["success"] is True
+        assert result["run_id"] == "run-123"
+        assert result["status"] == "cancelled"
+        assert result["terminal_reason"] == "user_cancelled"
+        runner.get_run.assert_called_once_with("run-123")
+        kill_process.assert_awaited_once()
+        assert kill_process.call_args.args[0] is runner.get_run.return_value
+        assert kill_process.call_args.kwargs["signal_name"] == "TERM"
+        assert kill_process.call_args.kwargs["close_terminal"] is True
+        terminalize.assert_awaited_once_with(
+            runner=runner,
+            run_id="run-123",
+            terminal_reason="user_cancelled",
+            lifecycle_monitor=None,
+            completion_registry=None,
+            task_manager=task_manager,
+            message="Agent run-123 cancelled",
+        )
+
+    @pytest.mark.asyncio
     async def test_run_not_found(self):
         """Test error when run not found."""
         runner = MagicMock()
@@ -404,6 +666,8 @@ class TestListRunningAgents:
         assert result["success"] is True
         assert result["count"] == 3
         assert len(result["agents"]) == 3
+        assert result["scope"] == "all"
+        runner.run_storage.list_active.assert_called_once_with(limit=100)
 
     @pytest.mark.asyncio
     async def test_filter_by_parent_session(self):
@@ -420,7 +684,96 @@ class TestListRunningAgents:
 
         assert result["success"] is True
         assert result["count"] == 2
-        runner.run_storage.list_by_parent.assert_called_once_with("parent-1")
+        runner.run_storage.list_by_parent.assert_called_once_with(
+            "parent-1",
+            limit=100,
+            status=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_default_all_scope_ignores_current_session_context(self):
+        """Default listing is build-wide even when MCP seeds caller session context."""
+        from gobby.utils.session_context import session_context_for_test
+
+        runner = _make_runner_with_run_storage()
+        agents = self._make_agents()
+        runner.run_storage.list_active.return_value = agents
+
+        registry = create_agents_registry(runner)
+        list_running = registry._tools["list_running_agents"].func
+
+        with session_context_for_test("caller-session"):
+            result = await list_running()
+
+        assert result["success"] is True
+        assert result["count"] == 3
+        runner.run_storage.list_active.assert_called_once_with(limit=100)
+        runner.run_storage.list_by_parent.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_parent_scope_uses_current_session_context_when_requested(self):
+        """Callers can still ask for direct children of the current session."""
+        from gobby.utils.session_context import session_context_for_test
+
+        runner = _make_runner_with_run_storage()
+        parent_agents = [a for a in self._make_agents() if a.parent_session_id == "parent-1"]
+        runner.run_storage.list_by_parent.return_value = parent_agents
+
+        registry = create_agents_registry(runner)
+        list_running = registry._tools["list_running_agents"].func
+
+        with session_context_for_test("parent-1"):
+            result = await list_running(scope="parent")
+
+        assert result["success"] is True
+        assert result["count"] == 2
+        assert result["scope"] == "parent"
+        runner.run_storage.list_by_parent.assert_called_once_with(
+            "parent-1",
+            limit=100,
+            status=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_running_status_uses_cli_equivalent_query(self):
+        """status='running' uses the same storage path as CLI --status running."""
+        runner = _make_runner_with_run_storage()
+        running_agents = [self._make_agents()[0]]
+        runner.run_storage.list_running.return_value = running_agents
+
+        registry = create_agents_registry(runner)
+        list_running = registry._tools["list_running_agents"].func
+
+        result = await list_running(status="running", limit=25)
+
+        assert result["success"] is True
+        assert result["count"] == 1
+        assert result["status"] == "running"
+        runner.run_storage.list_running.assert_called_once_with(limit=25)
+
+    @pytest.mark.asyncio
+    async def test_list_includes_agent_identity(self):
+        """List payloads expose agent identity so orchestrators can filter workers."""
+        runner = _make_runner_with_run_storage()
+        runner.run_storage.list_by_parent.return_value = [
+            _make_mock_agent_run(
+                run_id="run-worker",
+                session_id="sess-worker",
+                parent_session_id="parent-1",
+                agent_name="merge-worker",
+                workflow_name="merge-worker",
+                model="sonnet",
+            )
+        ]
+
+        registry = create_agents_registry(runner)
+        list_running = registry._tools["list_running_agents"].func
+
+        result = await list_running(parent_session_id="parent-1")
+
+        assert result["agents"][0]["agent_name"] == "merge-worker"
+        assert result["agents"][0]["workflow_name"] == "merge-worker"
+        assert result["agents"][0]["model"] == "sonnet"
 
 
 class TestGetRunningAgent:
@@ -621,6 +974,43 @@ class TestKillAgent:
             result = await kill_agent(run_id="run-123")
 
         assert result["success"] is True
+        assert result["workflow_stopped"] is True
+        runner.cancel_run.assert_called_once_with("run-123")
+
+    @pytest.mark.asyncio
+    async def test_stop_false_kills_without_terminalizing_workflow(self):
+        """CLI kill without --stop should not cancel workflow state."""
+        runner = _make_runner_with_run_storage()
+        mock_run = _make_mock_agent_run(
+            run_id="run-123",
+            session_id="sess-456",
+            parent_session_id="sess-parent",
+        )
+        runner.get_run.return_value = mock_run
+
+        registry = create_agents_registry(runner)
+        kill_agent = registry._tools["kill_agent"].func
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.agents._kill_agent_process",
+                new_callable=AsyncMock,
+                return_value={"success": True},
+            ) as kill_process,
+            patch(
+                "gobby.mcp_proxy.tools.agents._cleanup_terminal_artifacts",
+                new_callable=AsyncMock,
+            ) as cleanup,
+        ):
+            result = await kill_agent(run_id="run-123", stop=False)
+
+        assert result["success"] is True
+        assert result["workflow_stopped"] is False
+        assert kill_process.call_args.kwargs["close_terminal"] is True
+        cleanup.assert_not_awaited()
+        runner.cancel_run.assert_not_called()
+        runner.complete_run.assert_not_called()
+        runner.run_storage.fail.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_debug_preserves_state(self):
@@ -710,6 +1100,51 @@ class TestEndAgentRun:
 
         assert result["success"] is False
         assert "No agent found for session sess-456" == result["error"]
+
+    @pytest.mark.asyncio
+    async def test_unsubscribed_memory_helper_end_agent_run_does_not_notify_parent(
+        self, temp_db
+    ) -> None:
+        runner = _make_runner_with_run_storage()
+        mock_run = _make_mock_agent_run(
+            run_id="run-123",
+            session_id="sess-456",
+            parent_session_id="sess-parent",
+        )
+        runner.run_storage.get_by_session.return_value = mock_run
+        runner.get_run.return_value = mock_run
+        runner.complete_run.return_value = True
+
+        ism_manager = InterSessionMessageManager(temp_db)
+        session_manager = MagicMock()
+        session_manager.get.return_value = MagicMock(id="sess-parent", agent_depth=0)
+        wake_dispatcher = WakeDispatcher(session_manager, ism_manager)
+        completion_registry = CompletionEventRegistry(wake_callback=wake_dispatcher.wake)
+        registry = create_agents_registry(
+            runner,
+            completion_registry=completion_registry,
+            session_manager=session_manager,
+        )
+
+        from gobby.utils.session_context import session_context_for_test
+
+        with (
+            session_context_for_test("sess-456"),
+            patch(
+                "gobby.mcp_proxy.tools.agents._kill_agent_process",
+                new_callable=AsyncMock,
+                return_value={"success": True},
+            ),
+        ):
+            result = await registry._tools["end_agent_run"].func()
+
+        assert result == {"success": True, "run_id": "run-123", "status": "success"}
+        assert ism_manager.list_messages("sess-parent") == []
+        assert not ism_manager.has_completion_notification(
+            "sess-parent",
+            "completion_notification",
+            "run-123",
+        )
 
 
 class TestKillAgentSelfTerminationViaRunId:

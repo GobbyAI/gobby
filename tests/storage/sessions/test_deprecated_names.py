@@ -6,7 +6,7 @@ from importlib import import_module
 
 import pytest
 
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
@@ -31,7 +31,7 @@ def test_storage_packages_do_not_export_local_session_manager_name() -> None:
 
 
 def test_session_manager_no_longer_exposes_get_session_shim(
-    temp_db: LocalDatabase,
+    temp_db: HubDatabase,
 ) -> None:
     """Callers should use attribute-based Session objects via SessionManager.get()."""
     session_manager = SessionManager(temp_db)

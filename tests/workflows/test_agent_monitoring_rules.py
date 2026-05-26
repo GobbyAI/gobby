@@ -1,15 +1,15 @@
-"""Tests for agent-monitoring skill requirement rules."""
+"""Tests for build-coordinator skill guidance rules."""
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+import json
 from datetime import UTC, datetime
 
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.skills.formatting import skill_fetch_directive
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
@@ -19,163 +19,239 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path) -> Iterator[LocalDatabase]:
-    database = LocalDatabase(tmp_path / "agent_monitoring_rules.db")
-    run_migrations(database)
-    yield database
-    database.close()
+def manager(temp_db: HubDatabase) -> LocalWorkflowDefinitionManager:
+    return LocalWorkflowDefinitionManager(temp_db)
 
 
-@pytest.fixture
-def manager(db: LocalDatabase) -> LocalWorkflowDefinitionManager:
-    return LocalWorkflowDefinitionManager(db)
-
-
-def _sync_bundled(db: LocalDatabase) -> None:
+def _sync_bundled(db: HubDatabase) -> None:
     from gobby.workflows.sync_rules import get_bundled_rules_path
 
     sync_bundled_rules(db, get_bundled_rules_path())
     db.execute("UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'")
 
 
-def _event(data: dict[str, object]) -> HookEvent:
+def _event(
+    data: dict[str, object],
+    *,
+    source: SessionSource = SessionSource.CODEX,
+    metadata: dict[str, object] | None = None,
+) -> HookEvent:
     return HookEvent(
         event_type=HookEventType.BEFORE_TOOL,
         session_id="test-session",
-        source=SessionSource.CODEX,
+        source=source,
         timestamp=datetime.now(UTC),
         data=data,
+        metadata=metadata or {},
     )
 
 
-class TestRequireAgentMonitoringSkill:
-    def test_rule_structure(self, db, manager) -> None:
-        _sync_bundled(db)
-        row = manager.get_by_name("require-agent-monitoring-skill")
+class TestRemovedBuildCoordinatorMonitoringSkillRule:
+    def test_removed_rule_is_not_synced(
+        self,
+        temp_db: HubDatabase,
+        manager: LocalWorkflowDefinitionManager,
+    ) -> None:
+        """Deprecated monitoring-skill gate should stay removed after sync."""
+        manager.create(
+            name="require-build-coordinator-monitoring-skill",
+            workflow_type="rule",
+            definition_json=json.dumps(
+                {
+                    "event": "before_tool",
+                    "effects": [
+                        {
+                            "type": "block",
+                            "reason": (
+                                'Call get_skill(name="build-coordinator") on '
+                                "gobby-skills, then continue."
+                            ),
+                        }
+                    ],
+                }
+            ),
+            source="installed",
+            tags=["gobby"],
+        )
+
+        _sync_bundled(temp_db)
+
+        assert manager.get_by_name("require-build-coordinator-monitoring-skill") is None
+
+    @pytest.mark.asyncio
+    async def test_generic_monitoring_inspection_is_allowed_without_build_coordinator(
+        self, temp_db: HubDatabase
+    ) -> None:
+        """Generic inspection commands should not require build-coordinator skill."""
+        _sync_bundled(temp_db)
+
+        event = _event(
+            {
+                "tool_name": "mcp__gobby__get_tool_schema",
+                "mcp_tool": "get_tool_schema",
+                "tool_input": {
+                    "server_name": "gobby-sessions",
+                    "tool_name": "get_session",
+                },
+            },
+        )
+
+        response = await RuleEngine(temp_db).evaluate(event, session_id="sid", variables={})
+
+        assert response.decision == "allow"
+
+
+class TestRequireBuildCoordinatorForGobbyBuild:
+    def test_rule_structure(
+        self,
+        temp_db: HubDatabase,
+        manager: LocalWorkflowDefinitionManager,
+    ) -> None:
+        """Build command gate should retain the expected rule condition and guidance."""
+        _sync_bundled(temp_db)
+        row = manager.get_by_name("require-build-coordinator-for-gobby-build")
         assert row is not None
 
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
 
         assert body.event.value == "before_tool"
-        assert "not skill_loaded('agent-monitoring')" in (body.when or "")
-        assert "list_running_agents" in (body.when or "")
-        assert "capture_output" in (body.when or "")
-        assert "tmux capture-pane" in (body.when or "")
-        assert "gobby-hub.db" in (body.when or "")
+        assert body.when is not None
+        assert "not skill_loaded('build-coordinator')" in body.when
+        assert "source != 'pipeline'" in body.when
+        assert "is_spawned_agent" in body.when
+        assert "session_type" in body.when
+        assert "is_gobby_build_command" in body.when
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert (
-            body.effects[0].reason
-            == 'Call get_skill(name="agent-monitoring") on gobby-skills, then continue.'
-        )
+        assert body.effects[0].reason == skill_fetch_directive("build-coordinator")
 
     @pytest.mark.asyncio
-    async def test_blocks_monitoring_schema_before_skill_load(self, db) -> None:
-        _sync_bundled(db)
+    async def test_blocks_tmux_agent_gobby_build_before_skill_load(
+        self, temp_db: HubDatabase
+    ) -> None:
+        """Terminal agents should load build-coordinator before running gobby build."""
+        _sync_bundled(temp_db)
         event = _event(
             {
-                "tool_name": "mcp__gobby__get_tool_schema",
-                "mcp_tool": "get_tool_schema",
-                "tool_input": {
-                    "server_name": "gobby-agents",
-                    "tool_name": "list_running_agents",
-                },
+                "tool_name": "Bash",
+                "canonical_tool_kind": "execute",
+                "tool_input": {"command": "uv run --frozen gobby build #15117 --clone"},
             }
         )
 
-        response = await RuleEngine(db).evaluate(event, session_id="sid", variables={})
-
-        assert response.decision == "block"
-        assert "agent-monitoring" in (response.reason or "")
-
-    @pytest.mark.asyncio
-    async def test_skips_monitoring_schema_after_skill_load(self, db) -> None:
-        _sync_bundled(db)
-        event = _event(
-            {
-                "tool_name": "mcp__gobby__get_tool_schema",
-                "mcp_tool": "get_tool_schema",
-                "tool_input": {
-                    "server_name": "gobby-agents",
-                    "tool_name": "list_running_agents",
-                },
-            }
-        )
-
-        response = await RuleEngine(db).evaluate(
+        response = await RuleEngine(temp_db).evaluate(
             event,
             session_id="sid",
-            variables={"loaded_skills": ["agent-monitoring"]},
+            variables={"is_spawned_agent": True},
+        )
+
+        assert response.decision == "block"
+        assert response.reason is not None
+        assert "require-build-coordinator-for-gobby-build" in response.reason
+        assert 'Call get_skill(name="build-coordinator") on gobby-skills' in response.reason
+
+    @pytest.mark.asyncio
+    async def test_blocks_web_chat_gobby_build_before_skill_load(
+        self, temp_db: HubDatabase
+    ) -> None:
+        """Web-chat agents should load build-coordinator before running gobby build."""
+        _sync_bundled(temp_db)
+        event = _event(
+            {
+                "tool_name": "Bash",
+                "canonical_tool_kind": "execute",
+                "tool_input": {"command": "gobby build #15117"},
+            },
+            metadata={"session_type": "web_chat"},
+        )
+
+        response = await RuleEngine(temp_db).evaluate(event, session_id="sid", variables={})
+
+        assert response.decision == "block"
+        assert response.reason is not None
+        assert "require-build-coordinator-for-gobby-build" in response.reason
+
+    @pytest.mark.asyncio
+    async def test_allows_tmux_agent_gobby_build_after_skill_load(
+        self, temp_db: HubDatabase
+    ) -> None:
+        """Terminal agents may run gobby build after build-coordinator is loaded."""
+        _sync_bundled(temp_db)
+        event = _event(
+            {
+                "tool_name": "Bash",
+                "canonical_tool_kind": "execute",
+                "tool_input": {"command": "gobby build #15117"},
+            }
+        )
+
+        response = await RuleEngine(temp_db).evaluate(
+            event,
+            session_id="sid",
+            variables={"is_spawned_agent": True, "loaded_skills": ["build-coordinator"]},
         )
 
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_blocks_monitoring_tool_call_before_skill_load(self, db) -> None:
-        _sync_bundled(db)
-        event = _event(
-            {
-                "mcp_server": "gobby-agents",
-                "mcp_tool": "get_running_agent",
-                "tool_name": "mcp__gobby-agents__get_running_agent",
-                "tool_input": {"run_id": "run-1"},
-            }
-        )
-
-        response = await RuleEngine(db).evaluate(event, session_id="sid", variables={})
-
-        assert response.decision == "block"
-        assert "agent-monitoring" in (response.reason or "")
-
-    @pytest.mark.asyncio
-    async def test_blocks_session_capture_raw_call_before_skill_load(self, db) -> None:
-        _sync_bundled(db)
-        event = _event(
-            {
-                "tool_name": "mcp__gobby__call_tool",
-                "tool_input": {
-                    "server_name": "gobby-sessions",
-                    "tool_name": "capture_output",
-                    "arguments": {"session_id": "child-session"},
-                },
-            }
-        )
-
-        response = await RuleEngine(db).evaluate(event, session_id="sid", variables={})
-
-        assert response.decision == "block"
-        assert "agent-monitoring" in (response.reason or "")
-
-    @pytest.mark.asyncio
-    async def test_blocks_raw_tmux_monitoring_before_skill_load(self, db) -> None:
-        _sync_bundled(db)
+    async def test_allows_operator_gobby_build_without_skill_load(
+        self, temp_db: HubDatabase
+    ) -> None:
+        """Human/operator sessions may run gobby build without agent skill gates."""
+        _sync_bundled(temp_db)
         event = _event(
             {
                 "tool_name": "Bash",
                 "canonical_tool_kind": "execute",
-                "tool_input": {"command": "tmux capture-pane -t gobby-agent -p -S -"},
+                "tool_input": {"command": "gobby build #15117"},
             }
         )
 
-        response = await RuleEngine(db).evaluate(event, session_id="sid", variables={})
+        response = await RuleEngine(temp_db).evaluate(event, session_id="sid", variables={})
 
-        assert response.decision == "block"
-        assert "agent-monitoring" in (response.reason or "")
+        assert response.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_blocks_raw_sqlite_monitoring_before_skill_load(self, db) -> None:
-        _sync_bundled(db)
+    async def test_allows_dispatcher_gobby_build_without_skill_load(
+        self, temp_db: HubDatabase
+    ) -> None:
+        """Dispatcher-origin build commands are exempt from spawned-agent skill gates."""
+        _sync_bundled(temp_db)
         event = _event(
             {
                 "tool_name": "Bash",
                 "canonical_tool_kind": "execute",
-                "tool_input": {
-                    "command": "sqlite3 ~/.gobby/gobby-hub.db 'select * from agent_runs'",
-                },
+                "tool_input": {"command": "gobby build #15117"},
+            },
+            source=SessionSource.PIPELINE,
+        )
+
+        response = await RuleEngine(temp_db).evaluate(
+            event,
+            session_id="sid",
+            variables={"is_spawned_agent": True},
+        )
+
+        assert response.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_allows_commands_that_only_mention_gobby_build(
+        self, temp_db: HubDatabase
+    ) -> None:
+        """Commands that mention gobby build as text should not trip the gate."""
+        _sync_bundled(temp_db)
+        event = _event(
+            {
+                "tool_name": "Bash",
+                "canonical_tool_kind": "execute",
+                "tool_input": {"command": 'rg "gobby build" src tests'},
             }
         )
 
-        response = await RuleEngine(db).evaluate(event, session_id="sid", variables={})
+        response = await RuleEngine(temp_db).evaluate(
+            event,
+            session_id="sid",
+            variables={"loaded_skills": ["code-index"]},
+        )
 
-        assert response.decision == "block"
-        assert "agent-monitoring" in (response.reason or "")
+        assert response.decision == "allow"

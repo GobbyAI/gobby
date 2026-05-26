@@ -3,35 +3,17 @@
 import pytest
 
 from gobby.savings.tracker import CHARS_PER_TOKEN, VALID_CATEGORIES, SavingsTracker
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 
 
 @pytest.fixture
-def db(tmp_path) -> LocalDatabase:
-    """Create a temporary database with savings tables."""
-    db_path = str(tmp_path / "test.db")
-    db = LocalDatabase(db_path)
-    db.execute("""CREATE TABLE savings_ledger (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        session_id TEXT,
-        project_id TEXT,
-        category TEXT NOT NULL,
-        original_tokens INTEGER NOT NULL,
-        actual_tokens INTEGER NOT NULL,
-        tokens_saved INTEGER NOT NULL,
-        model TEXT,
-        metadata TEXT,
-        created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    )""")
-    db.execute("CREATE INDEX idx_savings_ledger_created ON savings_ledger(created_at)")
-    db.execute(
-        "CREATE INDEX idx_savings_ledger_project_cat ON savings_ledger(project_id, category)"
-    )
-    return db
+def db(temp_db: HubDatabase) -> HubDatabase:
+    """Use the migrated PostgreSQL hub database fixture."""
+    return temp_db
 
 
 @pytest.fixture
-def tracker(db: LocalDatabase) -> SavingsTracker:
+def tracker(db: HubDatabase) -> SavingsTracker:
     return SavingsTracker(db=db)
 
 

@@ -135,6 +135,8 @@ class LocalLLMProvider(LLMProvider):
         if not self._client:
             raise RuntimeError("Local LLM client not initialised")
 
+        if caller:
+            logger.debug("Local LLM text request from %s", caller)
         resolved = self._resolve_model(model)
         response = await self._client.chat.completions.create(
             model=resolved,
@@ -154,10 +156,14 @@ class LocalLLMProvider(LLMProvider):
         prompt: str,
         system_prompt: str | None = None,
         model: str | None = None,
+        *,
+        caller: str | None = None,
     ) -> dict[str, Any]:
         if not self._client:
             raise RuntimeError("Local LLM client not initialised")
 
+        if caller:
+            logger.debug("Local LLM JSON request from %s", caller)
         resolved = self._resolve_model(model)
 
         # Try structured JSON mode first; fall back if the server rejects it.

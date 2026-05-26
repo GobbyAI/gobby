@@ -9,7 +9,8 @@ import json
 import logging
 from pathlib import Path
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sql_dialect import json_array_contains_condition
 from gobby.storage.workflow_definitions import WorkflowDefinitionRow
 from gobby.workflows.template_writer import (
     delete_template_file,
@@ -22,7 +23,7 @@ from gobby.workflows.template_writer import (
 logger = logging.getLogger(__name__)
 
 
-def has_gobby_name_collision(db: DatabaseProtocol, name: str) -> bool:
+def has_gobby_name_collision(db: HubDatabase, name: str) -> bool:
     """Check if a name collides with a bundled gobby definition.
 
     Args:
@@ -32,11 +33,12 @@ def has_gobby_name_collision(db: DatabaseProtocol, name: str) -> bool:
     Returns:
         True if a gobby-tagged definition with this name exists
     """
+    tag_condition, tag_params = json_array_contains_condition(db, "tags", "gobby")
     row = db.fetchone(
         "SELECT id FROM workflow_definitions "
-        "WHERE name = ? AND tags LIKE '%\"gobby\"%' "
+        f"WHERE name = ? AND {tag_condition} "
         "AND deleted_at IS NULL",
-        (name,),
+        (name, *tag_params),
     )
     return row is not None
 

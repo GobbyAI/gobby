@@ -107,7 +107,7 @@ src/gobby/
 ├── agents/               # Agent spawning logic
 ├── worktrees/            # Git worktree management
 ├── memory/               # Memory system (TF-IDF, semantic)
-├── storage/              # SQLite storage layer
+├── storage/              # Hub storage layer
 ├── llm/                  # Multi-provider LLM abstraction
 ├── config/               # Configuration (YAML/JSON)
 └── utils/                # Git, logging, project utilities
@@ -118,7 +118,7 @@ src/gobby/
 | Path | Purpose |
 | :--- | :--- |
 | `~/.gobby/config.yaml` | Daemon configuration |
-| `~/.gobby/gobby-hub.db` | SQLite database |
+| PostgreSQL database URL | Runtime hub database connection |
 | `.gobby/project.json` | Project metadata |
 | `.gobby/tasks.jsonl` | Task sync file |
 

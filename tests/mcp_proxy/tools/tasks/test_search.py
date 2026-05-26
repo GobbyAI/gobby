@@ -21,7 +21,7 @@ import pytest
 from gobby.mcp_proxy.tools.tasks._search import create_reindex_registry, create_search_registry
 
 if TYPE_CHECKING:
-    from gobby.storage.database import LocalDatabase
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.projects import LocalProjectManager
     from gobby.storage.tasks import LocalTaskManager
 
@@ -34,7 +34,7 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def task_manager(temp_db: LocalDatabase) -> LocalTaskManager:
+def task_manager(temp_db: HubDatabase) -> LocalTaskManager:
     """Create a real LocalTaskManager backed by temp database."""
     from gobby.storage.tasks import LocalTaskManager
 

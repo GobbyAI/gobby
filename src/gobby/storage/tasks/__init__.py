@@ -23,7 +23,7 @@ from gobby.storage.tasks._artifacts import (
     set_artifact,
     set_artifacts_atomic,
 )
-from gobby.storage.tasks._crud import cascade_build_state_to_subtree
+from gobby.storage.tasks._build_cascade import cascade_build_state_to_subtree
 from gobby.storage.tasks._dispatch_mutex import (
     DispatchMutex,
     TaskDispatchMutexManager,
@@ -46,7 +46,6 @@ from gobby.storage.tasks._manager import LocalTaskManager
 from gobby.storage.tasks._models import (
     PRIORITY_MAP,
     TASK_TYPE_CHOICES,
-    TDD_ELIGIBLE_CATEGORIES,
     UNSET,
     VALID_CATEGORIES,
     VALID_TASK_TYPES,
@@ -62,6 +61,7 @@ from gobby.storage.tasks._models import (
     UnsetType,
     normalize_priority,
     validate_category,
+    validate_implementation_domain,
     validate_task_type,
 )
 from gobby.storage.tasks._ordering import order_tasks_hierarchically
@@ -80,6 +80,7 @@ from gobby.storage.tasks._stage_types import (
     StageManifestSpec,
     StageState,
 )
+from gobby.tasks.categories import TDD_ELIGIBLE_CATEGORIES
 
 __all__ = [
     # Core classes
@@ -113,6 +114,7 @@ __all__ = [
     # Functions
     "generate_task_id",
     "validate_category",
+    "validate_implementation_domain",
     "normalize_priority",
     "order_tasks_hierarchically",
     "cascade_build_state_to_subtree",

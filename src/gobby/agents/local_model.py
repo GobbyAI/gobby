@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 if TYPE_CHECKING:
-    from gobby.config.app import LocalConfig
+    from gobby.config.local import LocalConfig
 
 __all__ = ["ensure_local_model", "LocalModelError"]
 

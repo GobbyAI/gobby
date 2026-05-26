@@ -571,6 +571,7 @@ class TestDeEscalateTaskTool:
             "t1",
             reason="Fixed manually",
             reset_validation=False,
+            reset_stage_attempts=False,
         )
 
     @pytest.mark.integration
@@ -645,6 +646,7 @@ class TestDeEscalateTaskTool:
             "t1",
             reason="Resolved manually",
             reset_validation=False,
+            reset_stage_attempts=False,
         )
         assert mock_task_manager.de_escalate_task.call_count == 1
         assert mock_task_manager.de_escalate_task.call_args is not None
@@ -678,6 +680,7 @@ class TestDeEscalateTaskTool:
             "t1",
             reason="Human fixed the issue",
             reset_validation=False,
+            reset_stage_attempts=False,
         )
 
     @pytest.mark.integration
@@ -704,9 +707,37 @@ class TestDeEscalateTaskTool:
             "t1",
             reason="Fixed",
             reset_validation=True,
+            reset_stage_attempts=False,
         )
         assert mock_task_manager.de_escalate_task.call_count == 1
         assert mock_task_manager.de_escalate_task.call_args is not None
+
+    @pytest.mark.integration
+    @pytest.mark.asyncio
+    async def test_de_escalate_task_resets_stage_attempts(
+        self, mock_task_manager, task_registry_with_patches
+    ):
+        """Test that de_escalate_task optionally resets current stage attempts."""
+        escalated_task = _task_like(
+            title="Escalated task",
+            is_escalated=True,
+            escalated_at="2024-01-01T00:00:00",
+            escalation_reason="development_max_work_attempts",
+        )
+        mock_task_manager.get_task.return_value = escalated_task
+
+        result = await task_registry_with_patches.call(
+            "de_escalate_task",
+            {"task_id": "t1", "reason": "Fixed", "reset_stage_attempts": True},
+        )
+
+        assert "error" not in result
+        mock_task_manager.de_escalate_task.assert_called_once_with(
+            "t1",
+            reason="Fixed",
+            reset_validation=False,
+            reset_stage_attempts=True,
+        )
 
     @pytest.mark.integration
     @pytest.mark.asyncio
@@ -801,6 +832,7 @@ class TestValidationToolsRegistration:
         assert "properties" in input_schema
         assert "task_id" in input_schema["properties"]
         assert "reason" in input_schema["properties"]
+        assert "reset_stage_attempts" in input_schema["properties"]
         # Both should be required
         assert "task_id" in input_schema.get("required", [])
         assert "reason" in input_schema.get("required", [])

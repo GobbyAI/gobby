@@ -15,6 +15,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.storage.projects import LocalProjectManager
+from gobby.storage.sessions import SessionManager
 from gobby.utils.project_context import get_project_context
 from gobby.utils.session_context import (
     SeededContextTokens,
@@ -22,6 +24,7 @@ from gobby.utils.session_context import (
     reset_seeded_contexts,
     resolve_and_seed_contexts,
 )
+from gobby.workflows.state_manager import SessionVariableManager
 
 pytestmark = pytest.mark.unit
 
@@ -98,6 +101,57 @@ def test_resolve_and_seed_contexts_session_only_derives_project_from_session() -
     try:
         assert tokens.project_token == "project-token"
         mock_from_session.assert_called_once_with(SESSION_PLATFORM_UUID, mgr, mgr.db)
+    finally:
+        reset_seeded_contexts(tokens)
+
+
+def test_resumed_codex_register_recovery_seeds_canonical_session_for_variables(
+    temp_db,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A failed resumed Codex registration must not seed a stale wrapper session id."""
+    project = LocalProjectManager(temp_db).create(
+        name="resumed-codex-project",
+        repo_path="/tmp/resumed-codex-project",
+    )
+    session_manager = SessionManager(temp_db)
+    canonical_id = session_manager.register_session(
+        external_id="codex-external-session",
+        machine_id="machine-1",
+        source="codex",
+        project_id=project.id,
+    )
+    stale_wrapper_id = str(uuid.uuid4())
+
+    with patch.object(session_manager, "register", side_effect=RuntimeError("boom")):
+        injected_session_id = session_manager.register_session(
+            external_id="codex-external-session",
+            machine_id="machine-1",
+            source="codex",
+            project_id=project.id,
+        )
+
+    assert injected_session_id == canonical_id
+    assert injected_session_id != stale_wrapper_id
+
+    caplog.set_level(logging.WARNING, logger="gobby.utils.session_context")
+    tokens = resolve_and_seed_contexts(
+        session_ref=injected_session_id,
+        session_manager=session_manager,
+        db=temp_db,
+    )
+    try:
+        assert tokens.resolved_session_id == canonical_id
+        ctx = get_session_context()
+        assert ctx is not None
+        assert ctx.session_id == canonical_id
+        assert ctx.conversation_id == "codex-external-session"
+
+        variables = SessionVariableManager(temp_db)
+        variables.set_variable(ctx.session_id, "wrapper_recovery", True)
+        assert variables.get_variables(canonical_id)["wrapper_recovery"] is True
+        assert variables.get_variables(stale_wrapper_id) == {}
+        assert not any("could not resolve session ref" in rec.message for rec in caplog.records)
     finally:
         reset_seeded_contexts(tokens)
 
@@ -211,6 +265,45 @@ def test_override_mode_hash_n_ref_uses_project_ref_as_session_scope() -> None:
         mgr.resolve_session_reference.assert_called_once_with("#5", PROJECT_B_UUID)
         assert mgr.resolve_session_reference.call_count == 1
         assert mgr.resolve_session_reference.call_args is not None
+    finally:
+        reset_seeded_contexts(tokens)
+
+
+def test_override_mode_hash_n_ref_can_use_separate_session_scope_ref() -> None:
+    """Cross-project calls resolve #N session refs in caller scope and target project context."""
+    mgr = _make_session_manager()
+
+    def resolve_ref(project_ref: str) -> MagicMock:
+        project = MagicMock()
+        project.id = {
+            "caller-project": PROJECT_A_UUID,
+            "target-project": PROJECT_B_UUID,
+        }[project_ref]
+        return project
+
+    with (
+        patch("gobby.storage.projects.LocalProjectManager") as mock_pm_class,
+        patch(
+            "gobby.utils.project_context.set_project_context_from_ref",
+            return_value="target-token",
+        ) as mock_from_ref,
+    ):
+        mock_pm = MagicMock()
+        mock_pm.resolve_ref.side_effect = resolve_ref
+        mock_pm_class.return_value = mock_pm
+
+        tokens = resolve_and_seed_contexts(
+            session_ref="#5",
+            session_manager=mgr,
+            project_ref="target-project",
+            session_scope_ref="caller-project",
+            db=mgr.db,
+        )
+    try:
+        mgr.resolve_session_reference.assert_called_once_with("#5", PROJECT_A_UUID)
+        assert tokens.resolved_project_id == PROJECT_B_UUID
+        assert tokens.project_token == "target-token"
+        mock_from_ref.assert_called_once_with(PROJECT_B_UUID, mgr.db)
     finally:
         reset_seeded_contexts(tokens)
 

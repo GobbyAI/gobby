@@ -4,8 +4,7 @@ import json
 
 import pytest
 
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import (
     LocalWorkflowDefinitionManager,
 )
@@ -14,16 +13,14 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path) -> LocalDatabase:
+def db(temp_db: HubDatabase) -> HubDatabase:
     """Create a fresh database with migrations applied."""
-    db_path = tmp_path / "test_wf_defs.db"
-    database = LocalDatabase(db_path)
-    run_migrations(database)
+    database = temp_db
     return database
 
 
 @pytest.fixture
-def manager(db: LocalDatabase) -> LocalWorkflowDefinitionManager:
+def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
     """Create a workflow definition manager."""
     return LocalWorkflowDefinitionManager(db)
 
@@ -127,7 +124,8 @@ def test_create_with_all_fields(manager: LocalWorkflowDefinitionManager) -> None
     assert row.enabled is True
     assert row.priority == 50
     assert row.sources == ["claude", "gemini"]
-    assert row.canvas_json == '{"nodes": [], "edges": []}'
+    assert row.canvas_json is not None
+    assert json.loads(row.canvas_json) == {"nodes": [], "edges": []}
     assert row.source == "installed"
     assert row.tags == ["tag1", "tag2"]
     assert row.project_id is None
@@ -199,13 +197,13 @@ def test_get_by_name_global(manager: LocalWorkflowDefinitionManager) -> None:
 
 
 def test_get_by_name_project_scoped(
-    db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    db: HubDatabase, manager: LocalWorkflowDefinitionManager
 ) -> None:
     """Test get_by_name prefers project-scoped over global."""
     # Create project
     db.execute(
         "INSERT INTO projects (id, name, created_at, updated_at) "
-        "VALUES (?, ?, datetime('now'), datetime('now'))",
+        "VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
         ("proj-1", "Test Project"),
     )
 
@@ -228,12 +226,12 @@ def test_get_by_name_project_scoped(
 
 
 def test_get_by_name_fallback_to_global(
-    db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    db: HubDatabase, manager: LocalWorkflowDefinitionManager
 ) -> None:
     """Test get_by_name falls back to global when no project-scoped match."""
     db.execute(
         "INSERT INTO projects (id, name, created_at, updated_at) "
-        "VALUES (?, ?, datetime('now'), datetime('now'))",
+        "VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
         ("proj-1", "Test Project"),
     )
 
@@ -382,13 +380,11 @@ def test_list_all_filter_enabled(manager: LocalWorkflowDefinitionManager) -> Non
     assert "disabled-wf" in disabled_names
 
 
-def test_list_all_filter_project(
-    db: LocalDatabase, manager: LocalWorkflowDefinitionManager
-) -> None:
+def test_list_all_filter_project(db: HubDatabase, manager: LocalWorkflowDefinitionManager) -> None:
     """Test listing definitions filtered by project_id (includes global)."""
     db.execute(
         "INSERT INTO projects (id, name, created_at, updated_at) "
-        "VALUES (?, ?, datetime('now'), datetime('now'))",
+        "VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
         ("proj-1", "Test Project"),
     )
 
@@ -549,11 +545,11 @@ def test_duplicate_nonexistent_raises(manager: LocalWorkflowDefinitionManager) -
 # =============================================================================
 
 
-def test_move_to_project(db: LocalDatabase, manager: LocalWorkflowDefinitionManager) -> None:
+def test_move_to_project(db: HubDatabase, manager: LocalWorkflowDefinitionManager) -> None:
     """Test moving an installed definition to project scope."""
     db.execute(
         "INSERT INTO projects (id, name, created_at, updated_at) "
-        "VALUES (?, ?, datetime('now'), datetime('now'))",
+        "VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
         ("proj-1", "Test Project"),
     )
 
@@ -566,11 +562,11 @@ def test_move_to_project(db: LocalDatabase, manager: LocalWorkflowDefinitionMana
     assert moved.project_id == "proj-1"
 
 
-def test_move_to_global(db: LocalDatabase, manager: LocalWorkflowDefinitionManager) -> None:
+def test_move_to_global(db: HubDatabase, manager: LocalWorkflowDefinitionManager) -> None:
     """Test moving a project-scoped definition to global scope."""
     db.execute(
         "INSERT INTO projects (id, name, created_at, updated_at) "
-        "VALUES (?, ?, datetime('now'), datetime('now'))",
+        "VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
         ("proj-1", "Test Project"),
     )
 

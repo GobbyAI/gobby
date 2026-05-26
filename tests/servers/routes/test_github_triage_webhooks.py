@@ -3,10 +3,15 @@ from __future__ import annotations
 import hmac
 import json
 from hashlib import sha256
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import pytest
+from fastapi import BackgroundTasks
 from fastapi.testclient import TestClient
 
+from gobby.github_triage.service import WebhookAcceptance
+from gobby.servers.routes.github_triage import create_github_triage_router
 from gobby.storage.github_triage import GitHubTriageConfig, GitHubTriageStore
 from tests.servers.conftest import create_http_server
 
@@ -55,3 +60,38 @@ def test_github_triage_webhook_persists_delivery_and_returns_202(
     assert delivery is not None
     assert delivery.event == "ping"
     assert delivery.status == "processed"
+
+
+class _WebhookRequest:
+    headers = {"x-github-event": "issues"}
+
+    async def body(self) -> bytes:
+        return b"{}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "accepted",
+    [
+        WebhookAcceptance("delivery-processed", "ping", None, "processed"),
+        WebhookAcceptance("delivery-ignored", "issues", "edited", "ignored"),
+        WebhookAcceptance("delivery-duplicate", "issues", "opened", "pending", duplicate=True),
+    ],
+)
+async def test_github_triage_webhook_early_returns_schedule_no_dispatch(
+    accepted: WebhookAcceptance,
+) -> None:
+    """Processed, ignored, and duplicate webhook deliveries do not schedule dispatch."""
+    server = SimpleNamespace(run_db=AsyncMock(return_value=accepted))
+    background_tasks = BackgroundTasks()
+    endpoint = create_github_triage_router(server).routes[0].endpoint
+
+    with patch(
+        "gobby.servers.routes.github_triage._service",
+        return_value=SimpleNamespace(accept_webhook_delivery=object()),
+    ):
+        response = await endpoint("project-1", _WebhookRequest(), background_tasks)
+
+    assert response["status"] == accepted.status
+    assert response["duplicate"] is accepted.duplicate
+    assert background_tasks.tasks == []

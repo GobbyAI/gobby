@@ -5,6 +5,8 @@ from typing import Any, cast
 import pytest
 from click.testing import CliRunner
 
+from gobby.storage.hub.protocol import HubDatabase
+
 pytestmark = pytest.mark.unit
 
 
@@ -55,10 +57,9 @@ def test_quick_and_no_merge_flags_propagate(monkeypatch: pytest.MonkeyPatch) -> 
             tick_dispatched=0,
         )
 
-    monkeypatch.setattr("gobby.cli.build.resolve_project_id", lambda: "project-1")
-    monkeypatch.setattr("gobby.cli.build.LocalDatabase", lambda: _ClosableDb())
-    monkeypatch.setattr("gobby.cli.build.run_migrations", lambda _db: 0)
-    monkeypatch.setattr("gobby.cli.build._try_daemon_build", lambda *_args: None)
+    monkeypatch.setattr("gobby.cli.build.resolve_project_id", lambda **_kwargs: "project-1")
+    monkeypatch.setattr("gobby.cli.build._open_database", lambda: _ClosableDb())
+    monkeypatch.setattr("gobby.cli.build._try_daemon_build", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("gobby.cli.build.build", fake_build)
 
     result = CliRunner().invoke(
@@ -80,7 +81,8 @@ def test_quick_and_no_merge_flags_propagate(monkeypatch: pytest.MonkeyPatch) -> 
     assert opts.stage_caps[0].max_review_rounds == 2
 
 
-def test_json_surfaces_omit_removed_fields(temp_db: Any) -> None:
+def test_json_surfaces_omit_removed_fields(temp_db: HubDatabase) -> None:
+    """Build API, MCP schema, and request model expose only current fields."""
     from unittest.mock import MagicMock
 
     from gobby.mcp_proxy.tools.tasks._ops_factory import create_task_ops_registry

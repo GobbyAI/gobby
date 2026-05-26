@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase, SystemSessionBootstrap
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 
 logger = logging.getLogger("gobby.storage.sessions")
@@ -28,10 +28,10 @@ SYSTEM_SESSION_SOURCE = "system"
 SYSTEM_SESSION_TITLE = "_system"
 
 
-def ensure_system_session(db: DatabaseProtocol) -> None:
+def ensure_system_session(db: HubDatabase) -> None:
     """Ensure the bootstrapped root session for cron/pipeline work exists."""
     had_existing_sessions = False
-    with db.transaction_immediate():
+    with db.transaction_immediate(SystemSessionBootstrap()):
         existing = db.fetchone("SELECT id FROM sessions WHERE id = ?", (SYSTEM_SESSION_ID,))
         if existing is not None:
             return
@@ -47,11 +47,12 @@ def ensure_system_session(db: DatabaseProtocol) -> None:
         now = datetime.now(UTC).isoformat()
         db.execute(
             """
-            INSERT OR IGNORE INTO sessions (
+            INSERT INTO sessions (
                 id, external_id, machine_id, source, project_id, title,
                 status, agent_depth, created_at, updated_at
             )
             VALUES (?, ?, ?, ?, ?, ?, 'active', 0, ?, ?)
+            ON CONFLICT (id) DO NOTHING
             """,
             (
                 SYSTEM_SESSION_ID,

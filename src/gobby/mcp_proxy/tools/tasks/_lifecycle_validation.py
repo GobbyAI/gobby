@@ -5,6 +5,7 @@ can be closed (commit checks, child completion, LLM validation).
 """
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -20,6 +21,104 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_FAILURE_FEEDBACK_FLAGS = re.IGNORECASE | re.DOTALL
+_VALIDATION_GATE_WORDS = (
+    r"(?:"
+    r"(?:required\s+)?(?:validation|verification|quality)\s+(?:gate|check|step)s?|"
+    r"(?:required\s+)?checks?|"
+    r"(?:test|build|compil(?:e|ation|er)|lint|format|coverage|static\s+analysis)"
+    r"(?:\s+(?:gate|check|step))?s?|"
+    r"ci(?:\s+(?:gate|check|step))?"
+    r")"
+)
+_VALIDATION_FAILURE_WORDS = r"(?:failed|failing|not\s+clean|did\s+not\s+pass|not\s+pass(?:ed|ing)?)"
+_ZERO_FAILURE_TOKEN_RE = re.compile(
+    r"\b(?:0\s+fail(?:ed|ures?)|zero\s+failures?|fail(?:ed|ures?)\s*[=:]\s*0)\b",
+    _FAILURE_FEEDBACK_FLAGS,
+)
+_NONZERO_FAILURE_COUNT_RE = re.compile(
+    # Example: "1 failed" or "2 failures".
+    r"\b(?:[1-9]\d*|one|two|three|four|five|six|seven|eight|nine|ten)\s+"
+    r"fail(?:ed|ures?)\b|\bfail(?:ed|ures?)\s*[=:]\s*[1-9]\d*\b",
+    _FAILURE_FEEDBACK_FLAGS,
+)
+
+_ACCEPTANCE_CRITERIA_THEN_FAILURE_RE = re.compile(
+    # Example: "Acceptance criteria failed for the delivered implementation."
+    r"\b(?:acceptance\s+)?criteri(?:on|a)\b.{0,80}"
+    r"\b(?:failed|failing|unmet|unsatisfied|not\s+(?:satisfied|met))\b",
+    _FAILURE_FEEDBACK_FLAGS,
+)
+_FAILURE_THEN_ACCEPTANCE_CRITERIA_RE = re.compile(
+    # Example: "Failed acceptance criteria remain unresolved."
+    r"\b(?:failed|failing|unmet|unsatisfied|not\s+(?:satisfied|met))\b.{0,80}"
+    r"\b(?:acceptance\s+)?criteri(?:on|a)\b",
+    _FAILURE_FEEDBACK_FLAGS,
+)
+_VALIDATION_GATE_THEN_FAILURE_RE = re.compile(
+    # Example: "Required validation gate did not pass."
+    rf"\b{_VALIDATION_GATE_WORDS}\b.{{0,100}}\b{_VALIDATION_FAILURE_WORDS}\b",
+    _FAILURE_FEEDBACK_FLAGS,
+)
+_FAILURE_THEN_VALIDATION_GATE_RE = re.compile(
+    # Example: "Tests are failing in the required validation check."
+    rf"\b{_VALIDATION_FAILURE_WORDS}\b.{{0,100}}\b{_VALIDATION_GATE_WORDS}\b",
+    _FAILURE_FEEDBACK_FLAGS,
+)
+_VALIDATION_GATE_THEN_ERRORS_REMAIN_RE = re.compile(
+    # Example: "Validation gate errors remain unresolved."
+    rf"\b{_VALIDATION_GATE_WORDS}\b.{{0,100}}\berrors?\b.{{0,40}}"
+    r"\b(?:remain|remaining|unresolved)\b",
+    _FAILURE_FEEDBACK_FLAGS,
+)
+_VALIDATION_ERRORS_REMAIN_RE = re.compile(
+    # Example: "Validation errors remain in the package."
+    r"\b(?:validation|verification)\s+errors?\b.{0,40}"
+    r"\b(?:remain|remaining|unresolved)\b",
+    _FAILURE_FEEDBACK_FLAGS,
+)
+_ERRORS_REMAIN_THEN_VALIDATION_GATE_RE = re.compile(
+    # Example: "Errors remain in the validation step."
+    r"\berrors?\b.{0,40}\b(?:remain|remaining|unresolved)\b.{0,100}"
+    rf"\b{_VALIDATION_GATE_WORDS}\b",
+    _FAILURE_FEEDBACK_FLAGS,
+)
+_ERRORS_PREVENTED_CLEAN_PASS_RE = re.compile(
+    # Example: "Errors prevented a clean pass."
+    r"\berrors?\b.{0,80}\bprevented\b.{0,80}\b(?:clean|pass(?:ing)?|valid)\b",
+    _FAILURE_FEEDBACK_FLAGS,
+)
+_REMAINING_GAP_IS_VALIDATION_RE = re.compile(
+    # Example: "The only gap is the coverage gate."
+    r"\b(?:only|remaining)\s+gap\s+(?:is|remains)\b.{0,120}"
+    rf"\b(?:{_VALIDATION_GATE_WORDS}|criteri(?:on|a))\b",
+    _FAILURE_FEEDBACK_FLAGS,
+)
+_MYPY_THEN_INCOMPLETE_RE = re.compile(
+    # Example: "mypy is incomplete at the service boundary."
+    r"\bmypy\b.{0,80}\b(?:incomplete|unresolved)\b",
+    _FAILURE_FEEDBACK_FLAGS,
+)
+_INCOMPLETE_THEN_MYPY_RE = re.compile(
+    # Example: "Incomplete mypy work remains."
+    r"\b(?:incomplete|unresolved)\b.{0,80}\bmypy\b",
+    _FAILURE_FEEDBACK_FLAGS,
+)
+_REQUIRED_FAILURE_FEEDBACK_PATTERNS: tuple[re.Pattern[str], ...] = (
+    _NONZERO_FAILURE_COUNT_RE,
+    _ACCEPTANCE_CRITERIA_THEN_FAILURE_RE,
+    _FAILURE_THEN_ACCEPTANCE_CRITERIA_RE,
+    _VALIDATION_GATE_THEN_FAILURE_RE,
+    _FAILURE_THEN_VALIDATION_GATE_RE,
+    _VALIDATION_GATE_THEN_ERRORS_REMAIN_RE,
+    _VALIDATION_ERRORS_REMAIN_RE,
+    _ERRORS_REMAIN_THEN_VALIDATION_GATE_RE,
+    _ERRORS_PREVENTED_CLEAN_PASS_RE,
+    _REMAINING_GAP_IS_VALIDATION_RE,
+    _MYPY_THEN_INCOMPLETE_RE,
+    _INCOMPLETE_THEN_MYPY_RE,
+)
+
 
 @dataclass
 class ValidationResult:
@@ -29,6 +128,23 @@ class ValidationResult:
     error_type: str | None = None
     message: str | None = None
     extra: dict[str, Any] | None = None
+
+
+def feedback_admits_required_validation_failure(feedback: str | None) -> bool:
+    """Return True when validator feedback explicitly admits a required gate failed."""
+    return matched_required_validation_failure_pattern(feedback) is not None
+
+
+def matched_required_validation_failure_pattern(feedback: str | None) -> re.Pattern[str] | None:
+    """Return the validation-failure pattern matched by feedback, if any."""
+    if not feedback:
+        return None
+
+    normalized_feedback = _ZERO_FAILURE_TOKEN_RE.sub("", " ".join(feedback.split()))
+    for pattern in _REQUIRED_FAILURE_FEEDBACK_PATTERNS:
+        if pattern.search(normalized_feedback) is not None:
+            return pattern
+    return None
 
 
 def validate_commit_requirements(
@@ -56,7 +172,8 @@ def validate_commit_requirements(
             message=(
                 "\nA commit is required before closing this task.\n\n"
                 "**Normal flow:**\n"
-                '1. Commit your changes: git commit -m "[#N] description"\n'
+                "1. Commit your changes: "
+                'git commit -m "[<project_name>-#<task_number>] <type>: <description>"\n'
                 '2. Close with commit_sha: close_task(task_id="#N", commit_sha="<sha>")\n\n'
                 "**Edge cases (no work done):**\n"
                 '- Task was already done: reason="already_implemented"\n'
@@ -143,51 +260,51 @@ def gather_validation_context(
     """
     from gobby.tasks.commits import get_task_diff, summarize_diff_for_validation
 
-    validation_context = changes_summary
+    validation_context = ""
     raw_diff = None
 
-    if not validation_context:
-        # First try commit-based diff if task has linked commits
-        if task.commits:
-            try:
-                # Don't include uncommitted changes - they're likely unrelated to this task
-                # The linked commits ARE the work for this task
-                diff_result = get_task_diff(
-                    task_id=task.id,
-                    task_manager=task_manager,
-                    include_uncommitted=False,
-                    cwd=repo_path,
-                )
-                if diff_result.diff:
-                    raw_diff = diff_result.diff
-                    # Use smart summarization to ensure all files are visible
-                    summarized_diff = summarize_diff_for_validation(raw_diff)
-                    validation_context = (
-                        f"Commit-based diff ({len(diff_result.commits)} commits, "
-                        f"{diff_result.file_count} files):\n\n{summarized_diff}"
-                    )
-                else:
-                    logger.warning(
-                        f"get_task_diff returned empty for task {task.id} "
-                        f"with commits {task.commits}"
-                    )
-            except Exception as e:
-                logger.warning(f"get_task_diff failed for task {task.id}: {e}")
-
-        # Fall back to smart context ONLY if no linked commits
-        # (uncommitted changes are unrelated if we have specific commits linked)
-        if not validation_context and not task.commits:
-            from gobby.tasks.validation import get_validation_context_smart
-
-            # Smart context gathering: uncommitted changes + multi-commit window + file analysis
-            smart_context = get_validation_context_smart(
-                task_title=task.title,
-                validation_criteria=task.validation_criteria,
-                task_description=task.description,
+    # First try commit-based diff if task has linked commits. The linked
+    # commits are the authoritative implementation artifact; changes_summary
+    # is only supplemental prose.
+    if task.commits:
+        try:
+            diff_result = get_task_diff(
+                task_id=task.id,
+                task_manager=task_manager,
+                include_uncommitted=False,
                 cwd=repo_path,
             )
-            if smart_context:
-                validation_context = f"Validation context:\n\n{smart_context}"
+            if diff_result.diff:
+                raw_diff = diff_result.diff
+                summarized_diff = summarize_diff_for_validation(raw_diff)
+                validation_context = (
+                    f"Commit-based diff ({len(diff_result.commits)} commits, "
+                    f"{diff_result.file_count} files):\n\n{summarized_diff}"
+                )
+            else:
+                logger.warning(
+                    f"get_task_diff returned empty for task {task.id} with commits {task.commits}"
+                )
+        except Exception as e:
+            logger.warning(f"get_task_diff failed for task {task.id}: {e}")
+
+    if validation_context and changes_summary:
+        validation_context = f"{validation_context}\n\nAgent changes summary:\n{changes_summary}"
+    elif changes_summary:
+        validation_context = changes_summary
+
+    # Fall back to smart context ONLY if no linked commits.
+    if not validation_context and not task.commits:
+        from gobby.tasks.validation import get_validation_context_smart
+
+        smart_context = get_validation_context_smart(
+            task_title=task.title,
+            validation_criteria=task.validation_criteria,
+            task_description=task.description,
+            cwd=repo_path,
+        )
+        if smart_context:
+            validation_context = f"Validation context:\n\n{smart_context}"
 
     return validation_context, raw_diff
 
@@ -237,20 +354,32 @@ async def validate_leaf_task_with_llm(
         category=task.category,
     )
 
+    validation_status = result.status
+    matched_failure_pattern = matched_required_validation_failure_pattern(result.feedback)
+    if result.status == "valid" and matched_failure_pattern is not None:
+        logger.warning(
+            "Overriding validation status for task %s: LLM returned 'valid' but feedback "
+            "admits failure. Pattern: %s. Feedback: %s",
+            resolved_id,
+            matched_failure_pattern.pattern,
+            result.feedback,
+        )
+        validation_status = "invalid"
+
     # Store validation result regardless of pass/fail
     ctx.task_manager.update_task(
         resolved_id,
-        validation_status=result.status,
+        validation_status=validation_status,
         validation_feedback=result.feedback,
     )
 
-    if result.status != "valid":
+    if validation_status != "valid":
         # Block closing on invalid or pending (error during validation)
         return ValidationResult(
             can_close=False,
             error_type="validation_failed",
             message=result.feedback or "Validation did not pass",
-            extra={"validation_status": result.status},
+            extra={"validation_status": validation_status},
         )
 
     return ValidationResult(can_close=True)

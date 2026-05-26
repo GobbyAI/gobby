@@ -44,7 +44,7 @@ async def test_git_merge_success(resolver):
             "merge",
             "--no-commit",
             "--no-ff",
-            "origin/test-target",
+            "test-target",
             cwd="/tmp/test-repo",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

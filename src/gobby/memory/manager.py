@@ -6,10 +6,11 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from gobby.config.persistence import MemoryConfig
+from gobby.llm.base import LLMProviderCancellation
 from gobby.memory.backends.storage_adapter import StorageAdapter
 from gobby.memory.components.ingestion import IngestionService
 from gobby.memory.context import build_memory_context
-from gobby.memory.neo4j_client import Neo4jClient
+from gobby.memory.falkor_client import FalkorClient
 from gobby.memory.protocol import MemoryBackendProtocol, MemoryRecord
 from gobby.memory.services.crossref import CrossrefRebuildError, CrossrefService
 from gobby.memory.services.indexing import IndexingService
@@ -30,12 +31,11 @@ from gobby.memory.vectorstore import (
     is_recoverable_vector_store_error,
     log_rate_limited_warning,
 )
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories import LocalMemoryManager, Memory
 
 if TYPE_CHECKING:
     from gobby.llm.service import LLMService
-    from gobby.memory.fts_search import MemoryFTS5Searcher
     from gobby.memory.services.dedup import DedupService
     from gobby.memory.vectorstore import VectorStore
 
@@ -55,7 +55,7 @@ class MemoryManager:
     Wires storage (LocalMemoryManager + async backend), search (SearchService),
     indexing/lifecycle (IndexingService), cross-references (CrossrefService),
     image ingestion (IngestionService), dedup (DedupService), and the
-    Neo4j knowledge graph (KnowledgeGraphService).
+    FalkorDB knowledge graph (KnowledgeGraphService).
 
     Public API is intentionally broad and stable; this class delegates the
     heavy lifting to the per-concern services above.
@@ -63,18 +63,20 @@ class MemoryManager:
 
     def __init__(
         self,
-        db: DatabaseProtocol,
+        db: HubDatabase,
         config: MemoryConfig,
         llm_service: LLMService | None = None,
         vector_store: VectorStore | None = None,
         embed_fn: Callable[..., Any] | None = None,
         *,
-        neo4j_url: str | None = None,
-        neo4j_auth: str | None = None,
-        neo4j_database: str = "neo4j",
-        neo4j_graph_search: bool = True,
-        neo4j_graph_min_score: float = 0.5,
-        neo4j_rrf_k: int = 60,
+        falkordb_host: str | None = None,
+        falkordb_port: int = 16379,
+        falkordb_password: str | None = None,
+        falkordb_graph_name: str = "gobby_kg",
+        falkordb_graph_search: bool = True,
+        falkordb_graph_min_score: float = 0.5,
+        rrf_k: int = 60,
+        falkordb_rrf_k: int = 60,
         embedding_dim: int = 768,
         collection_prefix: str = "code_symbols_",
         run_db: Callable[..., Awaitable[Any]] | None = None,
@@ -85,12 +87,8 @@ class MemoryManager:
         self._llm_service = llm_service
         self._vector_store = vector_store
         self._embed_fn = embed_fn
-        self._neo4j_graph_search = neo4j_graph_search
-        self._neo4j_graph_min_score = neo4j_graph_min_score
-        self._neo4j_rrf_k = neo4j_rrf_k
 
         self.storage = LocalMemoryManager(db)
-        self._fts_searcher: MemoryFTS5Searcher | None = None
         self._backend: MemoryBackendProtocol = StorageAdapter(self.storage, run_db=run_db)
         self._ingestion_service = IngestionService(
             storage=self.storage,
@@ -99,14 +97,15 @@ class MemoryManager:
         )
         self._background_tasks: set[asyncio.Task[Any]] = set()
 
-        if neo4j_url:
-            self._neo4j_client: Neo4jClient | None = Neo4jClient(
-                url=neo4j_url,
-                auth=neo4j_auth,
-                database=neo4j_database,
+        if falkordb_host:
+            self._falkor_client: FalkorClient | None = FalkorClient(
+                host=falkordb_host,
+                port=falkordb_port,
+                password=falkordb_password,
+                graph_name=falkordb_graph_name,
             )
         else:
-            self._neo4j_client = None
+            self._falkor_client = None
 
         self._embeddings_available: bool | None = None
         self._last_vector_store_warning_at = -VECTORSTORE_WARNING_INTERVAL_SECONDS
@@ -126,14 +125,14 @@ class MemoryManager:
             except Exception as e:
                 logger.warning(f"Failed to initialize DedupService: {e}")
 
-        if llm_service and vector_store and embed_fn and self._neo4j_client:
+        if llm_service and self._falkor_client:
             try:
                 from gobby.prompts.loader import PromptLoader
 
                 provider, model, _ = llm_service.get_provider_for_feature(config.kg)
                 prompt_loader = PromptLoader(db=self.db)
                 self._kg_service = KnowledgeGraphService(
-                    neo4j_client=self._neo4j_client,
+                    falkor_client=self._falkor_client,
                     llm_provider=provider,
                     embed_fn=embed_fn,
                     prompt_loader=prompt_loader,
@@ -142,6 +141,8 @@ class MemoryManager:
                     code_symbol_collection_prefix=collection_prefix,
                     embedding_dim=embedding_dim,
                     model=model,
+                    llm_service=llm_service,
+                    feature_config=config.kg,
                 )
                 logger.debug("KnowledgeGraphService initialized")
             except Exception as e:
@@ -152,11 +153,12 @@ class MemoryManager:
             vector_store=vector_store,
             embed_fn=embed_fn,
             kg_service=self._kg_service,
-            fts_searcher_factory=self._get_fts_searcher,
+            keyword_search=self._keyword_search,
             config=config,
-            neo4j_graph_search=neo4j_graph_search,
-            neo4j_graph_min_score=neo4j_graph_min_score,
-            neo4j_rrf_k=neo4j_rrf_k,
+            falkordb_graph_search=falkordb_graph_search,
+            falkordb_graph_min_score=falkordb_graph_min_score,
+            rrf_k=rrf_k,
+            falkordb_rrf_k=falkordb_rrf_k,
             vector_store_failure_logger=self._log_vector_store_failure,
             run_db=run_db,
         )
@@ -172,36 +174,32 @@ class MemoryManager:
             vector_store=vector_store,
             embed_fn=embed_fn,
             kg_service=self._kg_service,
-            fts_searcher_factory=self._get_fts_searcher,
             crossref_service=self._crossref_service,
             kg_rebuilder=self.rebuild_knowledge_graph,
             run_db=run_db,
         )
 
     async def run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-        """Run memory SQLite work on the daemon DB executor when available."""
+        """Run memory storage work on the daemon DB executor when available."""
         if self._run_db is None:
             return await asyncio.to_thread(func, *args, **kwargs)
         return await self._run_db(func, *args, **kwargs)
 
     async def close(self) -> None:
-        """Close underlying clients (Neo4j httpx.AsyncClient, etc.)."""
-        if self._neo4j_client:
+        """Close underlying graph clients."""
+        if self._falkor_client:
             try:
-                await self._neo4j_client.close()
+                await self._falkor_client.close()
             except Exception as e:
-                logger.warning(f"Failed to close Neo4j client: {e}")
-            self._neo4j_client = None
-            self._kg_service = None
-            self._search_service.kg_service = None
-            self._indexing_service.kg_service = None
+                logger.warning(f"Failed to close FalkorDB client: {e}")
+            self.clear_graph_clients()
 
     def clear_graph_clients(self) -> None:
-        """Disable graph features by clearing Neo4j client and KG service."""
-        self._neo4j_client = None
+        """Disable graph features by clearing FalkorDB client and KG service references."""
+        self._falkor_client = None
         self._kg_service = None
-        self._search_service.kg_service = None
-        self._indexing_service.kg_service = None
+        self._search_service._kg_service = None
+        self._indexing_service._kg_service = None
 
     @property
     def kg_service(self) -> KnowledgeGraphService | None:
@@ -225,17 +223,22 @@ class MemoryManager:
         self._ingestion_service.llm_service = service
 
     @property
-    def neo4j_client(self) -> Neo4jClient | None:
-        """Shared Neo4j client for graph-backed subsystems, when configured."""
-        return self._neo4j_client
+    def falkor_client(self) -> FalkorClient | None:
+        """Shared FalkorDB client for graph-backed subsystems, when configured."""
+        return self._falkor_client
 
-    def _get_fts_searcher(self) -> MemoryFTS5Searcher:
-        """Lazily initialize the SQLite FTS5 searcher."""
-        if self._fts_searcher is None:
-            from gobby.memory.fts_search import MemoryFTS5Searcher
+    def _keyword_search(
+        self,
+        query: str,
+        limit: int,
+        project_id: str | None = None,
+    ) -> list[tuple[str, float]]:
+        """Run dialect-aware keyword search and return ranked memory IDs."""
+        from gobby.search.keyword import pick_search_backend
 
-            self._fts_searcher = MemoryFTS5Searcher(self.db)
-        return self._fts_searcher
+        backend = pick_search_backend(self.db, "memories")
+        hits = backend.search(query, limit, filters={"project_id": project_id})
+        return [(hit.id, hit.score) for hit in hits]
 
     @staticmethod
     def _record_to_memory(record: MemoryRecord) -> Memory:
@@ -361,7 +364,7 @@ class MemoryManager:
         source_session_id: str | None = None,
         tags: list[str] | None = None,
     ) -> Memory:
-        """Store a new memory in SQLite and VectorStore."""
+        """Store a new memory in storage and VectorStore."""
         normalized_content = content.strip()
         if await self._backend.content_exists(normalized_content, project_id):
             existing_record = await self._backend.get_memory_by_content(
@@ -484,7 +487,7 @@ class MemoryManager:
         tags_none: list[str] | None = None,
         min_score: float | None = None,
     ) -> list[Memory]:
-        """Retrieve memories via VectorStore + optional Neo4j graph search."""
+        """Retrieve memories via VectorStore + optional FalkorDB graph search."""
         return await self._search_service.search(
             query=query,
             project_id=project_id,
@@ -517,7 +520,7 @@ class MemoryManager:
         min_score: float = 0.5,
         project_id: str | None = None,
     ) -> list[str]:
-        """Search Neo4j graph for memory IDs via entity vector similarity."""
+        """Search FalkorDB graph for memory IDs via entity vector similarity."""
         return await self._search_service._search_graph_for_memories(
             query_embedding=query_embedding,
             limit=limit,
@@ -525,16 +528,16 @@ class MemoryManager:
             project_id=project_id,
         )
 
-    async def _fts5_ranked(
+    async def _keyword_ranked(
         self,
         query: str,
         limit: int,
         project_id: str | None,
     ) -> list[str]:
-        """Run FTS5 keyword search and return ranked memory IDs for RRF merge."""
-        return await self._search_service._fts5_ranked(query, limit, project_id)
+        """Run keyword search and return ranked memory IDs for RRF merge."""
+        return await self._search_service._keyword_ranked(query, limit, project_id)
 
-    async def _fts5_fallback(
+    async def _keyword_fallback(
         self,
         query: str,
         limit: int,
@@ -544,13 +547,13 @@ class MemoryManager:
         tags_any: list[str] | None,
         tags_none: list[str] | None,
     ) -> list[Memory]:
-        """FTS5 keyword search fallback when vector search returns nothing."""
-        return await self._search_service._fts5_fallback(
+        """Keyword search fallback when vector search returns nothing."""
+        return await self._search_service._keyword_fallback(
             query, limit, project_id, memory_type, tags_all, tags_any, tags_none
         )
 
     async def delete_memory(self, memory_id: str) -> bool:
-        """Delete a memory from SQLite, VectorStore, and Neo4j."""
+        """Delete a memory from storage, VectorStore, and FalkorDB."""
         existing_memory = self.get_memory(memory_id)
         result = self.storage.delete_memory(memory_id)
         if result and self._vector_store:
@@ -588,7 +591,7 @@ class MemoryManager:
         return result
 
     async def reconcile_stores(self, dry_run: bool = False) -> dict[str, Any]:
-        """Reconcile Qdrant and Neo4j with SQLite source of truth."""
+        """Reconcile Qdrant and FalkorDB with memory storage."""
         return await self._indexing_service.reconcile_stores(dry_run=dry_run)
 
     def count_memories(self, project_id: str | None = None) -> int:
@@ -605,7 +608,7 @@ class MemoryManager:
         tags_any: list[str] | None = None,
         tags_none: list[str] | None = None,
     ) -> list[Memory]:
-        """List memories with optional filtering (SQLite only)."""
+        """List memories with optional filtering."""
         return self.storage.list_memories(
             project_id=project_id,
             memory_type=memory_type,
@@ -685,7 +688,7 @@ class MemoryManager:
         content: str | None = None,
         tags: list[str] | None = None,
     ) -> Memory:
-        """Update an existing memory in SQLite and re-embed if content changed."""
+        """Update an existing memory and re-embed if content changed."""
         result = self.storage.update_memory(
             memory_id=memory_id,
             content=content,
@@ -733,7 +736,7 @@ class MemoryManager:
         return await self._indexing_service.clear_indices(project_id=project_id)
 
     async def rebuild_indices(self, project_id: str | None = None) -> dict[str, Any]:
-        """Rebuild all secondary indices from the SQLite source of truth."""
+        """Rebuild all secondary indices from memory storage."""
         return await self._indexing_service.rebuild_indices(project_id=project_id)
 
     async def invalidate_all(self, project_id: str | None = None) -> dict[str, Any]:
@@ -782,12 +785,20 @@ class MemoryManager:
         )
 
     async def clear_knowledge_graph(self, project_id: str | None = None) -> dict[str, Any]:
-        """Clear the Neo4j knowledge-graph projection and requeue affected memories."""
+        """Clear the FalkorDB knowledge-graph projection and requeue affected memories."""
         if not self._kg_service:
             return {"success": False, "error": "KnowledgeGraphService not initialized"}
         cleared = await self._kg_service.clear_graph(project_id=project_id)
         pending = await self.run_db(self.storage.mark_pending_graphs, project_id)
         return {"success": True, "memories_marked_pending": pending, **cleared}
+
+    async def get_knowledge_graph_counts(self, project_id: str | None = None) -> dict[str, Any]:
+        """Return actual FalkorDB knowledge-graph counts."""
+        if self._kg_service:
+            return await self._kg_service.get_graph_counts(project_id=project_id)
+        if self._falkor_client:
+            return await self._falkor_client.get_graph_counts(project_id=project_id)
+        return {"success": False, "error": "FalkorDB not configured"}
 
     async def rebuild_knowledge_graph(
         self,
@@ -795,7 +806,7 @@ class MemoryManager:
         limit: int = MAX_REINDEX_LIMIT,
         progress_callback: Callable[[dict[str, Any]], Awaitable[None] | None] | None = None,
     ) -> dict[str, Any]:
-        """Rebuild the Neo4j knowledge-graph projection from SQLite memories."""
+        """Rebuild the FalkorDB knowledge-graph projection from stored memories."""
         if not self._kg_service:
             return {"success": False, "error": "KnowledgeGraphService not initialized"}
 
@@ -803,6 +814,11 @@ class MemoryManager:
             all_memories = (await self._fetch_all_project_memories(project_id))[:limit]
         else:
             all_memories = await self.run_db(self.list_memories, None, None, limit)
+
+        memories_marked_pending = 0
+        for memory in all_memories:
+            await self.run_db(self.storage.mark_pending_graph, memory.id)
+            memories_marked_pending += 1
 
         status_counts = {status.value: 0 for status in KnowledgeGraphStatus}
         errors = 0
@@ -822,6 +838,7 @@ class MemoryManager:
                 "memories_total": len(all_memories),
                 "memories_completed": kg_done,
                 "memories_marked_processed": processed,
+                "memories_marked_pending": memories_marked_pending,
                 "status_counts": dict(status_counts),
                 "errors": errors,
                 "failed_memories": list(failed_memories),
@@ -832,11 +849,18 @@ class MemoryManager:
 
         async def _rebuild_kg(mem: Memory) -> KnowledgeGraphResult:
             nonlocal errors, kg_done, processed
-            result = await kg_service.add_to_graph(
-                mem.content,
-                memory_id=mem.id,
-                project_id=mem.project_id,
-            )
+            try:
+                result = await kg_service.add_to_graph(
+                    mem.content,
+                    memory_id=mem.id,
+                    project_id=mem.project_id,
+                )
+            except LLMProviderCancellation as e:
+                logger.info("KG extraction cancelled for memory %s: %s", mem.id, e)
+                result = KnowledgeGraphResult(
+                    KnowledgeGraphStatus.RETRYABLE_FAILURE,
+                    errors=[str(e) or e.__class__.__name__],
+                )
             async with kg_done_lock:
                 status_counts[result.status.value] += 1
                 kg_done += 1
@@ -891,6 +915,7 @@ class MemoryManager:
         return {
             "success": True,
             "memories_processed": len(all_memories),
+            "memories_marked_pending": memories_marked_pending,
             "memories_marked_processed": processed,
             "status_counts": status_counts,
             "memories_extracted": status_counts[KnowledgeGraphStatus.SUCCESS.value],
@@ -904,14 +929,17 @@ class MemoryManager:
         limit: int = DEFAULT_GRAPH_LIMIT,
         project_id: str | None = None,
     ) -> dict[str, Any] | None:
-        """Get the Neo4j entity graph for visualization."""
+        """Get the FalkorDB entity graph for visualization."""
         if self._kg_service:
             return await self._kg_service.get_entity_graph(limit=limit, project_id=project_id)
-        if self._neo4j_client:
+        if self._falkor_client:
             try:
-                return await self._neo4j_client.get_entity_graph(limit=limit, project_id=project_id)
+                return await self._falkor_client.get_entity_graph(
+                    limit=limit,
+                    project_id=project_id,
+                )
             except Exception as e:
-                logger.warning(f"Neo4j query failed: {e}")
+                logger.warning(f"FalkorDB query failed: {e}")
                 return None
         return None
 
@@ -920,20 +948,20 @@ class MemoryManager:
         entity_key: str,
         project_id: str | None = None,
     ) -> dict[str, Any] | None:
-        """Get neighbors for a single Neo4j entity."""
+        """Get neighbors for a single FalkorDB entity."""
         if self._kg_service:
             return await self._kg_service.get_entity_neighbors(
                 entity_key,
                 project_id=project_id,
             )
-        if self._neo4j_client:
+        if self._falkor_client:
             try:
-                return await self._neo4j_client.get_entity_neighbors(
+                return await self._falkor_client.get_entity_neighbors(
                     entity_key,
                     project_id=project_id,
                 )
             except Exception as e:
-                logger.warning(f"Neo4j query failed: {e}")
+                logger.warning(f"FalkorDB query failed: {e}")
                 return None
         return None
 

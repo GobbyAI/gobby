@@ -20,7 +20,7 @@ __all__ = ["AgentRunner"]
 
 if TYPE_CHECKING:
     from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.sessions import SessionManager
     from gobby.workflows.hooks import WorkflowHookHandler
 
@@ -39,7 +39,7 @@ class AgentRunner:
 
     def __init__(
         self,
-        db: DatabaseProtocol,
+        db: HubDatabase,
         session_storage: SessionManager,
         max_agent_depth: int = 1,
     ):

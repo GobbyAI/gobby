@@ -9,11 +9,11 @@ from typing import TYPE_CHECKING, Any, ClassVar, Protocol
 from gobby.storage.session_models import Session
 
 if TYPE_CHECKING:
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
 
 
 class _ManagerState(Protocol):
-    db: DatabaseProtocol
+    db: HubDatabase
     _VALID_CHAT_MODES: ClassVar[set[str]]
     _VALID_SESSION_TYPES: ClassVar[set[str]]
     _VALID_TITLE_SOURCES: ClassVar[set[str]]
@@ -105,7 +105,7 @@ class _BulkUpdateMixin:
         if project_id is not None:
             values["project_id"] = project_id
         if sandbox_enabled is not None:
-            values["sandbox_enabled"] = int(sandbox_enabled)
+            values["sandbox_enabled"] = bool(sandbox_enabled)
         if sandbox_policy_hash is not None:
             values["sandbox_policy_hash"] = sandbox_policy_hash
 

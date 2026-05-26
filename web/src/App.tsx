@@ -86,8 +86,10 @@ export default function App() {
     isStreaming,
     isThinking,
     isLoadingMessages,
+    transportError,
     contextUsage,
     sendMessage,
+    ensureMainSession,
     sendMode,
     sendAttachedSessionMode,
     sendProjectChange,
@@ -123,6 +125,7 @@ export default function App() {
     attachedSessionMeta,
     sessionInteractionMode,
     proxyDeliveryNotice,
+    clearTransportError,
     wsRef,
     handleVoiceMessageRef,
     handleBinaryMessageRef,
@@ -152,6 +155,23 @@ export default function App() {
     attachedSessionId && sessionInteractionMode === "proxy"
       ? attachedSessionId
       : conversationId;
+  const ensureVoiceConversationId = useCallback(async () => {
+    if (attachedSessionId && sessionInteractionMode === "proxy") {
+      return attachedSessionId;
+    }
+    return ensureMainSession({
+      projectId: projectIdRef.current,
+      provider: selectedProvider,
+      model: settings.model,
+    });
+  }, [
+    attachedSessionId,
+    ensureMainSession,
+    projectIdRef,
+    selectedProvider,
+    sessionInteractionMode,
+    settings.model,
+  ]);
   const voice = useVoice(
     wsRef,
     voiceConversationId,
@@ -163,6 +183,7 @@ export default function App() {
       voiceInputMode: settings.voiceInputMode,
     },
     isConnected,
+    ensureVoiceConversationId,
   );
   const mcp = useMcp();
   const skillsHook = useSkills();
@@ -671,6 +692,7 @@ export default function App() {
   }
 
   const navItems = createAppNavItems();
+  const visibleToastMessage = toastMessage ?? transportError?.message ?? null;
 
   return (
     <div className="app">
@@ -942,14 +964,17 @@ export default function App() {
         }}
       />
 
-      {toastMessage && (
+      {visibleToastMessage && (
         <button
           type="button"
           className="app-toast"
-          onClick={() => setToastMessage(null)}
-          aria-label={`Dismiss notification: ${toastMessage}`}
+          onClick={() => {
+            setToastMessage(null);
+            clearTransportError();
+          }}
+          aria-label={`Dismiss notification: ${visibleToastMessage}`}
         >
-          {toastMessage}
+          {visibleToastMessage}
         </button>
       )}
     </div>

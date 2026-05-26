@@ -237,9 +237,9 @@ class LLMService:
     ) -> str:
         """Call generate_text for a feature config with tier-based fallback.
 
-        When the primary provider is ``"local"`` and the call fails, this
-        method automatically retries with the Claude provider using the
-        tier-appropriate model (haiku / sonnet / opus).
+        When the primary provider is ``"local"`` and the call fails with a
+        local feature error, this method automatically retries with the Claude
+        provider using the tier-appropriate model (haiku / sonnet / opus).
 
         Args:
             feature_config: A FeatureDefaultConfig (or subclass) with
@@ -260,21 +260,15 @@ class LLMService:
                 max_tokens,
                 caller=caller,
             )
-        except Exception as e:
+        except (ValueError, RuntimeError) as e:
             if provider.provider_name != "local":
                 raise
 
-            # Tier-based fallback to Claude
-            from gobby.config.feature_base import TIER_FALLBACK_MODEL, ModelTier
-
-            tier = getattr(feature_config, "tier", ModelTier.LOW)
-            fallback_model = TIER_FALLBACK_MODEL[tier]
-            logger.warning(
-                "Local provider failed (%s), falling back to claude/%s",
+            fallback, fallback_model = self._local_fallback_provider(
+                feature_config,
                 e,
-                fallback_model,
+                operation="text",
             )
-            fallback = self.get_provider("claude")
             return await fallback.generate_text(
                 prompt,
                 system_prompt,
@@ -282,6 +276,78 @@ class LLMService:
                 max_tokens,
                 caller=caller,
             )
+
+    async def call_json_feature(
+        self,
+        feature_config: Any,
+        prompt: str,
+        system_prompt: str | None = None,
+        *,
+        caller: str | None = None,
+    ) -> dict[str, Any]:
+        """Call JSON generation for an LLM-backed feature.
+
+        Uses get_provider_for_feature(feature_config) to select provider and model, then calls
+        provider.generate_json(prompt, system_prompt, model, caller=caller). max_tokens is not
+        configurable here because generate_json uses provider-internal token limits.
+
+        Args:
+            feature_config: Feature config used by get_provider_for_feature.
+            prompt: User prompt to send to the selected provider.
+            system_prompt: Optional system prompt for JSON generation.
+            caller: Optional caller identifier for logging/tracing.
+
+        Returns:
+            Parsed JSON object as a dict.
+
+        When the selected provider is "local" and it raises a local feature error,
+        falls back to claude using
+        TIER_FALLBACK_MODEL[getattr(feature_config, "tier", ModelTier.LOW)] via
+        get_provider("claude").
+        """
+        provider, model, _ = self.get_provider_for_feature(feature_config)
+        try:
+            return await provider.generate_json(
+                prompt,
+                system_prompt,
+                model,
+                caller=caller,
+            )
+        except (ValueError, RuntimeError) as e:
+            if provider.provider_name != "local":
+                raise
+
+            fallback, fallback_model = self._local_fallback_provider(
+                feature_config,
+                e,
+                operation="JSON",
+            )
+            return await fallback.generate_json(
+                prompt,
+                system_prompt,
+                fallback_model,
+                caller=caller,
+            )
+
+    def _local_fallback_provider(
+        self,
+        feature_config: Any,
+        error: Exception,
+        *,
+        operation: str,
+    ) -> tuple["LLMProvider", str]:
+        """Return Claude fallback provider/model for a failed local feature call."""
+        from gobby.config.feature_base import TIER_FALLBACK_MODEL, ModelTier
+
+        tier = getattr(feature_config, "tier", ModelTier.LOW)
+        fallback_model = TIER_FALLBACK_MODEL[tier]
+        logger.warning(
+            "Local provider %s call failed (%s), falling back to claude/%s",
+            operation,
+            error,
+            fallback_model,
+        )
+        return self.get_provider("claude"), fallback_model
 
     @property
     def enabled_providers(self) -> list[str]:

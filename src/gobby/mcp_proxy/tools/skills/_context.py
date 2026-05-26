@@ -15,7 +15,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.skills import LocalSkillManager, SkillChangeNotifier
 
 if TYPE_CHECKING:
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -34,7 +34,7 @@ class RunDb(Protocol):
 class SkillsContext:
     """Shared dependencies for skill tool handlers."""
 
-    db: DatabaseProtocol
+    db: HubDatabase
     storage: LocalSkillManager
     notifier: SkillChangeNotifier
     session_manager: SessionManager
@@ -43,17 +43,17 @@ class SkillsContext:
     loader: SkillLoader
     project_id: str | None
     hub_manager: HubManager | None
-    run_db: RunDb | None = None
+    db_runner: RunDb | None = None
 
-    async def run_sqlite(
+    async def run_db(
         self,
         func: Callable[P, R],
         *args: P.args,
         **kwargs: P.kwargs,
     ) -> R:
-        if self.run_db is None:
+        if self.db_runner is None:
             return await asyncio.to_thread(func, *args, **kwargs)
-        return await self.run_db(func, *args, **kwargs)
+        return await self.db_runner(func, *args, **kwargs)
 
     async def get_active_skill_names(self, session_id: str) -> list[str] | None:
         """Return active skill names recorded for a session, when available."""
@@ -67,7 +67,7 @@ class SkillsContext:
             variables = sv_mgr.get_variables(resolved_id)
             return variables.get("_active_skill_names") if variables else None
 
-        names = await self.run_sqlite(_get_active_names)
+        names = await self.run_db(_get_active_names)
         if not isinstance(names, list) or not all(isinstance(name, str) for name in names):
             return None
         return names

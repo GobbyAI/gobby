@@ -22,13 +22,13 @@ if TYPE_CHECKING:
 
 import click
 
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 
 
 def _get_manager() -> LocalWorkflowDefinitionManager:
     """Get workflow definition manager."""
-    db = LocalDatabase()
+    db = open_runtime_hub_database(apply_migrations=False)
     return LocalWorkflowDefinitionManager(db)
 
 
@@ -36,7 +36,7 @@ def _get_audit_manager() -> WorkflowAuditManager:
     """Get workflow audit manager."""
     from gobby.storage.workflow_audit import WorkflowAuditManager
 
-    return WorkflowAuditManager()
+    return WorkflowAuditManager(open_runtime_hub_database(apply_migrations=False))
 
 
 def _parse_rule_body(row: Any) -> dict[str, Any]:
@@ -212,7 +212,7 @@ def import_rules(file: str) -> None:
 
     from gobby.workflows.sync_rules import sync_bundled_rules
 
-    db = LocalDatabase()
+    db = open_runtime_hub_database(apply_migrations=False)
     result = sync_bundled_rules(db, rules_path=path.parent)
 
     if result.get("errors"):

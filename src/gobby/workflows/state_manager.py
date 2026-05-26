@@ -4,7 +4,7 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase, SessionVariableMutation
 
 from .definitions import WorkflowInstance
 
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 class WorkflowInstanceManager:
     """Manages CRUD operations for workflow instances (multi-workflow per session)."""
 
-    def __init__(self, db: DatabaseProtocol):
+    def __init__(self, db: HubDatabase):
         self.db = db
 
     def get_instance(self, session_id: str, workflow_name: str) -> WorkflowInstance | None:
@@ -30,9 +30,9 @@ class WorkflowInstanceManager:
     def get_active_instances(self, session_id: str) -> list[WorkflowInstance]:
         """Get all enabled workflow instances for a session, sorted by priority."""
         rows = self.db.fetchall(
-            "SELECT * FROM workflow_instances WHERE session_id = ? AND enabled = 1 "
+            "SELECT * FROM workflow_instances WHERE session_id = ? AND enabled = ? "
             "ORDER BY priority ASC",
-            (session_id,),
+            (session_id, True),
         )
         return [self._row_to_instance(row) for row in rows]
 
@@ -61,14 +61,14 @@ class WorkflowInstanceManager:
                 instance.id,
                 instance.session_id,
                 instance.workflow_name,
-                1 if instance.enabled else 0,
+                instance.enabled,
                 instance.priority,
                 instance.current_step,
                 instance.step_entered_at.isoformat() if instance.step_entered_at else None,
                 instance.step_action_count,
                 instance.total_action_count,
                 json.dumps(instance.variables),
-                1 if instance.context_injected else 0,
+                instance.context_injected,
                 now,
                 now,
             ),
@@ -96,7 +96,7 @@ class WorkflowInstanceManager:
         self.db.execute(
             "UPDATE workflow_instances SET enabled = ?, updated_at = ? "
             "WHERE session_id = ? AND workflow_name = ?",
-            (1 if enabled else 0, now, session_id, workflow_name),
+            (enabled, now, session_id, workflow_name),
         )
 
     @staticmethod
@@ -139,7 +139,7 @@ class SessionVariableManager:
 
     _DEFAULTS_CACHE_TTL = 10.0  # seconds
 
-    def __init__(self, db: DatabaseProtocol):
+    def __init__(self, db: HubDatabase):
         self.db = db
         self._defaults_cache: dict[str, Any] | None = None
         self._defaults_cache_time: float = 0.0
@@ -179,7 +179,8 @@ class SessionVariableManager:
 
         rows = self.db.fetchall(
             "SELECT name, definition_json FROM workflow_definitions "
-            "WHERE workflow_type = 'variable' AND enabled = 1 AND source = 'installed'",
+            "WHERE workflow_type = 'variable' AND enabled = ? AND source = 'installed'",
+            (True,),
         )
         defaults: dict[str, Any] = {}
         for row in rows:
@@ -210,7 +211,7 @@ class SessionVariableManager:
         if not updates:
             return True
         now = datetime.now(UTC).isoformat()
-        with self.db.transaction_immediate() as conn:
+        with self.db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
             row = conn.execute(
                 "SELECT variables FROM session_variables WHERE session_id = ?",
                 (session_id,),
@@ -248,7 +249,7 @@ class SessionVariableManager:
         if not values:
             return True
         now = datetime.now(UTC).isoformat()
-        with self.db.transaction_immediate() as conn:
+        with self.db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
             row = conn.execute(
                 "SELECT variables FROM session_variables WHERE session_id = ?",
                 (session_id,),
@@ -260,6 +261,56 @@ class SessionVariableManager:
             existing = set(stored)
             existing.update(values)
             current_vars[name] = sorted(existing)
+            if row:
+                conn.execute(
+                    "UPDATE session_variables SET variables = ?, updated_at = ? "
+                    "WHERE session_id = ?",
+                    (json.dumps(current_vars), now, session_id),
+                )
+            else:
+                conn.execute(
+                    "INSERT INTO session_variables (session_id, variables, updated_at) "
+                    "VALUES (?, ?, ?)",
+                    (session_id, json.dumps(current_vars), now),
+                )
+        return True
+
+    def append_to_set_variable_and_conditional_merge(
+        self,
+        session_id: str,
+        name: str,
+        values: list[str],
+        *,
+        condition_name: str,
+        updates: dict[str, Any],
+    ) -> bool:
+        """Append set values and conditionally merge updates in one transaction.
+
+        The condition is evaluated against the same row snapshot that receives
+        the append, so edit tracking and evidence reset cannot interleave.
+        """
+        if not values and not updates:
+            return True
+
+        now = datetime.now(UTC).isoformat()
+        with self.db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
+            row = conn.execute(
+                "SELECT variables FROM session_variables WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+            current_vars = json.loads(row["variables"]) if row and row["variables"] else {}
+
+            if values:
+                stored = current_vars.get(name, [])
+                if not isinstance(stored, list):
+                    stored = [stored] if stored else []
+                existing = set(stored)
+                existing.update(values)
+                current_vars[name] = sorted(existing)
+
+            if current_vars.get(condition_name) is True:
+                current_vars.update(updates)
+
             if row:
                 conn.execute(
                     "UPDATE session_variables SET variables = ?, updated_at = ? "

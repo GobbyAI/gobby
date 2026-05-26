@@ -242,7 +242,7 @@ class TestCreateChatSessionInner:
 
             assert mock_session.resume_session_id == "conv-res"
             assert mock_session.chat_mode == "normal"
-            assert mock_session._accumulated_output_tokens == 500
+            mock_session.set_accumulated_output_tokens.assert_called_once_with(500)
             mixin.session_manager.update_model.assert_called_once_with("db-id-123", "sonnet")
 
     @pytest.mark.asyncio

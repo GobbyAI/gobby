@@ -21,6 +21,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _mcp_manager_is_connected(mcp_manager: Any, name: str) -> bool:
+    is_connected = getattr(mcp_manager, "is_connected", None)
+    if callable(is_connected):
+        return bool(mcp_manager.is_connected(name))
+
+    connections = getattr(mcp_manager, "connections", None)
+    return isinstance(connections, dict) and name in connections
+
+
 async def list_mcp_servers(
     internal_manager: "InternalToolRegistryManager | None" = Depends(get_internal_manager),
     mcp_manager: "MCPClientManager | None" = Depends(get_mcp_manager),
@@ -56,7 +65,7 @@ async def list_mcp_servers(
             for config in mcp_manager.server_configs:
                 health = mcp_manager.health.get(config.name)
                 state = health.state.value if health else "unknown"
-                is_connected = config.name in mcp_manager.connections
+                is_connected = _mcp_manager_is_connected(mcp_manager, config.name)
                 if is_connected:
                     connected_count += 1
                 entry: dict[str, Any] = {

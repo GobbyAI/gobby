@@ -29,8 +29,11 @@ pytestmark = pytest.mark.unit
 def _mock_ext_services_and_prompts():
     """Prevent real Docker service installers and interactive API-key prompts."""
     with (
+        patch("gobby.cli.install.run_daemon_setup"),
         patch("gobby.cli.install._run_qdrant_install"),
-        patch("gobby.cli.install._run_neo4j_install"),
+        patch("gobby.cli.install._run_falkordb_install"),
+        patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=MagicMock()),
+        patch("gobby.cli.install.SecretStore"),
         patch(
             "gobby.cli._install_prompts._prompt_api_keys",
             return_value={"stored": 0, "already_configured": 0, "env_found": 0},
@@ -61,6 +64,7 @@ class TestEnsureDaemonConfig:
         bootstrap_path = temp_dir / ".gobby" / "bootstrap.yaml"
         bootstrap_path.parent.mkdir(parents=True, exist_ok=True)
         bootstrap_path.write_text("daemon_port: 60887\n")
+        bootstrap_path.chmod(0o600)
 
         with patch.object(Path, "expanduser", return_value=bootstrap_path):
             result = _ensure_daemon_config()
@@ -75,6 +79,7 @@ class TestEnsureDaemonConfig:
         shared_bootstrap = temp_dir / "install" / "shared" / "config" / "bootstrap.yaml"
         shared_bootstrap.parent.mkdir(parents=True, exist_ok=True)
         shared_bootstrap.write_text("daemon_port: 60887\nbind_host: localhost\n")
+        shared_bootstrap.chmod(0o600)
 
         with (
             patch.object(Path, "expanduser", return_value=bootstrap_path),
@@ -226,12 +231,20 @@ class TestInstallCommand:
 
     @patch("gobby.cli.install._is_claude_code_installed")
     @patch("gobby.cli.install._is_gemini_cli_installed")
+    @patch("gobby.cli.install._is_grok_cli_installed")
+    @patch("gobby.cli.install._is_agy_cli_installed")
+    @patch("gobby.cli.install._is_qwen_cli_installed")
+    @patch("gobby.cli.install._is_droid_cli_installed")
     @patch("gobby.cli.install._is_codex_cli_installed")
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.install.load_full_config_from_db")
     def test_install_no_clis_detected_no_git(
         self,
         mock_load_config: MagicMock,
         mock_codex: MagicMock,
+        mock_droid: MagicMock,
+        mock_qwen: MagicMock,
+        mock_agy: MagicMock,
+        mock_grok: MagicMock,
         mock_gemini: MagicMock,
         mock_claude: MagicMock,
         runner: CliRunner,
@@ -241,7 +254,11 @@ class TestInstallCommand:
         mock_load_config.return_value = MagicMock()
         mock_claude.return_value = False
         mock_gemini.return_value = False
+        mock_grok.return_value = False
+        mock_agy.return_value = False
+        mock_qwen.return_value = False
         mock_codex.return_value = False
+        mock_droid.return_value = False
 
         with runner.isolated_filesystem(temp_dir=str(temp_dir)):
             result = runner.invoke(cli, ["install"])
@@ -506,7 +523,7 @@ class TestInstallCommand:
             patch("gobby.cli.install.install_codex", return_value=codex_result) as mock_codex,
             patch("gobby.cli.install._run_embedding_install") as mock_embedding,
             patch("gobby.cli.install._run_qdrant_install") as mock_qdrant,
-            patch("gobby.cli.install._run_neo4j_install") as mock_neo4j,
+            patch("gobby.cli.install._run_falkordb_install") as mock_falkordb,
         ):
             with runner.isolated_filesystem(temp_dir=str(temp_dir)):
                 result = runner.invoke(cli, ["install", "--codex", "--no-interactive"])
@@ -517,7 +534,7 @@ class TestInstallCommand:
         mock_codex.assert_called_once()
         mock_embedding.assert_not_called()
         mock_qdrant.assert_not_called()
-        mock_neo4j.assert_not_called()
+        mock_falkordb.assert_not_called()
 
     @patch("gobby.cli.install._ensure_daemon_config")
     @patch("gobby.cli.install.install_git_hooks")
@@ -671,7 +688,10 @@ class TestInstallCommand:
             "skipped": [],
         }
 
-        with runner.isolated_filesystem(temp_dir=str(temp_dir)):
+        with (
+            runner.isolated_filesystem(temp_dir=str(temp_dir)),
+            patch("gobby.cli.install.run_daemon_setup"),
+        ):
             # Create .git directory to trigger git hooks install
             Path(".git").mkdir()
             result = runner.invoke(cli, ["install", "--all"])

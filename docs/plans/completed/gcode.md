@@ -4,9 +4,9 @@
 
 Subagents (Claude Code Agent tool) can't use MCP — they only have Bash, Read, Write, Grep, Glob. Today they have zero access to gobby's code graph, symbol search, or blast radius analysis.
 
-`gcode` is a standalone Rust CLI that provides the same functionality as the `gobby-code` MCP server, but invocable via Bash. It reads and writes gobby's databases directly — SQLite for symbols/search, Neo4j for the code graph, Qdrant for semantic search. It does NOT need the gobby daemon running.
+`gcode` is a standalone Rust CLI that provides the same functionality as the `gobby-code` MCP server, but invocable via Bash. It reads and writes gobby's databases directly — PostgreSQL for symbols/search, Neo4j for the code graph, Qdrant for semantic search. It does NOT need the gobby daemon running.
 
-**What "depends on gobby's infrastructure" means**: gcode uses the same `gobby-hub.db`, the same Neo4j instance, the same Qdrant instance. It shares the data layer. But it's a standalone process that can index, search, and query the graph independently.
+**What "depends on gobby's infrastructure" means**: gcode uses the same `PostgreSQL hub`, the same Neo4j instance, the same Qdrant instance. It shares the data layer. But it's a standalone process that can index, search, and query the graph independently.
 
 ## Decisions
 
@@ -15,7 +15,7 @@ Subagents (Claude Code Agent tool) can't use MCP — they only have Bash, Read, 
 | Binary name | `gcode` | Short, `g`-prefixed like `gsqz` |
 | Repository | In-repo at `rust/gcode/` | Tightly coupled to gobby's schema, secrets, config — must ship together |
 | Daemon dependency | None — fully standalone | The whole point is subagent access without daemon |
-| SQLite | Direct read/write (rusqlite) | Symbols, FTS5 search, file metadata |
+| PostgreSQL | Direct read/write (ruPostgreSQL) | Symbols, FTS5 search, file metadata |
 | Neo4j | Direct HTTP API (reqwest) | Graph: callers, imports, blast-radius |
 | Qdrant | Rust-native direct storage (qdrant-client crate) | Opens `~/.gobby/services/qdrant/` directly, no server needed |
 | Embeddings | llama-cpp-2 crate (GGUF, same model as Python) | Bit-identical to Python's llama-cpp-python output, fastembed has nomic normalization/quantization bugs |
@@ -66,7 +66,7 @@ gcode CLI (Rust, ~9-15ms startup)
     ├── Config
     │   └── ~/.gobby/bootstrap.yaml → DB path → config_store → service URLs
     │
-    ├── SQLite (rusqlite, read/write)
+    ├── PostgreSQL (ruPostgreSQL, read/write)
     │   ├── code_symbols / code_symbols_fts      → search, outline, symbol
     │   ├── code_content_chunks / code_content_fts → search-content
     │   ├── code_indexed_files / _projects        → status, tree, stale detection
@@ -76,7 +76,7 @@ gcode CLI (Rust, ~9-15ms startup)
     │   ├── 16 language grammars
     │   ├── Symbol/import/call extraction
     │   ├── Incremental indexing (hash-based stale detection)
-    │   └── Writes to SQLite + Neo4j
+    │   └── Writes to PostgreSQL + Neo4j
     │
     ├── Neo4j HTTP API (reqwest)
     │   ├── POST /db/{database}/query/v2    → Cypher queries
@@ -101,7 +101,7 @@ Summaries improve search quality (indexed in FTS5) and help agents understand sy
 
 ### What gcode Replaces
 
-gcode **replaces** the gobby-code MCP server entirely. It becomes the sole accessor of code index data (SQLite, Neo4j, Qdrant). The Python `code_index/` module can be retired once gcode is stable.
+gcode **replaces** the gobby-code MCP server entirely. It becomes the sole accessor of code index data (PostgreSQL, Neo4j, Qdrant). The Python `code_index/` module can be retired once gcode is stable.
 
 ### Project Layout
 
@@ -112,7 +112,7 @@ rust/gcode/
   main.rs              -- clap CLI, dispatch
   config.rs            -- bootstrap.yaml, config_store, project detection
   secrets.rs           -- Fernet decryption, $secret:NAME resolution, machine_id + salt
-  db.rs                -- rusqlite connection to gobby-hub.db
+  db.rs                -- ruPostgreSQL connection to PostgreSQL hub
   neo4j.rs             -- Neo4j HTTP client (Cypher queries, auth)
   commands/
     index.rs           -- full/incremental indexing
@@ -145,7 +145,7 @@ File System
   → walker.rs (ignore crate, .gitignore-aware)
   → hasher.rs (SHA256) → compare with code_indexed_files.content_hash
   → parser.rs (tree-sitter) → Symbol, ImportRelation, CallRelation
-  → db.rs (rusqlite) → write to code_symbols, code_indexed_files, code_content_chunks
+  → db.rs (ruPostgreSQL) → write to code_symbols, code_indexed_files, code_content_chunks
   → neo4j.rs → write CALLS, IMPORTS, DEFINES edges
   → semantic.rs (llama-cpp-2 GGUF → Qdrant) → write symbol embeddings
 ```
@@ -165,8 +165,8 @@ Query string
 
 gcode replicates the daemon's config chain, including secret decryption:
 
-1. Read `~/.gobby/bootstrap.yaml` → `database_path` (default: `~/.gobby/gobby-hub.db`)
-2. Open SQLite DB (read-only for config)
+1. Read `~/.gobby/bootstrap.yaml` → `database_url` (default: `~/.gobby/PostgreSQL hub`)
+2. Open PostgreSQL DB (read-only for config)
 3. Read `config_store` table → persistence settings:
    - `memory.neo4j_url`, `memory.neo4j_auth`, `memory.neo4j_database`
    - `memory.qdrant_url`, `memory.qdrant_api_key`
@@ -174,7 +174,7 @@ gcode replicates the daemon's config chain, including secret decryption:
    - Read `~/.gobby/machine_id` (plain text)
    - Read `~/.gobby/.secret_salt` (16 raw bytes)
    - PBKDF2-HMAC-SHA256 (600,000 iterations, 32-byte key) → base64url → Fernet key
-   - Decrypt `encrypted_value` from `secrets` table in `gobby-hub.db`
+   - Decrypt `encrypted_value` from `secrets` table in `PostgreSQL hub`
 5. Resolve `${VAR}` patterns: SecretStore first, then env vars
 6. Env var overrides: `GOBBY_NEO4J_URL`, etc.
 
@@ -195,7 +195,7 @@ Source: `src/gobby/storage/secrets.py`, `src/gobby/utils/machine_id.py`, `src/go
 | Neo4j | Yes | Graph commands return `[]` with warning. Search loses graph boost. |
 | Qdrant storage | Yes | Search loses semantic boost. FTS5 + graph still works. |
 | GGUF model | Not downloaded | Search loses semantic boost. FTS5 + graph still works. Warning printed. |
-| SQLite | No index | `gcode search` returns nothing. `gcode index` creates it. |
+| PostgreSQL | No index | `gcode search` returns nothing. `gcode index` creates it. |
 
 ### UUID5 Parity (Critical)
 
@@ -203,9 +203,9 @@ Symbol IDs must match Python. Namespace: `c0de1de0-0000-4000-8000-000000000000`,
 
 Source: `src/gobby/code_index/models.py:12,49-52`
 
-### SQLite Concurrency
+### PostgreSQL Concurrency
 
-gcode shares `gobby-hub.db` with the daemon. Both may read/write concurrently.
+gcode shares `PostgreSQL hub` with the daemon. Both may read/write concurrently.
 
 - Enable WAL mode (already set by daemon)
 - Use `SQLITE_OPEN_READ_WRITE` for indexing, `SQLITE_OPEN_READ_ONLY` for queries
@@ -256,7 +256,7 @@ serde_json = "1"
 serde_yaml = "0.9"
 
 # Database
-rusqlite = { version = "0.32", features = ["bundled"] }
+ruPostgreSQL = { version = "0.32", features = ["bundled"] }
 
 # HTTP (Neo4j, Qdrant, daemon)
 reqwest = { version = "0.12", features = ["json", "blocking"] }
@@ -322,12 +322,12 @@ No daemon in the loop for indexing. gcode handles it directly.
 - Create `rust/gcode/` directory in gobby repo with Cargo project
 - `config.rs` — bootstrap.yaml, config_store, project detection
 - `secrets.rs` — Fernet decryption, $secret:NAME resolution
-- `db.rs` — rusqlite connection, schema awareness
+- `db.rs` — ruPostgreSQL connection, schema awareness
 - `models.rs` — Symbol, IndexedFile, ContentChunk with UUID5 parity
 - `index/languages.rs` — port 16 language specs from Python
 - `index/parser.rs` — tree-sitter parsing
 - `index/walker.rs` — git-aware file discovery
-- `index/indexer.rs` — full/incremental indexing (SQLite writes)
+- `index/indexer.rs` — full/incremental indexing (PostgreSQL writes)
 - `search/fts.rs` — FTS5 search
 - `commands/` — index, search-text, search-content, outline, symbol, status
 - `output.rs` — JSON + text formatters
@@ -381,7 +381,7 @@ After gcode Sprint 2, verify cross-runtime embedding parity: generate same text 
 | `src/gobby/code_index/parser.py` | Tree-sitter parsing to replicate in Rust |
 | `src/gobby/code_index/languages.py` | 16 language specs to port verbatim |
 | `src/gobby/code_index/models.py:12,49-52` | UUID5 namespace + key format |
-| `src/gobby/code_index/storage.py` | SQLite schema + FTS5 queries |
+| `src/gobby/code_index/storage.py` | PostgreSQL schema + FTS5 queries |
 | `src/gobby/code_index/searcher.py` | RRF hybrid search algorithm |
 | `src/gobby/code_index/graph.py` | Cypher queries for Neo4j |
 | `src/gobby/code_index/indexer.py` | Incremental indexing logic |

@@ -14,10 +14,13 @@ Classes:
 """
 
 import asyncio
+import difflib
 import hashlib
 import json
 import logging
 import os
+import re
+import string
 from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
@@ -30,7 +33,7 @@ __all__ = [
 
 from gobby.config.persistence import MemoryBackupConfig
 from gobby.memory.manager import MemoryManager
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +46,112 @@ def _parse_updated_at(value: Any) -> tuple[int, str]:
         except ValueError:
             return (0, value)
     return (0, "")
+
+
+def _parse_created_at(value: Any) -> tuple[int, str]:
+    """Build a sortable created_at key that treats missing values as newest."""
+    if isinstance(value, str) and value:
+        try:
+            return (0, datetime.fromisoformat(value).isoformat())
+        except ValueError:
+            return (0, value)
+    return (1, "")
+
+
+_MEMORY_NORMALIZE_PUNCTUATION = str.maketrans("", "", string.punctuation)
+_MEMORY_NORMALIZE_WHITESPACE_RE = re.compile(r"\s+")
+_MEMORY_FUZZY_MIN_LENGTH = 160
+_MEMORY_FUZZY_DUPLICATE_THRESHOLD = 0.96
+_MEMORY_FUZZY_PREFIX_LENGTH = 96
+_MEMORY_TYPE_RANK = {
+    "fact": 10,
+    "context": 20,
+    "pattern": 30,
+    "preference": 40,
+    "decision": 50,
+    "codebase_fact": 60,
+    "codebase_decision": 70,
+    "implementation_summary": 80,
+}
+
+
+def _normalized_memory_content(content: Any) -> str:
+    """Normalize content for conservative cross-machine backup deduplication."""
+    text = str(content or "").casefold()
+    text = text.translate(_MEMORY_NORMALIZE_PUNCTUATION)
+    return _MEMORY_NORMALIZE_WHITESPACE_RE.sub(" ", text).strip()
+
+
+def _normalized_memory_hash(content: Any) -> str:
+    normalized = _normalized_memory_content(content)
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def _is_fuzzy_memory_duplicate(left: str, right: str) -> bool:
+    if min(len(left), len(right)) < _MEMORY_FUZZY_MIN_LENGTH:
+        return False
+    return difflib.SequenceMatcher(None, left, right, autojunk=False).ratio() >= (
+        _MEMORY_FUZZY_DUPLICATE_THRESHOLD
+    )
+
+
+def _memory_fuzzy_bucket_key(normalized_content: str) -> str:
+    return normalized_content[:_MEMORY_FUZZY_PREFIX_LENGTH]
+
+
+def _find_fuzzy_duplicate(
+    normalized: str,
+    *,
+    fuzzy_buckets: dict[str, list[str]],
+    normalized_by_key: dict[str, str],
+) -> str | None:
+    """Find an existing near-duplicate record key for normalized content."""
+    fuzzy_bucket = fuzzy_buckets.get(_memory_fuzzy_bucket_key(normalized), [])
+    for key in fuzzy_bucket:
+        existing_normalized = normalized_by_key.get(key)
+        if existing_normalized is None:
+            continue
+        if _is_fuzzy_memory_duplicate(normalized, existing_normalized):
+            return key
+    return None
+
+
+def _memory_type_rank(record: Mapping[str, Any]) -> int:
+    memory_type = str(record.get("type") or record.get("memory_type") or "fact").lower()
+    return _MEMORY_TYPE_RANK.get(memory_type, 0)
+
+
+def _record_tags(record: Mapping[str, Any]) -> list[str]:
+    raw_tags = record.get("tags")
+    if not isinstance(raw_tags, list):
+        return []
+    return [str(tag).strip() for tag in raw_tags if str(tag).strip()]
+
+
+def _merge_memory_records(existing: dict[str, Any], candidate: dict[str, Any]) -> dict[str, Any]:
+    """Merge duplicate JSONL records while preserving durable provenance fields."""
+    latest = (
+        candidate
+        if _parse_updated_at(candidate.get("updated_at"))
+        >= _parse_updated_at(existing.get("updated_at"))
+        else existing
+    )
+    earliest = (
+        candidate
+        if _parse_created_at(candidate.get("created_at"))
+        < _parse_created_at(existing.get("created_at"))
+        else existing
+    )
+    specific = candidate if _memory_type_rank(candidate) > _memory_type_rank(existing) else existing
+
+    merged = dict(latest)
+    merged["created_at"] = earliest.get("created_at", merged.get("created_at"))
+    merged["updated_at"] = latest.get("updated_at", merged.get("updated_at"))
+    merged["tags"] = sorted(set(_record_tags(existing)) | set(_record_tags(candidate)))
+    merged["type"] = (
+        specific.get("type") or specific.get("memory_type") or merged.get("type", "fact")
+    )
+    return merged
 
 
 _EPHEMERAL_IMPLEMENTATION_TAGS = {"build-e2e"}
@@ -85,7 +194,7 @@ class MemoryBackupManager:
 
     def __init__(
         self,
-        db: DatabaseProtocol,
+        db: HubDatabase,
         memory_manager: MemoryManager | None,
         config: MemoryBackupConfig,
     ):
@@ -335,12 +444,7 @@ class MemoryBackupManager:
         return True
 
     def _deduplicate_records_by_id(self, records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Keep a single canonical record per id, preferring the latest updated_at.
-
-        Two-pass dedup: first by ID, then by content. This ensures that records
-        with different IDs but identical content (e.g., a file-version and a
-        DB-version of the same memory) are merged, keeping the latest.
-        """
+        """Keep one canonical record per id or conservatively equivalent content."""
         # Pass 1: dedup by ID
         canonical_by_key: dict[str, dict[str, Any]] = {}
         for record in records:
@@ -350,24 +454,43 @@ class MemoryBackupManager:
                 continue
 
             existing = canonical_by_key.get(key)
-            if existing is None or _parse_updated_at(record.get("updated_at")) >= _parse_updated_at(
-                existing.get("updated_at")
-            ):
+            if existing is None:
                 canonical_by_key[key] = record
+            else:
+                canonical_by_key[key] = _merge_memory_records(existing, record)
 
-        # Pass 2: dedup by content (merges records with different IDs but same content)
+        # Pass 2: dedup by normalized content, then fuzzy-match long near-duplicates.
         canonical_by_content: dict[str, dict[str, Any]] = {}
+        normalized_by_key: dict[str, str] = {}
+        fuzzy_buckets: dict[str, list[str]] = {}
         for record in canonical_by_key.values():
             content = record.get("content", "").strip()
             if not content:
                 canonical_by_content[record.get("id", "")] = record
                 continue
 
-            existing = canonical_by_content.get(content)
-            if existing is None or _parse_updated_at(record.get("updated_at")) >= _parse_updated_at(
-                existing.get("updated_at")
-            ):
-                canonical_by_content[content] = record
+            normalized = _normalized_memory_content(content)
+            if not normalized:
+                continue
+            content_key = _normalized_memory_hash(content)
+            existing_key = content_key if content_key in canonical_by_content else None
+            if existing_key is None:
+                existing_key = _find_fuzzy_duplicate(
+                    normalized,
+                    fuzzy_buckets=fuzzy_buckets,
+                    normalized_by_key=normalized_by_key,
+                )
+            if existing_key is None:
+                canonical_by_content[content_key] = record
+                normalized_by_key[content_key] = normalized
+                fuzzy_buckets.setdefault(_memory_fuzzy_bucket_key(normalized), []).append(
+                    content_key
+                )
+            else:
+                canonical_by_content[existing_key] = _merge_memory_records(
+                    canonical_by_content[existing_key],
+                    record,
+                )
 
         return list(canonical_by_content.values())
 

@@ -9,13 +9,13 @@ from gobby.mcp_proxy.metrics_events import MetricsEventStore
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-    from gobby.storage.database import LocalDatabase
+    from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def event_store(temp_db: "LocalDatabase") -> MetricsEventStore:
+def event_store(temp_db: "HubDatabase") -> MetricsEventStore:
     return MetricsEventStore(temp_db)
 
 
@@ -225,7 +225,7 @@ class TestQueryEvents:
 
 class TestArchive:
     def test_archive_old_events(
-        self, event_store: MetricsEventStore, temp_db: "LocalDatabase"
+        self, event_store: MetricsEventStore, temp_db: "HubDatabase"
     ) -> None:
         # Insert events with old timestamps
         old_date = (datetime.now(UTC) - timedelta(days=60)).isoformat()
@@ -234,7 +234,7 @@ class TestArchive:
                 """INSERT INTO metrics_events
                    (event_type, name, server_name, success, latency_ms, created_at)
                    VALUES (?, ?, ?, ?, ?, ?)""",
-                ("tool_call", "Read", "gobby-tasks", 1, 10.0 + i, old_date),
+                ("tool_call", "Read", "gobby-tasks", True, 10.0 + i, old_date),
             )
         # Insert a recent event that should survive
         event_store.record_event(event_type="tool_call", name="Edit", latency_ms=5.0)
@@ -255,7 +255,7 @@ class TestArchive:
         assert remaining[0]["name"] == "Edit"
 
     def test_archive_upsert_merges(
-        self, event_store: MetricsEventStore, temp_db: "LocalDatabase"
+        self, event_store: MetricsEventStore, temp_db: "HubDatabase"
     ) -> None:
         """Running archive twice should merge counts, not duplicate rows."""
         old_date1 = (datetime.now(UTC) - timedelta(days=60)).isoformat()
@@ -265,7 +265,7 @@ class TestArchive:
             """INSERT INTO metrics_events
                (event_type, name, server_name, success, latency_ms, created_at)
                VALUES (?, ?, ?, ?, ?, ?)""",
-            ("tool_call", "Read", "gobby-tasks", 1, 10.0, old_date1),
+            ("tool_call", "Read", "gobby-tasks", True, 10.0, old_date1),
         )
         event_store.archive_old_events(retention_days=30)
 
@@ -273,7 +273,7 @@ class TestArchive:
             """INSERT INTO metrics_events
                (event_type, name, server_name, success, latency_ms, created_at)
                VALUES (?, ?, ?, ?, ?, ?)""",
-            ("tool_call", "Read", "gobby-tasks", 1, 20.0, old_date2),
+            ("tool_call", "Read", "gobby-tasks", True, 20.0, old_date2),
         )
         event_store.archive_old_events(retention_days=30)
 
@@ -288,10 +288,73 @@ class TestArchive:
         assert event_store.archive_old_events(retention_days=30) == 0
 
 
+class TestPostgresArchive:
+    """PostgreSQL regressions for ON CONFLICT archive upserts."""
+
+    pytestmark = pytest.mark.integration
+
+    def test_archive_old_events_upsert_merges_existing_row(
+        self, postgres_db: "HubDatabase"
+    ) -> None:
+        event_store = MetricsEventStore(postgres_db)
+        old_date = datetime(2020, 1, 2, 12, tzinfo=UTC).isoformat()
+        project_id = "proj-pg-archive"
+
+        postgres_db.execute(
+            """
+            INSERT INTO metrics_events_archive (
+                event_type, project_id, server_name, name,
+                call_count, success_count, failure_count,
+                total_latency_ms, block_count, allow_count
+            ) VALUES (?, ?, ?, ?, 2, 1, 1, 40.0, 1, 0)
+            """,
+            ("tool_call", project_id, "context7", "get-docs"),
+        )
+        postgres_db.execute(
+            """
+            INSERT INTO metrics_events (
+                event_type, project_id, server_name, name,
+                success, latency_ms, result, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("tool_call", project_id, "context7", "get-docs", True, 10.0, "allow", old_date),
+        )
+        postgres_db.execute(
+            """
+            INSERT INTO metrics_events (
+                event_type, project_id, server_name, name,
+                success, latency_ms, result, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("tool_call", project_id, "context7", "get-docs", False, 20.0, "block", old_date),
+        )
+
+        assert event_store.archive_old_events(retention_days=30) == 2
+
+        row = postgres_db.fetchone(
+            """
+            SELECT
+                call_count, success_count, failure_count,
+                total_latency_ms, block_count, allow_count
+            FROM metrics_events_archive
+            WHERE event_type = ? AND project_id = ? AND server_name = ? AND name = ?
+            """,
+            ("tool_call", project_id, "context7", "get-docs"),
+        )
+
+        assert row is not None
+        assert row["call_count"] == 4
+        assert row["success_count"] == 2
+        assert row["failure_count"] == 2
+        assert row["total_latency_ms"] == 70.0
+        assert row["block_count"] == 2
+        assert row["allow_count"] == 1
+
+
 class TestMetricsManagerIntegration:
     """Test that ToolMetricsManager dual-writes to event store."""
 
-    def test_record_call_writes_event(self, temp_db: "LocalDatabase") -> None:
+    def test_record_call_writes_event(self, temp_db: "HubDatabase") -> None:
         from gobby.mcp_proxy.metrics import ToolMetricsManager
 
         manager = ToolMetricsManager(temp_db)
@@ -311,7 +374,7 @@ class TestMetricsManagerIntegration:
         assert events[0]["session_id"] == "sess-123"
         assert events[0]["server_name"] == "gobby-tasks"
 
-    def test_record_call_without_session_id(self, temp_db: "LocalDatabase") -> None:
+    def test_record_call_without_session_id(self, temp_db: "HubDatabase") -> None:
         from gobby.mcp_proxy.metrics import ToolMetricsManager
 
         manager = ToolMetricsManager(temp_db)
@@ -331,7 +394,7 @@ class TestMCPTools:
     """Test the new MCP tool functions."""
 
     @pytest.fixture
-    def registry(self, temp_db: "LocalDatabase") -> "InternalToolRegistry":
+    def registry(self, temp_db: "HubDatabase") -> "InternalToolRegistry":
         from gobby.mcp_proxy.metrics import ToolMetricsManager
         from gobby.mcp_proxy.tools.metrics import create_metrics_registry
 
@@ -342,7 +405,7 @@ class TestMCPTools:
         )
 
     @pytest.mark.asyncio
-    async def test_get_session_tools(self, registry, temp_db: "LocalDatabase") -> None:
+    async def test_get_session_tools(self, registry, temp_db: "HubDatabase") -> None:
         event_store = MetricsEventStore(temp_db)
         event_store.record_event(
             event_type="tool_call",
@@ -365,7 +428,7 @@ class TestMCPTools:
         assert len(result["tools"]) == 1
 
     @pytest.mark.asyncio
-    async def test_get_rule_metrics(self, registry, temp_db: "LocalDatabase") -> None:
+    async def test_get_rule_metrics(self, registry, temp_db: "HubDatabase") -> None:
         event_store = MetricsEventStore(temp_db)
         event_store.record_event(event_type="rule_eval", name="task-rule", result="block")
         event_store.record_event(event_type="rule_eval", name="task-rule", result="allow")
@@ -376,7 +439,7 @@ class TestMCPTools:
         assert result["summary"]["total_blocks"] == 1
 
     @pytest.mark.asyncio
-    async def test_get_skill_metrics(self, registry, temp_db: "LocalDatabase") -> None:
+    async def test_get_skill_metrics(self, registry, temp_db: "HubDatabase") -> None:
         event_store = MetricsEventStore(temp_db)
         event_store.record_event(event_type="skill_search", name="memory")
         event_store.record_event(event_type="skill_invoke", name="memory")
@@ -387,7 +450,7 @@ class TestMCPTools:
         assert result["summary"]["total_invocations"] == 1
 
     @pytest.mark.asyncio
-    async def test_get_metrics_timeseries(self, registry, temp_db: "LocalDatabase") -> None:
+    async def test_get_metrics_timeseries(self, registry, temp_db: "HubDatabase") -> None:
         event_store = MetricsEventStore(temp_db)
         event_store.record_event(event_type="tool_call", name="Read", latency_ms=10.0)
 

@@ -8,6 +8,7 @@ rules:
     priority: 30
     when: >
       not skill_loaded('code-index')
+      and not variables.get('code_index_preflight_warning')
       and (
         (event.data.get('canonical_tool_kind') == 'read'
          and event.data.get('canonical_file_path', '').rpartition('.')[2]
@@ -17,4 +18,4 @@ rules:
       )
     effects:
       - type: block
-        reason: 'Call get_skill(name="code-index") on gobby-skills, then continue.'
+        reason: 'Call get_skill(name="code-index") on gobby-skills through mcp__gobby__ progressive discovery: list_mcp_servers -> list_tools("gobby-skills") -> get_tool_schema("gobby-skills", "get_skill") -> call_tool("gobby-skills", "get_skill", {"name": "code-index"}). Then continue.'

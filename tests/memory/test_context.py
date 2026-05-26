@@ -137,7 +137,7 @@ class TestBuildMemoryContext:
             ),
             Memory(
                 id="m4",
-                content="- Database uses SQLite",
+                content="- Database uses PostgreSQL",
                 memory_type="fact",
                 created_at="2024-01-01",
                 updated_at="2024-01-01",
@@ -157,7 +157,7 @@ class TestBuildMemoryContext:
         assert "This is the project context" in result
         assert "Use Python 3.11+" in result
         assert "Follow PEP 8 style" in result
-        assert "Database uses SQLite" in result
+        assert "Database uses PostgreSQL" in result
 
     def test_context_type_no_bullet_stripping(self) -> None:
         """Test that context type content is not bullet-stripped."""

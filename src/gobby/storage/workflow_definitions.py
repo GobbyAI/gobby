@@ -3,14 +3,15 @@
 import hashlib
 import json
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from sqlite3 import Row
 from threading import Lock
 from typing import Any, Literal
 from uuid import uuid4
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sql_dialect import json_text_expr, older_than_now_expr
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,7 @@ def get_workflow_definitions_revision() -> int:
         return _WORKFLOW_DEFINITIONS_REVISION
 
 
-def _bump_workflow_definitions_revision() -> None:
+def bump_workflow_definitions_revision() -> None:
     global _WORKFLOW_DEFINITIONS_REVISION
     with _WORKFLOW_DEFINITIONS_REVISION_LOCK:
         _WORKFLOW_DEFINITIONS_REVISION += 1
@@ -66,7 +67,7 @@ class WorkflowDefinitionRow:
     deleted_at: str | None = None
 
     @classmethod
-    def from_row(cls, row: Row) -> "WorkflowDefinitionRow":
+    def from_row(cls, row: Mapping[str, Any]) -> "WorkflowDefinitionRow":
         def _parse_json_list(val: str | None) -> list[str] | None:
             if val is None:
                 return None
@@ -119,7 +120,7 @@ class WorkflowDefinitionRow:
 class LocalWorkflowDefinitionManager:
     """Manages workflow definitions in the local database."""
 
-    def __init__(self, db: DatabaseProtocol):
+    def __init__(self, db: HubDatabase):
         self.db = db
 
     def create(
@@ -158,7 +159,7 @@ class LocalWorkflowDefinitionManager:
                     description,
                     workflow_type,
                     version,
-                    1 if enabled else 0,
+                    bool(enabled),
                     priority,
                     json.dumps(sources) if sources else None,
                     definition_json,
@@ -170,7 +171,7 @@ class LocalWorkflowDefinitionManager:
                 ),
             )
 
-        _bump_workflow_definitions_revision()
+        bump_workflow_definitions_revision()
         return self.get(definition_id)
 
     def get(self, definition_id: str, include_deleted: bool = False) -> WorkflowDefinitionRow:
@@ -212,7 +213,7 @@ class LocalWorkflowDefinitionManager:
             if key in json_fields and val is not None:
                 values[key] = json.dumps(val)
             elif key == "enabled" and isinstance(val, bool):
-                values[key] = 1 if val else 0
+                values[key] = val
             else:
                 values[key] = val
 
@@ -222,7 +223,7 @@ class LocalWorkflowDefinitionManager:
         values["updated_at"] = datetime.now(UTC).isoformat()
         cursor = self.db.safe_update("workflow_definitions", values, "id = ?", (definition_id,))
         if cursor.rowcount > 0:
-            _bump_workflow_definitions_revision()
+            bump_workflow_definitions_revision()
         return self.get(definition_id)
 
     def delete(self, definition_id: str) -> bool:
@@ -235,7 +236,7 @@ class LocalWorkflowDefinitionManager:
             )
             deleted = cursor.rowcount > 0
         if deleted:
-            _bump_workflow_definitions_revision()
+            bump_workflow_definitions_revision()
         return deleted
 
     def hard_delete(self, definition_id: str) -> bool:
@@ -244,7 +245,7 @@ class LocalWorkflowDefinitionManager:
             cursor = conn.execute("DELETE FROM workflow_definitions WHERE id = ?", (definition_id,))
             deleted = cursor.rowcount > 0
         if deleted:
-            _bump_workflow_definitions_revision()
+            bump_workflow_definitions_revision()
         return deleted
 
     def restore(self, definition_id: str) -> WorkflowDefinitionRow:
@@ -257,21 +258,26 @@ class LocalWorkflowDefinitionManager:
             )
             if cursor.rowcount == 0:
                 raise ValueError(f"Workflow definition {definition_id} not found or not deleted")
-        _bump_workflow_definitions_revision()
+        bump_workflow_definitions_revision()
         return self.get(definition_id)
 
     def purge_deleted(self, older_than_days: int = 30) -> int:
         """Hard-delete rows that were soft-deleted more than older_than_days ago."""
         if older_than_days < 1:
             raise ValueError(f"older_than_days must be >= 1, got {older_than_days}")
+        deleted_before_sql = older_than_now_expr(self.db, "deleted_at", "?", "day")
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                "DELETE FROM workflow_definitions WHERE deleted_at IS NOT NULL AND deleted_at < datetime('now', ?)",
-                (f"-{older_than_days} days",),
+                f"""
+                DELETE FROM workflow_definitions
+                WHERE deleted_at IS NOT NULL
+                  AND {deleted_before_sql}
+                """,  # nosec B608 # cutoff expression is selected by storage dialect.
+                (older_than_days,),
             )
             count = cursor.rowcount
         if count:
-            _bump_workflow_definitions_revision()
+            bump_workflow_definitions_revision()
             logger.info(f"Purged {count} soft-deleted workflow definitions")
         return count
 
@@ -299,7 +305,7 @@ class LocalWorkflowDefinitionManager:
 
         if enabled is not None:
             conditions.append("enabled = ?")
-            params.append(1 if enabled else 0)
+            params.append(enabled)
 
         where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
         rows = self.db.fetchall(
@@ -315,10 +321,11 @@ class LocalWorkflowDefinitionManager:
         enabled: bool | None = None,
     ) -> list[WorkflowDefinitionRow]:
         """List rule definitions filtered by event type from definition_json."""
+        event_sql = json_text_expr(self.db, "definition_json", "event")
         conditions = [
             "workflow_type = 'rule'",
             "deleted_at IS NULL",
-            "json_extract(definition_json, '$.event') = ?",
+            f"{event_sql} = ?",
         ]
         params: list[Any] = [event]
 
@@ -328,7 +335,7 @@ class LocalWorkflowDefinitionManager:
 
         if enabled is not None:
             conditions.append("enabled = ?")
-            params.append(1 if enabled else 0)
+            params.append(enabled)
 
         where = f" WHERE {' AND '.join(conditions)}"
         rows = self.db.fetchall(
@@ -344,10 +351,11 @@ class LocalWorkflowDefinitionManager:
         enabled: bool | None = None,
     ) -> list[WorkflowDefinitionRow]:
         """List rule definitions filtered by group from definition_json."""
+        group_sql = json_text_expr(self.db, "definition_json", "group")
         conditions = [
             "workflow_type = 'rule'",
             "deleted_at IS NULL",
-            "json_extract(definition_json, '$.group') = ?",
+            f"{group_sql} = ?",
         ]
         params: list[Any] = [group]
 
@@ -357,7 +365,7 @@ class LocalWorkflowDefinitionManager:
 
         if enabled is not None:
             conditions.append("enabled = ?")
-            params.append(1 if enabled else 0)
+            params.append(enabled)
 
         where = f" WHERE {' AND '.join(conditions)}"
         rows = self.db.fetchall(

@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.config.persistence import MemoryConfig
+from gobby.llm.base import LLMProviderCancellation
 from gobby.memory.services.knowledge_graph import KnowledgeGraphResult, KnowledgeGraphStatus
 from tests._timing import wait_for_async_condition
 
@@ -22,7 +23,7 @@ def _mock_llm_service(provider: AsyncMock | None = None) -> MagicMock:
 
 
 def _make_manager(
-    neo4j_url: str | None = None,
+    falkordb_host: str | None = None,
     llm_service: MagicMock | None = None,
     vector_store: AsyncMock | None = None,
     embed_fn: AsyncMock | None = None,
@@ -40,30 +41,44 @@ def _make_manager(
 
     config = MemoryConfig()
 
-    return MemoryManager(
-        db=db,
-        config=config,
-        llm_service=llm_service,
-        vector_store=vector_store,
-        embed_fn=embed_fn,
-        neo4j_url=neo4j_url,
-        neo4j_auth="neo4j:password" if neo4j_url else None,
-    )
+    kwargs = {
+        "db": db,
+        "config": config,
+        "llm_service": llm_service,
+        "vector_store": vector_store,
+        "embed_fn": embed_fn,
+        "falkordb_host": falkordb_host,
+        "falkordb_password": "secret" if falkordb_host else None,
+    }
+    if falkordb_host:
+        with patch("gobby.memory.manager.FalkorClient") as falkor_cls:
+            falkor_cls.return_value = AsyncMock()
+            return MemoryManager(**kwargs)
+    return MemoryManager(**kwargs)
 
 
 class TestKnowledgeGraphServiceInitialization:
     """Test that KnowledgeGraphService is initialized correctly."""
 
-    def test_kg_service_created_when_neo4j_and_llm_configured(self) -> None:
-        """KnowledgeGraphService is created when Neo4j URL + LLM are configured."""
+    def test_kg_service_created_when_FalkorDB_and_llm_configured(self) -> None:
+        """KnowledgeGraphService is created when FalkorDB URL + LLM are configured."""
         embed_fn = AsyncMock(return_value=[0.1, 0.2])
         vs = AsyncMock()
 
         manager = _make_manager(
-            neo4j_url="http://localhost:7474",
+            falkordb_host="127.0.0.1",
             llm_service=_mock_llm_service(),
             vector_store=vs,
             embed_fn=embed_fn,
+        )
+
+        assert manager._kg_service is not None
+
+    def test_kg_service_created_without_vector_dependencies(self) -> None:
+        """KnowledgeGraphService can run without vector search dependencies."""
+        manager = _make_manager(
+            falkordb_host="127.0.0.1",
+            llm_service=_mock_llm_service(),
         )
 
         assert manager._kg_service is not None
@@ -75,7 +90,7 @@ class TestKnowledgeGraphServiceInitialization:
 
         with patch("gobby.memory.manager.KnowledgeGraphService") as mock_kg_service:
             manager = _make_manager(
-                neo4j_url="http://localhost:7474",
+                falkordb_host="127.0.0.1",
                 llm_service=llm_service,
                 vector_store=AsyncMock(),
                 embed_fn=AsyncMock(return_value=[0.1]),
@@ -85,11 +100,13 @@ class TestKnowledgeGraphServiceInitialization:
         call_kwargs = mock_kg_service.call_args.kwargs
         assert call_kwargs["llm_provider"] is provider
         assert call_kwargs["model"] == "haiku"
+        assert call_kwargs["llm_service"] is llm_service
+        assert call_kwargs["feature_config"] is manager.config.kg
 
-    def test_kg_service_none_when_no_neo4j(self) -> None:
-        """KnowledgeGraphService is None when Neo4j is not configured."""
+    def test_kg_service_none_when_no_FalkorDB(self) -> None:
+        """KnowledgeGraphService is None when FalkorDB is not configured."""
         manager = _make_manager(
-            neo4j_url=None,
+            falkordb_host=None,
             llm_service=_mock_llm_service(),
             vector_store=AsyncMock(),
             embed_fn=AsyncMock(),
@@ -100,7 +117,7 @@ class TestKnowledgeGraphServiceInitialization:
     def test_kg_service_none_when_no_llm(self) -> None:
         """KnowledgeGraphService is None when LLM service not available."""
         manager = _make_manager(
-            neo4j_url="http://localhost:7474",
+            falkordb_host="127.0.0.1",
             llm_service=None,
         )
 
@@ -113,7 +130,7 @@ class TestGraphDelegation:
     async def test_get_entity_graph_delegates_to_kg_service(self) -> None:
         """get_entity_graph delegates to KnowledgeGraphService."""
         manager = _make_manager(
-            neo4j_url="http://localhost:7474",
+            falkordb_host="127.0.0.1",
             llm_service=_mock_llm_service(),
             vector_store=AsyncMock(),
             embed_fn=AsyncMock(return_value=[0.1]),
@@ -130,7 +147,7 @@ class TestGraphDelegation:
     async def test_get_entity_neighbors_delegates_to_kg_service(self) -> None:
         """get_entity_neighbors delegates to KnowledgeGraphService."""
         manager = _make_manager(
-            neo4j_url="http://localhost:7474",
+            falkordb_host="127.0.0.1",
             llm_service=_mock_llm_service(),
             vector_store=AsyncMock(),
             embed_fn=AsyncMock(return_value=[0.1]),
@@ -147,9 +164,26 @@ class TestGraphDelegation:
             project_id=None,
         )
 
+    async def test_get_knowledge_graph_counts_delegates_to_kg_service(self) -> None:
+        """get_knowledge_graph_counts returns actual FalkorDB counts."""
+        manager = _make_manager(
+            falkordb_host="127.0.0.1",
+            llm_service=_mock_llm_service(),
+            vector_store=AsyncMock(),
+            embed_fn=AsyncMock(return_value=[0.1]),
+        )
+
+        expected = {"graph": "gobby_kg", "memory_nodes": 3, "entity_nodes": 7}
+        manager._kg_service.get_graph_counts = AsyncMock(return_value=expected)
+
+        result = await manager.get_knowledge_graph_counts(project_id="proj-1")
+
+        assert result == expected
+        manager._kg_service.get_graph_counts.assert_called_once_with(project_id="proj-1")
+
     async def test_get_entity_graph_returns_none_when_no_kg_service(self) -> None:
         """get_entity_graph returns None when KnowledgeGraphService is not available."""
-        manager = _make_manager(neo4j_url=None)
+        manager = _make_manager(falkordb_host=None)
 
         result = await manager.get_entity_graph()
 
@@ -157,7 +191,7 @@ class TestGraphDelegation:
 
     async def test_get_entity_neighbors_returns_none_when_no_kg_service(self) -> None:
         """get_entity_neighbors returns None when KnowledgeGraphService is not available."""
-        manager = _make_manager(neo4j_url=None)
+        manager = _make_manager(falkordb_host=None)
 
         result = await manager.get_entity_neighbors("Josh")
 
@@ -166,7 +200,7 @@ class TestGraphDelegation:
     async def test_clear_knowledge_graph_requeues_affected_memories(self) -> None:
         """clear_knowledge_graph should reset graph_processed for affected memories."""
         manager = _make_manager(
-            neo4j_url="http://localhost:7474",
+            falkordb_host="127.0.0.1",
             llm_service=_mock_llm_service(),
             vector_store=AsyncMock(),
             embed_fn=AsyncMock(return_value=[0.1]),
@@ -195,7 +229,7 @@ class TestGraphDelegation:
     async def test_rebuild_knowledge_graph_marks_successful_memories_processed(self) -> None:
         """Explicit rebuild should reconcile graph_processed for successful rows."""
         manager = _make_manager(
-            neo4j_url="http://localhost:7474",
+            falkordb_host="127.0.0.1",
             llm_service=_mock_llm_service(),
             vector_store=AsyncMock(),
             embed_fn=AsyncMock(return_value=[0.1]),
@@ -214,14 +248,20 @@ class TestGraphDelegation:
             ]
         )
         manager.mark_graph_processed = MagicMock()
+        manager.storage.mark_pending_graph = MagicMock()
 
         result = await manager.rebuild_knowledge_graph(project_id="proj-1")
 
         assert manager._kg_service.add_to_graph.await_count == 3
+        manager.storage.mark_pending_graph.assert_any_call("mem-1")
+        manager.storage.mark_pending_graph.assert_any_call("mem-2")
+        manager.storage.mark_pending_graph.assert_any_call("mem-3")
+        assert manager.storage.mark_pending_graph.call_count == 3
         manager.mark_graph_processed.assert_any_call("mem-1")
         manager.mark_graph_processed.assert_any_call("mem-2")
         assert manager.mark_graph_processed.call_count == 2
         assert result["memories_processed"] == 3
+        assert result["memories_marked_pending"] == 3
         assert result["memories_marked_processed"] == 2
         assert result["memories_extracted"] == 1
         assert result["noop_no_entities"] == 1
@@ -230,7 +270,7 @@ class TestGraphDelegation:
     async def test_rebuild_knowledge_graph_reports_progress_and_failed_memory_ids(self) -> None:
         """Rebuild progress snapshots and final result should identify failing rows."""
         manager = _make_manager(
-            neo4j_url="http://localhost:7474",
+            falkordb_host="127.0.0.1",
             llm_service=_mock_llm_service(),
             vector_store=AsyncMock(),
             embed_fn=AsyncMock(return_value=[0.1]),
@@ -249,6 +289,7 @@ class TestGraphDelegation:
             ]
         )
         manager.mark_graph_processed = MagicMock()
+        manager.storage.mark_pending_graph = MagicMock()
 
         progress_updates: list[dict[str, object]] = []
 
@@ -262,6 +303,7 @@ class TestGraphDelegation:
 
         assert progress_updates[0]["memories_total"] == 2
         assert progress_updates[0]["memories_completed"] == 0
+        assert progress_updates[0]["memories_marked_pending"] == 2
         assert progress_updates[-1]["memories_completed"] == 2
         assert progress_updates[-1]["errors"] == 1
         assert result["failed_memories"] == [
@@ -273,6 +315,37 @@ class TestGraphDelegation:
             }
         ]
 
+    async def test_rebuild_knowledge_graph_treats_llm_cancellation_as_retryable(self) -> None:
+        """Provider shutdown cancellation leaves memory pending instead of permanent-failed."""
+        manager = _make_manager(
+            falkordb_host="127.0.0.1",
+            llm_service=_mock_llm_service(),
+            vector_store=AsyncMock(),
+            embed_fn=AsyncMock(return_value=[0.1]),
+        )
+
+        mem = MagicMock(id="mem-1", content="First memory", project_id="proj-1")
+        manager._fetch_all_project_memories = AsyncMock(return_value=[mem])
+        manager._kg_service.add_to_graph = AsyncMock(
+            side_effect=LLMProviderCancellation("Claude SDK process terminated [exit_code=143]")
+        )
+        manager.mark_graph_processed = MagicMock()
+        manager.storage.mark_pending_graph = MagicMock()
+
+        result = await manager.rebuild_knowledge_graph(project_id="proj-1")
+
+        assert result["success"] is True
+        assert result["errors"] == 1
+        assert result["failed_memories"] == [
+            {
+                "memory_id": "mem-1",
+                "project_id": "proj-1",
+                "status": "retryable_failure",
+                "errors": ["Claude SDK process terminated [exit_code=143]"],
+            }
+        ]
+        manager.mark_graph_processed.assert_not_called()
+
 
 class TestGraphBackgroundTask:
     """Test that create_memory chains a graph background task."""
@@ -280,7 +353,7 @@ class TestGraphBackgroundTask:
     async def test_create_memory_fires_graph_task_after_dedup(self) -> None:
         """create_memory fires a graph background task when KnowledgeGraphService is available."""
         manager = _make_manager(
-            neo4j_url="http://localhost:7474",
+            falkordb_host="127.0.0.1",
             llm_service=_mock_llm_service(),
             vector_store=AsyncMock(),
             embed_fn=AsyncMock(return_value=[0.1]),
@@ -321,7 +394,7 @@ class TestGraphBackgroundTask:
 
     async def test_create_memory_no_graph_task_when_no_kg_service(self) -> None:
         """create_memory doesn't fire graph task when KnowledgeGraphService is unavailable."""
-        manager = _make_manager(neo4j_url=None)
+        manager = _make_manager(falkordb_host=None)
 
         manager._backend = AsyncMock()
         manager._backend.content_exists = AsyncMock(return_value=False)
@@ -353,7 +426,7 @@ class TestGraphBackgroundTask:
     async def test_graph_task_failure_logged_not_raised(self) -> None:
         """Graph background task failure is logged but doesn't propagate."""
         manager = _make_manager(
-            neo4j_url="http://localhost:7474",
+            falkordb_host="127.0.0.1",
             llm_service=_mock_llm_service(),
             vector_store=AsyncMock(),
             embed_fn=AsyncMock(return_value=[0.1]),
@@ -380,7 +453,7 @@ class TestGraphBackgroundTask:
         manager._backend.create = AsyncMock(return_value=mock_record)
 
         # Make graph service fail
-        manager._kg_service.add_to_graph = AsyncMock(side_effect=Exception("Neo4j down"))
+        manager._kg_service.add_to_graph = AsyncMock(side_effect=Exception("FalkorDB down"))
 
         memory = await manager.create_memory(content="test")
         await wait_for_async_condition(

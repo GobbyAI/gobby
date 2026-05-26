@@ -20,7 +20,7 @@ from gobby.storage.sessions._manager import SessionManager as InternalSessionMan
 pytestmark = pytest.mark.unit
 
 EXPECTED_PUBLIC_METHOD_SIGNATURES = {
-    "__init__": "(self, db: 'DatabaseProtocol | None' = None, *, session_storage: "
+    "__init__": "(self, db: 'HubDatabase | None' = None, *, session_storage: "
     "'SessionManager | None' = None, logger_instance: 'logging.Logger | None' = None, "
     "config: 'DaemonConfig | None' = None)",
     "add_usage_delta": "(self, session_id: 'str', input_tokens: 'int' = 0, "
@@ -109,6 +109,7 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "reset_transcript_processed": "(self, session_id: 'str') -> 'Session | None'",
     "recover_session": "(self, external_id: 'str', source: 'str', machine_id: 'str', "
     "project_id: 'str | None', session_type: 'str | None' = None) -> 'Session | None'",
+    "revive_expired_terminal_session": "(self, session_id: 'str') -> 'Session | None'",
     "resolve_session_reference": "(self, ref: 'str', project_id: 'str | None' = None) -> 'str'",
     "touch": "(self, session_id: 'str') -> 'None'",
     "unregister_session_change_listener": "(self, listener: 'SessionChangeCallback') -> 'None'",

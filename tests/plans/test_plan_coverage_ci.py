@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar, Protocol
 
+import psycopg
 import pytest
 import yaml
 
@@ -102,7 +102,7 @@ def test_no_orphan_manifests(temp_db: TestDatabase) -> None:
     _seed_registry(temp_db)
     implementation_keys = {
         (entry.project_id, entry.root_task_ref, entry.plan_id)
-        for entry in _active_implementation_entries(temp_db)
+        for entry in _implementation_entries(temp_db)
     }
 
     orphaned: list[str] = []
@@ -145,8 +145,9 @@ def _seed_registry(db: TestDatabase) -> dict[str, PlanRegistryEntry]:
 def _seed_project(db: TestDatabase) -> None:
     db.execute(
         """
-        INSERT OR IGNORE INTO projects (id, name, repo_path, created_at, updated_at)
+        INSERT INTO projects (id, name, repo_path, created_at, updated_at)
         VALUES (?, 'gobby', ?, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')
+        ON CONFLICT (id) DO NOTHING
         """,
         (PROJECT_ID, str(PROJECT_ROOT)),
     )
@@ -170,7 +171,7 @@ def _entry_for_path(path: Path) -> PlanRegistryEntry:
         root_task_ref=root_task_ref,
         plan_id=plan_id,
     )
-    plan_kind = "implementation" if state == "active" and manifest_path.exists() else "strategy"
+    plan_kind = "implementation" if manifest_path.exists() else "strategy"
     parser_kind = _parser_kind(plan_kind)
     plan_hash = (
         parse_plan(path, plan_kind=parser_kind, parse_mode="draft").source_hash
@@ -203,6 +204,17 @@ def _active_implementation_entries(db: TestDatabase) -> list[PlanRegistryEntry]:
     )
 
 
+def _implementation_entries(db: TestDatabase) -> list[PlanRegistryEntry]:
+    return _entries(
+        db,
+        """
+        SELECT * FROM plans
+        WHERE plan_kind = 'implementation'
+        ORDER BY plan_id
+        """,
+    )
+
+
 def _entries(db: TestDatabase, sql: str) -> list[PlanRegistryEntry]:
     rows = db.fetchall(sql)
     return [
@@ -222,7 +234,30 @@ def _entries(db: TestDatabase, sql: str) -> list[PlanRegistryEntry]:
 def _is_plan_markdown(path: Path) -> bool:
     if path.name == "README.md" or path.name.startswith("."):
         return False
-    return _strip_leading_html_comments(path.read_text(encoding="utf-8")).lstrip().startswith("#")
+    if not path.stem.startswith("task-"):
+        return False
+    text = path.read_text(encoding="utf-8")
+    if _is_orphan_manifest_plan(path, text):
+        return False
+    return _strip_leading_html_comments(text).lstrip().startswith("#")
+
+
+def _is_orphan_manifest_plan(path: Path, text: str) -> bool:
+    """Return whether an active manifest plan has no coverage manifest yet."""
+    return (
+        path.parent.name != "completed"
+        and "`kind: manifest`" in text
+        and not _coverage_manifest_exists(path)
+    )
+
+
+def _coverage_manifest_exists(path: Path) -> bool:
+    return coverage_manifest_path(
+        PROJECT_ROOT,
+        project_id=PROJECT_ID,
+        root_task_ref=_root_ref(path),
+        plan_id=path.stem,
+    ).exists()
 
 
 def _strip_leading_html_comments(text: str) -> str:
@@ -303,7 +338,7 @@ def test_plans_table_has_unique_project_plan_constraint(temp_db: TestDatabase) -
     _seed_registry(temp_db)
     first = _active_entries(temp_db)[0]
 
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(psycopg.IntegrityError):
         temp_db.execute(
             """
             INSERT INTO plans (

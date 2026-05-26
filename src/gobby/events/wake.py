@@ -9,12 +9,15 @@ InterSessionMessage:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
+import weakref
 from collections.abc import Callable, Coroutine
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
+from gobby.agents.tmux.text_injection import TmuxExpectedTextInjectionError
 from gobby.sessions.tmux_context import get_tmux_socket_path, parse_terminal_context_value
 
 if TYPE_CHECKING:
@@ -24,7 +27,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-CONTINUE_WAKE_SIGNAL = "Message from Gobby daemon: Job's Done.\n"
+CONTINUE_WAKE_SIGNAL = "Message from Gobby daemon: New activity available.\n"
 
 # Coalesce bursty completions targeting an interactive pane: while the user is
 # idle on the same turn, suppress redundant tmux send-keys after the first wake.
@@ -39,6 +42,10 @@ TmuxPaneSender = Callable[[str, str, str | None], Coroutine[Any, Any, None]]
 
 # sdk_resumer signature: (sdk_session_id: str, message: str) -> None
 SdkResumer = Callable[[str, str], Coroutine[Any, Any, None]]
+
+
+class WebChatSessionRegistryProtocol(Protocol):
+    async def wake_session(self, session_id: str) -> dict[str, Any]: ...
 
 
 class WakeDispatcher:
@@ -60,6 +67,7 @@ class WakeDispatcher:
         tmux_pane_sender: TmuxPaneSender | None = None,
         sdk_resumer: SdkResumer | None = None,
         agent_run_manager: LocalAgentRunManager | None = None,
+        web_chat_session_registry: WebChatSessionRegistryProtocol | None = None,
     ) -> None:
         self._session_manager = session_manager
         self._ism_manager = ism_manager
@@ -67,8 +75,19 @@ class WakeDispatcher:
         self._tmux_pane_sender = tmux_pane_sender
         self._sdk_resumer = sdk_resumer
         self._agent_run_manager = agent_run_manager
+        self._web_chat_session_registry = web_chat_session_registry
         # session_id -> (turn_count_at_last_wake, monotonic_ts_at_last_wake)
-        self._last_pane_wake: dict[str, tuple[int, float]] = {}
+        self._last_live_wake: dict[str, tuple[int, float]] = {}
+        self._live_wake_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
+            weakref.WeakValueDictionary()
+        )
+
+    def set_web_chat_session_registry(
+        self,
+        registry: WebChatSessionRegistryProtocol | None,
+    ) -> None:
+        """Wire the live web-chat registry after server initialization."""
+        self._web_chat_session_registry = registry
 
     async def wake(
         self,
@@ -100,6 +119,20 @@ class WakeDispatcher:
         session: Any | None = None,
     ) -> dict[str, Any]:
         """Send a live wake signal after durable mailbox storage is complete."""
+        lock = self._live_wake_locks.get(session_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._live_wake_locks[session_id] = lock
+        async with lock:
+            return await self._dispatch_live_wake_unlocked(session_id, session=session)
+
+    async def _dispatch_live_wake_unlocked(
+        self,
+        session_id: str,
+        *,
+        session: Any | None = None,
+    ) -> dict[str, Any]:
+        """Send a live wake signal while holding the per-session wake lock."""
         session = session or self._session_manager.get(session_id)
         if session is None:
             logger.warning(f"Cannot wake session {session_id}: not found")
@@ -108,48 +141,109 @@ class WakeDispatcher:
                 "delivered": False,
                 "method": None,
                 "error": "session_not_found",
+                "error_code": "session_not_found",
+                "error_message": f"Session {session_id} not found",
             }
 
         agent_depth = getattr(session, "agent_depth", 0) or 0
         terminal_context = getattr(session, "terminal_context", None)
+        session_type = getattr(session, "session_type", None)
+        status = getattr(session, "status", None)
+
+        if status == "expired":
+            return self._live_wake_failure(
+                session_id,
+                method=None,
+                error_code="session_expired",
+                error_message=f"Session {session_id} is expired",
+            )
+
+        if session_type == "web_chat":
+            if not self._should_send_live_wake(session_id, session):
+                return self._live_wake_debounced_result(session_id, method="web_chat")
+            result = await self._dispatch_web_chat_wake(session_id)
+            if result.get("delivered"):
+                self._record_live_wake(session_id, session)
+            return result
 
         # Interactive session → try tmux pane wake after durable message storage.
         if agent_depth == 0:
-            if terminal_context and self._tmux_pane_sender:
-                tmux_pane = self._parse_tmux_pane(terminal_context)
-                if tmux_pane and self._should_send_pane_wake(session_id, session):
-                    tmux_socket_path = self._parse_tmux_socket_path(terminal_context)
-                    try:
-                        await self._tmux_pane_sender(
-                            tmux_pane,
-                            CONTINUE_WAKE_SIGNAL,
-                            tmux_socket_path,
-                        )
-                        self._record_pane_wake(session_id, session)
-                        return {
-                            "session_id": session_id,
-                            "delivered": True,
-                            "method": "tmux_pane",
-                        }
-                    except Exception:
-                        logger.warning(
-                            f"tmux pane wake failed for session {session_id} (pane={tmux_pane})",
-                            exc_info=True,
-                        )
-                        return {
-                            "session_id": session_id,
-                            "delivered": False,
-                            "method": "tmux_pane",
-                            "error": "tmux_pane_wake_failed",
-                        }
-            return {"session_id": session_id, "delivered": False, "method": None}
+            if not terminal_context:
+                return self._live_wake_failure(
+                    session_id,
+                    method=None,
+                    error_code="no_live_wake_channel",
+                    error_message="Session has no terminal_context for live wake",
+                )
+            tmux_pane = self._parse_tmux_pane(terminal_context)
+            if not tmux_pane:
+                return self._live_wake_failure(
+                    session_id,
+                    method="tmux_pane",
+                    error_code="no_tmux_pane",
+                    error_message="Session terminal_context has no tmux_pane",
+                )
+            if not self._tmux_pane_sender:
+                return self._live_wake_failure(
+                    session_id,
+                    method="tmux_pane",
+                    error_code="no_live_wake_channel",
+                    error_message="No tmux pane sender is configured",
+                )
+            if not self._should_send_live_wake(session_id, session):
+                return self._live_wake_debounced_result(session_id, method="tmux_pane")
+            tmux_socket_path = self._parse_tmux_socket_path(terminal_context)
+            try:
+                await self._tmux_pane_sender(
+                    tmux_pane,
+                    CONTINUE_WAKE_SIGNAL,
+                    tmux_socket_path,
+                )
+                self._record_live_wake(session_id, session)
+                return {
+                    "session_id": session_id,
+                    "delivered": True,
+                    "method": "tmux_pane",
+                }
+            except TmuxExpectedTextInjectionError as exc:
+                detail = str(exc) or type(exc).__name__
+                logger.info(
+                    "tmux pane wake skipped for session %s (pane=%s): %s",
+                    session_id,
+                    tmux_pane,
+                    detail,
+                )
+                return self._live_wake_failure(
+                    session_id,
+                    method="tmux_pane",
+                    error_code="tmux_pane_wake_failed",
+                    error_message=detail,
+                )
+            except Exception as exc:
+                detail = str(exc) or type(exc).__name__
+                logger.warning(
+                    "tmux pane wake failed for session %s (pane=%s)",
+                    session_id,
+                    tmux_pane,
+                    exc_info=True,
+                )
+                return self._live_wake_failure(
+                    session_id,
+                    method="tmux_pane",
+                    error_code="tmux_pane_wake_failed",
+                    error_message=detail,
+                )
 
         # Terminal agent → try tmux, then SDK. Both are wake signals only.
+        if not self._should_send_live_wake(session_id, session):
+            return self._live_wake_debounced_result(session_id, method="live_wake")
+
         if terminal_context and self._tmux_sender:
             tmux_session_name = self._parse_tmux_session(terminal_context)
             if tmux_session_name:
                 try:
                     await self._tmux_sender(tmux_session_name, CONTINUE_WAKE_SIGNAL)
+                    self._record_live_wake(session_id, session)
                     return {
                         "session_id": session_id,
                         "delivered": True,
@@ -161,12 +255,46 @@ class WakeDispatcher:
                         exc_info=True,
                     )
 
+        if terminal_context and self._tmux_pane_sender:
+            tmux_pane = self._parse_tmux_pane(terminal_context)
+            if tmux_pane:
+                tmux_socket_path = self._parse_tmux_socket_path(terminal_context)
+                try:
+                    await self._tmux_pane_sender(
+                        tmux_pane,
+                        CONTINUE_WAKE_SIGNAL,
+                        tmux_socket_path,
+                    )
+                    self._record_live_wake(session_id, session)
+                    return {
+                        "session_id": session_id,
+                        "delivered": True,
+                        "method": "tmux_pane",
+                    }
+                except TmuxExpectedTextInjectionError as exc:
+                    logger.info(
+                        "tmux pane wake skipped for terminal agent session %s (pane=%s), "
+                        "trying SDK resume: %s",
+                        session_id,
+                        tmux_pane,
+                        str(exc) or type(exc).__name__,
+                    )
+                except Exception:
+                    logger.warning(
+                        "tmux pane wake failed for terminal agent session %s (pane=%s), "
+                        "trying SDK resume",
+                        session_id,
+                        tmux_pane,
+                        exc_info=True,
+                    )
+
         # SDK agent → try resume via sdk_session_id
         if self._sdk_resumer:
             sdk_session_id = self._resolve_sdk_session_id(session_id)
             if sdk_session_id:
                 try:
                     await self._sdk_resumer(sdk_session_id, CONTINUE_WAKE_SIGNAL)
+                    self._record_live_wake(session_id, session)
                     return {
                         "session_id": session_id,
                         "delivered": True,
@@ -182,26 +310,111 @@ class WakeDispatcher:
                         "delivered": False,
                         "method": "sdk",
                         "error": "sdk_resume_failed",
+                        "error_code": "sdk_resume_failed",
+                        "error_message": "SDK resume failed",
                     }
 
-        return {"session_id": session_id, "delivered": False, "method": None}
+        return self._live_wake_failure(
+            session_id,
+            method=None,
+            error_code="no_live_wake_channel",
+            error_message="No live wake channel is available for this session",
+        )
 
-    def _should_send_pane_wake(self, session_id: str, session: Any) -> bool:
-        """Decide whether to send a live tmux pane wake to an interactive session.
+    @staticmethod
+    def _live_wake_failure(
+        session_id: str,
+        *,
+        method: str | None,
+        error_code: str,
+        error_message: str,
+    ) -> dict[str, Any]:
+        return {
+            "session_id": session_id,
+            "delivered": False,
+            "method": method,
+            "error": error_code,
+            "error_code": error_code,
+            "error_message": error_message,
+        }
 
-        Coalesces bursty completions: if a pane wake was already delivered to
+    async def _dispatch_web_chat_wake(self, session_id: str) -> dict[str, Any]:
+        if self._web_chat_session_registry is None:
+            return self._web_chat_no_live_result(session_id)
+
+        try:
+            result = await self._web_chat_session_registry.wake_session(session_id)
+        except Exception as exc:
+            logger.warning(
+                "web_chat wake failed for session %s: %s",
+                session_id,
+                exc,
+                exc_info=True,
+            )
+            return {
+                "session_id": session_id,
+                "delivered": False,
+                "method": "web_chat",
+                "error": str(exc),
+                "error_code": "web_chat_wake_failed",
+                "error_message": str(exc),
+            }
+
+        if not isinstance(result, dict):
+            return {
+                "session_id": session_id,
+                "delivered": False,
+                "method": "web_chat",
+                "error_code": "web_chat_wake_failed",
+            }
+        result.setdefault("session_id", session_id)
+        result.setdefault("method", "web_chat")
+        return result
+
+    @staticmethod
+    def _live_wake_debounced_result(session_id: str, *, method: str) -> dict[str, Any]:
+        return {
+            "session_id": session_id,
+            "delivered": False,
+            "method": method,
+            "skipped": "debounced",
+        }
+
+    @staticmethod
+    def _web_chat_no_live_result(session_id: str) -> dict[str, Any]:
+        return {
+            "session_id": session_id,
+            "delivered": False,
+            "method": "web_chat",
+            "error": "no_live_web_chat_session",
+            "error_code": "no_live_web_chat_session",
+            "error_message": f"No live web_chat session found for {session_id}",
+        }
+
+    def _prune_live_wake_state(self, stale_before: float) -> None:
+        """Drop stale wake timestamps and unused per-session locks."""
+        for recorded_session_id, (_, recorded_ts) in tuple(self._last_live_wake.items()):
+            if recorded_ts >= stale_before:
+                continue
+            lock = self._live_wake_locks.get(recorded_session_id)
+            if lock is not None and lock.locked():
+                continue
+            self._last_live_wake.pop(recorded_session_id, None)
+            self._live_wake_locks.pop(recorded_session_id, None)
+
+    def _should_send_live_wake(self, session_id: str, session: Any) -> bool:
+        """Decide whether to send a live wake signal to a session.
+
+        Coalesces bursty completions: if a wake was already delivered to
         this session and the user has not advanced the turn since (and the 30s
         ceiling has not elapsed), skip the live nudge. Durable ISMs are stored
         unconditionally, so the agent still sees every completion when it next
         reads its inbox.
         """
         now = time.monotonic()
-        stale_before = now - PANE_WAKE_DEBOUNCE_SECONDS
-        for recorded_session_id, (_, recorded_ts) in tuple(self._last_pane_wake.items()):
-            if recorded_ts < stale_before:
-                self._last_pane_wake.pop(recorded_session_id, None)
+        self._prune_live_wake_state(now - PANE_WAKE_DEBOUNCE_SECONDS)
 
-        last = self._last_pane_wake.get(session_id)
+        last = self._last_live_wake.get(session_id)
         if last is None:
             return True
         last_turn, last_ts = last
@@ -210,10 +423,10 @@ class WakeDispatcher:
             return True
         return (now - last_ts) >= PANE_WAKE_DEBOUNCE_SECONDS
 
-    def _record_pane_wake(self, session_id: str, session: Any) -> None:
-        """Record that a tmux pane wake was just delivered to this session."""
+    def _record_live_wake(self, session_id: str, session: Any) -> None:
+        """Record that a live wake was just delivered to this session."""
         current_turn = int(getattr(session, "turn_count", 0) or 0)
-        self._last_pane_wake[session_id] = (current_turn, time.monotonic())
+        self._last_live_wake[session_id] = (current_turn, time.monotonic())
 
     def _resolve_sdk_session_id(self, session_id: str) -> str | None:
         """Look up the SDK session ID for a session via agent_runs.

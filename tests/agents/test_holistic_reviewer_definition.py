@@ -40,6 +40,9 @@ def test_success_path_uses_complete_stage_for_in_progress_holistic_qa() -> None:
     assert "complete_stage" in instructions
     assert 'stage_name="holistic_qa"' in instructions
     assert "validation_override_reason" in instructions
+    assert "After successful final validation in REVIEW" in instructions
+    assert "pending terminal-verdict obligation" in instructions
+    assert "After successful final validation" in status
     assert 'complete_stage(stage_name="holistic_qa"' in status
     assert "gobby-tasks-ops:approve_review" in blocked
     assert "gobby-tasks-ops:reject_review" in blocked
@@ -93,12 +96,14 @@ def test_loads_required_skills_before_review() -> None:
     load_step = steps["load_skill"]
 
     assert agent["step_variables"]["required_skills"] == [
+        "code-index",
         "holistic-review",
         "tech-writer",
+        "task-transitions",
     ]
     assert load_step["allowed_mcp_tools"] == ["gobby-skills:get_skill"]
-    assert 'get_skill(name="holistic-review")' in load_step["status_message"]
-    assert 'get_skill(name="tech-writer")' in load_step["status_message"]
+    for skill_name in agent["step_variables"]["required_skills"]:
+        assert f'get_skill(name="{skill_name}")' in load_step["status_message"]
     assert load_step["transitions"] == [
         {
             "to": "review",

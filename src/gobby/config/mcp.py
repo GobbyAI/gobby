@@ -260,6 +260,7 @@ class MCPConfigManager:
         """
         config = self._read_config()
         servers = []
+        seen_names: set[str] = set()
 
         for server_dict in config.get("servers", []):
             try:
@@ -267,11 +268,18 @@ class MCPConfigManager:
                 if "name" not in server_dict:
                     logger.warning(f"Skipping MCP server config without 'name': {server_dict}")
                     continue
+                name = str(server_dict["name"])
+                if name in seen_names:
+                    logger.warning(
+                        "Skipping duplicate MCP server config %r; first entry wins",
+                        name,
+                    )
+                    continue
 
                 # Create MCPServerConfig with defaults for optional fields
                 # File-based configs use GLOBAL_PROJECT_ID since they're system-wide
                 server_config = MCPServerConfig(
-                    name=server_dict["name"],
+                    name=name,
                     project_id=server_dict.get("project_id", GLOBAL_PROJECT_ID),
                     enabled=server_dict.get("enabled", True),
                     transport=server_dict.get("transport", "http"),
@@ -290,6 +298,7 @@ class MCPConfigManager:
                 server_config.validate()
 
                 servers.append(server_config)
+                seen_names.add(name)
 
             except Exception as e:
                 logger.error(

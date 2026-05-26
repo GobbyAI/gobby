@@ -9,10 +9,12 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.storage.projects import GLOBAL_PROJECT_ID, ORPHANED_PROJECT_ID, PERSONAL_PROJECT_ID
+from gobby.workflows.step_context import get_active_step_workflow_context
 
 if TYPE_CHECKING:
+    from gobby.storage.session_tasks import SessionTaskManager
+    from gobby.storage.sessions import SessionManager
     from gobby.storage.tasks import LocalTaskManager
-    from gobby.tasks.session_tasks import SessionTaskManager
 
     from .engine import RuleEngine
 
@@ -87,11 +89,15 @@ class WorkflowHookHandler:
         enabled: bool = True,
         rule_engine: "RuleEngine | None" = None,
         task_manager: "LocalTaskManager | None" = None,
+        session_manager: "SessionManager | None" = None,
         session_task_manager: "SessionTaskManager | None" = None,
+        config: Any | None = None,
     ):
         self.rule_engine = rule_engine
         self._task_manager = task_manager
+        self._session_manager = session_manager
         self._session_task_manager = session_task_manager
+        self._config = config
         self._loop = loop
         self.timeout = timeout if timeout > 0 else None
         self._enabled = enabled
@@ -139,6 +145,33 @@ class WorkflowHookHandler:
         return identifiers
 
     @staticmethod
+    def _tool_context_fingerprint(data: dict[str, Any]) -> str | None:
+        """Return a content fingerprint for matching direct MCP proxy re-entry."""
+        tool_name = data.get("tool_name") or data.get("toolName")
+        if not isinstance(tool_name, str) or not tool_name:
+            return None
+
+        tool_input = data.get("tool_input") or data.get("toolInput") or {}
+        if not isinstance(tool_input, dict):
+            tool_input = {}
+        tool_input = deepcopy(tool_input)
+        for arg_key in ("arguments", "args"):
+            raw_args = tool_input.get(arg_key)
+            if isinstance(raw_args, str):
+                try:
+                    parsed_args = json.loads(raw_args)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                if isinstance(parsed_args, dict):
+                    tool_input[arg_key] = parsed_args
+
+        try:
+            input_json = json.dumps(tool_input, sort_keys=True, separators=(",", ":"))
+        except TypeError:
+            input_json = repr(tool_input)
+        return f"{tool_name}:{input_json}"
+
+    @staticmethod
     def _needs_tool_rehydration(data: dict[str, Any]) -> bool:
         """Return True when an AFTER_TOOL event lacks usable tool context."""
         tool_name = data.get("tool_name")
@@ -183,6 +216,10 @@ class WorkflowHookHandler:
         identifiers = self._tool_context_ids(data)
         if identifiers:
             snapshot["_ids"] = identifiers
+
+        fingerprint = self._tool_context_fingerprint(data)
+        if fingerprint:
+            snapshot["_fingerprint"] = fingerprint
 
         return snapshot
 
@@ -260,6 +297,24 @@ class WorkflowHookHandler:
             for snapshot in snapshots:
                 for identifier in snapshot.get("_ids", []):
                     self._tool_context_by_id.pop((cache_key, identifier), None)
+
+    def has_pending_tool_context(
+        self,
+        source: SessionSource,
+        session_id: str,
+        data: dict[str, Any],
+    ) -> bool:
+        """Return whether a matching CLI BEFORE_TOOL context is still pending."""
+        fingerprint = self._tool_context_fingerprint(data)
+        if not fingerprint:
+            return False
+
+        cache_key = self._tool_context_session_key(source, session_id)
+        with self._tool_context_lock:
+            return any(
+                snapshot.get("_fingerprint") == fingerprint
+                for snapshot in self._tool_contexts.get(cache_key, [])
+            )
 
     def _sync_tool_context(self, event: HookEvent, session_id: str) -> None:
         """Maintain BEFORE/AFTER tool parity for rule evaluation."""
@@ -405,6 +460,7 @@ class WorkflowHookHandler:
             detect_mcp_call,
             detect_plan_mode_from_context,
             detect_task_claim,
+            detect_verification_evidence,
             reconcile_claimed_tasks,
         )
 
@@ -414,6 +470,8 @@ class WorkflowHookHandler:
                 variables,
                 session_id,
                 task_manager=self._task_manager,
+                session_manager=self._session_manager,
+                session_task_manager=self._session_task_manager,
             )
 
         # Task claim/release tracking (AFTER_TOOL for gobby-tasks calls)
@@ -428,6 +486,7 @@ class WorkflowHookHandler:
             )
             detect_commit_link(event, variables, session_id)
             detect_bash_commit(event, variables, session_id)
+            detect_verification_evidence(event, variables, session_id, self._config)
             detect_mcp_call(event, variables, session_id)
 
         # Plan mode detection on the semantic start-of-turn boundary
@@ -456,6 +515,12 @@ class WorkflowHookHandler:
                     eval_lock_acquired = True
 
                 self._sync_tool_context(event, session_id)
+                if isinstance(event.data, dict) and not event.metadata.get(
+                    "_tool_context_rehydrated"
+                ):
+                    from gobby.hooks.normalization import normalize_tool_fields
+
+                    normalize_tool_fields(event.data)
 
                 # Load session-scoped variables (canonical store)
                 variables: dict[str, Any] = {}
@@ -467,28 +532,50 @@ class WorkflowHookHandler:
                             logger.warning(
                                 "Failed to load session variables on STOP - "
                                 f"blocking for safety: {e}",
+                                exc_info=True,
                             )
                             return HookResponse(
                                 decision="block",
                                 reason="Could not load session state. Try again.",
                             )
-                        logger.debug(f"Could not load session variables for rules: {e}")
+                        logger.debug(
+                            "Could not load session variables for rules session=%s event=%s: %s",
+                            session_id,
+                            event.event_type,
+                            e,
+                            exc_info=True,
+                        )
 
-                # Inject current_step from active workflow instance so rule templates
-                # can display it (e.g., require-step-completion block message).
-                if variables.get("is_spawned_agent") and not variables.get("current_step"):
+                # Inject active step details so stop gates can give actionable
+                # lifecycle instructions.
+                if variables.get("is_spawned_agent"):
                     try:
-                        from gobby.workflows.state_manager import WorkflowInstanceManager
-
-                        instances = WorkflowInstanceManager(
-                            self.rule_engine.db
-                        ).get_active_instances(session_id)
-                        for inst in instances:
-                            if inst.current_step:
-                                variables["current_step"] = inst.current_step
-                                break
+                        step_context = await asyncio.to_thread(
+                            get_active_step_workflow_context,
+                            self.rule_engine.db,
+                            session_id,
+                        )
+                        if step_context is not None:
+                            variables["current_step"] = step_context.current_step
+                            variables["_step_workflow_name"] = step_context.workflow_name
+                            variables["current_step_status_message"] = (
+                                step_context.status_message or ""
+                            )
+                            variables["current_step_description"] = step_context.description or ""
+                        else:
+                            variables["current_step"] = ""
+                            variables["_step_workflow_name"] = ""
+                            variables["current_step_status_message"] = ""
+                            variables["current_step_description"] = ""
                     except Exception as e:
-                        logger.debug(f"Could not inject current_step from workflow instance: {e}")
+                        logger.warning(
+                            "Could not inject current_step from workflow instance "
+                            "session=%s event=%s: %s",
+                            session_id,
+                            event.event_type,
+                            e,
+                            exc_info=True,
+                        )
 
                 # Lazy-init variable presets for sessions that started before gobby init.
                 # Mirrors the baseline_dirty_files pattern below — one-time DB hit per session.
@@ -509,14 +596,25 @@ class WorkflowHookHandler:
                                 key = var_body.get("variable", var_row.name)
                                 if key not in variables:
                                     defaults[key] = var_body.get("value")
-                            except (json.JSONDecodeError, AttributeError):
-                                pass
+                            except (json.JSONDecodeError, AttributeError) as e:
+                                logger.warning(
+                                    "Skipping malformed variable definition %s: %s",
+                                    getattr(var_row, "name", "<unknown>"),
+                                    e,
+                                    exc_info=True,
+                                )
                         defaults["_variable_defaults_loaded"] = True
                         variables.update(defaults)
                         if self._session_var_manager and session_id:
                             self._session_var_manager.merge_variables(session_id, defaults)
                     except Exception as e:
-                        logger.debug(f"Could not lazy-load variable defaults: {e}")
+                        logger.warning(
+                            "Could not lazy-load variable defaults session=%s project=%s: %s",
+                            session_id,
+                            event.project_id,
+                            e,
+                            exc_info=True,
+                        )
 
                 from gobby.workflows.git_utils import get_dirty_files_categorized
                 from gobby.workflows.safe_evaluator import LazyBool
@@ -597,6 +695,12 @@ class WorkflowHookHandler:
             logger.error(f"RuleEngine evaluation failed: {e}", exc_info=True)
             raise
 
+    async def evaluate_async(self, event: HookEvent) -> HookResponse:
+        """Evaluate rules asynchronously for callers that already own the loop."""
+        if not self._enabled:
+            return HookResponse(decision="allow")
+        return await self._evaluate_rules(event)
+
     def evaluate(self, event: HookEvent) -> HookResponse:
         """Evaluate rules for a hook event.
 
@@ -621,7 +725,8 @@ class WorkflowHookHandler:
                 logger.warning("Could not run workflow engine: Event loop is already running.")
                 return HookResponse(decision="allow")
             except RuntimeError:
-                return asyncio.run(self._evaluate_rules(event))
+                coroutine = self.evaluate_async(event)
+                return asyncio.run(coroutine)
 
         except concurrent.futures.CancelledError:
             return self._handle_cancelled(event)

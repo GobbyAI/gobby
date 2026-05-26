@@ -66,6 +66,7 @@ async def test_heartbeat_passes_snapshot(monkeypatch: pytest.MonkeyPatch) -> Non
     from gobby.dispatch import dispatcher
 
     candidate = _candidate("needs_review")
+    heartbeat_db = SimpleNamespace()
     captured: dict[str, object] = {}
 
     class SpyMutex:
@@ -90,18 +91,39 @@ async def test_heartbeat_passes_snapshot(monkeypatch: pytest.MonkeyPatch) -> Non
         def candidate_stage_snapshot_matches(*args: object, **kwargs: object) -> bool:
             return True
 
+    class SpyWriteSetGuard:
+        @classmethod
+        def load(cls, db: object, *, project_id: str | None = None) -> SpyWriteSetGuard:
+            captured["write_set_db"] = db
+            captured["write_set_project_id"] = project_id
+            return cls()
+
+        def action_reserves_write_set(self, action: object, task: object) -> bool:
+            return False
+
+        def conflict_for(self, task_id: str) -> object:
+            raise AssertionError("conflict_for should not run when no action reserves files")
+
+        def reserve(self, task_id: str) -> None:
+            raise AssertionError("reserve should not run when no action reserves files")
+
     monkeypatch.setattr(dispatcher, "RuntimeDispatchMutex", SpyMutex)
     monkeypatch.setattr(dispatcher, "list_automation_candidates", lambda *a, **k: [candidate])
+    monkeypatch.setattr(dispatcher, "sweep_stale_claims", lambda *a, **k: 0)
+    monkeypatch.setattr(dispatcher, "sweep_orphan_no_run_dispatch_mutexes", lambda *a, **k: 0)
     monkeypatch.setattr(dispatcher, "count_active_agents", lambda *a, **k: 0)
     monkeypatch.setattr(dispatcher, "reload_candidate", lambda *a, **k: candidate)
     monkeypatch.setattr(dispatcher, "build_context", lambda *a, **k: SimpleNamespace())
     monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *a, **k: None)
+    monkeypatch.setattr(dispatcher, "DispatchWriteSetGuard", SpyWriteSetGuard)
 
-    result = await dispatcher.run_heartbeat(db=SimpleNamespace(), project_id="project-1")
+    result = await dispatcher.run_heartbeat(db=heartbeat_db, project_id="project-1")
 
     assert result.skipped == 1
     assert captured["expected_stage_name"] == "development"
     assert captured["expected_stage_state"] == "needs_review"
     assert captured["expected_stage_updated_at"] == "2026-05-02T00:00:00+00:00"
+    assert captured["write_set_db"] is heartbeat_db
+    assert captured["write_set_project_id"] == "project-1"
     assert "expected_lifecycle" not in captured
     assert "expected_status" not in captured

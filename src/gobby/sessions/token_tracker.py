@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 from gobby.storage.token_events import TokenEventStore
 
 if TYPE_CHECKING:
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
 
 
 class SessionTokenTracker:
@@ -17,7 +17,7 @@ class SessionTokenTracker:
     def __init__(
         self,
         *,
-        db: DatabaseProtocol | None = None,
+        db: HubDatabase | None = None,
         session_storage: Any | None = None,
     ) -> None:
         if db is None and session_storage is None:

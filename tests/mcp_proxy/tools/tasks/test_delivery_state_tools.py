@@ -95,6 +95,27 @@ def test_record_pr_state_persists_delivery_unit(
     assert state["units"][0]["pr_state"] == "awaiting_ci"
 
 
+def test_record_pr_state_defaults_merge_strategy_for_direct_merge(
+    temp_db: Any, sample_project: dict[str, Any]
+) -> None:
+    task = create_task(temp_db, sample_project, task_type="feature")
+    registry = _registry(temp_db)
+    record = registry.get_tool("record_pr_state")
+    assert record is not None
+
+    result = record(
+        task_id=task.id,
+        pr_required=False,
+        pr_state="direct_merge",
+        campaign_state="direct_merge",
+    )
+
+    assert result["delivery"]["campaign"]["state"] == "direct_merge"
+    assert result["delivery"]["campaign"]["merge_strategy"] == "squash"
+    assert result["delivery"]["units"][0]["pr_required"] is False
+    assert result["delivery"]["units"][0]["pr_state"] == "direct_merge"
+
+
 @pytest.mark.asyncio
 async def test_open_delivery_pr_uses_github_mcp_for_same_repo(
     temp_db: Any, sample_project: dict[str, Any]

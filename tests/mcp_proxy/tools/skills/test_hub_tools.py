@@ -1,25 +1,20 @@
 """Tests for hub-related MCP tools: list_hubs and search_hub."""
 
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from gobby.config.skills import HubConfig
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = [pytest.mark.integration]
 
 
 @pytest.fixture
-def db(tmp_path: Path):
+def db(temp_db: HubDatabase):
     """Create a fresh database with migrations applied."""
-    db_path = tmp_path / "test.db"
-    database = LocalDatabase(db_path)
-    run_migrations(database)
+    database = temp_db
     yield database
-    database.close()
 
 
 @pytest.fixture

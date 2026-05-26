@@ -379,8 +379,7 @@ stop or turn-end event does not release the agent run.
 
 | Path | Description |
 | :--- | :--- |
-| `~/.gobby/gobby-hub.db` | Default SQLite database for sessions and related tables. |
-| `$GOBBY_HOME/gobby-hub.db` | Database location when `GOBBY_HOME` is set. |
+| `~/.gobby/bootstrap.yaml` `database_url` | Runtime PostgreSQL hub DSN for sessions and related tables. |
 | `~/.gobby/logs/` | Daemon logs. |
 | `.gobby/session_summaries/` | Default file output for CLI-created handoff summaries. |
 

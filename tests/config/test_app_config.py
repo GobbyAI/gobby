@@ -53,6 +53,11 @@ from gobby.telemetry.config import TelemetrySettings
 pytestmark = pytest.mark.unit
 
 
+def write_secure_bootstrap(path: Path, content: str) -> None:
+    path.write_text(content)
+    path.chmod(0o600)
+
+
 class TestExpandEnvVars:
     """Tests for expand_env_vars function."""
 
@@ -378,7 +383,6 @@ class TestDaemonConfig:
         config = DaemonConfig()
         assert config.daemon_port == 60887
         assert config.daemon_health_check_interval == 10.0
-        assert config.database_path == "~/.gobby/gobby-hub.db"
         assert isinstance(config.bin_freshness, BinFreshnessConfig)
 
     def test_port_validation(self) -> None:
@@ -565,18 +569,8 @@ class TestLoadConfig:
         """Test loading config with config_file=None reads bootstrap.yaml."""
         default_path = temp_dir / ".gobby" / "bootstrap.yaml"
         default_path.parent.mkdir(parents=True, exist_ok=True)
-        default_path.write_text(yaml.dump({"daemon_port": 7777}))
-
-        # Patch expanduser to redirect ~/.gobby to temp_dir/.gobby
-        original_expanduser = Path.expanduser
-
-        def mock_expanduser(self):
-            path_str = str(self)
-            if path_str.startswith("~/.gobby"):
-                return temp_dir / ".gobby" / path_str[9:]  # Remove ~/.gobby/
-            return original_expanduser(self)
-
-        monkeypatch.setattr(Path, "expanduser", mock_expanduser)
+        write_secure_bootstrap(default_path, yaml.dump({"daemon_port": 7777}))
+        monkeypatch.setenv("GOBBY_HOME", str(default_path.parent))
 
         config = load_config(config_file=None)
         assert config.daemon_port == 7777
@@ -585,7 +579,7 @@ class TestLoadConfig:
         """Test load_config raises ValueError on invalid bootstrap configuration."""
         bootstrap_file = temp_dir / "bootstrap.yaml"
         # Write invalid port value (out of range)
-        bootstrap_file.write_text(yaml.dump({"daemon_port": 80}))
+        write_secure_bootstrap(bootstrap_file, yaml.dump({"daemon_port": 80}))
 
         with pytest.raises(ValueError, match="Configuration validation failed"):
             load_config(config_file=str(bootstrap_file))
@@ -594,7 +588,7 @@ class TestLoadConfig:
         """Test load_config falls back to defaults when bootstrap has invalid type."""
         bootstrap_file = temp_dir / "bootstrap.yaml"
         # Write string instead of int for port — bootstrap silently falls back
-        bootstrap_file.write_text("daemon_port: not_a_number")
+        write_secure_bootstrap(bootstrap_file, "daemon_port: not_a_number")
 
         config = load_config(config_file=str(bootstrap_file))
         # Bootstrap swallows the int() conversion error and returns defaults
@@ -657,6 +651,41 @@ class TestLoadConfig:
         assert config.memory.kg.provider == "codex"
         assert config.memory.kg.model == "gpt-5-mini"
 
+    def test_load_config_drops_stale_neo4j_db_keys(
+        self, temp_dir: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Legacy databases.neo4j.* config_store keys do not block FalkorDB config."""
+
+        class DummyConfigStore:
+            def __init__(self) -> None:
+                self.deleted: list[str] = []
+
+            def get_all(self) -> dict[str, object]:
+                return {
+                    "databases.neo4j.url": "http://localhost:8474",
+                    "databases.neo4j.password": "$secret:password",
+                    "databases.falkordb.requirepass": "falkor-secret",
+                }
+
+            def delete(self, key: str) -> bool:
+                self.deleted.append(key)
+                return True
+
+        store = DummyConfigStore()
+        caplog.set_level("WARNING", logger="gobby.config.app")
+
+        config = load_config(
+            config_file=str(temp_dir / "bootstrap.yaml"),
+            config_store=store,
+        )
+
+        assert config.databases.falkordb.requirepass == "falkor-secret"
+        assert store.deleted == ["databases.neo4j.password", "databases.neo4j.url"]
+        assert any(
+            "Ignoring stale Neo4j config_store keys after FalkorDB migration" in record.getMessage()
+            for record in caplog.records
+        )
+
     def test_load_config_drops_removed_dead_sections(self, temp_dir: Path) -> None:
         """Removed review/task_description/enrichment sections are ignored from DB config."""
 
@@ -691,6 +720,53 @@ class TestLoadConfig:
 
         assert config.cron.check_interval_seconds == 60
 
+    def test_load_config_preserves_bootstrap_backend_selection_over_db(
+        self, temp_dir: Path
+    ) -> None:
+        """DB config cannot override bootstrap-level hub backend selection."""
+
+        bootstrap_file = temp_dir / "bootstrap.yaml"
+        write_secure_bootstrap(
+            bootstrap_file,
+            "hub_backend: postgres\n"
+            "database_url: postgresql://gobby:secret@localhost:60891/gobby\n"
+            "postgres_install_mode: docker\n",
+        )
+
+        class DummyConfigStore:
+            def get_all(self) -> dict[str, object]:
+                return {
+                    "hub_backend": "local",
+                    "database_url": None,
+                    "postgres_install_mode": "external",
+                }
+
+        config = load_config(
+            config_file=str(bootstrap_file),
+            config_store=DummyConfigStore(),
+            resolve_database_url=True,
+        )
+
+        assert config.hub_backend == "postgres"
+        assert config.database_url == "postgresql://gobby:secret@localhost:60891/gobby"
+        assert config.postgres_install_mode == "docker"
+
+    def test_load_config_without_resolution_reads_plaintext_dsn(self, temp_dir: Path) -> None:
+        """Config readers can inspect bootstrap fields without special credential access."""
+
+        bootstrap_file = temp_dir / "bootstrap.yaml"
+        write_secure_bootstrap(
+            bootstrap_file,
+            "hub_backend: postgres\n"
+            "database_url: postgresql://gobby:secret@localhost:60891/gobby\n"
+            "daemon_port: 61234\n",
+        )
+
+        config = load_config(config_file=str(bootstrap_file))
+
+        assert config.daemon_port == 61234
+        assert config.database_url == "postgresql://gobby:secret@localhost:60891/gobby"
+
 
 class TestBootstrapConfig:
     """Tests for bootstrap configuration loading."""
@@ -701,7 +777,6 @@ class TestBootstrapConfig:
 
         bootstrap = load_bootstrap(str(temp_dir / "nonexistent.yaml"))
         assert bootstrap.daemon_port == 60887
-        assert bootstrap.database_path == "~/.gobby/gobby-hub.db"
         assert bootstrap.bind_host == "localhost"
         assert bootstrap.websocket_port == 60888
         assert bootstrap.ui_port == 60889
@@ -711,19 +786,26 @@ class TestBootstrapConfig:
         from gobby.config.bootstrap import load_bootstrap
 
         bootstrap_file = temp_dir / "bootstrap.yaml"
-        bootstrap_file.write_text(
-            "database_path: /custom/db.sqlite\n"
-            "daemon_port: 9999\n"
-            "bind_host: 0.0.0.0\n"
-            "websocket_port: 9998\n"
-            "ui_port: 9997\n"
+        write_secure_bootstrap(
+            bootstrap_file,
+            "daemon_port: 9999\nbind_host: 0.0.0.0\nwebsocket_port: 9998\nui_port: 9997\n",
         )
         bootstrap = load_bootstrap(str(bootstrap_file))
         assert bootstrap.daemon_port == 9999
-        assert bootstrap.database_path == "/custom/db.sqlite"
         assert bootstrap.bind_host == "0.0.0.0"
         assert bootstrap.websocket_port == 9998
         assert bootstrap.ui_port == 9997
+
+    def test_load_bootstrap_ignores_legacy_neo4j_password(self, temp_dir: Path) -> None:
+        """Legacy bootstrap neo4j_password does not affect FalkorDB credentials."""
+        from gobby.config.bootstrap import load_bootstrap
+
+        bootstrap_file = temp_dir / "bootstrap.yaml"
+        write_secure_bootstrap(bootstrap_file, "neo4j_password: old-secret\n")
+
+        bootstrap = load_bootstrap(str(bootstrap_file))
+
+        assert bootstrap.falkordb_password == "gobbyfalkor"
 
     def test_to_config_dict(self) -> None:
         """Test bootstrap converts to DaemonConfig-compatible dict."""
@@ -734,23 +816,25 @@ class TestBootstrapConfig:
         assert d["daemon_port"] == 7777
         assert d["websocket"]["port"] == 7778
         assert d["bind_host"] == "localhost"
+        assert d["hub_backend"] == "postgres"
+        assert d["database_url"] is None
+        assert d["postgres_install_mode"] is None
 
     def test_partial_yaml(self, temp_dir: Path) -> None:
         """Test bootstrap fills defaults for missing fields."""
         from gobby.config.bootstrap import load_bootstrap
 
         bootstrap_file = temp_dir / "bootstrap.yaml"
-        bootstrap_file.write_text("daemon_port: 5555\n")
+        write_secure_bootstrap(bootstrap_file, "daemon_port: 5555\n")
         bootstrap = load_bootstrap(str(bootstrap_file))
         assert bootstrap.daemon_port == 5555
-        assert bootstrap.database_path == "~/.gobby/gobby-hub.db"  # default
 
     def test_legacy_config_path_redirects(self, temp_dir: Path) -> None:
         """Test that passing a config.yaml path finds bootstrap.yaml in same dir."""
         from gobby.config.bootstrap import load_bootstrap
 
         bootstrap_file = temp_dir / "bootstrap.yaml"
-        bootstrap_file.write_text("daemon_port: 4444\n")
+        write_secure_bootstrap(bootstrap_file, "daemon_port: 4444\n")
         # Pass legacy config.yaml path — should find bootstrap.yaml instead
         bootstrap = load_bootstrap(str(temp_dir / "config.yaml"))
         assert bootstrap.daemon_port == 4444
@@ -1034,11 +1118,13 @@ class TestCompactHandoffConfig:
         """Test default compact handoff config."""
         config = CompactHandoffConfig()
         assert config.enabled is True
+        assert config.refresh_timeout_seconds == 180.0
 
     def test_custom_values(self) -> None:
         """Test custom compact handoff config."""
-        config = CompactHandoffConfig(enabled=False)
+        config = CompactHandoffConfig(enabled=False, refresh_timeout_seconds=45.0)
         assert config.enabled is False
+        assert config.refresh_timeout_seconds == 45.0
 
 
 class TestContextInjectionConfig:

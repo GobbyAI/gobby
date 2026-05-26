@@ -1,8 +1,7 @@
 """Tests for the LocalProjectManager storage layer."""
 
-import sqlite3
-
 import pytest
+from psycopg.errors import UniqueViolation
 
 from gobby.storage.projects import LocalProjectManager, Project
 
@@ -73,7 +72,7 @@ class TestLocalProjectManager:
         """Test that creating a project with duplicate name raises error."""
         project_manager.create(name="unique-project")
 
-        with pytest.raises(sqlite3.IntegrityError):
+        with pytest.raises(UniqueViolation):
             project_manager.create(name="unique-project")
 
     def test_get_project(self, project_manager: LocalProjectManager) -> None:

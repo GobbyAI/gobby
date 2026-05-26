@@ -607,10 +607,10 @@ async def migrate_to_v2():
 
 ## Supersedes
 
-This plan supersedes **Phase 8: Semantic Memory Search with sqlite-vec** from `docs/plans/enhancements.md`.
+This plan supersedes **Phase 8: Semantic Memory Search with PostgreSQL-vec** from `docs/plans/enhancements.md`.
 
 **Why the change:**
-- sqlite-vec requires native extension loading (platform issues)
+- PostgreSQL-vec requires native extension loading (platform issues)
 - sentence-transformers adds ~500MB dependency
 - TF-IDF achieves similar results for memory recall use case
 - Memora's approach is battle-tested and simpler

@@ -10,7 +10,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from gobby.storage.database import DatabaseProtocol, LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sql_dialect import older_than_now_expr
 
 logger = logging.getLogger(__name__)
 
@@ -33,18 +34,22 @@ class WorkflowAuditEntry:
 
 
 class WorkflowAuditManager:
-    """Manages workflow audit log entries in SQLite."""
+    """Manages workflow audit log entries in the hub database."""
 
-    def __init__(self, db: DatabaseProtocol | None = None):
+    def __init__(self, db: HubDatabase | None = None):
         """Initialize the audit manager.
 
         Args:
             db: Optional database instance. If None, creates a new one.
         """
-        self._db = db or LocalDatabase()
+        if db is None:
+            from gobby.storage.hub.runtime import open_runtime_hub_database
+
+            db = open_runtime_hub_database(apply_migrations=False)
+        self._db = db
 
     @property
-    def db(self) -> DatabaseProtocol:
+    def db(self) -> HubDatabase:
         """Get database instance."""
         return self._db
 
@@ -80,11 +85,12 @@ class WorkflowAuditManager:
             timestamp = datetime.now(UTC).isoformat()
             context_json = json.dumps(context) if context else None
 
-            cursor = self.db.execute(
+            row = self.db.execute(
                 """
                 INSERT INTO workflow_audit_log
                 (session_id, timestamp, step, event_type, tool_name, rule_id, condition, result, reason, context)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                RETURNING id
                 """,
                 (
                     session_id,
@@ -98,8 +104,8 @@ class WorkflowAuditManager:
                     reason,
                     context_json,
                 ),
-            )
-            return cursor.lastrowid
+            ).fetchone()
+            return int(row["id"]) if row is not None else None
         except Exception as e:
             logger.error(f"Failed to log audit entry: {e}")
             return None
@@ -360,12 +366,13 @@ class WorkflowAuditManager:
             Number of entries deleted.
         """
         try:
+            cutoff_sql = older_than_now_expr(self.db, "timestamp", "?", "day")
             cursor = self.db.execute(
-                """
+                f"""
                 DELETE FROM workflow_audit_log
-                WHERE datetime(timestamp) < datetime('now', ? || ' days')
-                """,
-                (f"-{days}",),
+                WHERE {cutoff_sql}
+                """,  # nosec B608 # cutoff expression is selected by storage dialect.
+                (days,),
             )
             return cursor.rowcount
         except Exception as e:

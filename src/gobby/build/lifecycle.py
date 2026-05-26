@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
+from dataclasses import asdict, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
 from gobby.build.delivery import record_build_delivery_campaign
+from gobby.build.dispatch_tick import (
+    DispatcherTickSummary,
+)
 from gobby.build.dispatch_tick import (
     kick_dispatcher_tick as _kick_dispatcher_tick,
 )
@@ -32,6 +36,7 @@ from gobby.build.validation import (
     _validate_epic_isolation_artifacts,
     _validate_max_active_agents,
     _validate_no_merge,
+    _validate_planning_seed,
     _validate_retry_caps,
     _validate_task_ref_isolation_artifacts,
 )
@@ -40,30 +45,198 @@ from gobby.build.workspaces import (
     ensure_task_parent_integration_workspace,
 )
 from gobby.config.build import Isolation
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.build_history import (
+    best_effort_finish_run,
+    best_effort_record_event,
+    best_effort_start_run,
+    best_effort_update_run_context,
+)
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import (
     LocalTaskManager,
     ManifestAlreadyInitializedError,
     StageManifestSpec,
+    StageState,
     Task,
 )
 from gobby.storage.tasks._lifecycle_events import BUILD_EVENT_REASON
+
+_EXPANDED_EPIC_LEGACY_ROOT_STAGES = frozenset(
+    {"ideation", "research", "architecture", "prd", "planning", "expansion", "pr"}
+)
 
 _STAGE_CAP_UPDATE_ASSIGNMENTS = {
     "max_work_attempts": "max_work_attempts = ?",
     "max_review_rounds": "max_review_rounds = ?",
 }
 
+_DRY_RUN_PLAN_TASK_ID = "dry-run:plan-file"
+
+
+class _DryRunRollback(Exception):
+    """Internal sentinel used to roll back dry-run preview writes."""
+
 
 async def build(
     input_ref: str,
     opts: BuildOptions,
     *,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str,
     services: object | None = None,
 ) -> BuildResult:
     """Start lifecycle automation for a plan file, epic, or automated leaf task."""
+    coordinator_session_id = _resolve_coordinator_session_id(
+        opts,
+        db=db,
+        project_id=project_id,
+        services=services,
+    )
+    if opts.dry_run:
+        return await _build_dry_run(
+            input_ref,
+            opts,
+            db=db,
+            project_id=project_id,
+            services=services,
+        )
+
+    run = best_effort_start_run(
+        db,
+        project_id=project_id,
+        input_ref=input_ref,
+        action="build",
+        actor="build",
+        summary=_build_run_summary(
+            {"quick": opts.quick, "isolation": opts.isolation},
+            coordinator_session_id,
+        ),
+    )
+    try:
+        result = await _build_impl(
+            input_ref,
+            opts,
+            db=db,
+            project_id=project_id,
+            services=services,
+            build_run_id=run.id if run is not None else None,
+        )
+    except Exception as exc:
+        best_effort_finish_run(
+            db,
+            run.id if run is not None else None,
+            status="failed",
+            error=str(exc),
+        )
+        best_effort_record_event(
+            db,
+            run_id=run.id if run is not None else None,
+            project_id=project_id,
+            event_type="build_failed",
+            action="build",
+            message=str(exc),
+            payload={"input_ref": input_ref},
+        )
+        raise
+    best_effort_finish_run(
+        db,
+        run.id if run is not None else None,
+        status="completed",
+        root_task_id=result.task_id,
+        summary=_build_run_summary(asdict(result), coordinator_session_id),
+    )
+    best_effort_record_event(
+        db,
+        run_id=run.id if run is not None else None,
+        project_id=project_id,
+        root_task_id=result.task_id,
+        task_id=result.task_id,
+        event_type="build_completed",
+        action="build",
+        message="gobby build",
+        payload=asdict(result),
+    )
+    return result
+
+
+async def _build_dry_run(
+    input_ref: str,
+    opts: BuildOptions,
+    *,
+    db: HubDatabase,
+    project_id: str,
+    services: object | None = None,
+) -> BuildResult:
+    result: BuildResult | None = None
+    try:
+        with db.transaction_immediate():
+            result = await _build_impl(
+                input_ref,
+                opts,
+                db=db,
+                project_id=project_id,
+                services=services,
+            )
+            raise _DryRunRollback
+    except _DryRunRollback:
+        if result is None:
+            raise RuntimeError("dry-run build did not produce a result") from None
+        if result.created:
+            result = replace(result, task_id=_DRY_RUN_PLAN_TASK_ID)
+        return replace(result, dry_run=True)
+
+
+def _build_run_summary(
+    payload: dict[str, object],
+    coordinator_session_id: str | None,
+) -> dict[str, object]:
+    if coordinator_session_id is None:
+        return payload
+    return {**payload, "coordinator_session_id": coordinator_session_id}
+
+
+def _resolve_coordinator_session_id(
+    opts: BuildOptions,
+    *,
+    db: HubDatabase,
+    project_id: str,
+    services: object | None,
+) -> str | None:
+    ref = opts.coordinator_session_ref
+    if not ref:
+        return None
+    manager = getattr(services, "session_manager", None) or SessionManager(db)
+    try:
+        resolved_id = str(manager.resolve_session_reference(ref, project_id))
+    except ValueError as exc:
+        raise ValueError(f"build coordinator session could not be resolved: {exc}") from exc
+    session = manager.get(resolved_id)
+    if session is None:
+        raise ValueError(f"build coordinator session not found: {ref}")
+    if session.project_id != project_id:
+        raise ValueError("build coordinator session must belong to the build project")
+    return resolved_id
+
+
+def _attach_build_run_root(
+    db: HubDatabase,
+    build_run_id: str | None,
+    root_task_id: str,
+) -> None:
+    best_effort_update_run_context(db, build_run_id, root_task_id=root_task_id)
+
+
+async def _build_impl(
+    input_ref: str,
+    opts: BuildOptions,
+    *,
+    db: HubDatabase,
+    project_id: str,
+    services: object | None = None,
+    build_run_id: str | None = None,
+) -> BuildResult:
+    """Start lifecycle automation after history instrumentation is installed."""
 
     opts = resolve_build_profile_options(opts, db=db, project_id=project_id)
     skip_stages = _validate_skip_stages(opts.skip_stages)
@@ -75,6 +248,7 @@ async def build(
     _validate_clones_dir(opts)
     _validate_retry_caps(opts)
     _validate_max_active_agents(opts)
+    _validate_planning_seed(opts)
     target_branch = await _resolve_target_branch(db, project_id, opts, input_kind)
 
     if input_kind == "plan_file":
@@ -90,6 +264,7 @@ async def build(
             target_branch,
             db,
             services,
+            build_run_id,
         )
 
     if not isinstance(task_or_plan, Task):
@@ -106,9 +281,10 @@ async def build(
             project_id,
             services,
             target_branch,
+            build_run_id,
         )
 
-    _prepare_task_ref_expansion_output(task_manager, task, opts)
+    _reset_task_ref_expansion_output(task_manager, task, opts)
     if input_kind == "leaf":
         return await _build_leaf(
             task_manager,
@@ -120,6 +296,7 @@ async def build(
             db,
             project_id,
             services,
+            build_run_id,
         )
 
     return await _build_epic(
@@ -132,6 +309,7 @@ async def build(
         db,
         project_id,
         services,
+        build_run_id,
     )
 
 
@@ -143,8 +321,9 @@ async def _build_plan_file(
     warnings: list[str],
     project_id: str,
     target_branch: str | None,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     services: object | None,
+    build_run_id: str | None,
 ) -> BuildResult:
     task = task_manager.create_task(
         project_id=project_id,
@@ -167,15 +346,16 @@ async def _build_plan_file(
     )
     record_build_delivery_campaign(db, project_id=project_id, task_id=task.id, opts=opts)
     specs = _initialize_stage_manifest(task_manager, task, opts, skip_stages, "plan_file")
+    _seed_plan_file_stage_state(task_manager, task.id, opts)
     initial_lifecycle = _current_stage_name(task_manager, task.id, specs)
     _record_build_event(task_manager, task.id, initial_lifecycle)
-    tick = await _kick_dispatcher_tick(
+    _attach_build_run_root(db, build_run_id, task.id)
+    tick = await _build_dispatcher_tick(
         task_manager.db,
         project_id,
+        opts,
         dispatcher_enabled=True,
         services=services,
-        max_ticks=_quick_tick_limit(opts),
-        max_active_agents=opts.max_active_agents,
     )
     if opts.quick:
         _set_automation_for_task_tree(task_manager, task, False, isolation=opts.isolation)
@@ -188,7 +368,40 @@ async def _build_plan_file(
         dispatcher_tick=tick,
         manifest=specs_payload(specs),
         warnings=warnings,
+        dry_run=opts.dry_run,
     )
+
+
+def _seed_plan_file_stage_state(
+    task_manager: LocalTaskManager,
+    task_id: str,
+    opts: BuildOptions,
+) -> None:
+    if opts.planning_seed_state != "needs_review":
+        return
+    if not task_manager.stage_states.get(task_id, "planning"):
+        raise ValueError("planning_seed_state=needs_review requires a planning stage")
+    now = datetime.now(UTC).isoformat()
+    with task_manager.db.transaction() as conn:
+        conn.execute(
+            """
+            UPDATE task_stage_states
+               SET state = 'needs_review',
+                   review_round_count = ?,
+                   entered_at = COALESCE(entered_at, ?),
+                   updated_at = ?,
+                   notes = ?
+             WHERE task_id = ?
+               AND stage_name = 'planning'
+            """,
+            (
+                opts.completed_plan_review_rounds,
+                now,
+                now,
+                "Seeded plan review state from build input.",
+                task_id,
+            ),
+        )
 
 
 async def _build_leaf(
@@ -198,9 +411,10 @@ async def _build_leaf(
     skip_stages: list[str],
     warnings: list[str],
     target_branch: str | None,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str,
     services: object | None,
+    build_run_id: str | None,
 ) -> BuildResult:
     if task.category not in AUTOMATED_LEAF_CATEGORIES:
         allowed = ", ".join(sorted(AUTOMATED_LEAF_CATEGORIES))
@@ -222,13 +436,13 @@ async def _build_leaf(
     specs = _initialize_stage_manifest(task_manager, task, opts, skip_stages, "leaf")
     initial_lifecycle = _current_stage_name(task_manager, task.id, specs)
     _record_build_event(task_manager, task.id, initial_lifecycle)
-    tick = await _kick_dispatcher_tick(
+    _attach_build_run_root(db, build_run_id, task.id)
+    tick = await _build_dispatcher_tick(
         db,
         project_id,
+        opts,
         dispatcher_enabled=True,
         services=services,
-        max_ticks=_quick_tick_limit(opts),
-        max_active_agents=opts.max_active_agents,
     )
     if opts.quick:
         _set_automation_for_task_tree(task_manager, task, False, isolation=opts.isolation)
@@ -241,6 +455,7 @@ async def _build_leaf(
         dispatcher_tick=tick,
         manifest=specs_payload(specs),
         warnings=warnings,
+        dry_run=opts.dry_run,
     )
 
 
@@ -251,9 +466,10 @@ async def _build_epic(
     skip_stages: list[str],
     warnings: list[str],
     target_branch: str | None,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str,
     services: object | None,
+    build_run_id: str | None,
 ) -> BuildResult:
     artifacts = task_manager.artifacts.get_artifacts(task.id)
     _validate_epic_isolation_artifacts(opts.isolation, artifacts)
@@ -265,21 +481,31 @@ async def _build_epic(
     if opts.isolation in {"worktree", "clone"}:
         if target_branch is None:
             raise ValueError("target_branch is required for epic integration workspaces")
-        await asyncio.to_thread(
-            ensure_epic_integration_workspaces,
-            task_manager=task_manager,
-            root_task=task,
-            backend=opts.workspace_backend,
-            target_branch=target_branch,
-            project_id=project_id,
-            services=services,
-        )
-    specs = _initialize_stage_manifest(task_manager, task, opts, skip_stages, "epic")
+        if not opts.dry_run:
+            await asyncio.to_thread(
+                ensure_epic_integration_workspaces,
+                task_manager=task_manager,
+                root_task=task,
+                backend=opts.workspace_backend,
+                target_branch=target_branch,
+                project_id=project_id,
+                services=services,
+            )
+    manifest_input_kind: InputKind = (
+        "expanded_epic" if _has_existing_expansion_output(task_manager, task) else "epic"
+    )
+    specs = _initialize_stage_manifest(
+        task_manager,
+        task,
+        opts,
+        skip_stages,
+        manifest_input_kind,
+    )
     cascade_specs = (
         resolve_stage_manifest_specs(
             task_manager,
             task,
-            "epic",
+            manifest_input_kind,
             replace(opts, no_merge=False),
             skip_stages,
         )
@@ -299,13 +525,13 @@ async def _build_epic(
         _cascade_target_branch_to_subtree(task_manager, task.id, target_branch)
     initial_lifecycle = _current_stage_name(task_manager, task.id, specs)
     _record_build_event(task_manager, task.id, initial_lifecycle)
-    tick = await _kick_dispatcher_tick(
+    _attach_build_run_root(db, build_run_id, task.id)
+    tick = await _build_dispatcher_tick(
         db,
         project_id,
+        opts,
         dispatcher_enabled=True,
         services=services,
-        max_ticks=_quick_tick_limit(opts),
-        max_active_agents=opts.max_active_agents,
     )
     if opts.quick:
         _set_automation_for_task_tree(task_manager, task, False, isolation=opts.isolation)
@@ -318,6 +544,7 @@ async def _build_epic(
         dispatcher_tick=tick,
         manifest=specs_payload(specs),
         warnings=warnings,
+        dry_run=opts.dry_run,
     )
 
 
@@ -342,18 +569,32 @@ async def _resume_existing_lifecycle(
     opts: BuildOptions,
     skip_stages: list[str],
     warnings: list[str],
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str,
     services: object | None,
     target_branch: str | None,
+    build_run_id: str | None,
 ) -> BuildResult:
-    if skip_stages:
+    resume_skip_stages = skip_stages
+    skip_stages_shape_resume = _skip_stages_can_shape_expanded_epic_resume(
+        task_manager,
+        task,
+        skip_stages,
+    )
+    if skip_stages and not skip_stages_shape_resume:
         if opts.skip_stages_explicit:
             raise ValueError(
                 "--skip-stage can only shape a new lifecycle; use build restart or clean first"
             )
         warnings.append("Profile skip_stages ignored because the task already has a manifest")
+        resume_skip_stages = []
     resume_opts = opts
+    _repair_expanded_epic_root_manifest_for_resume(
+        task_manager,
+        task,
+        resume_opts,
+        resume_skip_stages,
+    )
     _apply_stage_caps_to_existing_lifecycle(task_manager, task.id, resume_opts)
     record_build_delivery_campaign(
         db,
@@ -374,18 +615,6 @@ async def _resume_existing_lifecycle(
     if task.task_type == "epic":
         artifacts = task_manager.artifacts.get_artifacts(task.id)
         integration_target = target_branch or artifacts.target_branch
-        if resume_opts.isolation in {"worktree", "clone"}:
-            if integration_target is None:
-                raise ValueError("target_branch is required for epic integration workspaces")
-            await asyncio.to_thread(
-                ensure_epic_integration_workspaces,
-                task_manager=task_manager,
-                root_task=task,
-                backend=resume_opts.workspace_backend,
-                target_branch=integration_target,
-                project_id=project_id,
-                services=services,
-            )
         task_manager.cascade_build_state_to_subtree(
             task.id,
             isolation=resume_opts.isolation,
@@ -394,7 +623,20 @@ async def _resume_existing_lifecycle(
             include_merge_stage=resume_opts.isolation in {"worktree", "clone"}
             and not opts.no_merge,
         )
-    elif resume_opts.isolation in {"worktree", "clone"}:
+        if resume_opts.isolation in {"worktree", "clone"}:
+            if integration_target is None:
+                raise ValueError("target_branch is required for epic integration workspaces")
+            if not resume_opts.dry_run:
+                await asyncio.to_thread(
+                    ensure_epic_integration_workspaces,
+                    task_manager=task_manager,
+                    root_task=task,
+                    backend=resume_opts.workspace_backend,
+                    target_branch=integration_target,
+                    project_id=project_id,
+                    services=services,
+                )
+    elif resume_opts.isolation in {"worktree", "clone"} and not resume_opts.dry_run:
         await asyncio.to_thread(
             ensure_task_parent_integration_workspace,
             task_manager=task_manager,
@@ -407,13 +649,13 @@ async def _resume_existing_lifecycle(
     specs = stage_state_specs(task_manager, task.id)
     initial_lifecycle = _current_stage_name(task_manager, task.id, specs)
     _record_build_event(task_manager, task.id, initial_lifecycle)
-    tick = await _kick_dispatcher_tick(
+    _attach_build_run_root(db, build_run_id, task.id)
+    tick = await _build_dispatcher_tick(
         db,
         project_id,
+        opts,
         dispatcher_enabled=True,
         services=services,
-        max_ticks=_quick_tick_limit(opts),
-        max_active_agents=opts.max_active_agents,
     )
     if opts.quick:
         _set_automation_for_task_tree(task_manager, task, False, isolation=resume_opts.isolation)
@@ -421,11 +663,93 @@ async def _resume_existing_lifecycle(
         task_id=task.id,
         created=False,
         initial_lifecycle=initial_lifecycle,
-        applied_stages_skipped=[],
+        applied_stages_skipped=resume_skip_stages if skip_stages_shape_resume else [],
         tick_dispatched=tick.ticks,
         dispatcher_tick=tick,
         manifest=specs_payload(specs),
         warnings=warnings,
+        dry_run=opts.dry_run,
+    )
+
+
+def _skip_stages_can_shape_expanded_epic_resume(
+    task_manager: LocalTaskManager,
+    task: Task,
+    skip_stages: list[str],
+) -> bool:
+    if not skip_stages:
+        return False
+    return (
+        task.task_type == "epic"
+        and set(skip_stages) <= {"pr"}
+        and _has_existing_expansion_output(task_manager, task)
+    )
+
+
+def _repair_expanded_epic_root_manifest_for_resume(
+    task_manager: LocalTaskManager,
+    task: Task,
+    opts: BuildOptions,
+    skip_stages: list[str],
+) -> bool:
+    if task.task_type != "epic" or not _has_existing_expansion_output(task_manager, task):
+        return False
+
+    rows = task_manager.stage_states.list_for_task(task.id)
+    if not rows:
+        return False
+
+    desired_opts = replace(opts, stage_caps=[])
+    desired_specs = resolve_stage_manifest_specs(
+        task_manager,
+        task,
+        "expanded_epic",
+        desired_opts,
+        skip_stages,
+    )
+    desired_names = [spec.stage_name for spec in desired_specs]
+    current_names = [row.stage_name for row in rows]
+    if current_names == desired_names:
+        return False
+
+    desired_name_set = set(desired_names)
+    if not desired_name_set.issubset(current_names):
+        return False
+    if any(
+        stage_name not in desired_name_set and stage_name not in _EXPANDED_EPIC_LEGACY_ROOT_STAGES
+        for stage_name in current_names
+    ):
+        return False
+
+    desired_rows = [row for row in rows if row.stage_name in desired_name_set]
+    if not all(_is_pristine_resume_stage(row) for row in desired_rows):
+        return False
+
+    task_manager.db.execute("DELETE FROM task_stage_states WHERE task_id = ?", (task.id,))
+    task_manager.stage_states.initialize_manifest(
+        task.id,
+        desired_specs,
+        by_session_id=None,
+    )
+    task_manager.lifecycle_events.record_lifecycle_event(
+        task.id,
+        from_state="manifest:" + ",".join(current_names),
+        to_state="manifest:" + ",".join(desired_names),
+        reason="repair_expanded_epic_root_manifest",
+        by_actor="build",
+    )
+    return True
+
+
+def _is_pristine_resume_stage(row: StageState) -> bool:
+    return (
+        row.state == "ready"
+        and row.entered_at is None
+        and row.completed_at is None
+        and row.work_attempt_count == 0
+        and row.review_round_count == 0
+        and row.artifact_refs is None
+        and row.notes is None
     )
 
 
@@ -481,6 +805,26 @@ def _quick_tick_limit(opts: BuildOptions) -> int | None:
     return 2 if opts.quick else None
 
 
+async def _build_dispatcher_tick(
+    db: HubDatabase,
+    project_id: str,
+    opts: BuildOptions,
+    *,
+    dispatcher_enabled: bool,
+    services: object | None,
+) -> DispatcherTickSummary:
+    if opts.dry_run:
+        return DispatcherTickSummary(reason="dry_run")
+    return await _kick_dispatcher_tick(
+        db,
+        project_id,
+        dispatcher_enabled=dispatcher_enabled,
+        services=services,
+        max_ticks=_quick_tick_limit(opts),
+        max_active_agents=opts.max_active_agents,
+    )
+
+
 def _set_automation_for_task_tree(
     task_manager: LocalTaskManager,
     task: Task,
@@ -499,23 +843,27 @@ def _set_automation_for_task_tree(
     )
 
 
-def _prepare_task_ref_expansion_output(
+def _reset_task_ref_expansion_output(
     task_manager: LocalTaskManager,
     task: Task,
     opts: BuildOptions,
 ) -> None:
+    if not opts.reset_expansion_output:
+        return
     from gobby.tasks.expansion_service import ExpansionService
 
     service = ExpansionService(task_manager=task_manager, llm_service=None)
-    if opts.reset_expansion_output:
-        service.reset_expansion_output(task.id)
-        return
-    existing = service.find_existing_expansion_output(task.id)
-    if existing is not None:
-        raise ValueError(
-            "Expansion output already exists for this task. "
-            "Use --reset-expansion-output before rebuilding."
-        )
+    service.reset_expansion_output(task.id)
+
+
+def _has_existing_expansion_output(task_manager: LocalTaskManager, task: Task) -> bool:
+    if task.task_type != "epic":
+        return False
+
+    from gobby.tasks.expansion_service import ExpansionService
+
+    service = ExpansionService(task_manager=task_manager, llm_service=None)
+    return service.find_existing_expansion_output(task.id) is not None
 
 
 def _current_stage_name(

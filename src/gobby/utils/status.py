@@ -14,10 +14,12 @@ logger = logging.getLogger(__name__)
 # Label width for alignment in status sections
 _LW = 18
 _CODING_CLI_LABELS = (
+    ("agy", "AGY CLI"),
     ("claude", "Claude Code"),
     ("codex", "Codex CLI"),
     ("droid", "Droid CLI"),
     ("gemini", "Gemini CLI"),
+    ("grok", "Grok CLI"),
     ("qwen", "Qwen CLI"),
 )
 
@@ -51,6 +53,88 @@ def _format_bytes(n: int) -> str:
     if n < 1024 * 1024 * 1024:
         return f"{n / (1024 * 1024):.1f} MB"
     return f"{n / (1024 * 1024 * 1024):.1f} GB"
+
+
+def _safe_status_text(value: Any) -> str | None:
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped or None
+    return None
+
+
+def _format_postgres_host_db(payload: dict[str, Any]) -> str | None:
+    host = _safe_status_text(payload.get("dsn_host"))
+    db_name = _safe_status_text(payload.get("dsn_db"))
+    if host and db_name:
+        return f"{host}/{db_name}"
+    return host or db_name
+
+
+def _format_postgres_extensions(payload: dict[str, Any]) -> str | None:
+    extensions = payload.get("extensions")
+    if not isinstance(extensions, dict) or not extensions:
+        return None
+
+    missing = [
+        name for name in ("pg_search", "pgaudit") if name in extensions and not extensions.get(name)
+    ]
+    if missing:
+        return f"missing {', '.join(missing)}"
+    return "extensions ok"
+
+
+def _format_postgres_service_status(payload: Any) -> str | None:
+    """Format a compact PostgreSQL hub service status without exposing DSNs."""
+    if not isinstance(payload, dict):
+        return None
+
+    mode = _safe_status_text(payload.get("mode")) or "unknown"
+    if payload.get("available") is False:
+        details = [mode]
+        error = _safe_status_text(payload.get("error"))
+        if error:
+            details.append(error)
+        return f"unavailable ({'; '.join(details)})"
+
+    details = [mode]
+    for part in (
+        _format_postgres_host_db(payload),
+        _format_postgres_extensions(payload),
+    ):
+        if part:
+            details.append(part)
+
+    health = "healthy" if payload.get("healthy") else "unhealthy"
+    return f"{health} ({'; '.join(details)})"
+
+
+def _provider_model_count(provider_models: Any, provider: str) -> int | None:
+    if not isinstance(provider_models, dict):
+        return None
+    info = provider_models.get(provider)
+    if not isinstance(info, dict):
+        return None
+    count = info.get("model_count")
+    if isinstance(count, int) and not isinstance(count, bool) and count > 0:
+        return count
+    return None
+
+
+def _format_coding_cli_details(hooks: dict[str, Any], provider_models: Any, name: str) -> str:
+    parts = []
+    if name == "gemini":
+        parts.append("deprecated")
+    if hooks.get(name):
+        parts.append("hooks installed")
+    if name == "agy":
+        parts.append("unavailable: no machine transport")
+
+    model_count = _provider_model_count(provider_models, name)
+    if model_count is not None:
+        plural = "s" if model_count != 1 else ""
+        parts.append(f"{model_count} model{plural} available")
+
+    return f" ({', '.join(parts)})" if parts else ""
 
 
 def format_status_message(
@@ -187,14 +271,15 @@ def format_status_message(
     if deps_info and deps_info.get("coding_clis"):
         clis = deps_info["coding_clis"]
         hooks = clis.get("hooks", {})
+        provider_models = data.get("provider_models")
         lines.append("Coding CLIs:")
         for name, label in _CODING_CLI_LABELS:
             version = clis.get(name)
-            hook_str = " (hooks installed)" if hooks.get(name) else ""
+            details = _format_coding_cli_details(hooks, provider_models, name)
             if version:
-                lines.append(f"  {label + ':':<{_LW}}{version}{hook_str}")
+                lines.append(f"  {label + ':':<{_LW}}{version}{details}")
             else:
-                lines.append(f"  {label + ':':<{_LW}}not installed{hook_str}")
+                lines.append(f"  {label + ':':<{_LW}}not installed{details}")
         lines.append("")
 
     # ---- Services ----
@@ -209,6 +294,11 @@ def format_status_message(
             status_str = "running" if docker_running else "stopped"
             lines.append(f"  {'Docker:':<{_LW}}{status_str} (v{docker_ver})")
 
+        # PostgreSQL hub
+        postgres_status = _format_postgres_service_status(data.get("postgres"))
+        if postgres_status:
+            lines.append(f"  {'PostgreSQL:':<{_LW}}{postgres_status}")
+
         # Qdrant
         memory = data.get("memory", {})
         qdrant = memory.get("qdrant", {})
@@ -216,16 +306,18 @@ def format_status_message(
             status_str = "healthy" if qdrant.get("healthy") else "unhealthy"
             lines.append(f"  {'Qdrant:':<{_LW}}{status_str}")
 
-        # Neo4j
-        neo4j = memory.get("neo4j", {})
-        if neo4j.get("configured"):
-            url_str = f" ({neo4j['url']})" if neo4j.get("url") else ""
-            if neo4j.get("healthy"):
-                lines.append(f"  {'Neo4j:':<{_LW}}healthy{url_str}")
-            elif neo4j.get("installed"):
-                lines.append(f"  {'Neo4j:':<{_LW}}not responding{url_str}")
+        # FalkorDB
+        falkordb = memory.get("falkordb", {})
+        if falkordb.get("configured") or falkordb.get("installed"):
+            url_str = f" ({falkordb['url']})" if falkordb.get("url") else ""
+            if falkordb.get("healthy"):
+                lines.append(f"  {'FalkorDB:':<{_LW}}healthy{url_str}")
+            elif falkordb.get("configured") and falkordb.get("installed"):
+                lines.append(f"  {'FalkorDB:':<{_LW}}not responding{url_str}")
+            elif falkordb.get("installed"):
+                lines.append(f"  {'FalkorDB:':<{_LW}}installed, not configured{url_str}")
             else:
-                lines.append(f"  {'Neo4j:':<{_LW}}not installed")
+                lines.append(f"  {'FalkorDB:':<{_LW}}not installed")
 
         # Embeddings
         configured_embeddings_provider = dep.get("embeddings_provider")
@@ -259,15 +351,6 @@ def format_status_message(
             lines.append(f"  {'Embeddings:':<{_LW}}Ollama (stopped)")
         elif isinstance(lmstudio, dict):
             lines.append(f"  {'Embeddings:':<{_LW}}LM Studio (stopped)")
-
-        provider_models = data.get("provider_models", {})
-        for provider, info in provider_models.items():
-            source = info.get("source", "failed")
-            count = info.get("model_count", 0)
-            detail = f"{count} models ({source})"
-            if info.get("error"):
-                detail += f" - {info['error']}"
-            lines.append(f"  {('Models ' + provider + ':'):<{_LW}}{detail}")
 
         lines.append("")
 
@@ -360,6 +443,14 @@ def format_status_message(
             )
         elif source == "failed":
             health_issues.append(f"Provider models: {name} — {error or 'discovery failed'}")
+
+    postgres = data.get("postgres")
+    if isinstance(postgres, dict):
+        if postgres.get("available") is False:
+            error = _safe_status_text(postgres.get("error")) or "status unavailable"
+            health_issues.append(f"PostgreSQL: {error}")
+        elif postgres.get("healthy") is False:
+            health_issues.append("PostgreSQL: unhealthy")
 
     if health_issues:
         lines.append("Health Issues:")

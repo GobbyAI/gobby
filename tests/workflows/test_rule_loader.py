@@ -6,12 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
 
 
-def test_deprecated_rules_not_synced(temp_db: LocalDatabase, tmp_path: Path) -> None:
+def test_deprecated_rules_not_synced(temp_db: HubDatabase, tmp_path: Path) -> None:
     from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
     from gobby.workflows.sync_rules import sync_bundled_rules
 
@@ -49,7 +49,7 @@ rules:
     assert manager.get_by_name("old-build-rule") is None
 
 
-def test_bundled_build_deprecated_rules_not_synced(temp_db: LocalDatabase) -> None:
+def test_bundled_build_deprecated_rules_not_synced(temp_db: HubDatabase) -> None:
     from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
     from gobby.workflows.sync_rules import sync_bundled_rules
 

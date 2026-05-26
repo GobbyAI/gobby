@@ -77,6 +77,31 @@ class TestSessionLifecycleManager:
         assert process_task.cancelled() or process_task.done()
 
     @pytest.mark.asyncio
+    async def test_stop_returns_when_cancelled_task_is_slow_to_drain(self, manager, monkeypatch):
+        """Shutdown should not block on best-effort background work."""
+
+        async def slow_to_cancel():
+            await asyncio.Event().wait()
+
+        async def fake_wait(tasks, timeout):
+            assert timeout == 0.01
+            return set(), set(tasks)
+
+        monkeypatch.setattr(asyncio, "wait", fake_wait)
+
+        task = asyncio.create_task(slow_to_cancel())
+        manager._running = True
+        manager._expire_task = task
+
+        await asyncio.wait_for(manager.stop(drain_timeout=0.01), timeout=0.2)
+
+        assert manager._running is False
+        assert manager._expire_task is None
+
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    @pytest.mark.asyncio
     async def test_expire_stale_sessions(self, manager):
         """Test expiring stale sessions."""
         # Setup mocks

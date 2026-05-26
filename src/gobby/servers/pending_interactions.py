@@ -1,7 +1,7 @@
 """Durable pending interaction manager for web chat approval flows.
 
 Coordinates tool approvals, plan approvals, and ask-user questions with
-in-memory waiters backed by SQLite persistence. Replaces the bifurcated
+in-memory waiters backed by hub database persistence. Replaces the bifurcated
 approval state (pending_plan_path + in-memory asyncio.Event).
 """
 
@@ -10,15 +10,22 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import sqlite3
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
-from gobby.storage.database import DatabaseProtocol, LocalDatabase
+import psycopg
+
+from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
+
+
+def _is_unique_constraint_error(exc: Exception) -> bool:
+    if isinstance(exc, psycopg.IntegrityError):
+        return True
+    return getattr(exc, "sqlstate", None) == "23505"
 
 
 @dataclass
@@ -41,8 +48,8 @@ class PendingInteractionManager:
     """Coordinates durable pending interactions with in-memory waiters.
 
     Lifecycle:
-    - create() inserts a DB row, creates an asyncio.Event, starts a timeout task
-    - wait() blocks until the Event is set (resolve or expire)
+    - create() inserts a DB row, creates an asyncio.Future, starts a timeout task
+    - wait() blocks until the Future is resolved (resolve, expire, or cleanup)
     - resolve() sets the decision, wakes the waiter, updates DB
     - expire() marks expired in DB, wakes waiter with timeout decision
     - cleanup() cancels all timeout tasks (called on daemon shutdown)
@@ -51,16 +58,15 @@ class PendingInteractionManager:
 
     def __init__(
         self,
-        db: LocalDatabase | DatabaseProtocol,
+        db: HubDatabase,
         run_db: Callable[..., Awaitable[Any]] | None = None,
     ) -> None:
         self._db = db
         self._run_db = run_db
-        self._waiters: dict[str, asyncio.Event] = {}
-        self._results: dict[str, dict[str, Any]] = {}
+        self._waiters: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._timeouts: dict[str, asyncio.Task[None]] = {}
 
-    async def _run_sqlite(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    async def _run_database(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         if self._run_db is None:
             return await asyncio.to_thread(func, *args, **kwargs)
         return await self._run_db(func, *args, **kwargs)
@@ -89,7 +95,7 @@ class PendingInteractionManager:
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                await self._run_sqlite(
+                await self._run_database(
                     self._insert_pending,
                     interaction_id,
                     session_id,
@@ -100,7 +106,9 @@ class PendingInteractionManager:
                     timeout_seconds,
                 )
                 break
-            except sqlite3.IntegrityError:
+            except Exception as exc:
+                if not _is_unique_constraint_error(exc):
+                    raise
                 if attempt < max_retries - 1:
                     await self.supersede(session_id, kind)
                     await asyncio.sleep(0.05 * (attempt + 1))
@@ -108,8 +116,8 @@ class PendingInteractionManager:
                 raise
 
         # Create in-memory waiter
-        event = asyncio.Event()
-        self._waiters[interaction_id] = event
+        future = asyncio.get_running_loop().create_future()
+        self._waiters[interaction_id] = future
 
         # Start timeout task
         timeout_task = asyncio.create_task(self._timeout_handler(interaction_id, timeout_seconds))
@@ -146,16 +154,14 @@ class PendingInteractionManager:
 
     async def wait(self, interaction_id: str) -> dict[str, Any]:
         """Block until resolved or timeout. Returns decision + response."""
-        event = self._waiters.get(interaction_id)
-        if not event:
+        future = self._waiters.get(interaction_id)
+        if not future:
             return {"decision": "deny", "reason": "unknown_interaction"}
 
-        await event.wait()
-
-        # Pop results and waiter
-        result = self._results.pop(interaction_id, {"decision": "deny", "reason": "no_result"})
-        self._waiters.pop(interaction_id, None)
-        return result
+        try:
+            return await future
+        finally:
+            self._waiters.pop(interaction_id, None)
 
     async def resolve(
         self,
@@ -165,7 +171,7 @@ class PendingInteractionManager:
     ) -> bool:
         """Set decision, wake waiter, update DB. Returns False if expired/missing."""
         # Update DB
-        updated = await self._run_sqlite(
+        updated = await self._run_database(
             self._resolve_pending,
             interaction_id,
             decision,
@@ -180,10 +186,7 @@ class PendingInteractionManager:
             timeout_task.cancel()
 
         # Set result and wake waiter
-        self._results[interaction_id] = {"decision": decision, "response": response}
-        event = self._waiters.get(interaction_id)
-        if event:
-            event.set()
+        self._wake_waiter(interaction_id, {"decision": decision, "response": response})
 
         return True
 
@@ -197,7 +200,7 @@ class PendingInteractionManager:
             result = conn.execute(
                 """UPDATE pending_interactions
                    SET status = 'resolved', decision = ?, response_json = ?,
-                       resolved_at = datetime('now')
+                       resolved_at = CURRENT_TIMESTAMP
                    WHERE id = ? AND status = 'pending'""",
                 (decision, response_json, interaction_id),
             )
@@ -205,7 +208,7 @@ class PendingInteractionManager:
 
     async def expire(self, interaction_id: str) -> None:
         """Mark expired in DB, wake waiter with timeout decision."""
-        await self._run_sqlite(self._expire_pending, interaction_id)
+        await self._run_database(self._expire_pending, interaction_id)
 
         # Cancel timeout task (may already be the one calling us)
         timeout_task = self._timeouts.pop(interaction_id, None)
@@ -213,17 +216,20 @@ class PendingInteractionManager:
             timeout_task.cancel()
 
         # Set result and wake waiter
-        self._results[interaction_id] = {"decision": "timeout"}
-        event = self._waiters.get(interaction_id)
-        if event:
-            event.set()
+        self._wake_waiter(interaction_id, {"decision": "timeout"})
+
+    def _wake_waiter(self, interaction_id: str, result: dict[str, Any]) -> None:
+        """Resolve an in-memory waiter with a durable result."""
+        future = self._waiters.get(interaction_id)
+        if future and not future.done():
+            future.set_result(result)
 
     def _expire_pending(self, interaction_id: str) -> None:
         with self._db.transaction() as conn:
             conn.execute(
                 """UPDATE pending_interactions
                    SET status = 'expired', decision = 'timeout',
-                       resolved_at = datetime('now')
+                       resolved_at = CURRENT_TIMESTAMP
                    WHERE id = ? AND status = 'pending'""",
                 (interaction_id,),
             )
@@ -233,7 +239,7 @@ class PendingInteractionManager:
 
         Only the latest non-expired per (session_id, kind) is returned.
         """
-        rows = await self._run_sqlite(
+        rows = await self._run_database(
             self._db.fetchall,
             """SELECT id, kind, provider, tool_name, payload_json, timeout_seconds
                FROM pending_interactions
@@ -264,7 +270,7 @@ class PendingInteractionManager:
 
     async def count_pending(self, session_id: str) -> int:
         """Count pending interactions for a session (rate limiting)."""
-        row = await self._run_sqlite(
+        row = await self._run_database(
             self._db.fetchone,
             "SELECT COUNT(*) as cnt FROM pending_interactions WHERE session_id = ? AND status = 'pending'",
             (session_id,),
@@ -272,7 +278,13 @@ class PendingInteractionManager:
         return row["cnt"] if row else 0
 
     async def cleanup(self) -> None:
-        """Cancel all timeout tasks. Called on daemon shutdown."""
+        """Wake waiters and cancel timeout tasks. Called on daemon shutdown."""
+        for interaction_id in list(self._waiters):
+            self._wake_waiter(
+                interaction_id,
+                {"decision": "deny", "reason": "daemon_shutdown"},
+            )
+
         for task in self._timeouts.values():
             task.cancel()
         # Await all cancelled tasks to suppress warnings
@@ -280,11 +292,10 @@ class PendingInteractionManager:
             await asyncio.gather(*self._timeouts.values(), return_exceptions=True)
         self._timeouts.clear()
         self._waiters.clear()
-        self._results.clear()
 
     async def supersede(self, session_id: str, kind: str) -> None:
         """Expire any existing pending interaction of same (session_id, kind)."""
-        rows = await self._run_sqlite(
+        rows = await self._run_database(
             self._db.fetchall,
             "SELECT id FROM pending_interactions WHERE session_id = ? AND kind = ? AND status = 'pending'",
             (session_id, kind),
@@ -294,15 +305,16 @@ class PendingInteractionManager:
 
     async def expire_all_pending(self) -> None:
         """Mark all pending rows as expired. Called on daemon startup (fail-closed)."""
-        await self._run_sqlite(self._expire_all_pending)
+        await self._run_database(self._expire_all_pending)
 
         # Clear any orphaned in-memory state
-        for event in self._waiters.values():
-            event.set()
+        for interaction_id in list(self._waiters):
+            self._wake_waiter(interaction_id, {"decision": "timeout"})
         self._waiters.clear()
-        self._results.clear()
         for task in self._timeouts.values():
             task.cancel()
+        if self._timeouts:
+            await asyncio.gather(*self._timeouts.values(), return_exceptions=True)
         self._timeouts.clear()
 
     def _expire_all_pending(self) -> None:
@@ -310,7 +322,7 @@ class PendingInteractionManager:
             conn.execute(
                 """UPDATE pending_interactions
                    SET status = 'expired', decision = 'timeout',
-                       resolved_at = datetime('now')
+                       resolved_at = CURRENT_TIMESTAMP
                    WHERE status = 'pending'"""
             )
 

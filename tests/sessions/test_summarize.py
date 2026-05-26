@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-import time
+import threading
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -16,8 +16,8 @@ from gobby.sessions.summarize import (
     _generate_full_summary,
     generate_session_summaries,
 )
-from gobby.storage.database import LocalDatabase
 from gobby.storage.executor import DatabaseExecutor
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 
@@ -30,6 +30,8 @@ def _make_session(
     source: str = "claude",
     summary_markdown: str | None = None,
     digest_markdown: str | None = None,
+    last_turn_markdown: str | None = None,
+    last_assistant_content: str | None = None,
 ) -> MagicMock:
     session = MagicMock()
     session.id = session_id
@@ -37,6 +39,8 @@ def _make_session(
     session.source = source
     session.summary_markdown = summary_markdown
     session.digest_markdown = digest_markdown
+    session.last_turn_markdown = last_turn_markdown
+    session.last_assistant_content = last_assistant_content
     return session
 
 
@@ -75,9 +79,9 @@ class TestGenerateSessionSummaries:
         assert "No session found" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_repeated_summary_persistence_keeps_sqlite_connections_bounded(
+    async def test_repeated_summary_persistence_keeps_postgres_connections_bounded(
         self,
-        temp_db: LocalDatabase,
+        temp_db: HubDatabase,
     ) -> None:
         """Session get/update_summary/update_status calls use the bounded DB runner."""
         sm = SessionManager(temp_db)
@@ -94,9 +98,13 @@ class TestGenerateSessionSummaries:
         sm.update_digest_markdown(session.id, "### Turn 1\nUse digest context.")
         executor = DatabaseExecutor(max_workers=2, thread_name_prefix="summary-db")
         original_get = SessionManager.get
+        first_get_started = threading.Event()
+        release_gets = threading.Event()
+        waits_completed: list[bool] = []
 
         def slow_get(self, *args, **kwargs):
-            time.sleep(0.02)
+            first_get_started.set()
+            waits_completed.append(release_gets.wait(timeout=1))
             return original_get(self, *args, **kwargs)
 
         try:
@@ -108,20 +116,29 @@ class TestGenerateSessionSummaries:
                     return_value=("# Summary", None),
                 ),
             ):
-                results = await asyncio.gather(
-                    *(
-                        generate_session_summaries(
-                            session_id=session.id,
-                            session_manager=sm,
-                            db=temp_db,
-                            run_db=executor.run,
+                async def run_summaries() -> list[dict[str, object]]:
+                    return await asyncio.gather(
+                        *(
+                            generate_session_summaries(
+                                session_id=session.id,
+                                session_manager=sm,
+                                db=temp_db,
+                                run_db=executor.run,
+                            )
+                            for _ in range(20)
                         )
-                        for _ in range(20)
                     )
-                )
+
+                task = asyncio.create_task(run_summaries())
+                assert await asyncio.to_thread(first_get_started.wait, 1)
+                release_gets.set()
+                results = await task
 
             assert all(result["success"] is True for result in results)
-            assert temp_db.connection_count <= 1 + executor.max_workers
+            assert all(waits_completed)
+            connection_count = getattr(temp_db, "connection_count", None)
+            if connection_count is not None:
+                assert connection_count <= 1 + executor.max_workers
         finally:
             executor.shutdown(wait=True)
 
@@ -351,6 +368,107 @@ class TestGenerateSessionSummaries:
         assert context["last_messages"] == "### Turn 1\nDigest is the bounded source."
 
     @pytest.mark.asyncio
+    async def test_digest_primary_context_includes_latest_turn_when_digest_lags(self) -> None:
+        session = _make_session(
+            session_id="sess-digest",
+            transcript_path="/tmp/transcript.jsonl",
+            digest_markdown="### Turn 1\nOld coordinator state.",
+            last_turn_markdown="Current build state: #12746 is development:in_progress.",
+        )
+        handoff_ctx = MagicMock()
+        handoff_ctx.git_status = "clean"
+        session_manager = MagicMock()
+        session_manager.db = None
+        provider = AsyncMock()
+        provider.generate_summary.return_value = "# Digest Summary"
+
+        with (
+            patch("gobby.sessions.summarize._resolve_provider", return_value=provider),
+            patch("gobby.prompts.loader.PromptLoader") as MockPromptLoader,
+            patch("gobby.workflows.git_utils.get_file_changes", return_value=[]),
+            patch("gobby.workflows.git_utils.get_git_diff_summary", return_value=""),
+            patch(
+                "gobby.workflows.summary_actions._format_structured_context",
+                return_value="structured",
+            ),
+            patch("gobby.workflows.summary_actions.format_turns_for_llm") as mock_format,
+        ):
+            MockPromptLoader.return_value.load.return_value.content = "prompt"
+
+            full_markdown, full_error = await _generate_full_summary(
+                session=session,
+                turns=[{"message": {"role": "user", "content": "raw transcript"}}],
+                handoff_ctx=handoff_ctx,
+                llm_service=None,
+                db=None,
+                session_manager=session_manager,
+            )
+
+        assert full_markdown == "# Digest Summary"
+        assert full_error is None
+        mock_format.assert_not_called()
+        context = provider.generate_summary.await_args.args[0]
+        assert "Old coordinator state." in context["transcript_summary"]
+        assert (
+            "Current build state: #12746 is development:in_progress."
+            in context["transcript_summary"]
+        )
+        assert context["last_messages"].endswith(
+            "Current build state: #12746 is development:in_progress."
+        )
+
+    @pytest.mark.asyncio
+    async def test_digest_primary_context_includes_current_assistant_content(self) -> None:
+        session = _make_session(
+            session_id="sess-digest",
+            transcript_path="/tmp/transcript.jsonl",
+            digest_markdown="### Turn 1\nOld coordinator state.",
+            last_turn_markdown="Old coordinator state.",
+            last_assistant_content="Current handoff: #14997 open and #12746 still running.",
+        )
+        handoff_ctx = MagicMock()
+        handoff_ctx.git_status = "clean"
+        session_manager = MagicMock()
+        session_manager.db = None
+        provider = AsyncMock()
+        provider.generate_summary.return_value = "# Digest Summary"
+
+        with (
+            patch("gobby.sessions.summarize._resolve_provider", return_value=provider),
+            patch("gobby.prompts.loader.PromptLoader") as MockPromptLoader,
+            patch("gobby.workflows.git_utils.get_file_changes", return_value=[]),
+            patch("gobby.workflows.git_utils.get_git_diff_summary", return_value=""),
+            patch(
+                "gobby.workflows.summary_actions._format_structured_context",
+                return_value="structured",
+            ),
+            patch("gobby.workflows.summary_actions.format_turns_for_llm") as mock_format,
+        ):
+            MockPromptLoader.return_value.load.return_value.content = "prompt"
+
+            full_markdown, full_error = await _generate_full_summary(
+                session=session,
+                turns=[{"message": {"role": "user", "content": "raw transcript"}}],
+                handoff_ctx=handoff_ctx,
+                llm_service=None,
+                db=None,
+                session_manager=session_manager,
+            )
+
+        assert full_markdown == "# Digest Summary"
+        assert full_error is None
+        mock_format.assert_not_called()
+        context = provider.generate_summary.await_args.args[0]
+        assert "Old coordinator state." in context["transcript_summary"]
+        assert (
+            "Current handoff: #14997 open and #12746 still running."
+            in context["transcript_summary"]
+        )
+        assert context["last_messages"].endswith(
+            "Current handoff: #14997 open and #12746 still running."
+        )
+
+    @pytest.mark.asyncio
     async def test_full_summary_enrichment_uses_run_db(self) -> None:
         session = _make_session(
             session_id="sess-enrich",
@@ -378,7 +496,9 @@ class TestGenerateSessionSummaries:
                 "gobby.workflows.summary_actions._format_structured_context",
                 return_value="structured",
             ),
-            patch("gobby.sessions.summarize._get_claimed_tasks", return_value="task context") as claimed,
+            patch(
+                "gobby.sessions.summarize._get_claimed_tasks", return_value="task context"
+            ) as claimed,
             patch(
                 "gobby.sessions.summarize._get_session_memories",
                 return_value="memory context",
@@ -520,6 +640,36 @@ class TestGenerateSessionSummaries:
         )
         assert sm.update_summary.call_count == 1
         assert sm.update_summary.call_args is not None
+
+    @pytest.mark.asyncio
+    async def test_deterministic_fallback_persists_latest_turn_when_digest_lags(self) -> None:
+        sm = MagicMock()
+        sm.get.return_value = _make_session(
+            digest_markdown="### Turn 1\nOld compact handoff.",
+            last_turn_markdown="Fresh compact handoff: #14653 is needs_review.",
+        )
+
+        with (
+            patch("gobby.sessions.summarize._enrich_git_context"),
+            patch(
+                "gobby.sessions.summarize._generate_full_summary",
+                return_value=(None, "provider unavailable"),
+            ),
+            patch(
+                "gobby.sessions.formatting.format_handoff_as_markdown",
+                return_value="# Fallback Summary",
+            ),
+        ):
+            result = await generate_session_summaries(
+                session_id="sess-1",
+                session_manager=sm,
+                set_handoff_ready=False,
+            )
+
+        assert result["success"] is True
+        persisted = sm.update_summary.call_args.kwargs["summary_markdown"]
+        assert "Old compact handoff." in persisted
+        assert "Fresh compact handoff: #14653 is needs_review." in persisted
 
 
 class TestGetClaimedTasks:

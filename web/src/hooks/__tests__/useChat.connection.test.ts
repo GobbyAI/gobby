@@ -143,4 +143,58 @@ describe("useChat connection lifecycle", () => {
 
     expect(projectMsg).toBeUndefined();
   });
+
+  it("keeps malformed JSON local to the router", async () => {
+    vi.useFakeTimers();
+    try {
+      await loadModule();
+      const { result } = renderHook(() => useChat());
+
+      const ws = mockWs.instances[0];
+      act(() => ws.simulateOpen());
+      act(() => ws.simulateMessage("{"));
+      act(() => {
+        vi.advanceTimersByTime(2000);
+      });
+
+      expect(result.current.transportError).toBeNull();
+      expect(mockWs.instances).toHaveLength(1);
+      expect(ws.close).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reports and reconnects after unexpected routing exceptions", async () => {
+    vi.useFakeTimers();
+    vi.doMock("../useChat/transportRouter", () => ({
+      routeTransportMessage: () => {
+        throw new Error("boom");
+      },
+    }));
+    try {
+      await loadModule();
+      const { result } = renderHook(() => useChat());
+
+      const ws = mockWs.instances[0];
+      act(() => ws.simulateOpen());
+      act(() => ws.simulateMessage({ type: "chat_stream" }));
+
+      expect(result.current.transportError?.message).toBe(
+        "Transport message handling failed; reconnecting",
+      );
+      expect(result.current.isConnected).toBe(false);
+      expect(result.current.isReconnecting).toBe(true);
+      expect(ws.close).toHaveBeenCalled();
+
+      act(() => {
+        vi.advanceTimersByTime(2000);
+      });
+
+      expect(mockWs.instances).toHaveLength(2);
+    } finally {
+      vi.doUnmock("../useChat/transportRouter");
+      vi.useRealTimers();
+    }
+  });
 });

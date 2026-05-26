@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from gobby.servers.http import HTTPServer
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from tests.servers.conftest import create_http_server
 
@@ -36,7 +36,7 @@ SAMPLE_PIPELINE_DEFINITION = json.dumps(
 
 
 @pytest.fixture
-def http_server(temp_db: LocalDatabase) -> HTTPServer:
+def http_server(temp_db: HubDatabase) -> HTTPServer:
     """Create an HTTP server with a real database."""
     mock_config = MagicMock()
     mock_config.logging.max_size_mb = 10
@@ -60,7 +60,7 @@ def client(http_server: HTTPServer) -> TestClient:
 
 
 @pytest.fixture
-def manager(temp_db: LocalDatabase) -> LocalWorkflowDefinitionManager:
+def manager(temp_db: HubDatabase) -> LocalWorkflowDefinitionManager:
     """Create a workflow definition manager."""
     return LocalWorkflowDefinitionManager(temp_db)
 
@@ -355,12 +355,11 @@ def test_toggle_not_found(client: TestClient) -> None:
 
 
 def test_move_to_project(
-    client: TestClient, temp_db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    client: TestClient, temp_db: HubDatabase, manager: LocalWorkflowDefinitionManager
 ) -> None:
     """Test moving a definition to project scope."""
     temp_db.execute(
-        "INSERT INTO projects (id, name, created_at, updated_at) "
-        "VALUES (?, ?, datetime('now'), datetime('now'))",
+        "INSERT INTO projects (id, name, created_at, updated_at) VALUES (?, ?, NOW(), NOW())",
         ("proj-1", "Test Project"),
     )
     row = manager.create(name="move-proj-test", definition_json=SAMPLE_DEFINITION)
@@ -390,12 +389,11 @@ def test_move_to_project_not_found(client: TestClient) -> None:
 
 
 def test_move_to_global(
-    client: TestClient, temp_db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    client: TestClient, temp_db: HubDatabase, manager: LocalWorkflowDefinitionManager
 ) -> None:
     """Test moving a definition to global scope."""
     temp_db.execute(
-        "INSERT INTO projects (id, name, created_at, updated_at) "
-        "VALUES (?, ?, datetime('now'), datetime('now'))",
+        "INSERT INTO projects (id, name, created_at, updated_at) VALUES (?, ?, NOW(), NOW())",
         ("proj-1", "Test Project"),
     )
     row = manager.create(

@@ -22,8 +22,7 @@ from gobby.install.bin_freshness_locks import try_acquire_native_bin_lock
 from gobby.install.bin_freshness_models import ManagedBinSpec, ReleaseAsset, managed_bin_specs
 from gobby.install.bin_freshness_updater import update_all_managed_bins, update_managed_bin
 from gobby.storage.bin_update_state import BinUpdateStateStore
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
 
@@ -37,12 +36,6 @@ def _spec(name: str = "ghook", floor: str = "0.4.1") -> ManagedBinSpec:
         stamp_name=f".{name}-version",
         sidecar_name=f".{name}-install.json",
     )
-
-
-def _db(tmp_path: Path) -> LocalDatabase:
-    db = LocalDatabase(tmp_path / "bin-state.db")
-    run_migrations(db)
-    return db
 
 
 def _write_binary(bin_dir: Path, spec: ManagedBinSpec, content: bytes = b"old") -> Path:
@@ -188,8 +181,10 @@ class TestBinInspector:
 
 
 class TestBinUpdater:
-    def test_github_up_to_date_records_without_downloading(self, tmp_path: Path) -> None:
-        db = _db(tmp_path)
+    def test_github_up_to_date_records_without_downloading(
+        self, tmp_path: Path, postgres_db: HubDatabase
+    ) -> None:
+        db = postgres_db
         bin_dir = tmp_path / "bin"
         spec = _spec()
         _write_binary(bin_dir, spec)
@@ -208,8 +203,35 @@ class TestBinUpdater:
         assert record.last_status == "up_to_date"
         assert client.downloads == 0
 
-    def test_staged_github_upgrade_promotes_binary_stamp_and_sidecar(self, tmp_path: Path) -> None:
-        db = _db(tmp_path)
+    def test_github_newer_installed_version_records_without_downloading(
+        self,
+        tmp_path: Path,
+        postgres_db: HubDatabase,
+    ) -> None:
+        db = postgres_db
+        bin_dir = tmp_path / "bin"
+        spec = _spec()
+        _write_binary(bin_dir, spec)
+        _write_stamp(bin_dir, spec, "0.4.2")
+        client = FakeClient(asset=_asset(spec, "0.4.1"))
+
+        record = update_managed_bin(
+            db,
+            spec,
+            BinFreshnessConfig(),
+            bin_dir=bin_dir,
+            client=client,
+        )
+
+        assert record is not None
+        assert record.last_status == "up_to_date"
+        assert record.installed_version == "0.4.2"
+        assert client.downloads == 0
+
+    def test_staged_github_upgrade_promotes_binary_stamp_and_sidecar(
+        self, tmp_path: Path, postgres_db: HubDatabase
+    ) -> None:
+        db = postgres_db
         bin_dir = tmp_path / "bin"
         spec = _spec()
         _write_binary(bin_dir, spec, b"old")
@@ -233,8 +255,10 @@ class TestBinUpdater:
         assert sidecar["install_method"] == "github-release"
         assert sidecar["installed_version"] == "0.4.1"
 
-    def test_github_api_failure_records_failed_and_keeps_binary(self, tmp_path: Path) -> None:
-        db = _db(tmp_path)
+    def test_github_api_failure_records_failed_and_keeps_binary(
+        self, tmp_path: Path, postgres_db: HubDatabase
+    ) -> None:
+        db = postgres_db
         bin_dir = tmp_path / "bin"
         spec = _spec()
         _write_binary(bin_dir, spec, b"old")
@@ -253,8 +277,10 @@ class TestBinUpdater:
         assert record.last_status == "failed"
         assert (bin_dir / spec.binary_name).read_bytes() == b"old"
 
-    def test_missing_release_tag_records_source_unavailable_at_floor(self, tmp_path: Path) -> None:
-        db = _db(tmp_path)
+    def test_missing_release_tag_records_source_unavailable_at_floor(
+        self, tmp_path: Path, postgres_db: HubDatabase
+    ) -> None:
+        db = postgres_db
         bin_dir = tmp_path / "bin"
         spec = _spec()
         _write_binary(bin_dir, spec)
@@ -274,9 +300,9 @@ class TestBinUpdater:
         assert "missing release tag" in (record.last_error or "")
 
     def test_missing_platform_asset_records_source_unavailable_at_floor(
-        self, tmp_path: Path
+        self, tmp_path: Path, postgres_db: HubDatabase
     ) -> None:
-        db = _db(tmp_path)
+        db = postgres_db
         bin_dir = tmp_path / "bin"
         spec = _spec()
         _write_binary(bin_dir, spec)
@@ -295,8 +321,10 @@ class TestBinUpdater:
         assert record.last_status == "source_unavailable"
         assert "missing platform asset" in (record.last_error or "")
 
-    def test_atomic_promotion_failure_keeps_existing_binary(self, tmp_path: Path) -> None:
-        db = _db(tmp_path)
+    def test_atomic_promotion_failure_keeps_existing_binary(
+        self, tmp_path: Path, postgres_db: HubDatabase
+    ) -> None:
+        db = postgres_db
         bin_dir = tmp_path / "bin"
         spec = _spec()
         _write_binary(bin_dir, spec, b"old")
@@ -326,8 +354,10 @@ class TestBinUpdater:
         assert record.last_status == "failed"
         assert (bin_dir / spec.binary_name).read_bytes() == b"old"
 
-    def test_lock_held_skip_leaves_existing_state(self, tmp_path: Path) -> None:
-        db = _db(tmp_path)
+    def test_lock_held_skip_leaves_existing_state(
+        self, tmp_path: Path, postgres_db: HubDatabase
+    ) -> None:
+        db = postgres_db
         bin_dir = tmp_path / "bin"
         bin_dir.mkdir(parents=True)
         spec = _spec()
@@ -363,8 +393,10 @@ class TestBinUpdater:
         assert result is None
         assert store.get(spec.name).last_status == "up_to_date"
 
-    def test_source_unavailable_below_floor_records_floor_violation(self, tmp_path: Path) -> None:
-        db = _db(tmp_path)
+    def test_source_unavailable_below_floor_records_floor_violation(
+        self, tmp_path: Path, postgres_db: HubDatabase
+    ) -> None:
+        db = postgres_db
         bin_dir = tmp_path / "bin"
         spec = _spec()
         _write_binary(bin_dir, spec)
@@ -382,8 +414,10 @@ class TestBinUpdater:
         assert record is not None
         assert record.last_status == "floor_violated"
 
-    def test_update_all_contains_internal_errors(self, tmp_path: Path) -> None:
-        db = _db(tmp_path)
+    def test_update_all_contains_internal_errors(
+        self, tmp_path: Path, postgres_db: HubDatabase
+    ) -> None:
+        db = postgres_db
         bin_dir = tmp_path / "bin"
         client = FakeClient(resolve_error=RuntimeError("boom"))
 

@@ -258,12 +258,13 @@ Run tools:
 Coordination tools:
 
 - `send_message`
-- `send_command`
-- `activate_command`
-- `complete_command`
 - `deliver_pending_messages`
-- `wait_for_command`
 - `get_inter_session_messages`
+
+`send_message` uses explicit targets: `session`, `agent`, `project`, `build`,
+or `all`. Pass `target_id` for every target except `all`; `session` accepts a
+session ref, `agent` an agent run id, `project` a project id/name, and `build`
+a build run id, build input ref, or root task ref.
 
 Spawn requests can pass `agent`, `task_id`, isolation fields, provider/model
 overrides, reasoning fields, runtime limits, parent session, and project path.

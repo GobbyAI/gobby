@@ -16,10 +16,12 @@ import logging
 import threading
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.git_utils import DirtyFiles
 from gobby.workflows.hooks import WorkflowHookHandler
 from tests._timing import wait_forever
@@ -626,14 +628,9 @@ class TestVariablePersistence:
     """
 
     @pytest.fixture
-    def db(self, tmp_path):
+    def db(self, temp_db: HubDatabase):
         """Create a real database with migrations."""
-        from gobby.storage.database import LocalDatabase
-        from gobby.storage.migrations import run_migrations
-
-        db_path = tmp_path / "test_var_persist.db"
-        database = LocalDatabase(db_path)
-        run_migrations(database)
+        database = temp_db
         return database
 
     @pytest.fixture
@@ -672,10 +669,12 @@ class TestVariablePersistence:
         }
         db.execute(
             """
-            INSERT INTO workflow_definitions (name, workflow_type, definition_json, enabled, source)
-            VALUES (?, 'rule', ?, 1, 'test')
+            INSERT INTO workflow_definitions (
+                id, name, workflow_type, definition_json, enabled, source
+            )
+            VALUES (?, ?, 'rule', ?, ?, 'test')
             """,
-            (name, json.dumps(definition)),
+            (str(uuid4()), name, json.dumps(definition), True),
         )
 
     def _make_stop_event(self, session_id: str = "test-session") -> HookEvent:
@@ -754,10 +753,12 @@ class TestVariablePersistence:
         }
         db.execute(
             """
-            INSERT INTO workflow_definitions (name, workflow_type, definition_json, enabled, source)
-            VALUES (?, 'rule', ?, 1, 'test')
+            INSERT INTO workflow_definitions (
+                id, name, workflow_type, definition_json, enabled, source
+            )
+            VALUES (?, ?, 'rule', ?, ?, 'test')
             """,
-            ("test-flag-gate", json.dumps(definition)),
+            (str(uuid4()), "test-flag-gate", json.dumps(definition), True),
         )
 
         event = self._make_stop_event()
@@ -820,6 +821,37 @@ class TestVariablePersistence:
         assert variables.get("task_claimed") is True
         assert "task-uuid-observer" in variables.get("claimed_tasks", {})
         assert variables.get("claimed_tasks", {}).get("task-uuid-observer") == "#99"
+
+    @pytest.mark.asyncio
+    async def test_validation_evidence_observer_is_wired_and_persisted(
+        self, db, session_var_manager
+    ) -> None:
+        """Successful validation commands should persist readiness evidence."""
+        from gobby.workflows.engine.core import RuleEngine
+
+        handler = WorkflowHookHandler(rule_engine=RuleEngine(db=db))
+
+        event = HookEvent(
+            event_type=HookEventType.AFTER_TOOL,
+            session_id="test-ext",
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={
+                "tool_name": "Bash",
+                "tool_input": {"command": "uv run pytest tests/workflows/test_hooks.py -v"},
+                "tool_output": {"output": "passed", "exitCode": 0},
+            },
+            cwd="/repo",
+            metadata={"_platform_session_id": "test-session"},
+        )
+
+        await handler._evaluate_rules(event)
+
+        variables = session_var_manager.get_variables("test-session")
+        assert variables.get("verification_evidence_recorded") is True
+        evidence = variables.get("verification_evidence")
+        assert isinstance(evidence, list)
+        assert evidence[-1]["command"] == "uv run pytest tests/workflows/test_hooks.py -v"
 
     @pytest.mark.asyncio
     async def test_turn_end_reconciles_claimed_tasks_for_after_agent(
@@ -939,8 +971,9 @@ class TestVariablePersistence:
         response = await handler._evaluate_rules(after_event)
 
         assert before_response.decision == "block"
-        assert 'Call get_skill(name="task-transitions") on gobby-skills, then continue.' in (
-            before_response.reason or ""
+        assert (
+            'Call get_skill(name="task-transitions") on gobby-skills through mcp__gobby__ progressive discovery'
+            in (before_response.reason or "")
         )
         assert response.decision == "allow"
         assert after_event.data["tool_input"] == {
@@ -1016,13 +1049,8 @@ class TestBaselineDirtyFilesSubtraction:
     """
 
     @pytest.fixture
-    def db(self, tmp_path):
-        from gobby.storage.database import LocalDatabase
-        from gobby.storage.migrations import run_migrations
-
-        db_path = tmp_path / "test_baseline.db"
-        database = LocalDatabase(db_path)
-        run_migrations(database)
+    def db(self, temp_db: HubDatabase):
+        database = temp_db
         return database
 
     @pytest.fixture
@@ -1062,9 +1090,10 @@ class TestBaselineDirtyFilesSubtraction:
             ],
         }
         db.execute(
-            "INSERT INTO workflow_definitions (name, workflow_type, definition_json, enabled, source) "
-            "VALUES (?, 'rule', ?, 1, 'test')",
-            ("test-dirty-block", json.dumps(definition)),
+            "INSERT INTO workflow_definitions "
+            "(id, name, workflow_type, definition_json, enabled, source) "
+            "VALUES (?, ?, 'rule', ?, ?, 'test')",
+            (str(uuid4()), "test-dirty-block", json.dumps(definition), True),
         )
 
     @pytest.mark.asyncio
@@ -1324,13 +1353,8 @@ class TestStopFailsClosedOnVariableLoadError:
     """Test that STOP events fail closed when session variables can't be loaded."""
 
     @pytest.fixture
-    def db(self, tmp_path):
-        from gobby.storage.database import LocalDatabase
-        from gobby.storage.migrations import run_migrations
-
-        db_path = tmp_path / "test_var_load.db"
-        database = LocalDatabase(db_path)
-        run_migrations(database)
+    def db(self, temp_db: HubDatabase):
+        database = temp_db
         return database
 
     @pytest.fixture
@@ -1592,13 +1616,8 @@ class TestProjectPathResolution:
     """Workflow hook evaluation should recover project_path when only project_id is known."""
 
     @pytest.fixture
-    def db(self, tmp_path):
-        from gobby.storage.database import LocalDatabase
-        from gobby.storage.migrations import run_migrations
-
-        db_path = tmp_path / "test_project_path.db"
-        database = LocalDatabase(db_path)
-        run_migrations(database)
+    def db(self, temp_db: HubDatabase):
+        database = temp_db
         return database
 
     @pytest.mark.asyncio

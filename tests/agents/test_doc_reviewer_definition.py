@@ -43,7 +43,6 @@ def test_doc_reviewer_loads_required_skills() -> None:
         "code-index",
         "tech-writer",
         "task-transitions",
-        "verification-before-completion",
     ]
     assert load_step["allowed_mcp_tools"] == ["gobby-skills:get_skill"]
     for skill_name in agent["step_variables"]["required_skills"]:
@@ -65,6 +64,9 @@ def test_doc_reviewer_uses_ordered_docs_review_and_verdict_tools() -> None:
     assert "approve_review" in instructions
     assert "reject_review" in instructions
     assert "escalate_task" in instructions
+    assert "After successful final validation in REVIEW" in instructions
+    assert "pending terminal-verdict obligation" in instructions
+    assert "After successful final validation" in status_message
     assert {
         "gobby-tasks-ops:approve_review",
         "gobby-tasks-ops:reject_review",

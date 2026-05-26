@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import psutil
@@ -32,6 +33,107 @@ def _get_qdrant_url(server: "HTTPServer", vector_store: Any | None) -> str | Non
     qdrant = getattr(databases, "qdrant", None) if databases is not None else None
     config_url = getattr(qdrant, "url", None) if qdrant is not None else None
     return config_url if isinstance(config_url, str) and config_url else None
+
+
+def _is_mcp_server_connected(mcp_manager: Any, name: str) -> bool:
+    """Resolve connection state across concrete managers and lightweight test doubles."""
+    is_connected = getattr(mcp_manager, "is_connected", None)
+    if callable(is_connected):
+        try:
+            result = is_connected(name)
+            if isinstance(result, bool):
+                return result
+        except Exception:
+            logger.debug("MCP manager is_connected failed for %s", name, exc_info=True)
+
+    connections = getattr(mcp_manager, "connections", {})
+    if isinstance(connections, dict):
+        return name in connections
+    if isinstance(connections, (list, set, tuple)):
+        return name in connections
+    return False
+
+
+def _is_postgres_runtime(server: "HTTPServer", database_status: dict[str, Any]) -> bool:
+    """Return whether the active hub runtime is PostgreSQL."""
+    backend = database_status.get("backend")
+    if isinstance(backend, str) and backend == "postgres":
+        return True
+
+    services = getattr(server, "services", None)
+    config = getattr(services, "config", None) if services is not None else None
+    hub_backend = getattr(config, "hub_backend", None) if config is not None else None
+    return isinstance(hub_backend, str) and hub_backend == "postgres"
+
+
+def _postgres_mode_from_server(server: "HTTPServer") -> str | None:
+    services = getattr(server, "services", None)
+    config = getattr(services, "config", None) if services is not None else None
+    mode = getattr(config, "postgres_install_mode", None) if config is not None else None
+    return mode if isinstance(mode, str) else None
+
+
+async def _get_postgres_dashboard_status(
+    server: "HTTPServer", database_status: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Collect the PostgreSQL status payload used by the CLI status dashboard."""
+    if not _is_postgres_runtime(server, database_status):
+        return None
+
+    try:
+        from gobby.cli.installers.postgres import get_postgres_status
+
+        return await get_postgres_status(readiness_timeout=1.5, connect_timeout=1)
+    except Exception as exc:
+        logger.warning("Failed to get PostgreSQL status: %s", type(exc).__name__)
+        return {
+            "available": False,
+            "mode": _postgres_mode_from_server(server),
+            "healthy": False,
+            "error": type(exc).__name__,
+        }
+
+
+def _unavailable_falkordb_memory_status() -> dict[str, Any]:
+    return {
+        "configured": False,
+        "installed": False,
+        "healthy": False,
+        "url": None,
+    }
+
+
+async def _get_falkordb_memory_status(server: "HTTPServer") -> dict[str, Any]:
+    """Collect the FalkorDB status payload for the admin memory section."""
+    try:
+        from gobby.cli.services import get_falkordb_status
+        from gobby.config.persistence import is_falkordb_enabled
+
+        services = getattr(server, "services", None)
+        daemon_config = getattr(server, "config", None) or getattr(services, "config", None)
+        if daemon_config is None or services is None:
+            raise RuntimeError("server config unavailable")
+
+        falkor_cfg = daemon_config.databases.falkordb
+        status = await get_falkordb_status(
+            db=getattr(services, "database", None),
+            host=falkor_cfg.host,
+            port=falkor_cfg.port,
+            password=falkor_cfg.requirepass,
+        )
+        return {
+            "configured": is_falkordb_enabled(daemon_config.databases),
+            "installed": status["installed"],
+            "healthy": status["healthy"],
+            "url": status["url"],
+        }
+    except Exception as e:
+        logger.warning(
+            "Failed to check FalkorDB status: %s: %s",
+            type(e).__name__,
+            e,
+        )
+        return _unavailable_falkordb_memory_status()
 
 
 def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
@@ -114,7 +216,7 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
                 # Iterate over all configured servers, not just connected ones
                 for config in server.mcp_manager.server_configs:
                     health = server.mcp_manager.health.get(config.name)
-                    is_connected = config.name in server.mcp_manager.connections
+                    is_connected = _is_mcp_server_connected(server.mcp_manager, config.name)
                     mcp_health[config.name] = {
                         "connected": is_connected,
                         "status": (
@@ -255,27 +357,7 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
                 )
                 memory_stats["qdrant"] = {"configured": False, "healthy": False}
 
-            # Neo4j knowledge graph status
-            try:
-                from gobby.cli.services import is_neo4j_healthy, is_neo4j_installed
-
-                neo4j_client = getattr(server.memory_manager, "_neo4j_client", None)
-                neo4j_url = neo4j_client.base_url if neo4j_client else None
-                installed = is_neo4j_installed()
-                healthy = await is_neo4j_healthy(neo4j_url) if neo4j_url else False
-                memory_stats["neo4j"] = {
-                    "configured": neo4j_client is not None,
-                    "installed": installed,
-                    "healthy": healthy,
-                    "url": neo4j_url,
-                }
-            except Exception as e:
-                logger.warning(
-                    "Failed to check Neo4j status: %s: %s",
-                    type(e).__name__,
-                    e,
-                )
-                memory_stats["neo4j"] = {"configured": False, "installed": False, "healthy": False}
+        memory_stats["falkordb"] = await _get_falkordb_memory_status(server)
 
         # Get pipeline execution statistics
         pipeline_stats: dict[str, Any] = {
@@ -358,17 +440,6 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
         except Exception:
             pass
 
-        # Database size
-        db_size_bytes: int | None = None
-        try:
-            from gobby.cli.utils import get_gobby_home as _ghome
-
-            db_path = _ghome() / "gobby-hub.db"
-            if db_path.exists():
-                db_size_bytes = db_path.stat().st_size
-        except Exception:
-            pass
-
         # Last shutdown source
         last_shutdown: str | None = None
         try:
@@ -409,17 +480,29 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
                 logger.warning(f"Failed to get provider model catalog status: {e}")
 
         database_status: dict[str, Any] = {}
+        db_size_bytes: int | None = None
         db = getattr(server.services, "database", None)
         if db is not None:
+            database_status["backend"] = getattr(db, "dialect", None)
             connection_count = getattr(db, "connection_count", None)
             database_status["connection_count"] = (
                 connection_count if isinstance(connection_count, int) else None
             )
+            db_path = getattr(db, "db_path", None)
+            try:
+                if db_path is not None:
+                    resolved_db_path = Path(db_path).expanduser()
+                    if resolved_db_path.exists():
+                        db_size_bytes = resolved_db_path.stat().st_size
+            except Exception:
+                pass
         executor_stats = server.services.db_executor_stats()
         if executor_stats is not None:
             database_status["executor"] = executor_stats
 
-        return {
+        postgres_status = await _get_postgres_dashboard_status(server, database_status)
+
+        payload: dict[str, Any] = {
             "status": "healthy" if server._running else "degraded",
             "dev_mode": getattr(server.services, "dev_mode", False),
             "project_id": getattr(server.services, "project_id", None),
@@ -449,6 +532,9 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
             "last_shutdown": last_shutdown,
             "response_time_ms": response_time_ms,
         }
+        if postgres_status is not None:
+            payload["postgres"] = postgres_status
+        return payload
 
     @router.get("/metrics")
     async def get_metrics() -> PlainTextResponse:

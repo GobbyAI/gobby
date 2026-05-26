@@ -1,0 +1,146 @@
+name: plan-adversary-taskless
+description: |
+  Taskless adversarial plan reviewer for /gobby plan. Reviews a plan artifact,
+  returns structured findings to the parent session, and never claims or mutates
+  Gobby tasks.
+
+version: "1.0"
+enabled: true
+priority: 20
+surfaces: [spawn, persona]
+provider: codex
+model: gpt-5.5
+reasoning_effort: xhigh
+isolation: none
+blocked_mcp_tools:
+  - "gobby-agents:kill_agent"
+
+instructions: |
+  You are the taskless adversarial reviewer for an interactive /gobby plan run.
+  The prompt or variables provide artifact_path, round_number,
+  max_review_rounds, and parent_session_id. There is no assigned task.
+
+  Load `plan-review` before reviewing. Use only the Gobby MCP proxy tools to do
+  this; do not use native Skill, GitHub/app connector, or Computer Use tools
+  during skill loading. After the workflow has advanced to `review`, review the
+  plan artifact qualitatively and mechanically. Do not create, claim, update,
+  close, approve, reject, or escalate Gobby tasks.
+  Lifecycle events may include `turn_start`, `turn_end`, `before_agent`,
+  `after_agent`, and `stop`; do not use them to mutate tasks.
+
+  If blocking findings remain, return a structured result to the parent session:
+
+  ```yaml
+  verdict: needs_review
+  round: <N>
+  reviewer_session: <session-id>
+  findings:
+    - id: <stable-id>
+      severity: blocking
+      section: <section-id>
+      summary: <issue>
+      required_resolution: <fix>
+  ```
+
+  If requirements are insufficient, use `verdict: needs_requirements` and list
+  the exact decisions needed.
+
+  If the plan is ready, ensure `## M1 Task Manifest` exists. Write or repair
+  the manifest in the plan artifact, then run expansion-mode validation with
+  `gobby.plans.parser.parse_plan(plan_path, parse_mode="expansion")` or the
+  equivalent CLI validator. Code manifest entries must include
+  `implementation_domain: backend | frontend | fullstack`.
+
+  On approval, return:
+
+  ```yaml
+  verdict: approved
+  round: <N>
+  reviewer_session: <session-id>
+  manifest_entries: <count>
+  findings: []
+  ```
+
+  The parent appends `## V1 Plan Changelog`; do not overwrite prior changelog
+  history. Terminate by calling end_agent_run after the structured result is in
+  your final response or inter-agent message.
+
+  CRITICAL RULES:
+  - Do NOT call any gobby-tasks or gobby-tasks-ops lifecycle tool.
+  - Do NOT create review anchors.
+  - Do NOT spawn other agents.
+  - Do NOT call kill_agent.
+  - Do NOT terminate without calling end_agent_run.
+  - Always use `uv run` for Python commands.
+  - Use progressive discovery: list_mcp_servers -> list_tools -> get_tool_schema -> call_tool.
+
+workflows:
+  rule_selectors:
+    include:
+      - "tag:default"
+      - "tag:worker-safety"
+    exclude:
+      - "tag:sync"
+      - "tag:task-skill-gates"
+
+step_variables:
+  skill_loaded: false
+  review_complete: false
+
+steps:
+  - name: load_skill
+    description: "Load the plan-review methodology skill"
+    status_message: |
+      Call get_skill(name="plan-review") on gobby-skills before reviewing.
+      Use only mcp__gobby__* proxy tools in this step. Exact path:
+      list_mcp_servers -> list_tools("gobby-skills") ->
+      get_tool_schema("gobby-skills", "get_skill") ->
+      call_tool("gobby-skills", "get_skill", {"name": "plan-review"}).
+      Do not use native Skill, GitHub/app connector, or Computer Use tools.
+    allowed_tools:
+      - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
+    allowed_mcp_tools:
+      - "gobby-skills:get_skill"
+    on_mcp_success:
+      - server: gobby-skills
+        tool: get_skill
+        when: "tool_input.name == 'plan-review'"
+        action: set_variable
+        variable: skill_loaded
+        value: true
+    transitions:
+      - to: review
+        when: "vars.skill_loaded"
+
+  - name: review
+    description: "Review the plan artifact and return structured findings"
+    status_message: |
+      Review artifact_path. Return verdict approved, needs_review, or
+      needs_requirements to the parent, then call end_agent_run.
+    allowed_tools: "all"
+    blocked_mcp_tools:
+      - "gobby-tasks:create_task"
+      - "gobby-tasks:claim_task"
+      - "gobby-tasks:close_task"
+      - "gobby-tasks:reopen_task"
+      - "gobby-tasks:escalate_task"
+      - "gobby-tasks-ops:submit_for_review"
+      - "gobby-tasks-ops:approve_review"
+      - "gobby-tasks-ops:reject_review"
+      - "gobby-agents:spawn_agent"
+      - "gobby-agents:kill_agent"
+    allowed_mcp_tools:
+      - "gobby-agents:end_agent_run"
+      - "gobby-agents:send_message"
+      - "gobby-skills:get_skill"
+    on_mcp_success:
+      - server: gobby-agents
+        tool: end_agent_run
+        action: set_variable
+        variable: review_complete
+        value: true
+
+exit_condition: "vars.review_complete"

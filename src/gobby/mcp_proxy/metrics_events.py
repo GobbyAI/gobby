@@ -5,7 +5,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +24,41 @@ RANGE_DELTAS: dict[str, timedelta | None] = {
 }
 
 
+def _round_metric(value: Any) -> float | None:
+    if value is None:
+        return None
+    return round(float(value), 2)
+
+
+def _round_fields(row: dict[str, Any], fields: tuple[str, ...]) -> dict[str, Any]:
+    for field in fields:
+        row[field] = _round_metric(row.get(field))
+    return row
+
+
+def _parse_timestamp(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    text = str(value)
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+    parsed = datetime.fromisoformat(text)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed
+
+
+def _bucket_timestamp(value: Any, bucket_label: str) -> str:
+    timestamp = _parse_timestamp(value)
+    if bucket_label == "minute":
+        timestamp = timestamp.replace(second=0, microsecond=0)
+        return timestamp.strftime("%Y-%m-%dT%H:%M:00")
+    if bucket_label == "hour":
+        timestamp = timestamp.replace(minute=0, second=0, microsecond=0)
+        return timestamp.strftime("%Y-%m-%dT%H:00:00")
+    return timestamp.strftime("%Y-%m-%d")
+
+
 class MetricsEventStore:
     """
     Event log storage for metrics.
@@ -34,7 +69,7 @@ class MetricsEventStore:
     period are rolled into metrics_events_archive as aggregate totals.
     """
 
-    def __init__(self, db: DatabaseProtocol) -> None:
+    def __init__(self, db: HubDatabase) -> None:
         self.db = db
 
     def record_event(
@@ -63,7 +98,7 @@ class MetricsEventStore:
                 session_id,
                 server_name,
                 name,
-                1 if success else 0,
+                bool(success),
                 latency_ms,
                 result,
                 json.dumps(metadata) if metadata else None,
@@ -78,10 +113,10 @@ class MetricsEventStore:
                 server_name,
                 name AS tool_name,
                 COUNT(*) AS call_count,
-                SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) AS success_count,
-                SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) AS failure_count,
-                ROUND(AVG(latency_ms), 2) AS avg_latency_ms,
-                ROUND(SUM(latency_ms), 2) AS total_latency_ms
+                SUM(CASE WHEN success IS TRUE THEN 1 ELSE 0 END) AS success_count,
+                SUM(CASE WHEN success IS FALSE THEN 1 ELSE 0 END) AS failure_count,
+                AVG(latency_ms) AS avg_latency_ms,
+                SUM(latency_ms) AS total_latency_ms
             FROM metrics_events
             WHERE session_id = ? AND event_type = 'tool_call'
             GROUP BY server_name, name
@@ -89,7 +124,7 @@ class MetricsEventStore:
             """,
             (session_id,),
         )
-        return [dict(row) for row in rows]
+        return [_round_fields(dict(row), ("avg_latency_ms", "total_latency_ms")) for row in rows]
 
     def get_rule_stats(
         self,
@@ -115,7 +150,7 @@ class MetricsEventStore:
                 COUNT(*) AS eval_count,
                 SUM(CASE WHEN result = 'block' THEN 1 ELSE 0 END) AS block_count,
                 SUM(CASE WHEN result = 'allow' THEN 1 ELSE 0 END) AS allow_count,
-                ROUND(AVG(latency_ms), 2) AS avg_latency_ms
+                AVG(latency_ms) AS avg_latency_ms
             FROM metrics_events
             WHERE {where}
             GROUP BY name
@@ -123,7 +158,7 @@ class MetricsEventStore:
             """,
             tuple(params),
         )
-        return [dict(row) for row in rows]
+        return [_round_fields(dict(row), ("avg_latency_ms",)) for row in rows]
 
     def get_skill_stats(
         self,
@@ -148,7 +183,7 @@ class MetricsEventStore:
                 name AS skill_name,
                 event_type,
                 COUNT(*) AS count,
-                ROUND(AVG(latency_ms), 2) AS avg_latency_ms
+                AVG(latency_ms) AS avg_latency_ms
             FROM metrics_events
             WHERE {where}
             GROUP BY name, event_type
@@ -156,7 +191,7 @@ class MetricsEventStore:
             """,
             tuple(params),
         )
-        return [dict(row) for row in rows]
+        return [_round_fields(dict(row), ("avg_latency_ms",)) for row in rows]
 
     def query_events(
         self,
@@ -221,15 +256,11 @@ class MetricsEventStore:
         if delta is None and range_key != "all":
             delta = timedelta(hours=24)  # fallback
 
-        # Determine bucket size based on range
         if range_key in ("1h", "6h"):
-            bucket_fmt = "%Y-%m-%dT%H:%M:00"  # per-minute
             bucket_label = "minute"
         elif range_key in ("12h", "24h"):
-            bucket_fmt = "%Y-%m-%dT%H:00:00"  # per-hour
             bucket_label = "hour"
         else:
-            bucket_fmt = "%Y-%m-%d"  # per-day
             bucket_label = "day"
 
         conditions = ["event_type = ?"]
@@ -251,32 +282,69 @@ class MetricsEventStore:
         rows = self.db.fetchall(
             f"""
             SELECT
-                strftime('{bucket_fmt}', created_at) AS bucket,
-                COUNT(*) AS call_count,
-                SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) AS success_count,
-                SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) AS failure_count,
-                ROUND(AVG(latency_ms), 2) AS avg_latency_ms,
-                SUM(CASE WHEN result = 'block' THEN 1 ELSE 0 END) AS block_count,
-                SUM(CASE WHEN result = 'allow' THEN 1 ELSE 0 END) AS allow_count
+                created_at, success, latency_ms, result
             FROM metrics_events
             WHERE {where}
-            GROUP BY bucket
-            ORDER BY bucket ASC
+            ORDER BY created_at ASC
             """,
             tuple(params),
         )
+        buckets = self._bucket_timeseries_rows(rows, bucket_label)
 
         result: dict[str, Any] = {
             "range": range_key,
             "bucket_size": bucket_label,
             "event_type": event_type,
-            "buckets": [dict(row) for row in rows],
+            "buckets": buckets,
         }
 
         # For "all" range, include archive totals
         if range_key == "all":
             result["archive_totals"] = self.get_archive_totals(event_type=event_type, name=name)
 
+        return result
+
+    def _bucket_timeseries_rows(self, rows: list[Any], bucket_label: str) -> list[dict[str, Any]]:
+        buckets: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            bucket = _bucket_timestamp(row["created_at"], bucket_label)
+            entry = buckets.setdefault(
+                bucket,
+                {
+                    "bucket": bucket,
+                    "call_count": 0,
+                    "success_count": 0,
+                    "failure_count": 0,
+                    "avg_latency_ms": None,
+                    "block_count": 0,
+                    "allow_count": 0,
+                    "_latency_total": 0.0,
+                    "_latency_count": 0,
+                },
+            )
+            entry["call_count"] += 1
+            if bool(row["success"]):
+                entry["success_count"] += 1
+            else:
+                entry["failure_count"] += 1
+            latency = row["latency_ms"]
+            if latency is not None:
+                entry["_latency_total"] += float(latency)
+                entry["_latency_count"] += 1
+            if row["result"] == "block":
+                entry["block_count"] += 1
+            elif row["result"] == "allow":
+                entry["allow_count"] += 1
+
+        result: list[dict[str, Any]] = []
+        for bucket in sorted(buckets):
+            entry = buckets[bucket]
+            latency_count = entry.pop("_latency_count")
+            latency_total = entry.pop("_latency_total")
+            entry["avg_latency_ms"] = (
+                round(latency_total / latency_count, 2) if latency_count else None
+            )
+            result.append(entry)
         return result
 
     def get_archive_totals(
@@ -320,7 +388,7 @@ class MetricsEventStore:
         cutoff = (datetime.now(UTC) - timedelta(days=retention_days)).isoformat()
 
         # UPSERT aggregated counts into archive.
-        # Use COALESCE to replace NULLs — SQLite treats NULL != NULL in UNIQUE constraints.
+        # Use COALESCE to keep nullable dimensions deterministic in conflict targets.
         self.db.execute(
             """
             INSERT INTO metrics_events_archive (
@@ -334,8 +402,8 @@ class MetricsEventStore:
                 COALESCE(server_name, ''),
                 name,
                 COUNT(*),
-                SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END),
-                SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END),
+                SUM(CASE WHEN success IS TRUE THEN 1 ELSE 0 END),
+                SUM(CASE WHEN success IS FALSE THEN 1 ELSE 0 END),
                 COALESCE(SUM(latency_ms), 0),
                 SUM(CASE WHEN result = 'block' THEN 1 ELSE 0 END),
                 SUM(CASE WHEN result = 'allow' THEN 1 ELSE 0 END)
@@ -343,12 +411,13 @@ class MetricsEventStore:
             WHERE created_at < ?
             GROUP BY event_type, COALESCE(project_id, ''), COALESCE(server_name, ''), name
             ON CONFLICT(event_type, project_id, server_name, name) DO UPDATE SET
-                call_count = call_count + excluded.call_count,
-                success_count = success_count + excluded.success_count,
-                failure_count = failure_count + excluded.failure_count,
-                total_latency_ms = total_latency_ms + excluded.total_latency_ms,
-                block_count = block_count + excluded.block_count,
-                allow_count = allow_count + excluded.allow_count
+                call_count = metrics_events_archive.call_count + excluded.call_count,
+                success_count = metrics_events_archive.success_count + excluded.success_count,
+                failure_count = metrics_events_archive.failure_count + excluded.failure_count,
+                total_latency_ms = metrics_events_archive.total_latency_ms +
+                                   excluded.total_latency_ms,
+                block_count = metrics_events_archive.block_count + excluded.block_count,
+                allow_count = metrics_events_archive.allow_count + excluded.allow_count
             """,
             (cutoff,),
         )

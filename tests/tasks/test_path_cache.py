@@ -146,11 +146,11 @@ class TestPathCacheOnInsert:
         """Test that each project has independent path sequences."""
         # Create two projects
         temp_db.execute(
-            "INSERT INTO projects (id, name, created_at, updated_at) VALUES (?, ?, datetime('now'), datetime('now'))",
+            "INSERT INTO projects (id, name, created_at, updated_at) VALUES (?, ?, NOW(), NOW())",
             ("proj-a", "Project A"),
         )
         temp_db.execute(
-            "INSERT INTO projects (id, name, created_at, updated_at) VALUES (?, ?, datetime('now'), datetime('now'))",
+            "INSERT INTO projects (id, name, created_at, updated_at) VALUES (?, ?, NOW(), NOW())",
             ("proj-b", "Project B"),
         )
 

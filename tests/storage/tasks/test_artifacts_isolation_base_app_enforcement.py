@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import (
     LocalTaskManager,
     MissingIsolationBaseError,
@@ -76,14 +76,14 @@ def test_clear_isolation_pair_clears_base(temp_db, sample_project) -> None:
     assert artifacts.base_commit_sha is None
 
 
-def _task(temp_db: LocalDatabase, sample_project: dict[str, Any]) -> Task:
+def _task(temp_db: HubDatabase, sample_project: dict[str, Any]) -> Task:
     return LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Artifacts",
     )
 
 
-def _insert_legacy_worktree_row(temp_db: LocalDatabase, task_id: str) -> None:
+def _insert_legacy_worktree_row(temp_db: HubDatabase, task_id: str) -> None:
     temp_db.execute(
         """
         INSERT INTO task_artifacts (task_id, worktree_path, worktree_id)

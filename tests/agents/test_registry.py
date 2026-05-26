@@ -1379,7 +1379,7 @@ class TestRunningAgentRegistryKill:
         )
         registry.add(agent)
 
-        with patch("gobby.storage.database.LocalDatabase"):
+        with patch("gobby.storage.hub.runtime.open_runtime_hub_database"):
             with patch("gobby.storage.sessions.SessionManager") as MockSM:
                 MockSM.return_value.get.return_value = None
                 result = await registry.kill("ar-nopid")

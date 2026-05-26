@@ -262,7 +262,7 @@ async def _stop_started_services(
         try:
             await asyncio.wait_for(runner.cron_scheduler.stop(), timeout=2.0)
         except TimeoutError:
-            logger.warning("Cron scheduler shutdown timed out")
+            _log_shutdown_timeout("Cron scheduler", shutdown_intent=shutdown_intent)
 
     if runner.message_processor:
         try:
@@ -277,6 +277,16 @@ async def _stop_started_services(
             logger.warning("CommunicationsManager shutdown timed out")
 
 
+def _log_shutdown_timeout(service_name: str, *, shutdown_intent: ShutdownIntent) -> None:
+    if shutdown_intent is ShutdownIntent.RESTART:
+        logger.info(
+            "%s shutdown exceeded timeout during daemon restart; continuing with restart",
+            service_name,
+        )
+    else:
+        logger.warning("%s shutdown timed out", service_name)
+
+
 def _stop_ui_dev_server_if_needed(runner: GobbyRunner) -> None:
     if runner.config.ui.enabled and runner.config.ui.mode == "dev":
         from gobby.cli.utils import stop_ui_server
@@ -288,21 +298,32 @@ async def _close_managers_and_storage(runner: GobbyRunner) -> None:
     hook_manager = getattr(runner.http_server, "_hook_manager", None)
     if hook_manager:
         try:
-            hook_manager.shutdown()
+            await hook_manager.shutdown_async()
         except Exception as e:
             logger.warning(f"HookManager shutdown failed: {e}")
 
-    if runner.memory_manager:
+    memory_manager = getattr(runner, "memory_manager", None)
+    if memory_manager:
         try:
-            await asyncio.wait_for(runner.memory_manager.close(), timeout=5.0)
+            await asyncio.wait_for(memory_manager.close(), timeout=5.0)
         except TimeoutError:
             logger.warning("MemoryManager close timed out")
         except Exception as e:
             logger.warning(f"MemoryManager close failed: {e}")
 
-    if runner.vector_store:
+    code_indexer = getattr(runner, "code_indexer", None)
+    if code_indexer:
         try:
-            await asyncio.wait_for(runner.vector_store.close(), timeout=5.0)
+            await asyncio.wait_for(code_indexer.close_graph_client(), timeout=5.0)
+        except TimeoutError:
+            logger.warning("CodeIndexContext graph close timed out")
+        except Exception as e:
+            logger.warning(f"CodeIndexContext graph close failed: {e}")
+
+    vector_store = getattr(runner, "vector_store", None)
+    if vector_store:
+        try:
+            await asyncio.wait_for(vector_store.close(), timeout=5.0)
         except TimeoutError:
             logger.warning("VectorStore close timed out")
         except Exception as e:
@@ -330,11 +351,24 @@ async def shutdown_daemon_services(
         services.shutdown_in_progress = True
     await await_critical_stop_hook_grace_window()
     logger.debug("Shutdown requested; beginning graceful shutdown")
-    server.should_exit = True
+
+    cleanup_pending_interactions = getattr(
+        getattr(runner, "http_server", None),
+        "_cleanup_pending_interactions",
+        None,
+    )
+    if cleanup_pending_interactions is not None:
+        try:
+            await cleanup_pending_interactions()
+        except Exception as e:
+            logger.warning(f"Failed to clean up pending interactions: {e}")
+
     try:
         await runner.http_server._terminate_streamable_http_sessions()
     except Exception as e:
         logger.warning(f"Failed to terminate Streamable HTTP sessions: {e}")
+
+    server.should_exit = True
 
     await _cancel_runner_task(runner, "_subsystem_init_task")
     await _cancel_runner_task(runner, "_provider_model_refresh_task")
@@ -344,7 +378,7 @@ async def shutdown_daemon_services(
     try:
         await asyncio.wait_for(runner.lifecycle_manager.stop(), timeout=2.0)
     except TimeoutError:
-        logger.warning("Lifecycle manager shutdown timed out")
+        _log_shutdown_timeout("Lifecycle manager", shutdown_intent=shutdown_intent)
 
     try:
         logger.debug("Waiting for HTTP server lifespan shutdown")

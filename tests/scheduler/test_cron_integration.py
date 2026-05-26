@@ -18,7 +18,7 @@ from tests._timing import wait_for_async_condition
 
 if TYPE_CHECKING:
     from gobby.config.cron import CronConfig
-    from gobby.storage.database import LocalDatabase
+    from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.integration
 
@@ -26,7 +26,7 @@ PROJECT_ID = "00000000-0000-0000-0000-000000000000"
 
 
 @pytest.fixture
-def cron_storage(temp_db: LocalDatabase) -> CronJobStorage:
+def cron_storage(temp_db: HubDatabase) -> CronJobStorage:
     return CronJobStorage(temp_db)
 
 

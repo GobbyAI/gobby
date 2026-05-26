@@ -20,9 +20,8 @@ from gobby.plans.parser import (
 from gobby.prompts.models import parse_frontmatter
 from gobby.storage.tasks import Task
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.tasks.categories import AUTOMATED_LEAF_CATEGORIES, TDD_ELIGIBLE_CATEGORIES
+from gobby.tasks.categories import DEVELOPMENT_FORWARD_LEAF_CATEGORIES
 
-_TDD_CATEGORIES = TDD_ELIGIBLE_CATEGORIES
 _DEFAULT_AGENT = "backend-developer"
 _DEFAULT_PHASE_ID = "phase-1"
 _EXPANSION_STAGES = frozenset({"planning", "expansion", "development", "holistic_qa", "pr"})
@@ -35,21 +34,27 @@ _FRONTEND_SIGNALS = frozenset(
         "css",
         "eslint",
         "frontend",
+        "jsx",
         "lighthouse",
         "playwright",
         "react",
         "routing",
         "storybook",
         "svelte",
+        "tailwind",
+        "tsx",
+        "typescript",
         "ui",
         "vite",
         "vue",
+        "web",
         "webpack",
     }
 )
 _DETERMINISTIC_FRONTEND_SIGNAL_RE = re.compile(
     r"\b(?:accessibility|browser|client|component|css|eslint|frontend|lighthouse|"
-    r"next\.?js|playwright|react|routing|storybook|svelte|ui|vite|vue|webpack)\b",
+    r"jsx|next\.?js|playwright|react|routing|storybook|svelte|tailwind|tsx|"
+    r"typescript|ui|vite|vue|web|webpack)\b|(?:^|[\\/])web[\\/]|app\.tsx",
     flags=re.IGNORECASE,
 )
 _DETERMINISTIC_AGENT_BY_CATEGORY = {
@@ -58,8 +63,6 @@ _DETERMINISTIC_AGENT_BY_CATEGORY = {
     "test": "backend-developer",
     "config": "backend-developer",
     "docs": "tech-writer",
-    "planning": "planner",
-    "research": "researcher",
 }
 _BACKEND_SIGNALS = frozenset(
     {
@@ -75,7 +78,6 @@ _BACKEND_SIGNALS = frozenset(
         "ruff",
         "scheduler",
         "server",
-        "sqlite",
         "storage",
         "workflow",
         "worker",
@@ -200,7 +202,7 @@ def _agent_selection_fields(
     """Normalize expansion agent-selection fields for an emitted leaf task."""
     category = str(task_item.get("category", "code"))
     description = str(task_item.get("description") or "")
-    if category not in AUTOMATED_LEAF_CATEGORIES:
+    if category not in DEVELOPMENT_FORWARD_LEAF_CATEGORIES:
         return None, None, description
 
     available = _available_agent_names(agent_definitions)
@@ -315,10 +317,6 @@ def _contract_agent_fields(
     )
 
 
-def _contract_task_ids(section_id: str) -> tuple[str, str, str]:
-    return f"{section_id}::test", f"{section_id}::impl", f"{section_id}::ref"
-
-
 def _contract_single_task_id(section_id: str) -> str:
     return f"{section_id}::single"
 
@@ -340,14 +338,6 @@ def _contract_deferral_record(section: PlanSection) -> dict[str, Any] | None:
             for item in section.deferral.original_acceptance_items
         ],
     }
-
-
-def _stable_test_id(phase_id: str) -> str:
-    return f"{phase_id}::__test"
-
-
-def _stable_ref_id(phase_id: str) -> str:
-    return f"{phase_id}::__ref"
 
 
 def _strip_frontmatter(markdown: str) -> str:

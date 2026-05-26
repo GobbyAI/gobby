@@ -45,6 +45,7 @@ def _tool_inventory(
     from gobby.config.app import DaemonConfig
     from gobby.mcp_proxy.registries import setup_internal_registries
     from gobby.storage.clones import LocalCloneManager
+    from gobby.storage.inter_session_messages import InterSessionMessageManager
     from gobby.storage.merge_resolutions import MergeResolutionManager
     from gobby.storage.sessions import SessionManager
     from gobby.storage.tasks import LocalTaskManager
@@ -61,6 +62,7 @@ def _tool_inventory(
         db=temp_db,
         worktree_storage=LocalWorktreeManager(temp_db),
         clone_storage=LocalCloneManager(temp_db),
+        inter_session_message_manager=InterSessionMessageManager(temp_db),
         merge_storage=MergeResolutionManager(temp_db),
         merge_resolver=MergeResolver(),
         agent_runner=MagicMock(),

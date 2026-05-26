@@ -251,6 +251,8 @@ class CodexProvider(LLMProvider):
         prompt: str,
         system_prompt: str | None = None,
         model: str | None = None,
+        *,
+        caller: str | None = None,
     ) -> dict[str, Any]:
         """
         Generate structured JSON using Codex/OpenAI.
@@ -282,7 +284,8 @@ class CodexProvider(LLMProvider):
             result: dict[str, Any] = json.loads(content)
             return result
         except json.JSONDecodeError as e:
-            raise ValueError(f"Failed to parse LLM response as JSON: {e}") from e
+            caller_label = f"[{caller}]" if caller else ""
+            raise ValueError(f"Failed to parse LLM response{caller_label} as JSON: {e}") from e
 
     async def describe_image(
         self,

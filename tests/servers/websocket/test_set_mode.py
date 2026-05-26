@@ -122,6 +122,7 @@ class TestSetModeIdempotency:
         svm_instance.merge_variables.assert_called_once()
         merged_vars = svm_instance.merge_variables.call_args[0][1]
         assert merged_vars["chat_mode"] == "plan"
+        assert server._pending_modes == {}
 
 
 class TestSetModeAttachedSession:
@@ -146,6 +147,7 @@ class TestSetModeAttachedSession:
         svm_instance.merge_variables.assert_called_once()
         merged_vars = svm_instance.merge_variables.call_args[0][1]
         assert merged_vars["chat_mode"] == "plan"
+        assert attached_session.chat_mode == "normal"
 
     async def test_target_session_id_no_change_skips_update(self) -> None:
         server = ConcreteSessionControl()
@@ -160,6 +162,7 @@ class TestSetModeAttachedSession:
         )
 
         server.session_manager.update_chat_mode.assert_not_called()
+        assert attached_session.chat_mode == "plan"
 
     async def test_target_session_not_found_returns_error(self) -> None:
         server = ConcreteSessionControl()
@@ -172,4 +175,5 @@ class TestSetModeAttachedSession:
         )
 
         server._send_error.assert_awaited_once()
+        assert "not found" in server._send_error.await_args.args[1]
         server.session_manager.update_chat_mode.assert_not_called()

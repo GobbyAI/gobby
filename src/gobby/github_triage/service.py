@@ -6,11 +6,12 @@ import hmac
 import inspect
 import json
 import logging
-import sqlite3
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field
 from hashlib import sha256
 from typing import TYPE_CHECKING, Any, Literal, Protocol
+
+import psycopg
 
 from gobby.build import BuildOptions, build
 from gobby.github_triage.issue_index import (
@@ -29,7 +30,7 @@ from gobby.storage.tasks import LocalTaskManager, Task
 
 if TYPE_CHECKING:
     from gobby.storage.cron_models import CronJob
-    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +102,7 @@ class GitHubIssueTriageService:
     def __init__(
         self,
         *,
-        db: DatabaseProtocol,
+        db: HubDatabase,
         mcp_manager: Any | None = None,
         task_manager: LocalTaskManager | None = None,
         project_manager: LocalProjectManager | None = None,
@@ -458,7 +459,7 @@ class GitHubIssueTriageService:
                     github_issue_number=issue.issue_number,
                     github_repo=issue.repo,
                 )
-        except sqlite3.IntegrityError:
+        except psycopg.IntegrityError:
             existing = self.db.fetchone(
                 "SELECT id FROM tasks WHERE project_id = ? AND github_repo = ? "
                 "AND github_issue_number = ? LIMIT 1",
@@ -623,7 +624,7 @@ class GitHubIssueTriageService:
 
 def create_github_triage_handler(
     *,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     mcp_manager: Any | None,
     task_manager: LocalTaskManager,
     memory_manager: Any | None = None,

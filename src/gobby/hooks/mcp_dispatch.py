@@ -14,9 +14,15 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable, Coroutine
+from contextvars import Token
 from typing import Any
 
 from gobby.hooks.events import HookEvent
+from gobby.utils.session_context import (
+    SessionContext,
+    reset_session_context,
+    set_session_context,
+)
 
 # Type alias for the call_tool function signature used by MCPClientManager
 CallToolFn = Callable[[str, str, dict[str, Any]], Coroutine[Any, Any, Any]]
@@ -82,6 +88,7 @@ async def _safe_call(
     logger: logging.Logger,
 ) -> None:
     """Execute a single MCP call, logging errors without propagating."""
+    session_token = _set_session_context_from_arguments(arguments)
     try:
         result = await call_tool_fn(server, tool, arguments)
         if isinstance(result, dict) and result.get("success") is False:
@@ -90,3 +97,16 @@ async def _safe_call(
             )
     except Exception as exc:
         logger.error(f"dispatch_mcp_calls: {server}/{tool} failed: {exc}", exc_info=True)
+    finally:
+        if session_token is not None:
+            reset_session_context(session_token)
+
+
+def _set_session_context_from_arguments(
+    arguments: dict[str, Any],
+) -> Token[SessionContext | None] | None:
+    """Seed SessionContext from MCP arguments when a non-empty session_id is present."""
+    session_id = arguments.get("session_id")
+    if not isinstance(session_id, str) or not session_id:
+        return None
+    return set_session_context(SessionContext(session_id=session_id))

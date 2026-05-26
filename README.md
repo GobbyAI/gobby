@@ -63,9 +63,10 @@ have are missing.
 
 ## What Gobby is
 
-A Python 3.13+ daemon you run locally. SQLite at `~/.gobby/gobby-hub.db`.
-HTTP and the installed web UI on `:60887`, WebSocket on `:60888`, dev web UI
-on `:60889`, stdio MCP server that your coding CLIs talk to.
+A Python 3.13+ daemon you run locally. PostgreSQL is the runtime hub database,
+configured from bootstrap `database_url` settings. HTTP and the
+installed web UI run on `:60887`, WebSocket on `:60888`, dev web UI on
+`:60889`, with a stdio MCP server that your coding CLIs talk to.
 
 Three things make Gobby load-bearing:
 
@@ -167,7 +168,7 @@ but Gobby wires them in for you.
 
 | Tool | What it does | Why it matters |
 | --- | --- | --- |
-| [`gcode`](https://github.com/GobbyAI/gobby-cli) | AST symbol search over 18 languages via tree-sitter + SQLite FTS5; with Qdrant/FalkorDB it adds vector + graph search and Reciprocal Rank Fusion ranking | Agents stop reading whole files. They retrieve by symbol. Cuts 90%+ off file-level loads on large repos. |
+| [`gcode`](https://github.com/GobbyAI/gobby-cli) | AST symbol search over 18 languages via tree-sitter and PostgreSQL hub full-text search; with vector and graph backends it adds semantic + graph search and Reciprocal Rank Fusion ranking | Agents stop reading whole files. They retrieve by symbol. Cuts 90%+ off file-level loads on large repos. |
 | [`gsqz`](https://github.com/GobbyAI/gobby-cli) | Wraps shell commands and compresses output via 28 built-in pipelines (git, cargo, pytest, eslint, ruff, npm, more) | Verbose test/lint/build output collapses before it ever reaches the model. >90% token reduction on noisy commands, ~9ms overhead. |
 | [`gloc`](https://github.com/GobbyAI/gobby-cli) | One command to launch Claude Code or Codex against a local LLM (LM Studio, Ollama). Manages model lifecycle, env vars, warmup. | Same Gobby workflows run against local and cloud models without rewriting anything. |
 | [`ghook`](https://github.com/GobbyAI/gobby-cli) | Sandbox-tolerant hook dispatcher that spools events to `~/.gobby/hooks/inbox/` *before* posting to the daemon | Hook events survive sandbox FS denials, network blips, and daemon restarts. The drain worker replays them. |
@@ -233,7 +234,7 @@ Full release notes: [CHANGELOG.md](CHANGELOG.md).
 ## Architecture
 
 - Python 3.13+ daemon (`uv` for everything)
-- SQLite at `~/.gobby/gobby-hub.db`
+- PostgreSQL runtime hub configured from bootstrap `database_url`
 - HTTP API and installed web UI on `localhost:60887`, WebSocket on `:60888`,
   dev web UI on `:60889`
 - stdio MCP server for coding assistants
@@ -241,11 +242,11 @@ Full release notes: [CHANGELOG.md](CHANGELOG.md).
 - Optional Qdrant + FalkorDB for vector and graph-backed search
 - Companion Rust toolchain via [gobby-cli](https://github.com/GobbyAI/gobby-cli)
 
-The SQLite database at `~/.gobby/gobby-hub.db` is the source of truth for task
-state. `.gobby/tasks.jsonl` is the git-native sync projection — checked in,
-diffable in PRs, and reconciled with the DB so task-linked commits stay
-auditable across machines. Linear is supported as an optional external sync
-target for teams that already track work there.
+The PostgreSQL hub is the source of truth for task state. `.gobby/tasks.jsonl`
+is the git-native sync projection — checked in, diffable in PRs, and reconciled
+with the DB so task-linked commits stay auditable across machines. Linear is
+supported as an optional external sync target for teams that already track work
+there. PostgreSQL is the only runtime hub.
 
 The guides set is the source of truth for behavior:
 
@@ -272,7 +273,9 @@ See [docs/guides/README.md](docs/guides/README.md) for the full guide index.
 | Factory Droid | Hooks + MCP | Droid sessions, transcript parsing, spawned-agent flows |
 
 A task started in any one of them can be continued in any other with the same
-local state, validation gates, and review state.
+local state, validation gates, and review state. Hook policy is portable across
+providers, while native response fidelity remains provider-specific and is
+tracked in [adapter-fidelity.md](docs/guides/adapter-fidelity.md).
 
 Local model providers (LM Studio, Ollama) work through the same hooks and MCP
 layer wherever the underlying CLI supports OpenAI-compatible endpoints.
@@ -321,8 +324,8 @@ gobby init                   # initialize .gobby/ for this repo
   "mcpServers": {
     "gobby": {
       "type": "stdio",
-      "command": "uv",
-      "args": ["run", "gobby", "mcp-server"]
+      "command": "gobby",
+      "args": ["mcp-server"]
     }
   }
 }
@@ -345,58 +348,53 @@ For agent operating instructions in this repository, read [CLAUDE.md](CLAUDE.md)
 
 ## Where it's going
 
-0.4.x is the platform baseline. The next chunk of work is hardening that
-baseline, then porting the hot path to Rust, then opening up multi-machine and
-team surfaces.
+0.5.0 is the new baseline release after the PostgreSQL and FalkorDB data
+cutover. The next work is UI hardening, the Rust port, and then multi-machine
+Gobby Pro.
 
-### Post-0.4.x: hardening
+### 0.5.0: new baseline
 
-- **PostgreSQL hub migration** (`#12761`) — replace SQLite as the runtime hub
-  with `psycopg` v3, `pg_search`, dual-backend test infra, and a one-shot
-  cold-cutover migration tool. Phased across baseline reflattening, service
-  bootstrap, dual-backend tests, schema and query parity, migration tooling,
-  cutover, and rollback.
-- **FalkorDB graph migration** (`#12746`) — swap Neo4j for FalkorDB across
-  daemon writes, Rust read clients, web UI, admin payloads, and the setup
-  wizard.
-- **Memory recall helper** (`#12898`) — bounded background helper agent that
-  searches memory per turn and injects fresh results once into the parent
-  session.
-- **Plan registry APIs and UI editors** (`#14140`) — expose stage and build-
-  profile registries through APIs and editing surfaces so lifecycle shape can
-  evolve without hand-editing storage.
-- **Attached-session UX parity** with first-class web chat: context-usage
-  indicator, mode/model sync, attachments relay, persona switching, STT/TTS.
-- **Logging cleanup** before enforcing logging-format rules: config reset,
-  runtime-vs-app log separation, normalized handlers, automation logs for
-  cron and dispatch.
+0.5.0 locks in the post-data-migration platform: PostgreSQL as the runtime hub,
+FalkorDB as the graph backend, `.gobby/tasks.jsonl` as the git-native task
+projection, and the current Python daemon as the supported local-first control
+plane.
 
-### 0.5.0: Rust migration
+### 0.5.0+: UI hardening and Rust port work
 
-Strangler migration, not a rewrite. Python remains the public daemon and
-behavioral reference until each boundary passes parity, observability, and
-rollback gates. Rust sidecars run on internal ports, with Python delegating
-selected route families behind explicit flags. Compare mode runs both and
-returns the Python response until parity is proven.
+- **UI hardening** — keep tightening chat, sessions, tasks, workflows, cron,
+  projects, compact layouts, and shared design tokens until the web UI is solid
+  enough for daily Gobby Pro workflows.
+- **Attached-session parity** — close remaining gaps in context usage,
+  mode/model sync, attachments, persona switching, and voice surfaces.
+- **Rust port preparation** — freeze route contracts, add compare/delegation
+  plumbing, and keep extracting shared primitives in
+  [gobby-cli](https://github.com/GobbyAI/gobby-cli).
 
-The bridgehead already exists in [gobby-cli](https://github.com/GobbyAI/gobby-cli):
-`gcode`, `gsqz`, `gloc`, `ghook`, plus `gobby-core` shared primitives. 0.5.0
-extends that into the daemon itself.
+### 0.6.0: Rust port release
 
-### Later
+0.6.0 is the Rust port release. Python remains the behavioral reference until
+each boundary passes parity, observability, and rollback gates. Rust sidecars
+take over selected route families behind explicit delegation, with compare mode
+available while parity is proven.
 
-- **Pro sync and multi-daemon** — encrypted sync for tasks, memories, and
-  session metadata; multi-daemon discovery and handshake; fleet inventory,
-  health, and remote command; shared task boards, team workflows, audit, and
-  enterprise controls. This is the commercial layer.
-- **Native apps** — desktop app with tray lifecycle and a bundled daemon;
-  mobile companion for observing sessions, reviewing tasks, and approving
-  gates remotely.
-- **Ecosystem** — public plugin registry, stack-specific starter packs (hooks,
-  workflows, skills, task templates), additional CLI integrations.
-- **SWE-bench evaluation** (`docs/plans/SWE-BENCH.md`) — eval run/result
-  storage, `gobby eval` CLI, Docker-backed harness, trajectory capture,
-  Gobby-enabled vs baseline A/B tests.
+### 0.6.0+: Gobby Pro sync
+
+Gobby Pro starts with remote sync from multiple Gobby-controlled machines:
+multi-daemon discovery and handshake, encrypted task/memory/session sync, and
+operator controls for machines you own.
+
+### 0.7.0+: Gobby Pro beta
+
+The Pro beta adds fleet management and a shared dashboard for all Gobby
+machines: health, inventory, remote command, shared task boards, team workflows,
+audit, and enterprise controls.
+
+### Later: 1.0.0 prep
+
+Once the Pro beta stabilizes, the focus moves to 1.0.0 readiness: API and
+workflow stability, release polish, and SWE-bench evaluation
+(`docs/plans/SWE-BENCH.md`) with run/result storage, `gobby eval`, trajectory
+capture, and Gobby-enabled vs baseline A/B tests.
 
 Full plan: [ROADMAP.md](ROADMAP.md).
 

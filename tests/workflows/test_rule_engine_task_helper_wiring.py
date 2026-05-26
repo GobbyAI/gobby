@@ -2,13 +2,11 @@
 
 from collections.abc import Iterator
 from datetime import UTC, datetime
-from pathlib import Path
 
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.workflows.engine.core import RuleEngine
@@ -18,15 +16,12 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path: Path) -> Iterator[LocalDatabase]:
-    db_path = tmp_path / "test_rule_engine_task_wiring.db"
-    database = LocalDatabase(db_path)
-    run_migrations(database)
+def db(temp_db: HubDatabase) -> Iterator[HubDatabase]:
+    database = temp_db
     yield database
-    database.close()
 
 
-def _sync_bundled(db: LocalDatabase) -> None:
+def _sync_bundled(db: HubDatabase) -> None:
     from gobby.workflows.sync_rules import get_bundled_rules_path
 
     sync_bundled_rules(db, get_bundled_rules_path())
@@ -44,7 +39,7 @@ def _make_event() -> HookEvent:
 
 
 @pytest.mark.asyncio
-async def test_require_epic_tree_close_uses_real_task_manager(db: LocalDatabase) -> None:
+async def test_require_epic_tree_close_uses_real_task_manager(db: HubDatabase) -> None:
     _sync_bundled(db)
     task_manager = LocalTaskManager(db)
     project = LocalProjectManager(db).create(name="task-helper-wiring", repo_path=None)

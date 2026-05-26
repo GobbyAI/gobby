@@ -3,34 +3,43 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 import gobby.storage.chat_attachments as chat_attachments
 from gobby.servers.chat_attachment_limits import resolve_chat_attachment_limits
 from gobby.servers.websocket.db import run_db
 from gobby.storage.chat_attachments import ChatAttachmentRecord
 from gobby.storage.config_store import ConfigStore
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 
 
 class AttachmentSessionManager(Protocol):
     @property
-    def db(self) -> DatabaseProtocol | None: ...
+    def db(self) -> HubDatabase | None: ...
 
 
 class ChatAttachmentConfig(Protocol):
-    attachment_max_file_bytes: int
-    attachment_max_files_per_message: int
-    attachment_max_total_bytes_per_message: int
+    @property
+    def attachment_max_file_bytes(self) -> int: ...
+
+    @property
+    def attachment_max_files_per_message(self) -> int: ...
+
+    @property
+    def attachment_max_total_bytes_per_message(self) -> int: ...
 
 
 class AttachmentDaemonConfig(Protocol):
-    chat: ChatAttachmentConfig
+    @property
+    def chat(self) -> ChatAttachmentConfig: ...
 
 
 class AttachmentOwner(Protocol):
-    session_manager: AttachmentSessionManager | None
-    daemon_config: AttachmentDaemonConfig | None
+    @property
+    def session_manager(self) -> AttachmentSessionManager | None: ...
+
+    @property
+    def daemon_config(self) -> AttachmentDaemonConfig | None: ...
 
 
 @dataclass(frozen=True)
@@ -102,24 +111,21 @@ def append_prepared_attachment_context(content: str, prepared: PreparedMessageAt
     return context
 
 
-def _attachment_db(owner: AttachmentOwner) -> DatabaseProtocol:
-    try:
-        session_manager = owner.session_manager
-    except AttributeError as exc:
-        raise ValueError("Attachment storage requires session_manager") from exc
+def _attachment_db(owner: AttachmentOwner) -> HubDatabase:
+    session_manager = getattr(owner, "session_manager", None)
     if session_manager is None:
         raise ValueError("Attachment storage requires session_manager")
-    db = session_manager.db
+    db = getattr(session_manager, "db", None)
     if db is None:
         raise ValueError("Attachment storage requires session_manager.db")
-    return db
+    return cast(HubDatabase, db)
 
 
 def _resolve_limits_sync(owner: AttachmentOwner) -> tuple[int, int, int]:
     db = _attachment_db(owner)
     limits = resolve_chat_attachment_limits(
         config_store=ConfigStore(db),
-        daemon_config=getattr(owner, "daemon_config", None),
+        daemon_config=owner.daemon_config,
     )
     return (
         limits.max_file_bytes,

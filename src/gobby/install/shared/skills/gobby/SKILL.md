@@ -1,29 +1,38 @@
 ---
 name: gobby
-description: "Router contract for /gobby help and installed skill dispatch."
+description: "Router contract for provider-aware Gobby help and installed skill dispatch."
 version: "2.0.0"
 category: core
 triggers: help
 ---
 
-# /gobby Router
+# Gobby Router
 
-`/gobby` is a router entrypoint. It advertises installed skills on bare help
-requests and routes named skill requests through `gobby-skills`.
+Gobby skill routing is provider-dependent. Codex uses `$gobby`; providers with
+an installed slash router use `/gobby`. The router advertises installed skills
+on bare help requests and routes named skill requests through `gobby-skills`.
 
 ## Help Requests
 
-For `/gobby` and `/gobby help`, show dynamic help generated from installed
+For Codex help requests (`$gobby`, `$gobby help`) and slash-router help
+requests (`/gobby`, `/gobby help`), show dynamic help generated from installed
 skills. Do not maintain a hand-written shortcut list.
 
 Use `list_skills` on `gobby-skills` when skill discovery is needed. Present
-user-invoked skills with `/gobby <skill>` syntax.
+user-invoked skill examples with the provider's active trigger:
+
+- Codex: `$gobby <skill>`
+- Slash-router providers: `/gobby <skill>`
+
+Do not present `/gobby` as universal syntax.
 
 ## Skill Requests
 
 These forms route to `get_skill(name="<skill>")` on `gobby-skills`:
 
 ```text
+$gobby <skill> [args]
+$gobby skill <skill> [args]
 /gobby <skill> [args]
 /gobby skill <skill> [args]
 /gobby:<skill> [args]

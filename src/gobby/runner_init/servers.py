@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 def init_servers(runner: GobbyRunner) -> None:
     """Initialize HTTP server, WebSocket server, and broadcasting."""
     web_chat_session_registry = WebChatSessionRegistry()
+    runner.wake_dispatcher.set_web_chat_session_registry(web_chat_session_registry)
     http_server_ref: weakref.ReferenceType[HTTPServer] | None = None
 
     def tool_proxy_getter() -> object | None:

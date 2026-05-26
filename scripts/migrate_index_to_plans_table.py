@@ -14,8 +14,7 @@ from typing import Any
 import yaml
 
 from gobby.plans.parser import parse_plan
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -28,9 +27,8 @@ def main() -> int:
     args = parser.parse_args()
 
     repo_root = Path(args.repo_root).resolve()
-    db = LocalDatabase(args.database) if args.database else LocalDatabase()
+    db = _open_db(args.database)
     try:
-        run_migrations(db)
         count = migrate(repo_root, db, delete_index=not args.keep_index)
     finally:
         db.close()
@@ -38,14 +36,14 @@ def main() -> int:
     return 0
 
 
-def migrate(repo_root: Path, db: LocalDatabase, *, delete_index: bool = True) -> int:
+def migrate(repo_root: Path, db: HubDatabase, *, delete_index: bool = True) -> int:
     entries = _index_entries(repo_root / ".gobby" / "plans" / "index.yaml")
     count = 0
     for path in _plan_files(repo_root):
         entry = entries.get(path.stem, {})
         plan_doc = parse_plan(path, parse_mode="draft")
         project_id = str(entry.get("project_id") or _project_id(repo_root))
-        root_task_ref = str(entry.get("root_task_ref") or _root_ref(path) or "")
+        root_task_ref = _normalize_task_ref(entry.get("root_task_ref") or _root_ref(path) or "")
         if not root_task_ref:
             logger.warning(
                 "Skipping plan without root_task_ref (project_id=%s, path=%s)",
@@ -76,8 +74,25 @@ def _plan_files(repo_root: Path) -> list[Path]:
     return sorted(plans_dir.glob("*.md")) + sorted((plans_dir / "completed").glob("*.md"))
 
 
+def _open_db(database_url: str | None) -> HubDatabase:
+    if database_url:
+        from gobby.storage.hub.postgres import PostgresHubDatabase
+
+        db = PostgresHubDatabase(database_url)
+        try:
+            db.apply_migrations()
+        except Exception:
+            db.close()
+            raise
+        return db
+
+    from gobby.storage.hub.runtime import open_runtime_hub_database
+
+    return open_runtime_hub_database()
+
+
 def _upsert_plan(
-    db: LocalDatabase,
+    db: HubDatabase,
     *,
     project_id: str,
     plan_id: str,
@@ -96,7 +111,7 @@ def _upsert_plan(
                 id, project_id, plan_id, plan_path, plan_hash, plan_kind, state,
                 root_task_ref, created_at, updated_at, archived_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             ON CONFLICT(project_id, plan_id) DO UPDATE SET
                 plan_path = excluded.plan_path,
                 plan_hash = excluded.plan_hash,
@@ -124,6 +139,13 @@ def _upsert_plan(
 
 def _normalize_plan_kind(value: str) -> str:
     return "strategy" if value == "legacy" else value
+
+
+def _normalize_task_ref(value: Any) -> str:
+    ref = str(value or "").strip()
+    if ref.isdecimal():
+        return f"#{ref}"
+    return ref
 
 
 def _now() -> str:

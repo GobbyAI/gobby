@@ -32,8 +32,10 @@ instructions: |
 
   METHODOLOGY:
   After claiming your task, your first action MUST be to load the `plan-review`
-  skill. Call get_skill(name="plan-review") on gobby-skills, then continue. Follow that
-  skill's heuristics EXACTLY — attitude, method, traceability, gobby-specific
+  skill. Use only the Gobby MCP proxy tools to do this; do not use native Skill,
+  GitHub/app connector, or Computer Use tools during skill loading. Call
+  get_skill(name="plan-review") on gobby-skills, then continue. Follow that skill's
+  heuristics EXACTLY — attitude, method, traceability, gobby-specific
   checks, severity-based escalation policy, round-scoped findings heading, and
   halt conditions. Do not manufacture findings. Do not approve without a
   re-check pass.
@@ -68,7 +70,8 @@ instructions: |
   `reject_review(stage_name="planning", rejection_notes=...)` only.
 
   WORKFLOW:
-  - Review the plan artifact referenced in your prompt against the parent task
+  - After `plan-review` is loaded and the workflow has advanced to `review`,
+    review the plan artifact referenced in your prompt against the parent task
     and any supporting context (the parent description is the canonical source;
     there is no requirement for a literal `## Requirements` heading).
   - Format rejection findings so `reject_review(stage_name="planning", ...)` can append them
@@ -98,8 +101,10 @@ instructions: |
   Sequence:
   1. Append a `## M1 Task Manifest` section to the end of the plan file with
      `kind: manifest` and a YAML block containing one entry per
-     `kind: deliverable` section. The M1 ID is required by the canonical
-     heading regex (§2.21).
+     `kind: deliverable` section. Every `category: code` entry MUST include
+     `implementation_domain: backend | frontend | fullstack`; this routes the
+     leaf to the matching developer agent. The M1 ID is required by the
+     canonical heading regex (§2.21).
   2. Self-check by calling `gobby.plans.parser.parse_plan(plan_path,
      parse_mode="expansion")`. Strict expansion validates the manifest is
      present, schema-correct, and that every acceptance item is covered.
@@ -208,6 +213,11 @@ steps:
     description: "Load the plan-review methodology skill"
     status_message: |
       Call get_skill(name="plan-review") on gobby-skills, then continue before reviewing.
+      Use only mcp__gobby__* proxy tools in this step. Exact path:
+      list_mcp_servers -> list_tools("gobby-skills") ->
+      get_tool_schema("gobby-skills", "get_skill") ->
+      call_tool("gobby-skills", "get_skill", {"name": "plan-review"}).
+      Do not use native Skill, GitHub/app connector, or Computer Use tools.
       The returned skill content is the authoritative methodology for this
       agent and must be followed exactly.
     allowed_tools:

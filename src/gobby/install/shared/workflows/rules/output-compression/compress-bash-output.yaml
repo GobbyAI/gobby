@@ -6,10 +6,9 @@ rules:
     event: before_tool
     enabled: true
     priority: 50
-    # Droid keeps output compression enabled; Codex is excluded for its distinct tool payloads.
+    # Shell-capable CLIs share this rule; command-like gcode calls stay unwrapped.
     when: >
-      source != 'codex'
-      and event.data.get('tool_name') in ('Bash', 'run_shell_command')
+      event.data.get('tool_name') in ('Bash', 'run_shell_command')
       and not event.data.get('tool_input', {}).get('command', '').lstrip().startswith('gcode')
     effects:
       - type: rewrite_input

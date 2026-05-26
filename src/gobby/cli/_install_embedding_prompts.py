@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import logging
-import sqlite3
 import subprocess
 from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlparse
 
 import click
+import psycopg
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +17,7 @@ _EMBEDDING_INSTALLER_EXCEPTIONS = (
     OSError,
     RuntimeError,
     ValueError,
-    sqlite3.Error,
+    psycopg.Error,
     subprocess.SubprocessError,
 )
 
@@ -83,7 +83,7 @@ def _select_embedding_provider(
     if ollama_ok:
         options.append(("ollama", "Ollama (localhost:11434) - local"))
     options.append(("openai", "OpenAI (cloud, requires API key)"))
-    options.append(("none", "None (disables semantic search, skips Qdrant/Neo4j)"))
+    options.append(("none", "None (disables semantic search, skips Qdrant/FalkorDB)"))
 
     default_idx = 1
     if not lmstudio_ok and not ollama_ok:
@@ -160,22 +160,22 @@ def _get_openai_key(
 ) -> str | None:
     """Load or prompt for an OpenAI API key used by cloud embeddings.
 
-    Expected import, OS, and SQLite failures are logged and fall through to the
-    prompt/skip path. Programming and configuration errors propagate. In
+    Expected import, OS, and database failures are logged and fall through to
+    the prompt/skip path. Programming and configuration errors propagate. In
     non-interactive mode a missing key records a failed embedding result.
     """
     openai_api_key: str | None = None
     try:
-        from gobby.storage.database import LocalDatabase
+        from gobby.storage.hub.runtime import runtime_hub_database
         from gobby.storage.secrets import SecretStore
 
-        with LocalDatabase() as db:
+        with runtime_hub_database(apply_migrations=False) as db:
             secrets = SecretStore(db)
             if secrets.exists("openai_api_key"):
                 existing = secrets.get("openai_api_key")
                 openai_api_key = existing
                 click.echo("Using existing OpenAI API key from secrets")
-    except (ImportError, OSError, sqlite3.Error) as e:
+    except (ImportError, OSError, RuntimeError, psycopg.Error) as e:
         logger.warning("Failed to read existing openai_api_key: %s", e, exc_info=True)
 
     if openai_api_key:

@@ -40,7 +40,7 @@ It does **NOT** check:
 ```python
 async def require_task_review_or_close_before_stop(
     workflow_state: WorkflowState,
-    db: LocalDatabase,
+    db: HubDatabase,
     **kwargs: Any,
 ) -> dict[str, Any] | None:
     """Block stop if session has an in_progress task.

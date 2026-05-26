@@ -33,7 +33,7 @@ instructions: |
   CRITICAL RULES:
   - Do NOT call close_task — blocked by workflow. Approve or escalate only.
   - Do NOT call reopen_task or de_escalate_task — that is task-state policy handled by humans.
-  - Do NOT call git push — the merge agent handles pushing.
+  - Do NOT call git push — remote publication is handled only by explicit PR delivery.
   - Approval or escalation must happen before the workflow may end the turn and terminate.
   - Do NOT terminate or exit the agent process without calling end_agent_run.
   - Always use `uv run` for Python commands.

@@ -67,8 +67,24 @@ class TestMemorySyncExportDirect:
         assert result == {"error": "Memory Sync Manager not available"}
 
     @pytest.mark.asyncio
-    async def test_memory_sync_export_success(self):
+    async def test_memory_sync_export_skips_outside_jsonl_export_context(self, monkeypatch):
+        """Test memory_sync_export avoids local JSONL writes outside remote push."""
+        monkeypatch.delenv("GOBBY_JSONL_EXPORT_CONTEXT", raising=False)
+        mock_manager = AsyncMock()
+
+        result = await memory_sync_export(mock_manager)
+
+        assert result == {
+            "exported": {"memories": 0},
+            "skipped": True,
+            "reason": "not_remote_push",
+        }
+        mock_manager.export_to_files.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_memory_sync_export_success(self, monkeypatch):
         """Test memory_sync_export success path."""
+        monkeypatch.setenv("GOBBY_JSONL_EXPORT_CONTEXT", "pre-push")
         mock_manager = AsyncMock()
         mock_manager.export_to_files.return_value = 7
 
@@ -152,6 +168,22 @@ class TestBuildHeuristicTitle:
 
     def test_allows_two_character_titles(self) -> None:
         assert _build_heuristic_title("PR") == "PR"
+
+    def test_strips_gobby_namespace_and_subcommand(self) -> None:
+        title = _build_heuristic_title(
+            "/gobby plan why aren't tmux titles updating in claude sessions"
+        )
+        assert title == "Why aren't tmux titles updating in claude"
+
+    def test_strips_non_gobby_slash_command(self) -> None:
+        assert _build_heuristic_title("/loop check the deploy") == "Check the deploy"
+
+    def test_strips_single_slash_command_with_no_args(self) -> None:
+        assert _build_heuristic_title("/help") is None
+        assert _build_heuristic_title("/schedule") is None
+
+    def test_plain_prompt_unaffected_by_slash_stripping(self) -> None:
+        assert _build_heuristic_title("hello world") == "Hello world"
 
 
 class TestShouldUpdateDigestTitle:

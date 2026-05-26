@@ -34,12 +34,24 @@ def _context_value(context: Mapping[str, object], name: str) -> str | None:
     return str(value) if value not in (None, "") else None
 
 
+def _artifact_value(context: Mapping[str, object], name: str) -> str | None:
+    artifacts = context.get("artifacts")
+    value = _field(artifacts, name) if artifacts is not None else None
+    return str(value) if value not in (None, "") else None
+
+
 def _prompt(task: object, context: Mapping[str, object], *, role: str, contract: str) -> str:
     reason = _context_value(context, "reason")
     reason_line = f"\nDispatch reason: {reason}." if reason else ""
+    failure_context = _context_value(context, "failure_context")
+    failure_block = (
+        f"\n\nPrevious failure context for this follow-up work:\n{failure_context}"
+        if failure_context
+        else ""
+    )
     return (
         f"{role} for {_task_ref(task)}: {_task_title(task)}.\n"
-        f"Follow the {contract} contract for this task.{reason_line}"
+        f"Follow the {contract} contract for this task.{reason_line}{failure_block}"
     )
 
 
@@ -50,8 +62,14 @@ def _planner(task: object, context: Mapping[str, object]) -> str:
         role="Revise the plan",
         contract="planner.yaml agent",
     )
+    plan_file_path = _artifact_value(context, "plan_file_path")
+    plan_file_line = (
+        f"\nUse plan_file_path as the exact plan artifact path to edit: {plan_file_path}."
+        if plan_file_path
+        else ""
+    )
     return (
-        f"{base}\nTreat discovery marker blocks in the task description as "
+        f"{base}{plan_file_line}\nTreat discovery marker blocks in the task description as "
         "authoritative upstream context for planning."
     )
 
@@ -164,11 +182,28 @@ def _qa_dev(task: object, context: Mapping[str, object]) -> str:
 
 
 def _qa_reviewer(task: object, context: Mapping[str, object]) -> str:
-    return _prompt(
+    base = _prompt(
         task,
         context,
         role="Review the implementation",
         contract="qa-reviewer.yaml agent",
+    )
+    return (
+        f"{base}\n"
+        "Spawn-time auto-claim normally already owns the task. Do not call "
+        "claim_task unless the active step prompt explicitly says the current "
+        "step is CLAIM. Load the required QA skills before review, then use "
+        "get_task, get_task_diff, and exactly one review verdict tool. Do not "
+        "call get_workflow_status. Do not run full pytest, Vitest, or Jest "
+        "suites; run only focused validation relevant to the task diff. If a "
+        "worker-safety hook blocks a command, read the block reason, switch to "
+        "a focused file/filter command, and never retry that blocked command. "
+        "Run validation commands in the foreground. Do not use shell "
+        "backgrounding, detached commands, shell sleep loops, Monitor, "
+        "TaskOutput, or tmux polling to observe validation. If validation "
+        "cannot complete or be observed promptly, interrupt or abandon it once, "
+        "record the limitation in verdict evidence, and do not launch duplicate "
+        "validation commands."
     )
 
 
@@ -217,10 +252,12 @@ PROMPT_BUILDERS: dict[str, PromptBuilder] = {
     "doc-reviewer": _doc_reviewer,
     "expansion-qa": _expansion_qa,
     "frontend-developer": _developer,
+    "fullstack-developer": _developer,
     "holistic-reviewer": _holistic_reviewer,
     "merge-orchestrator": _merge_runner,
     "merge-worker": _merge_runner,
     "plan-adversary": _plan_adversary,
+    "plan-adversary-taskless": _plan_adversary,
     "plan-reviewer": _plan_adversary,
     "planner": _planner,
     "product-manager": _product_manager,

@@ -14,13 +14,13 @@ from typing import Any
 
 import click
 
-from gobby.storage.database import LocalDatabase
+from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.storage.merge_resolutions import MergeResolutionManager
 
 
 def get_merge_manager() -> MergeResolutionManager:
     """Get initialized merge resolution manager."""
-    db = LocalDatabase()
+    db = open_runtime_hub_database(apply_migrations=False)
     return MergeResolutionManager(db)
 
 
@@ -55,7 +55,7 @@ def get_worktree_context() -> dict[str, Any] | None:
 
     from gobby.storage.worktrees import LocalWorktreeManager
 
-    db = LocalDatabase()
+    db = open_runtime_hub_database(apply_migrations=False)
     manager = LocalWorktreeManager(db)
 
     # Check if current directory is a worktree
@@ -129,8 +129,7 @@ def merge_start(
     manager = get_merge_manager()
 
     try:
-        # Create resolution record with strategy
-        resolution = manager.create_resolution(
+        resolution, _created = manager.get_or_create_resolution(
             worktree_id=worktree_id,
             source_branch=source_branch,
             target_branch=target_branch,

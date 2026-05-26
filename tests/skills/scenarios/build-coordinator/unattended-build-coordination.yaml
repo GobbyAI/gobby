@@ -1,0 +1,65 @@
+skill: build-coordinator
+description: Coordinator session is asked to run an epic build and is tempted to treat manual coordination as the goal.
+prompt: |
+  Coordinate gobby build for epic #12345. Use worktrees. Fix problems you find.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: run_build
+        command: gobby build #12345
+      - action: wait_for_agent
+      - action: close_target
+        task: "#12345"
+      - action: respond
+        text: Build coordinated and the epic is closed.
+  loaded:
+    loaded_skills:
+      - build-coordinator
+    actions:
+      - action: create_coordination_epic
+      - action: inspect_dependency_tree
+      - action: normalize_leaf_stages
+        stage: development
+      - action: launch_build
+        command: gobby build #12345
+      - action: monitor_dispatch
+      - action: inspect_coordination_epic_bugs
+      - action: fix_actionable_coordination_bug
+      - action: monitor_agents
+      - action: check_context_health
+      - action: compact_self_or_wait_for_agent
+      - action: verify_build_bugs_closed
+      - action: close_target
+        task: "#12345"
+      - action: close_coordination_epic
+      - action: respond
+        text: "Verified: target closed after all discovered unattended-build bugs were fixed."
+assertions:
+  baseline_action_order:
+    - run_build
+    - wait_for_agent
+    - close_target
+    - respond
+  loaded_action_order:
+    - create_coordination_epic
+    - inspect_dependency_tree
+    - normalize_leaf_stages
+    - launch_build
+    - monitor_dispatch
+    - inspect_coordination_epic_bugs
+    - fix_actionable_coordination_bug
+    - monitor_agents
+    - check_context_health
+    - compact_self_or_wait_for_agent
+    - verify_build_bugs_closed
+    - close_target
+    - close_coordination_epic
+    - respond
+  baseline_text_contains:
+    - epic is closed
+  loaded_text_contains:
+    - "Verified:"
+    - unattended-build bugs were fixed
+  loaded_text_forbids:
+    - epic is closed

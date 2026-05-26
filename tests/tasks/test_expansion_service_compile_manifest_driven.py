@@ -13,6 +13,7 @@ import pytest
 from gobby.plans.parser import PlanDocument, parse_plan
 from gobby.storage.expansion_runs import LocalExpansionRunManager
 from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.tasks.expansion._contract import _assigned_agent_for_entry
 from gobby.tasks.expansion_service import ExpansionService
 
 pytestmark = pytest.mark.unit
@@ -47,6 +48,18 @@ def _parse_manifest_plan(tmp_path: Path) -> PlanDocument:
 
 def _deps_for(spec: dict[str, Any], task_id: str) -> set[str]:
     return {edge["depends_on"] for edge in spec["dependencies"] if edge["task_id"] == task_id}
+
+
+def test_manifest_entry_rejects_unknown_implementation_domain(tmp_path: Path) -> None:
+    plan_doc = _parse_manifest_plan(tmp_path)
+    entry = replace(
+        plan_doc.manifest_entries[0],
+        assigned_agent=None,
+        implementation_domain="mobile",
+    )
+
+    with pytest.raises(ValueError, match="Unsupported implementation_domain 'mobile'"):
+        _assigned_agent_for_entry(entry)
 
 
 _MANIFEST_PLAN = """
@@ -126,6 +139,7 @@ Final body copied into the generated task description.
   source_section: "1.1"
 - title: "Core from manifest"
   category: code
+  implementation_domain: backend
   task_type: feature
   depends_on:
     - "1.1"
@@ -174,6 +188,7 @@ Final body copied into the generated task description.
   source_section: "2.2"
 - title: "Final from manifest"
   category: code
+  implementation_domain: backend
   task_type: task
   depends_on:
     - "2.2"
@@ -248,15 +263,16 @@ def test_entry_fields_preserved(
     assert "validation_criteria" not in bootstrap
 
     core_tasks = [task for task in spec["tasks"] if task["source_section_id"] == "1.2"]
-    assert [task["title"] for task in core_tasks] == ["[IMPL] Core from manifest"]
+    assert [task["title"] for task in core_tasks] == ["Core from manifest"]
+    assert [task["id"] for task in core_tasks] == ["1.2::single"]
     assert [task["category"] for task in core_tasks] == ["code"]
-    assert {task["validation"] for task in core_tasks} == {
-        "Core validation from manifest\nAcceptance artifacts:\n- 1.2.1: file: `src/core.py`"
-    }
+    assert "Core validation from manifest" in core_tasks[0]["validation"]
+    assert "TDD evidence required:" in core_tasks[0]["validation"]
     assert {tuple(task["labels"]) for task in core_tasks} == {
-        ("covers:manifest-driven:1.2:1.2.1", "manifest:core")
+        ("covers:manifest-driven:1.2:1.2.1", "manifest:core", "tdd:required")
     }
     assert {task["task_type"] for task in core_tasks} == {"feature"}
+    assert {task["additional_skills"][0] for task in core_tasks} == {"test-driven-development"}
 
 
 def test_cross_tdd_mode_dependencies(
@@ -267,25 +283,12 @@ def test_cross_tdd_mode_dependencies(
     parent = _parent(service, sample_project)
     spec = service.compile_plan_to_spec(_parse_manifest_plan(tmp_path), parent)
 
-    # Cross-deliverable depends_on edges link IMPL/single tasks directly,
-    # regardless of TDD status — the per-phase sandwich wraps but does not
-    # rewire cross-deliverable dependencies.
-    assert "1.1::single" in _deps_for(spec, "1.2::impl")
-    assert "1.2::impl" in _deps_for(spec, "1.3::single")
+    # Cross-deliverable depends_on edges link single implementation leaves directly.
+    assert "1.1::single" in _deps_for(spec, "1.2::single")
+    assert "1.2::single" in _deps_for(spec, "1.3::single")
     assert "1.3::single" in _deps_for(spec, "2.1::single")
     assert "2.1::single" in _deps_for(spec, "2.2::single")
-    assert "2.2::single" in _deps_for(spec, "3.1::impl")
-
-    # Within-phase TDD sandwich: every [IMPL] depends on its phase [TEST];
-    # phase [REF] depends on every [IMPL] in that phase.
-    assert "phase-p1::__test" in _deps_for(spec, "1.2::impl")
-    assert {"1.2::impl"} <= _deps_for(spec, "phase-p1::__ref")
-    assert "phase-p3::__test" in _deps_for(spec, "3.1::impl")
-    assert "3.1::impl" in _deps_for(spec, "phase-p3::__ref")
-
-    # Cross-phase chain skips phase-p2 (no TDD entries → no sandwich).
-    # phase-p3's [TEST] therefore depends on phase-p1's [REF], not p2.
-    assert "phase-p1::__ref" in _deps_for(spec, "phase-p3::__test")
+    assert "2.2::single" in _deps_for(spec, "3.1::single")
 
 
 def test_phase_nesting_p1_p2_p3(
@@ -296,29 +299,15 @@ def test_phase_nesting_p1_p2_p3(
     parent = _parent(service, sample_project)
     spec = service.compile_plan_to_spec(_parse_manifest_plan(tmp_path), parent)
 
-    # phase-p1: TDD entry [1.2] wrapped in sandwich; non-TDD 1.1 and 1.3
-    # singles follow the sandwich.
-    # phase-p2: no TDD entries → no sandwich, just two singles.
-    # phase-p3: TDD entry 3.1 wrapped in sandwich.
     assert {phase["id"]: phase["task_ids"] for phase in spec["phases"]} == {
-        "phase-p1": [
-            "phase-p1::__test",
-            "1.2::impl",
-            "phase-p1::__ref",
-            "1.1::single",
-            "1.3::single",
-        ],
+        "phase-p1": ["1.1::single", "1.2::single", "1.3::single"],
         "phase-p2": ["2.1::single", "2.2::single"],
-        "phase-p3": ["phase-p3::__test", "3.1::impl", "phase-p3::__ref"],
+        "phase-p3": ["3.1::single"],
     }
     assert spec["deliverable_count"] == 6
-    # 6 entries (1 task each) + sandwich wrappers in p1 (TEST+REF) + p3 (TEST+REF) = 10
-    assert len(spec["tasks"]) == 10
-    # phase-p2 has no TDD entries → no sandwich emitted.
-    phase_by_id = {phase["id"]: phase for phase in spec["phases"]}
-    assert phase_by_id["phase-p1"]["tdd_sandwich_emitted"] is True
-    assert phase_by_id["phase-p2"]["tdd_sandwich_emitted"] is False
-    assert phase_by_id["phase-p3"]["tdd_sandwich_emitted"] is True
+    assert len(spec["tasks"]) == 6
+    assert all(not any(key.startswith("tdd_") for key in phase) for phase in spec["phases"])
+    assert spec["tdd_mode"] == "skill_backed"
 
 
 def test_compile_uses_plan_doc_plan_id_not_file_stem(
@@ -358,6 +347,7 @@ def test_parse_contract_plan_uses_task_filename_plan_id_fallback(
         ```yaml
         - title: "Immediate from manifest"
           category: code
+          implementation_domain: backend
           task_type: task
           depends_on: []
           validation_criteria: "Immediate validation from manifest"
@@ -384,7 +374,7 @@ def test_parse_contract_plan_uses_task_filename_plan_id_fallback(
     assert document.plan_id == "12761"
 
 
-def test_missing_manifest_returns_none_for_llm_fallback(
+def test_missing_manifest_synthesizes_manifest_for_contract_plan(
     service: ExpansionService,
     sample_project,
     tmp_path: Path,
@@ -411,7 +401,12 @@ def test_missing_manifest_returns_none_for_llm_fallback(
         plan_file=str(plan_path),
     )
 
-    assert service._parse_contract_plan(run, parent) is None
+    document = service._parse_contract_plan(run, parent)
+
+    assert document is not None
+    assert len(document.manifest_entries) == 1
+    assert document.manifest_entries[0].source_section == "A1"
+    assert "## M1 Task Manifest" in plan_path.read_text(encoding="utf-8")
 
 
 def test_deferrals_preserved(
@@ -451,6 +446,7 @@ def test_deferrals_preserved(
         ```yaml
         - title: "Immediate from manifest"
           category: code
+          implementation_domain: backend
           task_type: task
           depends_on: []
           validation_criteria: "Immediate validation from manifest"

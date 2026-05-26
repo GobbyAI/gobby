@@ -1,0 +1,81 @@
+"""Contract tests for taskless plan-adversary agent definition."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import pytest
+import yaml
+
+pytestmark = pytest.mark.unit
+
+AGENT_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "src/gobby/install/shared/workflows/agents/plan-adversary-taskless.yaml"
+)
+
+
+def _agent() -> dict[str, Any]:
+    data = yaml.safe_load(AGENT_PATH.read_text(encoding="utf-8"))
+    assert isinstance(data, dict)
+    return data
+
+
+def test_taskless_adversary_has_no_task_lifecycle_claim() -> None:
+    agent = _agent()
+    step_names = [step["name"] for step in agent["steps"]]
+    text = yaml.safe_dump(agent)
+
+    assert "claim" not in step_names
+    assert "assigned_task_id" not in text
+    review_step = next(step for step in agent["steps"] if step["name"] == "review")
+    blocked = set(review_step["blocked_mcp_tools"])
+    assert "gobby-tasks:claim_task" in blocked
+    assert "gobby-tasks:claim_task" not in set(review_step.get("allowed_mcp_tools") or [])
+    assert "gobby-tasks-ops:approve_review" in blocked
+    assert "gobby-tasks-ops:reject_review" in blocked
+
+
+def test_taskless_adversary_loads_plan_review_and_reports_structured_result() -> None:
+    agent = _agent()
+    steps = {step["name"]: step for step in agent["steps"]}
+
+    assert steps["load_skill"]["allowed_mcp_tools"] == ["gobby-skills:get_skill"]
+    status = steps["load_skill"]["status_message"]
+    assert "plan-review" in status
+    assert any(
+        tool_name in status
+        for tool_name in ("get_skill", "list_tools", "get_tool_schema", "call_tool")
+    )
+    assert "proxy tools" in status
+    assert "native Skill" in status
+    assert "GitHub/app connector" in status
+    assert "Computer Use tools" in status
+    assert "structured" in steps["review"]["description"].lower()
+    assert "verdict" in steps["review"]["status_message"].lower()
+    assert "After the workflow has advanced to `review`" in agent["instructions"]
+    assert "## V1 Plan Changelog" in agent["instructions"]
+    assert "## M1 Task Manifest" in agent["instructions"]
+    assert "implementation_domain" in agent["instructions"]
+    assert "gobby-agents:end_agent_run" in steps["review"]["allowed_mcp_tools"]
+
+
+def test_taskless_adversary_review_step_allows_send_message_to_parent() -> None:
+    """Regression for #15100.
+
+    The plan-review methodology requires the adversary to `send_message` its
+    structured verdict + findings back to the parent on `verdict: needs_review`
+    or `verdict: needs_requirements`. Because `allowed_mcp_tools` is a
+    whitelist, omitting `gobby-agents:send_message` implicitly blocks the
+    call and the parent never sees rejection-round findings (observed via
+    run-5231d2f026de which completed `success` after 57 turns without
+    delivering any verdict).
+    """
+    agent = _agent()
+    review_step = next(step for step in agent["steps"] if step["name"] == "review")
+    allowed = set(review_step["allowed_mcp_tools"])
+    assert "gobby-agents:send_message" in allowed, (
+        "send_message must be in the review step's allowed_mcp_tools whitelist "
+        "so the adversary can deliver structured findings to its parent."
+    )

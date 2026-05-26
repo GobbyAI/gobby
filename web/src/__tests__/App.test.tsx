@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, act, waitFor, screen } from "@testing-library/react";
+import { render, act, waitFor, screen, fireEvent } from "@testing-library/react";
 
 import App from "../App";
 import { useChat } from "../hooks/useChat";
@@ -35,6 +35,7 @@ function makeChatHookState() {
     isStreaming: false,
     isThinking: false,
     isLoadingMessages: false,
+    transportError: null,
     contextUsage: { totalInputTokens: 0, outputTokens: 0, contextWindow: null },
     sendMessage: vi.fn(),
     sendMode: vi.fn(),
@@ -77,6 +78,7 @@ function makeChatHookState() {
     canvasPanel: null,
     onCanvasInteraction: vi.fn(),
     setOnChatDeleted: vi.fn(),
+    clearTransportError: vi.fn(),
     activeAgent: "default",
     sendAgentChange: vi.fn(),
     selectedProvider: "claude",
@@ -97,6 +99,7 @@ function makeProjectsHookState() {
         linear_team_id: null,
         linear_project_id: null,
         approval_rules: [],
+        validation_detection: null,
         created_at: "2026-04-01T00:00:00Z",
         updated_at: "2026-04-01T00:00:00Z",
         session_count: 0,
@@ -113,6 +116,7 @@ function makeProjectsHookState() {
         linear_team_id: null,
         linear_project_id: null,
         approval_rules: [],
+        validation_detection: null,
         created_at: "2026-04-01T00:00:00Z",
         updated_at: "2026-04-01T00:00:00Z",
         session_count: 0,
@@ -129,6 +133,7 @@ function makeProjectsHookState() {
         linear_team_id: null,
         linear_project_id: null,
         approval_rules: [],
+        validation_detection: null,
         created_at: "2026-04-01T00:00:00Z",
         updated_at: "2026-04-01T00:00:00Z",
         session_count: 0,
@@ -318,6 +323,33 @@ describe("App wiring", () => {
       expect(mockSetProjectIdRef).toHaveBeenCalledWith("repo-project");
       expect(mockSendProjectChange).toHaveBeenCalledWith("repo-project");
     });
+  });
+
+  it("shows transport errors in the app toast", async () => {
+    const clearTransportError = vi.fn();
+    vi.mocked(useChat).mockReturnValue({
+      ...makeChatHookState(),
+      transportError: {
+        id: 1,
+        message: "Transport message handling failed; reconnecting",
+      },
+      clearTransportError,
+    } as never);
+
+    await act(async () => {
+      render(<App />);
+    });
+
+    const toast = await screen.findByRole("button", {
+      name: "Dismiss notification: Transport message handling failed; reconnecting",
+    });
+    expect(toast).toHaveTextContent(
+      "Transport message handling failed; reconnecting",
+    );
+
+    fireEvent.click(toast);
+
+    expect(clearTransportError).toHaveBeenCalledOnce();
   });
 
   it("hydrates and persists selected provider via UI settings", async () => {

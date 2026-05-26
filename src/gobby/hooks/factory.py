@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from gobby.autonomous.progress_tracker import ProgressTracker
@@ -25,7 +24,7 @@ from gobby.memory.manager import MemoryManager
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.sessions.transcripts.hook_assembler import HookTranscriptAssembler
 from gobby.storage.agents import LocalAgentRunManager
-from gobby.storage.database import DatabaseProtocol, LocalDatabase
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories import LocalMemoryManager
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
@@ -83,7 +82,7 @@ class HookManagerComponents:
     """All subsystem instances created by HookManagerFactory."""
 
     config: Any  # DaemonConfig | None
-    database: LocalDatabase
+    database: HubDatabase
     daemon_client: DaemonClient
     transcript_processor: ClaudeTranscriptParser
     session_task_manager: SessionTaskManager
@@ -130,7 +129,7 @@ class HookManagerFactory:
         completion_registry: Any | None,
         get_machine_id: Callable[[], str],
         resolve_project_id: Callable[[str | None, str | None], str],
-        database: DatabaseProtocol | None = None,
+        database: HubDatabase | None = None,
         session_manager: SessionManager | None = None,
         code_index_trigger: Any | None = None,
     ) -> HookManagerComponents:
@@ -174,8 +173,9 @@ class HookManagerFactory:
         if session_manager is not None:
             if database is not None and database is not session_manager.db:
                 raise ValueError("database and session_manager.db must reference the same object")
-            database = session_manager.db
-        database = cast(LocalDatabase, database or cls._create_database(config))
+            resolved_database = session_manager.db
+        else:
+            resolved_database = database or cls._create_database(config)
         daemon_client = DaemonClient(
             host=daemon_host,
             port=daemon_port,
@@ -186,21 +186,21 @@ class HookManagerFactory:
 
         # Create storage layer
         storage = cls._create_storage(
-            database,
+            resolved_database,
             logger=hook_logger,
             config=config,
             session_manager=session_manager,
         )
 
         # Initialize autonomous components
-        autonomous = cls._create_autonomous(database)
+        autonomous = cls._create_autonomous(resolved_database)
 
         # Initialize memory system
-        mem_manager = cls._create_memory(database, config)
+        mem_manager = cls._create_memory(resolved_database, config)
 
         # Initialize workflow engine
         workflow_components = cls._create_workflow_engine(
-            database,
+            resolved_database,
             config,
             llm_service,
             transcript_processor,
@@ -252,6 +252,7 @@ class HookManagerFactory:
             session_coordinator=session_coordinator,
             skill_manager=workflow_components.skill_manager,
             skills_config=config.skills if config else None,
+            memory_recall_helper_config=config.memory_recall_helper if config else None,
             call_tool=call_tool_fn,
             workflow_config=config.workflow if config else None,
             get_machine_id=get_machine_id,
@@ -262,7 +263,7 @@ class HookManagerFactory:
 
         return HookManagerComponents(
             config=config,
-            database=database,
+            database=resolved_database,
             daemon_client=daemon_client,
             transcript_processor=transcript_processor,
             session_task_manager=storage.session_task,
@@ -394,15 +395,20 @@ class HookManagerFactory:
         return dispatcher
 
     @staticmethod
-    def _create_database(config: Any | None) -> LocalDatabase:
-        if config and config.database_path:
-            db_path = Path(config.database_path).expanduser()
-            return LocalDatabase(db_path)
-        return LocalDatabase()
+    def _create_database(config: Any | None) -> HubDatabase:
+        database_url = getattr(config, "database_url", None) if config is not None else None
+        if database_url:
+            from gobby.storage.hub.postgres import PostgresHubDatabase
+
+            return PostgresHubDatabase(database_url)
+
+        from gobby.storage.hub.runtime import open_runtime_hub_database
+
+        return open_runtime_hub_database(apply_migrations=False)
 
     @staticmethod
     def _create_storage(
-        database: LocalDatabase,
+        database: HubDatabase,
         *,
         logger: logging.Logger,
         config: Any | None,
@@ -420,7 +426,7 @@ class HookManagerFactory:
         )
 
     @staticmethod
-    def _create_autonomous(database: LocalDatabase) -> _Autonomous:
+    def _create_autonomous(database: HubDatabase) -> _Autonomous:
         progress_tracker = ProgressTracker(database)
         return _Autonomous(
             stop_registry=StopRegistry(database),
@@ -429,7 +435,7 @@ class HookManagerFactory:
         )
 
     @staticmethod
-    def _create_memory(database: LocalDatabase, config: Any | None) -> MemoryManager:
+    def _create_memory(database: HubDatabase, config: Any | None) -> MemoryManager:
         memory_config = config.memory if config and hasattr(config, "memory") else None
         if not memory_config:
             from gobby.config.persistence import MemoryConfig
@@ -450,7 +456,7 @@ class HookManagerFactory:
 
     @staticmethod
     def _create_workflow_engine(
-        database: LocalDatabase,
+        database: HubDatabase,
         config: Any | None,
         llm_service: LLMService | None,
         transcript_processor: Any,
@@ -528,7 +534,9 @@ class HookManagerFactory:
             enabled=workflow_enabled,
             rule_engine=rule_engine,
             task_manager=storage.task,
+            session_manager=storage.session,
             session_task_manager=storage.session_task,
+            config=config,
         )
         return _WorkflowComponents(
             loader=loader,

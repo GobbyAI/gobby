@@ -7,13 +7,38 @@ enabling parent-child session communication and agent coordination.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from sqlite3 import Row
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from gobby.storage.database import DatabaseProtocol, LocalDatabase
+    from gobby.storage.hub.protocol import HubDatabase
+
+from gobby.storage.sql_dialect import is_postgres, json_text_expr
+
+MESSAGE_DIRECTION_ALIASES: dict[str, str] = {
+    "all": "all",
+    "inbox": "inbox",
+    "received": "inbox",
+    "sent": "sent",
+}
+MESSAGE_DIRECTION_OPTIONS = tuple(MESSAGE_DIRECTION_ALIASES)
+
+
+def normalize_message_direction(direction: str) -> str:
+    """Normalize public message history direction values."""
+    if not isinstance(direction, str):
+        raise ValueError(
+            f"Invalid direction. Expected one of: {', '.join(MESSAGE_DIRECTION_OPTIONS)}"
+        )
+    normalized = MESSAGE_DIRECTION_ALIASES.get(direction.strip().lower())
+    if normalized is None:
+        raise ValueError(
+            f"Invalid direction '{direction}'. Expected one of: "
+            f"{', '.join(MESSAGE_DIRECTION_OPTIONS)}"
+        )
+    return normalized
 
 
 @dataclass
@@ -42,11 +67,11 @@ class InterSessionMessage:
     delivered_at: str | None = None
 
     @classmethod
-    def from_row(cls, row: Row) -> InterSessionMessage:
+    def from_row(cls, row: Mapping[str, Any]) -> InterSessionMessage:
         """Create instance from database row.
 
         Args:
-            row: SQLite row with message data
+            row: Database row with message data
 
         Returns:
             InterSessionMessage instance
@@ -104,11 +129,11 @@ class InterSessionMessageManager:
     enabling agent coordination and parent-child communication.
     """
 
-    def __init__(self, db: LocalDatabase | DatabaseProtocol) -> None:
+    def __init__(self, db: HubDatabase) -> None:
         """Initialize the message manager.
 
         Args:
-            db: LocalDatabase instance for persistence
+            db: Hub database instance for persistence
         """
         self.db = db
 
@@ -214,20 +239,24 @@ class InterSessionMessageManager:
         completion_id: str,
     ) -> bool:
         """Return True when a completion notification already exists."""
+        completion_id_sql = json_text_expr(self.db, "metadata_json", "completion_id")
+        run_id_sql = json_text_expr(self.db, "metadata_json", "run_id")
+        execution_id_sql = json_text_expr(self.db, "metadata_json", "execution_id")
+        json_valid_sql = "" if is_postgres(self.db) else "AND json_valid(metadata_json)"
         row = self.db.fetchone(
-            """
+            f"""
             SELECT 1 FROM inter_session_messages
             WHERE to_session = ?
               AND message_type = ?
               AND metadata_json IS NOT NULL
-              AND json_valid(metadata_json)
+              {json_valid_sql}
               AND (
-                json_extract(metadata_json, '$.completion_id') = ?
-                OR json_extract(metadata_json, '$.run_id') = ?
-                OR json_extract(metadata_json, '$.execution_id') = ?
+                {completion_id_sql} = ?
+                OR {run_id_sql} = ?
+                OR {execution_id_sql} = ?
               )
             LIMIT 1
-            """,
+            """,  # nosec B608 # JSON expressions are generated from static keys.
             (to_session, message_type, completion_id, completion_id, completion_id),
         )
         return row is not None
@@ -289,7 +318,7 @@ class InterSessionMessageManager:
 
         Args:
             session_id: Session to query messages for
-            direction: "inbox" (received), "sent", or "all"
+            direction: "inbox"/"received", "sent", or "all"
             unread_only: If True, only return messages with read_at IS NULL
             undelivered_only: If True, only return messages with delivered_at IS NULL
             message_type: Filter by message_type (e.g. "message", "command_result")
@@ -299,6 +328,8 @@ class InterSessionMessageManager:
         Returns:
             List of InterSessionMessage instances ordered by sent_at DESC
         """
+        direction = normalize_message_direction(direction)
+
         conditions: list[str] = []
         params: list[Any] = []
 

@@ -141,6 +141,28 @@ class TestProcessShutdown:
         assert task.done()
 
     @pytest.mark.asyncio
+    async def test_shutdown_does_not_cancel_current_background_shutdown_task(self) -> None:
+        """A route-scheduled shutdown task should not cancel itself."""
+        services = ServiceContainer(
+            config=MagicMock(),
+            database=MagicMock(),
+            session_manager=MagicMock(),
+            task_manager=MagicMock(),
+        )
+        server = HTTPServer(services=services, port=8000, test_mode=True)
+        server._terminate_streamable_http_sessions = AsyncMock()
+
+        task = asyncio.create_task(server._process_shutdown())
+        server._background_tasks.add(task)
+        task.add_done_callback(server._background_tasks.discard)
+
+        await task
+
+        assert task.cancelled() is False
+        assert task.done() is True
+        server._terminate_streamable_http_sessions.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_shutdown_timeout_with_slow_tasks(self) -> None:
         """Test shutdown times out with very slow tasks."""
         services = ServiceContainer(
@@ -238,6 +260,45 @@ class TestProcessShutdown:
 
         assert events == ["terminate", "disconnect"]
         assert len(events) == 2
+
+    @pytest.mark.asyncio
+    async def test_shutdown_cleans_pending_interactions_before_http_session_termination(
+        self,
+    ) -> None:
+        """Blocked approval requests should be released before MCP transports close."""
+        events: list[str] = []
+
+        mock_mcp_manager = AsyncMock()
+        services = ServiceContainer(
+            config=MagicMock(),
+            database=MagicMock(),
+            session_manager=MagicMock(),
+            task_manager=MagicMock(),
+            mcp_manager=mock_mcp_manager,
+        )
+        server = HTTPServer(
+            services=services,
+            port=8000,
+            test_mode=True,
+        )
+
+        async def cleanup_pending() -> None:
+            events.append("cleanup")
+
+        async def terminate_sessions() -> None:
+            events.append("terminate")
+
+        async def disconnect_all() -> None:
+            events.append("disconnect")
+
+        server._cleanup_pending_interactions = AsyncMock(side_effect=cleanup_pending)
+        server._terminate_streamable_http_sessions = AsyncMock(side_effect=terminate_sessions)
+        mock_mcp_manager.disconnect_all.side_effect = disconnect_all
+
+        await server._process_shutdown()
+
+        assert events == ["cleanup", "terminate", "disconnect"]
+        assert len(events) == 3
 
     @pytest.mark.asyncio
     async def test_shutdown_continues_when_http_session_termination_fails(

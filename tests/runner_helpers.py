@@ -19,6 +19,9 @@ def set_mock_default(obj: MagicMock, name: str, default):
 def apply_safe_runner_config_defaults(config: MagicMock) -> MagicMock:
     """Populate runner tests with scalar defaults so background tasks stay deterministic."""
     config.bind_host = "localhost"
+    config.hub_backend = "postgres"
+    config.database_url = "postgresql://gobby:secret@localhost:60891/gobby"
+    config.postgres_install_mode = None
 
     if getattr(config, "websocket", None) is None:
         config.websocket = None
@@ -44,13 +47,14 @@ def apply_safe_runner_config_defaults(config: MagicMock) -> MagicMock:
     config.databases.qdrant = getattr(config.databases, "qdrant", MagicMock())
     set_mock_default(config.databases.qdrant, "url", "")
     set_mock_default(config.databases.qdrant, "collection_prefix", "test_")
-    config.databases.neo4j = getattr(config.databases, "neo4j", MagicMock())
-    set_mock_default(config.databases.neo4j, "url", "")
-    set_mock_default(config.databases.neo4j, "auth", None)
-    set_mock_default(config.databases.neo4j, "database", "neo4j")
-    set_mock_default(config.databases.neo4j, "graph_search", True)
-    set_mock_default(config.databases.neo4j, "graph_min_score", 0.5)
-    set_mock_default(config.databases.neo4j, "rrf_k", 60)
+    config.databases.falkordb = getattr(config.databases, "falkordb", MagicMock())
+    set_mock_default(config.databases.falkordb, "host", "127.0.0.1")
+    set_mock_default(config.databases.falkordb, "port", 16379)
+    set_mock_default(config.databases.falkordb, "requirepass", None)
+    set_mock_default(config.databases.falkordb, "graph_name", "gobby_kg")
+    set_mock_default(config.databases.falkordb, "graph_search", True)
+    set_mock_default(config.databases.falkordb, "graph_min_score", 0.5)
+    set_mock_default(config.databases.falkordb, "rrf_k", 60)
 
     config.code_index = getattr(config, "code_index", MagicMock())
     set_mock_default(config.code_index, "enabled", False)
@@ -92,8 +96,7 @@ def create_base_patches(
     patches = [
         patch("gobby.runner_init.storage.init_telemetry"),
         patch("gobby.runner_init.storage.get_machine_id", return_value="test-machine"),
-        patch("gobby.runner_init.helpers.LocalDatabase"),
-        patch("gobby.runner_init.helpers.run_migrations"),
+        patch("gobby.storage.hub.postgres.PostgresHubDatabase"),
         patch(RUNNER_INIT_SESSION_MANAGER_PATCH),
         patch("gobby.runner_init.storage.LocalTaskManager"),
         patch("gobby.runner_init.storage.SessionTaskManager"),

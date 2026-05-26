@@ -42,12 +42,12 @@ class TerminalPromptMonitor:
         self._handle_looping_agent = handle_looping_agent
         self._monotonic = monotonic
         self._last_enter_sent_at: dict[str, float] = {}
-        self._run_db = run_db
+        self._run_db_callback = run_db
 
-    async def _run_sqlite(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-        if self._run_db is None:
+    async def _run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        if self._run_db_callback is None:
             return await asyncio.to_thread(func, *args, **kwargs)
-        return await self._run_db(func, *args, **kwargs)
+        return await self._run_db_callback(func, *args, **kwargs)
 
     def mark_enter_sent(self, run_id: str) -> None:
         """Record that this run just received an automatic terminal keypress."""
@@ -59,7 +59,7 @@ class TerminalPromptMonitor:
 
     async def check_trust_prompts(self) -> int:
         """Check for folder trust prompts and auto-dismiss them."""
-        runs = await self._run_sqlite(self._get_active_terminal_runs)
+        runs = await self._run_db(self._get_active_terminal_runs)
 
         handled = 0
         for run in runs:
@@ -91,7 +91,7 @@ class TerminalPromptMonitor:
 
     async def check_loop_prompts(self) -> int:
         """Check for loop detection prompts and auto-dismiss them."""
-        runs = await self._run_sqlite(self._get_active_terminal_runs)
+        runs = await self._run_db(self._get_active_terminal_runs)
 
         handled = 0
         for run in runs:
@@ -135,7 +135,7 @@ class TerminalPromptMonitor:
         if not self._get_tmux_config().auto_enter_approval_prompts:
             return 0
 
-        runs = await self._run_sqlite(self._get_active_terminal_runs)
+        runs = await self._run_db(self._get_active_terminal_runs)
 
         handled = 0
         for run in runs:
@@ -170,7 +170,7 @@ class TerminalPromptMonitor:
         if not config.auto_enter_agent_terminals:
             return 0
 
-        runs = await self._run_sqlite(self._get_active_terminal_runs)
+        runs = await self._run_db(self._get_active_terminal_runs)
         now = self._monotonic()
         interval = config.auto_enter_agent_interval_seconds
 

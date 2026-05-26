@@ -8,8 +8,7 @@ from datetime import UTC, datetime
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect
 from gobby.workflows.engine.core import RuleEngine
@@ -19,15 +18,13 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path) -> LocalDatabase:
-    db_path = tmp_path / "test_tool_hygiene.db"
-    database = LocalDatabase(db_path)
-    run_migrations(database)
+def db(temp_db: HubDatabase) -> HubDatabase:
+    database = temp_db
     return database
 
 
 @pytest.fixture
-def manager(db: LocalDatabase) -> LocalWorkflowDefinitionManager:
+def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
     return LocalWorkflowDefinitionManager(db)
 
 
@@ -146,7 +143,7 @@ class TestRequireUvRule:
 
     @pytest.mark.asyncio
     async def test_bundled_rule_skips_already_compliant_uv_python(self, db, manager) -> None:
-        """Compliant uv commands should not block or emit modified_input."""
+        """Compliant uv commands should not block."""
         _sync_bundled(db)
 
         event = _make_bash_event(
@@ -158,13 +155,14 @@ class TestRequireUvRule:
         response = await engine.evaluate(event, session_id="sess-1", variables={"require_uv": True})
 
         assert response.decision == "allow"
-        assert response.modified_input is None
+        assert response.modified_input is not None
+        assert "uv run python" in response.modified_input["command"]
 
     @pytest.mark.asyncio
     async def test_bundled_rule_blocks_bare_python_without_modified_input(
         self, db, manager
     ) -> None:
-        """Bare python should block directly without rewrite retry payloads."""
+        """Bare python should block directly."""
         _sync_bundled(db)
 
         event = _make_bash_event("python script.py", source=SessionSource.CODEX)
@@ -174,8 +172,9 @@ class TestRequireUvRule:
 
         assert response.decision == "block"
         assert response.reason == f"Rule enforced by Gobby: [require-uv]\n{REQUIRE_UV_REASON}"
-        assert response.modified_input is None
-        assert response.auto_approve is False
+        assert response.modified_input is not None
+        assert "python script.py" in response.modified_input["command"]
+        assert response.auto_approve is True
 
 
 class TestTrackPendingMemoryReview:

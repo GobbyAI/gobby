@@ -17,8 +17,9 @@ from typing import Literal, cast
 from gobby.build.controls import cleanup_successful_merge_artifacts
 from gobby.build.workspaces import ensure_task_parent_integration_workspace
 from gobby.dispatch.actions import MergeWorkspaceAction
+from gobby.dispatch.merge_recovery import WORKSPACE_MERGE_CONFLICT_LABEL
 from gobby.storage.clones import LocalCloneManager
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._artifacts import TaskArtifactManager
@@ -59,7 +60,7 @@ class _GuideRow:
 async def execute_merge_workspace(
     action: MergeWorkspaceAction,
     *,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     services: object | None = None,
 ) -> str | None:
     """Merge source workspace into the target integration workspace."""
@@ -74,7 +75,7 @@ async def execute_merge_workspace(
 def _execute_merge_workspace_sync(
     action: MergeWorkspaceAction,
     *,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     services: object | None = None,
 ) -> str | None:
     """Merge source workspace into the target integration workspace."""
@@ -84,49 +85,64 @@ def _execute_merge_workspace_sync(
     try:
         paths = _resolve_paths(action, db=db, services=services)
         source_branch = action.source_branch or paths.source_branch
-        _ensure_branch(paths.source_path, source_branch, "source")
-        _ensure_branch(paths.target_path, action.target_branch, "target")
-        _ensure_clean(paths.target_path, "target integration workspace")
-        source_commit = _git_stdout(paths.source_path, ["rev-parse", "HEAD"])
-        if _is_ancestor(paths.target_path, source_commit):
-            _complete_merge_stage(db, action.task_id, source_commit)
+        try:
+            _ensure_branch(paths.source_path, source_branch, "source")
+            _ensure_branch(paths.target_path, action.target_branch, "target")
+            source_commit = _git_stdout(paths.source_path, ["rev-parse", "HEAD"])
+            _ensure_target_merge_safe(
+                paths.target_path, source_commit, "target integration workspace"
+            )
+            if _is_ancestor(paths.target_path, source_commit):
+                _complete_merge_stage(db, action.task_id, source_commit)
+                _mark_source_merged(action, db=db, source_id=paths.source_id)
+                return source_commit
+
+            merge_ref = source_commit
+            if action.backend == "clone":
+                _git_ok(paths.target_path, ["fetch", paths.source_path, source_branch])
+                merge_ref = "FETCH_HEAD"
+            result = _git(Path(paths.target_path), ["merge", "--no-ff", "--no-edit", merge_ref])
+            if result.returncode != 0:
+                conflicted = _conflicted_files(paths.target_path)
+                remaining = _resolve_worktree_local_conflicts(paths.target_path, conflicted)
+                if conflicted and not remaining:
+                    commit_result = _git(Path(paths.target_path), ["commit", "--no-edit"])
+                    if commit_result.returncode == 0:
+                        merge_sha = _git_stdout(paths.target_path, ["rev-parse", "HEAD"])
+                        if action.backend == "clone" and not paths.target_is_local:
+                            _sync_source_repo_branch(
+                                db,
+                                action.task_id,
+                                paths.target_path,
+                                action.target_branch,
+                            )
+                        _mark_source_merged(action, db=db, source_id=paths.source_id)
+                        _complete_merge_stage(db, action.task_id, merge_sha)
+                        return merge_sha
+                _abort_merge(paths.target_path)
+                detail_files = remaining or conflicted
+                detail = "\n".join(detail_files) if detail_files else result.stderr.strip()
+                reason = f"merge_conflict:{detail or 'unknown'}"
+                _mark_workspace_merge_conflict_for_recovery(db, action.task_id, reason)
+                _fail_merge_stage(db, action.task_id, reason, needs_human=False)
+                return None
+
+            merge_sha = _git_stdout(paths.target_path, ["rev-parse", "HEAD"])
+            if action.backend == "clone" and not paths.target_is_local:
+                _sync_source_repo_branch(
+                    db,
+                    action.task_id,
+                    paths.target_path,
+                    action.target_branch,
+                )
             _mark_source_merged(action, db=db, source_id=paths.source_id)
-            return source_commit
-
-        merge_ref = source_commit
-        if action.backend == "clone":
-            _git_ok(paths.target_path, ["fetch", paths.source_path, source_branch])
-            merge_ref = "FETCH_HEAD"
-        result = _git(Path(paths.target_path), ["merge", "--no-ff", "--no-edit", merge_ref])
-        if result.returncode != 0:
-            conflicted = _conflicted_files(paths.target_path)
-            remaining = _resolve_worktree_local_conflicts(paths.target_path, conflicted)
-            if conflicted and not remaining:
-                commit_result = _git(Path(paths.target_path), ["commit", "--no-edit"])
-                if commit_result.returncode == 0:
-                    merge_sha = _git_stdout(paths.target_path, ["rev-parse", "HEAD"])
-                    if action.backend == "clone" and not paths.target_is_local:
-                        _sync_source_repo_branch(
-                            db,
-                            action.task_id,
-                            paths.target_path,
-                            action.target_branch,
-                        )
-                    _mark_source_merged(action, db=db, source_id=paths.source_id)
-                    _complete_merge_stage(db, action.task_id, merge_sha)
-                    return merge_sha
-            _abort_merge(paths.target_path)
-            detail_files = remaining or conflicted
-            detail = "\n".join(detail_files) if detail_files else result.stderr.strip()
-            _fail_merge_stage(db, action.task_id, f"merge_conflict:{detail or 'unknown'}")
+            _complete_merge_stage(db, action.task_id, merge_sha)
+            return merge_sha
+        except RuntimeError as exc:
+            reason = f"workspace_merge_failed:{exc}"
+            _append_merge_failure_audit(db, action.task_id, reason)
+            _fail_merge_stage(db, action.task_id, reason)
             return None
-
-        merge_sha = _git_stdout(paths.target_path, ["rev-parse", "HEAD"])
-        if action.backend == "clone" and not paths.target_is_local:
-            _sync_source_repo_branch(db, action.task_id, paths.target_path, action.target_branch)
-        _mark_source_merged(action, db=db, source_id=paths.source_id)
-        _complete_merge_stage(db, action.task_id, merge_sha)
-        return merge_sha
     finally:
         _release_integration_mutex(db, key)
 
@@ -134,7 +150,7 @@ def _execute_merge_workspace_sync(
 def _resolve_paths(
     action: MergeWorkspaceAction,
     *,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     services: object | None,
 ) -> _WorkspacePaths:
     artifacts = TaskArtifactManager(db).get_artifacts(action.task_id)
@@ -175,7 +191,23 @@ def _resolve_paths(
                 services=services,
             )
             worktree_target = storage.get_by_branch(project_id, action.target_branch)
-        if worktree_source is None or worktree_target is None:
+        if worktree_source is None:
+            raise RuntimeError("source or target worktree metadata is missing")
+        if worktree_target is None:
+            local_target = _local_target_path_if_checked_out(
+                db,
+                action.task_id,
+                action.target_branch,
+            )
+            if local_target is not None:
+                return _WorkspacePaths(
+                    worktree_source.worktree_path,
+                    str(local_target),
+                    worktree_source.branch_name,
+                    worktree_source.id,
+                    None,
+                    target_is_local=True,
+                )
             raise RuntimeError("source or target worktree metadata is missing")
         _require_integration_target(worktree_target.workspace_role)
         return _WorkspacePaths(
@@ -221,7 +253,23 @@ def _resolve_paths(
             services=services,
         )
         clone_target = clone_storage.get_by_branch(project_id, action.target_branch)
-    if clone_source is None or clone_target is None:
+    if clone_source is None:
+        raise RuntimeError("source or target clone metadata is missing")
+    if clone_target is None:
+        local_target = _local_target_path_if_checked_out(
+            db,
+            action.task_id,
+            action.target_branch,
+        )
+        if local_target is not None:
+            return _WorkspacePaths(
+                clone_source.clone_path,
+                str(local_target),
+                clone_source.branch_name,
+                clone_source.id,
+                None,
+                target_is_local=True,
+            )
         raise RuntimeError("source or target clone metadata is missing")
     _require_integration_target(clone_target.workspace_role)
     return _WorkspacePaths(
@@ -233,14 +281,14 @@ def _resolve_paths(
     )
 
 
-def _project_id_for_task(db: DatabaseProtocol, task_id: str) -> str:
+def _project_id_for_task(db: HubDatabase, task_id: str) -> str:
     row = db.fetchone("SELECT project_id FROM tasks WHERE id = ?", (task_id,))
     if row is None:
         raise RuntimeError(f"task not found: {task_id}")
     return str(row["project_id"])
 
 
-def _is_root_task(db: DatabaseProtocol, task_id: str) -> bool:
+def _is_root_task(db: HubDatabase, task_id: str) -> bool:
     row = db.fetchone("SELECT parent_task_id FROM tasks WHERE id = ?", (task_id,))
     if row is None:
         raise RuntimeError(f"task not found: {task_id}")
@@ -248,7 +296,7 @@ def _is_root_task(db: DatabaseProtocol, task_id: str) -> bool:
 
 
 def _repair_parent_integration_workspace(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task_id: str,
     *,
     backend: WorkspaceBackend,
@@ -277,10 +325,50 @@ def _ensure_branch(path: str, expected: str, label: str) -> None:
         raise RuntimeError(f"{label} workspace branch mismatch: {current} != {expected}")
 
 
-def _ensure_clean(path: str, label: str) -> None:
-    status = _git_stdout(path, ["status", "--porcelain"])
-    if status:
-        raise RuntimeError(f"{label} is dirty")
+def _ensure_target_merge_safe(path: str, source_commit: str, label: str) -> None:
+    status = _git_ok(path, ["status", "--porcelain"]).stdout
+    dirty_paths = _non_gobby_dirty_paths(status)
+    if not dirty_paths:
+        return
+    incoming_paths = set(
+        _git_stdout(path, ["diff", "--name-only", "HEAD", source_commit]).splitlines()
+    )
+    overlapping = sorted(dirty_paths & incoming_paths)
+    if overlapping:
+        joined = ", ".join(overlapping)
+        raise RuntimeError(f"{label} dirty paths overlap merge: {joined}")
+
+
+def _status_path_is_gobby_only(pathspec: str) -> bool:
+    paths = [part.strip() for part in pathspec.split(" -> ")]
+    return all(path == ".gobby" or path.startswith(".gobby/") for path in paths)
+
+
+def _non_gobby_dirty_paths(status_output: str) -> set[str]:
+    paths: set[str] = set()
+    for line in _non_gobby_status_lines(status_output):
+        pathspec = _porcelain_pathspec(line)
+        paths.update(part.strip() for part in pathspec.split(" -> ") if part.strip())
+    return paths
+
+
+def _non_gobby_status_lines(status_output: str) -> list[str]:
+    dirty: list[str] = []
+    for line in status_output.splitlines():
+        if not line:
+            continue
+        pathspec = _porcelain_pathspec(line)
+        if not _status_path_is_gobby_only(pathspec):
+            dirty.append(line)
+    return dirty
+
+
+def _porcelain_pathspec(line: str) -> str:
+    if len(line) >= 3 and line[2] == " ":
+        return line[3:]
+    if len(line) >= 2 and line[1] == " ":
+        return line[2:]
+    return line[3:] if len(line) > 3 else line
 
 
 def _is_ancestor(target_path: str, commit_sha: str) -> bool:
@@ -421,7 +509,7 @@ def _abort_merge(path: str) -> None:
     _git(Path(path), ["merge", "--abort"])
 
 
-def _complete_merge_stage(db: DatabaseProtocol, task_id: str, commit_sha: str) -> None:
+def _complete_merge_stage(db: HubDatabase, task_id: str, commit_sha: str) -> None:
     StageStatesManager(db, TaskLifecycleEventManager(db)).complete_stage(
         task_id,
         "merge",
@@ -439,20 +527,49 @@ def _complete_merge_stage(db: DatabaseProtocol, task_id: str, commit_sha: str) -
         )
 
 
-def _fail_merge_stage(db: DatabaseProtocol, task_id: str, reason: str) -> None:
+def _fail_merge_stage(
+    db: HubDatabase,
+    task_id: str,
+    reason: str,
+    *,
+    needs_human: bool = True,
+) -> None:
     StageStatesManager(db, TaskLifecycleEventManager(db)).fail_stage(
         task_id,
         "merge",
         reason=reason,
-        needs_human=True,
+        needs_human=needs_human,
         by_session_id="dispatcher",
     )
+
+
+def _mark_workspace_merge_conflict_for_recovery(
+    db: HubDatabase,
+    task_id: str,
+    reason: str,
+) -> None:
+    LocalTaskManager(db).add_label(task_id, WORKSPACE_MERGE_CONFLICT_LABEL)
+    _append_merge_failure_audit(
+        db,
+        task_id,
+        f"{reason}\n\nMarked for automated merge-orchestrator recovery.",
+    )
+
+
+def _append_merge_failure_audit(db: HubDatabase, task_id: str, reason: str) -> None:
+    task_manager = LocalTaskManager(db)
+    task = task_manager.get_task(task_id)
+    description = task.description or ""
+    marker = f"\n\n### Workspace merge failed\n\n{reason}"
+    if marker in description:
+        return
+    task_manager.update_task(task_id, description=f"{description}{marker}")
 
 
 def _mark_source_merged(
     action: MergeWorkspaceAction,
     *,
-    db: DatabaseProtocol,
+    db: HubDatabase,
     source_id: str,
 ) -> None:
     if action.backend == "worktree":
@@ -463,7 +580,7 @@ def _mark_source_merged(
 
 
 def _sync_source_repo_branch(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     task_id: str,
     target_path: str,
     target_branch: str,
@@ -472,7 +589,7 @@ def _sync_source_repo_branch(
     _git_ok(repo_path, ["fetch", target_path, f"{target_branch}:{target_branch}"])
 
 
-def _repo_path_for_task(db: DatabaseProtocol, task_id: str) -> Path:
+def _repo_path_for_task(db: HubDatabase, task_id: str) -> Path:
     project_id = _project_id_for_task(db, task_id)
     project = LocalProjectManager(db).get(project_id)
     if project is None or not project.repo_path:
@@ -480,7 +597,19 @@ def _repo_path_for_task(db: DatabaseProtocol, task_id: str) -> Path:
     return Path(project.repo_path)
 
 
-def _acquire_integration_mutex(db: DatabaseProtocol, key: str) -> bool:
+def _local_target_path_if_checked_out(
+    db: HubDatabase,
+    task_id: str,
+    target_branch: str,
+) -> Path | None:
+    repo_path = _repo_path_for_task(db, task_id)
+    current = _git_stdout(repo_path, ["rev-parse", "--abbrev-ref", "HEAD"])
+    if current == target_branch:
+        return repo_path
+    return None
+
+
+def _acquire_integration_mutex(db: HubDatabase, key: str) -> bool:
     now = datetime.now(UTC)
     until = now + timedelta(seconds=MERGE_TTL_SECONDS)
     with db.transaction_immediate() as conn:
@@ -506,7 +635,7 @@ def _acquire_integration_mutex(db: DatabaseProtocol, key: str) -> bool:
         return True
 
 
-def _release_integration_mutex(db: DatabaseProtocol, key: str) -> None:
+def _release_integration_mutex(db: HubDatabase, key: str) -> None:
     with db.transaction() as conn:
         conn.execute(
             "DELETE FROM integration_workspace_mutex WHERE integration_key = ? AND lease_holder = ?",

@@ -3,18 +3,17 @@
 from __future__ import annotations
 
 import re
-import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
 import click
+import psycopg
 
 from gobby.code_index.storage import CodeIndexStorage
 from gobby.plans.consumer_sweep import run_consumer_sweep
 from gobby.plans.parser import PlanParseError, parse_plan
-from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.plans import LocalPlanManager, PlanNotFoundError
 from gobby.tasks.expansion._validate import validate_plan_file
 
@@ -110,7 +109,7 @@ def register_plan_command(
             plan_kind=plan_kind,
             root_task_ref=resolved_root_ref,
         )
-    except (PlanParseError, ValueError, OSError, sqlite3.Error) as exc:
+    except (PlanParseError, ValueError, OSError, psycopg.Error) as exc:
         raise click.ClickException(str(exc)) from exc
     finally:
         db.close()
@@ -168,7 +167,7 @@ def archive_plan_command(plan_id: str, reason: str | None, project: str | None) 
             project_id=_project_id(project),
             reason=reason,
         )
-    except (PlanNotFoundError, ValueError, OSError, sqlite3.Error) as exc:
+    except (PlanNotFoundError, ValueError, OSError, psycopg.Error) as exc:
         raise click.ClickException(str(exc)) from exc
     finally:
         db.close()
@@ -187,11 +186,10 @@ def review_runs_command(planning_task_ref: str) -> None:
     )
 
 
-def _open_db() -> LocalDatabase:
-    db = LocalDatabase()
-    if db.migrations_needed():
-        run_migrations(db)
-    return db
+def _open_db() -> HubDatabase:
+    from gobby.storage.hub.runtime import open_runtime_hub_database
+
+    return open_runtime_hub_database(apply_migrations=False)
 
 
 def _validate_plan_for_cli(
@@ -211,7 +209,7 @@ def _validate_plan_for_cli(
     except (OSError, PlanParseError) as exc:
         return {"valid": False, "errors": [f"Plan file is not contract-conforming: {exc}"]}
 
-    db: LocalDatabase | None = None
+    db: HubDatabase | None = None
     code_index: _CliCodeIndexContext | None = None
     if project_id:
         db = _open_db()
@@ -225,7 +223,7 @@ def _validate_plan_for_cli(
                 code_index=code_index,
                 include_tests=include_tests,
             )
-        except (OSError, sqlite3.Error, ValueError) as exc:
+        except (OSError, psycopg.Error, ValueError) as exc:
             return {
                 **result,
                 "valid": False,

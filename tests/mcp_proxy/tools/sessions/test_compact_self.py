@@ -18,6 +18,7 @@ import pytest
 
 from gobby.llm.claude_models import DoneEvent
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.sessions._handoff import register_handoff_tools
 from gobby.mcp_proxy.tools.sessions._terminal import (
     _CLI_COMPACT_COMMANDS,
     _send_codex_compaction_command,
@@ -25,6 +26,7 @@ from gobby.mcp_proxy.tools.sessions._terminal import (
 )
 from gobby.servers.chat_session_base import ChatSessionProtocol
 from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
+from gobby.utils.session_context import session_context_for_test
 from tests._timing import drain_asyncio_tasks
 
 pytestmark = pytest.mark.unit
@@ -39,6 +41,7 @@ class _TestRegistry(InternalToolRegistry):
 
 
 def _make_terminal_session(source: str, tmux_pane: str | None = "%12") -> MagicMock:
+    """Create a terminal session mock with optional tmux pane metadata."""
     session = MagicMock()
     session.session_type = "terminal"
     session.source = source
@@ -49,12 +52,14 @@ def _make_terminal_session(source: str, tmux_pane: str | None = "%12") -> MagicM
 
 
 async def _done_stream() -> AsyncIterator[DoneEvent]:
+    """Yield a completed provider stream event for direct tool tests."""
     yield DoneEvent(tool_calls_count=0)
 
 
 def _register_compact_self(
     session: MagicMock, tmux_send_keys_returns: bool = True
 ) -> tuple[_TestRegistry, MagicMock]:
+    """Register compact_self with mocked session and tmux dependencies."""
     registry = _TestRegistry(name="test", description="test")
     session_manager = MagicMock()
     session_manager.get.return_value = session
@@ -76,9 +81,12 @@ def _register_compact_self(
 
 
 def _call_compact_self(registry: _TestRegistry, tmux_manager: MagicMock, **kwargs: Any) -> Any:
+    """Invoke compact_self through the registry with tmux context patched."""
     compact_self = registry.get_tool("compact_self")
     assert compact_self is not None
+    caller_session_id = kwargs.pop("session_id", "s1")
     with (
+        session_context_for_test(caller_session_id),
         patch(
             "gobby.mcp_proxy.tools.sessions._terminal.get_tmux_manager_for_context",
             return_value=tmux_manager,
@@ -86,6 +94,26 @@ def _call_compact_self(registry: _TestRegistry, tmux_manager: MagicMock, **kwarg
         patch("gobby.mcp_proxy.tools.sessions._terminal._CODEX_INTERRUPT_SETTLE_SECONDS", 0),
     ):
         return asyncio.run(compact_self(**kwargs))
+
+
+def _run_direct_compact_self(
+    compact_self: Callable[..., Any],
+    session_id: str,
+    **kwargs: Any,
+) -> Any:
+    """Run an async compact_self callable from a synchronous test."""
+    with session_context_for_test(session_id):
+        return asyncio.run(compact_self(**kwargs))
+
+
+async def _await_direct_compact_self(
+    compact_self: Callable[..., Any],
+    session_id: str,
+    **kwargs: Any,
+) -> Any:
+    """Await compact_self inside an existing event loop with session context."""
+    with session_context_for_test(session_id):
+        return await compact_self(**kwargs)
 
 
 class TestCompactSelfCLIMap:
@@ -106,6 +134,17 @@ class TestCompactSelfCLIMap:
 
 
 class TestCompactSelfTerminalPath:
+    def test_schema_uses_caller_session_context(self) -> None:
+        session = _make_terminal_session("codex")
+        registry, _tmux = _register_compact_self(session)
+
+        schema = registry.get_schema("compact_self")
+
+        assert schema is not None
+        input_schema = schema["inputSchema"]
+        assert "session_id" not in input_schema["properties"]
+        assert "session_id" not in input_schema.get("required", [])
+
     def test_claude_session_fires_slash_compact_via_send_keys(self) -> None:
         session = _make_terminal_session("claude")
         registry, tmux = _register_compact_self(session)
@@ -260,6 +299,166 @@ class TestCompactSelfTerminalPath:
         mock_mark.assert_called_once()
         mock_clear.assert_called_once()
 
+    def test_terminal_session_refreshes_handoff_context_before_compacting(self) -> None:
+        events: list[str] = []
+        session = _make_terminal_session("codex")
+        session.id = "s1"
+        session.title = "Coordinator"
+        session.status = "active"
+        session.digest_markdown = "### Turn 4\nFresh transcript digest for #15040."
+        session.transcript_path = None
+        session.summary_markdown = "stale pre-compaction summary"
+
+        registry = _TestRegistry(name="test", description="test")
+        session_manager = MagicMock()
+        session_manager.get.return_value = session
+        session_manager.resolve_session_reference.side_effect = lambda ref, project_id=None: ref
+        db = MagicMock()
+        agent_run_manager = MagicMock()
+        agent_run_manager.get_by_session.return_value = None
+
+        tmux = MagicMock()
+
+        async def send_keys(_target: str, keys: str, *, literal: bool) -> bool:
+            events.append(f"tmux:{keys}")
+            return True
+
+        tmux.send_keys = AsyncMock(side_effect=send_keys)
+
+        async def refresh_summary(**kwargs: Any) -> dict[str, Any]:
+            assert kwargs["session_id"] == "s1"
+            events.append("refresh")
+            session.summary_markdown = "fresh compact handoff summary"
+            session.status = "handoff_ready"
+            return {"success": True, "full_length": len(session.summary_markdown)}
+
+        with patch(
+            "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
+            return_value=agent_run_manager,
+        ):
+            register_terminal_tools(registry, session_manager, db, llm_service=MagicMock())
+            register_handoff_tools(registry, session_manager)
+
+        compact_self = registry.get_tool("compact_self")
+        get_handoff_context = registry.get_tool("get_handoff_context")
+        assert compact_self is not None
+        assert get_handoff_context is not None
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal.get_tmux_manager_for_context",
+                return_value=tmux,
+            ),
+            patch("gobby.mcp_proxy.tools.sessions._terminal._CODEX_INTERRUPT_SETTLE_SECONDS", 0),
+            patch(
+                "gobby.sessions.summarize.generate_session_summaries",
+                side_effect=refresh_summary,
+            ) as mock_refresh,
+            session_context_for_test("s1"),
+        ):
+            result = asyncio.run(compact_self())
+            handoff = get_handoff_context(session_id="s1")
+
+        assert result["compacted"] is True
+        assert result["handoff_context_refreshed"] is True
+        assert events == ["refresh", "tmux:Escape", "tmux:/compact\n"]
+        mock_refresh.assert_awaited_once()
+        assert handoff["context_type"] == "summary_markdown"
+        assert handoff["context"] == "fresh compact handoff summary"
+        assert "stale pre-compaction" not in handoff["context"]
+
+    def test_terminal_session_compacts_with_digest_fallback_when_refresh_times_out(
+        self,
+    ) -> None:
+        events: list[str] = []
+        session = _make_terminal_session("codex")
+        session.id = "s1"
+        session.title = "Coordinator"
+        session.status = "active"
+        session.digest_markdown = "### Turn 8\nLatest coordinator state for #15156."
+        session.transcript_path = None
+        session.summary_markdown = "stale pre-compaction summary"
+
+        registry = _TestRegistry(name="test", description="test")
+        session_manager = MagicMock()
+        session_manager.get.return_value = session
+        session_manager.resolve_session_reference.side_effect = lambda ref, project_id=None: ref
+
+        def update_summary(session_id: str, *, summary_markdown: str) -> None:
+            assert session_id == "s1"
+            events.append("update_summary")
+            session.summary_markdown = summary_markdown
+
+        def update_status(session_id: str, status: str) -> None:
+            assert session_id == "s1"
+            events.append(f"status:{status}")
+            session.status = status
+
+        session_manager.update_summary.side_effect = update_summary
+        session_manager.update_status.side_effect = update_status
+        db = MagicMock()
+        agent_run_manager = MagicMock()
+        agent_run_manager.get_by_session.return_value = None
+
+        tmux = MagicMock()
+
+        async def send_keys(_target: str, keys: str, *, literal: bool) -> bool:
+            events.append(f"tmux:{keys}")
+            return True
+
+        tmux.send_keys = AsyncMock(side_effect=send_keys)
+
+        async def slow_refresh(**_kwargs: Any) -> dict[str, Any]:
+            events.append("refresh_start")
+            await asyncio.Event().wait()
+            return {"success": True}
+
+        with patch(
+            "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
+            return_value=agent_run_manager,
+        ):
+            register_terminal_tools(registry, session_manager, db, llm_service=MagicMock())
+            register_handoff_tools(registry, session_manager)
+
+        compact_self = registry.get_tool("compact_self")
+        get_handoff_context = registry.get_tool("get_handoff_context")
+        assert compact_self is not None
+        assert get_handoff_context is not None
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal.get_tmux_manager_for_context",
+                return_value=tmux,
+            ),
+            patch("gobby.mcp_proxy.tools.sessions._terminal._CODEX_INTERRUPT_SETTLE_SECONDS", 0),
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal._compact_handoff_refresh_timeout_seconds",
+                return_value=0.01,
+            ),
+            patch(
+                "gobby.sessions.summarize.generate_session_summaries",
+                side_effect=slow_refresh,
+            ) as mock_refresh,
+            session_context_for_test("s1"),
+        ):
+            result = asyncio.run(compact_self())
+            handoff = get_handoff_context(session_id="s1")
+
+        assert result["compacted"] is True
+        assert result["handoff_context_refreshed"] is True
+        assert result["handoff_context_fallback"] is True
+        assert result["handoff_context_refresh_timed_out"] is True
+        assert events == [
+            "refresh_start",
+            "update_summary",
+            "status:handoff_ready",
+            "tmux:Escape",
+            "tmux:/compact\n",
+        ]
+        mock_refresh.assert_awaited_once()
+        assert "Latest coordinator state for #15156." in handoff["context"]
+        assert "stale pre-compaction" not in handoff["context"]
+
 
 class TestCompactSelfFailureModes:
     def test_session_not_found_returns_compacted_false(self) -> None:
@@ -277,10 +476,22 @@ class TestCompactSelfFailureModes:
 
         compact_self = registry.get_tool("compact_self")
         assert compact_self is not None
-        result = asyncio.run(compact_self(session_id="missing"))
+        with session_context_for_test("missing"):
+            result = asyncio.run(compact_self())
 
         assert result["compacted"] is False
         assert "not found" in result["reason"]
+
+    def test_missing_session_context_returns_compacted_false(self) -> None:
+        session = _make_terminal_session("codex")
+        registry, _tmux = _register_compact_self(session)
+
+        compact_self = registry.get_tool("compact_self")
+        assert compact_self is not None
+        result = asyncio.run(compact_self())
+
+        assert result["compacted"] is False
+        assert "SessionContext" in result["reason"]
 
     def test_unknown_source_returns_compacted_false(self) -> None:
         session = _make_terminal_session("ubergoose")
@@ -344,7 +555,8 @@ class TestCompactSelfFailureModes:
 
         compact_self = registry.get_tool("compact_self")
         assert compact_self is not None
-        result = asyncio.run(compact_self(session_id="#42"))
+        with session_context_for_test("#42"):
+            result = asyncio.run(compact_self())
 
         assert result["compacted"] is False
         assert "failed to resolve session #42" in result["reason"]
@@ -395,7 +607,7 @@ class TestCompactSelfWebChatPath:
         with patch(
             "gobby.mcp_proxy.tools.sessions._terminal.mark_compact_self_continuation_pending"
         ) as mock_mark:
-            result = asyncio.run(compact_self(session_id="db-id"))
+            result = _run_direct_compact_self(compact_self, "db-id")
 
         assert result == {
             "compacted": True,
@@ -419,7 +631,7 @@ class TestCompactSelfWebChatPath:
 
         compact_self = registry.get_tool("compact_self")
         assert compact_self is not None
-        result = asyncio.run(compact_self(session_id="db-id"))
+        result = _run_direct_compact_self(compact_self, "db-id")
 
         assert result["compacted"] is False
         assert "No live web_chat session" in result["reason"]
@@ -450,7 +662,7 @@ class TestCompactSelfWebChatPath:
 
         compact_self = registry.get_tool("compact_self")
         assert compact_self is not None
-        result = asyncio.run(compact_self(session_id="db-id"))
+        result = _run_direct_compact_self(compact_self, "db-id")
 
         assert result["compacted"] is True
         assert live_session.send_message.call_args_list == [
@@ -479,7 +691,7 @@ class TestCompactSelfWebChatPath:
 
         compact_self = registry.get_tool("compact_self")
         assert compact_self is not None
-        result = asyncio.run(compact_self(session_id="db-id"))
+        result = _run_direct_compact_self(compact_self, "db-id")
 
         assert result["command"] == "/compact"
         assert live_session.send_message.call_args_list == [
@@ -514,7 +726,7 @@ class TestCompactSelfWebChatPath:
         active_task = asyncio.create_task(active_turn())
         web_chat_registry.track_active_task("conv-1", active_task)
 
-        result = await compact_self(session_id="db-id")
+        result = await _await_direct_compact_self(compact_self, "db-id")
 
         assert result == {
             "compacted": True,
@@ -555,7 +767,7 @@ class TestCompactSelfWebChatPath:
 
         compact_self = registry.get_tool("compact_self")
         assert compact_self is not None
-        result = asyncio.run(compact_self(session_id="#42"))
+        result = _run_direct_compact_self(compact_self, "#42")
 
         assert result["compacted"] is True
         assert live_session.send_message.call_args_list == [
@@ -597,7 +809,7 @@ class TestCompactSelfWebChatPath:
 
         compact_self = registry.get_tool("compact_self")
         assert compact_self is not None
-        result = asyncio.run(compact_self(session_id=lookup_id))
+        result = _run_direct_compact_self(compact_self, lookup_id)
 
         assert result == {
             "compacted": True,
@@ -648,7 +860,7 @@ class TestCompactSelfWebChatPath:
 
         compact_self = registry.get_tool("compact_self")
         assert compact_self is not None
-        result = asyncio.run(compact_self(session_id="#42"))
+        result = _run_direct_compact_self(compact_self, "#42")
 
         assert result["compacted"] is True
         assert live_session.send_message.call_args_list == [
@@ -692,7 +904,7 @@ class TestCompactSelfWebChatPath:
 
         compact_self = registry.get_tool("compact_self")
         assert compact_self is not None
-        result = asyncio.run(compact_self(session_id="db-id"))
+        result = _run_direct_compact_self(compact_self, "db-id")
 
         assert result == {"compacted": False, "reason": "Session db-id not found"}
 
@@ -738,7 +950,7 @@ class TestCompactSelfWebChatPath:
 
         compact_self = registry.get_tool("compact_self")
         assert compact_self is not None
-        result = asyncio.run(compact_self(session_id="#42"))
+        result = _run_direct_compact_self(compact_self, "#42")
 
         assert result == {"compacted": True, "session_id": "db-id"}
         assert web_chat_registry.compacted_session_ids == ["#42", "db-id"]
@@ -763,7 +975,7 @@ class TestCompactSelfUnsupportedSessionType:
 
         compact_self = registry.get_tool("compact_self")
         assert compact_self is not None
-        result = asyncio.run(compact_self(session_id="s1"))
+        result = _run_direct_compact_self(compact_self, "s1")
 
         assert result["compacted"] is False
         assert "unsupported session_type" in result["reason"]

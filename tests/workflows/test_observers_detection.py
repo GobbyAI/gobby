@@ -1,13 +1,18 @@
 """Tests for detection functions in observers module."""
 
 import json
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.normalization import normalize_tool_fields
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.workflows import observers as observers_module
 from gobby.workflows.observers import (
     _extract_shell_output_text,
     _is_git_commit_command,
@@ -17,6 +22,7 @@ from gobby.workflows.observers import (
     detect_mcp_call,
     detect_plan_mode_from_context,
     detect_task_claim,
+    detect_verification_evidence,
 )
 
 pytestmark = pytest.mark.unit
@@ -50,11 +56,7 @@ def make_after_tool_event():
             "tool_input": tool_input or {},
             "tool_output": tool_output or {},
         }
-
-        # Simulate adapter normalization for MCP calls
-        if tool_name in ("call_tool", "mcp__gobby__call_tool") and tool_input:
-            data["mcp_server"] = tool_input.get("server_name")
-            data["mcp_tool"] = tool_input.get("tool_name")
+        normalize_tool_fields(data)
 
         return HookEvent(
             event_type=HookEventType.AFTER_TOOL,
@@ -324,6 +326,43 @@ class TestDetectTaskClaimCloseTaskBehavior:
         assert variables.get("task_claimed") is False
         assert variables.get("claimed_tasks") == {}
 
+    def test_close_task_prefers_claimed_ref_before_project_resolution(
+        self,
+        variables,
+        make_after_tool_event,
+        mock_task_manager,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        mock_task_manager.get_task.side_effect = ValueError(
+            "Task #15126 not found in project [other-project]"
+        )
+        variables["task_claimed"] = True
+        variables["claimed_tasks"] = {"task-uuid-15126": "#15126"}
+
+        event = make_after_tool_event(
+            "mcp__gobby__call_tool",
+            tool_input={
+                "server_name": "gobby-tasks",
+                "tool_name": "close_task",
+                "arguments": {"task_id": "#15126"},
+            },
+            tool_output={"success": True, "result": {}},
+        )
+
+        with caplog.at_level(logging.WARNING, logger="gobby.workflows.observers"):
+            detect_task_claim(
+                event,
+                variables,
+                SESSION_ID,
+                task_manager=mock_task_manager,
+                project_id="other-project",
+            )
+
+        assert variables.get("task_claimed") is False
+        assert variables.get("claimed_tasks") == {}
+        mock_task_manager.get_task.assert_not_called()
+        assert "Cannot resolve closed task ref" not in caplog.text
+
     def test_failed_close_task_with_error(self, variables, make_after_tool_event) -> None:
         variables["task_claimed"] = True
         variables["claimed_tasks"] = {"task-123": "#1"}
@@ -384,6 +423,37 @@ class TestDetectTaskClaimCloseTaskBehavior:
         detect_task_claim(event, variables, SESSION_ID)
 
         assert variables.get("task_claimed") is True
+
+    def test_unresolved_close_refs_emit_thresholded_debug(
+        self,
+        variables,
+        make_after_tool_event,
+        caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(observers_module, "_unresolved_close_ref_count", 0)
+        event = make_after_tool_event(
+            "mcp__gobby__call_tool",
+            tool_input={
+                "server_name": "gobby-tasks",
+                "tool_name": "close_task",
+                "arguments": {"task_id": "#404"},
+            },
+            tool_output={"success": True, "result": {}},
+        )
+
+        with caplog.at_level(logging.DEBUG, logger="gobby.workflows.observers"):
+            for _ in range(10):
+                detect_task_claim(event, variables, SESSION_ID)
+
+        assert "Unresolved close_task refs reached 10" in caplog.text
+        record = next(
+            record
+            for record in caplog.records
+            if record.message == "Unresolved close_task refs reached 10"
+        )
+        assert record.latest_ref == "#404"
+        assert record.session_id == SESSION_ID
 
 
 # =============================================================================
@@ -959,6 +1029,7 @@ def _make_bash_event(
     tool_name: str = "Bash",
     command: str = "git commit -m 'msg'",
     is_error: bool = False,
+    cwd: str | None = None,
 ) -> HookEvent:
     """Helper to create a Bash AFTER_TOOL event with string output."""
     data: dict[str, object] = {
@@ -974,6 +1045,7 @@ def _make_bash_event(
         session_id="test-session-ext",
         timestamp=datetime.now(UTC),
         data=data,
+        cwd=cwd,
         metadata={"_platform_session_id": SESSION_ID},
     )
 
@@ -990,6 +1062,13 @@ class TestDetectBashCommit:
 
     def test_git_commit_branch_with_slash(self, variables) -> None:
         event = _make_bash_event("[feat/login 9a3b2c1e] Add auth\n 3 files changed")
+
+        detect_bash_commit(event, variables, SESSION_ID)
+
+        assert variables["task_has_commits"] is True
+
+    def test_git_commit_detached_head_output(self, variables) -> None:
+        event = _make_bash_event("[detached HEAD 9a3b2c1e] Fix bug\n 1 file changed")
 
         detect_bash_commit(event, variables, SESSION_ID)
 
@@ -1165,6 +1244,136 @@ class TestDetectBashCommit:
         assert "task_has_commits" not in variables
 
 
+class TestDetectVerificationEvidence:
+    """Verify validation commands record completion-readiness evidence."""
+
+    @pytest.mark.parametrize(
+        "command,normalized_argv,wrapper_chain",
+        [
+            (
+                "uv run pytest tests/workflows/test_hooks.py -v",
+                ["pytest", "tests/workflows/test_hooks.py", "-v"],
+                ["uv-run"],
+            ),
+            (
+                "uv run ruff check src/gobby/workflows/observers.py",
+                ["ruff", "check", "src/gobby/workflows/observers.py"],
+                ["uv-run"],
+            ),
+            (
+                "uv run mypy src/gobby/workflows/observers.py",
+                ["mypy", "src/gobby/workflows/observers.py"],
+                ["uv-run"],
+            ),
+            ("npm test", ["npm", "test"], []),
+            (
+                "cargo check --no-default-features",
+                ["cargo", "check", "--no-default-features"],
+                [],
+            ),
+            (
+                "cargo clippy --no-default-features -- -D warnings",
+                ["cargo", "clippy", "--no-default-features", "--", "-D", "warnings"],
+                [],
+            ),
+            ("cargo fmt --all -- --check", ["cargo", "fmt", "--all", "--", "--check"], []),
+            (
+                "/Users/josh/.gobby/bin/gsqz -- 'uv run ruff check src/'",
+                ["ruff", "check", "src/"],
+                ["gsqz-command-string", "uv-run"],
+            ),
+        ],
+    )
+    def test_successful_validation_records_evidence(
+        self,
+        variables,
+        command: str,
+        normalized_argv: list[str],
+        wrapper_chain: list[str],
+    ) -> None:
+        event = _make_bash_event("passed", command=command, cwd="/repo")
+
+        detect_verification_evidence(event, variables, SESSION_ID)
+
+        assert variables["verification_evidence_recorded"] is True
+        evidence = variables["verification_evidence"][-1]
+        assert evidence["command"] == command
+        assert evidence["cwd"] == "/repo"
+        assert evidence["evidence_type"] == "validation_command"
+        assert evidence["tool_name"] == "Bash"
+        assert evidence["success"] is True
+        assert evidence["matcher_id"]
+        assert evidence["normalized_argv"] == normalized_argv
+        assert evidence["wrapper_chain"] == wrapper_chain
+        assert evidence["normalized_command"]
+
+    def test_successful_validation_log_omits_raw_command(
+        self,
+        variables,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        command = "uv run pytest tests/workflows/test_hooks.py -v"
+        event = _make_bash_event("passed", command=command, cwd="/repo")
+
+        with caplog.at_level(logging.INFO, logger="gobby.workflows.observers"):
+            detect_verification_evidence(event, variables, SESSION_ID)
+
+        assert command not in caplog.text
+        assert "verification_evidence_recorded=true via validation command" in caplog.text
+
+    def test_validation_evidence_keeps_latest_50_items(self, variables) -> None:
+        variables["verification_evidence"] = [
+            {"command": f"uv run pytest old_{index}.py", "success": True} for index in range(55)
+        ]
+        event = _make_bash_event(
+            "passed",
+            command="uv run pytest tests/workflows/test_hooks.py -v",
+            cwd="/repo",
+        )
+
+        detect_verification_evidence(event, variables, SESSION_ID)
+
+        evidence = variables["verification_evidence"]
+        assert len(evidence) == 50
+        assert evidence[0]["command"] == "uv run pytest old_6.py"
+        assert evidence[-1]["command"] == "uv run pytest tests/workflows/test_hooks.py -v"
+
+    def test_failed_validation_clears_recorded_readiness(self, variables) -> None:
+        variables["verification_evidence_recorded"] = True
+        variables["verification_evidence"] = [{"command": "uv run pytest old.py", "success": True}]
+        event = _make_bash_event(
+            "failed",
+            command="uv run pytest tests/workflows/test_hooks.py -v",
+            is_error=True,
+        )
+
+        detect_verification_evidence(event, variables, SESSION_ID)
+
+        assert variables["verification_evidence_recorded"] is False
+        assert variables["verification_evidence"][-1]["evidence_type"] == "validation_command"
+        assert variables["verification_evidence"][-1]["success"] is False
+
+    def test_non_validation_command_is_ignored(self, variables) -> None:
+        event = _make_bash_event("ok", command="git status")
+
+        detect_verification_evidence(event, variables, SESSION_ID)
+
+        assert "verification_evidence_recorded" not in variables
+
+    def test_git_commit_does_not_clear_recorded_evidence(self, variables) -> None:
+        variables["verification_evidence_recorded"] = True
+        variables["verification_evidence"] = [{"command": "uv run pytest old.py", "success": True}]
+        event = _make_bash_event("[main abc1234] Fix\n 1 file changed")
+
+        detect_bash_commit(event, variables, SESSION_ID)
+
+        assert variables["task_has_commits"] is True
+        assert variables["verification_evidence_recorded"] is True
+        assert variables["verification_evidence"] == [
+            {"command": "uv run pytest old.py", "success": True}
+        ]
+
+
 def _make_bash_event_dict(
     tool_output: dict[str, object],
     *,
@@ -1188,6 +1397,31 @@ def _make_bash_event_dict(
         data=data,
         metadata={"_platform_session_id": SESSION_ID},
     )
+
+
+def test_tracking_edited_file_clears_recorded_verification_evidence(
+    temp_db: HubDatabase,
+) -> None:
+    from gobby.hooks.event_handlers._tool import ToolEventHandlerMixin
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    manager = SessionVariableManager(temp_db)
+    manager.merge_variables(
+        SESSION_ID,
+        {
+            "verification_evidence_recorded": True,
+            "verification_evidence": [{"command": "uv run pytest old.py", "success": True}],
+        },
+    )
+    handler = ToolEventHandlerMixin()
+    handler._session_manager = SimpleNamespace(db=temp_db)
+
+    handler._track_session_edited_file(SESSION_ID, "src/new_change.py", cwd=None)
+
+    variables = manager.get_variables(SESSION_ID)
+    assert variables["verification_evidence_recorded"] is False
+    assert variables["verification_evidence"] == []
+    assert variables["session_edited_files"] == ["src/new_change.py"]
 
 
 # =============================================================================
@@ -1234,6 +1468,12 @@ class TestIsGitCommitCommand:
 
     def test_chained_commands(self) -> None:
         assert _is_git_commit_command("git add . && git commit -m 'msg'") is True
+
+    def test_global_option_before_commit(self) -> None:
+        assert _is_git_commit_command("git -C /repo commit -m 'msg'") is True
+
+    def test_git_binary_path_before_commit(self) -> None:
+        assert _is_git_commit_command("/usr/bin/git -c user.name=Gobby commit -m 'msg'") is True
 
     def test_not_commit(self) -> None:
         assert _is_git_commit_command("git status") is False

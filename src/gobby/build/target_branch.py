@@ -7,13 +7,13 @@ from pathlib import Path
 
 from gobby.build.options import BuildOptions
 from gobby.build.stage_manifest import InputKind
-from gobby.storage.database import DatabaseProtocol
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
 
 
 async def _resolve_target_branch(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str,
     opts: BuildOptions,
     input_kind: InputKind,
@@ -27,7 +27,7 @@ async def _resolve_target_branch(
 
 
 async def _validate_target_branch(
-    db: DatabaseProtocol,
+    db: HubDatabase,
     project_id: str,
     target_branch: str | None,
 ) -> None:
@@ -67,7 +67,7 @@ async def _validate_target_branch(
     raise ValueError(f"target branch {target_branch} is missing; available branches: {available}")
 
 
-async def _current_target_branch(db: DatabaseProtocol, project_id: str) -> str | None:
+async def _current_target_branch(db: HubDatabase, project_id: str) -> str | None:
     project = LocalProjectManager(db).get(project_id)
     if project is None or project.repo_path is None:
         return None
@@ -111,12 +111,12 @@ def _cascade_target_branch_to_subtree(
                 JOIN subtree parent ON child.parent_task_id = parent.id
             )
             INSERT INTO task_artifacts (task_id, target_branch, updated_at)
-            SELECT id, ?, datetime('now')
+            SELECT id, ?, CURRENT_TIMESTAMP
             FROM subtree
             WHERE id IS NOT NULL
             ON CONFLICT(task_id) DO UPDATE SET
                 target_branch = excluded.target_branch,
-                updated_at = datetime('now')
+                updated_at = CURRENT_TIMESTAMP
             """,
             (epic_id, target_branch),
         )

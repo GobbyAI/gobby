@@ -15,13 +15,28 @@ import time
 from dataclasses import dataclass, field
 
 from gobby.agents.tmux.errors import TmuxNotFoundError, TmuxSessionError
+from gobby.agents.tmux.text_injection import (
+    TmuxTextInjectionError,
+    send_literal_text_to_tmux_target,
+)
 from gobby.config.tmux import TmuxConfig
 
 logger = logging.getLogger(__name__)
 
 
-_MISSING_SESSION_ERRORS = ("can't find session", "no such session")
+_MISSING_SESSION_ERRORS = ("can't find session", "no such session", "no server running")
+_MISSING_TARGET_ERRORS = (
+    *_MISSING_SESSION_ERRORS,
+    "can't find pane",
+    "no such pane",
+)
 TMUX_COMMAND_TIMEOUT_SECONDS = 10.0
+
+
+def _is_missing_tmux_target_error(stderr: str) -> bool:
+    """Return True for tmux errors that mean the target disappeared."""
+    message = stderr.lower()
+    return any(fragment in message for fragment in _MISSING_TARGET_ERRORS)
 
 
 @dataclass
@@ -495,7 +510,13 @@ class TmuxSessionManager:
             "off",
         )
         if rc != 0:
-            logger.warning(f"Failed to rename tmux window for '{target}': {stderr.strip()}")
+            message = stderr.strip()
+            if _is_missing_tmux_target_error(message):
+                logger.debug(
+                    "Skipping tmux window rename for missing target '%s': %s", target, message
+                )
+            else:
+                logger.warning("Failed to rename tmux window for '%s': %s", target, message)
             return False
         return True
 
@@ -554,44 +575,18 @@ class TmuxSessionManager:
                 return False
             return True
 
-        # Literal mode: split trailing newline into literal text + Enter.
-        # TUI apps (Claude Code, Gemini CLI) treat a literal \n inside
-        # send-keys -l as "add a line" rather than "submit the prompt".
-        send_enter = keys.endswith("\n")
-        text = keys.rstrip("\n")
-
-        if text:
-            rc, _stdout, stderr = await self._run(
-                "send-keys",
-                "-t",
+        try:
+            await send_literal_text_to_tmux_target(
                 session_name,
-                "-l",
-                text,
+                keys,
+                tmux_cmd=self._base_args(),
             )
-            if rc != 0:
-                logger.warning(
-                    f"Failed to send keys to tmux session '{session_name}': {stderr.strip()}"
-                )
-                return False
-
-        if send_enter:
-            # Brief pause so TUI apps (Claude Code, Gemini CLI) finish
-            # processing literal text before receiving the Enter keystroke.
-            # Without this, Enter can arrive before the TUI has committed
-            # the preceding characters to its input state, causing it to
-            # be silently dropped.
-            if text:
-                await asyncio.sleep(0.05)
-            rc, _stdout, stderr = await self._run(
-                "send-keys",
-                "-t",
+        except TmuxTextInjectionError as exc:
+            logger.warning(
+                "Failed to send keys to tmux session '%s': %s",
                 session_name,
-                "Enter",
+                exc,
             )
-            if rc != 0:
-                logger.warning(
-                    f"Failed to send Enter to tmux session '{session_name}': {stderr.strip()}"
-                )
-                return False
+            return False
 
         return True

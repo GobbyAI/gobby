@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from tests.servers.conftest import create_http_server
 
 if TYPE_CHECKING:
-    from gobby.storage.database import LocalDatabase
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.projects import LocalProjectManager
     from gobby.storage.sessions import SessionManager
 
@@ -294,6 +294,42 @@ class TestProjectRoutes:
         )
         assert response.status_code == 400
 
+    def test_update_project_validation_detection(
+        self,
+        client: TestClient,
+        project_manager: LocalProjectManager,
+        tmp_path: Path,
+    ) -> None:
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+        project = project_manager.create(
+            name="validation-detection-project",
+            repo_path=str(repo_path),
+            github_url="https://github.com/test/validation-detection-project",
+        )
+
+        payload = {
+            "builtin_matchers_enabled": False,
+            "custom_matchers": [
+                {
+                    "id": "project-ci",
+                    "label": "Project CI",
+                    "prefixes": ["./scripts/ci"],
+                }
+            ],
+        }
+        response = client.put(
+            f"/api/projects/{project.id}",
+            json={"validation_detection": payload},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["validation_detection"]["builtin_matchers_enabled"] is False
+        project_file = repo_path / ".gobby" / "project.json"
+        saved = json.loads(project_file.read_text())
+        assert saved["validation_detection"]["custom_matchers"][0]["id"] == "project-ci"
+
     def test_update_project_repo_path_migrates_approval_rules_and_preserves_metadata(
         self,
         client: TestClient,
@@ -458,7 +494,7 @@ class TestProjectRoutes:
     # Error: session_manager unavailable
     # -----------------------------------------------------------------
 
-    def test_session_manager_unavailable(self, temp_db: LocalDatabase) -> None:
+    def test_session_manager_unavailable(self, temp_db: HubDatabase) -> None:
         """503 when session_manager is None."""
         server = create_http_server(session_manager=None, database=temp_db)
         client = TestClient(server.app)
