@@ -387,6 +387,7 @@ mod tests {
             "gobby status",
             "gobby-cli status",
             "gcode search symbol",
+            "gh pr list",
             "ghook --diagnose",
             "gloc prompt",
             "gsqz --stats -- cargo test",
@@ -430,11 +431,16 @@ mod tests {
     }
 
     #[test]
-    fn test_sed_and_rg_are_builtin_exclusions() {
+    fn test_shell_inspection_commands_are_builtin_exclusions() {
         let compressor = Compressor::new(&test_config());
         let output = (0..120)
             .map(|i| format!("src/file_{i}.rs:{i}:fn item_{i}() {{}}\n"))
             .collect::<String>();
+
+        let gh_result = compressor.compress("gh pr view 123", &output);
+        assert_eq!(gh_result.strategy_name, "excluded");
+        assert_eq!(gh_result.compressed, output);
+        assert!(gh_result.is_passthrough());
 
         let rg_result = compressor.compress("rg \"fn item\" crates/gsqz/src", &output);
         assert_eq!(rg_result.strategy_name, "excluded");

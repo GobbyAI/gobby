@@ -188,17 +188,6 @@ pipelines:
           head: 30
           tail: 20
 
-  # === GitHub CLI ===
-  gh-cli:
-    match: '\bgh\s+(?:pr|issue)\s+(?:list|view)\b'
-    steps:
-      - filter_lines:
-          patterns:
-            - '^\s*$'
-      - truncate:
-          head: 30
-          tail: 5
-
   # === Utility ===
   download:
     match: '\b(?:wget|curl)\b'
@@ -220,6 +209,6 @@ fallback:
         head: 20
         tail: 20
 
-# These are additive. Gobby-owned CLIs, git, rg, and sed are always excluded in code:
-# gobby, gobby-cli, gcode, ghook, gloc, gsqz, git, rg, sed.
+# These are additive. Gobby-owned CLIs, git, gh, rg, and sed are always excluded in code:
+# gobby, gobby-cli, gcode, gh, ghook, gloc, gsqz, git, rg, sed.
 excluded_commands: []

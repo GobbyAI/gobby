@@ -13,6 +13,7 @@ pub const BUILTIN_EXCLUDED_COMMANDS: &[&str] = &[
     "gobby",
     "gobby-cli",
     "gcode",
+    "gh",
     "ghook",
     "gloc",
     "gsqz",

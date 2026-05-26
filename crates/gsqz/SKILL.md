@@ -35,10 +35,9 @@ gsqz auto-detects the command and applies the right compression:
 | Package | pip install/list, npm install/ls, uv pip/sync/add |
 | Files | ls, tree, find, grep |
 | Container | docker ps/images/logs, kubectl logs |
-| GitHub | gh pr/issue list/view |
 | Fallback | Any unmatched command: keeps first 20 + last 20 lines |
 
-Gobby-owned CLIs (`gobby`, `gobby-cli`, `gcode`, `ghook`, `gloc`, `gsqz`), `git`, `rg`, and `sed` are built-in exclusions. gsqz surfaces them raw.
+Gobby-owned CLIs (`gobby`, `gobby-cli`, `gcode`, `ghook`, `gloc`, `gsqz`), `git`, `gh`, `rg`, and `sed` are built-in exclusions. gsqz surfaces them raw.
 
 ## When NOT to Use
 

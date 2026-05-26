@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.4] — gsqz
+
+### Fixed
+
+#### gsqz
+
+- **Raw passthrough for inspection CLIs** — `gh`, `rg`, and `sed` now join the
+  built-in exclusion list so GitHub CLI output, ripgrep search results, and
+  exact file slices surface verbatim with no compression header or daemon
+  savings report.
+
 ## [0.8.6] — gcode
 
 ### Added
