@@ -121,6 +121,7 @@ def test_pull_request_runs_are_ignored_until_poll_bound() -> None:
 
 
 def test_missing_run_message_uses_requested_workflow() -> None:
+    """Missing-run wait messages name the workflow requested by the caller."""
     decision = verify_ci_gate.evaluate_runs([], "abc123", workflow="Release")
 
     assert decision.state == "wait"
@@ -128,6 +129,7 @@ def test_missing_run_message_uses_requested_workflow() -> None:
 
 
 def test_main_rejects_non_positive_poll_interval(capsys: pytest.CaptureFixture[str]) -> None:
+    """The CLI rejects non-positive poll intervals before polling GitHub."""
     with pytest.raises(SystemExit) as exc_info:
         verify_ci_gate.main(
             [

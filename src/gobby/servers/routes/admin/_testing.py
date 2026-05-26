@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING, Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES, TERMINAL_AGENT_RUN_STATUSES
+
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
 
@@ -125,20 +127,12 @@ def register_testing_routes(router: APIRouter, server: "HTTPServer") -> None:
 
         try:
             db = server.services.database
-            if request.status not in {
-                "pending",
-                "running",
-                "success",
-                "cancelled",
-                "error",
-                "timeout",
-            }:
+            allowed_statuses = set(ACTIVE_AGENT_RUN_STATUSES) | set(TERMINAL_AGENT_RUN_STATUSES)
+            if request.status not in allowed_statuses:
+                allowed_statuses_message = ", ".join(sorted(allowed_statuses))
                 raise HTTPException(
                     status_code=400,
-                    detail=(
-                        "status must be one of: pending, running, success, "
-                        "cancelled, error, timeout"
-                    ),
+                    detail=f"status must be one of: {allowed_statuses_message}",
                 )
 
             arm = LocalAgentRunManager(db)

@@ -11,10 +11,11 @@ from pathlib import Path
 from typing import Any
 
 from gobby.adapters.acp_client import StreamEvent, _make_id
+from gobby.agents.constants import UV_CACHE_DIR
 
 DEFAULT_TERMINAL_REQUEST_TIMEOUT_SECONDS = 30.0
 MAX_TERMINAL_OUTPUT_BYTES = 200_000
-_TERMINAL_ENV_ALLOWLIST = ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TMPDIR")
+_TERMINAL_ENV_ALLOWLIST = ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TMPDIR", UV_CACHE_DIR)
 logger = logging.getLogger(__name__)
 
 

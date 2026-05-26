@@ -191,7 +191,7 @@ def _session_variable_rows(postgres_db: Any, *session_ids: str) -> dict[str, dic
     rows: dict[str, dict[str, Any]] = {}
     for session_id in session_ids:
         row = postgres_db.fetchone(
-            "SELECT variables FROM session_variables WHERE session_id = ?",
+            "SELECT variables FROM session_variables WHERE session_id = $1",
             (session_id,),
         )
         if row is None:
@@ -211,6 +211,7 @@ class TestMemoryRecallHelperE2E:
         cli_events: CLIEventSimulator,
         postgres_db: Any,
     ) -> None:
+        """Delivered helper memories are fresh, canonical, and adapter-agnostic."""
         project_id = f"memory-helper-e2e-{uuid.uuid4().hex[:8]}"
         project_result = cli_events.register_test_project(
             project_id=project_id,

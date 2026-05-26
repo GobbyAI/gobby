@@ -35,7 +35,7 @@ def get_workflow_definitions_revision() -> int:
         return _WORKFLOW_DEFINITIONS_REVISION
 
 
-def _bump_workflow_definitions_revision() -> None:
+def bump_workflow_definitions_revision() -> None:
     global _WORKFLOW_DEFINITIONS_REVISION
     with _WORKFLOW_DEFINITIONS_REVISION_LOCK:
         _WORKFLOW_DEFINITIONS_REVISION += 1
@@ -171,7 +171,7 @@ class LocalWorkflowDefinitionManager:
                 ),
             )
 
-        _bump_workflow_definitions_revision()
+        bump_workflow_definitions_revision()
         return self.get(definition_id)
 
     def get(self, definition_id: str, include_deleted: bool = False) -> WorkflowDefinitionRow:
@@ -223,7 +223,7 @@ class LocalWorkflowDefinitionManager:
         values["updated_at"] = datetime.now(UTC).isoformat()
         cursor = self.db.safe_update("workflow_definitions", values, "id = ?", (definition_id,))
         if cursor.rowcount > 0:
-            _bump_workflow_definitions_revision()
+            bump_workflow_definitions_revision()
         return self.get(definition_id)
 
     def delete(self, definition_id: str) -> bool:
@@ -236,7 +236,7 @@ class LocalWorkflowDefinitionManager:
             )
             deleted = cursor.rowcount > 0
         if deleted:
-            _bump_workflow_definitions_revision()
+            bump_workflow_definitions_revision()
         return deleted
 
     def hard_delete(self, definition_id: str) -> bool:
@@ -245,7 +245,7 @@ class LocalWorkflowDefinitionManager:
             cursor = conn.execute("DELETE FROM workflow_definitions WHERE id = ?", (definition_id,))
             deleted = cursor.rowcount > 0
         if deleted:
-            _bump_workflow_definitions_revision()
+            bump_workflow_definitions_revision()
         return deleted
 
     def restore(self, definition_id: str) -> WorkflowDefinitionRow:
@@ -258,7 +258,7 @@ class LocalWorkflowDefinitionManager:
             )
             if cursor.rowcount == 0:
                 raise ValueError(f"Workflow definition {definition_id} not found or not deleted")
-        _bump_workflow_definitions_revision()
+        bump_workflow_definitions_revision()
         return self.get(definition_id)
 
     def purge_deleted(self, older_than_days: int = 30) -> int:
@@ -277,7 +277,7 @@ class LocalWorkflowDefinitionManager:
             )
             count = cursor.rowcount
         if count:
-            _bump_workflow_definitions_revision()
+            bump_workflow_definitions_revision()
             logger.info(f"Purged {count} soft-deleted workflow definitions")
         return count
 

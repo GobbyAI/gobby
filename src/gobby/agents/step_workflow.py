@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import _bump_workflow_definitions_revision
+from gobby.storage.workflow_definitions import bump_workflow_definitions_revision
 from gobby.workflows.definitions import AgentDefinitionBody
 
 
@@ -40,8 +40,8 @@ def register_agent_step_workflow(
                 definition_json, canvas_json, source, tags,
                 created_at, updated_at
             ) VALUES (
-                ?, NULL, ?, ?, 'workflow', '2.0', FALSE, 100, NULL,
-                ?, NULL, 'agent', NULL, ?, ?
+                $1, NULL, $2, $3, 'workflow', '2.0', FALSE, 100, NULL,
+                $4, NULL, 'agent', NULL, $5, $6
             )
             ON CONFLICT(name, project_id, source) DO UPDATE SET
                 description = excluded.description,
@@ -65,6 +65,6 @@ def register_agent_step_workflow(
                 now,
             ),
         )
-    _bump_workflow_definitions_revision()
+    bump_workflow_definitions_revision()
 
     return step_workflow_name

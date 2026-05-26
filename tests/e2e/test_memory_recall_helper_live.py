@@ -76,7 +76,7 @@ def _latest_helper_run(postgres_db: Any, parent_session_id: str) -> dict[str, An
         """
         SELECT id, status, child_session_id, result, error, prompt
         FROM agent_runs
-        WHERE parent_session_id = ? AND agent_name = 'memory-recall-helper'
+        WHERE parent_session_id = $1 AND agent_name = 'memory-recall-helper'
         ORDER BY created_at DESC
         LIMIT 1
         """,
@@ -172,6 +172,7 @@ class TestLiveMemoryRecallHelper:
         cli_events: CLIEventSimulator,
         postgres_db: Any,
     ) -> None:
+        """The live helper selects the expected memory and delivers it once next turn."""
         project_id = f"memory-helper-live-{uuid.uuid4().hex[:8]}"
         nonce = uuid.uuid4().hex[:10]
         project_result = cli_events.register_test_project(
