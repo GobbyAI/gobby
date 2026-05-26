@@ -152,6 +152,7 @@ jobs:
       GOBBY_POSTGRES_TEST_PASSWORD: gobby_test
       GOBBY_POSTGRES_TEST_PORT: "60892"
       GOBBY_POSTGRES_TEST_USER: gobby_test
+      GOBBY_TEST_PROTECT: "1"
     strategy:
       fail-fast: false
       matrix:
@@ -241,7 +242,7 @@ jobs:
         run: uv sync --dev
 
       - name: Run tests
-        run: uv run pytest --cov=gobby --cov-report=xml --cov-report=term-missing --cov-fail-under=80 --ignore=tests/voice --ignore=tests/servers/routes/test_voice_routes.py --deselect tests/hooks/test_hooks_context.py::test_session_start_context_injection
+        run: uv run pytest --cov=gobby --cov-report=xml --cov-report=term-missing --cov-fail-under=80 --ignore=tests/voice --ignore=tests/servers/routes/test_voice_routes.py
 
       - name: Upload coverage to Codecov
         if: matrix.python-version == '3.13'
@@ -324,6 +325,8 @@ jobs:
           database_url="postgresql://${database_authority}/${GOBBY_POSTGRES_TEST_DB}"
           test -n "$pg_search_version"
           test -n "$pg_search_sha256"
+          test "$pg_search_version" != "null"
+          test "$pg_search_sha256" != "null"
           {
             echo "GOBBY_PG_SEARCH_VERSION=$pg_search_version"
             echo "GOBBY_PG_SEARCH_SHA256=$pg_search_sha256"

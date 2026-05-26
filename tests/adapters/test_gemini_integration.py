@@ -75,6 +75,27 @@ class TestHandleNative:
         # BeforeToolSelection-specific formatting should apply
         assert result["hookSpecificOutput"]["toolConfig"]["tool_filter"] == ["read"]
 
+    @pytest.mark.parametrize("field_name", ["hook_event_name", "hookEventName"])
+    def test_handle_native_extracts_hook_type_from_top_level_acp_payload(
+        self, adapter, mock_hook_manager, field_name: str
+    ) -> None:
+        """ACP payloads may carry the hook event name outside input_data."""
+        mock_hook_manager.handle.return_value = HookResponse(
+            decision="allow",
+            modify_args={"tool_filter": ["read"]},
+        )
+
+        native_event = {
+            field_name: "BeforeToolSelection",
+            "input_data": {
+                "session_id": "sess-tools",
+            },
+        }
+
+        result = adapter.handle_native(native_event, mock_hook_manager)
+
+        assert result["hookSpecificOutput"]["toolConfig"]["tool_filter"] == ["read"]
+
     def test_handle_native_deny_response(self, adapter, mock_hook_manager) -> None:
         """handle_native() correctly formats deny responses."""
         mock_hook_manager.handle.return_value = HookResponse(

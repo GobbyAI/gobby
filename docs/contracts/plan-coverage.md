@@ -152,8 +152,8 @@ Entry schema (one entry per `kind: deliverable` section):
 | `depends_on` | list[str] | References `source_section` IDs of other manifest entries |
 | `validation_criteria` | str | One-line pass/fail |
 | `labels` | list[str] | Exactly one `covers:<plan-id>:<section-id>:<item-id>` label per acceptance item in the source section |
-| `implementation_domain` | enum|null | Required for `category: code`; one of `backend`, `frontend`, `fullstack` |
-| `assigned_agent` | str|null | Optional privileged/manual route override |
+| `implementation_domain` | enum\|null | Required for `category: code`; one of `backend`, `frontend`, `fullstack` |
+| `assigned_agent` | str\|null | Optional privileged/manual route override |
 | `tdd` | bool | True adds `test-driven-development`, `tdd:required`, and TDD evidence criteria on the leaf |
 | `source_section` | str | Must reference a `kind: deliverable` section ID |
 

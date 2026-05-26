@@ -323,7 +323,7 @@ class CodexAdapter(BaseAdapter):
                 try:
                     loop = asyncio.get_running_loop()
                 except RuntimeError:
-                    self._hook_manager.handle(hook_event)
+                    asyncio.run(self._dispatch_hook_event(hook_event))
                     logger.debug("Processed Codex event: %s -> %s", method, hook_event.event_type)
                     return
 

@@ -47,6 +47,8 @@ class TestEnvironmentVariableConstants:
     def test_constants_start_with_gobby(self) -> None:
         """All constants are prefixed with GOBBY_."""
         for var in ALL_TERMINAL_ENV_VARS:
+            if var == UV_CACHE_DIR:
+                continue
             assert var.startswith("GOBBY_"), f"{var} should start with GOBBY_"
 
     def test_all_terminal_env_vars_complete(self) -> None:
@@ -61,6 +63,7 @@ class TestEnvironmentVariableConstants:
             GOBBY_MAX_AGENT_DEPTH,
             GOBBY_PROMPT,
             GOBBY_PROMPT_FILE,
+            UV_CACHE_DIR,
         }
         assert set(ALL_TERMINAL_ENV_VARS) == expected
 

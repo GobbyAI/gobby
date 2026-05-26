@@ -122,13 +122,17 @@ def latest_considered_run(runs: Sequence[WorkflowRun], sha: str) -> WorkflowRun 
     return max(considered, key=lambda run: run.sort_key)
 
 
-def evaluate_runs(runs: Sequence[WorkflowRun], sha: str) -> GateDecision:
+def evaluate_runs(
+    runs: Sequence[WorkflowRun],
+    sha: str,
+    workflow: str = DEFAULT_WORKFLOW,
+) -> GateDecision:
     latest = latest_considered_run(runs, sha)
     if latest is None:
         return GateDecision(
             state="wait",
             message=(
-                f"No {DEFAULT_WORKFLOW} run found for {sha} from considered events: "
+                f"No {workflow} run found for {sha} from considered events: "
                 f"{', '.join(sorted(CONSIDERED_EVENTS))}"
             ),
             run=None,
@@ -170,7 +174,7 @@ def wait_for_ci_gate(
     deadline = clock() + timeout_seconds
     while True:
         runs = fetch_workflow_runs(repo=repo, workflow=workflow, sha=sha, runner=runner)
-        decision = evaluate_runs(runs, sha)
+        decision = evaluate_runs(runs, sha, workflow=workflow)
 
         if decision.state == "pass":
             print(decision.message)
@@ -205,6 +209,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("--repo is required when GITHUB_REPOSITORY is not set")
     if not args.sha:
         parser.error("--sha is required when GITHUB_SHA is not set")
+    if args.timeout_seconds <= 0:
+        parser.error("--timeout-seconds must be > 0")
+    if args.poll_interval_seconds <= 0:
+        parser.error("--poll-interval-seconds must be > 0")
 
     try:
         return wait_for_ci_gate(

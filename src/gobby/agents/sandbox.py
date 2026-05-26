@@ -365,6 +365,27 @@ class QwenSandboxResolver(GeminiSandboxResolver):
         return "qwen"
 
 
+class GrokSandboxResolver(SandboxResolver):
+    """Sandbox resolver for Grok CLI's built-in sandbox profiles."""
+
+    @property
+    def cli_name(self) -> str:
+        return "grok"
+
+    def resolve(
+        self, config: SandboxConfig, paths: ResolvedSandboxPaths
+    ) -> tuple[list[str], dict[str, str]]:
+        if not config.enabled:
+            return ([], {})
+
+        profile = (
+            "strict"
+            if config.mode == "restrictive" or not paths.allow_external_network
+            else "workspace"
+        )
+        return (["--sandbox", profile], {})
+
+
 def merge_claude_settings(
     base_settings: dict[str, Any],
     config: SandboxConfig,
@@ -474,6 +495,7 @@ def get_sandbox_resolver(cli: str) -> SandboxResolver:
         "claude": ClaudeSandboxResolver,
         "codex": CodexSandboxResolver,
         "gemini": GeminiSandboxResolver,
+        "grok": GrokSandboxResolver,
         "qwen": QwenSandboxResolver,
     }
 

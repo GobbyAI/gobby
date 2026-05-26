@@ -146,11 +146,15 @@ async def send_literal_text_to_tmux_target(
                 timeout=timeout,
             )
         finally:
-            with suppress(Exception):
+            try:
                 await _run_tmux_command(
                     (*base_cmd, "delete-buffer", "-b", buffer_name),
                     timeout=timeout,
                 )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                pass
 
     if send_enter:
         if literal_text and enter_delay_seconds > 0:

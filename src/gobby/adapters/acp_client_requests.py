@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -13,6 +14,8 @@ from gobby.adapters.acp_client import StreamEvent, _make_id
 
 DEFAULT_TERMINAL_REQUEST_TIMEOUT_SECONDS = 30.0
 MAX_TERMINAL_OUTPUT_BYTES = 200_000
+_TERMINAL_ENV_ALLOWLIST = ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TMPDIR")
+logger = logging.getLogger(__name__)
 
 
 def _coerce_terminal_timeout(value: Any) -> float:
@@ -50,8 +53,7 @@ async def write_json_rpc_result(client: Any, request_id: Any, result: dict[str, 
     if not process or not process.stdin:
         return
     response = {"jsonrpc": "2.0", "id": request_id, "result": result}
-    process.stdin.write((json.dumps(response) + "\n").encode())
-    await process.stdin.drain()
+    await _write_json_rpc_response(process, response)
 
 
 async def write_json_rpc_error(client: Any, request_id: Any, *, code: int, message: str) -> None:
@@ -63,8 +65,15 @@ async def write_json_rpc_error(client: Any, request_id: Any, *, code: int, messa
         "id": request_id,
         "error": {"code": code, "message": message},
     }
-    process.stdin.write((json.dumps(response) + "\n").encode())
-    await process.stdin.drain()
+    await _write_json_rpc_response(process, response)
+
+
+async def _write_json_rpc_response(process: Any, response: dict[str, Any]) -> None:
+    try:
+        process.stdin.write((json.dumps(response) + "\n").encode())
+        await process.stdin.drain()
+    except (BrokenPipeError, ConnectionResetError, OSError):
+        logger.debug("ACP client pipe closed while writing JSON-RPC response", exc_info=True)
 
 
 async def handle_client_request(
@@ -156,7 +165,7 @@ async def _run_terminal_create(
     timeout_seconds: float,
     output_limit: int,
 ) -> dict[str, Any]:
-    env = os.environ.copy()
+    env = {key: os.environ[key] for key in _TERMINAL_ENV_ALLOWLIST if key in os.environ}
     env["GOBBY_HOOKS_DISABLED"] = "1"
     env["GOBBY_ACP_CHILD_TOOL"] = "1"
 

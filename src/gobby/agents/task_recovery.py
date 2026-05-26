@@ -5,7 +5,7 @@ import logging
 import os
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
-from typing import Any, Literal, Protocol, cast
+from typing import Any, Literal, Protocol
 
 from gobby.tasks.state_semantics import (
     current_stage,
@@ -122,7 +122,7 @@ class TaskRecoveryHandler:
 
     def __init__(
         self,
-        task_manager: Any | None,
+        task_manager: _TaskManager | None,
         agent_run_manager: _AgentRunManager,
         stall_classifier: _StallClassifier,
         failure_threshold: int | None = None,
@@ -133,7 +133,7 @@ class TaskRecoveryHandler:
         )
         if failure_threshold < 1:
             raise ValueError("failure_threshold must be a positive integer")
-        self._task_manager = cast(_TaskManager | None, task_manager)
+        self._task_manager = task_manager
         self._agent_run_manager = agent_run_manager
         self._stall_classifier = stall_classifier
         self._failure_threshold = failure_threshold

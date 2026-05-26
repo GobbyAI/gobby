@@ -123,8 +123,14 @@ class AgentHealthMonitor:
                         timeout=5.0,
                         close_terminal=True,
                     )
-                    if result.get("success"):
-                        await self._clear_tmux_session_name(run)
+                    if not result.get("success"):
+                        logger.warning(
+                            "Skipping cleanup for run %s after failed terminal kill: %s",
+                            run.id,
+                            result.get("error") or result.get("message"),
+                        )
+                        continue
+                    await self._clear_tmux_session_name(run)
                 elif run.pid:
                     try:
                         os.kill(run.pid, signal.SIGTERM)

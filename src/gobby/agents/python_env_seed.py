@@ -20,6 +20,7 @@ _UV_ENV_TO_CLEAR = (
     "VIRTUAL_ENV",
     "VIRTUAL_ENV_PROMPT",
 )
+_SUBPROCESS_DETAIL_TAIL_CHARS = 600
 
 
 @dataclass(frozen=True)
@@ -162,7 +163,7 @@ def _subprocess_detail(stdout: bytes, stderr: bytes) -> str:
     output = (stderr or stdout).decode(errors="replace").strip()
     if not output:
         return "<no output>"
-    return output[-600:]
+    return output[-_SUBPROCESS_DETAIL_TAIL_CHARS:]
 
 
 async def _kill_process(proc: asyncio.subprocess.Process) -> None:

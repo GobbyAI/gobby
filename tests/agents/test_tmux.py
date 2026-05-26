@@ -826,6 +826,33 @@ class TestTmuxSpawner:
             assert env_arg["UV_CACHE_DIR"] == "/custom/uv-cache"
 
     @pytest.mark.asyncio
+    async def test_uv_cache_dir_empty_value_gets_default(self) -> None:
+        """Empty UV_CACHE_DIR values are treated as missing."""
+        spawner = TmuxSpawner()
+        with (
+            patch.object(
+                spawner._session_manager, "create_session", new_callable=AsyncMock
+            ) as mock_create,
+            patch.object(
+                spawner._session_manager, "get_session", new_callable=AsyncMock
+            ) as mock_get,
+            patch("gobby.agents.constants.tempfile.gettempdir", return_value="/tmp/test-tmp"),
+        ):
+            mock_create.return_value = TmuxSessionInfo(name="test-session", pane_pid=123)
+            mock_get.return_value = TmuxSessionInfo(name="test-session", pane_pid=123)
+            await spawner._async_spawn(
+                command=["echo", "hello"],
+                cwd="/tmp",
+                env={
+                    "GOBBY_SESSION_ID": "sess-1",
+                    "UV_CACHE_DIR": "",
+                },
+            )
+
+            env_arg = mock_create.call_args[1].get("env")
+            assert env_arg["UV_CACHE_DIR"] == "/tmp/test-tmp/gobby/uv-cache/sess-1"
+
+    @pytest.mark.asyncio
     async def test_unset_in_shell_command(self) -> None:
         """Shell command is prefixed with unset VIRTUAL_ENV."""
         spawner = TmuxSpawner()

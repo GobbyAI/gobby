@@ -120,6 +120,30 @@ def test_pull_request_runs_are_ignored_until_poll_bound() -> None:
     )
 
 
+def test_missing_run_message_uses_requested_workflow() -> None:
+    decision = verify_ci_gate.evaluate_runs([], "abc123", workflow="Release")
+
+    assert decision.state == "wait"
+    assert "No Release run found" in decision.message
+
+
+def test_main_rejects_non_positive_poll_interval(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        verify_ci_gate.main(
+            [
+                "--repo",
+                "GobbyAI/gobby",
+                "--sha",
+                "abc123",
+                "--poll-interval-seconds",
+                "0",
+            ]
+        )
+
+    assert exc_info.value.code == 2
+    assert "--poll-interval-seconds must be > 0" in capsys.readouterr().err
+
+
 def test_in_progress_latest_run_waits_and_repolls() -> None:
     responses = [
         _runs_json(

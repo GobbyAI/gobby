@@ -66,11 +66,18 @@ class IdleCheckHandler:
 
     async def _clear_tmux_session_name(self, run: AgentRun) -> None:
         if run.tmux_session_name:
-            await self._run_db(
-                self._agent_run_manager.clear_tmux_session_name,
-                run.id,
-                run.tmux_session_name,
-            )
+            try:
+                await self._run_db(
+                    self._agent_run_manager.clear_tmux_session_name,
+                    run.id,
+                    run.tmux_session_name,
+                )
+            except Exception:
+                logger.warning(
+                    "Failed clearing tmux session name for run %s",
+                    run.id,
+                    exc_info=True,
+                )
 
     async def check_idle_agents(self) -> int:
         """Check for idle agents and reprompt or fail them."""
@@ -279,11 +286,19 @@ class IdleCheckHandler:
         if self._latest_response_payload_type(items) != "reasoning":
             return False
 
+        redacted_items = [
+            {
+                "line_num": item.get("line_num"),
+                "timestamp": item.get("timestamp"),
+                "payload_type": item.get("payload_type"),
+            }
+            for item in items
+        ]
         logger.warning(
             "Codex reasoning watchdog interrupting run %s session %s: %s",
             run.id,
             session_id,
-            json.dumps(items, ensure_ascii=True),
+            json.dumps(redacted_items, ensure_ascii=True),
         )
 
         interrupted = await self._tmux.send_keys(tmux_name, "C-c", literal=False)

@@ -11,10 +11,11 @@ import shutil
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
-from gobby.agents.constants import UV_CACHE_DIR
+from gobby.agents.constants import ALL_TERMINAL_ENV_VARS, UV_CACHE_DIR
 from gobby.agents.sandbox import (
     CodexSandboxResolver,
     GeminiSandboxResolver,
+    GrokSandboxResolver,
     QwenSandboxResolver,
     SandboxConfig,
     compute_sandbox_paths,
@@ -32,6 +33,7 @@ from gobby.agents.tmux.spawner import TmuxSpawner
 from gobby.config.tmux import TmuxConfig
 
 logger = logging.getLogger(__name__)
+_RESERVED_EXTRA_ENV_KEYS = frozenset((*ALL_TERMINAL_ENV_VARS, "GOBBY_MACHINE_ID"))
 
 
 @dataclass
@@ -113,7 +115,11 @@ def _sandbox_config_for_spawn(
 
 def _apply_extra_env(env: dict[str, str], request: SpawnRequest) -> None:
     if request.extra_env:
-        env.update(request.extra_env)
+        for key, value in request.extra_env.items():
+            if key in _RESERVED_EXTRA_ENV_KEYS:
+                logger.warning("Ignoring reserved spawn environment override for %s", key)
+                continue
+            env[key] = value
 
 
 @dataclass
@@ -588,6 +594,17 @@ async def _spawn_grok_terminal(request: SpawnRequest) -> SpawnResult:
     )
 
     gobby_session_id = spawn_context.session_id
+    sandbox_config = _sandbox_config_for_spawn(request.sandbox_config, spawn_context.env_vars)
+    sandbox_args: list[str] = []
+    sandbox_env: dict[str, str] = {}
+    if sandbox_config and sandbox_config.enabled:
+        resolver = GrokSandboxResolver()
+        paths = compute_sandbox_paths(
+            config=sandbox_config,
+            workspace_path=request.cwd,
+        )
+        sandbox_args, sandbox_env = resolver.resolve(sandbox_config, paths)
+
     cmd, _cmd_env = build_cli_command(
         cli="grok",
         prompt=request.prompt,
@@ -595,9 +612,12 @@ async def _spawn_grok_terminal(request: SpawnRequest) -> SpawnResult:
         working_directory=request.cwd,
         model=request.model,
         reasoning_effort=request.effective_reasoning_effort,
+        sandbox_args=sandbox_args or None,
     )
 
     env = spawn_context.env_vars.copy()
+    if sandbox_env:
+        env.update(sandbox_env)
     _apply_extra_env(env, request)
 
     if request.api_base:

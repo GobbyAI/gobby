@@ -469,7 +469,7 @@ cli/
 │   │   └── mcp_proxy/tools/*
 │   ├── agents/runner.py
 │   └── sessions/manager.py
-├── storage/database.py
+├── storage/hub/postgres.py
 │   └── storage/migrations.py
 ├── llm/service.py
 │   └── llm/{claude,gemini,codex,litellm}.py

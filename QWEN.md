@@ -199,7 +199,7 @@ Files in `src/gobby/install/shared/` (rules/, workflows/, agents/, pipelines/) a
 | Path | Purpose |
 |---|---|
 | `~/.gobby/bootstrap.yaml` | Pre-DB bootstrap settings (ports, database URL, bind_host) |
-| PostgreSQL database URL | Runtime hub database connection |
+| `bootstrap.yaml` `database_url` | Runtime hub database connection |
 | `~/.gobby/logs/` | Log files |
 | `.gobby/project.json` | Project metadata |
 | `.gobby/tasks.jsonl` | Task sync file (git-native) |

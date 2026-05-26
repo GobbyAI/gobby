@@ -154,4 +154,9 @@ def _run_git(workspace: Path, args: list[str]) -> subprocess.CompletedProcess[st
             check=False,
         )
     except (OSError, subprocess.SubprocessError) as exc:
-        return subprocess.CompletedProcess(args=["git", *args], returncode=1, stderr=str(exc))
+        return subprocess.CompletedProcess(
+            args=["git", *args],
+            returncode=1,
+            stdout="",
+            stderr=str(exc),
+        )

@@ -168,13 +168,17 @@ def _gcode_wrapper_script(runtime_home: Path, gcode_bin: Path) -> str:
 
 
 def _exclude_generated_wrapper_from_git(workspace: Path) -> None:
-    result = subprocess.run(  # nosec B603 B607 # fixed git argv on local workspace.
-        ["git", "rev-parse", "--git-path", "info/exclude"],
-        cwd=workspace,
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
+    try:
+        result = subprocess.run(  # nosec B603 B607 # fixed git argv on local workspace.
+            ["git", "rev-parse", "--git-path", "info/exclude"],
+            cwd=workspace,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        logger.debug("Skipping gcode wrapper Git exclude after Git failure", exc_info=True)
+        return
     if result.returncode != 0:
         logger.debug("Skipping gcode wrapper Git exclude outside repository: %s", workspace)
         return

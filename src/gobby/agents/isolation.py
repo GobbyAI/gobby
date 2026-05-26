@@ -287,7 +287,7 @@ class WorktreeIsolationHandler(IsolationHandler):
             project_id=config.project_id,
             branch_name=branch_name,
             worktree_path=worktree_path,
-            base_branch=config.base_branch,
+            base_branch=base_branch,
             task_id=config.task_id,
         )
 

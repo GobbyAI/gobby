@@ -136,7 +136,7 @@ class TmuxSpawner(TerminalSpawnerBase):
         if cli := _infer_auth_cli(command):
             for key, value in terminal_env_passthrough(cli).items():
                 spawn_env.setdefault(key, value)
-        if UV_CACHE_DIR not in spawn_env:
+        if not spawn_env.get(UV_CACHE_DIR):
             spawn_env[UV_CACHE_DIR] = ensure_agent_uv_cache_dir(
                 spawn_env.get(GOBBY_SESSION_ID) or "unknown-session"
             )

@@ -138,7 +138,7 @@ elif GOBBY_TEST_PROTECT=1 \
     GOBBY_LOGGING_MCP_SERVER="$PYTEST_ISOLATION_DIR/logs/mcp-server.log" \
     GOBBY_LOGGING_MCP_CLIENT="$PYTEST_ISOLATION_DIR/logs/mcp-client.log" \
     GOBBY_LOGGING_HOOK_MANAGER="$PYTEST_ISOLATION_DIR/logs/hook-manager.log" \
-    uv run pytest -v --tb=line -rFEw --cov=gobby --cov-report=term-missing 2>&1 | timestamp | tee "$REPORTS_DIR/pytest-$TIMESTAMP.txt"; then
+    uv run pytest -v --tb=line -rFEw --cov=gobby --cov-report=term-missing --cov-fail-under=80 2>&1 | timestamp | tee "$REPORTS_DIR/pytest-$TIMESTAMP.txt"; then
     echo "✓ Pytest passed"
 else
     echo "✗ Pytest failed"

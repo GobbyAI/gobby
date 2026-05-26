@@ -95,6 +95,12 @@ reviews:
         - Clarity and completeness
         - Code example correctness
 
+  # Ignore patterns - files to skip reviewing
+  path_filters:
+    - "!docs/plans/abandoned/**"  # Historical plans, not active guidelines
+    - "!docs/plans/completed/**"
+    - "!.gobby/plans/completed/**"
+
 # Security and code quality tools
 tools:
   ruff:

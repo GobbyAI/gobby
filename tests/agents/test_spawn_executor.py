@@ -12,6 +12,7 @@ from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.spawn_executor import (
     SpawnRequest,
     SpawnResult,
+    _apply_extra_env,
     execute_spawn,
 )
 
@@ -761,6 +762,43 @@ class TestExecuteSpawn:
         assert result.child_session_id == "gobby-sess-123"
 
     @pytest.mark.asyncio
+    async def test_grok_terminal_spawn_applies_sandbox_config(self):
+        """Grok spawn passes built-in sandbox profile flags."""
+        request = SpawnRequest(
+            prompt="Test",
+            cwd="/path",
+            provider="grok",
+            session_id="sess",
+            run_id="run",
+            parent_session_id="parent",
+            project_id="proj",
+            session_manager=MagicMock(),
+            sandbox_config=SandboxConfig(enabled=True, mode="restrictive"),
+        )
+        mock_prepare = MagicMock(
+            return_value=MagicMock(
+                session_id="gobby-sess-123",
+                agent_run_id="run-grok123",
+                env_vars={"GOBBY_SESSION_ID": "gobby-sess-123"},
+            )
+        )
+        mock_spawner = MagicMock()
+        mock_spawner.spawn.return_value = MagicMock(success=True, pid=12345, terminal_type="tmux")
+
+        with (
+            patch("gobby.agents.spawn_executor.prepare_terminal_spawn", mock_prepare),
+            patch("gobby.agents.spawn_executor.TmuxSpawner", return_value=mock_spawner),
+            patch("gobby.agents.spawn_executor.pre_approve_directory"),
+        ):
+            result = await execute_spawn(request)
+
+        command = mock_spawner.spawn.call_args.kwargs["command"]
+        assert "--sandbox" in command
+        assert "strict" in command
+        assert command.index("--sandbox") < command.index("Test")
+        assert result.success is True
+
+    @pytest.mark.asyncio
     async def test_agy_spawn_rejects_unavailable_provider(self):
         """AGY is visible but explicitly unavailable for agent spawning."""
         request = SpawnRequest(
@@ -1236,3 +1274,31 @@ class TestExecuteSpawnErrorPaths:
         assert result.tmux_session_name == "gobby-abc"
         assert result.success is True
         assert result.pid == 99
+
+
+class TestApplyExtraEnv:
+    def test_reserved_env_overrides_are_ignored(self) -> None:
+        request = SpawnRequest(
+            prompt="Test",
+            cwd="/path",
+            provider="codex",
+            session_id="sess",
+            run_id="run",
+            parent_session_id="parent",
+            project_id="proj",
+            extra_env={
+                "GOBBY_SESSION_ID": "attacker-session",
+                UV_CACHE_DIR: "/bad/cache",
+                "CUSTOM_FLAG": "1",
+            },
+        )
+        env = {
+            "GOBBY_SESSION_ID": "gobby-sess-123",
+            UV_CACHE_DIR: "/tmp/gobby/uv-cache/gobby-sess-123",
+        }
+
+        _apply_extra_env(env, request)
+
+        assert env["GOBBY_SESSION_ID"] == "gobby-sess-123"
+        assert env[UV_CACHE_DIR] == "/tmp/gobby/uv-cache/gobby-sess-123"
+        assert env["CUSTOM_FLAG"] == "1"

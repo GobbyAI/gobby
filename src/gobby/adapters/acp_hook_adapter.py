@@ -443,6 +443,10 @@ class ACPHookAdapter(BaseAdapter):
         # Get original hook type for response formatting
         hook_type = native_event.get("hook_type", "")
         if not hook_type:
+            hook_type = native_event.get("hook_event_name", "")
+        if not hook_type:
+            hook_type = native_event.get("hookEventName", "")
+        if not hook_type:
             hook_type = native_event.get("input_data", {}).get("hook_event_name", "")
         if not hook_type:
             hook_type = native_event.get("input_data", {}).get("hookEventName", "")

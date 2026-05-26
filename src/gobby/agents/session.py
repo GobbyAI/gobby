@@ -307,4 +307,11 @@ class ChildSessionManager:
         if key in self._lineage_warning_keys:
             return
         self._lineage_warning_keys.add(key)
-        self.logger.warning(message)
+        self.logger.warning(
+            message,
+            extra={
+                "lineage_kind": kind,
+                "session_id": session_id,
+                "related_id": related_id,
+            },
+        )
