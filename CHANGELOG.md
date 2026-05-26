@@ -10,14 +10,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
+## [0.4.9]
 
+0.4.9 focuses on PostgreSQL-only runtime hardening, build/review completion
+gates, smarter memory recall, agent/session reliability, and release validation
+cleanup.
+
+### Added
+
+- Add the backgrounded `memory-recall-helper` agent, parent turn sequencing,
+  stale-helper cancellation, quiet agent completion, inline memory delivery
+  deduplication, and delivery freshness guards for smarter turn-start memory
+  recall.
+- Add completion-readiness verification evidence, manual review evidence
+  recording, configurable validation detection, and robust validation wrapper
+  parsing for task and stage completion gates.
+- Add build-coordinator gating for `gobby build`, dispatch ticks across task
+  managers, review signoff relay, build history storage, and coordinator wakeups
+  after agent completions.
+- Add Codex hook `updatedInput` rewrites, provider-aware Gobby skill routing,
+  code-index skill updates, and validation-detection project settings UI.
+
+### Changed
+
+- Complete the PostgreSQL-only runtime cleanup by removing remaining SQLite
+  migration/storage paths, keyring bootstrap runtime access, and legacy local
+  runtime routes.
+- Split workflow observers, app config leaf models, task CRUD helpers, and task
+  completion gates into smaller focused modules.
 - Route generated isolated `gcode` runtimes through the daemon-only PostgreSQL
   DSN broker ref and raise the managed `gcode` pin to `0.8.4`, preventing
   short-lived `gcode` helpers from opening the OS Keychain directly.
 - Let bootstrap readers parse pre-database fields without resolving
   `database_url_ref`; daemon/runtime database startup paths opt into DSN
   resolution explicitly.
+
+### Fixed
+
+- Preserve project/session context through MCP calls, dispatch spawn, compact
+  self, generated validation commands, and inter-session message delivery.
+- Harden agent lifecycle handling: cancelled-session tracking, stale helper
+  cancellation, live no-run dispatch leases, reused isolation metadata,
+  sandbox loopback access, trusted Codex worktrees, tmux text injection, and
+  pane wake diagnostics.
+- Repair completion and review flow edge cases, including stalled planner
+  handoffs, nested expansion locks, project-scoped close refs, approved plan
+  expansion manifests, manual verification metadata, and admitted validation
+  failures.
+- Stabilize pre-push validation by fixing high test-quality assertion gaps,
+  local install/config/handoff workflow tests, local coverage reporting, and
+  generated report cleanup.
+- Quiet expected validation, CodeRabbit, tmux, KG extraction, websocket, and
+  terminal shutdown noise without hiding actionable failures.
+
+### Security
+
+- Exclude `fastapi` 0.136.3 after `pip-audit` flagged MAL-2026-4750; lock
+  FastAPI to 0.136.1 until a safe newer release is available.
+
+### Release
+
+- Bump the package and `src/gobby/__init__.py` version to 0.4.9 and regenerate
+  the workspace lockfile entry.
 
 ## [0.4.6]
 
