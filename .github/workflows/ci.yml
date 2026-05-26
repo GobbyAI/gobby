@@ -321,9 +321,11 @@ jobs:
           database_url="postgresql://${database_authority}/${GOBBY_POSTGRES_TEST_DB}"
           test -n "$pg_search_version"
           test -n "$pg_search_sha256"
-          echo "GOBBY_PG_SEARCH_VERSION=$pg_search_version" >> "$GITHUB_ENV"
-          echo "GOBBY_PG_SEARCH_SHA256=$pg_search_sha256" >> "$GITHUB_ENV"
-          echo "DATABASE_URL=$database_url" >> "$GITHUB_ENV"
+          {
+            echo "GOBBY_PG_SEARCH_VERSION=$pg_search_version"
+            echo "GOBBY_PG_SEARCH_SHA256=$pg_search_sha256"
+            echo "DATABASE_URL=$database_url"
+          } >> "$GITHUB_ENV"
 
       - name: Build Postgres test image
         run: |
@@ -409,7 +411,8 @@ jobs:
 
       - name: Smoke installed wheel UI
         run: |
-          wheel="$(ls dist/gobby-*.whl | head -n 1)"
+          wheel="$(find dist -maxdepth 1 -name 'gobby-*.whl' -print -quit)"
+          test -n "$wheel"
           uv sync --dev
           GOBBY_TEST_PROTECT=1 GOBBY_RUN_WHEEL_UI_SMOKE=1 GOBBY_WHEEL_PATH="$wheel" \
             uv run pytest tests/packaging/test_installed_wheel_ui_smoke.py -v
