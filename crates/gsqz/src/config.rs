@@ -17,6 +17,8 @@ pub const BUILTIN_EXCLUDED_COMMANDS: &[&str] = &[
     "gloc",
     "gsqz",
     "git",
+    "rg",
+    "sed",
 ];
 
 #[derive(Debug, Clone, Deserialize)]

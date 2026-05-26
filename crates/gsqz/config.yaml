@@ -125,7 +125,7 @@ pipelines:
           tail: 10
 
   grep:
-    match: '\b(?:grep|rg|ripgrep)\b'
+    match: '\b(?:grep|ripgrep)\b'
     steps:
       - group_lines:
           mode: by_file
@@ -220,6 +220,6 @@ fallback:
         head: 20
         tail: 20
 
-# These are additive. Gobby-owned CLIs and git are always excluded in code:
-# gobby, gobby-cli, gcode, ghook, gloc, gsqz, git.
+# These are additive. Gobby-owned CLIs, git, rg, and sed are always excluded in code:
+# gobby, gobby-cli, gcode, ghook, gloc, gsqz, git, rg, sed.
 excluded_commands: []

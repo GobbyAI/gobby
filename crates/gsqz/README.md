@@ -175,7 +175,7 @@ pipelines:
 
 ...and 10+ more. Run `gsqz --dump-config` to see the full list.
 
-Gobby-owned CLIs (`gobby`, `gobby-cli`, `gcode`, `ghook`, `gloc`, `gsqz`) and `git` are always surfaced raw with no compression header and no savings report.
+Gobby-owned CLIs (`gobby`, `gobby-cli`, `gcode`, `ghook`, `gloc`, `gsqz`), `git`, `rg`, and `sed` are always surfaced raw with no compression header and no savings report.
 
 ### Step reference
 

@@ -418,7 +418,7 @@ mod tests {
         let result = compressor.compress("cargo test && git status", &output);
         assert_eq!(result.strategy_name, "excluded");
 
-        let result = compressor.compress("rg git README.md", &output);
+        let result = compressor.compress("grep git README.md", &output);
         assert_ne!(result.strategy_name, "excluded");
     }
 
@@ -427,6 +427,25 @@ mod tests {
         let compressor = Compressor::new(&test_config());
         let result = compressor.compress("/Users/josh/.gobby/bin/gcode search", "ok");
         assert_eq!(result.strategy_name, "excluded");
+    }
+
+    #[test]
+    fn test_sed_and_rg_are_builtin_exclusions() {
+        let compressor = Compressor::new(&test_config());
+        let output = (0..120)
+            .map(|i| format!("src/file_{i}.rs:{i}:fn item_{i}() {{}}\n"))
+            .collect::<String>();
+
+        let rg_result = compressor.compress("rg \"fn item\" crates/gsqz/src", &output);
+        assert_eq!(rg_result.strategy_name, "excluded");
+        assert_eq!(rg_result.compressed, output);
+        assert!(rg_result.is_passthrough());
+
+        let sed_result =
+            compressor.compress("sed -n '1,220p' crates/gsqz/src/compressor.rs", &output);
+        assert_eq!(sed_result.strategy_name, "excluded");
+        assert_eq!(sed_result.compressed, output);
+        assert!(sed_result.is_passthrough());
     }
 
     #[test]
