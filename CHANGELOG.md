@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.4.9]
+## [0.4.9] - 2026-05-26
 
 0.4.9 focuses on PostgreSQL-only runtime hardening, build/review completion
 gates, smarter memory recall, agent/session reliability, and release validation
