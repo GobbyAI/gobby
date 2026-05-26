@@ -9,6 +9,7 @@ Active memory-lifecycle rules:
 - bootstrap-session-title-on-prompt: heuristic title bootstrap on first prompt
 - increment-parent-turn-seq: set_variable on turn_start before helper rules
 - cancel-stale-memory-recall-helpers: mcp_call on turn_start before delivery
+- spawn-memory-recall-helper: backgrounded helper spawn on turn_start
 - memory-recall-on-prompt: mcp_call on turn_start
 - memory-capture-nudge: inject_context on turn_start
 - require-memory-review-before-status: block on before_tool (close_task, submit_for_review, approve_review, reject_review)
@@ -36,6 +37,7 @@ MEMORY_RULES = {
     "bootstrap-session-title-on-prompt",
     "increment-parent-turn-seq",
     "cancel-stale-memory-recall-helpers",
+    "spawn-memory-recall-helper",
     "memory-recall-on-prompt",
     "memory-capture-nudge",
     "require-memory-review-before-status",
@@ -292,6 +294,66 @@ class TestCancelStaleMemoryRecallHelpers:
         assert "is_spawned_agent" in body.when
         assert "_platform_session_id" in body.when
         assert "memory_recall_helper_enabled" not in body.when
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# spawn-memory-recall-helper
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestSpawnMemoryRecallHelper:
+    """Spawn a backgrounded helper after fast memory recall."""
+
+    def test_event_priority_and_effect(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("spawn-memory-recall-helper")
+        assert row is not None
+        assert row.enabled is True
+        assert row.priority == 12
+
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.event.value == "turn_start"
+        assert len(body.effects) == 1
+
+        effect = body.effects[0]
+        assert effect.type == "mcp_call"
+        assert effect.server == "gobby-agents"
+        assert effect.tool == "spawn_agent"
+        assert effect.background is True
+
+        arguments = effect.arguments
+        assert arguments["agent"] == "memory-recall-helper"
+        assert arguments["parent_session_id"] == "{{ event.metadata.get('_platform_session_id') }}"
+        assert arguments["notify_parent_on_completion"] is False
+        assert "supersede" not in arguments
+
+    def test_has_when_condition(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("spawn-memory-recall-helper")
+        assert row is not None
+
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.when is not None
+        assert "len((event.data.get('prompt') or '').split()) >= 6" in body.when
+        assert "not variables.get('is_spawned_agent')" in body.when
+        assert "variables.get('memory_recall_helper_enabled', True)" in body.when
+        assert "event.metadata.get('_platform_session_id')" in body.when
+        assert "variables.get('parent_turn_seq') is not none" in body.when
+
+    def test_prompt_template_uses_parent_context(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("spawn-memory-recall-helper")
+        assert row is not None
+
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        prompt = body.effects[0].arguments["prompt"]
+        assert prompt
+        assert "{{ event.metadata.get('_platform_session_id') }}" in prompt
+        assert "{{ event.data.prompt }}" in prompt
+        assert "variables.parent_turn_seq" in prompt
+        assert "default(0)" in prompt
+        assert "| int" in prompt
+        assert "{{ event.session_id }}" not in prompt
 
 
 # ═══════════════════════════════════════════════════════════════════════
