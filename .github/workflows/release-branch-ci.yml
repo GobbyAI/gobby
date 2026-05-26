@@ -1,12 +1,7 @@
-name: CI
+name: Release Branch CI
 
 on:
   push:
-    branches:
-      - "0.4.9"
-    tags:
-      - "ci-*"
-      - "v*"
   workflow_dispatch:
 
 permissions:

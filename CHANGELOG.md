@@ -63,9 +63,8 @@ cleanup.
 - Run the installed-wheel UI smoke test against the same local PostgreSQL
   pg_search test container as Python CI and make setup wizard coverage less
   sensitive to CI timing jitter.
-- Let CI run on the `0.4.9` release branch and release verification tags so
-  the release gate can verify release SHAs without relying on manual workflow
-  dispatch.
+- Add a branch-local release CI workflow so the release SHA can be verified
+  without relying on manual workflow dispatch.
 - Refresh the bundled-content manifest so packaged workflows, rules, prompts,
   and skills match the 0.4.9 source tree.
 - Quiet expected validation, CodeRabbit, tmux, KG extraction, websocket, and
