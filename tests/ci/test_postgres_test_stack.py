@@ -210,6 +210,7 @@ def test_ci_build_job_runs_wheel_smoke_against_local_postgres(repo_root: Path) -
     )
     assert _has_run(
         runs,
+        "find dist -maxdepth 1 -name 'gobby-*.whl' -print -quit",
         "GOBBY_RUN_WHEEL_UI_SMOKE=1",
         'GOBBY_WHEEL_PATH="$wheel"',
         "uv run pytest tests/packaging/test_installed_wheel_ui_smoke.py -v",
