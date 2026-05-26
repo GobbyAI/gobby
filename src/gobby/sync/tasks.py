@@ -78,6 +78,15 @@ def _normalize_date(value: str | date | datetime | None) -> str | None:
     return value
 
 
+def _known_session_id(value: str | None, existing_session_ids: set[str]) -> str | None:
+    if value is None:
+        return None
+    if value in existing_session_ids:
+        return value
+    logger.warning("Dropping task sync session reference for unknown session %s", value)
+    return None
+
+
 class TaskSyncManager:
     """
     Manages synchronization of tasks to the filesystem (JSONL) for Git versioning.
@@ -144,10 +153,11 @@ class TaskSyncManager:
 
             # Build dependency map: task_id -> list[depends_on]
             deps_map: dict[str, list[str]] = {}
-            for task_id, depends_on in deps_rows:
+            for row in deps_rows:
+                task_id = row["task_id"]
                 if task_id not in deps_map:
                     deps_map[task_id] = []
-                deps_map[task_id].append(depends_on)
+                deps_map[task_id].append(row["depends_on"])
 
             # Sort tasks by ID for deterministic output
             tasks.sort(key=lambda t: t.id)
@@ -279,6 +289,9 @@ class TaskSyncManager:
                     occupied_seq_nums.setdefault(pid, set()).add(sn)
                     max_seq_tracker[pid] = max(max_seq_tracker.get(pid, 0), sn)
             batch_claimed: dict[str | None, set[int]] = {}
+            existing_session_ids = {
+                row["id"] for row in self.db.fetchall("SELECT id FROM sessions")
+            }
 
             with self.db.transaction() as conn:
                 conn.execute("SET CONSTRAINTS ALL DEFERRED")
@@ -368,6 +381,19 @@ class TaskSyncManager:
                             closed_in_session_id = state.get("closed_in_session_id")
                         if closed_in_session_id is None and existing_row:
                             closed_in_session_id = existing_row["closed_in_session_id"]
+
+                        claimed_by_session_id = _known_session_id(
+                            claimed_by_session_id,
+                            existing_session_ids,
+                        )
+                        created_in_session_id = _known_session_id(
+                            created_in_session_id,
+                            existing_session_ids,
+                        )
+                        closed_in_session_id = _known_session_id(
+                            closed_in_session_id,
+                            existing_session_ids,
+                        )
 
                         # Common synced field values
                         synced_values = {

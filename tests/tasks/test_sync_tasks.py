@@ -421,6 +421,7 @@ class TestImportEdgeCases:
         with open(sync_manager.export_path, "w") as f:
             f.write(json.dumps(tasks_data) + "\n")
 
+        _insert_session(sync_manager.db, "session-123", sample_project["id"])
         sync_manager.import_from_jsonl()
 
         task = task_manager.get_task("task-canonical-state")
