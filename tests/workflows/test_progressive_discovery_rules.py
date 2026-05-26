@@ -370,10 +370,10 @@ class TestRuleEngineIntegration:
     def engine(self, db) -> RuleEngine:
         _sync_bundled(db)
         # Disable all rules first, then enable only the progressive discovery rules
-        db.execute("UPDATE workflow_definitions SET enabled = 0")
+        db.execute("UPDATE workflow_definitions SET enabled = FALSE")
         for name in PROGRESSIVE_DISCOVERY_RULES:
             db.execute(
-                "UPDATE workflow_definitions SET enabled = 1 WHERE name = ?",
+                "UPDATE workflow_definitions SET enabled = TRUE WHERE name = ?",
                 (name,),
             )
         return RuleEngine(db)
