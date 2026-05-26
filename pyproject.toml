@@ -1,6 +1,6 @@
 [project]
 name = "gobby"
-version = "0.4.9"
+version = "0.5.0"
 description = "The bottleneck in AI coding isn't the model: It's the babysitting. Gobby is a local daemon that turns a task into a PR across Claude Code, Codex, Gemini, Qwen, and Droid. Stage dispatch, hook-time rules, progressive MCP proxy, and more. Gobby built Gobby."
 readme = "README.md"
 license = "Apache-2.0"
