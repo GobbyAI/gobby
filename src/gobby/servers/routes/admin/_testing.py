@@ -16,6 +16,7 @@ from gobby.storage.agents import (
     STATUS_SUCCESS,
     STATUS_TIMEOUT,
     TERMINAL_AGENT_RUN_STATUSES,
+    AgentRunStatus,
 )
 
 if TYPE_CHECKING:
@@ -107,7 +108,7 @@ def register_testing_routes(router: APIRouter, server: "HTTPServer") -> None:
         session_id: str
         parent_session_id: str
         agent_name: str | None = None
-        status: str = STATUS_RUNNING
+        status: AgentRunStatus = STATUS_RUNNING
 
     @router.post("/test/register-agent")
     async def register_test_agent(request: TestAgentRegisterRequest) -> dict[str, Any]:

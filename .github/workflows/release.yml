@@ -42,11 +42,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
 
       - name: Install uv
         uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a
         with:
-          enable-cache: true
+          enable-cache: false
 
       - name: Set up Python
         run: uv python install 3.13
@@ -93,6 +95,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
 
       - name: Download dist artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
@@ -101,10 +105,9 @@ jobs:
           path: dist/
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
-        with:
-          files: dist/*
-          generate_release_notes: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --generate-notes
 
   dispatch-homebrew-tap:
     name: Dispatch Homebrew tap update

@@ -23,6 +23,10 @@ MEMORY_HELPER_RULE_NAMES = (
 )
 
 
+def _postgres_placeholders(items: tuple[str, ...]) -> str:
+    return ", ".join(f"${index}" for index, _ in enumerate(items, start=1))
+
+
 def _install_memory_helper_content(postgres_db: Any) -> None:
     """Install the bundled rows this E2E needs before the isolated daemon starts."""
     from gobby.agents.sync import sync_bundled_agents
@@ -31,9 +35,7 @@ def _install_memory_helper_content(postgres_db: Any) -> None:
     rules_result = sync_bundled_rules(postgres_db)
     assert rules_result["errors"] == []
 
-    placeholders = ", ".join(
-        f"${index}" for index, _ in enumerate(MEMORY_HELPER_RULE_NAMES, start=1)
-    )
+    placeholders = _postgres_placeholders(MEMORY_HELPER_RULE_NAMES)
     postgres_db.execute(
         f"""
         UPDATE workflow_definitions
@@ -160,9 +162,7 @@ def _register_helper_run(
 
 
 def _assert_memory_helper_rule_order(postgres_db: Any) -> None:
-    placeholders = ", ".join(
-        f"${index}" for index, _ in enumerate(MEMORY_HELPER_RULE_NAMES, start=1)
-    )
+    placeholders = _postgres_placeholders(MEMORY_HELPER_RULE_NAMES)
     rows = postgres_db.fetchall(
         f"""
         SELECT name, priority, definition_json
