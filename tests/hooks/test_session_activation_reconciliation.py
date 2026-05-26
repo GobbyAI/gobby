@@ -717,4 +717,3 @@ def test_hook_manager_reconciles_before_before_agent_rules() -> None:
         manager._handle_internal(event)
 
     assert call_order == ["reconcile", "rules", "handler"]
-    assert len(call_order) == 3

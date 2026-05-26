@@ -540,7 +540,6 @@ class TestVoiceWarmup:
             "request_id": "req-1",
             "project_id": "project-123",
         }
-        assert chat_data["project_id"] == "project-123"
 
     @pytest.mark.asyncio
     async def test_voice_audio_without_project_id_preserves_chat_fallback(self) -> None:
@@ -606,7 +605,6 @@ class TestVoiceWarmup:
             "request_id": "req-timeout",
             "error": "Speech-to-text timed out",
         }
-        assert payloads[-1]["request_id"] == "req-timeout"
         mixin._handle_chat_message.assert_not_awaited()
 
     @pytest.mark.asyncio

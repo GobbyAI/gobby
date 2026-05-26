@@ -7,7 +7,16 @@ from typing import TYPE_CHECKING, Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES, TERMINAL_AGENT_RUN_STATUSES
+from gobby.storage.agents import (
+    ACTIVE_AGENT_RUN_STATUSES,
+    STATUS_CANCELLED,
+    STATUS_ERROR,
+    STATUS_PENDING,
+    STATUS_RUNNING,
+    STATUS_SUCCESS,
+    STATUS_TIMEOUT,
+    TERMINAL_AGENT_RUN_STATUSES,
+)
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -98,7 +107,7 @@ def register_testing_routes(router: APIRouter, server: "HTTPServer") -> None:
         session_id: str
         parent_session_id: str
         agent_name: str | None = None
-        status: str = "running"
+        status: str = STATUS_RUNNING
 
     @router.post("/test/register-agent")
     async def register_test_agent(request: TestAgentRegisterRequest) -> dict[str, Any]:
@@ -145,16 +154,16 @@ def register_testing_routes(router: APIRouter, server: "HTTPServer") -> None:
                 prompt="test agent",
                 agent_name=request.agent_name,
             )
-            if request.status != "pending":
+            if request.status != STATUS_PENDING:
                 arm.start(request.run_id)
             arm.update_child_session(request.run_id, request.session_id)
-            if request.status == "success":
+            if request.status == STATUS_SUCCESS:
                 arm.complete(request.run_id, result="test agent completed")
-            elif request.status == "cancelled":
+            elif request.status == STATUS_CANCELLED:
                 arm.cancel(request.run_id)
-            elif request.status == "error":
+            elif request.status == STATUS_ERROR:
                 arm.fail(request.run_id, error="test agent failed")
-            elif request.status == "timeout":
+            elif request.status == STATUS_TIMEOUT:
                 arm.timeout(request.run_id)
 
             run = arm.get(request.run_id)

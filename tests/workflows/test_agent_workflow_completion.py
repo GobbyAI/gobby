@@ -232,7 +232,6 @@ class TestAgentWorkflowCompletion:
         await engine.evaluate(_after_tool_event(), session_id="agent-session", variables=variables)
 
         assert variables["step_workflow_complete"] is True
-        assert "step_workflow_complete" in variables
         runner.complete_run.assert_not_called()
         runner.agent_lifecycle_monitor.terminalize_successful_run.assert_awaited_once_with(
             "run-123",
@@ -302,11 +301,7 @@ class TestAgentWorkflowCompletion:
 
         assert variables["step_workflow_complete"] is True
         runner.complete_run.assert_not_called()
-        assert runner.complete_run.call_count == 0
-        assert not runner.complete_run.called
         completion_registry.notify.assert_not_awaited()
-        assert completion_registry.notify.await_count == 0
-        assert completion_registry.notify.await_args is None
 
     @pytest.mark.asyncio
     async def test_failed_codex_mcp_envelope_keeps_review_step_open(self, db: HubDatabase) -> None:

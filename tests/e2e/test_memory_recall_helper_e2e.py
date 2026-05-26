@@ -31,7 +31,9 @@ def _install_memory_helper_content(postgres_db: Any) -> None:
     rules_result = sync_bundled_rules(postgres_db)
     assert rules_result["errors"] == []
 
-    placeholders = ", ".join("?" for _ in MEMORY_HELPER_RULE_NAMES)
+    placeholders = ", ".join(
+        f"${index}" for index, _ in enumerate(MEMORY_HELPER_RULE_NAMES, start=1)
+    )
     postgres_db.execute(
         f"""
         UPDATE workflow_definitions
@@ -158,7 +160,9 @@ def _register_helper_run(
 
 
 def _assert_memory_helper_rule_order(postgres_db: Any) -> None:
-    placeholders = ", ".join("?" for _ in MEMORY_HELPER_RULE_NAMES)
+    placeholders = ", ".join(
+        f"${index}" for index, _ in enumerate(MEMORY_HELPER_RULE_NAMES, start=1)
+    )
     rows = postgres_db.fetchall(
         f"""
         SELECT name, priority, definition_json
