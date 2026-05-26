@@ -3,6 +3,9 @@ name: CI
 on:
   push:
     branches: [main, "*.*.*"]
+    tags:
+      - "v*"
+      - "ci-*"
     paths-ignore:
       - '**.md'
       - 'docs/**'
