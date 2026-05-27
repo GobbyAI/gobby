@@ -752,6 +752,34 @@ async def test_execute_blocks_no_progress_worker_redispatch(db: HubDatabase) -> 
 
 
 @pytest.mark.asyncio
+async def test_execute_accepts_normalized_wait_for_agent_output(db: HubDatabase) -> None:
+    manager = _install_workflow(db, current_step="execute")
+    engine = RuleEngine(db)
+    variables: dict[str, Any] = {}
+
+    await engine.evaluate(
+        _after_mcp_tool(
+            "gobby-agents:wait_for_agent",
+            tool_output={
+                "success": True,
+                "completed": True,
+                "run_id": "run-worker",
+                "status": "success",
+                "result": "",
+            },
+        ),
+        session_id="agent-session",
+        variables=variables,
+    )
+
+    instance = manager.get_instance("agent-session", "merge-orchestrator")
+    assert instance is not None
+    assert instance.variables["merge_worker_completed"] is True
+    assert instance.variables["post_worker_merge_status_checked"] is False
+    assert instance.variables["last_worker_run_id"] == "run-worker"
+
+
+@pytest.mark.asyncio
 async def test_execute_allows_fresh_dispatch_with_historical_no_progress_state(
     db: HubDatabase,
 ) -> None:

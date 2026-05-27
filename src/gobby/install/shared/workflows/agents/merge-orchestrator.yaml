@@ -401,22 +401,22 @@ steps:
         value: false
       - server: gobby-agents
         tool: wait_for_agent
-        when: "tool_output.result.completed is True"
+        when: "tool_output.get('completed') is True or (tool_output.get('completed') is None and tool_output.get('result', {}).get('completed') is True)"
         action: set_variable
         variable: merge_worker_completed
         value: true
       - server: gobby-agents
         tool: wait_for_agent
-        when: "tool_output.result.completed is True"
+        when: "tool_output.get('completed') is True or (tool_output.get('completed') is None and tool_output.get('result', {}).get('completed') is True)"
         action: set_variable
         variable: post_worker_merge_status_checked
         value: false
       - server: gobby-agents
         tool: wait_for_agent
-        when: "tool_output.result.completed is True"
+        when: "tool_output.get('completed') is True or (tool_output.get('completed') is None and tool_output.get('result', {}).get('completed') is True)"
         action: set_variable
         variable: last_worker_run_id
-        value: "str(tool_output.result.run_id)"
+        value: "str(tool_output.get('run_id') or tool_output.get('result', {}).get('run_id'))"
       - server: gobby-merge
         tool: merge_status
         action: set_variable
