@@ -276,6 +276,26 @@ class TestDeleteWorktreeErrors:
         assert result.exit_code == 0
         assert "Failed to delete worktree" in result.output
 
+    @patch("gobby.cli.worktrees.get_daemon_url", return_value="http://localhost:9876")
+    @patch("gobby.cli.worktrees.resolve_worktree_id", return_value="wt-123")
+    @patch("gobby.cli.worktrees.get_worktree_manager")
+    @patch("httpx.post")
+    def test_delete_empty_result_payload_is_success(
+        self,
+        mock_post: MagicMock,
+        mock_mgr: MagicMock,
+        mock_resolve: MagicMock,
+        mock_url: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        resp = MagicMock()
+        resp.json.return_value = {"result": {}}
+        resp.raise_for_status.return_value = None
+        mock_post.return_value = resp
+        result = runner.invoke(worktrees, ["delete", "wt-123", "--yes"])
+        assert result.exit_code == 0
+        assert "Deleted worktree: wt-123" in result.output
+
     @patch("gobby.cli.worktrees.resolve_worktree_id", side_effect=click.ClickException("not found"))
     @patch("gobby.cli.worktrees.get_worktree_manager")
     def test_delete_resolve_error(

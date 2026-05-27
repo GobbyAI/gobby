@@ -61,6 +61,16 @@ def _call_worktree_tool(
     return result
 
 
+def _delete_tool_succeeded(result: dict[str, Any]) -> bool:
+    """Return whether a delete_worktree daemon response represents success."""
+    if result.get("success") is True:
+        return True
+    if result == {}:
+        return True
+    inner_result = result.get("result")
+    return inner_result == {} and "error" not in result
+
+
 @click.group()
 def worktrees() -> None:
     """Manage git worktrees for parallel development."""
@@ -224,7 +234,7 @@ def delete_worktree(worktree_ref: str, force: bool, yes: bool) -> None:
         click.echo(f"Error: {e}", err=True)
         return
 
-    if result.get("success"):
+    if _delete_tool_succeeded(result):
         click.echo(f"Deleted worktree: {worktree_id}")
     else:
         click.echo(f"Failed to delete worktree: {result.get('error')}", err=True)

@@ -167,7 +167,13 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
         if not deleted:
             return {"success": False, "error": "Failed to delete worktree record"}
 
-        return {"success": True}
+        artifact_refs_cleared = 0
+        if ctx.task_manager is not None:
+            artifact_refs_cleared = ctx.task_manager.artifacts.clear_worktree_references(
+                worktree_id
+            )
+
+        return {"success": True, "artifact_refs_cleared": artifact_refs_cleared}
 
     @registry.tool(
         name="mark_worktree_merged",

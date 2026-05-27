@@ -104,3 +104,55 @@ async def test_clean_deletes_stale_integration_branch(temp_db, tmp_path: Path) -
 
     assert stale_branch not in _branches(repo)
     assert result.branches_deleted == 1
+
+
+@pytest.mark.asyncio
+async def test_clean_clears_dangling_integration_workspace_id(
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    from gobby.build.branch_cleanup import integration_branch_name
+    from gobby.build.controls import build_clean_target
+    from gobby.storage.projects import LocalProjectManager
+    from gobby.storage.tasks import LocalTaskManager
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+
+    project = LocalProjectManager(temp_db).create("integration-clean", repo_path=str(repo))
+    task_manager = LocalTaskManager(temp_db)
+    epic = task_manager.create_task(
+        project_id=project.id,
+        title="recover missing integration metadata",
+        task_type="epic",
+        category="code",
+    )
+    stale_branch = integration_branch_name(epic)
+    stale_worktree_id = "wt-missing-row"
+    _git(repo, "branch", stale_branch)
+    task_manager.artifacts.set_artifacts_atomic(
+        epic.id,
+        integration_branch=stale_branch,
+        integration_workspace_id=stale_worktree_id,
+        target_branch="main",
+    )
+
+    result = await build_clean_target(
+        f"#{epic.seq_num}",
+        db=temp_db,
+        project_id=project.id,
+        yes=True,
+        force=True,
+    )
+    artifacts = task_manager.artifacts.get_artifacts(epic.id)
+
+    assert artifacts.integration_workspace_id is None
+    assert stale_branch not in _branches(repo)
+    assert result.branches_deleted == 1
+    assert any(
+        artifact.artifact_id == stale_worktree_id
+        and artifact.source == "task_artifacts_integration"
+        and artifact.deleted
+        for artifact in result.artifacts
+    )

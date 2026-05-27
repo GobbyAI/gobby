@@ -72,6 +72,9 @@ def defer_dirty_descendant_worktree_artifacts(
         ):
             artifacts_to_delete.append(artifact)
             continue
+        if not Path(artifact.path).exists():
+            artifacts_to_delete.append(artifact)
+            continue
         status = worktree_git.get_worktree_status(artifact.path)
         if status is not None and (
             status.has_uncommitted_changes
@@ -92,6 +95,8 @@ def collect_clean_artifacts(
 ) -> list[BuildArtifactSummary]:
     worktrees = LocalWorktreeManager(db)
     clones = LocalCloneManager(db)
+    project_path = get_project_path(db, project_id)
+    project_name = project_path.name
     summaries: list[BuildArtifactSummary] = []
     seen: set[tuple[str, str]] = set()
 
@@ -117,28 +122,40 @@ def collect_clean_artifacts(
         )
         if artifacts.integration_workspace_id:
             integration_worktree = worktrees.get(artifacts.integration_workspace_id)
-            if integration_worktree is not None:
-                _append_artifact(
-                    summaries,
-                    seen,
+            _append_artifact(
+                summaries,
+                seen,
+                family="worktree",
+                task_id=task.id,
+                path=integration_worktree.worktree_path
+                if integration_worktree is not None
+                else _expected_integration_path(
                     family="worktree",
-                    task_id=task.id,
-                    path=integration_worktree.worktree_path,
-                    artifact_id=integration_worktree.id,
-                    source="task_artifacts_integration",
-                )
+                    project_name=project_name,
+                    branch_name=artifacts.integration_branch,
+                    artifact_id=artifacts.integration_workspace_id,
+                ),
+                artifact_id=artifacts.integration_workspace_id,
+                source="task_artifacts_integration",
+            )
         if artifacts.integration_clone_id:
             integration_clone = clones.get(artifacts.integration_clone_id)
-            if integration_clone is not None:
-                _append_artifact(
-                    summaries,
-                    seen,
+            _append_artifact(
+                summaries,
+                seen,
+                family="clone",
+                task_id=task.id,
+                path=integration_clone.clone_path
+                if integration_clone is not None
+                else _expected_integration_path(
                     family="clone",
-                    task_id=task.id,
-                    path=integration_clone.clone_path,
-                    artifact_id=integration_clone.id,
-                    source="task_artifacts_integration",
-                )
+                    project_name=project_name,
+                    branch_name=artifacts.integration_branch,
+                    artifact_id=artifacts.integration_clone_id,
+                ),
+                artifact_id=artifacts.integration_clone_id,
+                source="task_artifacts_integration",
+            )
 
         worktree = worktrees.get_by_task(task.id)
         if worktree is not None:
@@ -252,6 +269,20 @@ def _append_artifact(
             exists=expanded_path.exists(),
         )
     )
+
+
+def _expected_integration_path(
+    *,
+    family: ArtifactFamily,
+    project_name: str,
+    branch_name: str | None,
+    artifact_id: str,
+) -> str:
+    if branch_name:
+        safe_branch = branch_name.replace("/", "-").replace("\\", "-")
+        root = "worktrees" if family == "worktree" else "clones"
+        return str(Path.home() / ".gobby" / root / project_name / safe_branch)
+    return f"<missing-{family}-{artifact_id}>"
 
 
 def _detect_orphan_artifacts(

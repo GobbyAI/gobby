@@ -261,6 +261,152 @@ def test_epic_integration_workspace_refreshes_from_advanced_target_branch(
     assert (integration_path / "after-child-merge.txt").read_text() == "landed on target\n"
 
 
+def test_epic_integration_workspace_adopts_pruned_metadata(
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    integration_path = tmp_path / "integration"
+    repo.mkdir()
+    _init_repo(repo)
+
+    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    task_manager = LocalTaskManager(temp_db)
+    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    integration_branch = _integration_branch(parent)
+    stale_worktree_id = "wt-pruned"
+
+    _git(repo, "worktree", "add", "-b", integration_branch, str(integration_path), "main")
+    task_manager.artifacts.set_artifacts_atomic(
+        parent.id,
+        integration_branch=integration_branch,
+        integration_workspace_id=stale_worktree_id,
+        target_branch="main",
+    )
+
+    ensure_epic_integration_workspaces(
+        task_manager=task_manager,
+        root_task=parent,
+        backend="worktree",
+        target_branch="main",
+        project_id=project.id,
+        services=None,
+    )
+
+    worktrees = LocalWorktreeManager(temp_db)
+    adopted = worktrees.get_by_branch(project.id, integration_branch)
+    parent_artifacts = task_manager.artifacts.get_artifacts(parent.id)
+
+    assert adopted is not None
+    assert adopted.id != stale_worktree_id
+    assert adopted.worktree_path == str(integration_path)
+    assert adopted.workspace_role == "integration"
+    assert parent_artifacts.integration_workspace_id == adopted.id
+
+
+def test_epic_integration_workspace_recreates_missing_path(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+
+    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    task_manager = LocalTaskManager(temp_db)
+    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    integration_branch = _integration_branch(parent)
+    missing_path = tmp_path / "missing-integration"
+
+    worktrees = LocalWorktreeManager(temp_db)
+    stale = worktrees.create(
+        project_id=project.id,
+        branch_name=integration_branch,
+        worktree_path=str(missing_path),
+        base_branch="main",
+        task_id=parent.id,
+        workspace_role="integration",
+    )
+    task_manager.artifacts.set_artifacts_atomic(
+        parent.id,
+        integration_branch=integration_branch,
+        integration_workspace_id=stale.id,
+        target_branch="main",
+    )
+
+    ensure_epic_integration_workspaces(
+        task_manager=task_manager,
+        root_task=parent,
+        backend="worktree",
+        target_branch="main",
+        project_id=project.id,
+        services=None,
+    )
+
+    recreated = worktrees.get_by_branch(project.id, integration_branch)
+    parent_artifacts = task_manager.artifacts.get_artifacts(parent.id)
+
+    assert worktrees.get(stale.id) is None
+    assert recreated is not None
+    assert recreated.id != stale.id
+    assert Path(recreated.worktree_path).is_dir()
+    assert parent_artifacts.integration_workspace_id == recreated.id
+
+
+def test_epic_integration_workspace_blocks_active_run_for_pruned_metadata(
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    from gobby.storage.agents import LocalAgentRunManager
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+
+    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    task_manager = LocalTaskManager(temp_db)
+    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    integration_branch = _integration_branch(parent)
+    stale_worktree_id = "wt-active"
+    temp_db.execute(
+        "INSERT INTO sessions "
+        "(id, external_id, machine_id, source, project_id, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, NOW(), NOW())",
+        ("parent-session", "ext-active", "machine-1", "codex", project.id),
+    )
+    run_manager = LocalAgentRunManager(temp_db)
+    run = run_manager.create(
+        parent_session_id="parent-session",
+        provider="codex",
+        prompt="review",
+        agent_name="holistic-reviewer",
+        task_id=parent.id,
+        run_id="run-active-integration",
+    )
+    run_manager.update_runtime(run.id, worktree_id=stale_worktree_id)
+    task_manager.artifacts.set_artifacts_atomic(
+        parent.id,
+        integration_branch=integration_branch,
+        integration_workspace_id=stale_worktree_id,
+        target_branch="main",
+    )
+
+    with pytest.raises(BuildWorkspaceError, match="active run run-active-integration"):
+        ensure_epic_integration_workspaces(
+            task_manager=task_manager,
+            root_task=parent,
+            backend="worktree",
+            target_branch="main",
+            project_id=project.id,
+            services=None,
+        )
+
+    parent_artifacts = task_manager.artifacts.get_artifacts(parent.id)
+    assert parent_artifacts.integration_workspace_id == stale_worktree_id
+
+
 def test_epic_integration_workspace_merges_closed_descendant_commits(
     temp_db,
     tmp_path: Path,
@@ -519,7 +665,7 @@ def test_epic_integration_workspace_refresh_aborts_timeout_merge(
             return completed(args)
         raise AssertionError(f"unexpected git args: {args}")
 
-    monkeypatch.setattr("gobby.build.workspaces._git", fake_git)
+    monkeypatch.setattr("gobby.build.workspace_git._git", fake_git)
 
     with pytest.raises(BuildWorkspaceError, match="git merge timed out"):
         _refresh_clean_git_dir(workspace, branch_name, base_ref)
