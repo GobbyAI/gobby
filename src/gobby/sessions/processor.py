@@ -312,8 +312,12 @@ class SessionMessageProcessor:
             event_at = canonicalize_event_timestamp(
                 msg.timestamp if isinstance(msg.timestamp, datetime) else datetime.now(UTC)
             )
-            message_id = msg.message_id if isinstance(msg.message_id, str) and msg.message_id else None
-            metadata = {"content_type": msg.content_type} if isinstance(msg.content_type, str) else None
+            message_id = (
+                msg.message_id if isinstance(msg.message_id, str) and msg.message_id else None
+            )
+            metadata = (
+                {"content_type": msg.content_type} if isinstance(msg.content_type, str) else None
+            )
             usage = msg.usage
             event = TokenEvent(
                 session_id=session_id,

@@ -582,6 +582,86 @@ async def test_verify_in_worktree_preserves_env_wrapper_env(tmp_path, monkeypatc
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "command,expected_prefix",
+    [
+        (
+            "CARGO_HOME=/tmp/gobby-cargo cargo test -p gobby-core --features qdrant qdrant::tests",
+            ("cargo", "test", "-p", "gobby-core"),
+        ),
+        ("go test ./pkg/...", ("go", "test", "./pkg/...")),
+        ("npm run lint", ("npm", "run", "lint")),
+        ("dotnet format --verify-no-changes", ("dotnet", "format", "--verify-no-changes")),
+    ],
+)
+async def test_verify_in_worktree_allows_recognized_validation_commands(
+    tmp_path,
+    monkeypatch,
+    command: str,
+    expected_prefix: tuple[str, ...],
+) -> None:
+    wt = _make_worktree(path=str(tmp_path))
+    worktree_manager = MagicMock()
+    worktree_manager.get.return_value = wt
+    captured: dict[str, object] = {}
+
+    class CompletedProcess:
+        returncode = 0
+
+        async def communicate(self):
+            return b"test ok\n", b""
+
+    async def fake_subprocess(*args, **kwargs):
+        captured["args"] = args
+        captured["env"] = kwargs["env"]
+        return CompletedProcess()
+
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.merge_landscape.asyncio.create_subprocess_exec",
+        fake_subprocess,
+    )
+
+    registry = _make_registry(worktree_manager=worktree_manager, git_manager=MagicMock())
+    result = await registry.call(
+        "verify_in_worktree",
+        {"worktree_id": "wt-1", "command": command},
+    )
+
+    assert result["success"] is True
+    assert captured["args"][: len(expected_prefix)] == expected_prefix
+    if command.startswith("CARGO_HOME="):
+        assert captured["env"]["CARGO_HOME"] == "/tmp/gobby-cargo"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cargo test --all-features",
+        "go test ./...",
+        "pytest",
+        "npm run test",
+    ],
+)
+async def test_verify_in_worktree_rejects_unscoped_test_commands(
+    tmp_path,
+    command: str,
+) -> None:
+    wt = _make_worktree(path=str(tmp_path))
+    worktree_manager = MagicMock()
+    worktree_manager.get.return_value = wt
+
+    registry = _make_registry(worktree_manager=worktree_manager, git_manager=MagicMock())
+    result = await registry.call(
+        "verify_in_worktree",
+        {"worktree_id": "wt-1", "command": command},
+    )
+
+    assert result["success"] is False
+    assert result["error"] == "test verification must target a package, path, file, or filter"
+
+
+@pytest.mark.asyncio
 async def test_verify_in_worktree_rejects_env_wrapper_without_assignments(tmp_path) -> None:
     wt = _make_worktree(path=str(tmp_path))
     worktree_manager = MagicMock()
@@ -673,7 +753,7 @@ async def test_verify_in_worktree_rejects_unapproved_command(tmp_path) -> None:
     )
 
     assert result["success"] is False
-    assert "not permitted" in result["error"]
+    assert "not a recognized validation command" in result["error"]
 
 
 @pytest.mark.asyncio

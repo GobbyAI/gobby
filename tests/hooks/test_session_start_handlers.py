@@ -246,9 +246,7 @@ class TestSessionStartPreCreatedSession:
         # Should still allow despite error
         assert response.decision == "allow"
 
-    def test_existing_web_chat_session_found_by_external_id(
-        self, mock_dependencies: dict
-    ) -> None:
+    def test_existing_web_chat_session_found_by_external_id(self, mock_dependencies: dict) -> None:
         """Codex thread-start events should reuse the durable web-chat row."""
         mock_session = MagicMock()
         mock_session.id = "sess-web-123"

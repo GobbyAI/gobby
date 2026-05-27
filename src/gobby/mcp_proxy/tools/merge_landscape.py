@@ -19,6 +19,11 @@ import shlex
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
+from gobby.config.validation_detection import (
+    ValidationCommandMatch,
+    classify_validation_command,
+    resolve_validation_detection_config,
+)
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 
 if TYPE_CHECKING:
@@ -26,15 +31,37 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_ALLOWED_VERIFICATION_COMMANDS = {
-    "git",
-    "npm",
-    "pnpm",
-    "uv",
-    "yarn",
-}
 _ALLOWED_GIT_VERIFICATION_SUBCOMMANDS = {"diff", "ls-files", "rev-parse", "status"}
 _BLOCKED_GIT_DIFF_FLAGS = {"--ext-diff", "--no-index"}
+_TEST_SCOPE_FLAGS = {
+    "--filter",
+    "--grep",
+    "--include",
+    "--package",
+    "--run",
+    "--test",
+    "--test-name-pattern",
+    "--test-path-pattern",
+    "--testNamePattern",
+    "--testPathPattern",
+    "-k",
+    "-m",
+    "-p",
+    "-t",
+}
+_UNSCOPED_TEST_TARGETS = {".", "./", "...", "./...", "all"}
+_TEST_COMMAND_WORDS = {
+    "exec",
+    "jest",
+    "nextest",
+    "phpunit",
+    "pytest",
+    "rspec",
+    "run",
+    "test",
+    "tests",
+    "vitest",
+}
 _SAFE_ENV_KEYS = {"HOME", "LANG", "LC_ALL", "PATH", "TERM", "TMPDIR"}
 _BLOCKED_VERIFICATION_ENV_KEYS = {
     "BASH_ENV",
@@ -195,25 +222,59 @@ def _reject_git_verification_args(args: list[str]) -> str | None:
     return None
 
 
-def _reject_verification_command(argv: list[str]) -> str | None:
-    executable = Path(argv[0]).name
-    if executable not in _ALLOWED_VERIFICATION_COMMANDS:
-        return f"verification command '{executable}' is not permitted"
+def _looks_like_test_execution(argv: tuple[str, ...]) -> bool:
+    for token in argv:
+        word = Path(token).name
+        if word in _TEST_COMMAND_WORDS:
+            return True
+        if word.endswith("test") or word.endswith("tests"):
+            return True
+    return False
 
+
+def _has_test_scope(argv: tuple[str, ...]) -> bool:
+    for index, token in enumerate(argv):
+        if token in _TEST_SCOPE_FLAGS:
+            return index + 1 < len(argv) and argv[index + 1] not in _UNSCOPED_TEST_TARGETS
+        for flag in _TEST_SCOPE_FLAGS:
+            if token.startswith(f"{flag}="):
+                value = token.split("=", 1)[1]
+                return bool(value and value not in _UNSCOPED_TEST_TARGETS)
+
+    for token in argv[1:]:
+        if token == "--":
+            continue
+        if token in _UNSCOPED_TEST_TARGETS:
+            return False
+        if token.startswith("-"):
+            continue
+        if token in _TEST_COMMAND_WORDS:
+            continue
+        return True
+    return False
+
+
+def _reject_unscoped_test_command(match: ValidationCommandMatch) -> str | None:
+    if "test" not in match.categories:
+        return None
+    if not _looks_like_test_execution(match.normalized_argv):
+        return None
+    if _has_test_scope(match.normalized_argv):
+        return None
+    return "test verification must target a package, path, file, or filter"
+
+
+def _reject_verification_command(argv: list[str], project_path: str) -> str | None:
+    executable = Path(argv[0]).name
     if executable == "git":
         return _reject_git_verification_args(argv[1:])
 
-    if executable in {"npm", "pnpm", "yarn"}:
-        if len(argv) < 3 or argv[1] != "run":
-            return f"{executable} verification must use 'run <script>'"
-        return None
-
-    if executable == "uv":
-        if len(argv) >= 3 and argv[1] == "run" and argv[2] in {"mypy", "pytest", "ruff"}:
-            return None
-        return "uv verification must use 'run pytest', 'run ruff', or 'run mypy'"
-
-    return f"verification command '{executable}' is not permitted"
+    config = resolve_validation_detection_config(project_path=project_path)
+    command = shlex.join(argv)
+    match = classify_validation_command(command, config)
+    if match is None:
+        return f"verification command {command!r} is not a recognized validation command"
+    return _reject_unscoped_test_command(match)
 
 
 def register_merge_landscape_tools(
@@ -572,13 +633,13 @@ def register_merge_landscape_tools(
         argv, command_env, rejection = _normalize_verification_command(argv)
         if rejection:
             return {"success": False, "error": rejection}
-        rejection = _reject_verification_command(argv)
-        if rejection:
-            return {"success": False, "error": rejection}
 
         wt_path, _, err = _resolve_worktree_path(worktree_manager, worktree_id)
         if err or not wt_path:
             return {"success": False, "error": err}
+        rejection = _reject_verification_command(argv, wt_path)
+        if rejection:
+            return {"success": False, "error": rejection}
         safe_env = _verification_environment()
         safe_env.update(command_env)
 
