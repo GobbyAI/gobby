@@ -11,11 +11,17 @@ homepage = "https://gobby.ai"
 keywords = ["gobby", "cli"]
 categories = ["development-tools"]
 
+[features]
+default = []
+indexing = ["dep:ignore", "dep:sha2"]
+
 [dependencies]
 anyhow = "1"
 dirs = "6"
+ignore = { version = "0.4", optional = true }
 serde_json = "1"
 serde_yaml = "0.9"
+sha2 = { version = "0.10", optional = true }
 
 [dev-dependencies]
 tempfile = "3"
