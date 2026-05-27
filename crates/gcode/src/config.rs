@@ -13,6 +13,7 @@ use postgres::Client;
 use crate::db;
 use crate::git::{self, WorktreeKind};
 use crate::secrets;
+use crate::utils::short_id;
 
 /// FalkorDB connection configuration.
 #[derive(Debug, Clone)]
@@ -356,10 +357,6 @@ fn absolute_fallback(path: &Path) -> PathBuf {
             .unwrap_or_else(|_| PathBuf::from("."))
             .join(path)
     }
-}
-
-fn short_id(id: &str) -> &str {
-    id.get(..8).unwrap_or(id)
 }
 
 // ── Config store helpers ─────────────────────────────────────────────

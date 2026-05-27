@@ -14,6 +14,7 @@ mod schema;
 mod search;
 mod secrets;
 mod skill;
+mod utils;
 
 use clap::{Parser, Subcommand};
 

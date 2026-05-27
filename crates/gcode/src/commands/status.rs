@@ -7,6 +7,7 @@ use crate::db;
 use crate::index::indexer;
 use crate::models::IndexedProject;
 use crate::output::{self, Format};
+use crate::utils::short_id;
 
 /// Format a `last_indexed_at` value for display.
 /// Handles both epoch seconds ("1774970556") and ISO 8601 ("2026-03-29T18:52:25.750230+00:00").
@@ -301,10 +302,6 @@ fn stale_projects(projects: &[IndexedProject]) -> Vec<StaleProject<'_>> {
     }
 
     stale
-}
-
-fn short_id(id: &str) -> &str {
-    id.get(..8).unwrap_or(id)
 }
 
 /// Remove stale project entries from the code index.

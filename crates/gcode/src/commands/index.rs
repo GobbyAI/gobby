@@ -1,6 +1,7 @@
 use crate::config::Context;
 use crate::db;
 use crate::index::indexer;
+use crate::utils::short_id;
 
 pub fn run(
     ctx: &Context,
@@ -81,8 +82,4 @@ pub fn run(
     }
 
     Ok(())
-}
-
-fn short_id(id: &str) -> &str {
-    id.get(..8).unwrap_or(id)
 }
