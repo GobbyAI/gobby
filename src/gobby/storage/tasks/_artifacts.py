@@ -245,31 +245,38 @@ class TaskArtifactManager:
 
     def clear_worktree_references(self, worktree_id: str) -> int:
         """Clear task artifact pointers that reference a deleted worktree id."""
-        rows = self.db.fetchall(
-            """
-            SELECT task_id, worktree_id, integration_workspace_id
-              FROM task_artifacts
-             WHERE worktree_id = ? OR integration_workspace_id = ?
-            """,
-            (worktree_id, worktree_id),
-        )
-        cleared = 0
-        for row in rows:
-            fields: dict[str, str | int | None] = {}
-            if row["worktree_id"] == worktree_id:
-                fields.update(
-                    {
-                        "worktree_path": None,
-                        "worktree_id": None,
-                        "base_commit_sha": None,
-                    }
-                )
-            if row["integration_workspace_id"] == worktree_id:
-                fields["integration_workspace_id"] = None
-            if fields:
-                self.set_artifacts_atomic(row["task_id"], **fields)
-                cleared += 1
-        return cleared
+        with self.db.transaction():
+            rows = self.db.fetchall(
+                """
+                SELECT task_id, worktree_id, integration_workspace_id
+                  FROM task_artifacts
+                 WHERE worktree_id = ? OR integration_workspace_id = ?
+                 ORDER BY task_id
+                """,
+                (worktree_id, worktree_id),
+            )
+            cleared = 0
+            for row in rows:
+                fields: dict[str, str | int | None] = {}
+                if row["worktree_id"] == worktree_id:
+                    fields.update(
+                        {
+                            "worktree_path": None,
+                            "worktree_id": None,
+                            "base_commit_sha": None,
+                        }
+                    )
+                if row["integration_workspace_id"] == worktree_id:
+                    fields.update(
+                        {
+                            "integration_branch": None,
+                            "integration_workspace_id": None,
+                        }
+                    )
+                if fields:
+                    self.set_artifacts_atomic(row["task_id"], **fields)
+                    cleared += 1
+            return cleared
 
     def increment_expansion_attempts(self, task_id: str) -> int:
         current = self.get_artifacts(task_id)

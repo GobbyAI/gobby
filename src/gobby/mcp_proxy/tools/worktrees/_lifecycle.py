@@ -169,9 +169,20 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
         artifact_refs_cleared = 0
         if ctx.task_manager is not None:
-            artifact_refs_cleared = ctx.task_manager.artifacts.clear_worktree_references(
-                worktree_id
-            )
+            try:
+                artifact_refs_cleared = ctx.task_manager.artifacts.clear_worktree_references(
+                    worktree_id
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to clear task artifact worktree references after deletion",
+                    extra={
+                        "operation": "delete_worktree",
+                        "worktree_id": worktree_id,
+                    },
+                    exc_info=True,
+                )
+                artifact_refs_cleared = 0
 
         return {"success": True, "artifact_refs_cleared": artifact_refs_cleared}
 

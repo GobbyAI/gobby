@@ -28,6 +28,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Classify changed paths
         id: classify
@@ -508,6 +509,8 @@ jobs:
     steps:
       - name: Check Out Repo
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Validate SOURCE_COMMIT
         run: |
@@ -526,14 +529,22 @@ jobs:
           tmp_dir="$(mktemp -d)"
           trap 'rm -rf "$tmp_dir"' EXIT
 
-          for file in inbox-envelope.v1.schema.json diagnose-output.v1.schema.json diagnose-output.v2.schema.json; do
+          shopt -s nullglob
+          schema_files=(schemas/*.schema.json)
+          if [[ "${#schema_files[@]}" -eq 0 ]]; then
+            echo "No schema files found under schemas/*.schema.json"
+            exit 1
+          fi
+
+          for local_file in "${schema_files[@]}"; do
+            file="$(basename "$local_file")"
             url="${base_url}/${file}"
             if ! curl_error="$(curl -fSL --show-error "$url" -o "${tmp_dir}/${file}" 2>&1)"; then
               echo "Failed to fetch ${url}: ${curl_error}"
               exit 1
             fi
 
-            local_sha="$(sha256sum "schemas/${file}" | awk '{print $1}')"
+            local_sha="$(sha256sum "$local_file" | awk '{print $1}')"
             remote_sha="$(sha256sum "${tmp_dir}/${file}" | awk '{print $1}')"
 
             if [[ "$local_sha" != "$remote_sha" ]]; then

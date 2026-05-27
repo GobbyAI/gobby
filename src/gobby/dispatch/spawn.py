@@ -39,7 +39,9 @@ _PRE_DEVELOPMENT_ISOLATION_STAGES = {
     "expansion",
 }
 _DEVELOPMENT_FORWARD_ISOLATION_STAGES = {"development", "holistic_qa", "pr", "merge"}
-_MAIN_CONTEXT_AGENT_SLUGS = {"planner", "plan-adversary", "plan-adversary-taskless"}
+# These agents coordinate main repository workflow state across stages, so they
+# force "none" isolation and override stage/task isolation rules.
+_MAIN_CONTEXT_AGENT_SLUGS = frozenset({"planner", "plan-adversary", "plan-adversary-taskless"})
 
 SpawnIsolation = Literal["none", "worktree", "clone"]
 

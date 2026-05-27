@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
+import psycopg
+
 from gobby.storage.task_affected_files import TaskAffectedFileManager
+from gobby.storage.tasks import TaskNotFoundError
 from gobby.tasks.commits import extract_mentioned_files
 from gobby.workflows.enforcement.blocking import is_source_code_path
 
@@ -19,6 +23,11 @@ PYTHON_SKILL = "python"
 RUST_SKILL = "rust"
 DEVELOPMENT_DISCIPLINE_SKILL = "development-discipline"
 TDD_SKILL = "test-driven-development"
+TDD_REQUIRED_LABEL = "tdd:required"
+TDD_EVIDENCE_PHRASE = "tdd evidence"
+TDD_CYCLE_KEYWORDS = frozenset({"red", "green", "refactor"})
+TDD_FAILING_TEST_PHRASE = "failing test"
+TDD_BEFORE_IMPLEMENTATION_PHRASE = "before implementation"
 
 SOURCE_CODE_CATEGORIES = {"code", "refactor", "test"}
 AGGREGATE_KEYS = (
@@ -124,7 +133,7 @@ def _empty_state() -> dict[str, list[str]]:
 def _load_task(task_manager: LocalTaskManager, task_id: str) -> Any | None:
     try:
         return task_manager.get_task(task_id)
-    except Exception as e:
+    except (TaskNotFoundError, ValueError, psycopg.Error) as e:
         logger.debug("Failed to load claimed task %s for skill metadata: %s", task_id, e)
         return None
 
@@ -135,7 +144,7 @@ def _task_files(task: Any, task_manager: LocalTaskManager) -> list[str]:
     if task_id:
         try:
             affected_files = TaskAffectedFileManager(task_manager.db).get_files(task_id)
-        except Exception as e:
+        except psycopg.Error as e:
             logger.debug("Failed to load affected files for task %s: %s", task_id, e)
         else:
             for row in affected_files:
@@ -148,7 +157,17 @@ def _task_files(task: Any, task_manager: LocalTaskManager) -> list[str]:
         "description": _string_field(task, "description"),
         "validation_criteria": _string_field(task, "validation_criteria"),
     }
-    for file_path in extract_mentioned_files(payload):
+    try:
+        mentioned_files = extract_mentioned_files(payload)
+    except Exception as e:
+        logger.debug(
+            "Failed to extract mentioned files for task %s from payload %s: %s",
+            task_id,
+            payload,
+            e,
+        )
+        mentioned_files = []
+    for file_path in mentioned_files:
         _append_unique_path(files, file_path)
     return files
 
@@ -179,7 +198,7 @@ def _task_requires_tdd(
 ) -> bool:
     if enforce_tdd:
         return True
-    if "tdd:required" in labels:
+    if TDD_REQUIRED_LABEL in labels:
         return True
     if TDD_SKILL in additional_skills:
         return True
@@ -190,11 +209,11 @@ def _criteria_require_tdd(validation_criteria: str | None) -> bool:
     if not validation_criteria:
         return False
     lowered = validation_criteria.lower()
-    if "test-driven-development" in lowered or "tdd evidence" in lowered:
+    if TDD_SKILL in lowered or TDD_EVIDENCE_PHRASE in lowered:
         return True
-    if "red" in lowered and "green" in lowered and "refactor" in lowered:
+    if all(_contains_word(lowered, keyword) for keyword in TDD_CYCLE_KEYWORDS):
         return True
-    return "failing test" in lowered and "before implementation" in lowered
+    return TDD_FAILING_TEST_PHRASE in lowered and TDD_BEFORE_IMPLEMENTATION_PHRASE in lowered
 
 
 def _string_list(value: Any) -> list[str]:
@@ -227,25 +246,41 @@ def _extend_unique(items: list[str], values: Iterable[str]) -> None:
 
 
 def _append_unique_path(paths: list[str], path: str) -> None:
+    """Append path, deduping only exact normalized paths and bare filename aliases.
+
+    Multi-segment paths are treated as distinct even when one is a suffix of
+    another, so ``src/foo.py`` and ``tests/src/foo.py`` remain separate.
+    """
+    path_components = _path_components(path)
+    if not path_components:
+        return
+
     for index, existing in enumerate(paths):
-        if existing == path:
+        existing_components = _path_components(existing)
+        if existing_components == path_components:
             return
-        if _same_path_suffix(existing, path):
-            if len(path) > len(existing):
+        if _same_basename(existing_components, path_components):
+            if len(existing_components) == 1 and len(path_components) > 1:
                 paths[index] = path
-            return
+            if len(path_components) == 1:
+                return
+            if len(existing_components) == 1:
+                return
+
     paths.append(path)
 
 
-def _same_path_suffix(left: str, right: str) -> bool:
-    left_key = _path_suffix_key(left)
-    right_key = _path_suffix_key(right)
-    return (
-        left_key == right_key
-        or left_key.endswith(f"/{right_key}")
-        or right_key.endswith(f"/{left_key}")
-    )
+def _contains_word(value: str, word: str) -> bool:
+    return re.search(rf"\b{re.escape(word)}\b", value) is not None
 
 
-def _path_suffix_key(value: str) -> str:
-    return value.replace("\\", "/").lstrip("./").lstrip("/")
+def _same_basename(left: tuple[str, ...], right: tuple[str, ...]) -> bool:
+    return bool(left and right and left[-1] == right[-1])
+
+
+def _path_components(value: str) -> tuple[str, ...]:
+    normalized = value.replace("\\", "/").strip()
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    normalized = normalized.lstrip("/")
+    return tuple(part for part in normalized.split("/") if part and part != ".")
