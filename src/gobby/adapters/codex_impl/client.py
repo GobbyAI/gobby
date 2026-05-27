@@ -97,6 +97,8 @@ class CodexAppServerClient:
         # Thread tracking for session management
         self._threads: dict[str, CodexThread] = {}
         self._thread_cwds: dict[str, str] = {}
+        self._thread_terminal_contexts: dict[str, dict[str, Any]] = {}
+        self._pending_thread_terminal_contexts: list[dict[str, Any]] = []
         self._pending_turn_prompts_by_thread: dict[str, str] = {}
         self._turn_prompts: dict[str, str] = {}
 
@@ -271,6 +273,7 @@ class CodexAppServerClient:
         model: str | None = None,
         approval_policy: str | None = None,
         sandbox: str | None = None,
+        terminal_context: dict[str, Any] | None = None,
     ) -> CodexThread:
         """
         Start a new Codex conversation thread.
@@ -298,7 +301,22 @@ class CodexAppServerClient:
                 "dangerFullAccess": "danger-full-access",
             }.get(sandbox, sandbox)
 
-        result = await self._send_request("thread/start", params)
+        pending_context: dict[str, Any] | None = None
+        if terminal_context:
+            pending_context = {
+                "cwd": cwd,
+                "terminal_context": dict(terminal_context),
+            }
+            self._pending_thread_terminal_contexts.append(pending_context)
+
+        try:
+            result = await self._send_request("thread/start", params)
+        except Exception:
+            if pending_context in self._pending_thread_terminal_contexts:
+                self._pending_thread_terminal_contexts.remove(pending_context)
+            raise
+        if pending_context in self._pending_thread_terminal_contexts:
+            self._pending_thread_terminal_contexts.remove(pending_context)
 
         thread_data = result.get("thread", {})
         thread = CodexThread(
@@ -313,6 +331,8 @@ class CodexAppServerClient:
         result_cwd = result.get("cwd") or thread_data.get("cwd") or cwd
         if isinstance(result_cwd, str) and result_cwd:
             self._thread_cwds[thread.id] = result_cwd
+        if terminal_context and thread.id:
+            self._thread_terminal_contexts[thread.id] = dict(terminal_context)
         logger.debug(f"Started Codex thread: {thread.id}")
         return thread
 
@@ -509,6 +529,8 @@ class CodexAppServerClient:
             thread_id = thread.get("id") if isinstance(thread, dict) else None
 
         cwd = params.get("cwd")
+        if not isinstance(cwd, str) and isinstance(thread, dict):
+            cwd = thread.get("cwd")
         if isinstance(thread_id, str) and thread_id:
             if isinstance(cwd, str) and cwd:
                 self._thread_cwds[thread_id] = cwd
@@ -517,6 +539,22 @@ class CodexAppServerClient:
                 if cached_cwd:
                     enriched = dict(params)
                     enriched["cwd"] = cached_cwd
+                    params = enriched
+
+        if method == "thread/started" and isinstance(thread_id, str) and thread_id:
+            terminal_context = self._thread_terminal_contexts.get(thread_id)
+            if terminal_context is None:
+                for idx, pending in enumerate(self._pending_thread_terminal_contexts):
+                    pending_cwd = pending.get("cwd")
+                    if not pending_cwd or not cwd or pending_cwd == cwd:
+                        terminal_context = pending.get("terminal_context")
+                        self._pending_thread_terminal_contexts.pop(idx)
+                        break
+            if isinstance(terminal_context, dict) and terminal_context:
+                self._thread_terminal_contexts[thread_id] = dict(terminal_context)
+                if not isinstance(params.get("terminal_context"), dict):
+                    enriched = dict(params)
+                    enriched["terminal_context"] = dict(terminal_context)
                     params = enriched
 
         if method == "turn/started":
@@ -555,6 +593,7 @@ class CodexAppServerClient:
             and thread_id
         ):
             self._thread_cwds.pop(thread_id, None)
+            self._thread_terminal_contexts.pop(thread_id, None)
 
         return params
 

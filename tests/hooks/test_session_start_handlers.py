@@ -246,6 +246,47 @@ class TestSessionStartPreCreatedSession:
         # Should still allow despite error
         assert response.decision == "allow"
 
+    def test_existing_web_chat_session_found_by_external_id(
+        self, mock_dependencies: dict
+    ) -> None:
+        """Codex thread-start events should reuse the durable web-chat row."""
+        mock_session = MagicMock()
+        mock_session.id = "sess-web-123"
+        mock_session.project_id = "proj-123"
+        mock_session.parent_session_id = None
+        mock_session.agent_depth = 0
+        mock_session.agent_run_id = None
+        mock_session.workflow_name = None
+        mock_session.session_type = "web_chat"
+        mock_session.terminal_context = {}
+
+        mock_dependencies["session_storage"].get.return_value = None
+        mock_dependencies["session_manager"].find_by_external_id.return_value = mock_session
+        mock_dependencies["session_manager"].update.return_value = mock_session
+        mock_dependencies["session_manager"].backfill_terminal_context.return_value = (
+            mock_session,
+            False,
+        )
+
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.SESSION_START,
+            session_id="codex-thread-123",
+            data={"transcript_path": "/path/to/transcript.jsonl", "cwd": "/some/dir"},
+        )
+
+        response = handlers.handle_session_start(event)
+
+        assert response.decision == "allow"
+        assert response.metadata.get("is_pre_created") is True
+        assert event.metadata["_platform_session_id"] == "sess-web-123"
+        mock_dependencies["session_manager"].register_session.assert_not_called()
+        mock_dependencies["message_processor"].register_session.assert_called_once_with(
+            "sess-web-123",
+            "/path/to/transcript.jsonl",
+            source="claude",
+        )
+
     def test_pre_created_session_coordinator_error(self, mock_dependencies: dict) -> None:
         """Test error registering session with coordinator is handled."""
         mock_session = MagicMock()

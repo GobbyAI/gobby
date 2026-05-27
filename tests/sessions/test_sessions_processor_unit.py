@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.sessions.processor import SessionMessageProcessor
-from gobby.sessions.transcripts.base import ParsedMessage
+from gobby.sessions.transcripts.base import ParsedMessage, TokenUsage
 from tests._timing import wait_for_async_condition
 
 pytestmark = pytest.mark.unit
@@ -609,6 +609,98 @@ class TestModelExtraction:
         )
         assert mock_session_manager.update_model.call_count == 1
         assert mock_session_manager.update_model.call_args is not None
+
+    @pytest.mark.asyncio
+    async def test_process_session_persists_codex_token_usage(
+        self, mock_db, tmp_path, monkeypatch
+    ) -> None:
+        """Codex token_count records should update the context pie source fields."""
+
+        class FakeTokenEventStore:
+            def __init__(self, _db):
+                self.records = []
+
+            def get_session_totals(self, _session_id):
+                return {
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "cache_creation_tokens": 0,
+                    "cache_read_tokens": 0,
+                }
+
+            def record(self, event):
+                self.records.append(event)
+                return True
+
+        store = FakeTokenEventStore(mock_db)
+        monkeypatch.setattr(
+            "gobby.sessions.processor.TokenEventStore",
+            lambda _db: store,
+        )
+
+        mock_session_manager = MagicMock()
+        session = MagicMock()
+        session.project_id = "proj-1"
+        session.source = "codex"
+        session.context_window = None
+        session.model = None
+        mock_session_manager.get.return_value = session
+
+        mock_ws = MagicMock()
+        mock_ws.broadcast = AsyncMock()
+        mock_ws.broadcast_token_event = AsyncMock()
+        mock_ws.broadcast_session_usage_updated = AsyncMock()
+
+        processor = SessionMessageProcessor(
+            mock_db,
+            websocket_server=mock_ws,
+            session_manager=mock_session_manager,
+        )
+        transcript = tmp_path / "transcript.jsonl"
+        transcript.write_text('{"type": "event_msg"}\n')
+
+        parsed_msg = ParsedMessage(
+            index=0,
+            role="assistant",
+            content="",
+            content_type="text",
+            tool_name=None,
+            tool_input=None,
+            tool_result=None,
+            timestamp=datetime.now(),
+            raw_json={"payload": {"info": {"model_context_window": 258400}}},
+            usage=TokenUsage(
+                input_tokens=11392,
+                output_tokens=498,
+                cache_creation_tokens=0,
+                cache_read_tokens=93568,
+            ),
+            model="gpt-5.5",
+            message_id="token-count-1",
+        )
+        mock_parser = MagicMock()
+        mock_parser.parse_lines.return_value = [parsed_msg]
+        processor._active_sessions["session-1"] = str(transcript)
+        processor._parsers["session-1"] = mock_parser
+
+        await processor._process_session("session-1", str(transcript))
+
+        assert store.records[0].input_tokens == 11392
+        assert store.records[0].cache_read_tokens == 93568
+        assert store.records[0].context_window == 258400
+        mock_session_manager.update_usage.assert_called_once_with(
+            session_id="session-1",
+            input_tokens=104960,
+            output_tokens=498,
+            cache_creation_tokens=0,
+            cache_read_tokens=93568,
+            context_window=258400,
+            model="gpt-5.5",
+        )
+        usage_payload = mock_ws.broadcast_session_usage_updated.await_args.args[0]
+        assert usage_payload["usage_input_tokens"] == 104960
+        assert usage_payload["context_window"] == 258400
+        mock_ws.broadcast_token_event.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_process_session_skips_model_update_when_none(self, mock_db, tmp_path) -> None:

@@ -17,11 +17,21 @@ class TranscriptParserErrorLog:
     def __init__(self, cli_name: str):
         self.cli_name = cli_name
         self.log_path = Path.home() / ".gobby" / "logs" / f"{cli_name}-parser-error.log"
-        self.log_path.parent.mkdir(parents=True, exist_ok=True)
 
         self.logger = logging.getLogger(f"gobby.parser_error.{cli_name}")
         self.logger.setLevel(logging.INFO)
         self.logger.propagate = False
+
+        try:
+            self.log_path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            logger.debug(
+                "Failed to create transcript parser error log directory",
+                extra={"cli": cli_name, "path": str(self.log_path.parent)},
+                exc_info=True,
+            )
+            self._add_null_handler()
+            return
 
         for handler in list(self.logger.handlers):
             if (
@@ -36,11 +46,28 @@ class TranscriptParserErrorLog:
             for handler in self.logger.handlers
         ):
             # 10MB rotation, keep 5 backups
-            handler = RotatingFileHandler(self.log_path, maxBytes=10 * 1024 * 1024, backupCount=5)
+            try:
+                handler = RotatingFileHandler(
+                    self.log_path,
+                    maxBytes=10 * 1024 * 1024,
+                    backupCount=5,
+                )
+            except OSError:
+                logger.debug(
+                    "Failed to open transcript parser error log",
+                    extra={"cli": cli_name, "path": str(self.log_path)},
+                    exc_info=True,
+                )
+                self._add_null_handler()
+                return
             # Custom formatter to just pass through the message
             formatter = logging.Formatter("%(message)s")
             handler.setFormatter(formatter)
             self.logger.addHandler(handler)
+
+    def _add_null_handler(self) -> None:
+        if not any(isinstance(handler, logging.NullHandler) for handler in self.logger.handlers):
+            self.logger.addHandler(logging.NullHandler())
 
     def log_unknown_block(
         self, line_num: int, session_id: str | None, block_type: str, raw: dict[str, Any]

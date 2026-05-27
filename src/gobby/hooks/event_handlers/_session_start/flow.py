@@ -151,6 +151,40 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
         f"SESSION_START: cli={cli_source}, project={project_id}, source={session_source}"
     )
 
+    if handler._session_manager:
+        try:
+            existing_web_chat = handler._session_manager.find_by_external_id(
+                external_id,
+                machine_id,
+                project_id,
+                cli_source,
+                session_type="web_chat",
+            )
+            if (
+                existing_web_chat is not None
+                and isinstance(getattr(existing_web_chat, "id", None), str)
+                and getattr(existing_web_chat, "session_type", None) == "web_chat"
+            ):
+                handler.logger.info(
+                    "Found web-chat session %s by external_id %s; reusing it",
+                    existing_web_chat.id,
+                    external_id,
+                )
+                return cast(
+                    HookResponse,
+                    handler._handle_pre_created_session(
+                        existing_session=existing_web_chat,
+                        external_id=external_id,
+                        transcript_path=transcript_path,
+                        cli_source=cli_source,
+                        event=event,
+                        cwd=cwd,
+                        terminal_context=terminal_context,
+                    ),
+                )
+        except Exception as e:
+            handler.logger.debug(f"No web-chat session found by external_id: {e}")
+
     _t_parent = time.monotonic()
     workflow_name = input_data.get("workflow_name")
     agent_depth = input_data.get("agent_depth")

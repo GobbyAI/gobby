@@ -391,11 +391,18 @@ class CodexWebChatBackend:
         elif session.resume_session_id:
             thread = await self._client.resume_thread(session.resume_session_id)
         else:
+            terminal_context = None
+            if session.db_session_id:
+                terminal_context = {
+                    "gobby_session_id": session.db_session_id,
+                    "gobby_web_chat_child": "1",
+                }
             thread = await self._client.start_thread(
                 cwd=session.project_path or ".",
                 model=session._model,
                 approval_policy=_CODEX_WEB_CHAT_APPROVAL_POLICY,
                 sandbox=CodexSandboxResolver.thread_sandbox_policy(self._sandbox_config),
+                terminal_context=terminal_context,
             )
 
         session._thread_id = thread.id

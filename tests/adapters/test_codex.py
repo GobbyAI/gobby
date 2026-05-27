@@ -591,6 +591,73 @@ class TestCodexAppServerClientThreadManagement:
         assert client._thread_cwds["thr-new"] == "/project"
 
     @pytest.mark.asyncio
+    async def test_start_thread_tracks_web_chat_terminal_context(self):
+        """Daemon-owned web chats should tag Codex thread-start notifications."""
+        client = CodexAppServerClient()
+
+        mock_result = {
+            "thread": {
+                "id": "thr-web",
+                "preview": "",
+                "modelProvider": "openai",
+                "createdAt": 1704067200,
+            }
+        }
+
+        with patch.object(
+            client, "_send_request", new_callable=AsyncMock, return_value=mock_result
+        ) as mock_send:
+            thread = await client.start_thread(
+                cwd="/project",
+                model="gpt-5.5",
+                terminal_context={"gobby_session_id": "sess-web", "gobby_web_chat_child": "1"},
+            )
+
+            mock_send.assert_called_once_with(
+                "thread/start",
+                {"cwd": "/project", "model": "gpt-5.5"},
+            )
+
+        assert thread.id == "thr-web"
+        assert client._thread_terminal_contexts["thr-web"] == {
+            "gobby_session_id": "sess-web",
+            "gobby_web_chat_child": "1",
+        }
+        assert client._pending_thread_terminal_contexts == []
+
+    def test_thread_started_notification_consumes_pending_terminal_context(self) -> None:
+        """Early thread/started notifications should bind to the pending web-chat row."""
+        client = CodexAppServerClient()
+        client._pending_thread_terminal_contexts.append(
+            {
+                "cwd": "/project",
+                "terminal_context": {
+                    "gobby_session_id": "sess-web",
+                    "gobby_web_chat_child": "1",
+                },
+            }
+        )
+
+        params = client._enrich_notification(
+            "thread/started",
+            {
+                "cwd": "/project",
+                "thread": {
+                    "id": "thr-web",
+                    "preview": "",
+                    "modelProvider": "openai",
+                },
+            },
+        )
+
+        assert params["terminal_context"] == {
+            "gobby_session_id": "sess-web",
+            "gobby_web_chat_child": "1",
+        }
+        assert client._pending_thread_terminal_contexts == []
+        assert client._thread_terminal_contexts["thr-web"] == params["terminal_context"]
+
+    @pytest.mark.asyncio
     async def test_resume_thread(self):
         """resume_thread sends request and returns thread."""
         client = CodexAppServerClient()

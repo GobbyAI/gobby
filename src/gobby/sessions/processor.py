@@ -14,6 +14,7 @@ import inspect
 import json
 import logging
 import os
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
 import aiofiles
@@ -24,6 +25,10 @@ if TYPE_CHECKING:
 
     class WebSocketServer(Protocol):
         async def broadcast(self, message: dict[str, Any]) -> None: ...
+
+        async def broadcast_session_usage_updated(self, message: dict[str, Any]) -> None: ...
+
+        async def broadcast_token_event(self, message: dict[str, Any]) -> None: ...
 
         async def feed_attached_session_tts(
             self,
@@ -41,6 +46,13 @@ from gobby.sessions.transcripts import get_parser
 from gobby.sessions.transcripts.base import ParsedMessage, ParsedToolEvent, TranscriptParser
 from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.token_events import (
+    TokenEvent,
+    TokenEventStore,
+    build_session_usage_payload,
+    build_token_event_payload,
+    canonicalize_event_timestamp,
+)
 from gobby.telemetry.instruments import inc_counter
 
 logger = logging.getLogger(__name__)
@@ -220,6 +232,171 @@ class SessionMessageProcessor:
                 stats["tool_call_count"] = stats.get("tool_call_count", 0) + 1
         self._stats[session_id] = stats
         return stats
+
+    @staticmethod
+    def _coerce_context_window(value: Any) -> int | None:
+        if isinstance(value, bool) or value is None:
+            return None
+        try:
+            coerced = int(value)
+        except (TypeError, ValueError):
+            return None
+        return coerced if coerced > 0 else None
+
+    @classmethod
+    def _message_context_window(cls, message: ParsedMessage) -> int | None:
+        payload = message.raw_json.get("payload")
+        if not isinstance(payload, dict):
+            return None
+        info = payload.get("info")
+        if not isinstance(info, dict):
+            return None
+        return cls._coerce_context_window(
+            info.get("model_context_window") or info.get("modelContextWindow")
+        )
+
+    @staticmethod
+    def _usage_has_tokens(message: ParsedMessage) -> bool:
+        usage = message.usage
+        if usage is None:
+            return False
+        fields = (
+            "input_tokens",
+            "output_tokens",
+            "cache_creation_tokens",
+            "cache_read_tokens",
+        )
+        if not all(isinstance(getattr(usage, field, 0), int) for field in fields):
+            return False
+        return any(getattr(usage, field, 0) != 0 for field in fields)
+
+    async def _persist_usage_events(
+        self,
+        session_id: str,
+        messages: list[ParsedMessage],
+    ) -> None:
+        if not self.session_manager or not any(self._usage_has_tokens(msg) for msg in messages):
+            return
+
+        try:
+            session = self.session_manager.get(session_id)
+        except Exception:
+            logger.debug("Failed to load session %s for token usage", session_id, exc_info=True)
+            return
+        if session is None:
+            return
+
+        store = TokenEventStore(self.db)
+        project_id = getattr(session, "project_id", None)
+        project_id = project_id if isinstance(project_id, str) else None
+        source = getattr(session, "source", None)
+        source = source if isinstance(source, str) and source else "unknown"
+        context_window = self._coerce_context_window(getattr(session, "context_window", None))
+        last_model = getattr(session, "model", None)
+        last_model = last_model if isinstance(last_model, str) and last_model else None
+        running_totals = store.get_session_totals(session_id)
+        latest_codex_totals: dict[str, int] | None = None
+        latest_event_at: str | None = None
+        saw_insert = False
+
+        for msg in messages:
+            message_model = msg.model if isinstance(msg.model, str) and msg.model else None
+            if message_model:
+                last_model = message_model
+            if not self._usage_has_tokens(msg) or msg.usage is None:
+                continue
+
+            event_context_window = self._message_context_window(msg) or context_window
+            if event_context_window is not None:
+                context_window = event_context_window
+            event_at = canonicalize_event_timestamp(
+                msg.timestamp if isinstance(msg.timestamp, datetime) else datetime.now(UTC)
+            )
+            message_id = msg.message_id if isinstance(msg.message_id, str) and msg.message_id else None
+            metadata = {"content_type": msg.content_type} if isinstance(msg.content_type, str) else None
+            usage = msg.usage
+            event = TokenEvent(
+                session_id=session_id,
+                project_id=project_id,
+                message_id=message_id,
+                source=source,
+                origin="transcript",
+                model=message_model or last_model,
+                input_tokens=usage.input_tokens,
+                output_tokens=usage.output_tokens,
+                cache_creation_tokens=usage.cache_creation_tokens,
+                cache_read_tokens=usage.cache_read_tokens,
+                context_window=event_context_window,
+                event_at=event_at,
+                metadata=metadata,
+            )
+            if not store.record(event):
+                continue
+
+            saw_insert = True
+            latest_event_at = event_at
+            running_totals["input_tokens"] += usage.input_tokens
+            running_totals["output_tokens"] += usage.output_tokens
+            running_totals["cache_creation_tokens"] += usage.cache_creation_tokens
+            running_totals["cache_read_tokens"] += usage.cache_read_tokens
+            if source == "codex":
+                latest_codex_totals = {
+                    "input_tokens": usage.input_tokens
+                    + usage.cache_creation_tokens
+                    + usage.cache_read_tokens,
+                    "output_tokens": running_totals["output_tokens"],
+                    "cache_creation_tokens": usage.cache_creation_tokens,
+                    "cache_read_tokens": usage.cache_read_tokens,
+                }
+            if self.websocket_server is not None:
+                await self.websocket_server.broadcast_token_event(
+                    build_token_event_payload(
+                        {
+                            "session_id": session_id,
+                            "project_id": project_id,
+                            "message_id": message_id,
+                            "source": source,
+                            "origin": "transcript",
+                            "event_at": event_at,
+                            "model": event.model,
+                            "model_family": event.normalized_model_family(),
+                            "input_tokens": usage.input_tokens,
+                            "output_tokens": usage.output_tokens,
+                            "cache_creation_tokens": usage.cache_creation_tokens,
+                            "cache_read_tokens": usage.cache_read_tokens,
+                            "context_window": event_context_window,
+                        },
+                        session_totals=running_totals,
+                    )
+                )
+
+        if not saw_insert:
+            return
+
+        totals = store.get_session_totals(session_id)
+        if not any(totals.values()) and any(running_totals.values()):
+            totals = dict(running_totals)
+        session_totals = latest_codex_totals if latest_codex_totals is not None else totals
+        self.session_manager.update_usage(
+            session_id=session_id,
+            input_tokens=session_totals["input_tokens"],
+            output_tokens=session_totals["output_tokens"],
+            cache_creation_tokens=session_totals["cache_creation_tokens"],
+            cache_read_tokens=session_totals["cache_read_tokens"],
+            context_window=context_window,
+            model=last_model,
+        )
+        if self.websocket_server is not None:
+            await self.websocket_server.broadcast_session_usage_updated(
+                build_session_usage_payload(
+                    session_id=session_id,
+                    project_id=project_id,
+                    model=last_model,
+                    context_window=context_window,
+                    totals=session_totals,
+                    updated_at=latest_event_at,
+                )
+            )
 
     async def start(self) -> None:
         """Start the processing loop."""
@@ -430,6 +607,7 @@ class SessionMessageProcessor:
                 if msg.model:
                     self.session_manager.update_model(session_id, msg.model)
                     break
+        await self._persist_usage_events(session_id, parsed_messages)
 
         # Render incrementally and broadcast
         render_state = self._render_states.get(session_id, RenderState())
@@ -527,6 +705,7 @@ class SessionMessageProcessor:
                 if msg.model:
                     self.session_manager.update_model(session_id, msg.model)
                     break
+        await self._persist_usage_events(session_id, new_messages)
 
         # Render incrementally and broadcast
         render_state = self._render_states.get(session_id, RenderState())
