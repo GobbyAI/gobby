@@ -15,7 +15,7 @@ pytestmark = pytest.mark.unit
 def db(temp_db: HubDatabase):
     database = temp_db
     with database.transaction() as conn:
-        conn.execute("INSERT INTO projects (id, name) VALUES (?, ?)", ("p1", "test_project"))
+        conn.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", ("p1", "test_project"))
     return database
 
 
@@ -38,7 +38,7 @@ def test_apply_result_case_condition_binds_boolean_for_postgres() -> None:
     source = inspect.getsource(expansion_runs_module.LocalExpansionRunManager.save_apply_result)
 
     assert "1 if completed else 0" not in source
-    assert "completed_at = CASE WHEN ? THEN ? ELSE completed_at END" in source
+    assert "completed_at = CASE WHEN %s THEN %s ELSE completed_at END" in source
 
 
 def test_append_log_creates_first_entry(run_manager, parent_task) -> None:

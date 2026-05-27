@@ -316,7 +316,7 @@ def _create_test_project(db: HubDatabase, project_id: str = "test-proj") -> str:
     with db.transaction() as conn:
         conn.execute(
             "INSERT INTO projects (id, name, created_at, updated_at) "
-            "VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) ON CONFLICT (id) DO NOTHING",
+            "VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) ON CONFLICT (id) DO NOTHING",
             (project_id, f"Test Project {project_id}"),
         )
     return project_id

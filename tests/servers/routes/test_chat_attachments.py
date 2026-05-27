@@ -58,7 +58,7 @@ def test_upload_persists_metadata_and_file(client: TestClient, temp_db: HubDatab
     assert payload["size_bytes"] == 5
     assert payload["content_url"] == f"/api/chat/attachments/{payload['id']}/content"
 
-    row = temp_db.fetchone("SELECT * FROM chat_attachments WHERE id = ?", (payload["id"],))
+    row = temp_db.fetchone("SELECT * FROM chat_attachments WHERE id = %s", (payload["id"],))
     assert row is not None
     assert row["project_id"] == project.id
     assert row["draft_id"] == "draft-1"
@@ -95,7 +95,9 @@ def test_upload_without_project_id_uses_server_project(
     assert response.status_code == 200
     payload = response.json()
     assert payload["project_id"] == project.id
-    row = temp_db.fetchone("SELECT project_id FROM chat_attachments WHERE id = ?", (payload["id"],))
+    row = temp_db.fetchone(
+        "SELECT project_id FROM chat_attachments WHERE id = %s", (payload["id"],)
+    )
     assert row is not None
     assert row["project_id"] == project.id
 
@@ -153,7 +155,9 @@ def test_upload_sanitizes_traversal_filename_preserving_extension(
 
     assert response.status_code == 200
     payload = response.json()
-    row = temp_db.fetchone("SELECT local_path FROM chat_attachments WHERE id = ?", (payload["id"],))
+    row = temp_db.fetchone(
+        "SELECT local_path FROM chat_attachments WHERE id = %s", (payload["id"],)
+    )
     assert row is not None
     assert Path(row["local_path"]).name == "_note.txt"
 
@@ -171,7 +175,9 @@ def test_upload_truncates_oversized_filename_suffix_to_safe_path_part(
 
     assert response.status_code == 200
     payload = response.json()
-    row = temp_db.fetchone("SELECT local_path FROM chat_attachments WHERE id = ?", (payload["id"],))
+    row = temp_db.fetchone(
+        "SELECT local_path FROM chat_attachments WHERE id = %s", (payload["id"],)
+    )
     assert row is not None
     stored_name = Path(row["local_path"]).name
     assert len(stored_name.encode("utf-8")) <= 255
@@ -310,7 +316,7 @@ def test_delete_only_removes_unbound_uploads(
         files={"file": ("queued.txt", b"queued", "text/plain")},
     ).json()
     first_path = Path(
-        temp_db.fetchone("SELECT local_path FROM chat_attachments WHERE id = ?", (first["id"],))[
+        temp_db.fetchone("SELECT local_path FROM chat_attachments WHERE id = %s", (first["id"],))[
             "local_path"
         ]
     )
@@ -318,7 +324,7 @@ def test_delete_only_removes_unbound_uploads(
     delete_response = client.delete(f"/api/chat/attachments/{first['id']}")
 
     assert delete_response.status_code == 200
-    assert temp_db.fetchone("SELECT * FROM chat_attachments WHERE id = ?", (first["id"],)) is None
+    assert temp_db.fetchone("SELECT * FROM chat_attachments WHERE id = %s", (first["id"],)) is None
     assert not first_path.exists()
 
     second = client.post(
@@ -342,7 +348,7 @@ def test_delete_reports_file_removal_failure_after_metadata_delete(
         files={"file": ("queued.txt", b"queued", "text/plain")},
     ).json()
     uploaded_row = temp_db.fetchone(
-        "SELECT local_path FROM chat_attachments WHERE id = ?",
+        "SELECT local_path FROM chat_attachments WHERE id = %s",
         (uploaded["id"],),
     )
     assert uploaded_row is not None
@@ -361,5 +367,5 @@ def test_delete_reports_file_removal_failure_after_metadata_delete(
     assert response.status_code == 200
     assert response.json() == {"ok": False}
     assert (
-        temp_db.fetchone("SELECT * FROM chat_attachments WHERE id = ?", (uploaded["id"],)) is None
+        temp_db.fetchone("SELECT * FROM chat_attachments WHERE id = %s", (uploaded["id"],)) is None
     )

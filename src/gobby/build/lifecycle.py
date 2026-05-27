@@ -68,8 +68,8 @@ _EXPANDED_EPIC_LEGACY_ROOT_STAGES = frozenset(
 )
 
 _STAGE_CAP_UPDATE_ASSIGNMENTS = {
-    "max_work_attempts": "max_work_attempts = ?",
-    "max_review_rounds": "max_review_rounds = ?",
+    "max_work_attempts": "max_work_attempts = %s",
+    "max_review_rounds": "max_review_rounds = %s",
 }
 
 _DRY_RUN_PLAN_TASK_ID = "dry-run:plan-file"
@@ -388,11 +388,11 @@ def _seed_plan_file_stage_state(
             """
             UPDATE task_stage_states
                SET state = 'needs_review',
-                   review_round_count = ?,
-                   entered_at = COALESCE(entered_at, ?),
-                   updated_at = ?,
-                   notes = ?
-             WHERE task_id = ?
+                   review_round_count = %s,
+                   entered_at = COALESCE(entered_at, %s),
+                   updated_at = %s,
+                   notes = %s
+             WHERE task_id = %s
                AND stage_name = 'planning'
             """,
             (
@@ -752,7 +752,7 @@ def _repair_expanded_epic_root_manifest_for_resume(
     if not all(_is_pristine_resume_stage(row) for row in desired_rows):
         return False
 
-    task_manager.db.execute("DELETE FROM task_stage_states WHERE task_id = ?", (task.id,))
+    task_manager.db.execute("DELETE FROM task_stage_states WHERE task_id = %s", (task.id,))
     task_manager.stage_states.initialize_manifest(
         task.id,
         desired_specs,
@@ -822,7 +822,7 @@ def _apply_stage_caps_to_existing_lifecycle(
             f"""
             UPDATE task_stage_states
                SET {", ".join(updates)}
-             WHERE task_id = ? AND stage_name = ?
+             WHERE task_id = %s AND stage_name = %s
             """,
             tuple(params),
         )

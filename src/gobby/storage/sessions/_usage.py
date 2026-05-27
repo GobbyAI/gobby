@@ -44,14 +44,14 @@ class _UsageMixin:
         query = """
         UPDATE sessions
         SET
-            usage_input_tokens = ?,
-            usage_output_tokens = ?,
-            usage_cache_creation_tokens = ?,
-            usage_cache_read_tokens = ?,
-            context_window = COALESCE(?, context_window),
-            model = COALESCE(?, model),
+            usage_input_tokens = %s,
+            usage_output_tokens = %s,
+            usage_cache_creation_tokens = %s,
+            usage_cache_read_tokens = %s,
+            context_window = COALESCE(%s, context_window),
+            model = COALESCE(%s, model),
             updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
+        WHERE id = %s
         """
         try:
             with self.db.transaction():
@@ -87,25 +87,25 @@ class _UsageMixin:
         UPDATE sessions
         SET
             usage_input_tokens = CASE
-                WHEN COALESCE(usage_input_tokens, 0) + ? < 0 THEN 0
-                ELSE COALESCE(usage_input_tokens, 0) + ?
+                WHEN COALESCE(usage_input_tokens, 0) + %s < 0 THEN 0
+                ELSE COALESCE(usage_input_tokens, 0) + %s
             END,
             usage_output_tokens = CASE
-                WHEN COALESCE(usage_output_tokens, 0) + ? < 0 THEN 0
-                ELSE COALESCE(usage_output_tokens, 0) + ?
+                WHEN COALESCE(usage_output_tokens, 0) + %s < 0 THEN 0
+                ELSE COALESCE(usage_output_tokens, 0) + %s
             END,
             usage_cache_creation_tokens = CASE
-                WHEN COALESCE(usage_cache_creation_tokens, 0) + ? < 0 THEN 0
-                ELSE COALESCE(usage_cache_creation_tokens, 0) + ?
+                WHEN COALESCE(usage_cache_creation_tokens, 0) + %s < 0 THEN 0
+                ELSE COALESCE(usage_cache_creation_tokens, 0) + %s
             END,
             usage_cache_read_tokens = CASE
-                WHEN COALESCE(usage_cache_read_tokens, 0) + ? < 0 THEN 0
-                ELSE COALESCE(usage_cache_read_tokens, 0) + ?
+                WHEN COALESCE(usage_cache_read_tokens, 0) + %s < 0 THEN 0
+                ELSE COALESCE(usage_cache_read_tokens, 0) + %s
             END,
-            context_window = COALESCE(?, context_window),
-            model = COALESCE(?, model),
+            context_window = COALESCE(%s, context_window),
+            model = COALESCE(%s, model),
             updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
+        WHERE id = %s
         """
         try:
             with self.db.transaction():

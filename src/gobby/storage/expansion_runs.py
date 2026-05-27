@@ -159,7 +159,7 @@ class LocalExpansionRunManager:
                 input_source, plan_file, provider, model, options_json,
                 created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, 'pending', %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 run_id,
@@ -182,7 +182,7 @@ class LocalExpansionRunManager:
 
     def get(self, run_id: str) -> ExpansionRun | None:
         """Get an expansion run by ID."""
-        row = self.db.fetchone("SELECT * FROM expansion_runs WHERE id = ?", (run_id,))
+        row = self.db.fetchone("SELECT * FROM expansion_runs WHERE id = %s", (run_id,))
         return ExpansionRun.from_row(row) if row else None
 
     def get_latest_for_task(self, task_id: str) -> ExpansionRun | None:
@@ -190,7 +190,7 @@ class LocalExpansionRunManager:
         row = self.db.fetchone(
             """
             SELECT * FROM expansion_runs
-            WHERE parent_task_id = ?
+            WHERE parent_task_id = %s
             ORDER BY created_at DESC
             LIMIT 1
             """,
@@ -200,11 +200,11 @@ class LocalExpansionRunManager:
 
     def get_active_for_task(self, task_id: str) -> ExpansionRun | None:
         """Get the most recent non-terminal expansion run for a task."""
-        placeholders = ", ".join("?" for _ in self._ACTIVE_STATUSES)
+        placeholders = ", ".join("%s" for _ in self._ACTIVE_STATUSES)
         row = self.db.fetchone(
             f"""
             SELECT * FROM expansion_runs
-            WHERE parent_task_id = ?
+            WHERE parent_task_id = %s
               AND status IN ({placeholders})
             ORDER BY created_at DESC
             LIMIT 1
@@ -221,13 +221,13 @@ class LocalExpansionRunManager:
         limit: int = 20,
     ) -> list[ExpansionRun]:
         """List expansion runs for a task."""
-        query = "SELECT * FROM expansion_runs WHERE parent_task_id = ?"
+        query = "SELECT * FROM expansion_runs WHERE parent_task_id = %s"
         params: list[Any] = [task_id]
         if statuses:
-            placeholders = ", ".join("?" for _ in statuses)
+            placeholders = ", ".join("%s" for _ in statuses)
             query += f" AND status IN ({placeholders})"
             params.extend(statuses)
-        query += " ORDER BY created_at DESC LIMIT ?"
+        query += " ORDER BY created_at DESC LIMIT %s"
         params.append(limit)
         return [ExpansionRun.from_row(row) for row in self.db.fetchall(query, tuple(params))]
 
@@ -237,8 +237,8 @@ class LocalExpansionRunManager:
         self.db.execute(
             """
             UPDATE expansion_runs
-            SET status = 'running', started_at = COALESCE(started_at, ?), updated_at = ?, error = NULL
-            WHERE id = ?
+            SET status = 'running', started_at = COALESCE(started_at, %s), updated_at = %s, error = NULL
+            WHERE id = %s
             """,
             (now, now, run_id),
         )
@@ -257,10 +257,10 @@ class LocalExpansionRunManager:
             """
             UPDATE expansion_runs
             SET status = 'compiled',
-                compiled_spec_json = ?,
-                checkpoints_json = COALESCE(?, checkpoints_json),
-                updated_at = ?
-            WHERE id = ?
+                compiled_spec_json = %s,
+                checkpoints_json = COALESCE(%s, checkpoints_json),
+                updated_at = %s
+            WHERE id = %s
             """,
             (
                 json.dumps(compiled_spec),
@@ -275,7 +275,7 @@ class LocalExpansionRunManager:
         """Mark a run as applying."""
         now = datetime.now(UTC).isoformat()
         self.db.execute(
-            "UPDATE expansion_runs SET status = 'applying', updated_at = ? WHERE id = ?",
+            "UPDATE expansion_runs SET status = 'applying', updated_at = %s WHERE id = %s",
             (now, run_id),
         )
         return self.get(run_id)
@@ -295,13 +295,13 @@ class LocalExpansionRunManager:
         self.db.execute(
             """
             UPDATE expansion_runs
-            SET status = ?,
-                task_id_map_json = ?,
-                created_task_ids_json = ?,
-                checkpoints_json = COALESCE(?, checkpoints_json),
-                completed_at = CASE WHEN ? THEN ? ELSE completed_at END,
-                updated_at = ?
-            WHERE id = ?
+            SET status = %s,
+                task_id_map_json = %s,
+                created_task_ids_json = %s,
+                checkpoints_json = COALESCE(%s, checkpoints_json),
+                completed_at = CASE WHEN %s THEN %s ELSE completed_at END,
+                updated_at = %s
+            WHERE id = %s
             """,
             (
                 status,
@@ -322,8 +322,8 @@ class LocalExpansionRunManager:
         self.db.execute(
             """
             UPDATE expansion_runs
-            SET qa_result_json = ?, updated_at = ?
-            WHERE id = ?
+            SET qa_result_json = %s, updated_at = %s
+            WHERE id = %s
             """,
             (json.dumps(qa_result), now, run_id),
         )
@@ -348,9 +348,9 @@ class LocalExpansionRunManager:
         cursor = self.db.execute(
             """
             UPDATE expansion_runs
-            SET logs_json = COALESCE(logs_json, '[]'::jsonb) || ?::jsonb,
-                updated_at = ?
-            WHERE id = ?
+            SET logs_json = COALESCE(logs_json, '[]'::jsonb) || %s::jsonb,
+                updated_at = %s
+            WHERE id = %s
             """,
             (json.dumps([entry]), now, run_id),
         )
@@ -368,8 +368,8 @@ class LocalExpansionRunManager:
         self.db.execute(
             """
             UPDATE expansion_runs
-            SET checkpoints_json = ?, updated_at = ?
-            WHERE id = ?
+            SET checkpoints_json = %s, updated_at = %s
+            WHERE id = %s
             """,
             (json.dumps(checkpoints), now, run_id),
         )
@@ -381,8 +381,8 @@ class LocalExpansionRunManager:
         self.db.execute(
             """
             UPDATE expansion_runs
-            SET status = 'failed', error = ?, completed_at = ?, updated_at = ?
-            WHERE id = ?
+            SET status = 'failed', error = %s, completed_at = %s, updated_at = %s
+            WHERE id = %s
             """,
             (error, now, now, run_id),
         )
@@ -395,8 +395,8 @@ class LocalExpansionRunManager:
         self.db.execute(
             """
             UPDATE expansion_runs
-            SET status = 'cancelled', error = ?, completed_at = ?, updated_at = ?
-            WHERE id = ?
+            SET status = 'cancelled', error = %s, completed_at = %s, updated_at = %s
+            WHERE id = %s
             """,
             (error, now, now, run_id),
         )

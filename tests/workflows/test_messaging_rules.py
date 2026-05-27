@@ -222,7 +222,7 @@ _TEST_PROJECT_ID = "test-project-001"
 def _ensure_project(db: HubDatabase) -> None:
     """Insert a minimal project row so session FK constraints are satisfied."""
     db.execute(
-        "INSERT INTO projects (id, name) VALUES (?, 'test-project') ON CONFLICT (id) DO NOTHING",
+        "INSERT INTO projects (id, name) VALUES (%s, 'test-project') ON CONFLICT (id) DO NOTHING",
         (_TEST_PROJECT_ID,),
     )
 
@@ -232,7 +232,7 @@ def _create_session(db: HubDatabase, session_id: str) -> None:
     _ensure_project(db)
     db.execute(
         "INSERT INTO sessions (id, external_id, machine_id, source, project_id) "
-        "VALUES (?, ?, 'test-machine', 'claude', ?) "
+        "VALUES (%s, %s, 'test-machine', 'claude', %s) "
         "ON CONFLICT (id) DO NOTHING",
         (session_id, session_id, _TEST_PROJECT_ID),
     )
@@ -246,7 +246,7 @@ def _insert_undelivered_message(db: HubDatabase, to_session: str) -> str:
     db.execute(
         "INSERT INTO inter_session_messages "
         "(id, from_session, to_session, content, priority, sent_at) "
-        "VALUES (?, ?, ?, 'hello', 'normal', CURRENT_TIMESTAMP)",
+        "VALUES (%s, %s, %s, 'hello', 'normal', CURRENT_TIMESTAMP)",
         (msg_id, _SENDER_SESSION, to_session),
     )
     return msg_id
@@ -260,7 +260,7 @@ def _insert_delivered_message(db: HubDatabase, to_session: str) -> str:
     db.execute(
         "INSERT INTO inter_session_messages "
         "(id, from_session, to_session, content, priority, sent_at, delivered_at) "
-        "VALUES (?, ?, ?, 'hello', 'normal', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+        "VALUES (%s, %s, %s, 'hello', 'normal', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
         (msg_id, _SENDER_SESSION, to_session),
     )
     return msg_id

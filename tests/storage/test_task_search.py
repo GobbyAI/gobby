@@ -150,9 +150,9 @@ class TestTaskSearch:
         db.execute(
             """
             UPDATE tasks
-               SET closed_at = ?,
-                   closed_reason = ?
-             WHERE id = ?
+               SET closed_at = %s,
+                   closed_reason = %s
+             WHERE id = %s
             """,
             ("2026-05-06T00:00:00+00:00", "closed-with-stale-stage", closed_task.id),
         )
@@ -315,8 +315,8 @@ class TestTaskSearchBackend:
 
         assert results == [("task-a", 1.0), ("task-b", 0.5)]
         assert "pdb.score(t.id)" in db.sql
-        assert "(t.title @@@ $1 OR t.description @@@ $1)" in db.sql
-        assert db.params == ("alpha", "ready", "in_progress", 2)
+        assert "(t.title @@@ %s OR t.description @@@ %s)" in db.sql
+        assert db.params == ("alpha", "alpha", "ready", "in_progress", 2)
 
     def test_pg_search_query_sanitization(self) -> None:
         """Test pg_search query sanitization."""

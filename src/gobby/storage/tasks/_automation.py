@@ -34,7 +34,7 @@ def list_automation_candidates(
     params: list[Any] = [now]
     project_filter = ""
     if project_id is not None:
-        project_filter = "AND tasks.project_id = ?"
+        project_filter = "AND tasks.project_id = %s"
         params.append(project_id)
 
     rows = db.fetchall(
@@ -60,7 +60,7 @@ def list_automation_candidates(
           AND (
               mutex.task_id IS NULL
               OR mutex.lease_until IS NULL
-              OR mutex.lease_until < ?
+              OR mutex.lease_until < %s
           )
           {project_filter}
         ORDER BY tasks.priority ASC, tasks.seq_num ASC, tasks.created_at ASC
@@ -87,7 +87,7 @@ def sweep_stale_claims(
     params: list[Any] = [now]
     project_filter = ""
     if project_id is not None:
-        project_filter = "AND project_id = ?"
+        project_filter = "AND project_id = %s"
         params.append(project_id)
 
     with db.transaction() as conn:
@@ -96,7 +96,7 @@ def sweep_stale_claims(
             UPDATE tasks
                SET claimed_by_session_id = NULL,
                    assignee = NULL,
-                   updated_at = ?
+                   updated_at = %s
              WHERE allow_automation IS TRUE
                AND closed_at IS NULL
                AND escalated_at IS NULL

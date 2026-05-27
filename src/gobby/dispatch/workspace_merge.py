@@ -282,14 +282,14 @@ def _resolve_paths(
 
 
 def _project_id_for_task(db: HubDatabase, task_id: str) -> str:
-    row = db.fetchone("SELECT project_id FROM tasks WHERE id = ?", (task_id,))
+    row = db.fetchone("SELECT project_id FROM tasks WHERE id = %s", (task_id,))
     if row is None:
         raise RuntimeError(f"task not found: {task_id}")
     return str(row["project_id"])
 
 
 def _is_root_task(db: HubDatabase, task_id: str) -> bool:
-    row = db.fetchone("SELECT parent_task_id FROM tasks WHERE id = ?", (task_id,))
+    row = db.fetchone("SELECT parent_task_id FROM tasks WHERE id = %s", (task_id,))
     if row is None:
         raise RuntimeError(f"task not found: {task_id}")
     return row["parent_task_id"] is None
@@ -614,7 +614,7 @@ def _acquire_integration_mutex(db: HubDatabase, key: str) -> bool:
     until = now + timedelta(seconds=MERGE_TTL_SECONDS)
     with db.transaction_immediate() as conn:
         row = conn.execute(
-            "SELECT lease_until, lease_holder FROM integration_workspace_mutex WHERE integration_key = ?",
+            "SELECT lease_until, lease_holder FROM integration_workspace_mutex WHERE integration_key = %s",
             (key,),
         ).fetchone()
         if row is not None and row["lease_until"] and row["lease_until"] >= now.isoformat():
@@ -624,7 +624,7 @@ def _acquire_integration_mutex(db: HubDatabase, key: str) -> bool:
             INSERT INTO integration_workspace_mutex (
                 integration_key, lease_until, lease_holder, updated_at
             )
-            VALUES (?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s)
             ON CONFLICT(integration_key) DO UPDATE SET
                 lease_until = excluded.lease_until,
                 lease_holder = excluded.lease_holder,
@@ -638,7 +638,7 @@ def _acquire_integration_mutex(db: HubDatabase, key: str) -> bool:
 def _release_integration_mutex(db: HubDatabase, key: str) -> None:
     with db.transaction() as conn:
         conn.execute(
-            "DELETE FROM integration_workspace_mutex WHERE integration_key = ? AND lease_holder = ?",
+            "DELETE FROM integration_workspace_mutex WHERE integration_key = %s AND lease_holder = %s",
             (key, MERGE_HOLDER),
         )
 

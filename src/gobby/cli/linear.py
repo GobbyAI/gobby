@@ -298,7 +298,7 @@ def linear_status(json_format: bool) -> None:
 
         # Count linked tasks
         row = task_manager.db.fetchone(
-            "SELECT COUNT(*) as count FROM tasks WHERE project_id = ? AND linear_issue_id IS NOT NULL",
+            "SELECT COUNT(*) as count FROM tasks WHERE project_id = %s AND linear_issue_id IS NOT NULL",
             (project_id,),
         )
         linked_count = row["count"] if row else 0

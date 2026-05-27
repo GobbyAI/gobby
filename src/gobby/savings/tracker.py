@@ -78,7 +78,7 @@ class SavingsTracker:
             "INSERT INTO savings_ledger "
             "(session_id, project_id, category, original_tokens, actual_tokens, "
             "tokens_saved, model, metadata) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 session_id,
                 project_id,
@@ -97,15 +97,15 @@ class SavingsTracker:
 
         project_filter = ""
         if project_id:
-            project_filter = "AND project_id = ?"
+            project_filter = "AND project_id = %s"
             params.append(project_id)
 
         # Build category IN clause
-        cat_placeholders = ", ".join("?" for _ in VALID_CATEGORIES)
+        cat_placeholders = ", ".join("%s" for _ in VALID_CATEGORIES)
         cat_filter = f"AND category IN ({cat_placeholders})"
         cat_params = list(VALID_CATEGORIES)
 
-        window_sql = newer_than_now_expr(self.db, "created_at", "?", "day")
+        window_sql = newer_than_now_expr(self.db, "created_at", "%s", "day")
         rows = self.db.fetchall(
             f"SELECT category, "
             f"SUM(original_tokens) as original_tokens, "

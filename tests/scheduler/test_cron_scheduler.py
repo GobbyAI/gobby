@@ -69,7 +69,7 @@ async def test_scheduler_advances_dispatcher_next_run_at(
     columns = {
         row["column_name"]
         for row in cron_storage.db.fetchall(
-            "SELECT column_name FROM information_schema.columns WHERE table_name = ?",
+            "SELECT column_name FROM information_schema.columns WHERE table_name = %s",
             ("cron_jobs",),
         )
     }
@@ -86,7 +86,7 @@ async def test_scheduler_advances_dispatcher_next_run_at(
         action_config={"handler": "dispatch.tick"},
         interval_seconds=60,
     )
-    cron_storage.db.execute("UPDATE cron_jobs SET is_system = TRUE WHERE id = ?", (job.id,))
+    cron_storage.db.execute("UPDATE cron_jobs SET is_system = TRUE WHERE id = %s", (job.id,))
     cron_storage.update_system_job_bookkeeping(
         job.id,
         next_run_at=(datetime.now(UTC) - timedelta(minutes=1)).isoformat(),

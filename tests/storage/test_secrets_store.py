@@ -259,7 +259,9 @@ class TestSecretStoreSet:
     def test_set_encrypts_value(self, store: SecretStore, temp_db: HubDatabase) -> None:
         """The stored value in the DB should NOT be the plaintext."""
         store.set("SENSITIVE", "super-secret-value")
-        row = temp_db.fetchone("SELECT encrypted_value FROM secrets WHERE name = ?", ("sensitive",))
+        row = temp_db.fetchone(
+            "SELECT encrypted_value FROM secrets WHERE name = %s", ("sensitive",)
+        )
         assert row is not None
         assert row["encrypted_value"] != "super-secret-value"
         assert len(row["encrypted_value"]) > 0

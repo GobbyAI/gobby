@@ -38,7 +38,7 @@ def _get_session_stats(db: "HubDatabase", session: Any) -> dict[str, int]:
             """
             SELECT COUNT(*) AS count
               FROM session_tasks
-             WHERE session_id = ? AND action = 'closed'
+             WHERE session_id = %s AND action = 'closed'
             """,
             (session.id,),
         )
@@ -49,7 +49,7 @@ def _get_session_stats(db: "HubDatabase", session: Any) -> dict[str, int]:
     # Memories created by this session
     try:
         row = db.fetchone(
-            "SELECT COUNT(*) AS count FROM memories WHERE source_session_id = ?",
+            "SELECT COUNT(*) AS count FROM memories WHERE source_session_id = %s",
             (session.id,),
         )
         stats["memories_created"] = row["count"] if row else 0
@@ -67,7 +67,7 @@ def _get_session_stats(db: "HubDatabase", session: Any) -> dict[str, int]:
             """
             SELECT COUNT(DISTINCT skill_name) AS count
               FROM session_skills
-             WHERE session_id = ?
+             WHERE session_id = %s
             """,
             (session.id,),
         )
@@ -113,7 +113,7 @@ def register_lifecycle_routes(
                             errors.append(f"Session {sid} not found")
                             continue
                         server.session_manager.db.execute(
-                            "UPDATE sessions SET project_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                            "UPDATE sessions SET project_id = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
                             (target_project_id, sid),
                         )
                         moved_ids.append(sid)

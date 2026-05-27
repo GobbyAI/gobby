@@ -281,7 +281,7 @@ def row_value(row: Any, key: str) -> Any:
 
 def placeholder(hub: Any, index: int) -> str:
     """Return the placeholder token for the active execution surface."""
-    return f"${index}"
+    return "%s"
 
 
 def _add_param(hub: Any, params: list[Any], value: Any) -> str:

@@ -1129,7 +1129,7 @@ class TestHookManagerSessionLookup:
             response = manager.handle(event)
 
         rows = manager._session_manager.db.fetchall(
-            "SELECT id FROM sessions WHERE external_id = ?",
+            "SELECT id FROM sessions WHERE external_id = %s",
             ("orphaned-session-end",),
         )
 
@@ -1171,7 +1171,7 @@ class TestHookManagerSessionLookup:
             == existing_session_id
         )
         rows = manager._session_manager.db.fetchall(
-            "SELECT id FROM sessions WHERE external_id = ?",
+            "SELECT id FROM sessions WHERE external_id = %s",
             ("shared-session-id",),
         )
         assert len(rows) == 1
@@ -1199,7 +1199,7 @@ class TestHookManagerSessionLookup:
         assert session_id is not None
 
         manager._session_manager.db.execute(
-            "UPDATE sessions SET title = ?, digest_markdown = ? WHERE id = ?",
+            "UPDATE sessions SET title = %s, digest_markdown = %s WHERE id = %s",
             ("Recovered Codex Title", None, session_id),
         )
 

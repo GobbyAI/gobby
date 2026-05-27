@@ -227,7 +227,7 @@ def test_cleanup_old_runs(cron_storage: CronJobStorage) -> None:
     cron_storage.update_run(run.id, status="completed", completed_at=old_time)
     # Backdate created_at directly
     cron_storage.db.execute(
-        "UPDATE cron_runs SET created_at = ? WHERE id = ?",
+        "UPDATE cron_runs SET created_at = %s WHERE id = %s",
         (old_time, run.id),
     )
 

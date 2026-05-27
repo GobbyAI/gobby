@@ -88,7 +88,7 @@ class TestTaskDependencyManager:
         now = datetime.now(UTC).isoformat()
         with dep_manager.db.transaction() as conn:
             conn.execute(
-                "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (?, ?, 'blocks', ?)",
+                "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (%s, %s, 'blocks', %s)",
                 (t2.id, t1.id, now),
             )
 

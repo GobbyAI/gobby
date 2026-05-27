@@ -80,7 +80,7 @@ class StageStateRows:
             """
             SELECT *
               FROM task_stage_states
-             WHERE task_id = ?
+             WHERE task_id = %s
              ORDER BY position, stage_name
             """,
             (task_id,),
@@ -99,7 +99,7 @@ class StageStateRows:
             """
             SELECT *
               FROM task_stage_states
-             WHERE task_id = ? AND stage_name = ?
+             WHERE task_id = %s AND stage_name = %s
             """,
             (task_id, stage_name),
         ).fetchone()
@@ -116,7 +116,7 @@ class StageStateRows:
             """
             SELECT *
               FROM task_stage_states
-             WHERE task_id = ? AND state != 'done'
+             WHERE task_id = %s AND state != 'done'
              ORDER BY position, stage_name
              LIMIT 1
             """,
@@ -132,13 +132,13 @@ class StageStateRows:
         project_id: str | None = None,
     ) -> list[str]:
         params: list[object] = [stage_name]
-        filters = ["s.stage_name = ?"]
+        filters = ["s.stage_name = %s"]
         if state is not None:
             validate_state_value(state)
-            filters.append("s.state = ?")
+            filters.append("s.state = %s")
             params.append(state)
         if project_id is not None:
-            filters.append("t.project_id = ?")
+            filters.append("t.project_id = %s")
             params.append(project_id)
         rows = self.db.fetchall(
             f"""

@@ -74,7 +74,7 @@ def test_migration_infers_hash_root_ref_without_index(temp_db, tmp_path: Path) -
     assert migrate(tmp_path, temp_db) == 1
 
     row = temp_db.fetchone(
-        "SELECT root_task_ref FROM plans WHERE plan_id = ?",
+        "SELECT root_task_ref FROM plans WHERE plan_id = %s",
         ("task-100-active",),
     )
     assert row["root_task_ref"] == "#100"

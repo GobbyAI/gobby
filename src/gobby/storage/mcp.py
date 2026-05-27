@@ -170,7 +170,7 @@ class LocalMCPManager:
                 id, name, project_id, transport, url, command, args, env, headers,
                 enabled, description, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT(name, project_id) DO UPDATE SET
                 transport = excluded.transport,
                 url = excluded.url,
@@ -218,7 +218,7 @@ class LocalMCPManager:
     def _fetch_servers_by_name(self, name: str) -> list[MCPServer]:
         """Fetch every row for a server name across projects."""
         rows = self.db.fetchall(
-            "SELECT * FROM mcp_servers WHERE name = ? ORDER BY updated_at DESC, created_at DESC",
+            "SELECT * FROM mcp_servers WHERE name = %s ORDER BY updated_at DESC, created_at DESC",
             (name,),
         )
         return [MCPServer.from_row(row) for row in rows]
@@ -226,14 +226,14 @@ class LocalMCPManager:
     def _load_tools_for_server_id(self, server_id: str) -> list[Tool]:
         """Load cached tools directly by server ID."""
         rows = self.db.fetchall(
-            "SELECT * FROM tools WHERE mcp_server_id = ? ORDER BY name",
+            "SELECT * FROM tools WHERE mcp_server_id = %s ORDER BY name",
             (server_id,),
         )
         return [Tool.from_row(row) for row in rows]
 
     def _replace_tools_for_server_id(self, server_id: str, tools: list[Tool]) -> None:
         """Replace cached tools for a server ID."""
-        self.db.execute("DELETE FROM tools WHERE mcp_server_id = ?", (server_id,))
+        self.db.execute("DELETE FROM tools WHERE mcp_server_id = %s", (server_id,))
         if not tools:
             return
 
@@ -242,7 +242,7 @@ class LocalMCPManager:
             self.db.execute(
                 """
                 INSERT INTO tools (id, mcp_server_id, name, description, input_schema, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     str(uuid.uuid4()),
@@ -350,7 +350,7 @@ class LocalMCPManager:
 
         for lookup_project_id in self._server_lookup_project_ids(name, project_id):
             row = self.db.fetchone(
-                "SELECT * FROM mcp_servers WHERE name = ? AND project_id = ?",
+                "SELECT * FROM mcp_servers WHERE name = %s AND project_id = %s",
                 (name, lookup_project_id),
             )
             if row:
@@ -360,7 +360,7 @@ class LocalMCPManager:
 
     def get_server_by_id(self, server_id: str) -> MCPServer | None:
         """Get server by ID."""
-        row = self.db.fetchone("SELECT * FROM mcp_servers WHERE id = ?", (server_id,))
+        row = self.db.fetchone("SELECT * FROM mcp_servers WHERE id = %s", (server_id,))
         return MCPServer.from_row(row) if row else None
 
     def list_servers(
@@ -378,7 +378,7 @@ class LocalMCPManager:
         Returns:
             List of servers for the project.
         """
-        conditions = ["project_id = ?"]
+        conditions = ["project_id = %s"]
         params: list[Any] = [project_id]
 
         if enabled_only:
@@ -424,7 +424,7 @@ class LocalMCPManager:
     def list_runtime_servers(self, project_id: str, enabled_only: bool = True) -> list[MCPServer]:
         """List project-scoped servers plus bundled global servers available at runtime."""
         conditions = ["enabled IS TRUE"] if enabled_only else []
-        project_where = " AND ".join(["project_id = ?"] + conditions) or "project_id = ?"
+        project_where = " AND ".join(["project_id = %s"] + conditions) or "project_id = %s"
         project_rows = self.db.fetchall(
             f"SELECT * FROM mcp_servers WHERE {project_where} ORDER BY name",  # nosec B608
             (project_id,),
@@ -432,12 +432,12 @@ class LocalMCPManager:
 
         bundled_groups: dict[str, list[MCPServer]] = {}
         for project_scope in (GLOBAL_PROJECT_ID, *LEGACY_GLOBAL_PROJECT_IDS):
-            global_conditions = ["project_id = ?"]
+            global_conditions = ["project_id = %s"]
             params: list[Any] = [project_scope]
             if enabled_only:
                 global_conditions.append("enabled IS TRUE")
             global_conditions.append(
-                "name IN ({})".format(",".join("?" for _ in BUNDLED_EXTERNAL_MCP_SERVER_NAMES))
+                "name IN ({})".format(",".join("%s" for _ in BUNDLED_EXTERNAL_MCP_SERVER_NAMES))
             )
             params.extend(sorted(BUNDLED_EXTERNAL_MCP_SERVER_NAMES))
             rows = self.db.fetchall(
@@ -508,7 +508,7 @@ class LocalMCPManager:
                     server.id for server in servers if server.id != canonical_server.id
                 ]
                 for server_id in duplicate_ids:
-                    conn.execute("DELETE FROM mcp_servers WHERE id = ?", (server_id,))
+                    conn.execute("DELETE FROM mcp_servers WHERE id = %s", (server_id,))
 
             if (
                 canonical_source.project_id != GLOBAL_PROJECT_ID
@@ -561,12 +561,12 @@ class LocalMCPManager:
 
         fields["updated_at"] = datetime.now(UTC).isoformat()
 
-        set_clause = ", ".join(f"{k} = ?" for k in fields)
+        set_clause = ", ".join(f"{k} = %s" for k in fields)
         # Update by server ID to be precise
         values = list(fields.values()) + [server.id]
 
         self.db.execute(
-            f"UPDATE mcp_servers SET {set_clause} WHERE id = ?",  # nosec B608
+            f"UPDATE mcp_servers SET {set_clause} WHERE id = %s",  # nosec B608
             tuple(values),
         )
 
@@ -585,13 +585,13 @@ class LocalMCPManager:
         name = name.lower()
         if is_bundled_external_mcp_server(name):
             cursor = self.db.execute(
-                "DELETE FROM mcp_servers WHERE name = ?",
+                "DELETE FROM mcp_servers WHERE name = %s",
                 (name,),
             )
             return cursor.rowcount > 0
 
         cursor = self.db.execute(
-            "DELETE FROM mcp_servers WHERE name = ? AND project_id = ?",
+            "DELETE FROM mcp_servers WHERE name = %s AND project_id = %s",
             (name, project_id),
         )
         return cursor.rowcount > 0
@@ -616,7 +616,7 @@ class LocalMCPManager:
             return 0
 
         # Delete existing tools
-        self.db.execute("DELETE FROM tools WHERE mcp_server_id = ?", (server.id,))
+        self.db.execute("DELETE FROM tools WHERE mcp_server_id = %s", (server.id,))
 
         # Insert new tools
         now = datetime.now(UTC).isoformat()
@@ -629,7 +629,7 @@ class LocalMCPManager:
             self.db.execute(
                 """
                 INSERT INTO tools (id, mcp_server_id, name, description, input_schema, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     tool_id,
@@ -657,7 +657,7 @@ class LocalMCPManager:
             return []
 
         rows = self.db.fetchall(
-            "SELECT * FROM tools WHERE mcp_server_id = ? ORDER BY name",
+            "SELECT * FROM tools WHERE mcp_server_id = %s ORDER BY name",
             (server.id,),
         )
         return [Tool.from_row(row) for row in rows]
@@ -730,7 +730,7 @@ class LocalMCPManager:
                 self.db.execute(
                     """
                     INSERT INTO tools (id, mcp_server_id, name, description, input_schema, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         tool_id,
@@ -755,8 +755,8 @@ class LocalMCPManager:
                 self.db.execute(
                     """
                     UPDATE tools
-                    SET description = ?, input_schema = ?, updated_at = ?
-                    WHERE id = ?
+                    SET description = %s, input_schema = %s, updated_at = %s
+                    WHERE id = %s
                     """,
                     (
                         tool.get("description"),
@@ -782,7 +782,7 @@ class LocalMCPManager:
         stale_tools = set(existing_tools.keys()) - current_tool_names
         for tool_name in stale_tools:
             existing = existing_tools[tool_name]
-            self.db.execute("DELETE FROM tools WHERE id = ?", (existing.id,))
+            self.db.execute("DELETE FROM tools WHERE id = %s", (existing.id,))
             stats["removed"] += 1
 
         # Cleanup stale hashes

@@ -93,9 +93,9 @@ def _claimed_automation_candidates(
     params: list[Any] = [*_RECOVERABLE_STAGE_STATES]
     project_filter = ""
     if project_id is not None:
-        project_filter = "AND tasks.project_id = ?"
+        project_filter = "AND tasks.project_id = %s"
         params.append(project_id)
-    state_placeholders = ", ".join("?" for _ in _RECOVERABLE_STAGE_STATES)
+    state_placeholders = ", ".join("%s" for _ in _RECOVERABLE_STAGE_STATES)
 
     rows = db.fetchall(
         f"""
@@ -163,11 +163,11 @@ def _agent_claim_payload(
         """
         SELECT id, status
           FROM agent_runs
-         WHERE task_id = ?
+         WHERE task_id = %s
            AND (
-               child_session_id = ?
-               OR claimed_session_id = ?
-               OR parent_session_id = ?
+               child_session_id = %s
+               OR claimed_session_id = %s
+               OR parent_session_id = %s
            )
          ORDER BY updated_at DESC
         """,

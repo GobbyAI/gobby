@@ -17,7 +17,7 @@ def db(tmp_path: Path, hub_db: HubDatabase) -> HubDatabase:
     database = hub_db
     # Create dummy project required for sessions
     database.execute(
-        "INSERT INTO projects (id, name, repo_path) VALUES (?, ?, ?)",
+        "INSERT INTO projects (id, name, repo_path) VALUES (%s, %s, %s)",
         ("proj-1", "Test Project", str(tmp_path)),
     )
     return database

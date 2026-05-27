@@ -672,7 +672,7 @@ class TestVariablePersistence:
             INSERT INTO workflow_definitions (
                 id, name, workflow_type, definition_json, enabled, source
             )
-            VALUES (?, ?, 'rule', ?, ?, 'test')
+            VALUES (%s, %s, 'rule', %s, %s, 'test')
             """,
             (str(uuid4()), name, json.dumps(definition), True),
         )
@@ -756,7 +756,7 @@ class TestVariablePersistence:
             INSERT INTO workflow_definitions (
                 id, name, workflow_type, definition_json, enabled, source
             )
-            VALUES (?, ?, 'rule', ?, ?, 'test')
+            VALUES (%s, %s, 'rule', %s, %s, 'test')
             """,
             (str(uuid4()), "test-flag-gate", json.dumps(definition), True),
         )
@@ -1092,7 +1092,7 @@ class TestBaselineDirtyFilesSubtraction:
         db.execute(
             "INSERT INTO workflow_definitions "
             "(id, name, workflow_type, definition_json, enabled, source) "
-            "VALUES (?, ?, 'rule', ?, ?, 'test')",
+            "VALUES (%s, %s, 'rule', %s, %s, 'test')",
             (str(uuid4()), "test-dirty-block", json.dumps(definition), True),
         )
 

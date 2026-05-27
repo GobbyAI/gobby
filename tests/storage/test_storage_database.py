@@ -26,7 +26,7 @@ class TestHubDatabase:
         assert row["name"] == "test"
 
     def test_fetchone_returns_none_for_no_results(self, temp_db: HubDatabase) -> None:
-        row = temp_db.fetchone("SELECT * FROM projects WHERE id = ?", ("missing",))
+        row = temp_db.fetchone("SELECT * FROM projects WHERE id = %s", ("missing",))
 
         assert row is None
 
@@ -39,32 +39,32 @@ class TestHubDatabase:
         temp_db.execute("CREATE TABLE test_items (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
 
         temp_db.executemany(
-            "INSERT INTO test_items (id, name) VALUES ($1, $2)",
+            "INSERT INTO test_items (id, name) VALUES (%s, %s)",
             [(1, "one"), (2, "two"), (3, "three")],
         )
 
         rows = temp_db.fetchall("SELECT * FROM test_items ORDER BY id")
         assert [row["name"] for row in rows] == ["one", "two", "three"]
 
-    def test_numbered_placeholders_remap(self, temp_db: HubDatabase) -> None:
-        temp_db.execute("CREATE TABLE numbered_items (a TEXT, b TEXT)")
-        temp_db.execute("INSERT INTO numbered_items (a, b) VALUES ($2, $1)", ("left", "right"))
+    def test_positional_placeholders_bind_in_order(self, temp_db: HubDatabase) -> None:
+        temp_db.execute("CREATE TABLE positional_items (a TEXT, b TEXT)")
+        temp_db.execute("INSERT INTO positional_items (a, b) VALUES (%s, %s)", ("left", "right"))
 
         row = temp_db.fetchone(
-            "SELECT a, b FROM numbered_items WHERE a = $1 AND b = $2",
-            ("right", "left"),
+            "SELECT a, b FROM positional_items WHERE a = %s AND b = %s",
+            ("left", "right"),
         )
 
         assert row is not None
-        assert row["a"] == "right"
-        assert row["b"] == "left"
+        assert row["a"] == "left"
+        assert row["b"] == "right"
 
-    def test_qmark_placeholders_remap(self, temp_db: HubDatabase) -> None:
-        temp_db.execute("CREATE TABLE qmark_items (a TEXT, b TEXT)")
-        temp_db.execute("INSERT INTO qmark_items (a, b) VALUES (?, ?)", ("left", "right"))
+    def test_native_psycopg_placeholders_are_used_directly(self, temp_db: HubDatabase) -> None:
+        temp_db.execute("CREATE TABLE psycopg_items (a TEXT, b TEXT)")
+        temp_db.execute("INSERT INTO psycopg_items (a, b) VALUES (%s, %s)", ("left", "right"))
 
         row = temp_db.fetchone(
-            "SELECT a, b FROM qmark_items WHERE a = ? AND b = ?",
+            "SELECT a, b FROM psycopg_items WHERE a = %s AND b = %s",
             ("left", "right"),
         )
 

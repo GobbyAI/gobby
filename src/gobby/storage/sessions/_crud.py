@@ -140,7 +140,7 @@ class _SessionCRUDMixin:
                     )
                     if existing and existing.project_id != project_id:
                         conn.execute(
-                            "UPDATE sessions SET project_id = ?, updated_at = ? WHERE id = ?",
+                            "UPDATE sessions SET project_id = %s, updated_at = %s WHERE id = %s",
                             (project_id, now, existing.id),
                         )
                         get_logger().info(
@@ -174,7 +174,7 @@ class _SessionCRUDMixin:
             else:
                 session_id = str(uuid.uuid4())
                 max_seq_row = conn.execute(
-                    "SELECT MAX(seq_num) as max_seq FROM sessions WHERE project_id = ?",
+                    "SELECT MAX(seq_num) as max_seq FROM sessions WHERE project_id = %s",
                     (project_id,),
                 ).fetchone()
                 next_seq_num = ((max_seq_row["max_seq"] if max_seq_row else None) or 0) + 1
@@ -195,7 +195,7 @@ class _SessionCRUDMixin:
                             status, created_at, updated_at, seq_num,
                             had_edits, message_count, turn_count, tool_call_count, last_assistant_content
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, FALSE, 0, 0, 0, NULL)
+                        VALUES (%s, %s, %s, %s, %s, %s, NULL, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'active', %s, %s, %s, FALSE, 0, 0, 0, NULL)
                         """,
                         (
                             session_id,
@@ -331,11 +331,11 @@ class _SessionCRUDMixin:
             self.db.execute(
                 """
                 UPDATE sessions
-                SET model = COALESCE(?, model),
-                    is_local = ?,
-                    chat_mode = COALESCE(?, chat_mode),
-                    updated_at = ?
-                WHERE id = ?
+                SET model = COALESCE(%s, model),
+                    is_local = %s,
+                    chat_mode = COALESCE(%s, chat_mode),
+                    updated_at = %s
+                WHERE id = %s
                 """,
                 (model, bool(is_local), chat_mode, now, session.id),
             )
@@ -346,7 +346,7 @@ class _SessionCRUDMixin:
 
     def get(self: _SessionCRUDHost, session_id: str) -> Session | None:
         """Get session by ID."""
-        row = self.db.fetchone("SELECT * FROM sessions WHERE id = ?", (session_id,))
+        row = self.db.fetchone("SELECT * FROM sessions WHERE id = %s", (session_id,))
         return Session.from_row(row) if row else None
 
     def resolve_session_reference(
@@ -373,14 +373,14 @@ class _SessionCRUDMixin:
         now = datetime.now(UTC).isoformat()
         with self.db.transaction():
             self.db.execute(
-                "UPDATE sessions SET updated_at = ? WHERE id = ?",
+                "UPDATE sessions SET updated_at = %s WHERE id = %s",
                 (now, session_id),
             )
 
     def delete(self: _SessionCRUDHost, session_id: str) -> bool:
         """Delete session by ID."""
         with self.db.transaction():
-            cursor = self.db.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+            cursor = self.db.execute("DELETE FROM sessions WHERE id = %s", (session_id,))
         deleted = cursor.rowcount > 0
         if deleted:
             self._notify_session_change("session_deleted", session_id)

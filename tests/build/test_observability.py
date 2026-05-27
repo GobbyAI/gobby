@@ -66,7 +66,7 @@ def test_get_build_status_reports_agents_mutex_artifacts_events_and_comments(
     temp_db.execute(
         """
         INSERT INTO task_comments (id, task_id, author, author_type, body)
-        VALUES (?, ?, 'dispatcher', 'system', '## Holistic QA Failure\n\nNeeds work')
+        VALUES (%s, %s, 'dispatcher', 'system', '## Holistic QA Failure\n\nNeeds work')
         """,
         ("comment-1", task.id),
     )
@@ -190,7 +190,7 @@ def test_explain_dispatch_reports_block_reasons_and_would_dispatch(temp_db) -> N
     blocked = _automated_task(temp_db, project_id, "Blocked")
     blocker = manager.create_task(project_id=project_id, title="Blocker")
     temp_db.execute(
-        "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (?, ?, 'blocks', NOW())",
+        "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (%s, %s, 'blocks', NOW())",
         (blocked.id, blocker.id),
     )
     parent = manager.create_task(project_id=project_id, title="Parent", task_type="epic")
@@ -199,11 +199,11 @@ def test_explain_dispatch_reports_block_reasons_and_would_dispatch(temp_db) -> N
         parent.id, stage_names=["planning", "expansion", "development"]
     )
     temp_db.execute(
-        "UPDATE task_stage_states SET state = 'done' WHERE task_id = ? AND stage_name = 'planning'",
+        "UPDATE task_stage_states SET state = 'done' WHERE task_id = %s AND stage_name = 'planning'",
         (parent.id,),
     )
     temp_db.execute(
-        "UPDATE task_stage_states SET state = 'needs_review' WHERE task_id = ? AND stage_name = 'expansion'",
+        "UPDATE task_stage_states SET state = 'needs_review' WHERE task_id = %s AND stage_name = 'expansion'",
         (parent.id,),
     )
     ancestor_blocked = manager.create_task(
@@ -220,7 +220,7 @@ def test_explain_dispatch_reports_block_reasons_and_would_dispatch(temp_db) -> N
     manager.initialize_task_manifest(no_match.id, stage_names=["merge"])
     manager.update_task(no_match.id, allow_automation=True, isolation="none")
     temp_db.execute(
-        "UPDATE task_stage_states SET state = 'needs_review' WHERE task_id = ?",
+        "UPDATE task_stage_states SET state = 'needs_review' WHERE task_id = %s",
         (no_match.id,),
     )
     ready = _automated_task(temp_db, project_id, "Ready")

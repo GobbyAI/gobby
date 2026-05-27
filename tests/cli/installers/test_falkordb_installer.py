@@ -261,13 +261,13 @@ class TestInstallFalkorDB:
         assert store.get("databases.neo4j.auth") is None
 
         row = hub_db.fetchone(
-            "SELECT value, is_secret FROM config_store WHERE key = ?",
+            "SELECT value, is_secret FROM config_store WHERE key = %s",
             ("databases.falkordb.requirepass",),
         )
         assert row is not None
         assert json.loads(row["value"]) == "$secret:requirepass"
         assert row["is_secret"] is True
-        assert hub_db.fetchone("SELECT 1 FROM secrets WHERE name = ?", ("requirepass",))
+        assert hub_db.fetchone("SELECT 1 FROM secrets WHERE name = %s", ("requirepass",))
 
     def test_installer_does_not_write_bootstrap_when_config_store_update_fails(
         self,

@@ -29,9 +29,9 @@ async def test_mcp_list_tasks_current_stage_state_excludes_stale_closed_task(
     temp_db.execute(
         """
         UPDATE tasks
-           SET closed_at = ?,
-               closed_reason = ?
-         WHERE id = ?
+           SET closed_at = %s,
+               closed_reason = %s
+         WHERE id = %s
         """,
         ("2026-05-06T00:00:00+00:00", "closed-with-stale-stage", closed_task.id),
     )

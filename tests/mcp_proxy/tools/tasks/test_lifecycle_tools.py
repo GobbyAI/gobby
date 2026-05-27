@@ -57,7 +57,7 @@ def test_record_pr_opened_persists_pr_metadata(
         """
         SELECT pr_url, github_pr_number
         FROM task_delivery_units
-        WHERE task_id = ?
+        WHERE task_id = %s
         """,
         (ctx.task_id,),
     )

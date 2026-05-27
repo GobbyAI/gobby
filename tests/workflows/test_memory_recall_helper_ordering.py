@@ -158,7 +158,7 @@ def _register_sessions(db: HubDatabase, *session_ids: str) -> None:
         db.execute(
             """
             INSERT INTO sessions (id, external_id, machine_id, source, project_id)
-            VALUES (?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s)
             """,
             (session_id, f"external-{session_id}", "machine-test", "claude", project.id),
         )

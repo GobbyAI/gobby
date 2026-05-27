@@ -119,7 +119,7 @@ class _BulkUpdateMixin:
 
         try:
             with self.db.transaction():
-                self.db.safe_update("sessions", values, "id = ?", (session_id,))
+                self.db.safe_update("sessions", values, "id = %s", (session_id,))
         except Exception as exc:
             if current is None or not is_session_unique_conflict(exc):
                 raise
@@ -127,7 +127,7 @@ class _BulkUpdateMixin:
             if conflicting is None:
                 raise
             with self.db.transaction():
-                self.db.safe_update("sessions", values, "id = ?", (conflicting.id,))
+                self.db.safe_update("sessions", values, "id = %s", (conflicting.id,))
             updated = self.get(conflicting.id)
             if updated is not None:
                 self._notify_session_change("session_updated", conflicting.id)
@@ -173,7 +173,7 @@ class _BulkUpdateMixin:
 
         values["updated_at"] = datetime.now(UTC).isoformat()
         with self.db.transaction():
-            self.db.safe_update("sessions", values, "id = ?", (session_id,))
+            self.db.safe_update("sessions", values, "id = %s", (session_id,))
         return self.get(session_id)
 
     def recalculate_stats(self: _ManagerState, session_id: str) -> Session | None:
@@ -194,8 +194,8 @@ class _BulkUpdateMixin:
           turn_count = (SELECT COUNT(*) FROM session_messages WHERE session_id = sessions.id AND role = 'assistant'),
           tool_call_count = (SELECT COUNT(*) FROM session_messages WHERE session_id = sessions.id AND tool_name IS NOT NULL),
           last_assistant_content = (SELECT content FROM session_messages WHERE session_id = sessions.id AND role = 'assistant' AND tool_name IS NULL ORDER BY message_index DESC LIMIT 1),
-          updated_at = ?
-        WHERE id = ?
+          updated_at = %s
+        WHERE id = %s
         """
         now = datetime.now(UTC).isoformat()
         with self.db.transaction():
@@ -223,12 +223,12 @@ def _conflicting_web_chat_session(
             """
             SELECT *
               FROM sessions
-             WHERE external_id = ?
-               AND machine_id = ?
-               AND source = ?
+             WHERE external_id = %s
+               AND machine_id = %s
+               AND source = %s
                AND project_id IS NULL
                AND session_type = 'web_chat'
-               AND id != ?
+               AND id != %s
              LIMIT 1
             """,
             (external_id, current.machine_id, source, current.id),
@@ -238,12 +238,12 @@ def _conflicting_web_chat_session(
             """
             SELECT *
               FROM sessions
-             WHERE external_id = ?
-               AND machine_id = ?
-               AND source = ?
-               AND project_id = ?
+             WHERE external_id = %s
+               AND machine_id = %s
+               AND source = %s
+               AND project_id = %s
                AND session_type = 'web_chat'
-               AND id != ?
+               AND id != %s
              LIMIT 1
             """,
             (external_id, current.machine_id, source, project_id, current.id),

@@ -173,7 +173,7 @@ class GitHubTriageStore:
 
     def get_config(self, project_id: str, fallback_repo: str | None = None) -> GitHubTriageConfig:
         row = self.db.fetchone(
-            "SELECT * FROM project_github_triage_configs WHERE project_id = ?",
+            "SELECT * FROM project_github_triage_configs WHERE project_id = %s",
             (project_id,),
         )
         if row:
@@ -196,7 +196,7 @@ class GitHubTriageStore:
         now = _now()
         with self.db.transaction() as conn:
             existing = conn.execute(
-                "SELECT created_at FROM project_github_triage_configs WHERE project_id = ?",
+                "SELECT created_at FROM project_github_triage_configs WHERE project_id = %s",
                 (config.project_id,),
             ).fetchone()
             created_at = existing["created_at"] if existing else now
@@ -206,7 +206,7 @@ class GitHubTriageStore:
                     project_id, enabled, webhook_enabled, repositories_json,
                     reconcile_interval_seconds, webhook_secret_ref, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT(project_id) DO UPDATE SET
                     enabled = excluded.enabled,
                     webhook_enabled = excluded.webhook_enabled,
@@ -252,7 +252,7 @@ class GitHubTriageStore:
                     issue_number, status, payload_hash, headers_json, raw_body,
                     received_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     row_id,
@@ -281,7 +281,7 @@ class GitHubTriageStore:
 
     def get_delivery(self, project_id: str, delivery_id: str) -> GitHubTriageDelivery | None:
         row = self.db.fetchone(
-            "SELECT * FROM gh_triage_deliveries WHERE project_id = ? AND delivery_id = ?",
+            "SELECT * FROM gh_triage_deliveries WHERE project_id = %s AND delivery_id = %s",
             (project_id, delivery_id),
         )
         return GitHubTriageDelivery.from_row(row) if row else None
@@ -299,9 +299,9 @@ class GitHubTriageStore:
                 UPDATE gh_triage_deliveries
                    SET status = 'processing',
                        error = NULL,
-                       updated_at = ?
-                 WHERE project_id = ?
-                   AND delivery_id = ?
+                       updated_at = %s
+                 WHERE project_id = %s
+                   AND delivery_id = %s
                    AND status = 'pending'
                 """,
                 (now, project_id, delivery_id),
@@ -309,7 +309,7 @@ class GitHubTriageStore:
             if cursor.rowcount != 1:
                 return None
             row = conn.execute(
-                "SELECT * FROM gh_triage_deliveries WHERE project_id = ? AND delivery_id = ?",
+                "SELECT * FROM gh_triage_deliveries WHERE project_id = %s AND delivery_id = %s",
                 (project_id, delivery_id),
             ).fetchone()
         return GitHubTriageDelivery.from_row(row) if row else None
@@ -328,9 +328,9 @@ class GitHubTriageStore:
         self.db.execute(
             """
             UPDATE gh_triage_deliveries
-            SET status = ?, error = ?, processed_at = COALESCE(?, processed_at),
-                updated_at = ?
-            WHERE project_id = ? AND delivery_id = ?
+            SET status = %s, error = %s, processed_at = COALESCE(%s, processed_at),
+                updated_at = %s
+            WHERE project_id = %s AND delivery_id = %s
             """,
             (status, error, processed_at, now, project_id, delivery_id),
         )
@@ -361,8 +361,8 @@ class GitHubTriageStore:
         now = _now()
         with self.db.transaction() as conn:
             existing = conn.execute(
-                "SELECT created_at FROM gh_issues_triaged WHERE project_id = ? AND repo = ? "
-                "AND issue_number = ?",
+                "SELECT created_at FROM gh_issues_triaged WHERE project_id = %s AND repo = %s "
+                "AND issue_number = %s",
                 (project_id, repo, issue_number),
             ).fetchone()
             created_at = existing["created_at"] if existing else now
@@ -374,7 +374,7 @@ class GitHubTriageStore:
                     task_id, vector_point_id, dedup_issue_key, source, last_triaged_at,
                     created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT(project_id, repo, issue_number) DO UPDATE SET
                     issue_url = excluded.issue_url,
                     issue_state = excluded.issue_state,
@@ -415,8 +415,8 @@ class GitHubTriageStore:
                 ),
             )
             row = conn.execute(
-                "SELECT * FROM gh_issues_triaged WHERE project_id = ? AND repo = ? "
-                "AND issue_number = ?",
+                "SELECT * FROM gh_issues_triaged WHERE project_id = %s AND repo = %s "
+                "AND issue_number = %s",
                 (project_id, repo, issue_number),
             ).fetchone()
         if row is None:
@@ -427,8 +427,8 @@ class GitHubTriageStore:
         self, project_id: str, repo: str, issue_number: int
     ) -> GitHubIssueTriageRecord | None:
         row = self.db.fetchone(
-            "SELECT * FROM gh_issues_triaged WHERE project_id = ? AND repo = ? "
-            "AND issue_number = ?",
+            "SELECT * FROM gh_issues_triaged WHERE project_id = %s AND repo = %s "
+            "AND issue_number = %s",
             (project_id, repo, issue_number),
         )
         return GitHubIssueTriageRecord.from_row(row) if row else None

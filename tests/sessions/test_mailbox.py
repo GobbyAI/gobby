@@ -201,7 +201,7 @@ class TestMailboxDirectSend:
         assert wake_dispatcher.calls == [recipient.id]
 
         row = temp_db.fetchone(
-            "SELECT * FROM inter_session_messages WHERE id = ?",
+            "SELECT * FROM inter_session_messages WHERE id = %s",
             (result.message_ids[0],),
         )
         assert row is not None

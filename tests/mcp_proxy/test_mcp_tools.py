@@ -120,6 +120,7 @@ async def test_create_task(mock_task_manager, mock_sync_manager):
             category="research",
             validation_criteria=None,
             implementation_domain=None,
+            additional_skills=None,
             created_in_session_id="test-session",
         )
         assert mock_task_manager.create_task_with_decomposition.call_count >= 1
@@ -170,6 +171,7 @@ async def test_create_task_with_session_id(mock_task_manager, mock_sync_manager)
             category="research",
             validation_criteria=None,
             implementation_domain=None,
+            additional_skills=None,
             created_in_session_id="session-abc123",
         )
         assert mock_task_manager.create_task_with_decomposition.call_count >= 1

@@ -86,7 +86,7 @@ async def test_prepare_message_attachments_binds_ids_and_formats_safe_context(
     assert str(tmp_path) not in (prepared.prompt_context or "")
     assert "base64" not in (prepared.prompt_context or "").lower()
 
-    row = temp_db.fetchone("SELECT * FROM chat_attachments WHERE id = ?", (attachment_id,))
+    row = temp_db.fetchone("SELECT * FROM chat_attachments WHERE id = %s", (attachment_id,))
     assert row is not None
     assert row["conversation_id"] == "conv-1"
     assert row["message_id"] == "msg-1"
@@ -121,7 +121,7 @@ async def test_prepare_message_attachments_checks_current_file_size_limit_before
         )
 
     row = temp_db.fetchone(
-        "SELECT conversation_id FROM chat_attachments WHERE id = ?", (attachment_id,)
+        "SELECT conversation_id FROM chat_attachments WHERE id = %s", (attachment_id,)
     )
     assert row is not None
     assert row["conversation_id"] is None
@@ -144,7 +144,7 @@ async def test_prepare_message_attachments_checks_current_total_size_limit_befor
         )
 
     rows = temp_db.fetchall(
-        "SELECT conversation_id FROM chat_attachments WHERE id IN (?, ?)",
+        "SELECT conversation_id FROM chat_attachments WHERE id IN (%s, %s)",
         (first, second),
     )
     assert [row["conversation_id"] for row in rows] == [None, None]

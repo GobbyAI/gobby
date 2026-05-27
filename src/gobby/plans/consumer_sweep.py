@@ -25,7 +25,7 @@ _CHANGE_VERBS_RE = re.compile(
 )
 _TARGET_LINE_RE = re.compile(r"^\s*Targets?\s*:\s*(?P<rest>.*)$", re.IGNORECASE)
 _TARGET_DESTRUCTIVE_MARKER_RE = re.compile(
-    r"\b(DELETIONS ONLY|DELETE FILE|REMOVE FILE|DROP FILE|RENAMED? FILE|MOVED? FILE|"
+    r"\b(DELETIONS ONLY|DELETE FILE|REMOVE FILE|DROP FILE|RENAMED%s FILE|MOVED%s FILE|"
     r"DELETED ENTIRELY|REMOVED ENTIRELY)\b",
     re.IGNORECASE,
 )
@@ -299,11 +299,11 @@ def _direct_symbol_consumers(
     conditions: list[str] = []
     params: list[Any] = [project_id]
     if symbol_ids:
-        placeholders = ", ".join("?" for _ in symbol_ids)
+        placeholders = ", ".join("%s" for _ in symbol_ids)
         conditions.append(f"callee_symbol_id IN ({placeholders})")
         params.extend(symbol_ids)
     elif callee_names:
-        placeholders = ", ".join("?" for _ in callee_names)
+        placeholders = ", ".join("%s" for _ in callee_names)
         conditions.append(f"callee_name IN ({placeholders})")
         params.extend(callee_names)
     if not conditions:
@@ -311,7 +311,7 @@ def _direct_symbol_consumers(
 
     rows = db.fetchall(
         "SELECT DISTINCT file_path FROM code_calls "
-        "WHERE project_id = ? AND (" + " OR ".join(conditions) + ")",
+        "WHERE project_id = %s AND (" + " OR ".join(conditions) + ")",
         tuple(params),
     )
     return _row_paths(rows)

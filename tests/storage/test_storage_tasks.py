@@ -44,9 +44,9 @@ def _mark_closed_without_stage_cleanup(task_manager: LocalTaskManager, task_id: 
     task_manager.db.execute(
         """
         UPDATE tasks
-           SET closed_at = ?,
-               closed_reason = ?
-         WHERE id = ?
+           SET closed_at = %s,
+               closed_reason = %s
+         WHERE id = %s
         """,
         ("2026-05-06T00:00:00+00:00", "closed-with-stale-stage", task_id),
     )
@@ -1743,7 +1743,7 @@ class TestConcurrentTaskCreation:
 
         # Verify all seq_nums are unique
         rows = temp_db.fetchall(
-            "SELECT seq_num FROM tasks WHERE project_id = ? ORDER BY seq_num",
+            "SELECT seq_num FROM tasks WHERE project_id = %s ORDER BY seq_num",
             (project_id,),
         )
         seq_nums = [r["seq_num"] for r in rows]
@@ -2001,7 +2001,7 @@ class TestPathCacheComputation:
         """Test path computation returns None when seq_num is NULL (legacy data)."""
         task = task_manager.create_task(project_id=project_id, title="Task")
         # Simulate legacy data by clearing the seq_num
-        temp_db.execute("UPDATE tasks SET seq_num = NULL WHERE id = ?", (task.id,))
+        temp_db.execute("UPDATE tasks SET seq_num = NULL WHERE id = %s", (task.id,))
 
         path = task_manager.compute_path_cache(task.id)
         assert path is None
@@ -2015,7 +2015,7 @@ class TestPathCacheComputation:
             project_id=project_id, title="Child", parent_task_id=parent.id
         )
         # Simulate legacy data - parent has NULL seq_num
-        temp_db.execute("UPDATE tasks SET seq_num = NULL WHERE id = ?", (parent.id,))
+        temp_db.execute("UPDATE tasks SET seq_num = NULL WHERE id = %s", (parent.id,))
 
         path = task_manager.compute_path_cache(child.id)
         assert path is None
@@ -2024,20 +2024,20 @@ class TestPathCacheComputation:
         """Test update_path_cache stores the computed path."""
         task = task_manager.create_task(project_id=project_id, title="Task")
         # Clear the path_cache to test update_path_cache works
-        temp_db.execute("UPDATE tasks SET path_cache = NULL WHERE id = ?", (task.id,))
+        temp_db.execute("UPDATE tasks SET path_cache = NULL WHERE id = %s", (task.id,))
 
         path = task_manager.update_path_cache(task.id)
         assert path == "1"
 
         # Verify it was stored in the database
-        row = temp_db.fetchone("SELECT path_cache FROM tasks WHERE id = ?", (task.id,))
+        row = temp_db.fetchone("SELECT path_cache FROM tasks WHERE id = %s", (task.id,))
         assert row["path_cache"] == "1"
 
     def test_update_path_cache_with_null_seq_num(self, task_manager, project_id, temp_db) -> None:
         """Test update_path_cache when seq_num is NULL returns None."""
         task = task_manager.create_task(project_id=project_id, title="Task")
         # Simulate legacy data
-        temp_db.execute("UPDATE tasks SET seq_num = NULL WHERE id = ?", (task.id,))
+        temp_db.execute("UPDATE tasks SET seq_num = NULL WHERE id = %s", (task.id,))
 
         path = task_manager.update_path_cache(task.id)
         assert path is None
@@ -2056,24 +2056,24 @@ class TestPathCacheComputation:
         )
 
         # Clear path_cache values to test update_descendant_paths
-        temp_db.execute("UPDATE tasks SET path_cache = NULL WHERE project_id = ?", (project_id,))
+        temp_db.execute("UPDATE tasks SET path_cache = NULL WHERE project_id = %s", (project_id,))
 
         # Update all paths starting from root
         count = task_manager.update_descendant_paths(root.id)
         assert count == 4
 
         # Verify all paths - seq_nums are auto-assigned: root=1, child1=2, child2=3, gc=4
-        root_row = temp_db.fetchone("SELECT path_cache FROM tasks WHERE id = ?", (root.id,))
+        root_row = temp_db.fetchone("SELECT path_cache FROM tasks WHERE id = %s", (root.id,))
         assert root_row["path_cache"] == "1"
 
-        child1_row = temp_db.fetchone("SELECT path_cache FROM tasks WHERE id = ?", (child1.id,))
+        child1_row = temp_db.fetchone("SELECT path_cache FROM tasks WHERE id = %s", (child1.id,))
         assert child1_row["path_cache"] == "1.2"
 
-        child2_row = temp_db.fetchone("SELECT path_cache FROM tasks WHERE id = ?", (child2.id,))
+        child2_row = temp_db.fetchone("SELECT path_cache FROM tasks WHERE id = %s", (child2.id,))
         assert child2_row["path_cache"] == "1.3"
 
         grandchild_row = temp_db.fetchone(
-            "SELECT path_cache FROM tasks WHERE id = ?", (grandchild.id,)
+            "SELECT path_cache FROM tasks WHERE id = %s", (grandchild.id,)
         )
         assert grandchild_row["path_cache"] == "1.2.4"
 
@@ -2087,17 +2087,17 @@ class TestPathCacheComputation:
         )
 
         # Clear path_cache and simulate legacy data - child has NULL seq_num
-        temp_db.execute("UPDATE tasks SET path_cache = NULL WHERE project_id = ?", (project_id,))
-        temp_db.execute("UPDATE tasks SET seq_num = NULL WHERE id = ?", (child.id,))
+        temp_db.execute("UPDATE tasks SET path_cache = NULL WHERE project_id = %s", (project_id,))
+        temp_db.execute("UPDATE tasks SET seq_num = NULL WHERE id = %s", (child.id,))
 
         count = task_manager.update_descendant_paths(root.id)
         # Root succeeds, child fails (no seq_num)
         assert count == 1
 
-        root_row = temp_db.fetchone("SELECT path_cache FROM tasks WHERE id = ?", (root.id,))
+        root_row = temp_db.fetchone("SELECT path_cache FROM tasks WHERE id = %s", (root.id,))
         assert root_row["path_cache"] == "1"
 
-        child_row = temp_db.fetchone("SELECT path_cache FROM tasks WHERE id = ?", (child.id,))
+        child_row = temp_db.fetchone("SELECT path_cache FROM tasks WHERE id = %s", (child.id,))
         assert child_row["path_cache"] is None
 
     def test_to_dict_includes_seq_num_and_path_cache(self, task_manager, project_id) -> None:

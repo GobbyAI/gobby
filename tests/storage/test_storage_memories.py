@@ -199,7 +199,7 @@ def test_mark_pending_graphs_scopes_to_project(memory_manager, db) -> None:
 
     assert updated == 1
     rows = db.fetchall(
-        "SELECT id, graph_processed FROM memories WHERE id IN (?, ?, ?)",
+        "SELECT id, graph_processed FROM memories WHERE id IN (%s, %s, %s)",
         (mem_proj1.id, mem_proj2.id, mem_global.id),
     )
     by_id = {row["id"]: row["graph_processed"] for row in rows}
@@ -221,7 +221,7 @@ def test_mark_pending_graphs_without_project_resets_all(memory_manager, db) -> N
 
     assert updated == 3
     rows = db.fetchall(
-        "SELECT id, graph_processed FROM memories WHERE id IN (?, ?, ?)",
+        "SELECT id, graph_processed FROM memories WHERE id IN (%s, %s, %s)",
         (mem_proj1.id, mem_proj2.id, mem_global.id),
     )
     assert {row["graph_processed"] for row in rows} == {0}

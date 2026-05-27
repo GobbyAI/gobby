@@ -27,7 +27,7 @@ def _seed_skills(db: HubDatabase, skills: list[Skill]) -> None:
             INSERT INTO skills (
                 id, name, description, content, metadata,
                 enabled, always_apply, injection_format, source, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (id) DO UPDATE SET
                 name = EXCLUDED.name,
                 description = EXCLUDED.description,

@@ -98,7 +98,7 @@ def _record_project_build_event(
         row = conn.execute(
             """
             INSERT INTO project_lifecycle_events (project_id, event, reason, by_actor, created_at)
-            VALUES (?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s)
             RETURNING id
             """,
             (project_id, event, reason, by_actor, created_at),

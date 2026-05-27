@@ -19,7 +19,7 @@ def _session_exists(
 ) -> bool:
     if not session_id:
         return False
-    row = conn.execute("SELECT 1 FROM sessions WHERE id = ?", (session_id,)).fetchone()
+    row = conn.execute("SELECT 1 FROM sessions WHERE id = %s", (session_id,)).fetchone()
     return row is not None
 
 
@@ -40,7 +40,7 @@ def _close_task_in_txn(
 
     if not force and not cascade_descendants:
         open_children = conn.execute(
-            "SELECT id, title FROM tasks WHERE parent_task_id = ? AND closed_at IS NULL",
+            "SELECT id, title FROM tasks WHERE parent_task_id = %s AND closed_at IS NULL",
             (task_id,),
         ).fetchall()
         if open_children:
@@ -71,18 +71,18 @@ def _close_task_in_txn(
     conn.execute(
         """
         UPDATE tasks
-           SET closed_at = ?,
-               closed_reason = ?,
-               closed_in_session_id = ?,
-               closed_commit_sha = ?,
-               validation_override_reason = ?,
+           SET closed_at = %s,
+               closed_reason = %s,
+               closed_in_session_id = %s,
+               closed_commit_sha = %s,
+               validation_override_reason = %s,
                escalated_at = NULL,
                escalation_reason = NULL,
                is_escalated = FALSE,
                assignee = NULL,
                claimed_by_session_id = NULL,
-               updated_at = ?
-         WHERE id = ?
+               updated_at = %s
+         WHERE id = %s
         """,
         (
             now,
@@ -111,7 +111,7 @@ def _complete_terminal_delivery_stage_for_close(
         SELECT s.stage_name, s.state, r.category, r.is_terminal
           FROM task_stage_states s
           LEFT JOIN task_stages_registry r ON r.name = s.stage_name
-         WHERE s.task_id = ?
+         WHERE s.task_id = %s
            AND s.state != 'done'
          ORDER BY s.position, s.stage_name
          LIMIT 1
@@ -133,12 +133,12 @@ def _complete_terminal_delivery_stage_for_close(
         """
         UPDATE task_stage_states
            SET state = 'done',
-               completed_at = COALESCE(completed_at, ?),
-               completed_by_session_id = COALESCE(completed_by_session_id, ?),
-               completed_commit_sha = COALESCE(completed_commit_sha, ?),
-               updated_at = ?
-         WHERE task_id = ?
-           AND stage_name = ?
+               completed_at = COALESCE(completed_at, %s),
+               completed_by_session_id = COALESCE(completed_by_session_id, %s),
+               completed_commit_sha = COALESCE(completed_commit_sha, %s),
+               updated_at = %s
+         WHERE task_id = %s
+           AND stage_name = %s
            AND state = 'in_progress'
         """,
         (
@@ -168,7 +168,7 @@ def _completion_commit_sha_for_stage(
         """
         SELECT merge_sha
           FROM task_delivery_campaigns
-         WHERE task_id = ?
+         WHERE task_id = %s
            AND state = 'merged'
            AND merge_sha IS NOT NULL
            AND merge_sha != ''
@@ -190,18 +190,18 @@ def _cascade_close_descendants(
     conn.execute(
         """
         WITH RECURSIVE subtree(id) AS (
-            SELECT id FROM tasks WHERE parent_task_id = ?
+            SELECT id FROM tasks WHERE parent_task_id = %s
             UNION ALL
             SELECT tasks.id FROM tasks JOIN subtree ON tasks.parent_task_id = subtree.id
         )
         UPDATE tasks
-           SET closed_at = ?,
+           SET closed_at = %s,
                closed_reason = 'merged',
-               closed_in_session_id = ?,
-               closed_commit_sha = ?,
+               closed_in_session_id = %s,
+               closed_commit_sha = %s,
                assignee = NULL,
                claimed_by_session_id = NULL,
-               updated_at = ?
+               updated_at = %s
          WHERE id IN (SELECT id FROM subtree)
         """,
         (task_id, closed_at, closed_in_session_id, commit_sha, closed_at),

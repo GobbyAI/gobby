@@ -89,7 +89,7 @@ class LocalPlanManager:
                     id, project_id, plan_id, plan_path, plan_hash, plan_kind, state,
                     root_task_ref, created_at, updated_at, archived_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, NULL)
+                VALUES (%s, %s, %s, %s, %s, %s, 'active', %s, %s, %s, NULL)
                 ON CONFLICT(project_id, plan_id) DO UPDATE SET
                     plan_path = excluded.plan_path,
                     plan_hash = excluded.plan_hash,
@@ -132,13 +132,13 @@ class LocalPlanManager:
         clauses: list[str] = []
         params: list[object] = []
         if state is not None:
-            clauses.append("state = ?")
+            clauses.append("state = %s")
             params.append(state)
         if plan_kind is not None:
-            clauses.append("plan_kind = ?")
+            clauses.append("plan_kind = %s")
             params.append(plan_kind)
         if project_id is not None:
-            clauses.append("project_id = ?")
+            clauses.append("project_id = %s")
             params.append(project_id)
 
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
@@ -168,8 +168,8 @@ class LocalPlanManager:
             conn.execute(
                 """
                 UPDATE plans
-                SET plan_hash = ?, updated_at = ?
-                WHERE id = ?
+                SET plan_hash = %s, updated_at = %s
+                WHERE id = %s
                 """,
                 (doc.source_hash, now, record.id),
             )
@@ -235,10 +235,10 @@ class LocalPlanManager:
                     """
                     UPDATE plans
                     SET state = 'archived',
-                        plan_path = ?,
-                        archived_at = ?,
-                        updated_at = ?
-                    WHERE id = ?
+                        plan_path = %s,
+                        archived_at = %s,
+                        updated_at = %s
+                    WHERE id = %s
                     """,
                     (str(archived_relative), archived_at, archived_at, record.id),
                 )
@@ -267,7 +267,7 @@ class LocalPlanManager:
     def delete_plan(self, plan_id: str, *, project_id: str | None = None) -> bool:
         record = self.get_plan(plan_id, project_id=project_id)
         with self.db.transaction() as conn:
-            cursor = conn.execute("DELETE FROM plans WHERE id = ?", (record.id,))
+            cursor = conn.execute("DELETE FROM plans WHERE id = %s", (record.id,))
             deleted_count = cursor.rowcount
         self._remove_coverage_manifest(record)
         return deleted_count > 0
@@ -276,12 +276,12 @@ class LocalPlanManager:
         params: list[object] = [plan_id_or_ref, _normalize_ref(plan_id_or_ref)]
         project_clause = ""
         if project_id is not None:
-            project_clause = "AND project_id = ?"
+            project_clause = "AND project_id = %s"
             params.append(project_id)
         return self.db.fetchone(
             f"""
             SELECT * FROM plans
-            WHERE (plan_id = ? OR root_task_ref = ?)
+            WHERE (plan_id = %s OR root_task_ref = %s)
             {project_clause}
             ORDER BY updated_at DESC
             LIMIT 1

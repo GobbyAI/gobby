@@ -310,7 +310,7 @@ class LifecycleRepair:
     def _apply_candidate(self, candidate: LifecycleRepairCandidate, *, force: bool) -> None:
         if candidate.action == "remove_unused_manifest":
             self.task_manager.db.execute(
-                "DELETE FROM task_stage_states WHERE task_id = ?",
+                "DELETE FROM task_stage_states WHERE task_id = %s",
                 (candidate.task_id,),
             )
             self._record(candidate, "repair-lifecycle:remove-unused-manifest")
@@ -328,7 +328,7 @@ class LifecycleRepair:
         ]
         if force:
             self.task_manager.db.execute(
-                "DELETE FROM task_stage_states WHERE task_id = ?",
+                "DELETE FROM task_stage_states WHERE task_id = %s",
                 (candidate.task_id,),
             )
         self.task_manager.stage_states.initialize_manifest(
@@ -380,7 +380,7 @@ def _has_non_manifest_lifecycle_event(task_manager: LocalTaskManager, task_id: s
             """
             SELECT 1
               FROM task_lifecycle_events
-             WHERE task_id = ?
+             WHERE task_id = %s
                AND reason != 'initialize_manifest'
              LIMIT 1
             """,

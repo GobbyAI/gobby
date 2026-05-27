@@ -212,7 +212,7 @@ async def test_idle_reprompt_logs_codex_response_items(
         transcript_path=str(transcript_path),
     )
     stale_time = (datetime.now(UTC) - timedelta(seconds=120)).isoformat()
-    temp_db.execute("UPDATE sessions SET updated_at = ? WHERE id = ?", (stale_time, child.id))
+    temp_db.execute("UPDATE sessions SET updated_at = %s WHERE id = %s", (stale_time, child.id))
 
     run = _make_terminal_run(
         agent_run_manager,
@@ -284,7 +284,7 @@ async def test_idle_reasoning_watchdog_interrupts_codex_and_records_task_event(
         transcript_path=str(transcript_path),
     )
     stale_time = (datetime.now(UTC) - timedelta(seconds=120)).isoformat()
-    temp_db.execute("UPDATE sessions SET updated_at = ? WHERE id = ?", (stale_time, child.id))
+    temp_db.execute("UPDATE sessions SET updated_at = %s WHERE id = %s", (stale_time, child.id))
 
     run = _make_terminal_run(
         agent_run_manager,
@@ -358,7 +358,7 @@ async def test_idle_failure_logs_codex_response_items(
         transcript_path=str(transcript_path),
     )
     stale_time = (datetime.now(UTC) - timedelta(seconds=120)).isoformat()
-    temp_db.execute("UPDATE sessions SET updated_at = ? WHERE id = ?", (stale_time, child.id))
+    temp_db.execute("UPDATE sessions SET updated_at = %s WHERE id = %s", (stale_time, child.id))
 
     run = _make_terminal_run(
         agent_run_manager,

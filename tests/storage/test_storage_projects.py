@@ -17,7 +17,7 @@ class TestProject:
         project = project_manager.create(name="test-project")
 
         # Fetch raw row
-        row = project_manager.db.fetchone("SELECT * FROM projects WHERE id = ?", (project.id,))
+        row = project_manager.db.fetchone("SELECT * FROM projects WHERE id = %s", (project.id,))
         assert row is not None
 
         # Create from row

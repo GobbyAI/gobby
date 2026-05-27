@@ -79,7 +79,7 @@ class TestTaskGitHubFields:
                 INSERT INTO tasks (
                     id, project_id, title, priority, task_type,
                     created_at, updated_at, github_issue_number, github_pr_number, github_repo
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     "gt-test01",
@@ -96,7 +96,7 @@ class TestTaskGitHubFields:
             )
 
         # Fetch and verify via Task.from_row
-        row = temp_db.fetchone("SELECT * FROM tasks WHERE id = ?", ("gt-test01",))
+        row = temp_db.fetchone("SELECT * FROM tasks WHERE id = %s", ("gt-test01",))
         task = Task.from_row(row)
 
         assert task.github_issue_number == 123

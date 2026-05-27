@@ -184,7 +184,7 @@ def _subtree_tasks(task_manager: LocalTaskManager, root: Task) -> list[Task]:
         WITH RECURSIVE subtree(id) AS (
             SELECT id
               FROM tasks
-             WHERE id = ?
+             WHERE id = %s
             UNION ALL
             SELECT child.id
               FROM tasks child
@@ -311,7 +311,7 @@ def _count_active_agents(db: HubDatabase, project_id: str | None) -> int:
               FROM agent_runs ar
               JOIN sessions parent_s ON parent_s.id = ar.parent_session_id
              WHERE ar.status IN ('pending', 'running')
-               AND parent_s.project_id = ?
+               AND parent_s.project_id = %s
             """,
             (project_id,),
         )
@@ -394,14 +394,14 @@ def _recent_lifecycle_events(
 ) -> list[dict[str, Any]]:
     if not task_ids:
         return []
-    placeholders = ", ".join("?" for _ in task_ids)
+    placeholders = ", ".join("%s" for _ in task_ids)
     rows = db.fetchall(
         f"""
         SELECT id, task_id, from_state, to_state, reason, by_actor, created_at
           FROM task_lifecycle_events
          WHERE task_id IN ({placeholders})
          ORDER BY created_at DESC, id DESC
-         LIMIT ?
+         LIMIT %s
         """,  # nosec B608
         (*task_ids, _bounded_limit(limit)),
     )
@@ -512,13 +512,13 @@ def _latest_failure_comment(db: HubDatabase, task_id: str) -> dict[str, Any] | N
         """
         SELECT id, task_id, author, author_type, body, created_at
           FROM task_comments
-         WHERE task_id = ?
+         WHERE task_id = %s
            AND author_type = 'system'
            AND (
-               body LIKE '%Failure%'
-               OR body LIKE '%Follow-Up%'
-               OR body LIKE '%Dispatch%'
-               OR body LIKE '%Audit%'
+               body LIKE '%%Failure%%'
+               OR body LIKE '%%Follow-Up%%'
+               OR body LIKE '%%Dispatch%%'
+               OR body LIKE '%%Audit%%'
            )
          ORDER BY created_at DESC
          LIMIT 1

@@ -51,7 +51,7 @@ def handler(db: HubDatabase) -> WorkflowHookHandler:
     db.execute("UPDATE workflow_definitions SET enabled = FALSE WHERE workflow_type = 'rule'")
     for name in PROGRESSIVE_DISCOVERY_RULES:
         db.execute(
-            "UPDATE workflow_definitions SET enabled = TRUE WHERE name = ?",
+            "UPDATE workflow_definitions SET enabled = TRUE WHERE name = %s",
             (name,),
         )
 

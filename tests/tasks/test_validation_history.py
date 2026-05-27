@@ -21,7 +21,7 @@ def sample_project(temp_db):
     """Create a sample project for tests."""
     temp_db.execute(
         """INSERT INTO projects (id, name, created_at, updated_at)
-           VALUES (?, ?, NOW(), NOW())""",
+           VALUES (%s, %s, NOW(), NOW())""",
         ("test-project", "Test Project"),
     )
     return {"id": "test-project", "name": "Test Project"}
@@ -32,7 +32,7 @@ def sample_task(temp_db, sample_project):
     """Create a sample task for tests."""
     temp_db.execute(
         """INSERT INTO tasks (id, project_id, title, priority, task_type, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, NOW(), NOW())""",
+           VALUES (%s, %s, %s, %s, %s, NOW(), NOW())""",
         ("gt-test123", sample_project["id"], "Test Task", 2, "task"),
     )
     return {"id": "gt-test123"}
@@ -190,7 +190,7 @@ class TestValidationHistoryManager:
         # Create a second task
         temp_db.execute(
             """INSERT INTO tasks (id, project_id, title, priority, task_type, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, NOW(), NOW())""",
+               VALUES (%s, %s, %s, %s, %s, NOW(), NOW())""",
             ("gt-other", sample_project["id"], "Other Task", 2, "task"),
         )
 
@@ -295,7 +295,7 @@ class TestRecurringIssueDetection:
         """Create a sample project for tests."""
         temp_db.execute(
             """INSERT INTO projects (id, name, created_at, updated_at)
-               VALUES (?, ?, NOW(), NOW())""",
+               VALUES (%s, %s, NOW(), NOW())""",
             ("test-project", "Test Project"),
         )
         return {"id": "test-project"}
@@ -305,7 +305,7 @@ class TestRecurringIssueDetection:
         """Create a sample task for tests."""
         temp_db.execute(
             """INSERT INTO tasks (id, project_id, title, priority, task_type, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, NOW(), NOW())""",
+               VALUES (%s, %s, %s, %s, %s, NOW(), NOW())""",
             ("gt-recurring", sample_project["id"], "Test Task", 2, "task"),
         )
         return {"id": "gt-recurring"}

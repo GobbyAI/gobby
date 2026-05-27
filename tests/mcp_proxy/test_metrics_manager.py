@@ -30,14 +30,14 @@ def metrics_manager(temp_db: "HubDatabase", mock_telemetry) -> ToolMetricsManage
     temp_db.execute(
         """
         INSERT INTO projects (id, name, repo_path, created_at, updated_at)
-        VALUES (?, ?, ?, NOW(), NOW())
+        VALUES (%s, %s, %s, NOW(), NOW())
         """,
         ("proj-1", "Test Project 1", "/tmp/test1"),
     )
     temp_db.execute(
         """
         INSERT INTO projects (id, name, repo_path, created_at, updated_at)
-        VALUES (?, ?, ?, NOW(), NOW())
+        VALUES (%s, %s, %s, NOW(), NOW())
         """,
         ("proj-2", "Test Project 2", "/tmp/test2"),
     )
@@ -492,7 +492,7 @@ class TestCleanupOldMetrics:
                 call_count, success_count, failure_count,
                 total_latency_ms, avg_latency_ms,
                 last_called_at, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 "tm-old",
@@ -568,7 +568,7 @@ class TestGetDailyMetrics:
                 project_id, server_name, tool_name, date,
                 call_count, success_count, failure_count,
                 total_latency_ms, avg_latency_ms, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
             """,
             ("proj-1", "server1", "tool1", "2024-01-01", 10, 8, 2, 1000.0, 100.0),
         )
@@ -578,7 +578,7 @@ class TestGetDailyMetrics:
                 project_id, server_name, tool_name, date,
                 call_count, success_count, failure_count,
                 total_latency_ms, avg_latency_ms, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
             """,
             ("proj-2", "server2", "tool2", "2024-01-02", 5, 5, 0, 500.0, 100.0),
         )

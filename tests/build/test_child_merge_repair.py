@@ -373,7 +373,7 @@ def test_epic_integration_workspace_blocks_active_run_for_pruned_metadata(
     temp_db.execute(
         "INSERT INTO sessions "
         "(id, external_id, machine_id, source, project_id, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, NOW(), NOW())",
+        "VALUES (%s, %s, %s, %s, %s, NOW(), NOW())",
         ("parent-session", "ext-active", "machine-1", "codex", project.id),
     )
     run_manager = LocalAgentRunManager(temp_db)

@@ -137,7 +137,7 @@ class StageRegistryLoader:
         with db.transaction():
             for entry in entries:
                 row = db.fetchone(
-                    "SELECT * FROM task_stages_registry WHERE name = ?",
+                    "SELECT * FROM task_stages_registry WHERE name = %s",
                     (entry.name,),
                 )
                 if row is not None:
@@ -160,7 +160,7 @@ class StageRegistryLoader:
                         dispatch_type, dispatch_target, dispatch_inputs_json, position_hint,
                         requires_human, is_terminal, default_max_work_attempts,
                         default_max_review_rounds, bundled_hash, deleted_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, CURRENT_TIMESTAMP)
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NULL, CURRENT_TIMESTAMP)
                     ON CONFLICT(name) DO UPDATE SET
                         display_label = excluded.display_label,
                         description = excluded.description,
@@ -219,7 +219,7 @@ class StageRegistryLoader:
                         """
                         UPDATE task_stages_registry
                            SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-                         WHERE name = ?
+                         WHERE name = %s
                         """,
                         [(row["name"],) for row in orphaned],
                     )

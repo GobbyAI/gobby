@@ -86,7 +86,7 @@ def _ensure_dispatcher_project_row(db: HubDatabase, project_id: str) -> None:
     db.execute(
         """
         INSERT INTO projects (id, name, created_at, updated_at)
-        VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         ON CONFLICT (id) DO NOTHING
         """,
         (project_id, f"project:{project_id}"),

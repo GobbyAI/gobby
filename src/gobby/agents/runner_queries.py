@@ -36,7 +36,7 @@ def get_run_id_by_session(runner: AgentRunner, session_id: str) -> str | None:
         The run_id if found, None otherwise.
     """
     row = runner.db.fetchone(
-        "SELECT id FROM agent_runs WHERE child_session_id = ? ORDER BY created_at DESC LIMIT 1",
+        "SELECT id FROM agent_runs WHERE child_session_id = %s ORDER BY created_at DESC LIMIT 1",
         (session_id,),
     )
     return row["id"] if row else None

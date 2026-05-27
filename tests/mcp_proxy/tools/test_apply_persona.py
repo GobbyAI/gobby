@@ -136,13 +136,13 @@ class TestBuildPersonaChanges:
 
         # Create a project + session so FK constraints are satisfied
         db.execute(
-            "INSERT INTO projects (id, name, repo_path) VALUES (?, ?, ?)",
+            "INSERT INTO projects (id, name, repo_path) VALUES (%s, %s, %s)",
             ("proj-1", "test-project", "/tmp/test"),
         )
         session_id = "sess-step-test"
         db.execute(
             "INSERT INTO sessions (id, external_id, project_id, machine_id, source, status) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "VALUES (%s, %s, %s, %s, %s, %s)",
             (session_id, "ext-1", "proj-1", "machine-1", "test", "active"),
         )
 
@@ -173,13 +173,13 @@ class TestBuildPersonaChanges:
         from gobby.workflows.state_manager import WorkflowInstanceManager
 
         db.execute(
-            "INSERT INTO projects (id, name, repo_path) VALUES (?, ?, ?)",
+            "INSERT INTO projects (id, name, repo_path) VALUES (%s, %s, %s)",
             ("proj-2", "test-project-2", "/tmp/test"),
         )
         session_id = "sess-spawned-step-test"
         db.execute(
             "INSERT INTO sessions (id, external_id, project_id, machine_id, source, status) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "VALUES (%s, %s, %s, %s, %s, %s)",
             (session_id, "ext-2", "proj-2", "machine-1", "test", "active"),
         )
 
@@ -210,13 +210,13 @@ class TestBuildPersonaChanges:
         from gobby.workflows.state_manager import WorkflowInstanceManager
 
         db.execute(
-            "INSERT INTO projects (id, name, repo_path) VALUES (?, ?, ?)",
+            "INSERT INTO projects (id, name, repo_path) VALUES (%s, %s, %s)",
             ("proj-preserve", "test-project-preserve", "/tmp/test"),
         )
         session_id = "sess-spawned-preserve-test"
         db.execute(
             "INSERT INTO sessions (id, external_id, project_id, machine_id, source, status) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "VALUES (%s, %s, %s, %s, %s, %s)",
             (session_id, "ext-preserve", "proj-preserve", "machine-1", "codex", "active"),
         )
 

@@ -70,19 +70,19 @@ def update_task(
     task_columns = table_column_names(db, "tasks")
 
     if title is not UNSET:
-        updates.append("title = ?")
+        updates.append("title = %s")
         params.append(title)
     if description is not UNSET:
-        updates.append("description = ?")
+        updates.append("description = %s")
         params.append(description)
     if priority is not UNSET:
-        updates.append("priority = ?")
+        updates.append("priority = %s")
         params.append(priority)
     if task_type is not UNSET:
-        updates.append("task_type = ?")
+        updates.append("task_type = %s")
         params.append(validate_task_type(cast(str | None, task_type)))
     if assignee is not UNSET:
-        updates.append("assignee = ?")
+        updates.append("assignee = %s")
         params.append(assignee)
     derived_claimed_by_session_id = _derive_claimed_by_session_id(
         db,
@@ -90,74 +90,74 @@ def update_task(
         claimed_by_session_id=claimed_by_session_id,
     )
     if derived_claimed_by_session_id is not UNSET:
-        updates.append("claimed_by_session_id = ?")
+        updates.append("claimed_by_session_id = %s")
         params.append(derived_claimed_by_session_id)
     if labels is not UNSET:
-        updates.append("labels = ?")
+        updates.append("labels = %s")
         if labels is None:
             params.append("[]")
         else:
             params.append(json.dumps(labels))
     if parent_task_id is not UNSET:
-        updates.append("parent_task_id = ?")
+        updates.append("parent_task_id = %s")
         params.append(parent_task_id)
     if validation_status is not UNSET:
-        updates.append("validation_status = ?")
+        updates.append("validation_status = %s")
         params.append(validation_status)
     if validation_feedback is not UNSET:
-        updates.append("validation_feedback = ?")
+        updates.append("validation_feedback = %s")
         params.append(validation_feedback)
     if category is not UNSET:
-        updates.append("category = ?")
+        updates.append("category = %s")
         params.append(category)
     if validation_criteria is not UNSET:
-        updates.append("validation_criteria = ?")
+        updates.append("validation_criteria = %s")
         params.append(validation_criteria)
     if validation_fail_count is not UNSET:
-        updates.append("validation_fail_count = ?")
+        updates.append("validation_fail_count = %s")
         params.append(validation_fail_count)
     if dispatch_failure_count is not UNSET:
-        updates.append("dispatch_failure_count = ?")
+        updates.append("dispatch_failure_count = %s")
         params.append(dispatch_failure_count)
     if github_issue_number is not UNSET:
-        updates.append("github_issue_number = ?")
+        updates.append("github_issue_number = %s")
         params.append(github_issue_number)
     if github_pr_number is not UNSET:
-        updates.append("github_pr_number = ?")
+        updates.append("github_pr_number = %s")
         params.append(github_pr_number)
     if github_repo is not UNSET:
-        updates.append("github_repo = ?")
+        updates.append("github_repo = %s")
         params.append(github_repo)
     if linear_issue_id is not UNSET:
-        updates.append("linear_issue_id = ?")
+        updates.append("linear_issue_id = %s")
         params.append(linear_issue_id)
     if linear_team_id is not UNSET:
-        updates.append("linear_team_id = ?")
+        updates.append("linear_team_id = %s")
         params.append(linear_team_id)
     if validation_override_reason is not UNSET:
-        updates.append("validation_override_reason = ?")
+        updates.append("validation_override_reason = %s")
         params.append(validation_override_reason)
     if allow_automation is not UNSET:
-        updates.append("allow_automation = ?")
+        updates.append("allow_automation = %s")
         params.append(bool(allow_automation))
     if unattended is UNSET and yolo is not UNSET:
         unattended = yolo
     if unattended is not UNSET:
-        updates.append("unattended = ?")
+        updates.append("unattended = %s")
         params.append(bool(unattended))
     if isolation is not UNSET:
         if isolation is None:
             raise ValueError("isolation cannot be None")
-        updates.append("isolation = ?")
+        updates.append("isolation = %s")
         params.append(Isolation(cast(str, isolation)).value)
     if assigned_agent is not UNSET:
-        updates.append("assigned_agent = ?")
+        updates.append("assigned_agent = %s")
         params.append(assigned_agent)
     if implementation_domain is not UNSET:
-        updates.append("implementation_domain = ?")
+        updates.append("implementation_domain = %s")
         params.append(validate_implementation_domain(cast(str | None, implementation_domain)))
     if additional_skills is not UNSET:
-        updates.append("additional_skills = ?")
+        updates.append("additional_skills = %s")
         params.append(json.dumps(additional_skills) if additional_skills is not None else None)
     next_closed_at = current_task.closed_at if closed_at is UNSET else cast(str | None, closed_at)
     next_escalated_at = (
@@ -165,58 +165,58 @@ def update_task(
     )
 
     if closed_at is not UNSET:
-        updates.append("closed_at = ?")
+        updates.append("closed_at = %s")
         params.append(next_closed_at)
     if escalated_at is not UNSET:
-        updates.append("escalated_at = ?")
+        updates.append("escalated_at = %s")
         params.append(next_escalated_at)
         if "is_escalated" in task_columns:
-            updates.append("is_escalated = ?")
+            updates.append("is_escalated = %s")
             params.append(bool(next_escalated_at))
 
     if closed_reason is not UNSET:
-        updates.append("closed_reason = ?")
+        updates.append("closed_reason = %s")
         params.append(closed_reason)
     elif current_task.closed_at and next_closed_at is None:
-        updates.append("closed_reason = ?")
+        updates.append("closed_reason = %s")
         params.append(None)
     if closed_in_session_id is not UNSET:
-        updates.append("closed_in_session_id = ?")
+        updates.append("closed_in_session_id = %s")
         params.append(closed_in_session_id)
     elif current_task.closed_at and next_closed_at is None:
-        updates.append("closed_in_session_id = ?")
+        updates.append("closed_in_session_id = %s")
         params.append(None)
     if closed_commit_sha is not UNSET:
-        updates.append("closed_commit_sha = ?")
+        updates.append("closed_commit_sha = %s")
         params.append(closed_commit_sha)
     elif current_task.closed_at and next_closed_at is None:
-        updates.append("closed_commit_sha = ?")
+        updates.append("closed_commit_sha = %s")
         params.append(None)
 
     if escalation_reason is not UNSET:
-        updates.append("escalation_reason = ?")
+        updates.append("escalation_reason = %s")
         params.append(escalation_reason)
     elif current_task.escalated_at and next_escalated_at is None:
-        updates.append("escalation_reason = ?")
+        updates.append("escalation_reason = %s")
         params.append(None)
 
     if current_task.closed_at and next_closed_at is None:
         if validation_status is UNSET:
-            updates.append("validation_status = ?")
+            updates.append("validation_status = %s")
             params.append(None)
         if validation_feedback is UNSET:
-            updates.append("validation_feedback = ?")
+            updates.append("validation_feedback = %s")
             params.append(None)
 
     if not updates:
         return False
 
-    updates.append("updated_at = ?")
+    updates.append("updated_at = %s")
     params.append(now)
 
     params.append(task_id)
 
-    sql = f"UPDATE tasks SET {', '.join(updates)} WHERE id = ?"  # nosec B608
+    sql = f"UPDATE tasks SET {', '.join(updates)} WHERE id = %s"  # nosec B608
 
     with db.transaction() as conn:
         cursor = conn.execute(sql, tuple(params))

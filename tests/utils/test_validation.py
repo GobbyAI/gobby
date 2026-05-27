@@ -84,7 +84,7 @@ class TestCheckOrphanDependencies:
 
         # Create valid dependency
         task_manager.db.execute(
-            "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (?, ?, ?, ?)",
+            "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (%s, %s, %s, %s)",
             (task2.id, task1.id, "blocks", _now_iso()),
         )
 
@@ -112,7 +112,7 @@ class TestCheckOrphanDependencies:
         # Defer FK checks so the validator can inspect intentionally invalid rows.
         with _deferred_constraints_rollback(task_manager.db):
             task_manager.db.execute(
-                "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (?, ?, ?, ?)",
+                "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (%s, %s, %s, %s)",
                 ("nonexistent-task-id", task1.id, "blocks", _now_iso()),
             )
 
@@ -141,7 +141,7 @@ class TestCheckOrphanDependencies:
         # Defer FK checks so the validator can inspect intentionally invalid rows.
         with _deferred_constraints_rollback(task_manager.db):
             task_manager.db.execute(
-                "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (?, ?, ?, ?)",
+                "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (%s, %s, %s, %s)",
                 (task1.id, "nonexistent-dep-id", "blocks", _now_iso()),
             )
 
@@ -190,7 +190,7 @@ class TestCheckInvalidProjects:
             task_manager.db.execute(
                 """
                 INSERT INTO tasks (id, title, task_type, project_id, created_at, updated_at)
-                VALUES (?, ?, ?, ?, NOW(), NOW())
+                VALUES (%s, %s, %s, %s, NOW(), NOW())
                 """,
                 ("orphan-task", "Orphan Task", "task", "nonexistent-project"),
             )
@@ -227,11 +227,11 @@ class TestCheckCycles:
 
         # Linear chain: task1 <- task2 <- task3
         task_manager.db.execute(
-            "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (?, ?, ?, ?)",
+            "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (%s, %s, %s, %s)",
             (task2.id, task1.id, "blocks", _now_iso()),
         )
         task_manager.db.execute(
-            "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (?, ?, ?, ?)",
+            "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (%s, %s, %s, %s)",
             (task3.id, task2.id, "blocks", _now_iso()),
         )
 
@@ -255,11 +255,11 @@ class TestCheckCycles:
 
         # Create cycle: task1 -> task2 -> task1
         task_manager.db.execute(
-            "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (?, ?, ?, ?)",
+            "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (%s, %s, %s, %s)",
             (task1.id, task2.id, "blocks", _now_iso()),
         )
         task_manager.db.execute(
-            "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (?, ?, ?, ?)",
+            "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (%s, %s, %s, %s)",
             (task2.id, task1.id, "blocks", _now_iso()),
         )
 
@@ -296,11 +296,11 @@ class TestCleanOrphans:
         with task_manager.db.transaction() as conn:
             conn.execute("SET CONSTRAINTS ALL DEFERRED")
             task_manager.db.execute(
-                "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (?, ?, ?, ?)",
+                "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (%s, %s, %s, %s)",
                 ("nonexistent-1", task1.id, "blocks", _now_iso()),
             )
             task_manager.db.execute(
-                "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (?, ?, ?, ?)",
+                "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (%s, %s, %s, %s)",
                 (task1.id, "nonexistent-2", "blocks", _now_iso()),
             )
 
@@ -355,14 +355,14 @@ class TestValidateAll:
             task_manager.db.execute(
                 """
                 INSERT INTO tasks (id, title, task_type, project_id, created_at, updated_at)
-                VALUES (?, ?, ?, ?, NOW(), NOW())
+                VALUES (%s, %s, %s, %s, NOW(), NOW())
                 """,
                 ("orphan-task", "Orphan Task", "task", "nonexistent-project"),
             )
 
             # Create orphan dependency (depends_on doesn't exist)
             task_manager.db.execute(
-                "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (?, ?, ?, ?)",
+                "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (%s, %s, %s, %s)",
                 ("orphan-task", "nonexistent-dep", "blocks", _now_iso()),
             )
 

@@ -149,7 +149,7 @@ class TokenEventStore:
                 event_at,
                 metadata
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (session_id, message_id) WHERE message_id IS NOT NULL DO NOTHING
             """,
             (
@@ -178,17 +178,19 @@ class TokenEventStore:
         """Delete token events for a session."""
         if origin:
             cursor = self.db.execute(
-                "DELETE FROM token_events WHERE session_id = ? AND origin = ?",
+                "DELETE FROM token_events WHERE session_id = %s AND origin = %s",
                 (session_id, origin),
             )
         else:
-            cursor = self.db.execute("DELETE FROM token_events WHERE session_id = ?", (session_id,))
+            cursor = self.db.execute(
+                "DELETE FROM token_events WHERE session_id = %s", (session_id,)
+            )
         rowcount = getattr(cursor, "rowcount", None)
         return rowcount if isinstance(rowcount, int) else 0
 
     def count_session_events(self, session_id: str) -> int:
         row = self.db.fetchone(
-            "SELECT COUNT(*) AS count FROM token_events WHERE session_id = ?",
+            "SELECT COUNT(*) AS count FROM token_events WHERE session_id = %s",
             (session_id,),
         )
         return _coerce_int(_row_value(row, "count"), default=0)
@@ -202,7 +204,7 @@ class TokenEventStore:
                 COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens,
                 COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens
             FROM token_events
-            WHERE session_id = ?
+            WHERE session_id = %s
             """,
             (session_id,),
         )
@@ -228,7 +230,7 @@ class TokenEventStore:
         params: list[Any] = [session_id]
         since_sql = ""
         if since:
-            since_sql = "AND event_at > ?"
+            since_sql = "AND event_at > %s"
             params.append(canonicalize_event_timestamp(since))
         params.append(limit)
 
@@ -252,10 +254,10 @@ class TokenEventStore:
                 created_at,
                 metadata
             FROM token_events
-            WHERE session_id = ?
+            WHERE session_id = %s
               {since_sql}
             ORDER BY event_at DESC, id DESC
-            LIMIT ?
+            LIMIT %s
             """,
             tuple(params),
         )
@@ -414,14 +416,14 @@ class TokenEventStore:
         params: list[Any] = []
 
         if hours is not None and hours > 0:
-            clauses.append(f"AND {newer_than_now_expr(self.db, 'event_at', '?', 'hour')}")
+            clauses.append(f"AND {newer_than_now_expr(self.db, 'event_at', '%s', 'hour')}")
             params.append(hours)
         elif days is not None and days > 0:
-            clauses.append(f"AND {newer_than_now_expr(self.db, 'event_at', '?', 'day')}")
+            clauses.append(f"AND {newer_than_now_expr(self.db, 'event_at', '%s', 'day')}")
             params.append(days)
 
         if project_id:
-            clauses.append("AND project_id = ?")
+            clauses.append("AND project_id = %s")
             params.append(project_id)
 
         return " ".join(clauses), params

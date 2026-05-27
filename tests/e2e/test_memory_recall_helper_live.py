@@ -76,7 +76,7 @@ def _latest_helper_run(postgres_db: Any, parent_session_id: str) -> dict[str, An
         """
         SELECT id, status, child_session_id, result, error, prompt
         FROM agent_runs
-        WHERE parent_session_id = $1 AND agent_name = 'memory-recall-helper'
+        WHERE parent_session_id = %s AND agent_name = 'memory-recall-helper'
         ORDER BY created_at DESC
         LIMIT 1
         """,

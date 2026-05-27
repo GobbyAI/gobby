@@ -41,7 +41,7 @@ def engine(db: HubDatabase) -> RuleEngine:
         "reset-subagent-flag",
     ):
         db.execute(
-            "UPDATE workflow_definitions SET enabled = TRUE WHERE name = ?",
+            "UPDATE workflow_definitions SET enabled = TRUE WHERE name = %s",
             (name,),
         )
     return RuleEngine(db)

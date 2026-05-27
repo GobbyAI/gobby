@@ -856,7 +856,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
     def _load_session_overrides(self, session_id: str) -> dict[str, bool]:
         """Load session-scoped rule overrides."""
         rows = self.db.fetchall(
-            "SELECT rule_name, enabled FROM rule_overrides WHERE session_id = ?",
+            "SELECT rule_name, enabled FROM rule_overrides WHERE session_id = %s",
             (session_id,),
         )
         return {row["rule_name"]: bool(row["enabled"]) for row in rows}

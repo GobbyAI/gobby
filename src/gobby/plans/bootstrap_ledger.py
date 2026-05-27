@@ -175,7 +175,7 @@ def _scope_for_task(db: HubDatabase, task_id: str) -> _TaskPlanScope | None:
         SELECT t.project_id, t.seq_num, p.repo_path
         FROM tasks t
         LEFT JOIN projects p ON p.id = t.project_id
-        WHERE t.id = ?
+        WHERE t.id = %s
         """,
         (task_id,),
     )
@@ -197,8 +197,8 @@ def _matching_plan_entries(
         """
         SELECT plan_id, project_id, root_task_ref
         FROM plans
-        WHERE project_id = ?
-          AND (root_task_ref = ? OR root_task_ref = ?)
+        WHERE project_id = %s
+          AND (root_task_ref = %s OR root_task_ref = %s)
         ORDER BY updated_at DESC, plan_id ASC
         """,
         (scope.project_id, scope.root_task_ref, _normalize_ref(scope.root_task_ref)),
@@ -326,7 +326,7 @@ def _task_title(db: HubDatabase, *, project_id: str, task_ref: str) -> str | Non
     normalized = _normalize_ref(task_ref)
     if normalized.isdigit():
         row = db.fetchone(
-            "SELECT title FROM tasks WHERE project_id = ? AND seq_num = ?",
+            "SELECT title FROM tasks WHERE project_id = %s AND seq_num = %s",
             (project_id, int(normalized)),
         )
         if row is not None:
@@ -336,7 +336,7 @@ def _task_title(db: HubDatabase, *, project_id: str, task_ref: str) -> str | Non
     row = db.fetchone(
         """
         SELECT title FROM tasks
-        WHERE project_id = ? AND (id = ? OR id LIKE ? ESCAPE '!')
+        WHERE project_id = %s AND (id = %s OR id LIKE %s ESCAPE '!')
         ORDER BY id
         LIMIT 1
         """,

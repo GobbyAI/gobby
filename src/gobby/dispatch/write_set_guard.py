@@ -47,7 +47,7 @@ class DispatchWriteSetGuard:
         project_filter = ""
         params: list[object] = [now]
         if project_id is not None:
-            project_filter = "AND t.project_id = ?"
+            project_filter = "AND t.project_id = %s"
             params.append(project_id)
 
         rows = db.fetchall(
@@ -76,7 +76,7 @@ class DispatchWriteSetGuard:
                AND mutex.run_id IS NOT NULL
                AND (
                     mutex.lease_until IS NULL
-                    OR mutex.lease_until >= ?
+                    OR mutex.lease_until >= %s
                )
              WHERE t.closed_at IS NULL
                AND t.escalated_at IS NULL
@@ -154,7 +154,7 @@ class DispatchWriteSetGuard:
             """
             SELECT DISTINCT file_path
               FROM task_affected_files
-             WHERE task_id = ?
+             WHERE task_id = %s
              ORDER BY file_path
             """,
             (task_id,),

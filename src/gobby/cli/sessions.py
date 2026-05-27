@@ -539,7 +539,7 @@ def restore_transcript(
                 external_id = archive_file.stem.replace(".jsonl", "")
                 # Look up session by external_id
                 row = db.fetchone(
-                    "SELECT id, transcript_path FROM sessions WHERE external_id = ?",
+                    "SELECT id, transcript_path FROM sessions WHERE external_id = %s",
                     (external_id,),
                 )
                 if not row or not row["transcript_path"]:

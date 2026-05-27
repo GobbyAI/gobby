@@ -35,7 +35,7 @@ def multi_project_hub(hub_db):
         hub_db.execute(
             """
             INSERT INTO projects (id, name, repo_path, created_at, updated_at)
-            VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            VALUES (%s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             (project_name, project_name.replace("-", " ").title(), project_dir),
         )
@@ -70,7 +70,7 @@ def multi_project_hub(hub_db):
             hub_db.execute(
                 """
                 INSERT INTO sessions (id, project_id, external_id, source, machine_id, status, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 """,
                 (
                     f"sess-{project_name}-{k}",
@@ -302,14 +302,14 @@ class TestHubQueryEdgeCases:
         hub_db.execute(
             """
             INSERT INTO projects (id, name, repo_path, created_at, updated_at)
-            VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            VALUES (%s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             ("tasks-only-project", "Tasks Only", "/path/tasks"),
         )
         hub_db.execute(
             """
             INSERT INTO tasks (id, project_id, title, created_at, updated_at)
-            VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            VALUES (%s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             ("task-only-1", "tasks-only-project", "A Task"),
         )
@@ -334,14 +334,14 @@ class TestHubQueryEdgeCases:
         hub_db.execute(
             """
             INSERT INTO projects (id, name, repo_path, created_at, updated_at)
-            VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            VALUES (%s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             ("sessions-only-project", "Sessions Only", "/path/sessions"),
         )
         hub_db.execute(
             """
             INSERT INTO sessions (id, project_id, external_id, source, machine_id, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             ("sess-only-1", "sessions-only-project", "ext-1", "claude", "machine-1", "active"),
         )

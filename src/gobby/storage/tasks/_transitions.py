@@ -76,7 +76,7 @@ def _current_stage_row(db: HubDatabase, task_id: str) -> Any | None:
         """
         SELECT *
           FROM task_stage_states
-         WHERE task_id = ? AND state != 'done'
+         WHERE task_id = %s AND state != 'done'
          ORDER BY position, stage_name
          LIMIT 1
         """,
@@ -111,8 +111,8 @@ def reset_current_non_ready_stage(
                    completed_commit_sha = NULL,
                    artifact_refs = NULL,
                    notes = NULL,
-                   updated_at = ?
-             WHERE task_id = ? AND stage_name = ?
+                   updated_at = %s
+             WHERE task_id = %s AND stage_name = %s
             """,
             (now, task_id, stage_name),
         )
@@ -340,7 +340,7 @@ def _stage_name_from_work_attempt_escalation(
         """
         SELECT stage_name
           FROM task_stage_states
-         WHERE task_id = ?
+         WHERE task_id = %s
         """,
         (task_id,),
     )
@@ -364,7 +364,7 @@ def _reset_stage_work_attempts(
         """
         SELECT *
           FROM task_stage_states
-         WHERE task_id = ? AND stage_name = ?
+         WHERE task_id = %s AND stage_name = %s
         """,
         (task_id, stage_name),
     )
@@ -378,8 +378,8 @@ def _reset_stage_work_attempts(
             """
             UPDATE task_stage_states
                SET work_attempt_count = 0,
-                   updated_at = ?
-             WHERE task_id = ? AND stage_name = ?
+                   updated_at = %s
+             WHERE task_id = %s AND stage_name = %s
             """,
             (now, task_id, stage_name),
         )

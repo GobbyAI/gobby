@@ -27,7 +27,7 @@ def record_discovery_savings(
         all_skills_chars = sum(len(row["content"] or "") for row in skills_rows)
 
         session_skills_rows = db.fetchall(
-            "SELECT skill_name FROM session_skills WHERE session_id = ?",
+            "SELECT skill_name FROM session_skills WHERE session_id = %s",
             (session_id,),
         )
         used_skill_names = {row["skill_name"] for row in session_skills_rows}
@@ -42,7 +42,7 @@ def record_discovery_savings(
             SELECT t.name as tool_name, s.name as server_name, t.input_schema
             FROM tools t
             JOIN mcp_servers s ON t.mcp_server_id = s.id
-            WHERE s.project_id = ?
+            WHERE s.project_id = %s
             """,
             (project_id,),
         )

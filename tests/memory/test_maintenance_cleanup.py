@@ -107,7 +107,7 @@ class TestFindStaleMemories:
         assert len(result) == 1
         assert result[0].id == "stale-1"
         call_args = db.fetchall.call_args
-        assert "access_count <= ?" in call_args[0][0]
+        assert "access_count <= %s" in call_args[0][0]
         assert call_args[0][1][0] == 1
 
     def test_skips_accessed_memories(self) -> None:
@@ -140,7 +140,7 @@ class TestFindStaleMemories:
 
         call_args = db.fetchall.call_args
         sql = call_args[0][0]
-        assert "project_id = ?" in sql
+        assert "project_id = %s" in sql
 
     def test_uses_updated_and_last_accessed_for_candidate_selection(self) -> None:
         db = MagicMock()
@@ -150,7 +150,7 @@ class TestFindStaleMemories:
 
         sql = db.fetchall.call_args[0][0]
         assert "COALESCE(updated_at, created_at) < ?" in sql
-        assert "last_accessed_at IS NULL OR last_accessed_at < ?" in sql
+        assert "last_accessed_at IS NULL OR last_accessed_at < %s" in sql
 
 
 # ---------------------------------------------------------------------------
@@ -352,7 +352,7 @@ class TestFindOrphanedMemories:
         find_orphaned_memories(db, project_id="proj-1")
 
         sql = db.fetchall.call_args[0][0]
-        assert "project_id = ?" in sql
+        assert "project_id = %s" in sql
 
 
 # ---------------------------------------------------------------------------

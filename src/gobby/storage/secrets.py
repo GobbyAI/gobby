@@ -158,13 +158,13 @@ class SecretStore:
         now = datetime.now(UTC).isoformat()
 
         # Check if exists
-        existing = self.db.fetchone("SELECT id FROM secrets WHERE name = ?", (name,))
+        existing = self.db.fetchone("SELECT id FROM secrets WHERE name = %s", (name,))
 
         if existing:
             self.db.execute(
                 """UPDATE secrets
-                   SET encrypted_value = ?, category = ?, description = ?, updated_at = ?
-                   WHERE name = ?""",
+                   SET encrypted_value = %s, category = %s, description = %s, updated_at = %s
+                   WHERE name = %s""",
                 (encrypted, category, description, now, name),
             )
             secret_id = existing["id"]
@@ -172,11 +172,11 @@ class SecretStore:
             secret_id = str(uuid.uuid4())
             self.db.execute(
                 """INSERT INTO secrets (id, name, encrypted_value, category, description, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (%s, %s, %s, %s, %s, %s, %s)""",
                 (secret_id, name, encrypted, category, description, now, now),
             )
 
-        row = self.db.fetchone("SELECT * FROM secrets WHERE id = ?", (secret_id,))
+        row = self.db.fetchone("SELECT * FROM secrets WHERE id = %s", (secret_id,))
         if row is None:
             raise ValueError(f"Secret '{name}' not found after upsert (id={secret_id})")
         return SecretInfo(
@@ -198,7 +198,7 @@ class SecretStore:
             Decrypted plaintext value, or None if not found
         """
         name = self._normalize_name(name)
-        row = self.db.fetchone("SELECT encrypted_value FROM secrets WHERE name = ?", (name,))
+        row = self.db.fetchone("SELECT encrypted_value FROM secrets WHERE name = %s", (name,))
         if not row:
             return None
 
@@ -220,10 +220,10 @@ class SecretStore:
             True if deleted, False if not found
         """
         name = self._normalize_name(name)
-        row = self.db.fetchone("SELECT id FROM secrets WHERE name = ?", (name,))
+        row = self.db.fetchone("SELECT id FROM secrets WHERE name = %s", (name,))
         if not row:
             return False
-        self.db.execute("DELETE FROM secrets WHERE name = ?", (name,))
+        self.db.execute("DELETE FROM secrets WHERE name = %s", (name,))
         return True
 
     def list(self) -> list[SecretInfo]:
@@ -250,7 +250,7 @@ class SecretStore:
     def exists(self, name: str) -> bool:
         """Check if a secret exists."""
         name = self._normalize_name(name)
-        row = self.db.fetchone("SELECT 1 FROM secrets WHERE name = ?", (name,))
+        row = self.db.fetchone("SELECT 1 FROM secrets WHERE name = %s", (name,))
         return row is not None
 
     def resolve(self, text: str) -> str:

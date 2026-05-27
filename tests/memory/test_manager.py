@@ -124,13 +124,13 @@ class TestCreateMemory:
     async def test_create_memory_with_all_params(self, db, memory_config):
         """Test memory creation with all parameters."""
         db.execute(
-            "INSERT INTO projects (id, name, repo_path) VALUES (?, ?, ?)",
+            "INSERT INTO projects (id, name, repo_path) VALUES (%s, %s, %s)",
             ("proj-123", "test-project", "/tmp/test"),
         )
         now = datetime.now(UTC).isoformat()
         db.execute(
             """INSERT INTO sessions (id, external_id, machine_id, source, project_id, created_at)
-               VALUES (?, ?, ?, ?, ?, ?)""",
+               VALUES (%s, %s, %s, %s, %s, %s)""",
             ("sess-123", "ext-123", "machine-123", "claude", "proj-123", now),
         )
 

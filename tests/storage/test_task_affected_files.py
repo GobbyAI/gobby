@@ -13,13 +13,13 @@ def db(temp_db: HubDatabase):
     """Create a fresh database with task rows for FK constraints."""
     database = temp_db
     database.execute(
-        "INSERT INTO projects (id, name, repo_path) VALUES (?, ?, ?)",
+        "INSERT INTO projects (id, name, repo_path) VALUES (%s, %s, %s)",
         ("proj-1", "test-project", "/tmp/test"),
     )
     for tid in ("task-1", "task-2", "task-3"):
         database.execute(
             "INSERT INTO tasks (id, title, project_id, task_type, priority, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+            "VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
             (tid, f"Task {tid}", "proj-1", "task", 2),
         )
     yield database

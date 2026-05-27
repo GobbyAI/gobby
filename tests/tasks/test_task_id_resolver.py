@@ -140,11 +140,11 @@ class TestTaskIdResolver:
         """Test that #N resolution is project-scoped."""
         # Create two projects
         temp_db.execute(
-            "INSERT INTO projects (id, name, created_at, updated_at) VALUES (?, ?, NOW(), NOW())",
+            "INSERT INTO projects (id, name, created_at, updated_at) VALUES (%s, %s, NOW(), NOW())",
             ("proj-a", "Project A"),
         )
         temp_db.execute(
-            "INSERT INTO projects (id, name, created_at, updated_at) VALUES (?, ?, NOW(), NOW())",
+            "INSERT INTO projects (id, name, created_at, updated_at) VALUES (%s, %s, NOW(), NOW())",
             ("proj-b", "Project B"),
         )
 

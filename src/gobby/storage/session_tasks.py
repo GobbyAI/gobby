@@ -57,7 +57,7 @@ class SessionTaskManager:
                 """
                 INSERT INTO session_tasks (
                     session_id, task_id, action, created_at
-                ) VALUES (?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s)
                 ON CONFLICT (session_id, task_id, action) DO NOTHING
                 """,
                 (session_id, task_id, action, now),
@@ -75,7 +75,7 @@ class SessionTaskManager:
             conn.execute(
                 """
                 DELETE FROM session_tasks
-                WHERE session_id = ? AND task_id = ? AND action = ?
+                WHERE session_id = %s AND task_id = %s AND action = %s
                 """,
                 (session_id, task_id, action),
             )
@@ -90,7 +90,7 @@ class SessionTaskManager:
         SELECT t.*, st.action as session_action, st.created_at as link_created_at
         FROM tasks t
         JOIN session_tasks st ON t.id = st.task_id
-        WHERE st.session_id = ?
+        WHERE st.session_id = %s
         ORDER BY st.created_at DESC
         """
         rows = self.db.fetchall(query, (session_id,))
@@ -113,6 +113,6 @@ class SessionTaskManager:
         """
         # Simple query that relies only on session_tasks to minimize dependencies
         rows = self.db.fetchall(
-            "SELECT * FROM session_tasks WHERE task_id = ? ORDER BY created_at DESC", (task_id,)
+            "SELECT * FROM session_tasks WHERE task_id = %s ORDER BY created_at DESC", (task_id,)
         )
         return [dict(row) for row in rows]

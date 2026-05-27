@@ -53,9 +53,9 @@ def _current_agent_mutex_owner(
         """
         SELECT id
           FROM agent_runs
-         WHERE id = ?
-           AND child_session_id = ?
-           AND task_id = ?
+         WHERE id = %s
+           AND child_session_id = %s
+           AND task_id = %s
            AND status = 'running'
         """,
         (run_id, session_id, task_id),
@@ -69,11 +69,11 @@ def _current_agent_mutex_owner(
           FROM agent_runs AS owner
           JOIN agent_runs AS child
             ON child.parent_session_id = owner.child_session_id
-         WHERE owner.id = ?
-           AND owner.task_id = ?
+         WHERE owner.id = %s
+           AND owner.task_id = %s
            AND owner.status = 'running'
            AND owner.agent_name = 'merge-orchestrator'
-           AND child.child_session_id = ?
+           AND child.child_session_id = %s
            AND child.status = 'running'
            AND child.agent_name = 'merge-worker'
         """,

@@ -25,7 +25,7 @@ class TestSession:
         )
         session_manager.update(session.id, title_source="manual")
 
-        row = session_manager.db.fetchone("SELECT * FROM sessions WHERE id = ?", (session.id,))
+        row = session_manager.db.fetchone("SELECT * FROM sessions WHERE id = %s", (session.id,))
         assert row is not None
 
         session_from_row = Session.from_row(row)

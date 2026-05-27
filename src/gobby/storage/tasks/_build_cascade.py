@@ -43,7 +43,7 @@ def cascade_build_state_to_subtree(
     _ = tuple(skip_stages)
     now = datetime.now(UTC).isoformat()
 
-    root_row = db.fetchone("SELECT project_id FROM tasks WHERE id = ?", (epic_id,))
+    root_row = db.fetchone("SELECT project_id FROM tasks WHERE id = %s", (epic_id,))
     if root_row is None:
         raise ValueError(f"Task {epic_id} not found")
     project_id = cast(str, root_row["project_id"])
@@ -54,7 +54,7 @@ def cascade_build_state_to_subtree(
             WITH RECURSIVE subtree(id) AS (
                 SELECT id
                 FROM tasks
-                WHERE id = ?
+                WHERE id = %s
                 UNION ALL
                 SELECT child.id
                 FROM tasks child
@@ -88,11 +88,11 @@ def cascade_build_state_to_subtree(
         conn.executemany(
             """
             UPDATE tasks
-            SET allow_automation = ?,
-                unattended = ?,
-                isolation = ?,
-                updated_at = ?
-            WHERE id = ?
+            SET allow_automation = %s,
+                unattended = %s,
+                isolation = %s,
+                updated_at = %s
+            WHERE id = %s
             """,
             update_params,
         )
@@ -175,7 +175,7 @@ def _remove_pristine_omitted_stages_for_build_cascade(
     now = datetime.now(UTC).isoformat()
     with db.transaction() as conn:
         conn.executemany(
-            "DELETE FROM task_stage_states WHERE task_id = ? AND stage_name = ?",
+            "DELETE FROM task_stage_states WHERE task_id = %s AND stage_name = %s",
             [(task_id, row.stage_name) for row in omitted_rows],
         )
         for row in remaining_rows:
@@ -183,11 +183,11 @@ def _remove_pristine_omitted_stages_for_build_cascade(
             conn.execute(
                 """
                 UPDATE task_stage_states
-                   SET position = ?,
-                       max_work_attempts = ?,
-                       max_review_rounds = ?,
-                       updated_at = ?
-                 WHERE task_id = ? AND stage_name = ?
+                   SET position = %s,
+                       max_work_attempts = %s,
+                       max_review_rounds = %s,
+                       updated_at = %s
+                 WHERE task_id = %s AND stage_name = %s
                 """,
                 (
                     spec.position,
@@ -204,8 +204,8 @@ def _remove_pristine_omitted_stages_for_build_cascade(
                 UPDATE tasks
                    SET assignee = NULL,
                        claimed_by_session_id = NULL,
-                       updated_at = ?
-                 WHERE id = ?
+                       updated_at = %s
+                 WHERE id = %s
                 """,
                 (now, task_id),
             )
@@ -260,12 +260,12 @@ def _is_removable_omitted_stage(row: Any, current: Any, has_active_agent: bool) 
 
 
 def _has_active_agent_run(db: HubDatabase, task_id: str) -> bool:
-    placeholders = ", ".join("?" for _ in ACTIVE_AGENT_RUN_STATUSES)
+    placeholders = ", ".join("%s" for _ in ACTIVE_AGENT_RUN_STATUSES)
     row = db.fetchone(
         f"""
         SELECT 1
           FROM agent_runs
-         WHERE task_id = ?
+         WHERE task_id = %s
            AND status IN ({placeholders})
          LIMIT 1
         """,  # nosec B608 # placeholders are generated from static status constants.

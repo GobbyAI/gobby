@@ -1332,11 +1332,11 @@ async def test_build_epic_creates_integration_worktrees_and_targets_nearest_bran
     child_artifacts = task_manager.artifacts.get_artifacts(child_epic.id)
     leaf_artifacts = task_manager.artifacts.get_artifacts(leaf.id)
     root_worktree = temp_db.fetchone(
-        "SELECT * FROM worktrees WHERE id = ?",
+        "SELECT * FROM worktrees WHERE id = %s",
         (root_artifacts.integration_workspace_id,),
     )
     child_worktree = temp_db.fetchone(
-        "SELECT * FROM worktrees WHERE id = ?",
+        "SELECT * FROM worktrees WHERE id = %s",
         (child_artifacts.integration_workspace_id,),
     )
 
@@ -1734,7 +1734,7 @@ async def test_build_task_ref_automates_existing_expansion_output(
         "pr",
         "merge",
     ]
-    assert temp_db.fetchone("SELECT 1 FROM tasks WHERE id = ?", (child.id,)) is not None
+    assert temp_db.fetchone("SELECT 1 FROM tasks WHERE id = %s", (child.id,)) is not None
     parent_rows = task_manager.stage_states.list_for_task(parent.id)
     child_rows = task_manager.stage_states.list_for_task(child.id)
     assert [row.stage_name for row in parent_rows] == [
@@ -1876,22 +1876,22 @@ async def test_build_task_ref_removes_skipped_pr_from_progressed_child_epic(
                entered_at = '2026-05-22T19:00:00+00:00',
                completed_at = '2026-05-22T19:01:00+00:00',
                updated_at = '2026-05-22T19:01:00+00:00'
-         WHERE task_id = ? AND stage_name IN ('development', 'holistic_qa')
+         WHERE task_id = %s AND stage_name IN ('development', 'holistic_qa')
         """,
         (child.id,),
     )
     temp_db.execute(
         """
         INSERT INTO sessions (id, external_id, machine_id, source, project_id)
-        VALUES (?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s)
         """,
         ("reviewer-session", "reviewer-session", "machine-1", "test", sample_project["id"]),
     )
     temp_db.execute(
         """
         UPDATE tasks
-           SET assignee = ?, claimed_by_session_id = ?
-         WHERE id = ?
+           SET assignee = %s, claimed_by_session_id = %s
+         WHERE id = %s
         """,
         ("reviewer-session", "reviewer-session", child.id),
     )
@@ -1962,7 +1962,7 @@ async def test_build_task_ref_removes_auto_started_skipped_pr_from_child_epic(
                entered_at = '2026-05-22T19:00:00+00:00',
                completed_at = '2026-05-22T19:01:00+00:00',
                updated_at = '2026-05-22T19:01:00+00:00'
-         WHERE task_id = ? AND stage_name IN ('development', 'holistic_qa')
+         WHERE task_id = %s AND stage_name IN ('development', 'holistic_qa')
         """,
         (child.id,),
     )
@@ -1974,7 +1974,7 @@ async def test_build_task_ref_removes_auto_started_skipped_pr_from_child_epic(
                entered_by_session_id = 'dispatcher',
                work_attempt_count = 1,
                updated_at = '2026-05-22T19:02:00+00:00'
-         WHERE task_id = ? AND stage_name = 'pr'
+         WHERE task_id = %s AND stage_name = 'pr'
         """,
         (child.id,),
     )
@@ -2042,7 +2042,7 @@ async def test_build_resume_cascades_skipped_pr_before_workspace_refresh(
                entered_at = '2026-05-22T19:00:00+00:00',
                completed_at = '2026-05-22T19:01:00+00:00',
                updated_at = '2026-05-22T19:01:00+00:00'
-         WHERE task_id = ? AND stage_name IN ('development', 'holistic_qa')
+         WHERE task_id = %s AND stage_name IN ('development', 'holistic_qa')
         """,
         (child.id,),
     )
@@ -2054,7 +2054,7 @@ async def test_build_resume_cascades_skipped_pr_before_workspace_refresh(
                entered_by_session_id = 'dispatcher',
                work_attempt_count = 1,
                updated_at = '2026-05-22T19:02:00+00:00'
-         WHERE task_id = ? AND stage_name = 'pr'
+         WHERE task_id = %s AND stage_name = 'pr'
         """,
         (child.id,),
     )
@@ -2133,4 +2133,4 @@ async def test_build_task_ref_can_reset_existing_expansion_output(
     )
 
     assert result.task_id == parent.id
-    assert temp_db.fetchone("SELECT 1 FROM tasks WHERE id = ?", (child.id,)) is None
+    assert temp_db.fetchone("SELECT 1 FROM tasks WHERE id = %s", (child.id,)) is None

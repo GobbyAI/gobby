@@ -498,7 +498,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
         if session_id and subagent_id and self._session_manager:
             try:
                 row = self._session_manager.db.fetchone(
-                    "SELECT agent_depth FROM sessions WHERE external_id = ? AND status = 'active'"
+                    "SELECT agent_depth FROM sessions WHERE external_id = %s AND status = 'active'"
                     " ORDER BY updated_at DESC LIMIT 1",
                     (session_id,),
                 )

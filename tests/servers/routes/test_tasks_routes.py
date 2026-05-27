@@ -176,7 +176,7 @@ class TestListTasks:
             title="Legacy task type",
             task_type=canonical_type,
         )
-        temp_db.execute("UPDATE tasks SET task_type = ? WHERE id = ?", (legacy_type, task.id))
+        temp_db.execute("UPDATE tasks SET task_type = %s WHERE id = %s", (legacy_type, task.id))
 
         response = client.get("/api/tasks", params={"task_type": canonical_type})
 
@@ -619,7 +619,7 @@ class TestLifecycleMutations:
             """
             SELECT *
               FROM inter_session_messages
-             WHERE to_session = ?
+             WHERE to_session = %s
                AND message_type = 'task_assignment'
             """,
             (session_id,),
@@ -973,7 +973,7 @@ class TestDeEscalateTask:
             """
             UPDATE task_stage_states
                SET work_attempt_count = 4
-             WHERE task_id = ? AND stage_name = 'development'
+             WHERE task_id = %s AND stage_name = 'development'
             """,
             (sample_task["id"],),
         )
@@ -992,7 +992,7 @@ class TestDeEscalateTask:
             """
             SELECT state, work_attempt_count
               FROM task_stage_states
-             WHERE task_id = ? AND stage_name = 'development'
+             WHERE task_id = %s AND stage_name = 'development'
             """,
             (sample_task["id"],),
         )
@@ -1034,7 +1034,7 @@ class TestComments:
         comment_id = str(_uuid.uuid4())
         temp_db.execute(
             """INSERT INTO task_comments (id, task_id, parent_comment_id, author, author_type, body)
-               VALUES (?, ?, ?, ?, ?, ?)""",
+               VALUES (%s, %s, %s, %s, %s, %s)""",
             (comment_id, task_id, parent_comment_id, author, author_type, body),
         )
         return comment_id

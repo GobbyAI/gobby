@@ -43,8 +43,8 @@ def _set_session_stats(
     db.execute(
         """
         UPDATE sessions
-        SET tool_call_count = ?, turn_count = ?
-        WHERE id = ?
+        SET tool_call_count = %s, turn_count = %s
+        WHERE id = %s
         """,
         (tool_calls_count, turns_used, session_id),
     )
@@ -60,8 +60,8 @@ def _set_persisted_run_stats(
     db.execute(
         """
         UPDATE agent_runs
-        SET tool_calls_count = ?, turns_used = ?
-        WHERE id = ?
+        SET tool_calls_count = %s, turns_used = %s
+        WHERE id = %s
         """,
         (tool_calls_count, turns_used, run_id),
     )

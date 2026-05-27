@@ -88,7 +88,7 @@ class BuildProfileLoader:
                     """
                     SELECT *
                       FROM build_profiles
-                     WHERE name = ?
+                     WHERE name = %s
                        AND source = 'installed'
                        AND project_id IS NULL
                     """,
@@ -130,7 +130,7 @@ class BuildProfileLoader:
                            SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
                          WHERE source = 'installed'
                            AND project_id IS NULL
-                           AND name = ?
+                           AND name = %s
                         """,
                         [(row["name"],) for row in orphaned],
                     )
@@ -239,7 +239,7 @@ class BuildProfileManager:
             f"""
             SELECT *
               FROM build_profiles
-             WHERE (source = 'installed' OR project_id IS NULL OR project_id = ?)
+             WHERE (source = 'installed' OR project_id IS NULL OR project_id = %s)
                {deleted_filter}
              ORDER BY source, COALESCE(project_id, ''), name
             """,  # nosec B608 # deleted_filter is controlled by a boolean.
@@ -256,20 +256,20 @@ class BuildProfileManager:
         include_deleted: bool = False,
     ) -> BuildProfile | None:
         deleted_filter = "" if include_deleted else "AND deleted_at IS NULL"
-        source_filter = "" if source is None else "AND source = ?"
+        source_filter = "" if source is None else "AND source = %s"
         params: list[Any] = [name]
         if source is not None:
             params.append(source)
         if project_id is None:
             scope_filter = "AND project_id IS NULL"
         else:
-            scope_filter = "AND project_id = ?"
+            scope_filter = "AND project_id = %s"
             params.append(project_id)
         row = self.db.fetchone(
             f"""
             SELECT *
               FROM build_profiles
-             WHERE name = ?
+             WHERE name = %s
                {source_filter}
                {scope_filter}
                {deleted_filter}
@@ -428,13 +428,13 @@ class BuildProfileManager:
         if purge:
             if source != "project":
                 raise BuildProfileError("only project build profiles can be purged")
-            self.db.execute("DELETE FROM build_profiles WHERE id = ?", (current.id,))
+            self.db.execute("DELETE FROM build_profiles WHERE id = %s", (current.id,))
             return None
         self.db.execute(
             """
             UPDATE build_profiles
                SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-             WHERE id = ?
+             WHERE id = %s
             """,
             (current.id,),
         )
@@ -483,7 +483,7 @@ class BuildProfileManager:
                 id, name, display_label, description, skip_stages_json, isolation,
                 unattended, delivery_mode, delivery_target_repo, enabled, source, project_id,
                 tags_json, bundled_hash, deleted_at, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             self._insert_params(profile),
         )
@@ -493,9 +493,9 @@ class BuildProfileManager:
             """
             SELECT id
               FROM build_profiles
-             WHERE name = ?
-               AND source = ?
-               AND ((project_id IS NULL AND ? IS NULL) OR project_id = ?)
+             WHERE name = %s
+               AND source = %s
+               AND ((project_id IS NULL AND %s::text IS NULL) OR project_id = %s)
                AND deleted_at IS NULL
              LIMIT 1
             """,
@@ -512,19 +512,19 @@ class BuildProfileManager:
         self.db.execute(
             f"""
             UPDATE build_profiles
-               SET display_label = ?,
-                   description = ?,
-                   skip_stages_json = ?,
-                   isolation = ?,
-                   unattended = ?,
-                   delivery_mode = ?,
-                   delivery_target_repo = ?,
-                   enabled = ?,
-                   tags_json = ?,
-                   bundled_hash = ?,
+               SET display_label = %s,
+                   description = %s,
+                   skip_stages_json = %s,
+                   isolation = %s,
+                   unattended = %s,
+                   delivery_mode = %s,
+                   delivery_target_repo = %s,
+                   enabled = %s,
+                   tags_json = %s,
+                   bundled_hash = %s,
                    {deleted_assignment}
                    updated_at = CURRENT_TIMESTAMP
-             WHERE id = ?
+             WHERE id = %s
             """,  # nosec B608 # deleted_assignment is controlled by a boolean.
             (
                 profile.display_label,

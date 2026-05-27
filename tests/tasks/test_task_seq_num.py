@@ -62,11 +62,11 @@ class TestSeqNumAutoIncrement:
         """Test that each project maintains its own seq_num sequence."""
         # Create two projects
         temp_db.execute(
-            "INSERT INTO projects (id, name, created_at, updated_at) VALUES (?, ?, NOW(), NOW())",
+            "INSERT INTO projects (id, name, created_at, updated_at) VALUES (%s, %s, NOW(), NOW())",
             ("proj-a", "Project A"),
         )
         temp_db.execute(
-            "INSERT INTO projects (id, name, created_at, updated_at) VALUES (?, ?, NOW(), NOW())",
+            "INSERT INTO projects (id, name, created_at, updated_at) VALUES (%s, %s, NOW(), NOW())",
             ("proj-b", "Project B"),
         )
 
@@ -107,7 +107,7 @@ class TestSeqNumAutoIncrement:
 
         # Manually create a gap by setting a high seq_num
         temp_db.execute(
-            "UPDATE tasks SET seq_num = ? WHERE id = ?",
+            "UPDATE tasks SET seq_num = %s WHERE id = %s",
             (100, task2.id),
         )
 

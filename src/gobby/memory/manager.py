@@ -672,13 +672,13 @@ class MemoryManager:
         escape_clause = " ESCAPE '" + bs + "'"
         if project_id:
             sql = (
-                "SELECT * FROM memories WHERE id LIKE ?"
+                "SELECT * FROM memories WHERE id LIKE %s"
                 + escape_clause
-                + " AND (project_id = ? OR project_id IS NULL) LIMIT ?"
+                + " AND (project_id = %s OR project_id IS NULL) LIMIT %s"
             )
             rows = self.db.fetchall(sql, (like_value, project_id, limit))
         else:
-            sql = "SELECT * FROM memories WHERE id LIKE ?" + escape_clause + " LIMIT ?"
+            sql = "SELECT * FROM memories WHERE id LIKE %s" + escape_clause + " LIMIT %s"
             rows = self.db.fetchall(sql, (like_value, limit))
         return [Memory.from_row(row) for row in rows]
 

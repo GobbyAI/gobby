@@ -69,7 +69,7 @@ class TaskDependencyManager:
             row = conn.execute(
                 """
                 INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at)
-                VALUES (?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s)
                 RETURNING id
                 """,
                 (task_id, depends_on, dep_type, now),
@@ -85,7 +85,7 @@ class TaskDependencyManager:
         """Remove a dependency."""
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                "DELETE FROM task_dependencies WHERE task_id = ? AND depends_on = ?",
+                "DELETE FROM task_dependencies WHERE task_id = %s AND depends_on = %s",
                 (task_id, depends_on),
             )
             deleted: bool = cursor.rowcount > 0
@@ -94,7 +94,7 @@ class TaskDependencyManager:
     def get_blockers(self, task_id: str) -> list[TaskDependency]:
         """Get tasks that block this task (task_id depends on X)."""
         rows = self.db.fetchall(
-            "SELECT * FROM task_dependencies WHERE task_id = ? AND dep_type = 'blocks'",
+            "SELECT * FROM task_dependencies WHERE task_id = %s AND dep_type = 'blocks'",
             (task_id,),
         )
         return [TaskDependency.from_row(row) for row in rows]
@@ -102,7 +102,7 @@ class TaskDependencyManager:
     def get_blocking(self, task_id: str) -> list[TaskDependency]:
         """Get tasks that this task blocks (X depends on task_id)."""
         rows = self.db.fetchall(
-            "SELECT * FROM task_dependencies WHERE depends_on = ? AND dep_type = 'blocks'",
+            "SELECT * FROM task_dependencies WHERE depends_on = %s AND dep_type = 'blocks'",
             (task_id,),
         )
         return [TaskDependency.from_row(row) for row in rows]
@@ -110,7 +110,7 @@ class TaskDependencyManager:
     def get_all_dependencies(self, task_id: str) -> list[TaskDependency]:
         """Get all dependencies for a task (outgoing edges)."""
         rows = self.db.fetchall(
-            "SELECT * FROM task_dependencies WHERE task_id = ?",
+            "SELECT * FROM task_dependencies WHERE task_id = %s",
             (task_id,),
         )
         return [TaskDependency.from_row(row) for row in rows]
@@ -133,7 +133,7 @@ class TaskDependencyManager:
             visited.add(current)
 
             deps = self.db.fetchall(
-                "SELECT depends_on FROM task_dependencies WHERE task_id = ? AND dep_type = 'blocks'",
+                "SELECT depends_on FROM task_dependencies WHERE task_id = %s AND dep_type = 'blocks'",
                 (current,),
             )
             for row in deps:

@@ -110,14 +110,14 @@ def set_stage_state(
         updates["work_attempt_count"] = work_attempt_count
     if review_round_count is not None:
         updates["review_round_count"] = review_round_count
-    assignments = ", ".join(f"{column} = ?" for column in updates)
+    assignments = ", ".join(f"{column} = %s" for column in updates)
     if stage_states_manager(db).get(task_id, stage_name) is None:
         initialize_manifest(db, task_id, [spec(stage_name, 0)])
     db.execute(
         f"""
         UPDATE task_stage_states
         SET {assignments}
-        WHERE task_id = ? AND stage_name = ?
+        WHERE task_id = %s AND stage_name = %s
         """,  # nosec B608 # test-only helper with static caller-owned columns.
         (*updates.values(), task_id, stage_name),
     )
@@ -128,7 +128,7 @@ def stage_row(db: Any, task_id: str, stage_name: str) -> dict[str, Any]:
         """
         SELECT *
         FROM task_stage_states
-        WHERE task_id = ? AND stage_name = ?
+        WHERE task_id = %s AND stage_name = %s
         """,
         (task_id, stage_name),
     )
@@ -143,7 +143,7 @@ def stage_rows(db: Any, task_id: str) -> list[dict[str, Any]]:
             """
             SELECT *
             FROM task_stage_states
-            WHERE task_id = ?
+            WHERE task_id = %s
             ORDER BY position
             """,
             (task_id,),
@@ -158,7 +158,7 @@ def lifecycle_events(db: Any, task_id: str) -> list[dict[str, Any]]:
             """
             SELECT from_state, to_state, reason, by_actor
             FROM task_lifecycle_events
-            WHERE task_id = ?
+            WHERE task_id = %s
             ORDER BY id
             """,
             (task_id,),
@@ -167,6 +167,6 @@ def lifecycle_events(db: Any, task_id: str) -> list[dict[str, Any]]:
 
 
 def task_row(db: Any, task_id: str) -> dict[str, Any]:
-    row = db.fetchone("SELECT * FROM tasks WHERE id = ?", (task_id,))
+    row = db.fetchone("SELECT * FROM tasks WHERE id = %s", (task_id,))
     assert row is not None, f"missing task {task_id}"
     return dict(row)

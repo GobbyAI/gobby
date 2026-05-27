@@ -33,9 +33,9 @@ def _has_delegated_agent_run(
         row = ctx.task_manager.db.fetchone(
             """
             SELECT id FROM agent_runs
-            WHERE child_session_id = ?
-              AND task_id = ?
-              AND parent_session_id = ?
+            WHERE child_session_id = %s
+              AND task_id = %s
+              AND parent_session_id = %s
               AND status IN ('pending', 'running')
             ORDER BY created_at DESC
             LIMIT 1

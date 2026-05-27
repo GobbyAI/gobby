@@ -52,21 +52,21 @@ def _build_session_filters(
     else:
         conditions.append("status != 'deleted'")
         if status:
-            conditions.append("status = ?")
+            conditions.append("status = %s")
             params.append(status)
         if statuses:
-            placeholders = ",".join(["?"] * len(statuses))
+            placeholders = ",".join(["%s"] * len(statuses))
             conditions.append(f"status IN ({placeholders})")
             params.extend(statuses)
 
     if project_id:
-        conditions.append("project_id = ?")
+        conditions.append("project_id = %s")
         params.append(project_id)
     if source:
-        conditions.append("source = ?")
+        conditions.append("source = %s")
         params.append(source)
     if sources:
-        placeholders = ",".join(["?"] * len(sources))
+        placeholders = ",".join(["%s"] * len(sources))
         conditions.append(f"source IN ({placeholders})")
         params.extend(sources)
 
@@ -81,15 +81,15 @@ def _build_session_filters(
         # "both selected" or "neither selected" → no filter
 
     if models:
-        placeholders = ",".join(["?"] * len(models))
+        placeholders = ",".join(["%s"] * len(models))
         conditions.append(f"model IN ({placeholders})")
         params.extend(models)
 
     if session_seq_min is not None:
-        conditions.append("seq_num >= ?")
+        conditions.append("seq_num >= %s")
         params.append(session_seq_min)
     if session_seq_max is not None:
-        conditions.append("seq_num <= ?")
+        conditions.append("seq_num <= %s")
         params.append(session_seq_max)
 
     # Task-ref overlap: a session matches if any task with seq_num in
@@ -105,10 +105,10 @@ def _build_session_filters(
                 continue
             bounds: list[str] = []
             if task_ref_min is not None:
-                bounds.append("seq_num >= ?")
+                bounds.append("seq_num >= %s")
                 params.append(task_ref_min)
             if task_ref_max is not None:
-                bounds.append("seq_num <= ?")
+                bounds.append("seq_num <= %s")
                 params.append(task_ref_max)
             bound_sql = " AND ".join(bounds)
             role_clauses.append(
@@ -118,10 +118,10 @@ def _build_session_filters(
             conditions.append(f"({' OR '.join(role_clauses)})")
 
     if created_after:
-        conditions.append("created_at >= ?")
+        conditions.append("created_at >= %s")
         params.append(created_after)
     if created_before:
-        conditions.append("created_at < ?")
+        conditions.append("created_at < %s")
         params.append(created_before)
 
     return conditions, params
@@ -205,7 +205,7 @@ class _QueryMixin:
             )
 
         if cursor_updated_at is not None and cursor_id is not None:
-            conditions.append("(updated_at < ? OR (updated_at = ? AND id < ?))")
+            conditions.append("(updated_at < %s OR (updated_at = %s AND id < %s))")
             params.extend([cursor_updated_at, cursor_updated_at, cursor_id])
 
         where_clause = " AND ".join(conditions)
@@ -216,7 +216,7 @@ class _QueryMixin:
             SELECT * FROM sessions
             WHERE {where_clause}
             ORDER BY updated_at DESC, id DESC
-            LIMIT ?
+            LIMIT %s
             """,  # nosec B608
             tuple(params),
         )
@@ -278,7 +278,7 @@ class _QueryMixin:
         if not session_ids:
             return result
 
-        placeholders = ",".join(["?"] * len(session_ids))
+        placeholders = ",".join(["%s"] * len(session_ids))
         sql = f"""
             SELECT
                 seq_num,

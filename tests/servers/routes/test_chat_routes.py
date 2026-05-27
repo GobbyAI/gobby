@@ -61,7 +61,7 @@ def test_delete_messages_removes_message_bound_attachment_file(
     assert response.json() == {"deleted": 1}
     assert not attachment_path.exists()
     assert chat_attachments.get_attachment(temp_db, attachment.id) is None
-    assert temp_db.fetchone("SELECT * FROM chat_messages WHERE id = ?", (message_id,)) is None
+    assert temp_db.fetchone("SELECT * FROM chat_messages WHERE id = %s", (message_id,)) is None
 
 
 def test_delete_messages_skips_attachment_paths_outside_managed_storage(

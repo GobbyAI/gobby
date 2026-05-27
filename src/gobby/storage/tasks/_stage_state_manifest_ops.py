@@ -86,7 +86,7 @@ class StageStateManifestOps:
             with self.db.transaction() as conn:
                 if existing:
                     conn.execute(
-                        "DELETE FROM task_stage_states WHERE task_id = ?",
+                        "DELETE FROM task_stage_states WHERE task_id = %s",
                         (task_id,),
                     )
                 for spec in sorted(specs, key=lambda item: item.position):
@@ -98,7 +98,7 @@ class StageStateManifestOps:
                             reviewer_agent, work_attempt_count, review_round_count,
                             max_work_attempts, max_review_rounds, updated_at
                         )
-                        VALUES (?, ?, ?, 'ready', ?, ?, 0, 0, ?, ?, ?)
+                        VALUES (%s, %s, %s, 'ready', %s, %s, 0, 0, %s, %s, %s)
                         """,
                         (
                             task_id,
@@ -150,7 +150,7 @@ class StageStateManifestOps:
                     reviewer_agent, work_attempt_count, review_round_count,
                     max_work_attempts, max_review_rounds, updated_at
                 )
-                VALUES (?, ?, ?, 'ready', ?, ?, 0, 0, ?, ?, ?)
+                VALUES (%s, %s, %s, 'ready', %s, %s, 0, 0, %s, %s, %s)
                 """,
                 (
                     task_id,
@@ -183,10 +183,10 @@ class StageStateManifestOps:
                 conn.execute(
                     """
                     UPDATE task_stage_states
-                       SET max_work_attempts = ?,
-                           max_review_rounds = ?,
-                           updated_at = ?
-                     WHERE task_id = ? AND stage_name = ?
+                       SET max_work_attempts = %s,
+                           max_review_rounds = %s,
+                           updated_at = %s
+                     WHERE task_id = %s AND stage_name = %s
                     """,
                     (
                         spec.max_work_attempts,
@@ -248,11 +248,11 @@ class StageStateManifestOps:
                 conn.execute(
                     """
                     UPDATE task_stage_states
-                       SET position = ?,
-                           max_work_attempts = ?,
-                           max_review_rounds = ?,
-                           updated_at = ?
-                     WHERE task_id = ? AND stage_name = ?
+                       SET position = %s,
+                           max_work_attempts = %s,
+                           max_review_rounds = %s,
+                           updated_at = %s
+                     WHERE task_id = %s AND stage_name = %s
                     """,
                     (
                         spec.position,
@@ -274,7 +274,7 @@ class StageStateManifestOps:
                         reviewer_agent, work_attempt_count, review_round_count,
                         max_work_attempts, max_review_rounds, updated_at
                     )
-                    VALUES (?, ?, ?, 'ready', ?, ?, 0, 0, ?, ?, ?)
+                    VALUES (%s, %s, %s, 'ready', %s, %s, 0, 0, %s, %s, %s)
                     """,
                     (
                         task_id,
@@ -321,7 +321,7 @@ class StageStateManifestOps:
                     """
                     SELECT stage_name, position
                       FROM task_stage_states
-                     WHERE task_id = ? AND position >= ?
+                     WHERE task_id = %s AND position >= %s
                      ORDER BY position DESC
                     """,
                     (task_id, spec.position),
@@ -330,8 +330,8 @@ class StageStateManifestOps:
                     conn.execute(
                         """
                         UPDATE task_stage_states
-                           SET position = ?, updated_at = ?
-                         WHERE task_id = ? AND stage_name = ?
+                           SET position = %s, updated_at = %s
+                         WHERE task_id = %s AND stage_name = %s
                         """,
                         (int(row["position"]) + 1, now, task_id, row["stage_name"]),
                     )
@@ -342,7 +342,7 @@ class StageStateManifestOps:
                         reviewer_agent, work_attempt_count, review_round_count,
                         max_work_attempts, max_review_rounds, updated_at
                     )
-                    VALUES (?, ?, ?, 'ready', ?, ?, 0, 0, ?, ?, ?)
+                    VALUES (%s, %s, %s, 'ready', %s, %s, 0, 0, %s, %s, %s)
                     """,
                     (
                         task_id,
@@ -385,14 +385,14 @@ class StageStateManifestOps:
                 raise RuntimeError(f"Stage '{stage_name}' disappeared before remove_stage")
             with self.db.transaction() as conn:
                 conn.execute(
-                    "DELETE FROM task_stage_states WHERE task_id = ? AND stage_name = ?",
+                    "DELETE FROM task_stage_states WHERE task_id = %s AND stage_name = %s",
                     (task_id, stage_name),
                 )
                 rows = conn.execute(
                     """
                     SELECT stage_name, position
                       FROM task_stage_states
-                     WHERE task_id = ? AND position > ?
+                     WHERE task_id = %s AND position > %s
                      ORDER BY position
                     """,
                     (task_id, row.position),
@@ -401,8 +401,8 @@ class StageStateManifestOps:
                     conn.execute(
                         """
                         UPDATE task_stage_states
-                           SET position = ?, updated_at = ?
-                         WHERE task_id = ? AND stage_name = ?
+                           SET position = %s, updated_at = %s
+                         WHERE task_id = %s AND stage_name = %s
                         """,
                         (
                             int(existing["position"]) - 1,

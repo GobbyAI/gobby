@@ -212,14 +212,14 @@ def _step(agent: dict[str, Any], name: str) -> dict[str, Any]:
 
 def _create_session(db: HubDatabase, session_id: str = "agent-session") -> None:
     db.execute(
-        "INSERT INTO projects (id, name, created_at) VALUES (?, ?, NOW()) "
+        "INSERT INTO projects (id, name, created_at) VALUES (%s, %s, NOW()) "
         "ON CONFLICT (id) DO NOTHING",
         ("project-1", "test-project"),
     )
     db.execute(
         "INSERT INTO sessions "
         "(id, external_id, machine_id, source, project_id, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, NOW(), NOW()) ON CONFLICT (id) DO NOTHING",
+        "VALUES (%s, %s, %s, %s, %s, NOW(), NOW()) ON CONFLICT (id) DO NOTHING",
         (session_id, f"ext-{session_id}", "machine-1", "claude", "project-1"),
     )
 

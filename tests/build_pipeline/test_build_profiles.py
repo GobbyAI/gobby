@@ -128,7 +128,7 @@ async def test_submit_profile_records_same_repo_delivery_campaign(
         """
         SELECT delivery_mode, source_repo, target_repo
         FROM task_delivery_campaigns
-        WHERE task_id = ?
+        WHERE task_id = %s
         """,
         (task.id,),
     )
@@ -173,7 +173,7 @@ async def test_submit_profile_records_cross_repo_delivery_campaign(
         """
         SELECT delivery_mode, source_repo, target_repo
         FROM task_delivery_campaigns
-        WHERE task_id = ?
+        WHERE task_id = %s
         """,
         (task.id,),
     )

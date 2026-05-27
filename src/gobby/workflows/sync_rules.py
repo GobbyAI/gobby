@@ -151,7 +151,7 @@ def sync_bundled_rules(
                     )
                     gobby_row = db.fetchone(
                         "SELECT id FROM workflow_definitions "
-                        f"WHERE name = ? AND {gobby_tag_condition} "
+                        f"WHERE name = %s AND {gobby_tag_condition} "
                         "AND deleted_at IS NULL",
                         (rule_name, *gobby_tag_params),
                     )

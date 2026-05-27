@@ -152,7 +152,7 @@ def fix_null_project(ctx: click.Context, dry_run: bool) -> None:
         click.echo(f"Found {len(rows)} memories with NULL project_id from sessions/agents.")
 
         session_ids = {row["source_session_id"] for row in rows if row["source_session_id"]}
-        placeholders = ",".join("?" for _ in session_ids)
+        placeholders = ",".join("%s" for _ in session_ids)
         session_project_ids: dict[str, str] = {}
         if session_ids:
             session_rows = db.fetchall(
@@ -190,7 +190,7 @@ def fix_null_project(ctx: click.Context, dry_run: bool) -> None:
             with db.transaction() as conn:
                 for project_id, memory_id in updates:
                     conn.execute(
-                        "UPDATE memories SET project_id = ? WHERE id = ?",
+                        "UPDATE memories SET project_id = %s WHERE id = %s",
                         (project_id, memory_id),
                     )
             click.echo(f"Fixed {len(updates)} memories with project_id from their source sessions.")

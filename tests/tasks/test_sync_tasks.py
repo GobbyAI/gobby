@@ -39,7 +39,7 @@ def _insert_session(db, session_id: str, project_id: str) -> None:
     db.execute(
         """
         INSERT INTO sessions (id, external_id, machine_id, source, project_id)
-        VALUES (?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s)
         ON CONFLICT (id) DO NOTHING
         """,
         (session_id, session_id, "test-machine", "test", project_id),
@@ -59,7 +59,7 @@ class TestTaskSyncManager:
         # Note: In schema, unique constraint includes dep_type
         now = "2023-01-01T00:00:00"
         sync_manager.db.execute(
-            "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (?, ?, ?, ?)",
+            "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (%s, %s, %s, %s)",
             (t2.id, t1.id, "blocking", now),
         )
 
@@ -137,7 +137,7 @@ class TestTaskSyncManager:
 
         # Verify Dependency
         deps = task_manager.db.fetchall(
-            "SELECT * FROM task_dependencies WHERE task_id = ?", (t2.id,)
+            "SELECT * FROM task_dependencies WHERE task_id = %s", (t2.id,)
         )
         assert len(deps) == 1
         assert deps[0]["depends_on"] == t1.id
@@ -149,7 +149,7 @@ class TestTaskSyncManager:
         t1 = task_manager.create_task(sample_project["id"], "Local Newer")
         # Force updated_at to future
         future = "2025-01-01T00:00:00+00:00"
-        task_manager.db.execute("UPDATE tasks SET updated_at = ? WHERE id = ?", (future, t1.id))
+        task_manager.db.execute("UPDATE tasks SET updated_at = %s WHERE id = %s", (future, t1.id))
 
         # File has older version
         past = "2020-01-01T00:00:00+00:00"
@@ -178,7 +178,7 @@ class TestTaskSyncManager:
 
         # 2. File is NEWER (should overwrite local)
         t2 = task_manager.create_task(sample_project["id"], "Local Older")
-        task_manager.db.execute("UPDATE tasks SET updated_at = ? WHERE id = ?", (past, t2.id))
+        task_manager.db.execute("UPDATE tasks SET updated_at = %s WHERE id = %s", (past, t2.id))
 
         file_data_2 = {
             "id": t2.id,
@@ -492,7 +492,7 @@ class TestClosedStateRoundTrip:
                 linear_team_id = 'TEAM-1',
                 start_date = '2026-01-10',
                 due_date = '2026-01-20'
-            WHERE id = ?""",
+            WHERE id = %s""",
             (task.id,),
         )
 
@@ -517,8 +517,8 @@ class TestClosedStateRoundTrip:
         assert data["due_date"] == "2026-01-20"
 
         # Delete task from DB to simulate fresh import
-        sync_manager.db.execute("DELETE FROM tasks WHERE id = ?", (task.id,))
-        row = sync_manager.db.fetchone("SELECT 1 FROM tasks WHERE id = ?", (task.id,))
+        sync_manager.db.execute("DELETE FROM tasks WHERE id = %s", (task.id,))
+        row = sync_manager.db.fetchone("SELECT 1 FROM tasks WHERE id = %s", (task.id,))
         assert row is None
 
         # Import from JSONL
@@ -561,7 +561,7 @@ class TestClosedStateRoundTrip:
                 closed_in_session_id = 'session-bbb',
                 compacted_at = '2026-01-10T00:00:00+00:00',
                 updated_at = '2020-01-01T00:00:00+00:00'
-            WHERE id = ?""",
+            WHERE id = %s""",
             (task.id,),
         )
 
@@ -598,7 +598,7 @@ class TestClosedStateRoundTrip:
         # Verify session-local fields were PRESERVED (not wiped to NULL)
         row = sync_manager.db.fetchone(
             "SELECT assignee, created_in_session_id, closed_in_session_id, "
-            "compacted_at FROM tasks WHERE id = ?",
+            "compacted_at FROM tasks WHERE id = %s",
             (task.id,),
         )
         assert row["assignee"] == "session-uuid-123"
@@ -613,7 +613,7 @@ class TestClosedStateRoundTrip:
         """Test that export includes priority and task_type fields."""
         task = task_manager.create_task(sample_project["id"], "Typed task")
         sync_manager.db.execute(
-            "UPDATE tasks SET priority = 1, task_type = 'bug' WHERE id = ?",
+            "UPDATE tasks SET priority = 1, task_type = 'bug' WHERE id = %s",
             (task.id,),
         )
 
@@ -638,11 +638,11 @@ class TestExportEdgeCases:
         # Add multiple dependencies to t3
         now = "2023-01-01T00:00:00"
         sync_manager.db.execute(
-            "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (?, ?, ?, ?)",
+            "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (%s, %s, %s, %s)",
             (t3.id, t1.id, "blocking", now),
         )
         sync_manager.db.execute(
-            "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (?, ?, ?, ?)",
+            "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (%s, %s, %s, %s)",
             (t3.id, t2.id, "blocking", now),
         )
 
@@ -663,11 +663,11 @@ class TestExportEdgeCases:
         # Add validation data directly to DB (status must be 'pending', 'valid', or 'invalid')
         sync_manager.db.execute(
             """UPDATE tasks SET
-                validation_status = ?,
-                validation_feedback = ?,
-                validation_fail_count = ?,
-                validation_criteria = ?
-            WHERE id = ?""",
+                validation_status = %s,
+                validation_feedback = %s,
+                validation_fail_count = %s,
+                validation_criteria = %s
+            WHERE id = %s""",
             ("invalid", "Test failed", 2, "Must pass CI", task.id),
         )
 
@@ -690,7 +690,7 @@ class TestExportEdgeCases:
         # Link commits
         commits_json = json.dumps(["commit1", "commit2"])
         sync_manager.db.execute(
-            "UPDATE tasks SET commits = ? WHERE id = ?",
+            "UPDATE tasks SET commits = %s WHERE id = %s",
             (commits_json, task.id),
         )
 
@@ -1106,7 +1106,7 @@ class TestImportSeqNumPreservation:
         # Create existing task with seq_num 5
         existing = task_manager.create_task(sample_project["id"], "Existing Task")
         sync_manager.db.execute(
-            "UPDATE tasks SET seq_num = 5, path_cache = '5' WHERE id = ?",
+            "UPDATE tasks SET seq_num = 5, path_cache = '5' WHERE id = %s",
             (existing.id,),
         )
 

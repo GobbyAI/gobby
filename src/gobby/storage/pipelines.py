@@ -65,7 +65,7 @@ class LocalPipelineExecutionManager:
                     session_id, parent_execution_id, continuation_prompt,
                     definition_json, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     execution_id,
@@ -97,7 +97,7 @@ class LocalPipelineExecutionManager:
             PipelineExecution or None if not found
         """
         row = self.db.fetchone(
-            "SELECT * FROM pipeline_executions WHERE id = ?",
+            "SELECT * FROM pipeline_executions WHERE id = %s",
             (execution_id,),
         )
         return PipelineExecution.from_row(row) if row else None
@@ -136,12 +136,12 @@ class LocalPipelineExecutionManager:
         self.db.execute(
             """
             UPDATE pipeline_executions
-            SET status = ?,
-                resume_token = COALESCE(?, resume_token),
-                outputs_json = COALESCE(?, outputs_json),
-                completed_at = COALESCE(?, completed_at),
-                updated_at = ?
-            WHERE id = ?
+            SET status = %s,
+                resume_token = COALESCE(%s, resume_token),
+                outputs_json = COALESCE(%s, outputs_json),
+                completed_at = COALESCE(%s, completed_at),
+                updated_at = %s
+            WHERE id = %s
             """,
             (
                 status.value,
@@ -172,20 +172,20 @@ class LocalPipelineExecutionManager:
         if self.project_id is None:
             where = "WHERE project_id IS NULL"
         else:
-            where = "WHERE project_id = ?"
+            where = "WHERE project_id = %s"
             params.append(self.project_id)
 
         if status is not None:
-            where += " AND status = ?"
+            where += " AND status = %s"
             params.append(status.value)
         if pipeline_name is not None:
-            where += " AND pipeline_name = ?"
+            where += " AND pipeline_name = %s"
             params.append(pipeline_name)
         if session_id is not None:
-            where += " AND session_id = ?"
+            where += " AND session_id = %s"
             params.append(session_id)
         if parent_execution_id is not None:
-            where += " AND parent_execution_id = ?"
+            where += " AND parent_execution_id = %s"
             params.append(parent_execution_id)
 
         return where, params
@@ -228,7 +228,7 @@ class LocalPipelineExecutionManager:
         )
         sql = (
             f"SELECT * FROM pipeline_executions {where} "  # nosec B608 # fragment built from typed inputs
-            "ORDER BY created_at DESC LIMIT ? OFFSET ?"
+            "ORDER BY created_at DESC LIMIT %s OFFSET %s"
         )
         params.extend([limit, offset])
 
@@ -278,7 +278,7 @@ class LocalPipelineExecutionManager:
             total AS (
                 SELECT COUNT(*) AS cnt
                 FROM filtered
-                WHERE (? IS NULL OR status = ?)
+                WHERE (%s::text IS NULL OR status = %s)
             ),
             summary AS (
                 SELECT status, COUNT(*) AS cnt
@@ -344,12 +344,10 @@ class LocalPipelineExecutionManager:
         if self.project_id is None:
             query = "SELECT * FROM pipeline_executions WHERE project_id IS NULL"
         else:
-            query = "SELECT * FROM pipeline_executions WHERE project_id = ?"
+            query = "SELECT * FROM pipeline_executions WHERE project_id = %s"
             params.append(self.project_id)
 
-        query += (
-            " AND status IN (?, ?, ?) AND review_json IS NULL ORDER BY completed_at DESC LIMIT ?"
-        )
+        query += " AND status IN (%s, %s, %s) AND review_json IS NULL ORDER BY completed_at DESC LIMIT %s"
         params.extend(
             [
                 ExecutionStatus.COMPLETED.value,
@@ -371,7 +369,7 @@ class LocalPipelineExecutionManager:
         """
         now = datetime.now(UTC).isoformat()
         self.db.execute(
-            "UPDATE pipeline_executions SET review_json = ?, updated_at = ? WHERE id = ?",
+            "UPDATE pipeline_executions SET review_json = %s, updated_at = %s WHERE id = %s",
             (review_json, now, execution_id),
         )
 
@@ -412,25 +410,25 @@ class LocalPipelineExecutionManager:
         if self.project_id is None:
             project_clause = "pe.project_id IS NULL"
         else:
-            project_clause = "pe.project_id = ?"
+            project_clause = "pe.project_id = %s"
             params.append(self.project_id)
 
         # Build LIKE conditions
-        like_conditions = ["pe.pipeline_name LIKE ? ESCAPE '\\'"]
+        like_conditions = ["pe.pipeline_name LIKE %s ESCAPE '\\'"]
         params.append(like_pattern)
 
         if search_errors:
-            like_conditions.append("se.error LIKE ? ESCAPE '\\'")
+            like_conditions.append("se.error LIKE %s ESCAPE '\\'")
             params.append(like_pattern)
 
         if search_outputs:
-            like_conditions.append("se.output_json LIKE ? ESCAPE '\\'")
+            like_conditions.append("se.output_json LIKE %s ESCAPE '\\'")
             params.append(like_pattern)
 
         like_clause = " OR ".join(like_conditions)
 
         if status is not None:
-            status_clause = " AND pe.status = ?"
+            status_clause = " AND pe.status = %s"
             params.append(status.value)
         else:
             status_clause = ""
@@ -443,7 +441,7 @@ class LocalPipelineExecutionManager:
             WHERE {project_clause}
               AND ({like_clause}){status_clause}
             ORDER BY pe.created_at DESC
-            LIMIT ? OFFSET ?
+            LIMIT %s OFFSET %s
         """  # nosec B608
 
         rows = self.db.fetchall(sql, tuple(params))
@@ -472,21 +470,21 @@ class LocalPipelineExecutionManager:
         if self.project_id is None:
             project_clause = "pe.project_id IS NULL"
         else:
-            project_clause = "pe.project_id = ?"
+            project_clause = "pe.project_id = %s"
             params.append(self.project_id)
 
-        like_conditions = ["pe.pipeline_name LIKE ? ESCAPE '" + chr(92) + "'"]
+        like_conditions = ["pe.pipeline_name LIKE %s ESCAPE '" + chr(92) + "'"]
         params.append(like_pattern)
         if search_errors:
-            like_conditions.append("se.error LIKE ? ESCAPE '" + chr(92) + "'")
+            like_conditions.append("se.error LIKE %s ESCAPE '" + chr(92) + "'")
             params.append(like_pattern)
         if search_outputs:
-            like_conditions.append("se.output_json LIKE ? ESCAPE '" + chr(92) + "'")
+            like_conditions.append("se.output_json LIKE %s ESCAPE '" + chr(92) + "'")
             params.append(like_pattern)
         like_clause = " OR ".join(like_conditions)
 
         if status is not None:
-            status_clause = " AND pe.status = ?"
+            status_clause = " AND pe.status = %s"
             params.append(status.value)
         else:
             status_clause = ""
@@ -512,7 +510,7 @@ class LocalPipelineExecutionManager:
             PipelineExecution or None if not found
         """
         row = self.db.fetchone(
-            "SELECT * FROM pipeline_executions WHERE resume_token = ?",
+            "SELECT * FROM pipeline_executions WHERE resume_token = %s",
             (token,),
         )
         return PipelineExecution.from_row(row) if row else None
@@ -540,7 +538,7 @@ class LocalPipelineExecutionManager:
 
         # Try prefix match
         row = self.db.fetchone(
-            "SELECT id FROM pipeline_executions WHERE id LIKE ? AND project_id = ?",
+            "SELECT id FROM pipeline_executions WHERE id LIKE %s AND project_id = %s",
             (f"{ref}%", self.project_id),
         )
         if row:
@@ -572,7 +570,7 @@ class LocalPipelineExecutionManager:
             INSERT INTO step_executions (
                 execution_id, step_id, status, input_json
             )
-            VALUES (?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s)
             """,
             (
                 execution_id,
@@ -584,7 +582,7 @@ class LocalPipelineExecutionManager:
 
         # Get the created step by execution_id and step_id (unique combination)
         row = self.db.fetchone(
-            "SELECT * FROM step_executions WHERE execution_id = ? AND step_id = ?",
+            "SELECT * FROM step_executions WHERE execution_id = %s AND step_id = %s",
             (execution_id, step_id),
         )
         if row is None:
@@ -621,42 +619,42 @@ class LocalPipelineExecutionManager:
         params: list[Any] = []
 
         if status is not None:
-            updates.append("status = ?")
+            updates.append("status = %s")
             params.append(status.value)
             # Set timestamps based on status
             if status == StepStatus.RUNNING:
-                updates.append("started_at = COALESCE(started_at, ?)")
+                updates.append("started_at = COALESCE(started_at, %s)")
                 params.append(now)
             elif status in (StepStatus.COMPLETED, StepStatus.FAILED, StepStatus.SKIPPED):
-                updates.append("completed_at = COALESCE(completed_at, ?)")
+                updates.append("completed_at = COALESCE(completed_at, %s)")
                 params.append(now)
 
         if output_json is not None:
-            updates.append("output_json = ?")
+            updates.append("output_json = %s")
             params.append(output_json)
 
         if error is not None:
-            updates.append("error = ?")
+            updates.append("error = %s")
             params.append(error)
 
         if approval_token is not None:
-            updates.append("approval_token = ?")
+            updates.append("approval_token = %s")
             params.append(approval_token)
 
         if approved_by is not None:
-            updates.append("approved_by = ?")
+            updates.append("approved_by = %s")
             params.append(approved_by)
-            updates.append("approved_at = ?")
+            updates.append("approved_at = %s")
             params.append(now)
 
         if approval_timeout_seconds is not None:
-            updates.append("approval_timeout_seconds = ?")
+            updates.append("approval_timeout_seconds = %s")
             params.append(approval_timeout_seconds)
 
         if not updates:
             # Nothing to update
             row = self.db.fetchone(
-                "SELECT * FROM step_executions WHERE id = ?",
+                "SELECT * FROM step_executions WHERE id = %s",
                 (step_execution_id,),
             )
             return StepExecution.from_row(row) if row else None
@@ -666,12 +664,12 @@ class LocalPipelineExecutionManager:
 
         # updates list contains only hardcoded column names, values are parameterized
         self.db.execute(
-            f"UPDATE step_executions SET {', '.join(updates)} WHERE id = ?",  # nosec B608
+            f"UPDATE step_executions SET {', '.join(updates)} WHERE id = %s",  # nosec B608
             tuple(params),
         )
 
         row = self.db.fetchone(
-            "SELECT * FROM step_executions WHERE id = ?",
+            "SELECT * FROM step_executions WHERE id = %s",
             (step_execution_id,),
         )
         return StepExecution.from_row(row) if row else None
@@ -686,7 +684,7 @@ class LocalPipelineExecutionManager:
             StepExecution or None if not found
         """
         row = self.db.fetchone(
-            "SELECT * FROM step_executions WHERE approval_token = ?",
+            "SELECT * FROM step_executions WHERE approval_token = %s",
             (token,),
         )
         return StepExecution.from_row(row) if row else None
@@ -712,7 +710,7 @@ class LocalPipelineExecutionManager:
         ) -> tuple[str, tuple[str, ...]]:
             if not ids:
                 return "", ()
-            placeholders = ", ".join("?" for _ in ids)
+            placeholders = ", ".join("%s" for _ in ids)
             return f" AND {column_name} NOT IN ({placeholders})", tuple(ids)
 
         # Build exclusion clause for parameter binding
@@ -723,11 +721,11 @@ class LocalPipelineExecutionManager:
         self.db.execute(
             f"""
             UPDATE step_executions
-            SET status = ?, error = 'Daemon restarted', completed_at = ?
-            WHERE status = ?
+            SET status = %s, error = 'Daemon restarted', completed_at = %s
+            WHERE status = %s
               AND execution_id IN (
                   SELECT id FROM pipeline_executions
-                  WHERE status = ? AND project_id = ?
+                  WHERE status = %s AND project_id = %s
               ){exclude_clause}
             """,  # nosec B608
             (
@@ -744,8 +742,8 @@ class LocalPipelineExecutionManager:
         cursor = self.db.execute(
             f"""
             UPDATE pipeline_executions
-            SET status = ?, outputs_json = ?, updated_at = ?
-            WHERE status = ? AND project_id = ?{exec_exclude_clause}
+            SET status = %s, outputs_json = %s, updated_at = %s
+            WHERE status = %s AND project_id = %s{exec_exclude_clause}
             """,  # nosec B608
             (
                 ExecutionStatus.INTERRUPTED.value,
@@ -784,11 +782,11 @@ class LocalPipelineExecutionManager:
             f"""
             SELECT se.* FROM step_executions se
             JOIN pipeline_executions pe ON se.execution_id = pe.id
-            WHERE se.status = ?
+            WHERE se.status = %s
               AND se.approval_timeout_seconds IS NOT NULL
               AND se.started_at IS NOT NULL
               AND {timeout_expired_sql}
-              AND pe.project_id = ?
+              AND pe.project_id = %s
             """,  # nosec B608 # timeout expression is selected by storage dialect.
             (StepStatus.WAITING_APPROVAL.value, self.project_id),
         )
@@ -806,7 +804,7 @@ class LocalPipelineExecutionManager:
         self.db.execute(
             """
             INSERT INTO completion_subscribers (completion_id, session_id)
-            VALUES (?, ?)
+            VALUES (%s, %s)
             ON CONFLICT (completion_id, session_id) DO NOTHING
             """,
             (completion_id, session_id),
@@ -823,7 +821,7 @@ class LocalPipelineExecutionManager:
             return
         self.db.executemany(
             "INSERT INTO completion_subscribers (completion_id, session_id) "
-            "VALUES (?, ?) ON CONFLICT (completion_id, session_id) DO NOTHING",
+            "VALUES (%s, %s) ON CONFLICT (completion_id, session_id) DO NOTHING",
             [(completion_id, sid) for sid in session_ids],
         )
 
@@ -837,7 +835,7 @@ class LocalPipelineExecutionManager:
             List of subscribed session IDs
         """
         rows = self.db.fetchall(
-            "SELECT session_id FROM completion_subscribers WHERE completion_id = ?",
+            "SELECT session_id FROM completion_subscribers WHERE completion_id = %s",
             (completion_id,),
         )
         return [row["session_id"] for row in rows]
@@ -849,7 +847,7 @@ class LocalPipelineExecutionManager:
             completion_id: Execution or run ID
         """
         self.db.execute(
-            "DELETE FROM completion_subscribers WHERE completion_id = ?",
+            "DELETE FROM completion_subscribers WHERE completion_id = %s",
             (completion_id,),
         )
 
@@ -872,10 +870,10 @@ class LocalPipelineExecutionManager:
                     self.db.execute(
                         """
                         UPDATE step_executions
-                        SET status = ?, output_json = NULL, error = NULL,
+                        SET status = %s, output_json = NULL, error = NULL,
                             started_at = NULL, completed_at = NULL,
                             approval_token = NULL, approved_by = NULL, approved_at = NULL
-                        WHERE id = ?
+                        WHERE id = %s
                         """,
                         (StepStatus.PENDING.value, step.id),
                     )
@@ -894,7 +892,7 @@ class LocalPipelineExecutionManager:
             List of StepExecution instances with FAILED status
         """
         rows = self.db.fetchall(
-            "SELECT * FROM step_executions WHERE execution_id = ? AND status = ?",
+            "SELECT * FROM step_executions WHERE execution_id = %s AND status = %s",
             (execution_id, StepStatus.FAILED.value),
         )
         return [StepExecution.from_row(row) for row in rows]
@@ -906,7 +904,7 @@ class LocalPipelineExecutionManager:
             Dict mapping status values to their counts.
         """
         rows = self.db.fetchall(
-            "SELECT status, COUNT(*) as cnt FROM pipeline_executions WHERE project_id = ? GROUP BY status",
+            "SELECT status, COUNT(*) as cnt FROM pipeline_executions WHERE project_id = %s GROUP BY status",
             (self.project_id,),
         )
         return {row["status"]: row["cnt"] for row in rows}
@@ -922,7 +920,7 @@ class LocalPipelineExecutionManager:
         """
         if not execution_ids:
             return {}
-        placeholders = ", ".join("?" for _ in execution_ids)
+        placeholders = ", ".join("%s" for _ in execution_ids)
         rows = self.db.fetchall(
             f"SELECT * FROM step_executions WHERE execution_id IN ({placeholders}) ORDER BY id",  # nosec B608
             tuple(execution_ids),
@@ -949,9 +947,9 @@ class LocalPipelineExecutionManager:
         rows = self.db.fetchall(
             """
             SELECT * FROM pipeline_executions
-            WHERE status = ?
-              AND project_id = ?
-              AND updated_at < ?
+            WHERE status = %s
+              AND project_id = %s
+              AND updated_at < %s
             ORDER BY updated_at ASC
             """,
             (ExecutionStatus.RUNNING.value, self.project_id, cutoff),
@@ -968,7 +966,7 @@ class LocalPipelineExecutionManager:
             List of StepExecution instances
         """
         rows = self.db.fetchall(
-            "SELECT * FROM step_executions WHERE execution_id = ? ORDER BY id",
+            "SELECT * FROM step_executions WHERE execution_id = %s ORDER BY id",
             (execution_id,),
         )
         return [StepExecution.from_row(row) for row in rows]

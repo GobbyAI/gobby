@@ -75,7 +75,7 @@ class _AgentRunLifecycleMixin:
                 status, prompt, task_id, timeout_seconds,
                 created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending', %s, %s, %s, %s, %s)
             """,
             (
                 run_id,
@@ -116,8 +116,8 @@ class _AgentRunLifecycleMixin:
         self.db.execute(
             """
             UPDATE agent_runs
-            SET status = 'running', started_at = ?, updated_at = ?
-            WHERE id = ?
+            SET status = 'running', started_at = %s, updated_at = %s
+            WHERE id = %s
             """,
             (now, now, run_id),
         )
@@ -132,13 +132,13 @@ class _AgentRunLifecycleMixin:
         if not filtered_run_ids:
             return 0
 
-        placeholders = ", ".join("?" for _ in filtered_run_ids)
+        placeholders = ", ".join("%s" for _ in filtered_run_ids)
         now = utc_now_iso()
         cursor = self.db.execute(
             f"""
             UPDATE sessions
             SET status = 'expired',
-                updated_at = ?
+                updated_at = %s
             WHERE status IN ('active', 'paused')
             AND (
                 agent_run_id IN ({placeholders})
@@ -156,13 +156,13 @@ class _AgentRunLifecycleMixin:
 
     def expire_sessions_for_terminal_runs(self: _AgentRunLifecycleHost) -> int:
         """Expire active/paused child sessions whose agent run is already terminal."""
-        status_placeholders = ", ".join("?" for _ in TERMINAL_AGENT_RUN_STATUSES)
+        status_placeholders = ", ".join("%s" for _ in TERMINAL_AGENT_RUN_STATUSES)
         now = utc_now_iso()
         cursor = self.db.execute(
             f"""
             UPDATE sessions
             SET status = 'expired',
-                updated_at = ?
+                updated_at = %s
             WHERE status IN ('active', 'paused')
             AND (
                 agent_run_id IN (
@@ -207,13 +207,13 @@ class _AgentRunLifecycleMixin:
             """
             UPDATE agent_runs
             SET status = 'success',
-                result = COALESCE(?, result),
+                result = COALESCE(%s, result),
                 terminal_reason = NULL,
-                tool_calls_count = ?,
-                turns_used = ?,
-                completed_at = ?,
-                updated_at = ?
-            WHERE id = ?
+                tool_calls_count = %s,
+                turns_used = %s,
+                completed_at = %s,
+                updated_at = %s
+            WHERE id = %s
               AND status IN ('pending', 'running')
             """,
             (result, tool_calls_count, turns_used, now, now, run_id),
@@ -247,13 +247,13 @@ class _AgentRunLifecycleMixin:
             """
             UPDATE agent_runs
             SET status = 'error',
-                error = ?,
+                error = %s,
                 terminal_reason = NULL,
-                tool_calls_count = ?,
-                turns_used = ?,
-                completed_at = ?,
-                updated_at = ?
-            WHERE id = ?
+                tool_calls_count = %s,
+                turns_used = %s,
+                completed_at = %s,
+                updated_at = %s
+            WHERE id = %s
               AND status IN ('pending', 'running')
             """,
             (error, tool_calls_count, turns_used, now, now, run_id),
@@ -276,13 +276,13 @@ class _AgentRunLifecycleMixin:
             """
             UPDATE agent_runs
             SET status = 'timeout',
-                error = ?,
+                error = %s,
                 terminal_reason = NULL,
-                tool_calls_count = ?,
-                turns_used = ?,
-                completed_at = ?,
-                updated_at = ?
-            WHERE id = ?
+                tool_calls_count = %s,
+                turns_used = %s,
+                completed_at = %s,
+                updated_at = %s
+            WHERE id = %s
               AND status IN ('pending', 'running')
             """,
             (error, tool_calls_count, turns_used, now, now, run_id),
@@ -304,10 +304,10 @@ class _AgentRunLifecycleMixin:
             """
             UPDATE agent_runs
             SET status = 'cancelled',
-                terminal_reason = ?,
-                completed_at = ?,
-                updated_at = ?
-            WHERE id = ?
+                terminal_reason = %s,
+                completed_at = %s,
+                updated_at = %s
+            WHERE id = %s
               AND status IN ('pending', 'running')
             """,
             (terminal_reason, now, now, run_id),

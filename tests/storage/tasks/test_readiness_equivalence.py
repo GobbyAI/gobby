@@ -81,7 +81,7 @@ def test_blocked_projection_includes_escalated_and_external_blockers(
     temp_db.execute(
         """
         INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at)
-        VALUES (?, ?, 'blocks', ?), (?, ?, 'blocks', ?)
+        VALUES (%s, %s, 'blocks', %s), (%s, %s, 'blocks', %s)
         """,
         (blocked.id, external_blocker.id, now, parent.id, child.id, now),
     )

@@ -144,7 +144,7 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
             # Closed in last 24h (always relative to now, intersected with window)
             closed_24h_rows = db.fetchall(
                 "SELECT COUNT(*) as cnt FROM tasks "
-                f"WHERE closed_at >= strftime('%Y-%m-%dT%H:%M:%S', 'now', '-1 days') {time_filter}",
+                f"WHERE closed_at >= NOW() - INTERVAL '1 day' {time_filter}",
                 tuple(params),
             )
             task_stats["closed_24h"] = closed_24h_rows[0]["cnt"] if closed_24h_rows else 0
@@ -212,7 +212,7 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
             # Recent = created in last 24h (within the filtered set)
             recent_rows = db.fetchall(
                 "SELECT COUNT(*) as cnt FROM memories "
-                f"WHERE created_at >= strftime('%Y-%m-%dT%H:%M:%S', 'now', '-1 days') {time_filter}",
+                f"WHERE created_at >= NOW() - INTERVAL '1 day' {time_filter}",
                 tuple(params),
             )
             memory_stats["recent_count"] = recent_rows[0]["cnt"] if recent_rows else 0
@@ -239,13 +239,13 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
             tool_rows = db.fetchall(
                 "SELECT name, COUNT(*) as cnt FROM metrics_events "
                 "WHERE event_type = 'tool_call'"
-                + (" AND created_at >= ?" if since else "")
+                + (" AND created_at >= %s" if since else "")
                 + " GROUP BY name ORDER BY cnt DESC LIMIT 5",
                 (since.isoformat(),) if since else (),
             )
             tool_total_row = db.fetchone(
                 "SELECT COUNT(*) as cnt FROM metrics_events "
-                "WHERE event_type = 'tool_call'" + (" AND created_at >= ?" if since else ""),
+                "WHERE event_type = 'tool_call'" + (" AND created_at >= %s" if since else ""),
                 (since.isoformat(),) if since else (),
             )
             metrics_stats["tools"] = {
@@ -259,7 +259,7 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
                 "SELECT name, COUNT(*) as cnt, "
                 "SUM(CASE WHEN result = 'block' THEN 1 ELSE 0 END) as blocks "
                 "FROM metrics_events WHERE event_type = 'rule_eval'"
-                + (" AND created_at >= ?" if since else "")
+                + (" AND created_at >= %s" if since else "")
                 + " GROUP BY name ORDER BY cnt DESC LIMIT 5",
                 (since.isoformat(),) if since else (),
             )
@@ -267,7 +267,7 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
                 "SELECT COUNT(*) as cnt, "
                 "SUM(CASE WHEN result = 'block' THEN 1 ELSE 0 END) as blocks "
                 "FROM metrics_events WHERE event_type = 'rule_eval'"
-                + (" AND created_at >= ?" if since else ""),
+                + (" AND created_at >= %s" if since else ""),
                 (since.isoformat(),) if since else (),
             )
             metrics_stats["rules"] = {
@@ -282,7 +282,7 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
             skill_rows = db.fetchall(
                 "SELECT name, event_type, COUNT(*) as cnt "
                 "FROM metrics_events WHERE event_type IN ('skill_search', 'skill_invoke')"
-                + (" AND created_at >= ?" if since else "")
+                + (" AND created_at >= %s" if since else "")
                 + " GROUP BY name, event_type ORDER BY cnt DESC LIMIT 5",
                 (since.isoformat(),) if since else (),
             )
@@ -291,7 +291,7 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
                 "SUM(CASE WHEN event_type = 'skill_search' THEN 1 ELSE 0 END) as searches, "
                 "SUM(CASE WHEN event_type = 'skill_invoke' THEN 1 ELSE 0 END) as invocations "
                 "FROM metrics_events WHERE event_type IN ('skill_search', 'skill_invoke')"
-                + (" AND created_at >= ?" if since else ""),
+                + (" AND created_at >= %s" if since else ""),
                 (since.isoformat(),) if since else (),
             )
             metrics_stats["skills"] = {

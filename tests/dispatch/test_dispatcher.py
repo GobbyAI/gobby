@@ -59,7 +59,7 @@ def _task(temp_db, sample_project, title: str = "Dispatch task", **fields):
     set_stage_state(temp_db, task.id, stage_name, stage_state)
     if legacy_status == "closed":
         temp_db.execute(
-            "UPDATE tasks SET closed_at = ?, closed_reason = ? WHERE id = ?",
+            "UPDATE tasks SET closed_at = %s, closed_reason = %s WHERE id = %s",
             (datetime.now(UTC).isoformat(), "test_terminal", task.id),
         )
     return get_task(temp_db, task.id)
@@ -106,7 +106,7 @@ def _session(temp_db, sample_project, session_id: str = "session-1") -> str:
     temp_db.execute(
         """
         INSERT INTO sessions (id, external_id, machine_id, source, project_id)
-        VALUES (?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s)
         """,
         (session_id, session_id, "machine-1", "test", sample_project["id"]),
     )
@@ -140,7 +140,7 @@ def test_development_prompt_includes_persisted_holistic_failure_context(
             id, task_id, parent_comment_id, author, author_type, body, created_at, updated_at
         )
         VALUES (
-            'comment-holistic-followup', ?, NULL, 'holistic-reviewer', 'system',
+            'comment-holistic-followup', %s, NULL, 'holistic-reviewer', 'system',
             '## Holistic QA Follow-Up\n\nFix the dialect parity suite.', CURRENT_TIMESTAMP,
             CURRENT_TIMESTAMP
         )
@@ -222,13 +222,13 @@ def test_candidate_filter_excludes_claimed_leased_blocked_terminal(temp_db, samp
         ttl_seconds=30,
     )
     temp_db.execute(
-        "UPDATE tasks SET closed_at = ? WHERE id = ?",
+        "UPDATE tasks SET closed_at = %s WHERE id = %s",
         (datetime.now(UTC).isoformat(), terminal.id),
     )
     temp_db.execute(
         """
         INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at)
-        VALUES (?, ?, 'blocks', ?)
+        VALUES (%s, %s, 'blocks', %s)
         """,
         (blocked.id, blocker.id, datetime.now(UTC).isoformat()),
     )

@@ -43,14 +43,14 @@ class _DiscoveryMixin:
         """
         query = """
             SELECT * FROM sessions
-            WHERE external_id = ?
-              AND machine_id = ?
-              AND ((project_id = ?) OR (project_id IS NULL AND ? IS NULL))
-              AND source = ?
+            WHERE external_id = %s
+              AND machine_id = %s
+              AND ((project_id = %s) OR (project_id IS NULL AND %s::text IS NULL))
+              AND source = %s
         """
         params: list[str | None] = [external_id, machine_id, project_id, project_id, source]
         if session_type is not None:
-            query += " AND session_type = ?"
+            query += " AND session_type = %s"
             params.append(session_type)
         row = self.db.fetchone(query, tuple(params))
         return Session.from_row(row) if row else None
@@ -75,7 +75,7 @@ class _DiscoveryMixin:
         row = self.db.fetchone(
             """
             SELECT * FROM sessions
-            WHERE external_id = ? AND source = ? AND status = 'active'
+            WHERE external_id = %s AND source = %s AND status = 'active'
             ORDER BY updated_at DESC
             LIMIT 1
             """,
@@ -106,13 +106,13 @@ class _DiscoveryMixin:
         """
         query = """
             SELECT * FROM sessions
-            WHERE external_id = ?
-              AND machine_id = ?
-              AND source = ?
+            WHERE external_id = %s
+              AND machine_id = %s
+              AND source = %s
         """
         params: list[str | None] = [external_id, machine_id, source]
         if session_type is not None:
-            query += " AND session_type = ?"
+            query += " AND session_type = %s"
             params.append(session_type)
         query += " ORDER BY updated_at DESC LIMIT 1"
         row = self.db.fetchone(query, tuple(params))
@@ -128,13 +128,13 @@ class _DiscoveryMixin:
         """Find all sessions sharing an external_id across sources within one project."""
         query = """
             SELECT * FROM sessions
-            WHERE external_id = ?
-              AND machine_id = ?
-              AND ((project_id = ?) OR (project_id IS NULL AND ? IS NULL))
+            WHERE external_id = %s
+              AND machine_id = %s
+              AND ((project_id = %s) OR (project_id IS NULL AND %s::text IS NULL))
         """
         params: list[str | None] = [external_id, machine_id, project_id, project_id]
         if session_type is not None:
-            query += " AND session_type = ?"
+            query += " AND session_type = %s"
             params.append(session_type)
         query += " ORDER BY created_at ASC, id ASC"
 
@@ -164,15 +164,15 @@ class _DiscoveryMixin:
         Returns:
             Session object or None
         """
-        updated_recent_sql = newer_than_now_expr(self.db, "updated_at", "?", "minute")
+        updated_recent_sql = newer_than_now_expr(self.db, "updated_at", "%s", "minute")
         query = (
-            "SELECT * FROM sessions WHERE machine_id = ? AND status = ? AND project_id = ?"
+            "SELECT * FROM sessions WHERE machine_id = %s AND status = %s AND project_id = %s"
             f" AND {updated_recent_sql}"
         )
         params: list[Any] = [machine_id, status, project_id, max_age_minutes]
 
         if source:
-            query += " AND source = ?"
+            query += " AND source = %s"
             params.append(source)
 
         query += " ORDER BY updated_at DESC LIMIT 1"
@@ -193,7 +193,7 @@ class _DiscoveryMixin:
         rows = self.db.fetchall(
             """
             SELECT * FROM sessions
-            WHERE parent_session_id = ?
+            WHERE parent_session_id = %s
             ORDER BY created_at ASC
             """,
             (parent_session_id,),
@@ -217,7 +217,7 @@ class _DiscoveryMixin:
         seen: set[str] = set()
         while True:
             row = self.db.fetchone(
-                "SELECT parent_session_id FROM sessions WHERE id = ?",
+                "SELECT parent_session_id FROM sessions WHERE id = %s",
                 (current_id,),
             )
             if not row or row["parent_session_id"] is None:

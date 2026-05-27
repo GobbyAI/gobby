@@ -92,7 +92,7 @@ class TestOrphanTagIsolation:
         # gobby template orphaned
         gobby_row = temp_db.fetchone(
             "SELECT deleted_at FROM workflow_definitions "
-            "WHERE name = 'gobby-only-rule' AND tags::text LIKE '%gobby%'"
+            "WHERE name = 'gobby-only-rule' AND tags::text LIKE '%%gobby%%'"
         )
         assert gobby_row is not None
         assert gobby_row["deleted_at"] is not None
@@ -100,7 +100,7 @@ class TestOrphanTagIsolation:
         # user template untouched
         user_row = temp_db.fetchone(
             "SELECT deleted_at FROM workflow_definitions "
-            "WHERE name = 'user-only-rule' AND tags::text LIKE '%user%'"
+            "WHERE name = 'user-only-rule' AND tags::text LIKE '%%user%%'"
         )
         assert user_row is not None
         assert user_row["deleted_at"] is None

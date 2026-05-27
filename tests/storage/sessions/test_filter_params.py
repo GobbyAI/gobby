@@ -39,9 +39,9 @@ def _register(
     # Patch fields the register helper does not expose.
     session_manager.db.execute(
         """UPDATE sessions
-           SET model = ?, seq_num = ?, agent_depth = ?, parent_session_id = ?,
-               created_at = ?, updated_at = ?
-           WHERE id = ?""",
+           SET model = %s, seq_num = %s, agent_depth = %s, parent_session_id = %s,
+               created_at = %s, updated_at = %s
+           WHERE id = %s""",
         (
             model,
             seq_num,
@@ -72,7 +72,7 @@ def _insert_task(
             seq_num, claimed_by_session_id, created_in_session_id, closed_in_session_id,
             created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             task_id,
@@ -115,7 +115,7 @@ class TestStatusesFilter:
         status: str,
     ) -> None:
         session_manager.db.execute(
-            "UPDATE sessions SET status = ? WHERE id = ?",
+            "UPDATE sessions SET status = %s WHERE id = %s",
             (status, session_id),
         )
 

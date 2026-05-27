@@ -8,11 +8,11 @@ pytestmark = pytest.mark.unit
 
 
 def test_sql_placeholders_defaults_to_compact_commas() -> None:
-    assert sql_placeholders(3) == "?,?,?"
+    assert sql_placeholders(3) == "%s,%s,%s"
 
 
 def test_sql_placeholders_supports_custom_separator() -> None:
-    assert sql_placeholders(2, separator=", ") == "?, ?"
+    assert sql_placeholders(2, separator=", ") == "%s, %s"
 
 
 def test_sql_placeholders_rejects_empty_lists() -> None:

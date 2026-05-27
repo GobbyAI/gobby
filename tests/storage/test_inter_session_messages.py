@@ -77,12 +77,12 @@ class TestInterSessionMessageDataclass:
         temp_db.execute(
             """INSERT INTO inter_session_messages
                (id, from_session, to_session, content, priority, sent_at)
-               VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)""",
+               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP)""",
             (msg_id, parent.id, child.id, "Test content", "normal"),
         )
 
         # Fetch and convert
-        row = temp_db.fetchone("SELECT * FROM inter_session_messages WHERE id = ?", (msg_id,))
+        row = temp_db.fetchone("SELECT * FROM inter_session_messages WHERE id = %s", (msg_id,))
         assert row is not None
 
         msg = InterSessionMessage.from_row(row)
@@ -268,7 +268,7 @@ class TestInterSessionMessageManagerCreateMessage:
         )
 
         # Verify in database
-        row = temp_db.fetchone("SELECT * FROM inter_session_messages WHERE id = ?", (msg.id,))
+        row = temp_db.fetchone("SELECT * FROM inter_session_messages WHERE id = %s", (msg.id,))
         assert row is not None
         assert row["content"] == "Persistent message"
 
@@ -461,7 +461,9 @@ class TestInterSessionMessageManagerMarkRead:
         manager.mark_read(msg.id)
 
         # Verify in database
-        row = temp_db.fetchone("SELECT read_at FROM inter_session_messages WHERE id = ?", (msg.id,))
+        row = temp_db.fetchone(
+            "SELECT read_at FROM inter_session_messages WHERE id = %s", (msg.id,)
+        )
         assert row["read_at"] is not None
 
     def test_mark_read_returns_updated_message(self, temp_db: HubDatabase) -> None:

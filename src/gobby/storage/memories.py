@@ -167,17 +167,17 @@ class LocalMemoryManager:
         memory_id = str(uuid.uuid5(MEMORY_UUID_NAMESPACE, normalized_content))
 
         # Check if memory already exists to avoid duplicate insert errors
-        existing_row = self.db.fetchone("SELECT * FROM memories WHERE id = ?", (memory_id,))
+        existing_row = self.db.fetchone("SELECT * FROM memories WHERE id = %s", (memory_id,))
         if existing_row:
             return self.get_memory(memory_id)
 
         # source_id proximity dedup: if the same session created a very similar
         # memory within the last 60 seconds, treat it as a duplicate
         if source_session_id:
-            recent_cutoff_sql = newer_than_now_expr(self.db, "created_at", "?", "second")
+            recent_cutoff_sql = newer_than_now_expr(self.db, "created_at", "%s", "second")
             recent = self.db.fetchone(
                 f"""SELECT id, content FROM memories
-                   WHERE source_session_id = ?
+                   WHERE source_session_id = %s
                      AND {recent_cutoff_sql}
                    ORDER BY created_at DESC LIMIT 1""",
                 (source_session_id, 60),
@@ -194,7 +194,7 @@ class LocalMemoryManager:
                     id, project_id, memory_type, content, source_type,
                     source_session_id, access_count, tags,
                     media, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, 0, %s, %s, %s, %s)
                 """,
                 (
                     memory_id,
@@ -229,11 +229,11 @@ class LocalMemoryManager:
         """
         if project_id:
             row = self.db.fetchone(
-                "SELECT * FROM memories WHERE id = ? AND (project_id = ? OR project_id IS NULL)",
+                "SELECT * FROM memories WHERE id = %s AND (project_id = %s OR project_id IS NULL)",
                 (memory_id, project_id),
             )
         else:
-            row = self.db.fetchone("SELECT * FROM memories WHERE id = ?", (memory_id,))
+            row = self.db.fetchone("SELECT * FROM memories WHERE id = %s", (memory_id,))
         if not row:
             raise ValueError(f"Memory {memory_id} not found")
         return Memory.from_row(row)
@@ -247,11 +247,11 @@ class LocalMemoryManager:
         if not memory_ids:
             return []
 
-        placeholders = ", ".join("?" for _ in memory_ids)
+        placeholders = ", ".join("%s" for _ in memory_ids)
         if project_id:
             rows = self.db.fetchall(
                 f"SELECT * FROM memories WHERE id IN ({placeholders}) "
-                "AND (project_id = ? OR project_id IS NULL)",
+                "AND (project_id = %s OR project_id IS NULL)",
                 (*memory_ids, project_id),
             )
         else:
@@ -267,7 +267,7 @@ class LocalMemoryManager:
 
     def memory_exists(self, memory_id: str) -> bool:
         """Check if a memory with the given ID exists."""
-        row = self.db.fetchone("SELECT 1 FROM memories WHERE id = ?", (memory_id,))
+        row = self.db.fetchone("SELECT 1 FROM memories WHERE id = %s", (memory_id,))
         return row is not None
 
     def content_exists(self, content: str, project_id: str | None = None) -> bool:
@@ -289,7 +289,7 @@ class LocalMemoryManager:
         # would create different memory IDs
         normalized_content = content.strip()
         row = self.db.fetchone(
-            "SELECT 1 FROM memories WHERE content = ? LIMIT 1",
+            "SELECT 1 FROM memories WHERE content = %s LIMIT 1",
             (normalized_content,),
         )
         return row is not None
@@ -310,7 +310,7 @@ class LocalMemoryManager:
         # Global lookup: find by content directly, ignoring project_id
         normalized_content = content.strip()
         row = self.db.fetchone(
-            "SELECT * FROM memories WHERE content = ? LIMIT 1",
+            "SELECT * FROM memories WHERE content = %s LIMIT 1",
             (normalized_content,),
         )
         if row:
@@ -328,23 +328,23 @@ class LocalMemoryManager:
         params: list[Any] = []
 
         if content is not None:
-            updates.append("content = ?")
+            updates.append("content = %s")
             params.append(content)
         if tags is not None:
-            updates.append("tags = ?")
+            updates.append("tags = %s")
             params.append(json.dumps(tags))
         if media is not _UNSET:  # Allow explicit None to clear media
-            updates.append("media = ?")
+            updates.append("media = %s")
             params.append(media)
 
         if not updates:
             return self.get_memory(memory_id)
 
-        updates.append("updated_at = ?")
+        updates.append("updated_at = %s")
         params.append(datetime.now(UTC).isoformat())
         params.append(memory_id)
 
-        sql = f"UPDATE memories SET {', '.join(updates)} WHERE id = ?"  # nosec B608
+        sql = f"UPDATE memories SET {', '.join(updates)} WHERE id = %s"  # nosec B608
 
         with self.db.transaction() as conn:
             cursor = conn.execute(sql, tuple(params))
@@ -356,7 +356,7 @@ class LocalMemoryManager:
 
     def delete_memory(self, memory_id: str) -> bool:
         with self.db.transaction() as conn:
-            cursor = conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+            cursor = conn.execute("DELETE FROM memories WHERE id = %s", (memory_id,))
             if cursor.rowcount == 0:
                 return False
         self._notify_listeners()
@@ -366,7 +366,7 @@ class LocalMemoryManager:
         """Mark a memory as pending KG graph processing."""
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                "UPDATE memories SET graph_processed = FALSE WHERE id = ?",
+                "UPDATE memories SET graph_processed = FALSE WHERE id = %s",
                 (memory_id,),
             )
             if cursor.rowcount == 0:
@@ -383,7 +383,7 @@ class LocalMemoryManager:
                 cursor = conn.execute("UPDATE memories SET graph_processed = FALSE")
             else:
                 cursor = conn.execute(
-                    "UPDATE memories SET graph_processed = FALSE WHERE project_id = ?",
+                    "UPDATE memories SET graph_processed = FALSE WHERE project_id = %s",
                     (project_id,),
                 )
             return cursor.rowcount
@@ -392,7 +392,7 @@ class LocalMemoryManager:
         """Mark a memory as having been processed by the KG pipeline."""
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                "UPDATE memories SET graph_processed = TRUE WHERE id = ?",
+                "UPDATE memories SET graph_processed = TRUE WHERE id = %s",
                 (memory_id,),
             )
             if cursor.rowcount == 0:
@@ -406,7 +406,7 @@ class LocalMemoryManager:
             offset: Number of rows to skip before returning results.
         """
         if limit is not None:
-            rows = self.db.fetchall("SELECT id FROM memories LIMIT ? OFFSET ?", (limit, offset))
+            rows = self.db.fetchall("SELECT id FROM memories LIMIT %s OFFSET %s", (limit, offset))
         else:
             rows = self.db.fetchall("SELECT id FROM memories")
         return [row["id"] for row in rows]
@@ -414,7 +414,7 @@ class LocalMemoryManager:
     def get_pending_graph_memories(self, limit: int = 20) -> list[Memory]:
         """Get memories pending KG graph processing."""
         rows = self.db.fetchall(
-            "SELECT * FROM memories WHERE graph_processed IS FALSE ORDER BY created_at ASC LIMIT ?",
+            "SELECT * FROM memories WHERE graph_processed IS FALSE ORDER BY created_at ASC LIMIT %s",
             (limit,),
         )
         return [Memory.from_row(row) for row in rows]
@@ -428,7 +428,7 @@ class LocalMemoryManager:
         """
         if project_id:
             row = self.db.fetchone(
-                "SELECT COUNT(*) AS cnt FROM memories WHERE project_id = ? OR project_id IS NULL",
+                "SELECT COUNT(*) AS cnt FROM memories WHERE project_id = %s OR project_id IS NULL",
                 (project_id,),
             )
         else:
@@ -464,16 +464,16 @@ class LocalMemoryManager:
         params: list[Any] = []
 
         if project_id:
-            query += " AND (project_id = ? OR project_id IS NULL)"
+            query += " AND (project_id = %s OR project_id IS NULL)"
             params.append(project_id)
 
         if memory_type:
-            query += " AND memory_type = ?"
+            query += " AND memory_type = %s"
             params.append(memory_type)
 
         # Fetch more results to allow for tag filtering
         fetch_limit = limit * 3 if (tags_all or tags_any or tags_none) else limit
-        query += " ORDER BY updated_at DESC LIMIT ? OFFSET ?"
+        query += " ORDER BY updated_at DESC LIMIT %s OFFSET %s"
         params.extend([fetch_limit, offset])
 
         rows = self.db.fetchall(query, tuple(params))
@@ -498,8 +498,8 @@ class LocalMemoryManager:
                 """
                 UPDATE memories
                 SET access_count = access_count + 1,
-                    last_accessed_at = ?
-                WHERE id = ?
+                    last_accessed_at = %s
+                WHERE id = %s
                 """,
                 (accessed_at, memory_id),
             )
@@ -529,16 +529,16 @@ class LocalMemoryManager:
         """
         # Escape LIKE wildcards in query_text
         escaped_query = query_text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        sql = "SELECT * FROM memories WHERE content LIKE ? ESCAPE '\\'"
+        sql = "SELECT * FROM memories WHERE content LIKE %s ESCAPE '\\'"
         params: list[Any] = [f"%{escaped_query}%"]
 
         if project_id:
-            sql += " AND (project_id = ? OR project_id IS NULL)"
+            sql += " AND (project_id = %s OR project_id IS NULL)"
             params.append(project_id)
 
         # Fetch more results than needed to allow for tag filtering
         fetch_limit = limit * 3 if (tags_all or tags_any or tags_none) else limit
-        sql += " ORDER BY updated_at DESC LIMIT ?"
+        sql += " ORDER BY updated_at DESC LIMIT %s"
         params.append(fetch_limit)
 
         rows = self.db.fetchall(sql, tuple(params))
@@ -621,7 +621,7 @@ class LocalMemoryManager:
             conn.execute(
                 """
                 INSERT INTO memory_crossrefs (source_id, target_id, similarity, created_at)
-                VALUES (?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s)
                 ON CONFLICT(source_id, target_id) DO UPDATE SET
                     similarity = excluded.similarity
                 """,
@@ -657,13 +657,13 @@ class LocalMemoryManager:
             """
             SELECT source_id, target_id, similarity, created_at
             FROM memory_crossrefs
-            WHERE source_id = ? AND similarity >= ?
+            WHERE source_id = %s AND similarity >= %s
             UNION
             SELECT source_id, target_id, similarity, created_at
             FROM memory_crossrefs
-            WHERE target_id = ? AND similarity >= ?
+            WHERE target_id = %s AND similarity >= %s
             ORDER BY similarity DESC
-            LIMIT ?
+            LIMIT %s
             """,
             (memory_id, min_similarity, memory_id, min_similarity, limit),
         )
@@ -687,7 +687,7 @@ class LocalMemoryManager:
             cursor = conn.execute(
                 """
                 DELETE FROM memory_crossrefs
-                WHERE source_id = ? OR target_id = ?
+                WHERE source_id = %s OR target_id = %s
                 """,
                 (memory_id, memory_id),
             )
@@ -706,8 +706,8 @@ class LocalMemoryManager:
             cursor = conn.execute(
                 """
                 DELETE FROM memory_crossrefs
-                WHERE source_id IN (SELECT id FROM memories WHERE project_id = ?)
-                   OR target_id IN (SELECT id FROM memories WHERE project_id = ?)
+                WHERE source_id IN (SELECT id FROM memories WHERE project_id = %s)
+                   OR target_id IN (SELECT id FROM memories WHERE project_id = %s)
                 """,
                 (project_id, project_id),
             )
@@ -738,10 +738,10 @@ class LocalMemoryManager:
                 FROM memory_crossrefs mc
                 JOIN memories m1 ON mc.source_id = m1.id
                 JOIN memories m2 ON mc.target_id = m2.id
-                WHERE (m1.project_id = ? OR m1.project_id IS NULL)
-                  AND (m2.project_id = ? OR m2.project_id IS NULL)
+                WHERE (m1.project_id = %s OR m1.project_id IS NULL)
+                  AND (m2.project_id = %s OR m2.project_id IS NULL)
                 ORDER BY mc.similarity DESC
-                LIMIT ?
+                LIMIT %s
                 """,
                 (project_id, project_id, limit),
             )
@@ -751,7 +751,7 @@ class LocalMemoryManager:
                 SELECT source_id, target_id, similarity, created_at
                 FROM memory_crossrefs
                 ORDER BY similarity DESC
-                LIMIT ?
+                LIMIT %s
                 """,
                 (limit,),
             )

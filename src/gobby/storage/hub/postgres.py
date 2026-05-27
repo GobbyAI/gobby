@@ -17,15 +17,6 @@ from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
 from gobby.storage.hub._ambient import ambient_transaction, enter_transaction
-from gobby.storage.hub.placeholders import (
-    params_from_indexes as _params_from_indexes,
-)
-from gobby.storage.hub.placeholders import (
-    remap_dollar_placeholders,
-    remap_qmark_placeholders,
-    scan_dollar_placeholder_indexes,
-    scan_qmark_placeholder_indexes,
-)
 from gobby.storage.hub.protocol import (
     ChatAttachmentMutation,
     Cursor,
@@ -73,113 +64,6 @@ _BaselineState = Literal[
     "already_baselined",
     "corrupt_partial",
 ]
-_PLACEHOLDER_SCAN_CACHE = threading.local()
-_NULL_TEST_PARAM_RE = re.compile(r"%s\s+IS(?P<not>\s+NOT)?\s+NULL", re.IGNORECASE)
-
-
-def _remap_placeholders_to_psycopg(
-    sql: str,
-    params: Sequence[Any],
-) -> tuple[str, tuple[Any, ...]]:
-    """Translate top-level hub placeholders to psycopg ``%s`` placeholders."""
-    if params and "?" in sql and "$" not in sql:
-        new_sql, new_params, indexes = remap_qmark_placeholders(sql, params, "%s")
-    else:
-        new_sql, new_params, indexes = remap_dollar_placeholders(sql, params, "%s")
-    new_sql = _cast_null_test_placeholders(new_sql)
-    new_sql = _escape_literal_percent_for_psycopg(new_sql)
-    _cache_param_permutation(sql, len(params), indexes)
-    return new_sql, new_params
-
-
-def _build_param_permutation(sql: str, param_count: int) -> list[int]:
-    """Return output-position to input-position mapping for top-level ``$N`` params."""
-    cached = _cached_param_permutation(sql, param_count)
-    if cached is not None:
-        return list(cached)
-    _new_sql, indexes = _scan_placeholder_indexes(sql, param_count)
-    return list(indexes)
-
-
-def _remap_placeholders_to_psycopg_with_indexes(
-    sql: str,
-    params: Sequence[Any],
-) -> tuple[str, tuple[Any, ...], tuple[int, ...]]:
-    new_sql, new_params = _remap_placeholders_to_psycopg(sql, params)
-    return new_sql, new_params, tuple(_build_param_permutation(sql, len(params)))
-
-
-def _cache_param_permutation(sql: str, param_count: int, indexes: tuple[int, ...]) -> None:
-    cache = cast(
-        dict[tuple[str, int], tuple[int, ...]] | None,
-        getattr(_PLACEHOLDER_SCAN_CACHE, "permutations", None),
-    )
-    if cache is None:
-        cache = {}
-        _PLACEHOLDER_SCAN_CACHE.permutations = cache
-    cache[(sql, param_count)] = indexes
-
-
-def _cached_param_permutation(sql: str, param_count: int) -> tuple[int, ...] | None:
-    cache = cast(
-        dict[tuple[str, int], tuple[int, ...]] | None,
-        getattr(_PLACEHOLDER_SCAN_CACHE, "permutations", None),
-    )
-    if cache is None:
-        return None
-    return cache.get((sql, param_count))
-
-
-def _scan_placeholder_indexes(sql: str, param_count: int) -> tuple[str, tuple[int, ...]]:
-    if param_count and "?" in sql and "$" not in sql:
-        return scan_qmark_placeholder_indexes(sql, param_count, "%s")
-    return scan_dollar_placeholder_indexes(sql, param_count, "%s")
-
-
-def _prepare_params(
-    sql: str,
-    params: Sequence[Any] | Mapping[str, Any],
-) -> tuple[str, Sequence[Any] | Mapping[str, Any]]:
-    if isinstance(params, Mapping):
-        new_sql = _cast_null_test_placeholders(sql)
-        return _escape_literal_percent_for_psycopg(new_sql), params
-    return _remap_placeholders_to_psycopg(sql, params)
-
-
-def _escape_literal_percent_for_psycopg(sql: str) -> str:
-    """Escape literal percent signs while preserving psycopg placeholders."""
-    out: list[str] = []
-    i = 0
-    n = len(sql)
-    while i < n:
-        char = sql[i]
-        if char != "%":
-            out.append(char)
-            i += 1
-            continue
-        if i + 1 < n and sql[i + 1] in {"s", "b", "t", "%"}:
-            out.append(sql[i : i + 2])
-            i += 2
-            continue
-        if i + 1 < n and sql[i + 1] == "(":
-            end = sql.find(")", i + 2)
-            if end >= 0 and end + 1 < n and sql[end + 1] in {"s", "b", "t"}:
-                out.append(sql[i : end + 2])
-                i = end + 2
-                continue
-        out.append("%%")
-        i += 1
-    return "".join(out)
-
-
-def _cast_null_test_placeholders(sql: str) -> str:
-    """Give bare ``%s IS NULL`` checks a type so Postgres can plan NULL params."""
-
-    def replace(match: re.Match[str]) -> str:
-        not_part = match.group("not") or ""
-        return f"%s::text IS{not_part} NULL"
-
-    return _NULL_TEST_PARAM_RE.sub(replace, sql)
 
 
 class PostgresHubDatabase:
@@ -356,11 +240,10 @@ class PostgresHubDatabase:
             for statement in _split_statements_respecting_dollar_quotes(sql):
                 if statement.strip():
                     conn.execute(statement)
-            sql, params = _remap_placeholders_to_psycopg(
-                "INSERT INTO schema_migrations (version, applied_at) VALUES ($1, NOW())",
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, NOW())",
                 (BASELINE_VERSION,),
             )
-            conn.execute(sql, params)
 
     def close(self) -> None:
         self._pool.close()
@@ -384,10 +267,7 @@ class _PostgresTransaction:
         sql: str,
         params: Sequence[Any] | Mapping[str, Any] = (),
     ) -> Cursor:
-        new_sql, new_params = _prepare_params(sql, params)
-        result = (
-            self._conn.execute(new_sql, new_params) if new_params else self._conn.execute(new_sql)
-        )
+        result = self._conn.execute(sql, params) if params else self._conn.execute(sql)
         return _PostgresCursor(result)
 
     def executemany(self, sql: str, rows: Iterable[Sequence[Any]]) -> Cursor:
@@ -395,19 +275,12 @@ class _PostgresTransaction:
         if not materialized:
             return _PostgresCursor(None, rowcount=0)
 
-        first = materialized[0]
-        new_sql, first_permuted, permutation = _remap_placeholders_to_psycopg_with_indexes(
-            sql,
-            first,
-        )
-        permuted_rows = [first_permuted]
-        permuted_rows.extend(_params_from_indexes(row, permutation) for row in materialized[1:])
         driver_executemany = getattr(self._conn, "executemany", None)
         if callable(driver_executemany):
-            driver_executemany(new_sql, permuted_rows)
+            driver_executemany(sql, materialized)
             return _PostgresCursor(None)
         with self._conn.cursor() as cursor:
-            cursor.executemany(new_sql, permuted_rows)
+            cursor.executemany(sql, materialized)
             return _PostgresCursor(None, rowcount=cursor.rowcount)
 
     def savepoint(self, name: str) -> Savepoint:
@@ -433,7 +306,7 @@ class _PostgresTransaction:
     def _acquire_lock_target(self, lock: LockTarget) -> None:
         if isinstance(lock, TaskSeqAllocation):
             row = self.execute(
-                "SELECT 1 FROM projects WHERE id = $1 FOR UPDATE",
+                "SELECT 1 FROM projects WHERE id = %s FOR UPDATE",
                 (lock.project_id,),
             ).fetchone()
             if row is not None:
@@ -445,7 +318,7 @@ class _PostgresTransaction:
             self._acquire_advisory_lock(lock_key)
 
     def _acquire_advisory_lock(self, lock_key: str) -> None:
-        self.execute("SELECT pg_advisory_xact_lock(hashtext($1))", (lock_key,))
+        self.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (lock_key,))
 
 
 class _PostgresCursor:
@@ -528,13 +401,9 @@ def _classify_baseline_state(conn: Any) -> _BaselineState:
 
 
 def _has_baseline_version(conn: Any, version: int) -> bool:
-    sql, params = _remap_placeholders_to_psycopg(
-        "SELECT 1 FROM schema_migrations WHERE version = $1 LIMIT 1",
-        (version,),
-    )
     row = conn.execute(
-        sql,
-        params,
+        "SELECT 1 FROM schema_migrations WHERE version = %s LIMIT 1",
+        (version,),
     ).fetchone()
     return row is not None
 
@@ -570,42 +439,18 @@ def _build_safe_update(
 
     update_params: list[Any] = []
     set_clauses: list[str] = []
-    if "?" in where and "$" not in where:
-        for column, value in values.items():
-            _validate_identifier(column)
-            set_clauses.append(f"{column} = ?")
-            update_params.append(value)
-
-        sql = f"UPDATE {table} SET {', '.join(set_clauses)} WHERE {where}"  # nosec B608
-        return sql, (*update_params, *where_params)
-
-    for index, (column, value) in enumerate(values.items(), start=1):
+    for column, value in values.items():
         _validate_identifier(column)
-        set_clauses.append(f"{column} = ${index}")
+        set_clauses.append(f"{column} = %s")
         update_params.append(value)
 
-    final_where = _shift_dollar_placeholders(where, len(update_params), len(where_params))
-    sql = f"UPDATE {table} SET {', '.join(set_clauses)} WHERE {final_where}"  # nosec B608
+    sql = f"UPDATE {table} SET {', '.join(set_clauses)} WHERE {where}"  # nosec B608
     return sql, (*update_params, *where_params)
 
 
 def _validate_identifier(identifier: str) -> None:
     if not _SQL_IDENTIFIER_PATTERN.fullmatch(identifier):
         raise ValueError(f"invalid SQL identifier: {identifier!r}")
-
-
-def _shift_dollar_placeholders(sql: str, offset: int, param_count: int) -> str:
-    marker = "__GOBBY_SHIFTED_DOLLAR_PLACEHOLDER__"
-    shifted_sql, indexes = scan_dollar_placeholder_indexes(sql, param_count, marker)
-    parts = shifted_sql.split(marker)
-    if len(parts) == 1:
-        return shifted_sql
-
-    output: list[str] = [parts[0]]
-    for index, part in zip(indexes, parts[1:], strict=True):
-        output.append(f"${index + 1 + offset}")
-        output.append(part)
-    return "".join(output)
 
 
 def _advisory_lock_keys(lock: LockTarget) -> tuple[str, ...]:

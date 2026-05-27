@@ -100,7 +100,7 @@ class TaskDeliveryStateManager:
             **cleaned,
         }
         columns = list(values)
-        placeholders = ", ".join("?" for _ in columns)
+        placeholders = ", ".join("%s" for _ in columns)
         updates = ", ".join(
             f"{column} = excluded.{column}" for column in columns if column != "task_id"
         )
@@ -119,7 +119,7 @@ class TaskDeliveryStateManager:
                        delivery_mode, source_repo, target_repo, pr_report_ref, merge_sha,
                        merge_report_ref, last_error, created_at, updated_at
                   FROM task_delivery_campaigns
-                 WHERE task_id = ?
+                 WHERE task_id = %s
                 """,
                 (task_id,),
             )
@@ -146,7 +146,7 @@ class TaskDeliveryStateManager:
             **cleaned,
         }
         columns = list(values)
-        placeholders = ", ".join("?" for _ in columns)
+        placeholders = ", ".join("%s" for _ in columns)
         updates = ", ".join(
             f"{column} = excluded.{column}"
             for column in columns
@@ -168,7 +168,7 @@ class TaskDeliveryStateManager:
                        github_pr_number, gate_snapshot_json, pr_state,
                        local_update_attempts, last_error, created_at, updated_at
                   FROM task_delivery_units
-                 WHERE task_id = ? AND unit_key = ?
+                 WHERE task_id = %s AND unit_key = %s
                 """,
                 (task_id, effective_unit_key),
             )
@@ -188,7 +188,7 @@ class TaskDeliveryStateManager:
                        delivery_mode, source_repo, target_repo, pr_report_ref, merge_sha,
                        merge_report_ref, last_error, created_at, updated_at
                   FROM task_delivery_campaigns
-                 WHERE task_id = ?
+                 WHERE task_id = %s
                 """,
                 (task_id,),
             ).fetchone()
@@ -199,7 +199,7 @@ class TaskDeliveryStateManager:
                        github_pr_number, gate_snapshot_json, pr_state,
                        local_update_attempts, last_error, created_at, updated_at
                   FROM task_delivery_units
-                 WHERE task_id = ?
+                 WHERE task_id = %s
                  ORDER BY created_at, unit_key
                 """,
                 (task_id,),

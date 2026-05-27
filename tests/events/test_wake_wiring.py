@@ -22,7 +22,7 @@ def db(hub_db: HubDatabase) -> HubDatabase:
     # Seed a project so FK constraints pass for pipeline_executions
     database.execute(
         "INSERT INTO projects (id, name, created_at, updated_at) "
-        "VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+        "VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
         ("test-project", "Test Project"),
     )
     return database
@@ -54,7 +54,7 @@ def _has_column(db: _ColumnLookupDatabase, table: str, column: str) -> bool:
             """
             SELECT 1
             FROM information_schema.columns
-            WHERE table_name = ? AND column_name = ?
+            WHERE table_name = %s AND column_name = %s
             """,
             (table, column),
         )

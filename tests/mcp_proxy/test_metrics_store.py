@@ -20,14 +20,14 @@ def metrics_store(temp_db: "HubDatabase") -> ToolMetricsStore:
     temp_db.execute(
         """
         INSERT INTO projects (id, name, repo_path, created_at, updated_at)
-        VALUES (?, ?, ?, NOW(), NOW())
+        VALUES (%s, %s, %s, NOW(), NOW())
         """,
         ("proj-1", "Test Project 1", "/tmp/test1"),
     )
     temp_db.execute(
         """
         INSERT INTO projects (id, name, repo_path, created_at, updated_at)
-        VALUES (?, ?, ?, NOW(), NOW())
+        VALUES (%s, %s, %s, NOW(), NOW())
         """,
         ("proj-2", "Test Project 2", "/tmp/test2"),
     )
@@ -39,7 +39,7 @@ def _insert_postgres_project(db: "HubDatabase", project_id: str) -> None:
     db.execute(
         """
         INSERT INTO projects (id, name, repo_path, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s)
         """,
         (project_id, f"{project_id}-name", f"/tmp/{project_id}", now, now),
     )
@@ -134,7 +134,7 @@ class TestToolMetricsStore:
                 call_count, success_count, failure_count,
                 total_latency_ms, avg_latency_ms,
                 last_called_at, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, 10, 8, 2, 1000.0, 100.0, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, 10, 8, 2, 1000.0, 100.0, %s, %s, %s)
             """,
             ("tm-old", "proj-1", "s1", "t1", old_time, old_time, old_time),
         )
@@ -168,7 +168,7 @@ class TestPostgresToolMetricsStore:
             """
             SELECT call_count, success_count, failure_count, total_latency_ms, avg_latency_ms
             FROM tool_metrics
-            WHERE project_id = ? AND server_name = ? AND tool_name = ?
+            WHERE project_id = %s AND server_name = %s AND tool_name = %s
             """,
             (project_id, "context7", "resolve-library-id"),
         )
@@ -195,7 +195,7 @@ class TestPostgresToolMetricsStore:
                 call_count, success_count, failure_count,
                 total_latency_ms, avg_latency_ms,
                 last_called_at, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, 2, 1, 1, 300.0, 150.0, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, 2, 1, 1, 300.0, 150.0, %s, %s, %s)
             """,
             ("tm-pg-daily", project_id, "context7", "get-docs", old_time, old_time, old_time),
         )
@@ -205,7 +205,7 @@ class TestPostgresToolMetricsStore:
                 project_id, server_name, tool_name, date,
                 call_count, success_count, failure_count,
                 total_latency_ms, avg_latency_ms, created_at
-            ) VALUES (?, ?, ?, ?, 3, 2, 1, 300.0, 100.0, ?)
+            ) VALUES (%s, %s, %s, %s, 3, 2, 1, 300.0, 100.0, %s)
             """,
             (project_id, "context7", "get-docs", "2020-01-02", old_time),
         )
@@ -216,7 +216,7 @@ class TestPostgresToolMetricsStore:
             """
             SELECT call_count, success_count, failure_count, total_latency_ms, avg_latency_ms
             FROM tool_metrics_daily
-            WHERE project_id = ? AND server_name = ? AND tool_name = ? AND date = ?
+            WHERE project_id = %s AND server_name = %s AND tool_name = %s AND date = %s
             """,
             (project_id, "context7", "get-docs", "2020-01-02"),
         )

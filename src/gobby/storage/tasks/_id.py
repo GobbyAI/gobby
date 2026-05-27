@@ -71,7 +71,7 @@ def resolve_task_reference(db: HubDatabase, ref: str, project_id: str) -> str:
             raise TaskNotFoundError(f"Invalid seq_num: {ref} (must be positive)")
 
         row = db.fetchone(
-            "SELECT id FROM tasks WHERE project_id = ? AND seq_num = ?",
+            "SELECT id FROM tasks WHERE project_id = %s AND seq_num = %s",
             (project_id, seq_num),
         )
         if not row:
@@ -81,7 +81,7 @@ def resolve_task_reference(db: HubDatabase, ref: str, project_id: str) -> str:
     # Path format: 1.2.3 (dots with all digits)
     if "." in ref and all(part.isdigit() for part in ref.split(".")):
         row = db.fetchone(
-            "SELECT id FROM tasks WHERE project_id = ? AND path_cache = ?",
+            "SELECT id FROM tasks WHERE project_id = %s AND path_cache = %s",
             (project_id, ref),
         )
         if not row:
@@ -93,7 +93,7 @@ def resolve_task_reference(db: HubDatabase, ref: str, project_id: str) -> str:
     parts = ref.split("-")
     if len(parts) == 5:
         row = db.fetchone(
-            "SELECT id FROM tasks WHERE id = ?",
+            "SELECT id FROM tasks WHERE id = %s",
             (ref,),
         )
         if not row:

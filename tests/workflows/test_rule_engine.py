@@ -491,7 +491,7 @@ class TestSessionOverrides:
         session_id = "override-session"
         db.execute(
             """INSERT INTO rule_overrides (id, session_id, rule_name, enabled)
-               VALUES (?, ?, ?, ?)""",
+               VALUES (%s, %s, %s, %s)""",
             (str(uuid.uuid4()), session_id, "block-rule", False),
         )
 
@@ -517,7 +517,7 @@ class TestSessionOverrides:
 
         db.execute(
             """INSERT INTO rule_overrides (id, session_id, rule_name, enabled)
-               VALUES (?, ?, ?, ?)""",
+               VALUES (%s, %s, %s, %s)""",
             (str(uuid.uuid4()), "session-a", "block-rule", False),
         )
 
@@ -2852,7 +2852,7 @@ class TestSessionOverridesExtended:
 
         # Add session override to disable this rule
         db.execute(
-            "INSERT INTO rule_overrides (id, session_id, rule_name, enabled) VALUES (?, ?, ?, ?)",
+            "INSERT INTO rule_overrides (id, session_id, rule_name, enabled) VALUES (%s, %s, %s, %s)",
             ("override-1", "sess-override", "block-everything", False),
         )
 

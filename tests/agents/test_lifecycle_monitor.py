@@ -666,7 +666,7 @@ class TestCheckIdleAgents:
         # Backdate updated_at to make it stale
         stale_time = (datetime.now(UTC) - timedelta(seconds=120)).isoformat()
         temp_db.execute(
-            "UPDATE sessions SET updated_at = ? WHERE id = ?",
+            "UPDATE sessions SET updated_at = %s WHERE id = %s",
             (stale_time, child.id),
         )
 
@@ -728,7 +728,7 @@ class TestCheckIdleAgents:
             project_id=sample_session.get("project_id"),
         )
         temp_db.execute(
-            "UPDATE sessions SET updated_at = ? WHERE id = ?",
+            "UPDATE sessions SET updated_at = %s WHERE id = %s",
             ((datetime.now(UTC) - timedelta(seconds=120)).isoformat(), child.id),
         )
         LocalWorkflowDefinitionManager(temp_db).create(
@@ -816,7 +816,7 @@ class TestCheckIdleAgents:
         )
         stale_time = (datetime.now(UTC) - timedelta(seconds=120)).replace(tzinfo=None).isoformat()
         temp_db.execute(
-            "UPDATE sessions SET updated_at = ? WHERE id = ?",
+            "UPDATE sessions SET updated_at = %s WHERE id = %s",
             (stale_time, child.id),
         )
         run = _make_terminal_run(
@@ -875,7 +875,7 @@ class TestCheckIdleAgents:
         )
         stale_for_base_timeout = (datetime.now(UTC) - timedelta(seconds=30)).isoformat()
         temp_db.execute(
-            "UPDATE sessions SET updated_at = ? WHERE id = ?",
+            "UPDATE sessions SET updated_at = %s WHERE id = %s",
             (stale_for_base_timeout, child.id),
         )
 
@@ -942,7 +942,7 @@ class TestCheckIdleAgents:
         )
         stale_for_base_timeout = (datetime.now(UTC) - timedelta(seconds=30)).isoformat()
         temp_db.execute(
-            "UPDATE sessions SET updated_at = ? WHERE id = ?",
+            "UPDATE sessions SET updated_at = %s WHERE id = %s",
             (stale_for_base_timeout, child.id),
         )
 
@@ -1004,7 +1004,7 @@ class TestCheckIdleAgents:
         )
         stale_for_scaled_timeout = (datetime.now(UTC) - timedelta(seconds=60)).isoformat()
         temp_db.execute(
-            "UPDATE sessions SET updated_at = ? WHERE id = ?",
+            "UPDATE sessions SET updated_at = %s WHERE id = %s",
             (stale_for_scaled_timeout, child.id),
         )
 
@@ -1066,7 +1066,7 @@ class TestCheckIdleAgents:
         )
         stale_time = (datetime.now(UTC) - timedelta(seconds=120)).isoformat()
         temp_db.execute(
-            "UPDATE sessions SET updated_at = ? WHERE id = ?",
+            "UPDATE sessions SET updated_at = %s WHERE id = %s",
             (stale_time, child.id),
         )
 
@@ -1354,7 +1354,7 @@ class TestCheckExpiredAgents:
         now = datetime.now(UTC)
         past = (now - timedelta(seconds=600)).isoformat()
         temp_db.execute(
-            "UPDATE agent_runs SET started_at = ? WHERE id = ?",
+            "UPDATE agent_runs SET started_at = %s WHERE id = %s",
             (past, run.id),
         )
 
@@ -1405,7 +1405,7 @@ class TestCheckExpiredAgents:
         )
         past = (datetime.now(UTC) - timedelta(seconds=600)).isoformat()
         temp_db.execute(
-            "UPDATE agent_runs SET started_at = ? WHERE id = ?",
+            "UPDATE agent_runs SET started_at = %s WHERE id = %s",
             (past, run.id),
         )
 
@@ -1452,8 +1452,8 @@ class TestCheckExpiredAgents:
         temp_db.execute(
             """
             UPDATE agent_runs
-            SET status = 'success', completed_at = ?, updated_at = ?
-            WHERE id = ?
+            SET status = 'success', completed_at = %s, updated_at = %s
+            WHERE id = %s
             """,
             (completed_at, completed_at, run.id),
         )
@@ -1494,8 +1494,8 @@ class TestCheckExpiredAgents:
         temp_db.execute(
             """
             UPDATE agent_runs
-            SET status = 'success', completed_at = ?, updated_at = ?
-            WHERE id = ?
+            SET status = 'success', completed_at = %s, updated_at = %s
+            WHERE id = %s
             """,
             (completed_at, completed_at, run.id),
         )
@@ -1550,8 +1550,8 @@ class TestCheckExpiredAgents:
         temp_db.execute(
             """
             UPDATE agent_runs
-            SET status = 'error', error = ?, completed_at = ?, updated_at = ?
-            WHERE id = ?
+            SET status = 'error', error = %s, completed_at = %s, updated_at = %s
+            WHERE id = %s
             """,
             ("agent session ended with incomplete workflow", completed_at, completed_at, run.id),
         )
@@ -1608,8 +1608,8 @@ class TestCheckExpiredAgents:
         temp_db.execute(
             """
             UPDATE agent_runs
-            SET status = 'cancelled', terminal_reason = ?, completed_at = ?, updated_at = ?
-            WHERE id = ?
+            SET status = 'cancelled', terminal_reason = %s, completed_at = %s, updated_at = %s
+            WHERE id = %s
             """,
             ("user_cancelled", completed_at, completed_at, run.id),
         )
@@ -1673,7 +1673,7 @@ class TestCheckExpiredAgents:
         # Backdate started_at
         past = (datetime.now(UTC) - timedelta(seconds=600)).isoformat()
         temp_db.execute(
-            "UPDATE agent_runs SET started_at = ? WHERE id = ?",
+            "UPDATE agent_runs SET started_at = %s WHERE id = %s",
             (past, run.id),
         )
 
@@ -1723,7 +1723,7 @@ class TestCheckExpiredAgents:
         # Backdate started_at
         past = (datetime.now(UTC) - timedelta(seconds=600)).isoformat()
         temp_db.execute(
-            "UPDATE agent_runs SET started_at = ? WHERE id = ?",
+            "UPDATE agent_runs SET started_at = %s WHERE id = %s",
             (past, run.id),
         )
 
@@ -2019,7 +2019,7 @@ class TestCheckInitializationTimeout:
         # Backdate started_at to exceed init_timeout
         backdated = (datetime.now(UTC) - timedelta(seconds=200)).isoformat()
         agent_run_manager.db.execute(
-            "UPDATE agent_runs SET started_at = ? WHERE id = ?",
+            "UPDATE agent_runs SET started_at = %s WHERE id = %s",
             (backdated, run.id),
         )
 
@@ -2071,7 +2071,7 @@ class TestCheckInitializationTimeout:
 
         backdated = (datetime.now(UTC) - timedelta(seconds=200)).isoformat()
         agent_run_manager.db.execute(
-            "UPDATE agent_runs SET started_at = ? WHERE id = ?",
+            "UPDATE agent_runs SET started_at = %s WHERE id = %s",
             (backdated, run.id),
         )
         monitor = AgentLifecycleMonitor(
@@ -2128,14 +2128,14 @@ class TestCheckInitializationTimeout:
         # Backdate started_at
         backdated = (datetime.now(UTC) - timedelta(seconds=200)).isoformat()
         agent_run_manager.db.execute(
-            "UPDATE agent_runs SET started_at = ? WHERE id = ?",
+            "UPDATE agent_runs SET started_at = %s WHERE id = %s",
             (backdated, run.id),
         )
 
         # Simulate agent activity: backdate created_at so the touch() delta > 5s
         old_created = (datetime.now(UTC) - timedelta(seconds=30)).isoformat()
         session_manager.db.execute(
-            "UPDATE sessions SET created_at = ? WHERE id = ?",
+            "UPDATE sessions SET created_at = %s WHERE id = %s",
             (old_created, child.id),
         )
         session_manager.touch(child.id)
@@ -2220,11 +2220,11 @@ class TestCheckInitializationTimeout:
         started = (datetime.now(UTC) - timedelta(seconds=200)).replace(tzinfo=None).isoformat()
         session_time = (datetime.now(UTC) - timedelta(seconds=200)).replace(tzinfo=None).isoformat()
         agent_run_manager.db.execute(
-            "UPDATE agent_runs SET started_at = ? WHERE id = ?",
+            "UPDATE agent_runs SET started_at = %s WHERE id = %s",
             (started, run.id),
         )
         session_manager.db.execute(
-            "UPDATE sessions SET created_at = ?, updated_at = ? WHERE id = ?",
+            "UPDATE sessions SET created_at = %s, updated_at = %s WHERE id = %s",
             (session_time, session_time, child.id),
         )
         monitor._session_manager = session_manager
@@ -2268,7 +2268,7 @@ class TestCheckInitializationTimeout:
 
         backdated = (datetime.now(UTC) - timedelta(seconds=200)).isoformat()
         agent_run_manager.db.execute(
-            "UPDATE agent_runs SET started_at = ? WHERE id = ?",
+            "UPDATE agent_runs SET started_at = %s WHERE id = %s",
             (backdated, run.id),
         )
 
@@ -2305,7 +2305,7 @@ class TestCheckInitializationTimeout:
 
         backdated = (datetime.now(UTC) - timedelta(seconds=200)).isoformat()
         agent_run_manager.db.execute(
-            "UPDATE agent_runs SET started_at = ? WHERE id = ?",
+            "UPDATE agent_runs SET started_at = %s WHERE id = %s",
             (backdated, run.id),
         )
 
@@ -2528,10 +2528,9 @@ async def test_lifecycle_monitor_db_paths_stay_on_bounded_executor(
             patch.object(agent_run_manager, "list_active", side_effect=slow_list_active),
             patch.object(monitor._tmux, "send_keys", new=AsyncMock(return_value=True)),
         ):
+
             async def run_checks() -> list[None]:
-                return await asyncio.gather(
-                    *(monitor.check_periodic_enters() for _ in range(20))
-                )
+                return await asyncio.gather(*(monitor.check_periodic_enters() for _ in range(20)))
 
             checks = asyncio.create_task(run_checks())
             assert await asyncio.to_thread(list_active_started.wait, 1)

@@ -34,12 +34,12 @@ class _AgentRunQueryHost(Protocol):
 class _AgentRunQueryMixin:
     def get(self: _AgentRunQueryHost, run_id: str) -> AgentRun | None:
         """Get agent run by ID."""
-        return self._fetch_run_with_live_stats("WHERE ar.id = ?", (run_id,))
+        return self._fetch_run_with_live_stats("WHERE ar.id = %s", (run_id,))
 
     def has_active_run_for_task(self: _AgentRunQueryHost, task_id: str) -> bool:
         """Check if there's already a pending/running agent run for a task."""
         row = self.db.fetchone(
-            "SELECT id FROM agent_runs WHERE task_id = ? AND status IN ('pending', 'running')",
+            "SELECT id FROM agent_runs WHERE task_id = %s AND status IN ('pending', 'running')",
             (task_id,),
         )
         return row is not None
@@ -47,7 +47,7 @@ class _AgentRunQueryMixin:
     def get_active_run_for_task(self: _AgentRunQueryHost, task_id: str) -> AgentRun | None:
         """Get the active (pending/running) agent run for a task, if any."""
         runs = self._fetch_runs_with_live_stats(
-            "WHERE ar.task_id = ? AND ar.status IN ('pending', 'running')",
+            "WHERE ar.task_id = %s AND ar.status IN ('pending', 'running')",
             (task_id,),
             order_by="ORDER BY ar.created_at DESC",
             limit=1,
@@ -71,10 +71,10 @@ class _AgentRunQueryMixin:
         Returns:
             List of AgentRun objects.
         """
-        conditions = ["ar.parent_session_id = ?"]
+        conditions = ["ar.parent_session_id = %s"]
         params: list[object] = [parent_session_id]
         if status:
-            conditions.append("ar.status = ?")
+            conditions.append("ar.status = %s")
             params.append(status)
 
         return self._fetch_runs_with_live_stats(
@@ -105,11 +105,11 @@ class _AgentRunQueryMixin:
         params: list[object] = []
 
         if status:
-            conditions.append("ar.status = ?")
+            conditions.append("ar.status = %s")
             params.append(status)
 
         if project_id:
-            conditions.append("parent_s.project_id = ?")
+            conditions.append("parent_s.project_id = %s")
             params.append(project_id)
 
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
@@ -131,7 +131,7 @@ class _AgentRunQueryMixin:
 
     def list_terminal_with_tmux(self: _AgentRunQueryHost, limit: int = 100) -> list[AgentRun]:
         """List terminal agent runs that still have a persisted tmux session."""
-        status_placeholders = ", ".join("?" for _ in TERMINAL_AGENT_RUN_STATUSES)
+        status_placeholders = ", ".join("%s" for _ in TERMINAL_AGENT_RUN_STATUSES)
         return self._fetch_runs_with_live_stats(
             f"""
             WHERE ar.status IN ({status_placeholders})
@@ -154,7 +154,7 @@ class _AgentRunQueryMixin:
         if task_ids is not None:
             if not task_ids:
                 return []
-            placeholders = ", ".join("?" for _ in task_ids)
+            placeholders = ", ".join("%s" for _ in task_ids)
             where_clause += f" AND ar.task_id IN ({placeholders})"
             params.extend(task_ids)
         return self._fetch_runs_with_live_stats(
@@ -167,7 +167,7 @@ class _AgentRunQueryMixin:
     def get_by_session(self: _AgentRunQueryHost, session_id: str) -> AgentRun | None:
         """Get active agent run by child session ID."""
         runs = self._fetch_runs_with_live_stats(
-            "WHERE ar.child_session_id = ? AND ar.status IN ('running', 'pending')",
+            "WHERE ar.child_session_id = %s AND ar.status IN ('running', 'pending')",
             (session_id,),
             order_by="ORDER BY ar.created_at DESC",
             limit=1,
@@ -181,10 +181,10 @@ class _AgentRunQueryMixin:
         status: AgentRunStatus | None = None,
     ) -> list[AgentRun]:
         """List active agent runs spawned by a parent session."""
-        conditions = ["ar.parent_session_id = ?"]
+        conditions = ["ar.parent_session_id = %s"]
         params: list[object] = [parent_session_id]
         if status:
-            conditions.append("ar.status = ?")
+            conditions.append("ar.status = %s")
             params.append(status)
         else:
             conditions.append("ar.status IN ('running', 'pending')")
@@ -210,7 +210,7 @@ class _AgentRunQueryMixin:
             """
             SELECT status, COUNT(*) as count
             FROM agent_runs
-            WHERE parent_session_id = ?
+            WHERE parent_session_id = %s
             GROUP BY status
             """,
             (parent_session_id,),
@@ -225,14 +225,14 @@ class _AgentRunQueryMixin:
         """Return child session IDs for agent runs cancelled within the recency window."""
         from gobby.storage.sql_dialect import newer_than_now_expr
 
-        recency_sql = newer_than_now_expr(self.db, "completed_at", "?", "hour")
+        recency_sql = newer_than_now_expr(self.db, "completed_at", "%s", "hour")
         sql = (
             "SELECT child_session_id FROM agent_runs "
             f"WHERE status = 'cancelled' AND child_session_id IS NOT NULL AND {recency_sql}"
         )  # nosec B608 - recency_sql is selected by storage dialect.
         params: list[int | str] = [since_hours]
         if agent_name is not None:
-            sql += " AND agent_name = ?"
+            sql += " AND agent_name = %s"
             params.append(agent_name)
 
         rows = self.db.fetchall(sql, params)
@@ -241,5 +241,5 @@ class _AgentRunQueryMixin:
     def delete(self: _AgentRunQueryHost, run_id: str) -> bool:
         """Delete an agent run."""
         with self.db.transaction() as conn:
-            cursor = conn.execute("DELETE FROM agent_runs WHERE id = ?", (run_id,))
+            cursor = conn.execute("DELETE FROM agent_runs WHERE id = %s", (run_id,))
         return bool(_positive_rowcount(cursor))

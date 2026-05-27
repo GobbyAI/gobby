@@ -88,7 +88,7 @@ def test_ensure_system_session_logs_recreation_at_warning(
         source="claude",
         project_id=sample_project["id"],
     )
-    session_manager.db.execute("DELETE FROM sessions WHERE id = ?", (SYSTEM_SESSION_ID,))
+    session_manager.db.execute("DELETE FROM sessions WHERE id = %s", (SYSTEM_SESSION_ID,))
 
     with patch("gobby.storage.sessions.logger") as mock_logger:
         ensure_system_session(session_manager.db)

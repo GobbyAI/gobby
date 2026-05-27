@@ -21,7 +21,7 @@ def _make_session(temp_db, sample_project, session_id: str, status: str) -> None
     temp_db.execute(
         """
         INSERT INTO sessions (id, external_id, machine_id, source, project_id, status, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
         """,
         (
             session_id,
@@ -46,14 +46,14 @@ def _claimed_task(temp_db, sample_project, *, claimed_by: str, stage_state: str 
     initialize_manifest(temp_db, task.id, [spec("planning", 0)])
     set_stage_state(temp_db, task.id, "planning", stage_state)
     temp_db.execute(
-        "UPDATE tasks SET allow_automation = TRUE, isolation = ?, claimed_by_session_id = ? WHERE id = ?",
+        "UPDATE tasks SET allow_automation = TRUE, isolation = %s, claimed_by_session_id = %s WHERE id = %s",
         (Isolation.none.value, claimed_by, task.id),
     )
     return task
 
 
 def _claim(temp_db, task_id: str) -> str | None:
-    row = temp_db.fetchone("SELECT claimed_by_session_id FROM tasks WHERE id = ?", (task_id,))
+    row = temp_db.fetchone("SELECT claimed_by_session_id FROM tasks WHERE id = %s", (task_id,))
     return row["claimed_by_session_id"] if row else None
 
 
@@ -100,9 +100,9 @@ def test_sweep_skips_closed_and_escalated_tasks(temp_db, sample_project) -> None
     closed = _claimed_task(temp_db, sample_project, claimed_by="sess-dead")
     escalated = _claimed_task(temp_db, sample_project, claimed_by="sess-dead")
     now = datetime.now(UTC).isoformat()
-    temp_db.execute("UPDATE tasks SET closed_at = ? WHERE id = ?", (now, closed.id))
+    temp_db.execute("UPDATE tasks SET closed_at = %s WHERE id = %s", (now, closed.id))
     temp_db.execute(
-        "UPDATE tasks SET escalated_at = ?, is_escalated = TRUE WHERE id = ?",
+        "UPDATE tasks SET escalated_at = %s, is_escalated = TRUE WHERE id = %s",
         (now, escalated.id),
     )
 

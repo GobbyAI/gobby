@@ -336,7 +336,7 @@ async def test_idle_planner_stage_agent_keeps_periodic_enter_and_gets_handoff_re
     )
     SessionVariableManager(temp_db).set_variable(child.id, "step_workflow_complete", False)
     temp_db.execute(
-        "UPDATE sessions SET updated_at = ? WHERE id = ?",
+        "UPDATE sessions SET updated_at = %s WHERE id = %s",
         ((datetime.now(UTC) - timedelta(seconds=120)).isoformat(), child.id),
     )
 

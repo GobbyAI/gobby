@@ -366,7 +366,7 @@ def _insert_skill(
     metadata_json: str | None,
 ) -> None:
     """Insert a skill row using an explicit JSONB metadata cast."""
-    metadata_clause = "CAST($5 AS JSONB)"
+    metadata_clause = "CAST(%s AS JSONB)"
     txn.execute(
         f"""
         INSERT INTO skills (
@@ -374,9 +374,9 @@ def _insert_skill(
             metadata, project_id, source,
             created_at, updated_at
         )
-        VALUES ($1, $2, 'desc', 'content', {metadata_clause}, $3, $4, $6, $7)
+        VALUES (%s, %s, 'desc', 'content', {metadata_clause}, %s, %s, %s, %s)
         """,
-        (skill_id, name, project_id, source, metadata_json, _ISO_TS, _ISO_TS),
+        (skill_id, name, metadata_json, project_id, source, _ISO_TS, _ISO_TS),
     )
 
 
@@ -386,14 +386,14 @@ def test_upsert_on_conflict_do_nothing_dialect_parity(hub_db: Any) -> None:
 
     with db.transaction() as txn:
         txn.execute(
-            "INSERT INTO projects (id, name) VALUES ($1, $2)",
+            "INSERT INTO projects (id, name) VALUES (%s, %s)",
             ("p-upsert-original", "parity-upsert"),
         )
 
     with db.transaction() as txn:
         txn.execute(
             """
-            INSERT INTO projects (id, name) VALUES ($1, $2)
+            INSERT INTO projects (id, name) VALUES (%s, %s)
             ON CONFLICT (name) DO NOTHING
             """,
             ("p-upsert-duplicate", "parity-upsert"),
@@ -401,7 +401,7 @@ def test_upsert_on_conflict_do_nothing_dialect_parity(hub_db: Any) -> None:
 
     with db.transaction() as txn:
         rows = txn.execute(
-            "SELECT id FROM projects WHERE name = $1 ORDER BY id",
+            "SELECT id FROM projects WHERE name = %s ORDER BY id",
             ("parity-upsert",),
         ).fetchall()
 
@@ -416,7 +416,7 @@ def test_returning_clause_dialect_parity(hub_db: Any) -> None:
         cursor = txn.execute(
             """
             INSERT INTO projects (id, name)
-            VALUES ($1, $2)
+            VALUES (%s, %s)
             RETURNING id
             """,
             ("proj-returning", "parity-returning"),
@@ -447,7 +447,7 @@ def test_json_path_extraction_dialect_parity(hub_db: Any) -> None:
         top_expr = json_text_expr(db, "metadata", "category")
         nested_expr = json_text_expr(db, "metadata", "nested", "deep")
         cursor = txn.execute(
-            f"SELECT {top_expr} AS top, {nested_expr} AS nested FROM skills WHERE id = $1",
+            f"SELECT {top_expr} AS top, {nested_expr} AS nested FROM skills WHERE id = %s",
             ("skl-parity-json",),
         )
         row = cursor.fetchone()
@@ -464,11 +464,11 @@ def test_timestamp_default_is_timezone_aware_utc_parity(hub_db: Any) -> None:
 
     with db.transaction() as txn:
         txn.execute(
-            "INSERT INTO projects (id, name) VALUES ($1, $2)",
+            "INSERT INTO projects (id, name) VALUES (%s, %s)",
             ("proj-ts", "parity-ts"),
         )
         row = txn.execute(
-            "SELECT created_at FROM projects WHERE id = $1",
+            "SELECT created_at FROM projects WHERE id = %s",
             ("proj-ts",),
         ).fetchone()
 
@@ -525,7 +525,7 @@ def test_unique_nulls_not_distinct_dialect_parity(hub_db: Any) -> None:
     # A row with a non-NULL project_id remains accepted.
     with db.transaction() as txn:
         txn.execute(
-            "INSERT INTO projects (id, name) VALUES ($1, $2)",
+            "INSERT INTO projects (id, name) VALUES (%s, %s)",
             ("proj-unique", "proj-unique"),
         )
         _insert_skill(
@@ -539,7 +539,7 @@ def test_unique_nulls_not_distinct_dialect_parity(hub_db: Any) -> None:
 
     with db.transaction() as txn:
         rows = txn.execute(
-            "SELECT id FROM skills WHERE name = $1 ORDER BY id",
+            "SELECT id FROM skills WHERE name = %s ORDER BY id",
             ("parity-unique-null",),
         ).fetchall()
 

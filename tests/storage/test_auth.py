@@ -36,7 +36,7 @@ class TestAuthStoreCreateSession:
         columns = {
             row["column_name"]
             for row in db.fetchall(
-                "SELECT column_name FROM information_schema.columns WHERE table_name = ?",
+                "SELECT column_name FROM information_schema.columns WHERE table_name = %s",
                 ("auth_sessions",),
             )
         }
@@ -81,7 +81,7 @@ class TestAuthStoreExpiry:
             """
             UPDATE auth_sessions
             SET expires_at = '2000-01-01T00:00:00+00:00'
-            WHERE token_hash = ?
+            WHERE token_hash = %s
             """,
             (hashlib.sha256(token.encode("utf-8")).hexdigest(),),
         )

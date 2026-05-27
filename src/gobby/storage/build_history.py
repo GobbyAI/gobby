@@ -109,7 +109,7 @@ class BuildHistoryStorage:
                     id, project_id, root_task_id, input_ref, action, status, actor,
                     summary_json, error, started_at, completed_at
                 )
-                VALUES (?, ?, ?, ?, ?, 'started', ?, ?, NULL, ?, NULL)
+                VALUES (%s, %s, %s, %s, %s, 'started', %s, %s, NULL, %s, NULL)
                 """,
                 (
                     run_id,
@@ -138,12 +138,12 @@ class BuildHistoryStorage:
             conn.execute(
                 """
                 UPDATE build_runs
-                   SET status = ?,
-                       root_task_id = COALESCE(?, root_task_id),
-                       summary_json = COALESCE(?, summary_json),
-                       error = ?,
-                       completed_at = ?
-                 WHERE id = ?
+                   SET status = %s,
+                       root_task_id = COALESCE(%s, root_task_id),
+                       summary_json = COALESCE(%s, summary_json),
+                       error = %s,
+                       completed_at = %s
+                 WHERE id = %s
                 """,
                 (status, root_task_id, _json_dump(summary), error, now, run_id),
             )
@@ -165,9 +165,9 @@ class BuildHistoryStorage:
             conn.execute(
                 """
                 UPDATE build_runs
-                   SET root_task_id = COALESCE(?, root_task_id),
-                       summary_json = COALESCE(?, summary_json)
-                 WHERE id = ?
+                   SET root_task_id = COALESCE(%s, root_task_id),
+                       summary_json = COALESCE(%s, summary_json)
+                 WHERE id = %s
                 """,
                 (root_task_id, _json_dump(merged_summary), run_id),
             )
@@ -195,7 +195,7 @@ class BuildHistoryStorage:
                     id, project_id, root_task_id, input_ref, action, status, actor,
                     summary_json, error, started_at, completed_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     run_id,
@@ -232,7 +232,7 @@ class BuildHistoryStorage:
                     run_id, project_id, root_task_id, task_id, event_type,
                     action, message, payload_json
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
                 (
@@ -254,7 +254,7 @@ class BuildHistoryStorage:
         return event
 
     def get_run(self, run_id: str) -> BuildRun | None:
-        row = self.db.fetchone("SELECT * FROM build_runs WHERE id = ?", (run_id,))
+        row = self.db.fetchone("SELECT * FROM build_runs WHERE id = %s", (run_id,))
         return BuildRun.from_row(row) if row is not None else None
 
     def _require_run(self, run_id: str) -> BuildRun:
@@ -264,7 +264,7 @@ class BuildHistoryStorage:
         return run
 
     def get_event(self, event_id: int) -> BuildHistoryEvent | None:
-        row = self.db.fetchone("SELECT * FROM build_history_events WHERE id = ?", (event_id,))
+        row = self.db.fetchone("SELECT * FROM build_history_events WHERE id = %s", (event_id,))
         return BuildHistoryEvent.from_row(row) if row is not None else None
 
     def latest_run_for_input(self, project_id: str, input_ref: str) -> BuildRun | None:
@@ -272,8 +272,8 @@ class BuildHistoryStorage:
             """
             SELECT *
               FROM build_runs
-             WHERE project_id = ?
-               AND input_ref = ?
+             WHERE project_id = %s
+               AND input_ref = %s
              ORDER BY started_at DESC, id DESC
              LIMIT 1
             """,
@@ -288,12 +288,12 @@ class BuildHistoryStorage:
             WITH RECURSIVE ancestors(id, parent_task_id) AS (
                 SELECT id, parent_task_id
                   FROM tasks
-                 WHERE id = ? AND project_id = ?
+                 WHERE id = %s AND project_id = %s
                 UNION ALL
                 SELECT parent.id, parent.parent_task_id
                   FROM tasks parent
                   JOIN ancestors child ON child.parent_task_id = parent.id
-                 WHERE parent.project_id = ?
+                 WHERE parent.project_id = %s
             )
             SELECT id FROM ancestors
             """,
@@ -303,13 +303,13 @@ class BuildHistoryStorage:
         if not ancestor_ids:
             return None
         # Ancestor ids come from the CTE and filter root_task_id for coordinated runs.
-        placeholders = ", ".join("?" for _ in ancestor_ids)
+        placeholders = ", ".join("%s" for _ in ancestor_ids)
         coordinator_session_expr = json_text_expr(self.db, "summary_json", "coordinator_session_id")
         row = self.db.fetchone(
             f"""
             SELECT *
               FROM build_runs
-             WHERE project_id = ?
+             WHERE project_id = %s
                AND root_task_id IN ({placeholders})
                AND NULLIF({coordinator_session_expr}, '') IS NOT NULL
              -- Newest started_at wins, id breaks ties.
@@ -328,13 +328,13 @@ class BuildHistoryStorage:
         input_ref: str | None = None,
         limit: int = 20,
     ) -> list[BuildRun]:
-        where = ["project_id = ?"]
+        where = ["project_id = %s"]
         params: list[Any] = [project_id]
         if root_task_id is not None:
-            where.append("root_task_id = ?")
+            where.append("root_task_id = %s")
             params.append(root_task_id)
         elif input_ref is not None:
-            where.append("input_ref = ?")
+            where.append("input_ref = %s")
             params.append(input_ref)
         params.append(_limit(limit))
         rows = self.db.fetchall(
@@ -343,7 +343,7 @@ class BuildHistoryStorage:
               FROM build_runs
              WHERE {" AND ".join(where)}
              ORDER BY started_at DESC, id DESC
-             LIMIT ?
+             LIMIT %s
             """,  # nosec B608 # where clauses are fixed strings.
             tuple(params),
         )
@@ -359,13 +359,13 @@ class BuildHistoryStorage:
     ) -> list[BuildHistoryEvent]:
         params: list[Any] = [project_id]
         if root_task_id is not None:
-            where = "e.project_id = ? AND e.root_task_id = ?"
+            where = "e.project_id = %s AND e.root_task_id = %s"
             params.append(root_task_id)
         elif input_ref is not None:
-            where = "e.project_id = ? AND r.input_ref = ?"
+            where = "e.project_id = %s AND r.input_ref = %s"
             params.append(input_ref)
         else:
-            where = "e.project_id = ?"
+            where = "e.project_id = %s"
         params.append(_limit(limit))
         rows = self.db.fetchall(
             f"""
@@ -374,7 +374,7 @@ class BuildHistoryStorage:
               LEFT JOIN build_runs r ON r.id = e.run_id
              WHERE {where}
              ORDER BY e.created_at DESC, e.id DESC
-             LIMIT ?
+             LIMIT %s
             """,  # nosec B608 # where clause is selected from fixed templates.
             tuple(params),
         )

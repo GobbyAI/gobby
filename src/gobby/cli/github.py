@@ -73,7 +73,7 @@ def github_status(json_format: bool) -> None:
 
         # Count linked tasks
         row = task_manager.db.fetchone(
-            "SELECT COUNT(*) as count FROM tasks WHERE project_id = ? AND github_issue_number IS NOT NULL",
+            "SELECT COUNT(*) as count FROM tasks WHERE project_id = %s AND github_issue_number IS NOT NULL",
             (project_id,),
         )
         linked_count = row["count"] if row else 0

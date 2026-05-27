@@ -89,7 +89,7 @@ def _cleanup_orphaned_schemas(url: str, age_hours: int = 24) -> None:
             """
             SELECT schema_name
             FROM information_schema.schemata
-            WHERE schema_name LIKE 'gobby_test_%'
+            WHERE schema_name LIKE 'gobby_test_%%'
             """
         ).fetchall()
         for (schema_name,) in rows:

@@ -78,5 +78,5 @@ def test_update_task_uses_postgres_column_introspection(monkeypatch: pytest.Monk
     assert "information_schema.columns" in column_sql
     assert column_params == ("tasks",)
     assert db.execute_calls[0][0] == (
-        "UPDATE tasks SET validation_fail_count = ?, updated_at = ? WHERE id = ?"
+        "UPDATE tasks SET validation_fail_count = %s, updated_at = %s WHERE id = %s"
     )

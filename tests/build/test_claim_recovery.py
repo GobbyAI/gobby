@@ -68,7 +68,7 @@ def _claim_recovery_payloads(temp_db, task_id: str) -> list[dict[str, object]]:
         """
         SELECT payload_json
           FROM build_history_events
-         WHERE task_id = ?
+         WHERE task_id = %s
            AND event_type = 'build_claim_recovery'
          ORDER BY id
         """,

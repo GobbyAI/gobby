@@ -169,7 +169,7 @@ def _enforce_isolation_base(
 
 
 def _get_artifacts_in_transaction(conn: Transaction, task_id: str) -> TaskArtifacts:
-    row = conn.execute("SELECT * FROM task_artifacts WHERE task_id = ?", (task_id,)).fetchone()
+    row = conn.execute("SELECT * FROM task_artifacts WHERE task_id = %s", (task_id,)).fetchone()
     if row is None:
         return TaskArtifacts(task_id=task_id)
     return TaskArtifacts.from_row(row)
@@ -194,7 +194,7 @@ def _set_artifacts_in_transaction(
     _enforce_isolation_base(current, fields, next_values)
 
     columns = sorted(_ARTIFACT_FIELDS)
-    placeholders = ", ".join("?" for _ in columns)
+    placeholders = ", ".join("%s" for _ in columns)
     update_clause = ", ".join(f"{column} = excluded.{column}" for column in columns)
     params = [task_id, *(next_values[column] for column in columns)]
 
@@ -203,7 +203,7 @@ def _set_artifacts_in_transaction(
         INSERT INTO task_artifacts (
             task_id, {", ".join(columns)}, updated_at
         )
-        VALUES (?, {placeholders}, CURRENT_TIMESTAMP)
+        VALUES (%s, {placeholders}, CURRENT_TIMESTAMP)
         ON CONFLICT(task_id) DO UPDATE SET
             {update_clause},
             updated_at = CURRENT_TIMESTAMP
@@ -220,7 +220,7 @@ class TaskArtifactManager:
         self.db = db
 
     def get_artifacts(self, task_id: str) -> TaskArtifacts:
-        row = self.db.fetchone("SELECT * FROM task_artifacts WHERE task_id = ?", (task_id,))
+        row = self.db.fetchone("SELECT * FROM task_artifacts WHERE task_id = %s", (task_id,))
         if row is None:
             return TaskArtifacts(task_id=task_id)
         return TaskArtifacts.from_row(row)
@@ -238,7 +238,7 @@ class TaskArtifactManager:
 
     def clear_artifacts(self, task_id: str) -> bool:
         with self.db.transaction() as conn:
-            cursor = conn.execute("DELETE FROM task_artifacts WHERE task_id = ?", (task_id,))
+            cursor = conn.execute("DELETE FROM task_artifacts WHERE task_id = %s", (task_id,))
             return cursor.rowcount > 0
 
     def clear_isolation_pair(self, task_id: str, family: str) -> TaskArtifacts:
@@ -265,7 +265,7 @@ class TaskArtifactManager:
                 """
                 SELECT task_id, worktree_id, integration_workspace_id
                   FROM task_artifacts
-                 WHERE worktree_id = ? OR integration_workspace_id = ?
+                 WHERE worktree_id = %s OR integration_workspace_id = %s
                  ORDER BY task_id
                 """,
                 (worktree_id, worktree_id),

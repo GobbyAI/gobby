@@ -31,7 +31,7 @@ def check_stale_neo4j_config(db: HubDatabase) -> None:
 
 def _stale_neo4j_config_keys(db: HubDatabase) -> tuple[str, ...]:
     rows = db.fetchall(
-        "SELECT key FROM config_store WHERE key LIKE ? ORDER BY key",
+        "SELECT key FROM config_store WHERE key LIKE %s ORDER BY key",
         (f"{_LEGACY_NEO4J_CONFIG_PREFIX}%",),
     )
     return tuple(str(row["key"]) for row in rows)
@@ -52,10 +52,10 @@ def _copy_neo4j_tunables_to_falkordb(txn: Transaction) -> None:
         txn.execute(
             """
             INSERT INTO config_store (key, value, source, is_secret, updated_at)
-            SELECT ?, value, source, is_secret, updated_at
+            SELECT %s, value, source, is_secret, updated_at
               FROM config_store
-             WHERE key = ?
-               AND NOT EXISTS (SELECT 1 FROM config_store WHERE key = ?)
+             WHERE key = %s
+               AND NOT EXISTS (SELECT 1 FROM config_store WHERE key = %s)
             """,
             (falkordb_key, stale_key, falkordb_key),
         )
@@ -63,7 +63,7 @@ def _copy_neo4j_tunables_to_falkordb(txn: Transaction) -> None:
 
 def _delete_neo4j_config_rows(txn: Transaction) -> None:
     txn.execute(
-        "DELETE FROM config_store WHERE key LIKE ?",
+        "DELETE FROM config_store WHERE key LIKE %s",
         (f"{_LEGACY_NEO4J_CONFIG_PREFIX}%",),
     )
 
@@ -72,8 +72,8 @@ def _delete_orphaned_legacy_auth_secret(txn: Transaction) -> None:
     txn.execute(
         """
         DELETE FROM secrets
-         WHERE name = ?
-           AND NOT EXISTS (SELECT 1 FROM config_store WHERE value = ?)
+         WHERE name = %s
+           AND NOT EXISTS (SELECT 1 FROM config_store WHERE value = %s)
         """,
         (_LEGACY_AUTH_SECRET_NAME, _LEGACY_AUTH_SECRET_REF),
     )

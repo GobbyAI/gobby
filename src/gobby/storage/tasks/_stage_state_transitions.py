@@ -79,24 +79,24 @@ class StageStateTransitions:
                 conn.execute(
                     """
                     UPDATE task_stage_states
-                       SET state = ?,
-                           entered_at = CASE WHEN ? = 'in_progress' THEN ? ELSE entered_at END,
+                       SET state = %s,
+                           entered_at = CASE WHEN %s = 'in_progress' THEN %s ELSE entered_at END,
                            entered_by_session_id = CASE
-                               WHEN ? = 'in_progress' THEN ? ELSE entered_by_session_id
+                               WHEN %s = 'in_progress' THEN %s ELSE entered_by_session_id
                            END,
-                           completed_at = CASE WHEN ? = 'done' THEN ? ELSE completed_at END,
+                           completed_at = CASE WHEN %s = 'done' THEN %s ELSE completed_at END,
                            completed_by_session_id = CASE
-                               WHEN ? = 'done' THEN ? ELSE completed_by_session_id
+                               WHEN %s = 'done' THEN %s ELSE completed_by_session_id
                            END,
                            completed_commit_sha = CASE
-                               WHEN ? = 'done' THEN ? ELSE completed_commit_sha
+                               WHEN %s = 'done' THEN %s ELSE completed_commit_sha
                            END,
-                           work_attempt_count = work_attempt_count + ?,
-                           review_round_count = review_round_count + ?,
-                           artifact_refs = COALESCE(?, artifact_refs),
-                           notes = COALESCE(?, notes),
-                           updated_at = ?
-                     WHERE task_id = ? AND stage_name = ?
+                           work_attempt_count = work_attempt_count + %s,
+                           review_round_count = review_round_count + %s,
+                           artifact_refs = COALESCE(%s, artifact_refs),
+                           notes = COALESCE(%s, notes),
+                           updated_at = %s
+                     WHERE task_id = %s AND stage_name = %s
                     """,
                     (
                         to_state,
@@ -193,7 +193,7 @@ class StageStateTransitions:
         rows = conn.execute(
             f"""
             WITH RECURSIVE subtree(id) AS (
-                SELECT id FROM tasks WHERE parent_task_id = ?
+                SELECT id FROM tasks WHERE parent_task_id = %s
                 UNION ALL
                 SELECT tasks.id
                   FROM tasks
@@ -240,7 +240,7 @@ class StageStateTransitions:
                SET status = 'active',
                    merged_at = NULL,
                    cleanup_after = NULL,
-                   updated_at = ?
+                   updated_at = %s
              WHERE task_id IN ({placeholders})
                AND status = 'merged'
             """,  # nosec B608 # placeholder count is derived from cited_subtasks length.
@@ -294,7 +294,7 @@ class StageStateTransitions:
             INSERT INTO task_comments (
                 id, task_id, parent_comment_id, author, author_type, body, created_at, updated_at
             )
-            VALUES (?, ?, NULL, ?, 'system', ?, ?, ?)
+            VALUES (%s, %s, NULL, %s, 'system', %s, %s, %s)
             """,
             (str(uuid.uuid4()), task_id, holder, body, now, now),
         )
@@ -312,7 +312,7 @@ class StageStateTransitions:
             """
             SELECT stage_name, position, state
               FROM task_stage_states
-             WHERE task_id = ?
+             WHERE task_id = %s
              ORDER BY position, stage_name
             """,
             (task_id,),
@@ -338,8 +338,8 @@ class StageStateTransitions:
                    claimed_by_session_id = NULL,
                    validation_fail_count = 0,
                    dispatch_failure_count = 0,
-                   updated_at = ?
-             WHERE id = ?
+                   updated_at = %s
+             WHERE id = %s
             """,
             (now, task_id),
         )
@@ -354,8 +354,8 @@ class StageStateTransitions:
                    completed_commit_sha = NULL,
                    artifact_refs = NULL,
                    notes = NULL,
-                   updated_at = ?
-             WHERE task_id = ? AND position >= ?
+                   updated_at = %s
+             WHERE task_id = %s AND position >= %s
             """,
             (now, task_id, reset_position),
         )
@@ -398,7 +398,7 @@ class StageStateTransitions:
             now = _now()
             with self.db.transaction() as conn:
                 task_row = conn.execute(
-                    "SELECT claimed_by_session_id FROM tasks WHERE id = ?",
+                    "SELECT claimed_by_session_id FROM tasks WHERE id = %s",
                     (task_id,),
                 ).fetchone()
                 claimed_by_session_id = task_row["claimed_by_session_id"] if task_row else None
@@ -422,11 +422,11 @@ class StageStateTransitions:
                            escalation_reason = NULL,
                            is_escalated = FALSE,
                            assignee = NULL,
-                           claimed_by_session_id = ?,
+                           claimed_by_session_id = %s,
                            validation_fail_count = 0,
                            dispatch_failure_count = 0,
-                           updated_at = ?
-                     WHERE id = ?
+                           updated_at = %s
+                     WHERE id = %s
                     """,
                     (preserved_claim, now, task_id),
                 )
@@ -437,18 +437,18 @@ class StageStateTransitions:
                         conn.execute(
                             """
                             UPDATE task_stage_states
-                               SET state = ?,
+                               SET state = %s,
                                    completed_at = CASE
-                                       WHEN state != ? THEN ? ELSE completed_at
+                                       WHEN state != %s THEN %s ELSE completed_at
                                    END,
                                    completed_by_session_id = CASE
-                                       WHEN state != ? THEN ? ELSE completed_by_session_id
+                                       WHEN state != %s THEN %s ELSE completed_by_session_id
                                    END,
                                    completed_commit_sha = CASE
-                                       WHEN state != ? THEN NULL ELSE completed_commit_sha
+                                       WHEN state != %s THEN NULL ELSE completed_commit_sha
                                    END,
-                                   updated_at = ?
-                             WHERE task_id = ? AND stage_name = ?
+                                   updated_at = %s
+                             WHERE task_id = %s AND stage_name = %s
                             """,
                             (
                                 to_state,
@@ -466,7 +466,7 @@ class StageStateTransitions:
                         conn.execute(
                             """
                             UPDATE task_stage_states
-                               SET state = ?,
+                               SET state = %s,
                                    entered_at = NULL,
                                    entered_by_session_id = NULL,
                                    completed_at = NULL,
@@ -474,11 +474,11 @@ class StageStateTransitions:
                                    completed_commit_sha = NULL,
                                    artifact_refs = NULL,
                                    notes = CASE
-                                       WHEN stage_name = ? THEN ?
+                                       WHEN stage_name = %s THEN %s
                                        ELSE NULL
                                    END,
-                                   updated_at = ?
-                             WHERE task_id = ? AND stage_name = ?
+                                   updated_at = %s
+                             WHERE task_id = %s AND stage_name = %s
                             """,
                             (to_state, target_stage_name, notes, now, task_id, row.stage_name),
                         )
@@ -592,9 +592,9 @@ def terminal_after_done(
         """
         SELECT COUNT(*) AS count
           FROM task_stage_states
-         WHERE task_id = ?
+         WHERE task_id = %s
            AND state != 'done'
-           AND stage_name != ?
+           AND stage_name != %s
         """,
         (task_id, stage_name),
     ).fetchone()

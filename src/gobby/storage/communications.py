@@ -42,7 +42,7 @@ class LocalCommunicationsStore:
             conn.execute(
                 """
                 INSERT INTO comms_channels (id, channel_type, name, enabled, config_json, webhook_secret, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     channel.id,
@@ -59,12 +59,12 @@ class LocalCommunicationsStore:
 
     def get_channel(self, channel_id: str) -> ChannelConfig | None:
         """Get a channel by ID."""
-        row = self.db.fetchone("SELECT * FROM comms_channels WHERE id = ?", (channel_id,))
+        row = self.db.fetchone("SELECT * FROM comms_channels WHERE id = %s", (channel_id,))
         return ChannelConfig.from_row(dict(row)) if row else None
 
     def get_channel_by_name(self, name: str) -> ChannelConfig | None:
         """Get a channel by name."""
-        row = self.db.fetchone("SELECT * FROM comms_channels WHERE name = ?", (name,))
+        row = self.db.fetchone("SELECT * FROM comms_channels WHERE name = %s", (name,))
         return ChannelConfig.from_row(dict(row)) if row else None
 
     def list_channels(self, enabled_only: bool = True) -> list[ChannelConfig]:
@@ -83,13 +83,13 @@ class LocalCommunicationsStore:
             conn.execute(
                 """
                 UPDATE comms_channels SET
-                    channel_type = ?,
-                    name = ?,
-                    enabled = ?,
-                    config_json = ?,
-                    webhook_secret = ?,
-                    updated_at = ?
-                WHERE id = ?
+                    channel_type = %s,
+                    name = %s,
+                    enabled = %s,
+                    config_json = %s,
+                    webhook_secret = %s,
+                    updated_at = %s
+                WHERE id = %s
                 """,
                 (
                     channel.channel_type,
@@ -113,17 +113,17 @@ class LocalCommunicationsStore:
             # Delete attachments for channel's messages via subquery
             conn.execute(
                 "DELETE FROM comms_attachments WHERE message_id IN "
-                "(SELECT id FROM comms_messages WHERE channel_id = ?)",
+                "(SELECT id FROM comms_messages WHERE channel_id = %s)",
                 (channel_id,),
             )
 
             # Delete child records
-            conn.execute("DELETE FROM comms_messages WHERE channel_id = ?", (channel_id,))
-            conn.execute("DELETE FROM comms_identities WHERE channel_id = ?", (channel_id,))
-            conn.execute("DELETE FROM comms_routing_rules WHERE channel_id = ?", (channel_id,))
+            conn.execute("DELETE FROM comms_messages WHERE channel_id = %s", (channel_id,))
+            conn.execute("DELETE FROM comms_identities WHERE channel_id = %s", (channel_id,))
+            conn.execute("DELETE FROM comms_routing_rules WHERE channel_id = %s", (channel_id,))
 
             # Delete the channel
-            conn.execute("DELETE FROM comms_channels WHERE id = ?", (channel_id,))
+            conn.execute("DELETE FROM comms_channels WHERE id = %s", (channel_id,))
 
     # --- Identities ---
 
@@ -141,7 +141,7 @@ class LocalCommunicationsStore:
                 INSERT INTO comms_identities (
                     id, channel_id, external_user_id, external_username,
                     session_id, project_id, metadata_json, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     identity.id,
@@ -159,7 +159,7 @@ class LocalCommunicationsStore:
 
     def get_identity(self, identity_id: str) -> CommsIdentity | None:
         """Get an identity by ID."""
-        row = self.db.fetchone("SELECT * FROM comms_identities WHERE id = ?", (identity_id,))
+        row = self.db.fetchone("SELECT * FROM comms_identities WHERE id = %s", (identity_id,))
         return CommsIdentity.from_row(dict(row)) if row else None
 
     def get_identity_by_external(
@@ -167,7 +167,7 @@ class LocalCommunicationsStore:
     ) -> CommsIdentity | None:
         """Get an identity by channel and external user ID."""
         row = self.db.fetchone(
-            "SELECT * FROM comms_identities WHERE channel_id = ? AND external_user_id = ?",
+            "SELECT * FROM comms_identities WHERE channel_id = %s AND external_user_id = %s",
             (channel_id, external_user_id),
         )
         return CommsIdentity.from_row(dict(row)) if row else None
@@ -177,7 +177,7 @@ class LocalCommunicationsStore:
         sql = "SELECT * FROM comms_identities"
         params: list[Any] = []
         if channel_id:
-            sql += " WHERE channel_id = ?"
+            sql += " WHERE channel_id = %s"
             params.append(channel_id)
 
         rows = self.db.fetchall(sql, tuple(params))
@@ -185,7 +185,7 @@ class LocalCommunicationsStore:
 
     def find_identities_by_username(self, username: str) -> list[CommsIdentity]:
         """Find identities across all channels by external username."""
-        sql = "SELECT * FROM comms_identities WHERE external_username = ?"
+        sql = "SELECT * FROM comms_identities WHERE external_username = %s"
         rows = self.db.fetchall(sql, (username,))
         return [CommsIdentity.from_row(dict(row)) for row in rows]
 
@@ -193,7 +193,7 @@ class LocalCommunicationsStore:
         """Link or unlink an identity to a session."""
         with self.db.transaction() as conn:
             conn.execute(
-                "UPDATE comms_identities SET session_id = ? WHERE id = ?",
+                "UPDATE comms_identities SET session_id = %s WHERE id = %s",
                 (session_id, identity_id),
             )
 
@@ -203,14 +203,14 @@ class LocalCommunicationsStore:
             conn.execute(
                 """
                 UPDATE comms_identities SET
-                    channel_id = ?,
-                    external_user_id = ?,
-                    external_username = ?,
-                    session_id = ?,
-                    project_id = ?,
-                    metadata_json = ?,
-                    updated_at = ?
-                WHERE id = ?
+                    channel_id = %s,
+                    external_user_id = %s,
+                    external_username = %s,
+                    session_id = %s,
+                    project_id = %s,
+                    metadata_json = %s,
+                    updated_at = %s
+                WHERE id = %s
                 """,
                 (
                     identity.channel_id,
@@ -228,7 +228,7 @@ class LocalCommunicationsStore:
     def delete_identity(self, identity_id: str) -> None:
         """Delete an identity by ID."""
         with self.db.transaction() as conn:
-            conn.execute("DELETE FROM comms_identities WHERE id = ?", (identity_id,))
+            conn.execute("DELETE FROM comms_identities WHERE id = %s", (identity_id,))
 
     # --- Messages ---
 
@@ -244,7 +244,7 @@ class LocalCommunicationsStore:
                     id, channel_id, identity_id, direction, content, content_type,
                     platform_message_id, platform_thread_id, session_id, status,
                     error, metadata_json, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     message.id,
@@ -266,7 +266,7 @@ class LocalCommunicationsStore:
 
     def get_message(self, message_id: str) -> CommsMessage | None:
         """Get a message by ID."""
-        row = self.db.fetchone("SELECT * FROM comms_messages WHERE id = ?", (message_id,))
+        row = self.db.fetchone("SELECT * FROM comms_messages WHERE id = %s", (message_id,))
         return CommsMessage.from_row(dict(row)) if row else None
 
     def get_message_by_platform_id(
@@ -276,7 +276,7 @@ class LocalCommunicationsStore:
         sql = """
             SELECT m.* FROM comms_messages m
             JOIN comms_channels c ON m.channel_id = c.id
-            WHERE c.name = ? AND m.platform_message_id = ?
+            WHERE c.name = %s AND m.platform_message_id = %s
         """
         row = self.db.fetchone(sql, (channel_name, platform_message_id))
         return CommsMessage.from_row(dict(row)) if row else None
@@ -294,16 +294,16 @@ class LocalCommunicationsStore:
         params: list[Any] = []
 
         if channel_id:
-            sql += " AND channel_id = ?"
+            sql += " AND channel_id = %s"
             params.append(channel_id)
         if session_id:
-            sql += " AND session_id = ?"
+            sql += " AND session_id = %s"
             params.append(session_id)
         if direction:
-            sql += " AND direction = ?"
+            sql += " AND direction = %s"
             params.append(direction)
 
-        sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        sql += " ORDER BY created_at DESC LIMIT %s OFFSET %s"
         params.extend([limit, offset])
 
         rows = self.db.fetchall(sql, tuple(params))
@@ -313,14 +313,14 @@ class LocalCommunicationsStore:
         """Delete messages created before the given cutoff date."""
         cutoff_iso = cutoff.isoformat()
         with self.db.transaction() as conn:
-            cursor = conn.execute("DELETE FROM comms_messages WHERE created_at < ?", (cutoff_iso,))
+            cursor = conn.execute("DELETE FROM comms_messages WHERE created_at < %s", (cutoff_iso,))
             return cursor.rowcount
 
     def update_message_status(self, message_id: str, status: str, error: str | None = None) -> None:
         """Update a message's status."""
         with self.db.transaction() as conn:
             conn.execute(
-                "UPDATE comms_messages SET status = ?, error = ? WHERE id = ?",
+                "UPDATE comms_messages SET status = %s, error = %s WHERE id = %s",
                 (status, error, message_id),
             )
 
@@ -340,7 +340,7 @@ class LocalCommunicationsStore:
                 INSERT INTO comms_routing_rules (
                     id, name, channel_id, event_pattern, project_id, session_id,
                     priority, enabled, config_json, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     rule.id,
@@ -360,7 +360,7 @@ class LocalCommunicationsStore:
 
     def get_routing_rule(self, rule_id: str) -> CommsRoutingRule | None:
         """Get a routing rule by ID."""
-        row = self.db.fetchone("SELECT * FROM comms_routing_rules WHERE id = ?", (rule_id,))
+        row = self.db.fetchone("SELECT * FROM comms_routing_rules WHERE id = %s", (rule_id,))
         return CommsRoutingRule.from_row(dict(row)) if row else None
 
     def list_routing_rules(
@@ -373,7 +373,7 @@ class LocalCommunicationsStore:
         if enabled_only:
             sql += " AND enabled IS TRUE"
         if channel_id:
-            sql += " AND (channel_id = ? OR channel_id IS NULL)"
+            sql += " AND (channel_id = %s OR channel_id IS NULL)"
             params.append(channel_id)
 
         sql += " ORDER BY priority DESC"
@@ -387,16 +387,16 @@ class LocalCommunicationsStore:
             conn.execute(
                 """
                 UPDATE comms_routing_rules SET
-                    name = ?,
-                    channel_id = ?,
-                    event_pattern = ?,
-                    project_id = ?,
-                    session_id = ?,
-                    priority = ?,
-                    enabled = ?,
-                    config_json = ?,
-                    updated_at = ?
-                WHERE id = ?
+                    name = %s,
+                    channel_id = %s,
+                    event_pattern = %s,
+                    project_id = %s,
+                    session_id = %s,
+                    priority = %s,
+                    enabled = %s,
+                    config_json = %s,
+                    updated_at = %s
+                WHERE id = %s
                 """,
                 (
                     rule.name,
@@ -416,7 +416,7 @@ class LocalCommunicationsStore:
     def delete_routing_rule(self, rule_id: str) -> None:
         """Delete a routing rule by ID."""
         with self.db.transaction() as conn:
-            conn.execute("DELETE FROM comms_routing_rules WHERE id = ?", (rule_id,))
+            conn.execute("DELETE FROM comms_routing_rules WHERE id = %s", (rule_id,))
 
     # --- Attachments ---
 
@@ -431,7 +431,7 @@ class LocalCommunicationsStore:
                 INSERT INTO comms_attachments (
                     id, message_id, filename, content_type, size_bytes,
                     local_path, platform_url, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     attachment.id,
@@ -448,13 +448,13 @@ class LocalCommunicationsStore:
 
     def get_attachment(self, attachment_id: str) -> CommsAttachment | None:
         """Get an attachment by ID."""
-        row = self.db.fetchone("SELECT * FROM comms_attachments WHERE id = ?", (attachment_id,))
+        row = self.db.fetchone("SELECT * FROM comms_attachments WHERE id = %s", (attachment_id,))
         return CommsAttachment.from_row(dict(row)) if row else None
 
     def list_attachments(self, message_id: str) -> list[CommsAttachment]:
         """List all attachments for a message."""
         rows = self.db.fetchall(
-            "SELECT * FROM comms_attachments WHERE message_id = ? ORDER BY created_at",
+            "SELECT * FROM comms_attachments WHERE message_id = %s ORDER BY created_at",
             (message_id,),
         )
         return [CommsAttachment.from_row(dict(row)) for row in rows]
@@ -462,12 +462,12 @@ class LocalCommunicationsStore:
     def delete_attachment(self, attachment_id: str) -> None:
         """Delete an attachment by ID."""
         with self.db.transaction() as conn:
-            conn.execute("DELETE FROM comms_attachments WHERE id = ?", (attachment_id,))
+            conn.execute("DELETE FROM comms_attachments WHERE id = %s", (attachment_id,))
 
     def delete_attachments_for_message(self, message_id: str) -> int:
         """Delete all attachments for a message."""
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                "DELETE FROM comms_attachments WHERE message_id = ?", (message_id,)
+                "DELETE FROM comms_attachments WHERE message_id = %s", (message_id,)
             )
             return cursor.rowcount

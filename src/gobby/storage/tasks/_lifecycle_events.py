@@ -89,7 +89,7 @@ class TaskLifecycleEventManager:
                 INSERT INTO task_lifecycle_events (
                     task_id, from_state, to_state, reason, by_actor
                 )
-                VALUES (?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s)
                 RETURNING id
                 """,
                 (task_id, from_state, to_state, reason, actor),
@@ -98,7 +98,7 @@ class TaskLifecycleEventManager:
                 raise RuntimeError("PostgreSQL hub did not return a lifecycle event id")
             event_id = int(row["id"])
 
-        row = self.db.fetchone("SELECT * FROM task_lifecycle_events WHERE id = ?", (event_id,))
+        row = self.db.fetchone("SELECT * FROM task_lifecycle_events WHERE id = %s", (event_id,))
         if row is None:
             raise RuntimeError(f"Lifecycle event {event_id} disappeared after insert")
         return TaskLifecycleEvent.from_row(row)
@@ -114,19 +114,19 @@ class TaskLifecycleEventManager:
             sql = """
                 SELECT *
                   FROM task_lifecycle_events
-                 WHERE task_id = ?
+                 WHERE task_id = %s
                  ORDER BY created_at DESC, id DESC
             """
         else:
             sql = """
                 SELECT *
                   FROM task_lifecycle_events
-                 WHERE task_id = ?
+                 WHERE task_id = %s
                  ORDER BY id
             """
         params: tuple[object, ...] = (task_id,)
         if limit is not None:
-            sql += " LIMIT ?"
+            sql += " LIMIT %s"
             params = (*params, limit)
         return [TaskLifecycleEvent.from_row(row) for row in self.db.fetchall(sql, params)]
 
@@ -155,8 +155,8 @@ class TaskLifecycleEventManager:
                 """
                 SELECT 1
                   FROM task_lifecycle_events
-                 WHERE task_id = ?
-                   AND reason = ?
+                 WHERE task_id = %s
+                   AND reason = %s
                  LIMIT 1
                 """,
                 (task_id, BUILD_EVENT_REASON),
@@ -168,12 +168,12 @@ class TaskLifecycleEventManager:
         ids = list(task_ids)
         if not ids:
             return set()
-        placeholders = ", ".join("?" for _ in ids)
+        placeholders = ", ".join("%s" for _ in ids)
         query = (
             """
             SELECT DISTINCT task_id
               FROM task_lifecycle_events
-             WHERE reason = ?
+             WHERE reason = %s
                AND task_id IN (
             """
             + placeholders

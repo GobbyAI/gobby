@@ -269,7 +269,7 @@ class TestProgressTracker:
         )
 
         row = test_db.fetchone(
-            "SELECT * FROM loop_progress WHERE session_id = ?",
+            "SELECT * FROM loop_progress WHERE session_id = %s",
             (session_id,),
         )
 
@@ -296,7 +296,7 @@ class TestProgressTracker:
         )
 
         rows = test_db.fetchall(
-            "SELECT progress_type, is_high_value FROM loop_progress WHERE session_id = ? ORDER BY id",
+            "SELECT progress_type, is_high_value FROM loop_progress WHERE session_id = %s ORDER BY id",
             (session_id,),
         )
 
@@ -502,7 +502,7 @@ class TestProgressTrackerSummary:
         # Record high-value
         progress_tracker.record_event(session_id, ProgressType.FILE_MODIFIED)
         progress_tracker.db.execute(
-            "UPDATE loop_progress SET recorded_at = ? WHERE session_id = ? AND is_high_value = ?",
+            "UPDATE loop_progress SET recorded_at = %s WHERE session_id = %s AND is_high_value = %s",
             ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(), session_id, True),
         )
 
@@ -580,7 +580,7 @@ class TestProgressTrackerStagnation:
         # Record a high-value event
         tracker.record_event(session_id, ProgressType.FILE_MODIFIED)
         tracker.db.execute(
-            "UPDATE loop_progress SET recorded_at = ? WHERE session_id = ? AND is_high_value = ?",
+            "UPDATE loop_progress SET recorded_at = %s WHERE session_id = %s AND is_high_value = %s",
             ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(), session_id, True),
         )
 
@@ -788,7 +788,7 @@ class TestStopRegistry:
 
         # Verify in database
         row = test_db.fetchone(
-            "SELECT * FROM session_stop_signals WHERE session_id = ?",
+            "SELECT * FROM session_stop_signals WHERE session_id = %s",
             (session_id,),
         )
         assert row is not None
@@ -941,8 +941,8 @@ class TestStopRegistryCleanup:
         test_db.execute(
             """
             UPDATE session_stop_signals
-            SET acknowledged_at = ?
-            WHERE session_id = ?
+            SET acknowledged_at = %s
+            WHERE session_id = %s
             """,
             ((datetime.now(UTC) - timedelta(hours=48)).isoformat(), session_id),
         )
@@ -1101,7 +1101,7 @@ class TestStuckDetector:
 
         # Verify in database
         row = test_db.fetchone(
-            "SELECT * FROM task_selection_history WHERE session_id = ?",
+            "SELECT * FROM task_selection_history WHERE session_id = %s",
             (session_id,),
         )
         assert row is not None
@@ -1194,7 +1194,7 @@ class TestStuckDetectorProgressStagnation:
         # Record high-value event
         tracker.record_event(session_id, ProgressType.FILE_MODIFIED)
         tracker.db.execute(
-            "UPDATE loop_progress SET recorded_at = ? WHERE session_id = ? AND is_high_value = ?",
+            "UPDATE loop_progress SET recorded_at = %s WHERE session_id = %s AND is_high_value = %s",
             ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(), session_id, True),
         )
 
@@ -1375,7 +1375,7 @@ class TestStuckDetectorSelectionHistory:
         test_db.execute(
             """
             INSERT INTO task_selection_history (session_id, task_id, selected_at, context)
-            VALUES (?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s)
             """,
             (
                 session_id,
@@ -1387,7 +1387,7 @@ class TestStuckDetectorSelectionHistory:
 
         history = stuck_detector.get_selection_history(session_id)
         row = test_db.fetchone(
-            "SELECT context FROM task_selection_history WHERE session_id = ?",
+            "SELECT context FROM task_selection_history WHERE session_id = %s",
             (session_id,),
         )
 

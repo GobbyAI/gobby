@@ -16,7 +16,7 @@ def hydrate_task_stage_state(db: HubDatabase, tasks: Sequence[Task]) -> None:
         return
 
     task_ids = [task.id for task in tasks]
-    placeholders = ", ".join("?" for _ in task_ids)
+    placeholders = ", ".join("%s" for _ in task_ids)
     rows = db.fetchall(
         f"""
         SELECT s.*, r.display_label, r.category

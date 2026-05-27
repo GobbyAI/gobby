@@ -310,7 +310,7 @@ def _get_task(task_manager: TaskProvider, task_id: str) -> Any | None:
     db = getattr(task_manager, "db", None)
     if db is None:
         return None
-    rows = db.fetchall("SELECT id FROM tasks WHERE seq_num = ?", (seq_num,))
+    rows = db.fetchall("SELECT id FROM tasks WHERE seq_num = %s", (seq_num,))
     if len(rows) != 1:
         return None
     try:

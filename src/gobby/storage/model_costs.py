@@ -71,7 +71,7 @@ class ModelCostStore:
             conn.executemany(
                 "INSERT INTO model_costs (model, provider, "
                 "context_length, max_completion_tokens, "
-                "source) VALUES (?, ?, ?, ?, ?)",
+                "source) VALUES (%s, %s, %s, %s, %s)",
                 rows,
             )
 
@@ -97,14 +97,14 @@ class ModelCostStore:
 
         model = strip_provider_prefix(model)
 
-        row = self.db.fetchone("SELECT context_length FROM model_costs WHERE model = ?", (model,))
+        row = self.db.fetchone("SELECT context_length FROM model_costs WHERE model = %s", (model,))
         if row and row["context_length"]:
             return int(row["context_length"])
 
         # Prefix match — find longest matching model key via SQL
         row = self.db.fetchone(
             "SELECT context_length FROM model_costs "
-            "WHERE ? LIKE model || '%' AND context_length IS NOT NULL "
+            "WHERE %s LIKE model || '%%' AND context_length IS NOT NULL "
             "ORDER BY LENGTH(model) DESC LIMIT 1",
             (model,),
         )

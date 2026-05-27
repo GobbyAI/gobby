@@ -52,7 +52,7 @@ def _batch_load_cron_info(database: Any, execution_ids: list[str]) -> dict[str, 
     if not execution_ids:
         return {}
     try:
-        placeholders = ", ".join("?" for _ in execution_ids)
+        placeholders = ", ".join("%s" for _ in execution_ids)
         rows = database.fetchall(
             f"""
             SELECT cr.pipeline_execution_id, cj.id as cron_job_id, cj.name, cj.cron_expr

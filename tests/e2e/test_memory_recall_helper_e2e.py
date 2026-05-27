@@ -195,7 +195,7 @@ def _session_variable_rows(postgres_db: Any, *session_ids: str) -> dict[str, dic
     rows: dict[str, dict[str, Any]] = {}
     for session_id in session_ids:
         row = postgres_db.fetchone(
-            "SELECT variables FROM session_variables WHERE session_id = $1",
+            "SELECT variables FROM session_variables WHERE session_id = %s",
             (session_id,),
         )
         if row is None:

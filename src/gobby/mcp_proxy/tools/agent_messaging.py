@@ -184,14 +184,14 @@ def add_messaging_tools(
             ):
                 try:
                     row = db.fetchone(
-                        "SELECT id FROM agent_runs WHERE child_session_id = ? "
+                        "SELECT id FROM agent_runs WHERE child_session_id = %s "
                         "ORDER BY created_at DESC LIMIT 1",
                         (from_id,),
                     )
                     if row:
                         now = datetime.now(UTC).isoformat()
                         db.execute(
-                            "UPDATE agent_runs SET result = ?, updated_at = ? WHERE id = ?",
+                            "UPDATE agent_runs SET result = %s, updated_at = %s WHERE id = %s",
                             (content, now, row["id"]),
                         )
                 except Exception as e:

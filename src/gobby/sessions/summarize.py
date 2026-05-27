@@ -614,7 +614,7 @@ def _get_session_memories(session_id: str, db: HubDatabase) -> str:
         rows = db.fetchall(
             """SELECT content, tags, memory_type
             FROM memories
-            WHERE source_session_id = ?
+            WHERE source_session_id = %s
             ORDER BY created_at DESC
             LIMIT 20""",
             (session_id,),

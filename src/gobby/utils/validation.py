@@ -63,7 +63,7 @@ class TaskValidator:
             return 0
 
         ids = [str(row["id"]) for row in orphans]
-        placeholders = ",".join("?" for _ in ids)
+        placeholders = ",".join("%s" for _ in ids)
 
         with self.db.transaction() as conn:
             conn.execute(f"DELETE FROM task_dependencies WHERE id IN ({placeholders})", tuple(ids))  # nosec B608

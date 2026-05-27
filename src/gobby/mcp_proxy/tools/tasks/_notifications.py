@@ -37,7 +37,7 @@ async def _notify(
     try:
         row = db.fetchone(
             "SELECT id, parent_session_id FROM agent_runs "
-            "WHERE task_id = ? AND status IN ('pending', 'running') "
+            "WHERE task_id = %s AND status IN ('pending', 'running') "
             "ORDER BY created_at DESC LIMIT 1",
             (task_id,),
         )

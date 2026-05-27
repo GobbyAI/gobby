@@ -149,7 +149,7 @@ class SkillMetadataMixin:
                     source_type, source_ref, hub_name, hub_slug, hub_version,
                     enabled, always_apply, injection_format, project_id,
                     source, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     skill_id,
@@ -195,10 +195,10 @@ class SkillMetadataMixin:
             ValueError: If skill not found
         """
         if include_deleted:
-            row = self._fetchone("SELECT * FROM skills WHERE id = ?", (skill_id,))
+            row = self._fetchone("SELECT * FROM skills WHERE id = %s", (skill_id,))
         else:
             row = self._fetchone(
-                "SELECT * FROM skills WHERE id = ? AND deleted_at IS NULL",
+                "SELECT * FROM skills WHERE id = %s AND deleted_at IS NULL",
                 (skill_id,),
             )
         if not row:
@@ -216,7 +216,7 @@ class SkillMetadataMixin:
         """
         if not skill_ids:
             return []
-        placeholders = ",".join("?" * len(skill_ids))
+        placeholders = ",".join("%s" for _ in skill_ids)
         rows = self._fetchall(
             f"SELECT * FROM skills WHERE id IN ({placeholders}) AND deleted_at IS NULL",
             tuple(skill_ids),
@@ -248,14 +248,14 @@ class SkillMetadataMixin:
             The Skill if found, None otherwise
         """
         # Build WHERE clause
-        conditions = ["name = ?"]
+        conditions = ["name = %s"]
         params: list[Any] = [name]
 
         if not include_deleted:
             conditions.append("deleted_at IS NULL")
 
         if source is not None:
-            conditions.append("source = ?")
+            conditions.append("source = %s")
             params.append(source)
 
         where = " AND ".join(conditions)
@@ -263,7 +263,7 @@ class SkillMetadataMixin:
         if project_id:
             # First try project-scoped skill
             row = self._fetchone(
-                f"SELECT * FROM skills WHERE {where} AND project_id = ?",  # nosec B608
+                f"SELECT * FROM skills WHERE {where} AND project_id = %s",  # nosec B608
                 (*params, project_id),
             )
             # If not found and include_global, try global
@@ -336,71 +336,71 @@ class SkillMetadataMixin:
         params: list[Any] = []
 
         if name is not None:
-            updates.append("name = ?")
+            updates.append("name = %s")
             params.append(name)
         if description is not None:
-            updates.append("description = ?")
+            updates.append("description = %s")
             params.append(description)
         if content is not None:
-            updates.append("content = ?")
+            updates.append("content = %s")
             params.append(content)
         if version is not _UNSET:
-            updates.append("version = ?")
+            updates.append("version = %s")
             params.append(version)
         if license is not _UNSET:
-            updates.append("license = ?")
+            updates.append("license = %s")
             params.append(license)
         if compatibility is not _UNSET:
-            updates.append("compatibility = ?")
+            updates.append("compatibility = %s")
             params.append(compatibility)
         if allowed_tools is not _UNSET:
-            updates.append("allowed_tools = ?")
+            updates.append("allowed_tools = %s")
             params.append(json.dumps(allowed_tools) if allowed_tools else None)
         if metadata is not _UNSET:
-            updates.append("metadata = ?")
+            updates.append("metadata = %s")
             params.append(json.dumps(metadata) if metadata else None)
         if source_path is not _UNSET:
-            updates.append("source_path = ?")
+            updates.append("source_path = %s")
             params.append(source_path)
         if source_type is not _UNSET:
-            updates.append("source_type = ?")
+            updates.append("source_type = %s")
             params.append(source_type)
         if source_ref is not _UNSET:
-            updates.append("source_ref = ?")
+            updates.append("source_ref = %s")
             params.append(source_ref)
         if hub_name is not _UNSET:
-            updates.append("hub_name = ?")
+            updates.append("hub_name = %s")
             params.append(hub_name)
         if hub_slug is not _UNSET:
-            updates.append("hub_slug = ?")
+            updates.append("hub_slug = %s")
             params.append(hub_slug)
         if hub_version is not _UNSET:
-            updates.append("hub_version = ?")
+            updates.append("hub_version = %s")
             params.append(hub_version)
         if enabled is not None:
-            updates.append("enabled = ?")
+            updates.append("enabled = %s")
             params.append(enabled)
         if always_apply is not None:
-            updates.append("always_apply = ?")
+            updates.append("always_apply = %s")
             params.append(always_apply)
         if injection_format is not None:
-            updates.append("injection_format = ?")
+            updates.append("injection_format = %s")
             params.append(injection_format)
         if source is not None:
-            updates.append("source = ?")
+            updates.append("source = %s")
             params.append(source)
         if project_id is not _UNSET:
-            updates.append("project_id = ?")
+            updates.append("project_id = %s")
             params.append(project_id)
 
         if not updates:
             return self.get_skill(skill_id)
 
-        updates.append("updated_at = ?")
+        updates.append("updated_at = %s")
         params.append(datetime.now(UTC).isoformat())
         params.append(skill_id)
 
-        sql = f"UPDATE skills SET {', '.join(updates)} WHERE id = ?"  # nosec B608
+        sql = f"UPDATE skills SET {', '.join(updates)} WHERE id = %s"  # nosec B608
 
         with self.db.transaction() as conn:
             cursor = conn.execute(sql, tuple(params))
@@ -429,8 +429,8 @@ class SkillMetadataMixin:
         now = datetime.now(UTC).isoformat()
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                "UPDATE skills SET deleted_at = ?, updated_at = ? "
-                "WHERE id = ? AND deleted_at IS NULL",
+                "UPDATE skills SET deleted_at = %s, updated_at = %s "
+                "WHERE id = %s AND deleted_at IS NULL",
                 (now, now, skill_id),
             )
             if cursor.rowcount == 0:
@@ -457,7 +457,7 @@ class SkillMetadataMixin:
             return False
 
         with self.db.transaction() as conn:
-            cursor = conn.execute("DELETE FROM skills WHERE id = ?", (skill_id,))
+            cursor = conn.execute("DELETE FROM skills WHERE id = %s", (skill_id,))
             if cursor.rowcount == 0:
                 return False
 
@@ -479,7 +479,7 @@ class SkillMetadataMixin:
         now = datetime.now(UTC).isoformat()
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                "UPDATE skills SET deleted_at = NULL, updated_at = ? WHERE id = ?",
+                "UPDATE skills SET deleted_at = NULL, updated_at = %s WHERE id = %s",
                 (now, skill_id),
             )
             if cursor.rowcount == 0:
@@ -557,21 +557,21 @@ class SkillMetadataMixin:
             query += " AND deleted_at IS NULL"
 
         if source is not None:
-            query += " AND source = ?"
+            query += " AND source = %s"
             params.append(source)
 
         if project_id:
             if include_global:
-                query += " AND (project_id = ? OR project_id IS NULL)"
+                query += " AND (project_id = %s OR project_id IS NULL)"
                 params.append(project_id)
             else:
-                query += " AND project_id = ?"
+                query += " AND project_id = %s"
                 params.append(project_id)
         else:
             query += " AND project_id IS NULL"
 
         if enabled is not None:
-            query += " AND enabled = ?"
+            query += " AND enabled = %s"
             params.append(enabled)
 
         # Filter by category using JSON extraction in SQL to avoid under-filled results
@@ -580,17 +580,17 @@ class SkillMetadataMixin:
             category_sql = json_text_expr(self.db, "metadata", "category")
             skillport_category_sql = json_text_expr(self.db, "metadata", "skillport", "category")
             query += f""" AND (
-                {category_sql} = ?
-                OR {skillport_category_sql} = ?
+                {category_sql} = %s
+                OR {skillport_category_sql} = %s
             )"""  # nosec B608 # JSON expressions are generated from static keys.
             params.extend([category, category])
 
         query += " ORDER BY name ASC"
         if limit >= 0:
-            query += " LIMIT ? OFFSET ?"
+            query += " LIMIT %s OFFSET %s"
             params.extend([limit, offset])
         elif offset > 0:
-            query += " OFFSET ?"
+            query += " OFFSET %s"
             params.append(offset)
 
         rows = self._fetchall(query, tuple(params))
@@ -633,7 +633,7 @@ class SkillMetadataMixin:
         escaped_query = query_text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         sql = """
             SELECT * FROM skills
-            WHERE (name LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\')
+            WHERE (name LIKE %s ESCAPE '\\' OR description LIKE %s ESCAPE '\\')
         """
         params: list[Any] = [f"%{escaped_query}%", f"%{escaped_query}%"]
 
@@ -641,10 +641,10 @@ class SkillMetadataMixin:
             sql += " AND deleted_at IS NULL"
 
         if project_id:
-            sql += " AND (project_id = ? OR project_id IS NULL)"
+            sql += " AND (project_id = %s OR project_id IS NULL)"
             params.append(project_id)
 
-        sql += " ORDER BY name ASC LIMIT ?"
+        sql += " ORDER BY name ASC LIMIT %s"
         params.append(limit)
 
         rows = self._fetchall(sql, tuple(params))
@@ -668,7 +668,7 @@ class SkillMetadataMixin:
         params: list[Any] = []
 
         if project_id:
-            query += " AND (project_id = ? OR project_id IS NULL)"
+            query += " AND (project_id = %s OR project_id IS NULL)"
             params.append(project_id)
         else:
             query += " AND project_id IS NULL"
@@ -689,10 +689,10 @@ class SkillMetadataMixin:
             True if exists, False otherwise
         """
         if include_deleted:
-            row = self._fetchone("SELECT 1 FROM skills WHERE id = ?", (skill_id,))
+            row = self._fetchone("SELECT 1 FROM skills WHERE id = %s", (skill_id,))
         else:
             row = self._fetchone(
-                "SELECT 1 FROM skills WHERE id = ? AND deleted_at IS NULL", (skill_id,)
+                "SELECT 1 FROM skills WHERE id = %s AND deleted_at IS NULL", (skill_id,)
             )
         return row is not None
 
@@ -722,21 +722,21 @@ class SkillMetadataMixin:
             query += " AND deleted_at IS NULL"
 
         if source is not None:
-            query += " AND source = ?"
+            query += " AND source = %s"
             params.append(source)
 
         if project_id:
             if include_global:
-                query += " AND (project_id = ? OR project_id IS NULL)"
+                query += " AND (project_id = %s OR project_id IS NULL)"
                 params.append(project_id)
             else:
-                query += " AND project_id = ?"
+                query += " AND project_id = %s"
                 params.append(project_id)
         else:
             query += " AND project_id IS NULL"
 
         if enabled is not None:
-            query += " AND enabled = ?"
+            query += " AND enabled = %s"
             params.append(enabled)
 
         row = self._fetchone(query, tuple(params))

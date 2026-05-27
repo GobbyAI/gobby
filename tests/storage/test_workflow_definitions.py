@@ -203,7 +203,7 @@ def test_get_by_name_project_scoped(
     # Create project
     db.execute(
         "INSERT INTO projects (id, name, created_at, updated_at) "
-        "VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+        "VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
         ("proj-1", "Test Project"),
     )
 
@@ -231,7 +231,7 @@ def test_get_by_name_fallback_to_global(
     """Test get_by_name falls back to global when no project-scoped match."""
     db.execute(
         "INSERT INTO projects (id, name, created_at, updated_at) "
-        "VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+        "VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
         ("proj-1", "Test Project"),
     )
 
@@ -384,7 +384,7 @@ def test_list_all_filter_project(db: HubDatabase, manager: LocalWorkflowDefiniti
     """Test listing definitions filtered by project_id (includes global)."""
     db.execute(
         "INSERT INTO projects (id, name, created_at, updated_at) "
-        "VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+        "VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
         ("proj-1", "Test Project"),
     )
 
@@ -549,7 +549,7 @@ def test_move_to_project(db: HubDatabase, manager: LocalWorkflowDefinitionManage
     """Test moving an installed definition to project scope."""
     db.execute(
         "INSERT INTO projects (id, name, created_at, updated_at) "
-        "VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+        "VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
         ("proj-1", "Test Project"),
     )
 
@@ -566,7 +566,7 @@ def test_move_to_global(db: HubDatabase, manager: LocalWorkflowDefinitionManager
     """Test moving a project-scoped definition to global scope."""
     db.execute(
         "INSERT INTO projects (id, name, created_at, updated_at) "
-        "VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+        "VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
         ("proj-1", "Test Project"),
     )
 

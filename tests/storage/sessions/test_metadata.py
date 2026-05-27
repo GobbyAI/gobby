@@ -546,7 +546,7 @@ class TestSessionManagerMetadata:
         assert updated.last_assistant_content == "Testing stats update."
 
         # Verify DB persisted
-        row = session_manager.db.fetchone("SELECT * FROM sessions WHERE id = ?", (session.id,))
+        row = session_manager.db.fetchone("SELECT * FROM sessions WHERE id = %s", (session.id,))
         assert row["message_count"] == 10
         assert row["turn_count"] == 5
         assert row["tool_call_count"] == 3

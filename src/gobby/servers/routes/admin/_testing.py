@@ -82,7 +82,7 @@ def register_testing_routes(router: APIRouter, server: "HTTPServer") -> None:
             db.execute(
                 """
                 INSERT INTO projects (id, name, repo_path, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s)
                 """,
                 (request.project_id, request.name, request.repo_path, now, now),
             )

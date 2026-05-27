@@ -334,7 +334,7 @@ def _build_file_patterns(
         # Paths starting with common prefixes (using config)
         rf"(?<![a-zA-Z0-9_])((?:{prefix_pattern})/[a-zA-Z0-9_./+-]+)",
         # Absolute paths
-        r"(/[a-zA-Z0-9_.-]+(?:/[a-zA-Z0-9_.-]+)+)",
+        r"(?<![a-zA-Z0-9_.-])(/[a-zA-Z0-9_.-]+(?:/[a-zA-Z0-9_.-]+)+)",
         # Relative paths with ./
         r"(\./[a-zA-Z0-9_./+-]+)",
         # Standalone filenames with common extensions (using config)

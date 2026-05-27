@@ -85,7 +85,7 @@ def postgres_client(postgres_server: Any) -> TestClient:
 
 def _config_store_row(db: Any, key: str) -> dict[str, object] | None:
     row = db.fetchone(
-        "SELECT key, value, source, is_secret, updated_at FROM config_store WHERE key = ?",
+        "SELECT key, value, source, is_secret, updated_at FROM config_store WHERE key = %s",
         (key,),
     )
     return dict(row) if row is not None else None
@@ -94,7 +94,7 @@ def _config_store_row(db: Any, key: str) -> dict[str, object] | None:
 def _secret_row(db: Any, name: str = "requirepass") -> dict[str, object] | None:
     row = db.fetchone(
         "SELECT id, name, encrypted_value, category, description, created_at, updated_at "
-        "FROM secrets WHERE name = ?",
+        "FROM secrets WHERE name = %s",
         (name,),
     )
     return dict(row) if row is not None else None

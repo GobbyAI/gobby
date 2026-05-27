@@ -110,7 +110,7 @@ class TestMediaColumnMigration:
         columns = {
             row["column_name"]
             for row in db.fetchall(
-                "SELECT column_name FROM information_schema.columns WHERE table_name = ?",
+                "SELECT column_name FROM information_schema.columns WHERE table_name = %s",
                 ("memories",),
             )
         }
@@ -150,8 +150,8 @@ class TestMemoryFromRowMedia:
             """
             INSERT INTO memories (id, memory_type, content, created_at, updated_at,
                                   access_count, tags, media)
-            VALUES (?, 'fact', 'Test content', '2026-01-19', '2026-01-19',
-                    0, '[]', ?)
+            VALUES (%s, 'fact', 'Test content', '2026-01-19', '2026-01-19',
+                    0, '[]', %s)
         """,
             ("mm-test", media_data),
         )

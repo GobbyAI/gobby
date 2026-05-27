@@ -37,7 +37,7 @@ class AuthStore:
         expires_at = datetime.now(UTC) + duration
 
         self.db.execute(
-            "INSERT INTO auth_sessions (token_hash, expires_at, remember_me) VALUES (?, ?, ?)",
+            "INSERT INTO auth_sessions (token_hash, expires_at, remember_me) VALUES (%s, %s, %s)",
             (_hash_token(token), expires_at.isoformat(), bool(remember_me)),
         )
 
@@ -52,7 +52,7 @@ class AuthStore:
             return False
 
         row = self.db.fetchone(
-            "SELECT expires_at FROM auth_sessions WHERE token_hash = ?",
+            "SELECT expires_at FROM auth_sessions WHERE token_hash = %s",
             (_hash_token(token),),
         )
         if not row:
@@ -70,10 +70,10 @@ class AuthStore:
 
     def delete_session(self, token: str) -> bool:
         """Delete a session (logout)."""
-        self.db.execute("DELETE FROM auth_sessions WHERE token_hash = ?", (_hash_token(token),))
+        self.db.execute("DELETE FROM auth_sessions WHERE token_hash = %s", (_hash_token(token),))
         return True
 
     def _cleanup_expired(self) -> None:
         """Remove expired sessions."""
         now = datetime.now(UTC).isoformat()
-        self.db.execute("DELETE FROM auth_sessions WHERE expires_at < ?", (now,))
+        self.db.execute("DELETE FROM auth_sessions WHERE expires_at < %s", (now,))

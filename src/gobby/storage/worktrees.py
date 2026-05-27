@@ -134,7 +134,7 @@ class LocalWorktreeManager:
                 base_branch, agent_session_id, status, created_at, updated_at,
                 workspace_role
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 worktree_id,
@@ -168,25 +168,25 @@ class LocalWorktreeManager:
 
     def get(self, worktree_id: str) -> Worktree | None:
         """Get worktree by ID."""
-        row = self.db.fetchone("SELECT * FROM worktrees WHERE id = ?", (worktree_id,))
+        row = self.db.fetchone("SELECT * FROM worktrees WHERE id = %s", (worktree_id,))
         return Worktree.from_row(row) if row else None
 
     def get_by_path(self, worktree_path: str) -> Worktree | None:
         """Get worktree by path."""
-        row = self.db.fetchone("SELECT * FROM worktrees WHERE worktree_path = ?", (worktree_path,))
+        row = self.db.fetchone("SELECT * FROM worktrees WHERE worktree_path = %s", (worktree_path,))
         return Worktree.from_row(row) if row else None
 
     def get_by_branch(self, project_id: str, branch_name: str) -> Worktree | None:
         """Get worktree by project and branch name."""
         row = self.db.fetchone(
-            "SELECT * FROM worktrees WHERE project_id = ? AND branch_name = ?",
+            "SELECT * FROM worktrees WHERE project_id = %s AND branch_name = %s",
             (project_id, branch_name),
         )
         return Worktree.from_row(row) if row else None
 
     def get_by_task(self, task_id: str) -> Worktree | None:
         """Get worktree linked to a task."""
-        row = self.db.fetchone("SELECT * FROM worktrees WHERE task_id = ?", (task_id,))
+        row = self.db.fetchone("SELECT * FROM worktrees WHERE task_id = %s", (task_id,))
         return Worktree.from_row(row) if row else None
 
     def list_worktrees(
@@ -212,13 +212,13 @@ class LocalWorktreeManager:
         params: list[Any] = []
 
         if project_id:
-            conditions.append("project_id = ?")
+            conditions.append("project_id = %s")
             params.append(project_id)
         if status:
-            conditions.append("status = ?")
+            conditions.append("status = %s")
             params.append(status)
         if agent_session_id:
-            conditions.append("agent_session_id = ?")
+            conditions.append("agent_session_id = %s")
             params.append(agent_session_id)
 
         where_clause = " AND ".join(conditions) if conditions else "1=1"
@@ -229,7 +229,7 @@ class LocalWorktreeManager:
             SELECT * FROM worktrees
             WHERE {where_clause}
             ORDER BY created_at DESC
-            LIMIT ?
+            LIMIT %s
             """,  # nosec B608
             tuple(params),
         )
@@ -278,11 +278,11 @@ class LocalWorktreeManager:
         # Add updated_at timestamp
         fields["updated_at"] = datetime.now(UTC).isoformat()
 
-        set_clause = ", ".join(f"{key} = ?" for key in fields.keys())
+        set_clause = ", ".join(f"{key} = %s" for key in fields.keys())
         values = list(fields.values()) + [worktree_id]
 
         self.db.execute(
-            f"UPDATE worktrees SET {set_clause} WHERE id = ?",  # nosec B608
+            f"UPDATE worktrees SET {set_clause} WHERE id = %s",  # nosec B608
             tuple(values),
         )
 
@@ -298,7 +298,7 @@ class LocalWorktreeManager:
         Returns:
             True if deleted, False if not found
         """
-        cursor = self.db.execute("DELETE FROM worktrees WHERE id = ?", (worktree_id,))
+        cursor = self.db.execute("DELETE FROM worktrees WHERE id = %s", (worktree_id,))
         return cursor.rowcount > 0
 
     # Status transition methods
@@ -396,11 +396,11 @@ class LocalWorktreeManager:
         rows = self.db.fetchall(
             """
             SELECT * FROM worktrees
-            WHERE project_id = ?
-              AND status = ?
-              AND updated_at < ?
+            WHERE project_id = %s
+              AND status = %s
+              AND updated_at < %s
             ORDER BY updated_at ASC
-            LIMIT ?
+            LIMIT %s
             """,
             (project_id, WorktreeStatus.ACTIVE.value, cutoff, limit),
         )
@@ -425,12 +425,12 @@ class LocalWorktreeManager:
             List of expired Worktree instances
         """
         now = datetime.now(UTC).isoformat()
-        sql = "SELECT * FROM worktrees WHERE status = ? AND cleanup_after IS NOT NULL AND cleanup_after < ?"
+        sql = "SELECT * FROM worktrees WHERE status = %s AND cleanup_after IS NOT NULL AND cleanup_after < %s"
         params: list[Any] = [WorktreeStatus.MERGED.value, now]
         if project_id:
-            sql += " AND project_id = ?"
+            sql += " AND project_id = %s"
             params.append(project_id)
-        sql += " ORDER BY cleanup_after ASC LIMIT ?"
+        sql += " ORDER BY cleanup_after ASC LIMIT %s"
         params.append(limit)
         rows = self.db.fetchall(sql, tuple(params))
         return [Worktree.from_row(row) for row in rows]
@@ -483,7 +483,7 @@ class LocalWorktreeManager:
             """
             SELECT status, COUNT(*) as count
             FROM worktrees
-            WHERE project_id = ?
+            WHERE project_id = %s
             GROUP BY status
             """,
             (project_id,),
@@ -526,9 +526,9 @@ class LocalWorktreeManager:
             rows = self.db.fetchall(
                 """
                 SELECT * FROM worktrees
-                WHERE merge_state = ? AND project_id = ?
+                WHERE merge_state = %s AND project_id = %s
                 ORDER BY updated_at DESC
-                LIMIT ?
+                LIMIT %s
                 """,
                 (merge_state, project_id, limit),
             )
@@ -536,9 +536,9 @@ class LocalWorktreeManager:
             rows = self.db.fetchall(
                 """
                 SELECT * FROM worktrees
-                WHERE merge_state = ?
+                WHERE merge_state = %s
                 ORDER BY updated_at DESC
-                LIMIT ?
+                LIMIT %s
                 """,
                 (merge_state, limit),
             )

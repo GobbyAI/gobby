@@ -23,7 +23,7 @@ def _register(
         project_id=sample_project["id"],
     )
     session_manager.db.execute(
-        "UPDATE sessions SET updated_at = ? WHERE id = ?",
+        "UPDATE sessions SET updated_at = %s WHERE id = %s",
         (updated_at, session.id),
     )
     return session.id

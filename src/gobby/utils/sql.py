@@ -8,7 +8,7 @@ def sql_placeholders(count: int, separator: str = ",") -> str:
 
     if count < 1:
         raise ValueError("count must be greater than or equal to 1")
-    return separator.join("?" for _ in range(count))
+    return separator.join("%s" for _ in range(count))
 
 
 __all__ = ["sql_placeholders"]

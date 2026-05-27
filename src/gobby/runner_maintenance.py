@@ -248,8 +248,8 @@ async def cleanup_zombie_messages_loop(
     interval_seconds = interval_hours * 3600
 
     def _expire_zombies() -> None:
-        updated_stale_sql = older_than_now_expr(db, "updated_at", "?", "hour")
-        created_stale_sql = older_than_now_expr(db, "created_at", "?", "hour")
+        updated_stale_sql = older_than_now_expr(db, "updated_at", "%s", "hour")
+        created_stale_sql = older_than_now_expr(db, "created_at", "%s", "hour")
         expired = db.execute(
             "UPDATE inter_session_messages SET delivered_at = CURRENT_TIMESTAMP "
             "WHERE delivered_at IS NULL AND to_session IN ("

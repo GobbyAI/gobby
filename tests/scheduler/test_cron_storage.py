@@ -30,7 +30,7 @@ def cron_storage(temp_db: HubDatabase) -> CronJobStorage:
 def test_cron_jobs_table_exists(temp_db: HubDatabase) -> None:
     """Migration creates cron_jobs table."""
     row = temp_db.fetchone(
-        "SELECT table_name FROM information_schema.tables WHERE table_name = ?",
+        "SELECT table_name FROM information_schema.tables WHERE table_name = %s",
         ("cron_jobs",),
     )
     assert row is not None
@@ -39,7 +39,7 @@ def test_cron_jobs_table_exists(temp_db: HubDatabase) -> None:
 def test_cron_runs_table_exists(temp_db: HubDatabase) -> None:
     """Migration creates cron_runs table."""
     row = temp_db.fetchone(
-        "SELECT table_name FROM information_schema.tables WHERE table_name = ?",
+        "SELECT table_name FROM information_schema.tables WHERE table_name = %s",
         ("cron_runs",),
     )
     assert row is not None
@@ -50,7 +50,7 @@ def test_cron_jobs_has_expected_columns(temp_db: HubDatabase) -> None:
     columns = {
         row["column_name"]
         for row in temp_db.fetchall(
-            "SELECT column_name FROM information_schema.columns WHERE table_name = ?",
+            "SELECT column_name FROM information_schema.columns WHERE table_name = %s",
             ("cron_jobs",),
         )
     }
@@ -511,7 +511,7 @@ def test_cleanup_old_runs(cron_storage: CronJobStorage) -> None:
     old_time = (datetime.now(UTC) - timedelta(days=60)).isoformat()
     cron_storage.db.execute(
         """INSERT INTO cron_runs (id, cron_job_id, triggered_at, status, created_at)
-        VALUES (?, ?, ?, 'completed', ?)""",
+        VALUES (%s, %s, %s, 'completed', %s)""",
         ("cr-old", job.id, old_time, old_time),
     )
     assert len(cron_storage.list_runs(job.id)) == 2

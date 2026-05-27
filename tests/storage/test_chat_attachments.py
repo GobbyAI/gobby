@@ -218,32 +218,32 @@ def test_delete_stale_unbound_attachments_deletes_only_never_bound_old_rows(
     temp_db.execute(
         """
         UPDATE chat_attachments
-           SET created_at = ?, updated_at = ?
-         WHERE id = ?
+           SET created_at = %s, updated_at = %s
+         WHERE id = %s
         """,
         (old, old, old_unbound),
     )
     temp_db.execute(
         """
         UPDATE chat_attachments
-           SET created_at = ?, updated_at = ?
-         WHERE id = ?
+           SET created_at = %s, updated_at = %s
+         WHERE id = %s
         """,
         (fresh, fresh, fresh_unbound),
     )
     temp_db.execute(
         """
         UPDATE chat_attachments
-           SET created_at = ?, updated_at = ?
-         WHERE id = ?
+           SET created_at = %s, updated_at = %s
+         WHERE id = %s
         """,
         (old, old, bound),
     )
     temp_db.execute(
         """
         UPDATE chat_attachments
-           SET created_at = ?, updated_at = ?, bound_at = ?
-         WHERE id = ?
+           SET created_at = %s, updated_at = %s, bound_at = %s
+         WHERE id = %s
         """,
         (old, old, old, historically_bound),
     )

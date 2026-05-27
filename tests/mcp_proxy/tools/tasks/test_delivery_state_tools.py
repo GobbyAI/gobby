@@ -150,7 +150,7 @@ async def test_open_delivery_pr_uses_github_mcp_for_same_repo(
     assert github.calls[1][1]["head"] == "feature/task"
     row = temp_db.fetchone(
         "SELECT repo, source_branch, target_branch, pr_url, github_pr_number "
-        "FROM task_delivery_units WHERE task_id = ?",
+        "FROM task_delivery_units WHERE task_id = %s",
         (task.id,),
     )
     assert row["repo"] == "test/test-project"
@@ -265,7 +265,7 @@ async def test_open_delivery_pr_uses_rest_head_repo_for_same_org_cross_repo(
     assert [name for name, _args in github.calls] == ["list_pull_requests"]
     row = temp_db.fetchone(
         "SELECT repo, source_branch, target_branch, pr_url, github_pr_number "
-        "FROM task_delivery_units WHERE task_id = ?",
+        "FROM task_delivery_units WHERE task_id = %s",
         (task.id,),
     )
     assert row["repo"] == "org/target"

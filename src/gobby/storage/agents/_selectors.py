@@ -108,7 +108,7 @@ class _AgentRunSelectorMixin:
             {order_by}
             """
         if limit:
-            sql += "\n            LIMIT ?"
+            sql += "\n            LIMIT %s"
         return sql
 
     def _fetch_run_with_live_stats(

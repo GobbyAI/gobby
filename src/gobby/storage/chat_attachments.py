@@ -132,7 +132,7 @@ def _fetch_attachment(
         SELECT id, project_id, draft_id, conversation_id, message_id, target_session_id,
                filename, mime_type, size_bytes, local_path, created_at, updated_at, bound_at
           FROM chat_attachments
-         WHERE id = ?
+         WHERE id = %s
         """,
         (attachment_id,),
     ).fetchone()
@@ -181,7 +181,7 @@ def create_attachment(
                 id, project_id, draft_id, filename, mime_type, size_bytes, local_path,
                 created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 record_id,
@@ -213,7 +213,7 @@ def get_attachments_by_ids(
         return []
 
     unique_ids = list(dict.fromkeys(attachment_ids))
-    placeholders = ",".join("?" for _ in unique_ids)
+    placeholders = ",".join("%s" for _ in unique_ids)
     rows = db.fetchall(
         f"""
         SELECT id, project_id, draft_id, conversation_id, message_id, target_session_id,
@@ -261,7 +261,7 @@ def bind_attachments(
     unique_ids = list(dict.fromkeys(attachment_ids))
     now = datetime.now(UTC).isoformat()
     with db.transaction_immediate(ChatAttachmentMutation()) as conn:
-        placeholders = ",".join("?" for _ in unique_ids)
+        placeholders = ",".join("%s" for _ in unique_ids)
         rows = conn.execute(
             f"""
             SELECT id, project_id, draft_id, conversation_id, message_id, target_session_id,
@@ -291,12 +291,12 @@ def bind_attachments(
             conn.execute(
                 """
                 UPDATE chat_attachments
-                   SET conversation_id = COALESCE(?, conversation_id),
-                       message_id = COALESCE(?, message_id),
-                       target_session_id = COALESCE(?, target_session_id),
-                       bound_at = COALESCE(bound_at, ?),
-                       updated_at = ?
-                 WHERE id = ?
+                   SET conversation_id = COALESCE(%s, conversation_id),
+                       message_id = COALESCE(%s, message_id),
+                       target_session_id = COALESCE(%s, target_session_id),
+                       bound_at = COALESCE(bound_at, %s),
+                       updated_at = %s
+                 WHERE id = %s
                 """,
                 (conversation_id, message_id, target_session_id, now, now, attachment_id),
             )
@@ -319,7 +319,7 @@ def delete_unbound_attachment(db: HubDatabase, attachment_id: str) -> ChatAttach
         row = conn.execute(
             """
             DELETE FROM chat_attachments
-             WHERE id = ?
+             WHERE id = %s
                AND conversation_id IS NULL
                AND message_id IS NULL
                AND target_session_id IS NULL
@@ -357,9 +357,9 @@ def delete_stale_unbound_attachments(
                       AND message_id IS NULL
                       AND target_session_id IS NULL
                       AND bound_at IS NULL
-                      AND created_at < ?
+                      AND created_at < %s
                     ORDER BY created_at ASC
-                    LIMIT ?
+                    LIMIT %s
              )
             RETURNING id, project_id, draft_id, conversation_id, message_id, target_session_id,
                       filename, mime_type, size_bytes, local_path, created_at, updated_at, bound_at
@@ -378,7 +378,7 @@ def delete_attachments_for_conversations(
     if not unique_ids:
         return []
 
-    placeholders = ",".join("?" for _ in unique_ids)
+    placeholders = ",".join("%s" for _ in unique_ids)
     with db.transaction_immediate(ChatAttachmentMutation()) as conn:
         rows = conn.execute(
             f"""
@@ -398,7 +398,7 @@ def delete_attachments_for_conversations(
         if not records:
             return []
         attachment_ids = [record.id for record in records]
-        id_placeholders = ",".join("?" for _ in attachment_ids)
+        id_placeholders = ",".join("%s" for _ in attachment_ids)
         conn.execute(
             f"DELETE FROM chat_attachments WHERE id IN ({id_placeholders})",
             tuple(attachment_ids),

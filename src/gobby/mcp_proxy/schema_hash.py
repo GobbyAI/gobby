@@ -124,7 +124,7 @@ class SchemaHashManager:
                 server_name, tool_name, project_id, schema_hash,
                 last_verified_at, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT(project_id, server_name, tool_name) DO UPDATE SET
                 schema_hash = excluded.schema_hash,
                 last_verified_at = excluded.last_verified_at,
@@ -155,7 +155,7 @@ class SchemaHashManager:
         row = self.db.fetchone(
             """
             SELECT * FROM tool_schema_hashes
-            WHERE project_id = ? AND server_name = ? AND tool_name = ?
+            WHERE project_id = %s AND server_name = %s AND tool_name = %s
             """,
             (project_id, server_name, tool_name),
         )
@@ -175,7 +175,7 @@ class SchemaHashManager:
         rows = self.db.fetchall(
             """
             SELECT * FROM tool_schema_hashes
-            WHERE project_id = ? AND server_name = ?
+            WHERE project_id = %s AND server_name = %s
             """,
             (project_id, server_name),
         )
@@ -267,8 +267,8 @@ class SchemaHashManager:
         cursor = self.db.execute(
             """
             UPDATE tool_schema_hashes
-            SET last_verified_at = ?, updated_at = ?
-            WHERE project_id = ? AND server_name = ? AND tool_name = ?
+            SET last_verified_at = %s, updated_at = %s
+            WHERE project_id = %s AND server_name = %s AND tool_name = %s
             """,
             (now, now, project_id, server_name, tool_name),
         )
@@ -289,7 +289,7 @@ class SchemaHashManager:
         cursor = self.db.execute(
             """
             DELETE FROM tool_schema_hashes
-            WHERE project_id = ? AND server_name = ? AND tool_name = ?
+            WHERE project_id = %s AND server_name = %s AND tool_name = %s
             """,
             (project_id, server_name, tool_name),
         )
@@ -309,7 +309,7 @@ class SchemaHashManager:
         cursor = self.db.execute(
             """
             DELETE FROM tool_schema_hashes
-            WHERE project_id = ? AND server_name = ?
+            WHERE project_id = %s AND server_name = %s
             """,
             (project_id, server_name),
         )
@@ -333,9 +333,9 @@ class SchemaHashManager:
             return self.delete_hashes_for_server(server_name, project_id)
 
         # Build placeholders for IN clause
-        placeholders = ",".join("?" for _ in valid_tool_names)
+        placeholders = ",".join("%s" for _ in valid_tool_names)
         cursor = self.db.execute(
-            f"DELETE FROM tool_schema_hashes WHERE project_id = ? AND server_name = ? AND tool_name NOT IN ({placeholders})",  # nosec B608
+            f"DELETE FROM tool_schema_hashes WHERE project_id = %s AND server_name = %s AND tool_name NOT IN ({placeholders})",  # nosec B608
             (project_id, server_name, *valid_tool_names),
         )
         return cursor.rowcount
@@ -352,14 +352,14 @@ class SchemaHashManager:
         """
         if project_id:
             count_row = self.db.fetchone(
-                "SELECT COUNT(*) as count FROM tool_schema_hashes WHERE project_id = ?",
+                "SELECT COUNT(*) as count FROM tool_schema_hashes WHERE project_id = %s",
                 (project_id,),
             )
             server_rows = self.db.fetchall(
                 """
                 SELECT server_name, COUNT(*) as count
                 FROM tool_schema_hashes
-                WHERE project_id = ?
+                WHERE project_id = %s
                 GROUP BY server_name
                 """,
                 (project_id,),

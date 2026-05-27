@@ -55,7 +55,7 @@ def _get_commit_count(db: "HubDatabase", session: Any) -> int:
     if session.project_id:
         try:
             row = db.fetchone(
-                "SELECT repo_path FROM projects WHERE id = ?",
+                "SELECT repo_path FROM projects WHERE id = %s",
                 (session.project_id,),
             )
             if row and row["repo_path"]:

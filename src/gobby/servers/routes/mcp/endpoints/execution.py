@@ -101,7 +101,7 @@ def _derive_project_from_unique_session_seq(
             """
             SELECT DISTINCT project_id
             FROM sessions
-            WHERE seq_num = ? AND project_id IS NOT NULL
+            WHERE seq_num = %s AND project_id IS NOT NULL
             LIMIT 2
             """,
             (seq_num,),

@@ -486,7 +486,7 @@ class LinearSyncService:
 
             # Dedup: check if task with this linear_issue_id already exists
             existing = self.task_manager.db.fetchone(
-                "SELECT id FROM tasks WHERE linear_issue_id = ? AND project_id = ?",
+                "SELECT id FROM tasks WHERE linear_issue_id = %s AND project_id = %s",
                 (issue_id, self.project_id),
             )
 
@@ -499,7 +499,7 @@ class LinearSyncService:
                 ref_seq = _gobby_seq_from_linear_title(title)
                 if ref_seq is not None:
                     existing = self.task_manager.db.fetchone(
-                        "SELECT id FROM tasks WHERE project_id = ? AND seq_num = ?",
+                        "SELECT id FROM tasks WHERE project_id = %s AND seq_num = %s",
                         (self.project_id, ref_seq),
                     )
                     if existing:
@@ -682,7 +682,7 @@ class LinearSyncService:
 
         rows = self.task_manager.db.fetchall(
             "SELECT id FROM tasks "
-            "WHERE project_id = ? AND linear_issue_id IS NULL AND closed_at IS NULL",
+            "WHERE project_id = %s AND linear_issue_id IS NULL AND closed_at IS NULL",
             (self.project_id,),
         )
 
@@ -707,7 +707,7 @@ class LinearSyncService:
         self.linear.require_available()
         rows = self.task_manager.db.fetchall(
             "SELECT id FROM tasks "
-            "WHERE project_id = ? AND linear_issue_id IS NOT NULL AND closed_at IS NULL",
+            "WHERE project_id = %s AND linear_issue_id IS NOT NULL AND closed_at IS NULL",
             (self.project_id,),
         )
         return await self._push_task_rows(rows)
@@ -760,7 +760,7 @@ class LinearSyncService:
         # Get all linked tasks for this project
         rows = self.task_manager.db.fetchall(
             "SELECT id, linear_issue_id FROM tasks "
-            "WHERE project_id = ? AND linear_issue_id IS NOT NULL",
+            "WHERE project_id = %s AND linear_issue_id IS NOT NULL",
             (self.project_id,),
         )
 
@@ -843,14 +843,14 @@ class LinearSyncService:
         if synced_at:
             rows = self.task_manager.db.fetchall(
                 "SELECT id FROM tasks "
-                "WHERE project_id = ? AND linear_issue_id IS NOT NULL "
-                "AND updated_at > ?",
+                "WHERE project_id = %s AND linear_issue_id IS NOT NULL "
+                "AND updated_at > %s",
                 (self.project_id, synced_at),
             )
         else:
             # No previous sync — push all linked tasks
             rows = self.task_manager.db.fetchall(
-                "SELECT id FROM tasks WHERE project_id = ? AND linear_issue_id IS NOT NULL",
+                "SELECT id FROM tasks WHERE project_id = %s AND linear_issue_id IS NOT NULL",
                 (self.project_id,),
             )
 

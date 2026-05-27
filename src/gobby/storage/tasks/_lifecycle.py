@@ -50,7 +50,7 @@ def close_task(
     # Check for open children unless force=True
     if not force:
         open_children = db.fetchall(
-            "SELECT id, title FROM tasks WHERE parent_task_id = ? AND closed_at IS NULL",
+            "SELECT id, title FROM tasks WHERE parent_task_id = %s AND closed_at IS NULL",
             (task_id,),
         )
         if open_children:
@@ -158,7 +158,7 @@ def link_commit(
         now = datetime.now(UTC).isoformat()
         with db.transaction() as conn:
             conn.execute(
-                "UPDATE tasks SET commits = ?, updated_at = ? WHERE id = ?",
+                "UPDATE tasks SET commits = %s, updated_at = %s WHERE id = %s",
                 (json.dumps(commits), now, task_id),
             )
         return True
@@ -208,7 +208,7 @@ def unlink_commit(
         commits_json = json.dumps(commits) if commits else None
         with db.transaction() as conn:
             conn.execute(
-                "UPDATE tasks SET commits = ?, updated_at = ? WHERE id = ?",
+                "UPDATE tasks SET commits = %s, updated_at = %s WHERE id = %s",
                 (commits_json, now, task_id),
             )
         return True
@@ -259,7 +259,7 @@ def delete_task(
 
     # Check if task exists first; capture path_cache so we can detect ancestors
     # of the original deletion target during dependent cascade.
-    existing = db.fetchone("SELECT path_cache FROM tasks WHERE id = ?", (task_id,))
+    existing = db.fetchone("SELECT path_cache FROM tasks WHERE id = %s", (task_id,))
     if not existing:
         return False
 
@@ -271,7 +271,7 @@ def delete_task(
 
     if not cascade:
         # Check for children
-        row = db.fetchone("SELECT 1 FROM tasks WHERE parent_task_id = ?", (task_id,))
+        row = db.fetchone("SELECT 1 FROM tasks WHERE parent_task_id = %s", (task_id,))
         if row:
             raise TaskHasChildrenError(f"Task {task_id} has children. Use cascade=True to delete.")
 
@@ -281,7 +281,7 @@ def delete_task(
             """SELECT t.id, t.seq_num, t.title
                FROM tasks t
                JOIN task_dependencies d ON d.task_id = t.id
-               WHERE d.depends_on = ? AND d.dep_type = 'blocks'""",
+               WHERE d.depends_on = %s AND d.dep_type = 'blocks'""",
             (task_id,),
         )
         if dependent_rows:
@@ -296,7 +296,7 @@ def delete_task(
 
     if cascade:
         # Recursive delete children
-        children = db.fetchall("SELECT id FROM tasks WHERE parent_task_id = ?", (task_id,))
+        children = db.fetchall("SELECT id FROM tasks WHERE parent_task_id = %s", (task_id,))
         for child in children:
             delete_task(
                 db,
@@ -314,7 +314,7 @@ def delete_task(
         dependents = db.fetchall(
             """SELECT t.id, t.path_cache FROM tasks t
                JOIN task_dependencies d ON d.task_id = t.id
-               WHERE d.depends_on = ? AND d.dep_type = 'blocks'""",
+               WHERE d.depends_on = %s AND d.dep_type = 'blocks'""",
             (task_id,),
         )
         for dep in dependents:
@@ -343,8 +343,9 @@ def delete_task(
         # tasks.parent_task_id lacks ON DELETE CASCADE, so orphan children
         # would cause an FK constraint failure without this cleanup.
         conn.execute(
-            "DELETE FROM task_dependencies WHERE task_id = ? OR depends_on = ?", (task_id, task_id)
+            "DELETE FROM task_dependencies WHERE task_id = %s OR depends_on = %s",
+            (task_id, task_id),
         )
-        conn.execute("UPDATE tasks SET parent_task_id = NULL WHERE parent_task_id = ?", (task_id,))
-        conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+        conn.execute("UPDATE tasks SET parent_task_id = NULL WHERE parent_task_id = %s", (task_id,))
+        conn.execute("DELETE FROM tasks WHERE id = %s", (task_id,))
     return True

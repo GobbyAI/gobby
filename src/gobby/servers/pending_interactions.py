@@ -140,7 +140,7 @@ class PendingInteractionManager:
                 """INSERT INTO pending_interactions
                    (id, session_id, kind, provider, tool_name,
                     payload_json, status, timeout_seconds)
-                   VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)""",
+                   VALUES (%s, %s, %s, %s, %s, %s, 'pending', %s)""",
                 (
                     interaction_id,
                     session_id,
@@ -199,9 +199,9 @@ class PendingInteractionManager:
         with self._db.transaction() as conn:
             result = conn.execute(
                 """UPDATE pending_interactions
-                   SET status = 'resolved', decision = ?, response_json = ?,
+                   SET status = 'resolved', decision = %s, response_json = %s,
                        resolved_at = CURRENT_TIMESTAMP
-                   WHERE id = ? AND status = 'pending'""",
+                   WHERE id = %s AND status = 'pending'""",
                 (decision, response_json, interaction_id),
             )
             return result.rowcount > 0
@@ -230,7 +230,7 @@ class PendingInteractionManager:
                 """UPDATE pending_interactions
                    SET status = 'expired', decision = 'timeout',
                        resolved_at = CURRENT_TIMESTAMP
-                   WHERE id = ? AND status = 'pending'""",
+                   WHERE id = %s AND status = 'pending'""",
                 (interaction_id,),
             )
 
@@ -243,7 +243,7 @@ class PendingInteractionManager:
             self._db.fetchall,
             """SELECT id, kind, provider, tool_name, payload_json, timeout_seconds
                FROM pending_interactions
-               WHERE session_id = ? AND status = 'pending'
+               WHERE session_id = %s AND status = 'pending'
                ORDER BY created_at DESC""",
             (session_id,),
         )
@@ -272,7 +272,7 @@ class PendingInteractionManager:
         """Count pending interactions for a session (rate limiting)."""
         row = await self._run_database(
             self._db.fetchone,
-            "SELECT COUNT(*) as cnt FROM pending_interactions WHERE session_id = ? AND status = 'pending'",
+            "SELECT COUNT(*) as cnt FROM pending_interactions WHERE session_id = %s AND status = 'pending'",
             (session_id,),
         )
         return row["cnt"] if row else 0
@@ -297,7 +297,7 @@ class PendingInteractionManager:
         """Expire any existing pending interaction of same (session_id, kind)."""
         rows = await self._run_database(
             self._db.fetchall,
-            "SELECT id FROM pending_interactions WHERE session_id = ? AND kind = ? AND status = 'pending'",
+            "SELECT id FROM pending_interactions WHERE session_id = %s AND kind = %s AND status = 'pending'",
             (session_id, kind),
         )
         for row in rows:

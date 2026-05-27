@@ -73,7 +73,7 @@ def test_action_config_repaired_with_operator_schedule_intact(temp_db) -> None:
     storage = CronJobStorage(temp_db)
     storage.update_job(first.id, interval_seconds=300)
     temp_db.execute(
-        "UPDATE cron_jobs SET action_config = ? WHERE id = ?",
+        "UPDATE cron_jobs SET action_config = %s WHERE id = %s",
         ('{"handler": "drifted"}', first.id),
     )
     upgraded = install_dispatcher_cron_row(temp_db, project_id="project-1")

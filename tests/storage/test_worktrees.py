@@ -362,7 +362,7 @@ class TestLocalWorktreeManagerList:
         call_args = mock_db.fetchall.call_args
         query = call_args[0][0]
         params = call_args[0][1]
-        assert "project_id = ?" in query
+        assert "project_id = %s" in query
         assert "proj-abc" in params
 
     def test_list_filter_by_status(self, manager, mock_db) -> None:
@@ -374,7 +374,7 @@ class TestLocalWorktreeManagerList:
         call_args = mock_db.fetchall.call_args
         query = call_args[0][0]
         params = call_args[0][1]
-        assert "status = ?" in query
+        assert "status = %s" in query
         assert "active" in params
 
     def test_list_filter_by_session(self, manager, mock_db) -> None:
@@ -386,7 +386,7 @@ class TestLocalWorktreeManagerList:
         call_args = mock_db.fetchall.call_args
         query = call_args[0][0]
         params = call_args[0][1]
-        assert "agent_session_id = ?" in query
+        assert "agent_session_id = %s" in query
         assert "sess-xyz" in params
 
     def test_list_with_limit(self, manager, mock_db) -> None:
@@ -408,8 +408,8 @@ class TestLocalWorktreeManagerList:
         call_args = mock_db.fetchall.call_args
         query = call_args[0][0]
         params = call_args[0][1]
-        assert "project_id = ?" in query
-        assert "status = ?" in query
+        assert "project_id = %s" in query
+        assert "status = %s" in query
         assert "proj-abc" in params
         assert "active" in params
 
@@ -470,8 +470,8 @@ class TestLocalWorktreeManagerUpdate:
         mock_db.execute.assert_called_once()
         call_args = mock_db.execute.call_args
         query = call_args[0][0]
-        assert "status = ?" in query
-        assert "updated_at = ?" in query  # Should auto-update timestamp
+        assert "status = %s" in query
+        assert "updated_at = %s" in query  # Should auto-update timestamp
 
     def test_update_multiple_fields(self, manager, mock_db) -> None:
         """Update modifies multiple fields."""
@@ -579,7 +579,7 @@ class TestLocalWorktreeManagerStatusTransitions:
         mock_db.execute.assert_called_once()
         call_args = mock_db.execute.call_args
         query = call_args[0][0]
-        assert "agent_session_id = ?" in query
+        assert "agent_session_id = %s" in query
 
     def test_release_clears_session_id(self, manager, mock_db, mock_row) -> None:
         """release clears agent_session_id."""
@@ -661,7 +661,7 @@ class TestLocalWorktreeManagerFindStale:
         call_args = mock_db.fetchall.call_args
         query = call_args[0][0]
         assert "updated_at <" in query
-        assert "status = ?" in query
+        assert "status = %s" in query
 
     def test_find_stale_custom_hours(self, manager, mock_db) -> None:
         """find_stale uses custom hours threshold."""
@@ -826,5 +826,5 @@ class TestLocalWorktreeManagerCountByStatus:
         call_args = mock_db.fetchall.call_args
         query = call_args[0][0]
         params = call_args[0][1]
-        assert "project_id = ?" in query
+        assert "project_id = %s" in query
         assert "proj-abc" in params

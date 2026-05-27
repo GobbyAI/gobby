@@ -24,7 +24,7 @@ class TaskCompactor:
         sql = """
             SELECT * FROM tasks
             WHERE closed_at IS NOT NULL
-              AND updated_at < ?
+              AND updated_at < %s
               AND compacted_at IS NULL
             ORDER BY updated_at ASC
         """
@@ -42,10 +42,10 @@ class TaskCompactor:
         # and mark it as compacted.
         sql = """
             UPDATE tasks
-            SET description = ?,
-                compacted_at = ?,
-                updated_at = ?
-            WHERE id = ?
+            SET description = %s,
+                compacted_at = %s,
+                updated_at = %s
+            WHERE id = %s
         """
 
         self.task_manager.db.execute(sql, (summary, now, now, task_id))

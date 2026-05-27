@@ -40,8 +40,8 @@ def _set_session_stats(
     db.execute(
         """
         UPDATE sessions
-        SET tool_call_count = ?, turn_count = ?
-        WHERE id = ?
+        SET tool_call_count = %s, turn_count = %s
+        WHERE id = %s
         """,
         (tool_calls_count, turns_used, session_id),
     )

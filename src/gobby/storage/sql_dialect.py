@@ -34,7 +34,7 @@ def table_column_names(db: Any, table_name: str) -> set[str]:
         SELECT column_name AS name
           FROM information_schema.columns
          WHERE table_schema = current_schema()
-           AND table_name = ?
+           AND table_name = %s
         """,
         (table_name,),
     )
@@ -56,7 +56,7 @@ def json_array_contains_condition(
     db: object, column: str, value: str
 ) -> tuple[str, tuple[str, ...]]:
     """Return a SQL condition and params for exact JSON string-array membership."""
-    return f"{column} @> ?::jsonb", (json.dumps([value]),)
+    return f"{column} @> %s::jsonb", (json.dumps([value]),)
 
 
 def older_than_now_expr(db: object, column: str, param: str, unit: IntervalUnit) -> str:

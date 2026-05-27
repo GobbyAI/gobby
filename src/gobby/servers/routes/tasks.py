@@ -171,7 +171,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
     def _stage_views_for_tasks(task_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
         if not task_ids:
             return {}
-        placeholders = ", ".join("?" for _ in task_ids)
+        placeholders = ", ".join("%s" for _ in task_ids)
         rows = server.task_manager.db.fetchall(
             f"""
             SELECT *

@@ -373,7 +373,7 @@ class TestRuleEngineIntegration:
         db.execute("UPDATE workflow_definitions SET enabled = FALSE")
         for name in PROGRESSIVE_DISCOVERY_RULES:
             db.execute(
-                "UPDATE workflow_definitions SET enabled = TRUE WHERE name = ?",
+                "UPDATE workflow_definitions SET enabled = TRUE WHERE name = %s",
                 (name,),
             )
         return RuleEngine(db)

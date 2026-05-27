@@ -176,7 +176,7 @@ class TestSessionManagerLifecycle:
         assert revived is not None
         assert revived.status == "active"
         row = session_manager.db.fetchone(
-            "SELECT transcript_processed FROM sessions WHERE id = ?",
+            "SELECT transcript_processed FROM sessions WHERE id = %s",
             (session.id,),
         )
         assert row["transcript_processed"] == 0

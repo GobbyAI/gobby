@@ -6,7 +6,7 @@ from gobby.storage.tasks._models import UNSET, MaybeUnset
 
 def _session_exists(db: HubDatabase, session_id: str) -> bool:
     """Return whether the given session ID exists in storage."""
-    return bool(db.fetchone("SELECT 1 FROM sessions WHERE id = ?", (session_id,)))
+    return bool(db.fetchone("SELECT 1 FROM sessions WHERE id = %s", (session_id,)))
 
 
 def _derive_claimed_by_session_id(

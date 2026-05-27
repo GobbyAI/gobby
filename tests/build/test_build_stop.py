@@ -66,7 +66,7 @@ def test_lifecycle_event_appended(temp_db) -> None:
 
     assert result.lifecycle_event.reason == "gobby build stop"
     row = temp_db.fetchone(
-        "SELECT reason FROM project_lifecycle_events WHERE project_id = ?",
+        "SELECT reason FROM project_lifecycle_events WHERE project_id = %s",
         ("project-1",),
     )
     assert row["reason"] == "gobby build stop"
@@ -130,7 +130,7 @@ def test_lifecycle_event_appended_on_hub_database(hub_db) -> None:
 
     assert result.lifecycle_event.id > 0
     row = hub_db.fetchone(
-        "SELECT reason FROM project_lifecycle_events WHERE project_id = ?",
+        "SELECT reason FROM project_lifecycle_events WHERE project_id = %s",
         (project.id,),
     )
     assert row["reason"] == "gobby build resume"

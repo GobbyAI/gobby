@@ -68,17 +68,17 @@ def _get_project_stats(server: HTTPServer, project_id: str) -> dict[str, Any]:
     db = server.session_manager.db
 
     session_count = db.fetchone(
-        "SELECT COUNT(*) as cnt FROM sessions WHERE project_id = ? AND status IN ('active', 'paused')",
+        "SELECT COUNT(*) as cnt FROM sessions WHERE project_id = %s AND status IN ('active', 'paused')",
         (project_id,),
     )
 
     open_task_count = db.fetchone(
-        "SELECT COUNT(*) as cnt FROM tasks WHERE project_id = ? AND closed_at IS NULL",
+        "SELECT COUNT(*) as cnt FROM tasks WHERE project_id = %s AND closed_at IS NULL",
         (project_id,),
     )
 
     last_activity = db.fetchone(
-        "SELECT MAX(updated_at) as last_activity FROM sessions WHERE project_id = ?",
+        "SELECT MAX(updated_at) as last_activity FROM sessions WHERE project_id = %s",
         (project_id,),
     )
 

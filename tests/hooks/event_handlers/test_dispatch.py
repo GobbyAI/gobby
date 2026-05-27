@@ -178,7 +178,7 @@ def _stage_pipeline_task(
     manager = LocalTaskManager(temp_db)
     task = manager.create_task(project_id=sample_project["id"], title="Pipeline stage")
     temp_db.execute(
-        "UPDATE task_stages_registry SET review_policy = ? WHERE name = 'expansion'",
+        "UPDATE task_stages_registry SET review_policy = %s WHERE name = 'expansion'",
         (review_policy,),
     )
     initialize_manifest(temp_db, task.id, [spec("expansion", 0)])
@@ -189,8 +189,8 @@ def _stage_pipeline_task(
     temp_db.execute(
         """
         UPDATE task_dispatch_mutex
-           SET run_id = ?, action_kind = ?
-         WHERE task_id = ?
+           SET run_id = %s, action_kind = %s
+         WHERE task_id = %s
         """,
         ("pe-1", "stage-pipeline:expansion", task.id),
     )

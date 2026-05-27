@@ -627,7 +627,7 @@ def create_configuration_router(server: "HTTPServer") -> APIRouter:
 
             # Check if a global override already exists
             existing_override = manager.db.fetchone(
-                "SELECT * FROM prompts WHERE name = ? AND scope = 'global' AND project_id IS NULL",
+                "SELECT * FROM prompts WHERE name = %s AND scope = 'global' AND project_id IS NULL",
                 (path,),
             )
 
@@ -671,7 +671,7 @@ def create_configuration_router(server: "HTTPServer") -> APIRouter:
 
             # Find the global override
             row = manager.db.fetchone(
-                "SELECT * FROM prompts WHERE name = ? AND scope = 'global' AND project_id IS NULL",
+                "SELECT * FROM prompts WHERE name = %s AND scope = 'global' AND project_id IS NULL",
                 (path,),
             )
             if not row:
@@ -860,7 +860,7 @@ def create_configuration_router(server: "HTTPServer") -> APIRouter:
 
                     # Upsert as scope='global'
                     existing = manager.db.fetchone(
-                        "SELECT id FROM prompts WHERE name = ? AND scope = 'global' "
+                        "SELECT id FROM prompts WHERE name = %s AND scope = 'global' "
                         "AND project_id IS NULL",
                         (name,),
                     )

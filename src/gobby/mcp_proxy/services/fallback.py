@@ -317,7 +317,7 @@ class ToolFallbackResolver:
                 SELECT t.description
                 FROM tools t
                 JOIN mcp_servers s ON t.mcp_server_id = s.id
-                WHERE s.name = ? AND t.name = ?
+                WHERE s.name = %s AND t.name = %s
                 LIMIT 1
                 """,
                 (server_name, tool_name),

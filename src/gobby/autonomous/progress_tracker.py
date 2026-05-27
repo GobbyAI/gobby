@@ -156,7 +156,7 @@ class ProgressTracker:
                 """
                 INSERT INTO loop_progress (
                     session_id, progress_type, tool_name, details, recorded_at, is_high_value
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s)
                 """,
                 (
                     session_id,
@@ -249,7 +249,7 @@ class ProgressTracker:
             """
             SELECT progress_type, COUNT(*) as count
             FROM loop_progress
-            WHERE session_id = ?
+            WHERE session_id = %s
             GROUP BY progress_type
             """,
             (session_id,),
@@ -267,7 +267,7 @@ class ProgressTracker:
             """
             SELECT COUNT(*) as count
             FROM loop_progress
-            WHERE session_id = ? AND is_high_value IS TRUE
+            WHERE session_id = %s AND is_high_value IS TRUE
             """,
             (session_id,),
         )
@@ -278,7 +278,7 @@ class ProgressTracker:
             """
             SELECT recorded_at
             FROM loop_progress
-            WHERE session_id = ? AND is_high_value IS TRUE
+            WHERE session_id = %s AND is_high_value IS TRUE
             ORDER BY recorded_at DESC
             LIMIT 1
             """,
@@ -293,7 +293,7 @@ class ProgressTracker:
             """
             SELECT recorded_at
             FROM loop_progress
-            WHERE session_id = ?
+            WHERE session_id = %s
             ORDER BY recorded_at DESC
             LIMIT 1
             """,
@@ -368,7 +368,7 @@ class ProgressTracker:
                 """
                 SELECT recorded_at
                 FROM loop_progress
-                WHERE session_id = ?
+                WHERE session_id = %s
                 ORDER BY recorded_at ASC
                 LIMIT 1
                 """,
@@ -409,7 +409,7 @@ class ProgressTracker:
         """
         with self._lock:
             result = self.db.execute(
-                "DELETE FROM loop_progress WHERE session_id = ?",
+                "DELETE FROM loop_progress WHERE session_id = %s",
                 (session_id,),
             )
 
@@ -432,9 +432,9 @@ class ProgressTracker:
             """
             SELECT session_id, progress_type, tool_name, details, recorded_at
             FROM loop_progress
-            WHERE session_id = ?
+            WHERE session_id = %s
             ORDER BY recorded_at DESC
-            LIMIT ?
+            LIMIT %s
             """,
             (session_id, limit),
         )

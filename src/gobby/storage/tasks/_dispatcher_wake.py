@@ -21,7 +21,7 @@ def wake_dispatcher_for_task_change(db: HubDatabase, task_id: str) -> bool:
         """
         SELECT project_id, allow_automation
           FROM tasks
-         WHERE id = ?
+         WHERE id = %s
         """,
         (task_id,),
     )

@@ -319,7 +319,7 @@ class TaskRecoveryHandler:
     def _clear_dispatch_mutex_by_run_id(db: Any, run_id: str) -> int:
         with db.transaction() as conn:
             cursor = conn.execute(
-                "DELETE FROM task_dispatch_mutex WHERE run_id = ?",
+                "DELETE FROM task_dispatch_mutex WHERE run_id = %s",
                 (run_id,),
             )
             return int(cursor.rowcount)

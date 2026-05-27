@@ -32,14 +32,14 @@ def _seed_db(db: HubDatabase) -> None:
     """Insert project + session rows to satisfy FK constraints."""
     db.execute(
         """INSERT INTO projects (id, name, repo_path, created_at, updated_at)
-           VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+           VALUES (%s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
            ON CONFLICT DO NOTHING""",
         (PROJECT_ID, "test-project", "/tmp/test"),
     )
     db.execute(
         """INSERT INTO sessions
            (id, external_id, machine_id, source, project_id, status, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+           VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
            ON CONFLICT DO NOTHING""",
         (SESSION_ID, "ext-1", "machine-1", "claude_code", PROJECT_ID, "active"),
     )
@@ -79,7 +79,7 @@ def _create_stalled_execution(
     # Backdate updated_at to make it stale
     stale_time = (datetime.now(UTC) - timedelta(minutes=stale_minutes)).isoformat()
     temp_db.execute(
-        "UPDATE pipeline_executions SET updated_at = ? WHERE id = ?",
+        "UPDATE pipeline_executions SET updated_at = %s WHERE id = %s",
         (stale_time, exe.id),
     )
     return exe.id
@@ -303,10 +303,10 @@ def _create_in_progress_task(
         task_type="task",
         project_id=project_id,
     )
-    task_manager.db.execute("UPDATE tasks SET assignee = ? WHERE id = ?", (assignee, task.id))
-    if task_manager.db.fetchone("SELECT 1 FROM sessions WHERE id = ?", (assignee,)):
+    task_manager.db.execute("UPDATE tasks SET assignee = %s WHERE id = %s", (assignee, task.id))
+    if task_manager.db.fetchone("SELECT 1 FROM sessions WHERE id = %s", (assignee,)):
         task_manager.db.execute(
-            "UPDATE tasks SET claimed_by_session_id = ? WHERE id = ?",
+            "UPDATE tasks SET claimed_by_session_id = %s WHERE id = %s",
             (assignee, task.id),
         )
     task_manager.initialize_task_manifest(task.id)
@@ -339,7 +339,7 @@ async def test_stale_task_with_terminal_agent_run_recovered(
         task_id=task_id,
     )
     # The run is created as 'pending' — start then fail it
-    runs = temp_db.fetchall("SELECT id FROM agent_runs WHERE task_id = ?", (task_id,))
+    runs = temp_db.fetchall("SELECT id FROM agent_runs WHERE task_id = %s", (task_id,))
     run_id = runs[0]["id"]
     agent_run_manager.start(run_id)
     agent_run_manager.fail(run_id, error="Agent died")
@@ -372,7 +372,7 @@ async def test_stale_task_with_commits_promoted_to_needs_review(
         prompt="implement feature",
         task_id=task_id,
     )
-    runs = temp_db.fetchall("SELECT id FROM agent_runs WHERE task_id = ?", (task_id,))
+    runs = temp_db.fetchall("SELECT id FROM agent_runs WHERE task_id = %s", (task_id,))
     run_id = runs[0]["id"]
     agent_run_manager.start(run_id)
     agent_run_manager.complete(run_id, result="done")
@@ -381,10 +381,10 @@ async def test_stale_task_with_commits_promoted_to_needs_review(
     # Write directly to DB since link_commit validates against git
     import json
 
-    row = temp_db.fetchone("SELECT commits FROM tasks WHERE id = ?", (task_id,))
+    row = temp_db.fetchone("SELECT commits FROM tasks WHERE id = %s", (task_id,))
     commits = json.loads(row["commits"]) if row["commits"] else []
     commits.append("abc123de")
-    temp_db.execute("UPDATE tasks SET commits = ? WHERE id = ?", (json.dumps(commits), task_id))
+    temp_db.execute("UPDATE tasks SET commits = %s WHERE id = %s", (json.dumps(commits), task_id))
 
     recovered = await heartbeat_with_tasks.check_stale_tasks()
     assert recovered == 1
@@ -410,7 +410,7 @@ async def test_stale_review_task_releases_claim_without_status_regression(
         project_id=PROJECT_ID,
     )
     task_manager.db.execute(
-        "UPDATE tasks SET assignee = ? WHERE id = ?",
+        "UPDATE tasks SET assignee = %s WHERE id = %s",
         ("sess-does-not-exist", task.id),
     )
     task_manager.initialize_task_manifest(task.id)
@@ -506,7 +506,7 @@ async def test_expired_session_task_recovered(
     """In-progress task assigned to an expired session returns to ready."""
     _seed_db(temp_db)
     # Mark the session as expired (simulates SessionLivenessMonitor detecting dead PID)
-    temp_db.execute("UPDATE sessions SET status = 'expired' WHERE id = ?", (SESSION_ID,))
+    temp_db.execute("UPDATE sessions SET status = 'expired' WHERE id = %s", (SESSION_ID,))
     task_id = _create_in_progress_task(task_manager, assignee=SESSION_ID)
 
     recovered = await heartbeat_with_tasks.check_stale_tasks()
@@ -529,7 +529,7 @@ async def test_paused_agent_session_task_recovered(
     _seed_db(temp_db)
     # Mark session as paused with agent_depth > 0 (dead agent session)
     temp_db.execute(
-        "UPDATE sessions SET status = 'paused', agent_depth = 1 WHERE id = ?", (SESSION_ID,)
+        "UPDATE sessions SET status = 'paused', agent_depth = 1 WHERE id = %s", (SESSION_ID,)
     )
     task_id = _create_in_progress_task(task_manager, assignee=SESSION_ID)
 
@@ -553,7 +553,7 @@ async def test_paused_interactive_session_task_not_recovered(
     _seed_db(temp_db)
     # Mark session as paused with agent_depth 0 (interactive user between prompts)
     temp_db.execute(
-        "UPDATE sessions SET status = 'paused', agent_depth = 0 WHERE id = ?", (SESSION_ID,)
+        "UPDATE sessions SET status = 'paused', agent_depth = 0 WHERE id = %s", (SESSION_ID,)
     )
     task_id = _create_in_progress_task(task_manager, assignee=SESSION_ID)
 

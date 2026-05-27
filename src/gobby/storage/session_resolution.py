@@ -59,7 +59,7 @@ def resolve_session_reference(db: HubDatabase, ref: str, project_id: str | None 
         is_seq_num_lookup = seq_num_ref.isdigit()
         if is_seq_num_lookup and len(seq_num_ref) >= 8:
             prefix_rows = db.fetchall(
-                "SELECT id FROM sessions WHERE id LIKE ? LIMIT 2",
+                "SELECT id FROM sessions WHERE id LIKE %s LIMIT 2",
                 (f"{seq_num_ref}%",),
             )
             if len(prefix_rows) == 1:
@@ -73,7 +73,7 @@ def resolve_session_reference(db: HubDatabase, ref: str, project_id: str | None 
                 f"for #N lookups. Pass a full UUID or ensure project context is set."
             )
         row = db.fetchone(
-            "SELECT id FROM sessions WHERE project_id = ? AND seq_num = ?",
+            "SELECT id FROM sessions WHERE project_id = %s AND seq_num = %s",
             (project_id, seq_num),
         )
         if not row:
@@ -90,7 +90,7 @@ def resolve_session_reference(db: HubDatabase, ref: str, project_id: str | None 
     if is_valid_uuid:
         canonical = str(uuid_obj)
         # Primary-key lookup wins.
-        row = db.fetchone("SELECT id FROM sessions WHERE id = ?", (canonical,))
+        row = db.fetchone("SELECT id FROM sessions WHERE id = %s", (canonical,))
         if row:
             return str(row["id"])
 
@@ -100,12 +100,12 @@ def resolve_session_reference(db: HubDatabase, ref: str, project_id: str | None 
         # caller to disambiguate rather than picking one silently.
         if project_id:
             ext_rows = db.fetchall(
-                "SELECT id FROM sessions WHERE external_id = ? AND project_id = ? LIMIT 5",
+                "SELECT id FROM sessions WHERE external_id = %s AND project_id = %s LIMIT 5",
                 (canonical, project_id),
             )
         else:
             ext_rows = db.fetchall(
-                "SELECT id FROM sessions WHERE external_id = ? LIMIT 5",
+                "SELECT id FROM sessions WHERE external_id = %s LIMIT 5",
                 (canonical,),
             )
         if not ext_rows:
@@ -123,7 +123,7 @@ def resolve_session_reference(db: HubDatabase, ref: str, project_id: str | None 
         return str(ext_rows[0]["id"])
 
     # Prefix matching — id first, then external_id.
-    rows = db.fetchall("SELECT id FROM sessions WHERE id LIKE ? LIMIT 5", (f"{ref}%",))
+    rows = db.fetchall("SELECT id FROM sessions WHERE id LIKE %s LIMIT 5", (f"{ref}%",))
     if rows:
         if len(rows) > 1:
             matches = [str(r["id"]) for r in rows]
@@ -132,12 +132,12 @@ def resolve_session_reference(db: HubDatabase, ref: str, project_id: str | None 
 
     if project_id:
         ext_rows = db.fetchall(
-            "SELECT id FROM sessions WHERE external_id LIKE ? AND project_id = ? LIMIT 5",
+            "SELECT id FROM sessions WHERE external_id LIKE %s AND project_id = %s LIMIT 5",
             (f"{ref}%", project_id),
         )
     else:
         ext_rows = db.fetchall(
-            "SELECT id FROM sessions WHERE external_id LIKE ? LIMIT 5",
+            "SELECT id FROM sessions WHERE external_id LIKE %s LIMIT 5",
             (f"{ref}%",),
         )
     if not ext_rows:

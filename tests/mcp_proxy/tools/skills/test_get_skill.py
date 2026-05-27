@@ -240,7 +240,7 @@ class TestGetSkillTool:
 
         # Verify skill usage was recorded
         row = populated_db.fetchone(
-            "SELECT skill_name FROM session_skills WHERE session_id = ?",
+            "SELECT skill_name FROM session_skills WHERE session_id = %s",
             (session.id,),
         )
         assert row is not None
@@ -282,7 +282,7 @@ class TestGetSkillTool:
         await tool(name="git-commit", session_id=session.id)
 
         row = populated_db.fetchone(
-            "SELECT COUNT(*) AS count FROM session_skills WHERE session_id = ?",
+            "SELECT COUNT(*) AS count FROM session_skills WHERE session_id = %s",
             (session.id,),
         )
         assert row["count"] == 1

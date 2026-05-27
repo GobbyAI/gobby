@@ -49,7 +49,7 @@ def get_claimed_task_ids() -> set[str]:
                     try:
                         seq_num = int(ref[1:])
                         row = db.fetchone(
-                            "SELECT id FROM tasks WHERE project_id = ? AND seq_num = ?",
+                            "SELECT id FROM tasks WHERE project_id = %s AND seq_num = %s",
                             (project_id, seq_num),
                         )
                         return row["id"] if row else None
@@ -62,7 +62,7 @@ def get_claimed_task_ids() -> set[str]:
 
                 # Partial UUID prefix - find matching task
                 row = db.fetchone(
-                    "SELECT id FROM tasks WHERE id LIKE ? AND project_id = ?",
+                    "SELECT id FROM tasks WHERE id LIKE %s AND project_id = %s",
                     (f"{ref}%", project_id),
                 )
                 return row["id"] if row else None

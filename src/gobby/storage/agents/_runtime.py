@@ -45,8 +45,8 @@ class _AgentRunRuntimeMixin:
         self.db.execute(
             """
             UPDATE agent_runs
-            SET sdk_session_id = ?, updated_at = ?
-            WHERE id = ?
+            SET sdk_session_id = %s, updated_at = %s
+            WHERE id = %s
             """,
             (sdk_session_id, now, run_id),
         )
@@ -64,7 +64,7 @@ class _AgentRunRuntimeMixin:
         row = self.db.fetchone(
             """
             SELECT sdk_session_id FROM agent_runs
-            WHERE child_session_id = ? AND sdk_session_id IS NOT NULL
+            WHERE child_session_id = %s AND sdk_session_id IS NOT NULL
             ORDER BY updated_at DESC
             LIMIT 1
             """,
@@ -89,28 +89,28 @@ class _AgentRunRuntimeMixin:
         params: list[Any] = []
 
         if pid is not None:
-            updates.append("pid = ?")
+            updates.append("pid = %s")
             params.append(pid)
         if tmux_session_name is not None:
-            updates.append("tmux_session_name = ?")
+            updates.append("tmux_session_name = %s")
             params.append(tmux_session_name)
         if worktree_id is not None:
-            updates.append("worktree_id = ?")
+            updates.append("worktree_id = %s")
             params.append(worktree_id)
         if clone_id is not None:
-            updates.append("clone_id = ?")
+            updates.append("clone_id = %s")
             params.append(clone_id)
 
         if not updates:
             return
 
         now = utc_now_iso()
-        updates.append("updated_at = ?")
+        updates.append("updated_at = %s")
         params.append(now)
         params.append(run_id)
 
         self.db.execute(
-            f"UPDATE agent_runs SET {', '.join(updates)} WHERE id = ?",
+            f"UPDATE agent_runs SET {', '.join(updates)} WHERE id = %s",
             tuple(params),
         )
 
@@ -124,8 +124,8 @@ class _AgentRunRuntimeMixin:
         cursor = self.db.execute(
             """
             UPDATE agent_runs
-            SET tmux_session_name = NULL, updated_at = ?
-            WHERE id = ? AND tmux_session_name = ?
+            SET tmux_session_name = NULL, updated_at = %s
+            WHERE id = %s AND tmux_session_name = %s
             """,
             (now, run_id, tmux_session_name),
         )
@@ -149,8 +149,8 @@ class _AgentRunRuntimeMixin:
         self.db.execute(
             """
             UPDATE agent_runs
-            SET child_session_id = ?, updated_at = ?
-            WHERE id = ?
+            SET child_session_id = %s, updated_at = %s
+            WHERE id = %s
             """,
             (child_session_id, now, run_id),
         )

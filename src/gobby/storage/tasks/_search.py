@@ -182,8 +182,12 @@ class TaskSearchBackend:
             return []
 
         params: list[Any] = []
-        query_placeholder = self._add_param(params, bm25_query)
-        conditions = [f"(t.title @@@ {query_placeholder} OR t.description @@@ {query_placeholder})"]
+        title_query_placeholder = self._add_param(params, bm25_query)
+        description_query_placeholder = self._add_param(params, bm25_query)
+        conditions = [
+            f"(t.title @@@ {title_query_placeholder} "
+            f"OR t.description @@@ {description_query_placeholder})"
+        ]
         self._append_common_filters(
             params=params,
             conditions=conditions,

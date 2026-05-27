@@ -422,7 +422,7 @@ def _affected_tasks(task_manager: LocalTaskManager, root: Task) -> list[Task]:
         WITH RECURSIVE subtree(id) AS (
             SELECT id
             FROM tasks
-            WHERE id = ?
+            WHERE id = %s
             UNION ALL
             SELECT child.id
             FROM tasks child
@@ -589,11 +589,11 @@ def _has_terminal_agent_claim(db: HubDatabase, task_id: str, session_id: str) ->
         """
         SELECT status
         FROM agent_runs
-        WHERE task_id = ?
+        WHERE task_id = %s
           AND (
-            child_session_id = ?
-            OR claimed_session_id = ?
-            OR parent_session_id = ?
+            child_session_id = %s
+            OR claimed_session_id = %s
+            OR parent_session_id = %s
           )
         """,
         (task_id, session_id, session_id, session_id),
@@ -700,14 +700,21 @@ def _apply_restart_task_controls(
     for task in tasks:
         if task.closed_at is not None:
             continue
-        updates: dict[str, object] = {
-            "allow_automation": allow_automation,
-            "unattended": opts.unattended,
-            "isolation": opts.isolation,
-        }
         if task.id == root.id and opts.assigned_agent is not None:
-            updates["assigned_agent"] = opts.assigned_agent
-        task_manager.update_task(task.id, **updates)
+            task_manager.update_task(
+                task.id,
+                allow_automation=allow_automation,
+                unattended=opts.unattended,
+                isolation=opts.isolation,
+                assigned_agent=opts.assigned_agent,
+            )
+        else:
+            task_manager.update_task(
+                task.id,
+                allow_automation=allow_automation,
+                unattended=opts.unattended,
+                isolation=opts.isolation,
+            )
 
 
 def _reset_restart_stage_manifests(
@@ -731,7 +738,7 @@ def _reset_restart_stage_manifests_legacy(db: HubDatabase, tasks: list[Task]) ->
         if not rows:
             continue
         specs = _restart_stage_specs(db, task, rows)
-        db.execute("DELETE FROM task_stage_states WHERE task_id = ?", (task.id,))
+        db.execute("DELETE FROM task_stage_states WHERE task_id = %s", (task.id,))
         task_manager.stage_states.initialize_manifest(task.id, specs, by_session_id=None)
         reset += 1
     return reset
@@ -762,7 +769,7 @@ def _reset_restart_stage_manifests_from_options(
         )
         if not specs:
             continue
-        db.execute("DELETE FROM task_stage_states WHERE task_id = ?", (task.id,))
+        db.execute("DELETE FROM task_stage_states WHERE task_id = %s", (task.id,))
         task_manager.stage_states.initialize_manifest(task.id, specs, by_session_id=None)
         reset += 1
     if input_kind == "plan_file":
@@ -808,11 +815,11 @@ def _seed_restart_plan_file_stage_state(
             """
             UPDATE task_stage_states
                SET state = 'needs_review',
-                   review_round_count = ?,
-                   entered_at = COALESCE(entered_at, ?),
-                   updated_at = ?,
-                   notes = ?
-             WHERE task_id = ?
+                   review_round_count = %s,
+                   entered_at = COALESCE(entered_at, %s),
+                   updated_at = %s,
+                   notes = %s
+             WHERE task_id = %s
                AND stage_name = 'planning'
             """,
             (
@@ -859,7 +866,7 @@ def _task_uses_isolated_workspace(task: Task) -> bool:
 
 
 def _has_children(db: HubDatabase, task_id: str) -> bool:
-    return bool(db.fetchone("SELECT 1 FROM tasks WHERE parent_task_id = ? LIMIT 1", (task_id,)))
+    return bool(db.fetchone("SELECT 1 FROM tasks WHERE parent_task_id = %s LIMIT 1", (task_id,)))
 
 
 def _primary_stage_for_restart(task: Task) -> str:

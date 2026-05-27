@@ -36,7 +36,7 @@ def compute_path_cache(db: HubDatabase, task_id: str) -> str | None:
 
     while current_id and depth < max_depth:
         row = db.fetchone(
-            "SELECT seq_num, parent_task_id FROM tasks WHERE id = ?",
+            "SELECT seq_num, parent_task_id FROM tasks WHERE id = %s",
             (current_id,),
         )
         if not row:
@@ -75,7 +75,7 @@ def update_path_cache(db: HubDatabase, task_id: str) -> str | None:
     if path is not None:
         now = datetime.now(UTC).isoformat()
         db.execute(
-            "UPDATE tasks SET path_cache = ?, updated_at = ? WHERE id = ?",
+            "UPDATE tasks SET path_cache = %s, updated_at = %s WHERE id = %s",
             (path, now, task_id),
         )
     return path
@@ -101,7 +101,7 @@ def update_descendant_paths(db: HubDatabase, task_id: str) -> int:
 
     # Find and update all descendants (recursive)
     children = db.fetchall(
-        "SELECT id FROM tasks WHERE parent_task_id = ?",
+        "SELECT id FROM tasks WHERE parent_task_id = %s",
         (task_id,),
     )
     for child in children:

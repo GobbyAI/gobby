@@ -186,8 +186,8 @@ async def test_execute_pipeline_recreates_missing_system_session(
 
     executor = CronExecutor(storage=cron_storage, pipeline_executor=pipeline_executor)
 
-    temp_db.execute("DELETE FROM sessions WHERE id = ?", (SYSTEM_SESSION_ID,))
-    assert temp_db.fetchone("SELECT id FROM sessions WHERE id = ?", (SYSTEM_SESSION_ID,)) is None
+    temp_db.execute("DELETE FROM sessions WHERE id = %s", (SYSTEM_SESSION_ID,))
+    assert temp_db.fetchone("SELECT id FROM sessions WHERE id = %s", (SYSTEM_SESSION_ID,)) is None
 
     job = _make_job(
         cron_storage,
@@ -199,12 +199,12 @@ async def test_execute_pipeline_recreates_missing_system_session(
     result = await executor.execute(job, run)
 
     assert result.status == "completed"
-    repaired = temp_db.fetchone("SELECT id FROM sessions WHERE id = ?", (SYSTEM_SESSION_ID,))
+    repaired = temp_db.fetchone("SELECT id FROM sessions WHERE id = %s", (SYSTEM_SESSION_ID,))
     assert repaired is not None
 
     cron_session_id = pipeline_executor.execute.await_args.kwargs["session_id"]
     cron_session = temp_db.fetchone(
-        "SELECT source, parent_session_id FROM sessions WHERE id = ?",
+        "SELECT source, parent_session_id FROM sessions WHERE id = %s",
         (cron_session_id,),
     )
     assert cron_session is not None

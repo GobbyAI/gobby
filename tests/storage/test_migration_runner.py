@@ -133,7 +133,7 @@ def test_split_statements_respecting_dollar_quotes_ignores_strings_and_comments(
         SELECT "odd;identifier";
         -- comment with a semicolon; and $tag$
         SELECT 1;
-        /* block comment; with $1 */
+        /* block comment; with %s */
         SELECT '$$not a tag;$$';
         """
     )

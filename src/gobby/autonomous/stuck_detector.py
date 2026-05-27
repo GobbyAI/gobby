@@ -56,7 +56,7 @@ def migrate_task_selection_history_contexts(db: "HubDatabase") -> int:
         except (SyntaxError, ValueError, TypeError):
             continue
         db.execute(
-            "UPDATE task_selection_history SET context = $1 WHERE id = $2",
+            "UPDATE task_selection_history SET context = %s WHERE id = %s",
             (context_json, row["id"]),
         )
         migrated += 1
@@ -187,7 +187,7 @@ class StuckDetector:
                 """
                 INSERT INTO task_selection_history (
                     session_id, task_id, selected_at, context
-                ) VALUES ($1, $2, $3, $4)
+                ) VALUES (%s, %s, %s, %s)
                 """,
                 (
                     session_id,
@@ -225,10 +225,10 @@ class StuckDetector:
             FROM (
                 SELECT task_id
                 FROM task_selection_history
-                WHERE session_id = $1
-                AND selected_at > $2
+                WHERE session_id = %s
+                AND selected_at > %s
                 ORDER BY selected_at DESC
-                LIMIT $3
+                LIMIT %s
             )
             GROUP BY task_id
             ORDER BY count DESC
@@ -388,7 +388,7 @@ class StuckDetector:
         """
         with self._lock:
             result = self.db.execute(
-                "DELETE FROM task_selection_history WHERE session_id = $1",
+                "DELETE FROM task_selection_history WHERE session_id = %s",
                 (session_id,),
             )
 
@@ -414,9 +414,9 @@ class StuckDetector:
             """
             SELECT session_id, task_id, selected_at, context
             FROM task_selection_history
-            WHERE session_id = $1
+            WHERE session_id = %s
             ORDER BY selected_at DESC
-            LIMIT $2
+            LIMIT %s
             """,
             (session_id, limit),
         )

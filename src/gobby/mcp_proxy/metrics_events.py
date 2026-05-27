@@ -90,7 +90,7 @@ class MetricsEventStore:
             INSERT INTO metrics_events (
                 event_type, project_id, session_id, server_name,
                 name, success, latency_ms, result, metadata_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 event_type,
@@ -118,7 +118,7 @@ class MetricsEventStore:
                 AVG(latency_ms) AS avg_latency_ms,
                 SUM(latency_ms) AS total_latency_ms
             FROM metrics_events
-            WHERE session_id = ? AND event_type = 'tool_call'
+            WHERE session_id = %s AND event_type = 'tool_call'
             GROUP BY server_name, name
             ORDER BY call_count DESC
             """,
@@ -136,10 +136,10 @@ class MetricsEventStore:
         params: list[Any] = []
 
         if since:
-            conditions.append("created_at >= ?")
+            conditions.append("created_at >= %s")
             params.append(since.isoformat())
         if session_id:
-            conditions.append("session_id = ?")
+            conditions.append("session_id = %s")
             params.append(session_id)
 
         where = " AND ".join(conditions)
@@ -170,10 +170,10 @@ class MetricsEventStore:
         params: list[Any] = []
 
         if since:
-            conditions.append("created_at >= ?")
+            conditions.append("created_at >= %s")
             params.append(since.isoformat())
         if session_id:
-            conditions.append("session_id = ?")
+            conditions.append("session_id = %s")
             params.append(session_id)
 
         where = " AND ".join(conditions)
@@ -207,19 +207,19 @@ class MetricsEventStore:
         params: list[Any] = []
 
         if event_type:
-            conditions.append("event_type = ?")
+            conditions.append("event_type = %s")
             params.append(event_type)
         if since:
-            conditions.append("created_at >= ?")
+            conditions.append("created_at >= %s")
             params.append(since.isoformat())
         if until:
-            conditions.append("created_at < ?")
+            conditions.append("created_at < %s")
             params.append(until.isoformat())
         if session_id:
-            conditions.append("session_id = ?")
+            conditions.append("session_id = %s")
             params.append(session_id)
         if name:
-            conditions.append("name = ?")
+            conditions.append("name = %s")
             params.append(name)
 
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
@@ -230,7 +230,7 @@ class MetricsEventStore:
             SELECT * FROM metrics_events
             {where}
             ORDER BY created_at DESC
-            LIMIT ?
+            LIMIT %s
             """,
             tuple(params),
         )
@@ -263,18 +263,18 @@ class MetricsEventStore:
         else:
             bucket_label = "day"
 
-        conditions = ["event_type = ?"]
+        conditions = ["event_type = %s"]
         params: list[Any] = [event_type]
 
         if delta:
             since = datetime.now(UTC) - delta
-            conditions.append("created_at >= ?")
+            conditions.append("created_at >= %s")
             params.append(since.isoformat())
         if name:
-            conditions.append("name = ?")
+            conditions.append("name = %s")
             params.append(name)
         if session_id:
-            conditions.append("session_id = ?")
+            conditions.append("session_id = %s")
             params.append(session_id)
 
         where = " AND ".join(conditions)
@@ -357,10 +357,10 @@ class MetricsEventStore:
         params: list[Any] = []
 
         if event_type:
-            conditions.append("event_type = ?")
+            conditions.append("event_type = %s")
             params.append(event_type)
         if name:
-            conditions.append("name = ?")
+            conditions.append("name = %s")
             params.append(name)
 
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
@@ -408,7 +408,7 @@ class MetricsEventStore:
                 SUM(CASE WHEN result = 'block' THEN 1 ELSE 0 END),
                 SUM(CASE WHEN result = 'allow' THEN 1 ELSE 0 END)
             FROM metrics_events
-            WHERE created_at < ?
+            WHERE created_at < %s
             GROUP BY event_type, COALESCE(project_id, ''), COALESCE(server_name, ''), name
             ON CONFLICT(event_type, project_id, server_name, name) DO UPDATE SET
                 call_count = metrics_events_archive.call_count + excluded.call_count,
@@ -424,7 +424,7 @@ class MetricsEventStore:
 
         # Delete archived events
         cursor = self.db.execute(
-            "DELETE FROM metrics_events WHERE created_at < ?",
+            "DELETE FROM metrics_events WHERE created_at < %s",
             (cutoff,),
         )
         deleted = cursor.rowcount if hasattr(cursor, "rowcount") else 0

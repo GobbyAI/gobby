@@ -105,17 +105,17 @@ def _candidate_lookup_clause(
             seq_num = int(task_id[1:] if task_id.startswith("#") else task_id)
         except ValueError:
             return None, []
-        return "t.project_id = ? AND t.seq_num = ?", [project_id, seq_num]
+        return "t.project_id = %s AND t.seq_num = %s", [project_id, seq_num]
 
     if "." in task_id and all(part.isdigit() for part in task_id.split(".")):
         if project_id is None:
             return None, []
-        return "t.project_id = ? AND t.path_cache = ?", [project_id, task_id]
+        return "t.project_id = %s AND t.path_cache = %s", [project_id, task_id]
 
     params: list[object] = [task_id]
-    clause = "t.id = ?"
+    clause = "t.id = %s"
     if project_id is not None:
-        clause += " AND t.project_id = ?"
+        clause += " AND t.project_id = %s"
         params.append(project_id)
     return clause, params
 
@@ -157,11 +157,11 @@ def _latest_failure_context(db: HubDatabase, task_id: str) -> str | None:
         """
         SELECT body
           FROM task_comments
-         WHERE task_id = ?
+         WHERE task_id = %s
            AND author_type = 'system'
            AND (
-               body LIKE '## Holistic QA Failure%'
-               OR body LIKE '## Holistic QA Follow-Up%'
+               body LIKE '## Holistic QA Failure%%'
+               OR body LIKE '## Holistic QA Follow-Up%%'
            )
          ORDER BY created_at DESC
          LIMIT 1
@@ -175,7 +175,7 @@ def _latest_failure_context(db: HubDatabase, task_id: str) -> str | None:
 
 
 def _children(db: HubDatabase, task_id: str) -> list[Task]:
-    rows = db.fetchall("SELECT * FROM tasks WHERE parent_task_id = ?", (task_id,))
+    rows = db.fetchall("SELECT * FROM tasks WHERE parent_task_id = %s", (task_id,))
     children = [Task.from_row(row) for row in rows]
     hydrate_task_stage_state(db, children)
     hydrate_task_blocking_state(db, children)

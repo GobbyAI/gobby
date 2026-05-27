@@ -41,7 +41,7 @@ class _AgentRunCleanupMixin:
             "last_activity_at",
             "timeout_seconds",
         )
-        default_timeout_sql = older_than_now_expr(self.db, "last_activity_at", "?", "minute")
+        default_timeout_sql = older_than_now_expr(self.db, "last_activity_at", "%s", "minute")
         stale_runs = self.db.fetchall(
             f"""
             WITH run_activity AS (
@@ -116,7 +116,7 @@ class _AgentRunCleanupMixin:
     ) -> int:
         """Mark stale pending agent runs as failed."""
         now = utc_now_iso()
-        pending_timeout_sql = older_than_now_expr(self.db, "created_at", "?", "minute")
+        pending_timeout_sql = older_than_now_expr(self.db, "created_at", "%s", "minute")
         with self.db.transaction() as conn:
             cursor = conn.execute(
                 f"""
@@ -126,8 +126,8 @@ class _AgentRunCleanupMixin:
                         WHEN tmux_session_name IS NULL THEN 'Pending run never started'
                         ELSE 'Pending tmux-initialized run never started'
                     END,
-                    completed_at = ?,
-                    updated_at = ?
+                    completed_at = %s,
+                    updated_at = %s
                 WHERE status = 'pending'
                 AND (
                     (

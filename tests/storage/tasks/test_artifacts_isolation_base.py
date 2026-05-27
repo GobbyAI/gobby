@@ -26,7 +26,7 @@ def _column_info(db: HubDatabase, table: str) -> dict[str, dict[str, Any]]:
             """
             SELECT column_name, is_nullable
             FROM information_schema.columns
-            WHERE table_name = ?
+            WHERE table_name = %s
             """,
             (table,),
         )

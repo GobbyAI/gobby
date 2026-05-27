@@ -54,7 +54,7 @@ def test_orphan_dependencies(manager, dep_manager, sample_project):
     with manager.db.transaction() as conn:
         conn.execute("SET CONSTRAINTS ALL DEFERRED")
         manager.db.execute(
-            "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (?, ?, ?, ?)",
+            "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (%s, %s, %s, %s)",
             ("non_existent_task", t1.id, "blocks", "2023-01-01T00:00:00Z"),
         )
 
@@ -85,7 +85,7 @@ def test_invalid_projects(manager, sample_project):
         manager.db.execute(
             """
             INSERT INTO tasks (id, project_id, title, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s)
             """,
             (
                 "task_orphan_proj",
@@ -113,7 +113,7 @@ def test_cycles_check(manager, dep_manager, sample_project):
 
     # Create cycle manually to bypass manager checks
     manager.db.execute(
-        "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (?, ?, ?, ?)",
+        "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (%s, %s, %s, %s)",
         (t1.id, t2.id, "blocks", "2023-01-01T00:00:00Z"),
     )
 

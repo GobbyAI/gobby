@@ -522,8 +522,8 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
             """
             SELECT pr_url
               FROM task_delivery_units
-             WHERE task_id = ?
-               AND (pr_url = ? OR unit_key = ?)
+             WHERE task_id = %s
+               AND (pr_url = %s OR unit_key = %s)
             """,
             (resolved_id, pr_url, unit_key or f"pr:{pr_url}"),
         )

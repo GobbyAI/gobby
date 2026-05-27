@@ -25,7 +25,7 @@ pytestmark = pytest.mark.unit
 @pytest.fixture
 def db(temp_db: HubDatabase) -> HubDatabase:
     temp_db.execute(
-        "INSERT INTO projects (id, name) VALUES (?, ?) ON CONFLICT (id) DO NOTHING",
+        "INSERT INTO projects (id, name) VALUES (%s, %s) ON CONFLICT (id) DO NOTHING",
         ("proj-delivery", "delivery-pipeline"),
     )
     return temp_db
@@ -98,7 +98,7 @@ def _create_run(
 def _ensure_session(db: HubDatabase, session_id: str) -> None:
     db.execute(
         "INSERT INTO sessions (id, external_id, machine_id, source, project_id, "
-        "created_at, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
+        "created_at, updated_at) VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
         "ON CONFLICT (id) DO NOTHING",
         (session_id, f"ext-{session_id}", "machine-delivery", "codex", "proj-delivery"),
     )

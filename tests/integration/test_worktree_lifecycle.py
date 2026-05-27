@@ -602,7 +602,7 @@ class TestStaleWorktreeDetection:
         # Manually set old worktree's updated_at to 48 hours ago
         old_time = (datetime.now(UTC) - timedelta(hours=48)).isoformat()
         temp_db.execute(
-            "UPDATE worktrees SET updated_at = ? WHERE id = ?",
+            "UPDATE worktrees SET updated_at = %s WHERE id = %s",
             (old_time, old.id),
         )
 
@@ -631,7 +631,7 @@ class TestStaleWorktreeDetection:
         # Set updated_at to 12 hours ago
         old_time = (datetime.now(UTC) - timedelta(hours=12)).isoformat()
         temp_db.execute(
-            "UPDATE worktrees SET updated_at = ? WHERE id = ?",
+            "UPDATE worktrees SET updated_at = %s WHERE id = %s",
             (old_time, worktree.id),
         )
 
@@ -662,7 +662,7 @@ class TestStaleWorktreeDetection:
         # Make it stale
         old_time = (datetime.now(UTC) - timedelta(hours=48)).isoformat()
         temp_db.execute(
-            "UPDATE worktrees SET updated_at = ? WHERE id = ?",
+            "UPDATE worktrees SET updated_at = %s WHERE id = %s",
             (old_time, worktree.id),
         )
 
@@ -694,7 +694,7 @@ class TestStaleWorktreeDetection:
         # Make it stale
         old_time = (datetime.now(UTC) - timedelta(hours=48)).isoformat()
         temp_db.execute(
-            "UPDATE worktrees SET updated_at = ? WHERE id = ?",
+            "UPDATE worktrees SET updated_at = %s WHERE id = %s",
             (old_time, worktree.id),
         )
 

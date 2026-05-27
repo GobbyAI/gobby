@@ -237,7 +237,7 @@ async def test_search_memories_skips_deleted_memories(manager, mock_vector_store
     mock_embed_fn.reset_mock()
 
     # Delete from DB directly (simulating index/DB desync)
-    manager.storage.db.execute("DELETE FROM memories WHERE id = ?", (mem_deleted.id,))
+    manager.storage.db.execute("DELETE FROM memories WHERE id = %s", (mem_deleted.id,))
 
     # Index returns both IDs (stale reference)
     mock_vector_store.search.return_value = [

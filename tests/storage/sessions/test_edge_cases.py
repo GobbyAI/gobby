@@ -77,7 +77,7 @@ class TestSessionEdgeCases:
 
         # Backdate the session
         session_manager.db.execute(
-            "UPDATE sessions SET updated_at = NOW() - INTERVAL '25 hours' WHERE id = ?",
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '25 hours' WHERE id = %s",
             (session.id,),
         )
 
@@ -103,7 +103,7 @@ class TestSessionEdgeCases:
 
         # Backdate the session
         session_manager.db.execute(
-            "UPDATE sessions SET updated_at = NOW() - INTERVAL '31 minutes' WHERE id = ?",
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '31 minutes' WHERE id = %s",
             (session.id,),
         )
 
@@ -172,7 +172,7 @@ class TestSessionEdgeCases:
 
         # Set agent_depth to NULL in database
         session_manager.db.execute(
-            "UPDATE sessions SET agent_depth = NULL WHERE id = ?",
+            "UPDATE sessions SET agent_depth = NULL WHERE id = %s",
             (session.id,),
         )
 
@@ -217,7 +217,7 @@ class TestSessionEdgeCases:
 
         # Backdate first session
         session_manager.db.execute(
-            "UPDATE sessions SET updated_at = NOW() - INTERVAL '1 hour' WHERE id = ?",
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '1 hour' WHERE id = %s",
             (session1.id,),
         )
 

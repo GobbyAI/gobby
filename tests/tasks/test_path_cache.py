@@ -89,7 +89,7 @@ class TestPathCacheOnInsert:
         task_id = task.id
 
         # Retrieve directly from database
-        row = temp_db.fetchone("SELECT path_cache FROM tasks WHERE id = ?", (task_id,))
+        row = temp_db.fetchone("SELECT path_cache FROM tasks WHERE id = %s", (task_id,))
         assert row["path_cache"] == "1"
 
         # Retrieve via get_task
@@ -146,11 +146,11 @@ class TestPathCacheOnInsert:
         """Test that each project has independent path sequences."""
         # Create two projects
         temp_db.execute(
-            "INSERT INTO projects (id, name, created_at, updated_at) VALUES (?, ?, NOW(), NOW())",
+            "INSERT INTO projects (id, name, created_at, updated_at) VALUES (%s, %s, NOW(), NOW())",
             ("proj-a", "Project A"),
         )
         temp_db.execute(
-            "INSERT INTO projects (id, name, created_at, updated_at) VALUES (?, ?, NOW(), NOW())",
+            "INSERT INTO projects (id, name, created_at, updated_at) VALUES (%s, %s, NOW(), NOW())",
             ("proj-b", "Project B"),
         )
 
@@ -332,12 +332,12 @@ class TestPathCacheOnReparent:
         )
 
         # Verify initial path in DB
-        row = temp_db.fetchone("SELECT path_cache FROM tasks WHERE id = ?", (child.id,))
+        row = temp_db.fetchone("SELECT path_cache FROM tasks WHERE id = %s", (child.id,))
         assert row["path_cache"] == "1.3"
 
         # Reparent
         task_manager.update_task(child.id, parent_task_id=parent2.id)
 
         # Verify new path in DB
-        row = temp_db.fetchone("SELECT path_cache FROM tasks WHERE id = ?", (child.id,))
+        row = temp_db.fetchone("SELECT path_cache FROM tasks WHERE id = %s", (child.id,))
         assert row["path_cache"] == "2.3"

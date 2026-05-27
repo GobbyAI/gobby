@@ -23,7 +23,7 @@ def db(temp_db: HubDatabase):
     database = temp_db
     # Create a test project
     database.execute(
-        "INSERT INTO projects (id, name, created_at, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+        "INSERT INTO projects (id, name, created_at, updated_at) VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
         ("test-project", "Test Project"),
     )
     return database
@@ -64,7 +64,7 @@ class TestCreateExecution:
         # Create a session first
         db.execute(
             """INSERT INTO sessions (id, external_id, machine_id, source, project_id, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+               VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             ("sess-123", "ext-1", "machine-1", "claude_code", "test-project", "active"),
         )
 
@@ -200,12 +200,12 @@ class TestListExecutionsExtended:
         """Test filtering executions by session_id."""
         db.execute(
             """INSERT INTO sessions (id, external_id, machine_id, source, project_id, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+               VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             ("sess-aaa", "ext-a", "machine-1", "claude_code", "test-project", "active"),
         )
         db.execute(
             """INSERT INTO sessions (id, external_id, machine_id, source, project_id, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+               VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             ("sess-bbb", "ext-b", "machine-1", "claude_code", "test-project", "active"),
         )
         manager.create_execution(pipeline_name="deploy", session_id="sess-aaa")
@@ -595,7 +595,7 @@ class TestApprovalTimeout:
         )
         # Backdate started_at so it's definitely expired
         db.execute(
-            "UPDATE step_executions SET started_at = NOW() - INTERVAL '60 seconds' WHERE id = ?",
+            "UPDATE step_executions SET started_at = NOW() - INTERVAL '60 seconds' WHERE id = %s",
             (step.id,),
         )
 
@@ -765,7 +765,7 @@ class TestPagination:
         """count_executions reflects session_id filter."""
         db.execute(
             """INSERT INTO sessions (id, external_id, machine_id, source, project_id, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+               VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             ("sess-x", "ext-x", "machine-1", "claude_code", "test-project", "active"),
         )
         manager.create_execution(pipeline_name="p1", session_id="sess-x")
@@ -794,7 +794,7 @@ class TestPagination:
         """status_summary_for_executions filters by session_id."""
         db.execute(
             """INSERT INTO sessions (id, external_id, machine_id, source, project_id, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+               VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             ("sess-q", "ext-q", "machine-1", "claude_code", "test-project", "active"),
         )
         e1 = manager.create_execution(pipeline_name="p1", session_id="sess-q")

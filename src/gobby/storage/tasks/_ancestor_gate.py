@@ -54,7 +54,7 @@ def find_child_development_ancestor_gate(
             SELECT parent.id, parent.parent_task_id, parent.seq_num, parent.path_cache, 1
               FROM tasks child
               JOIN tasks parent ON parent.id = child.parent_task_id
-             WHERE child.id = ?
+             WHERE child.id = %s
             UNION ALL
             SELECT parent.id,
                    parent.parent_task_id,

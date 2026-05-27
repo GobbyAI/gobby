@@ -28,7 +28,7 @@ class MetricSnapshotStorage:
         """Save a metrics snapshot as JSON."""
         try:
             self.db.execute(
-                "INSERT INTO metric_snapshots (metrics_json) VALUES (?)",
+                "INSERT INTO metric_snapshots (metrics_json) VALUES (%s)",
                 (json.dumps(metrics),),
             )
         except Exception as e:
@@ -39,11 +39,11 @@ class MetricSnapshotStorage:
 
         Returns list of {timestamp, metrics} dicts ordered by time ASC.
         """
-        recent_sql = newer_than_now_expr(self.db, "timestamp", "?", "hour")
+        recent_sql = newer_than_now_expr(self.db, "timestamp", "%s", "hour")
         rows = self.db.fetchall(
             f"SELECT timestamp, metrics_json FROM metric_snapshots "
             f"WHERE {recent_sql} "
-            f"ORDER BY timestamp ASC LIMIT ?",  # nosec B608 # cutoff expr is dialect-owned.
+            f"ORDER BY timestamp ASC LIMIT %s",  # nosec B608 # cutoff expr is dialect-owned.
             (hours, limit),
         )
         results = []
@@ -62,7 +62,7 @@ class MetricSnapshotStorage:
 
     def delete_old_snapshots(self, retention_hours: int = 24) -> int:
         """Purge snapshots older than retention period."""
-        expired_sql = older_than_now_expr(self.db, "timestamp", "?", "hour")
+        expired_sql = older_than_now_expr(self.db, "timestamp", "%s", "hour")
         cursor = self.db.execute(
             f"DELETE FROM metric_snapshots WHERE {expired_sql}",  # nosec B608
             (retention_hours,),

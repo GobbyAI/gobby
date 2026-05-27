@@ -20,14 +20,14 @@ def test_baseline_schema_includes_local_flag_columns(temp_db: HubDatabase) -> No
     agent_columns = {
         row["column_name"]
         for row in db.fetchall(
-            "SELECT column_name FROM information_schema.columns WHERE table_name = ?",
+            "SELECT column_name FROM information_schema.columns WHERE table_name = %s",
             ("agent_runs",),
         )
     }
     session_columns = {
         row["column_name"]
         for row in db.fetchall(
-            "SELECT column_name FROM information_schema.columns WHERE table_name = ?",
+            "SELECT column_name FROM information_schema.columns WHERE table_name = %s",
             ("sessions",),
         )
     }

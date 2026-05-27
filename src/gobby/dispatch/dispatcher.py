@@ -310,14 +310,14 @@ def sweep_orphan_no_run_dispatch_mutexes(
     params: list[object] = [DISPATCH_HOLDER]
     if project_id is not None:
         project_join = "JOIN tasks t ON t.id = mutex.task_id"
-        project_filter = "AND t.project_id = ?"
+        project_filter = "AND t.project_id = %s"
         params.append(project_id)
     rows = db.fetchall(
         f"""
         SELECT mutex.task_id, mutex.lease_until, mutex.updated_at
           FROM task_dispatch_mutex mutex
           {project_join}
-         WHERE mutex.lease_holder = ?
+         WHERE mutex.lease_holder = %s
            AND mutex.run_id IS NULL
            {project_filter}
         """,  # nosec B608 # project join/filter are fixed SQL fragments selected above.
@@ -361,10 +361,10 @@ def _release_orphan_no_run_mutex(
         cursor = conn.execute(
             """
             DELETE FROM task_dispatch_mutex
-             WHERE task_id = ?
-               AND lease_holder = ?
+             WHERE task_id = %s
+               AND lease_holder = %s
                AND run_id IS NULL
-               AND updated_at = ?
+               AND updated_at = %s
             """,
             (task_id, DISPATCH_HOLDER, updated_at),
         )
@@ -629,9 +629,9 @@ def _restore_stage_pipeline_retry(
                        WHEN work_attempt_count > 0 THEN work_attempt_count - 1
                        ELSE 0
                    END,
-                   updated_at = ?
-             WHERE task_id = ?
-               AND stage_name = ?
+                   updated_at = %s
+             WHERE task_id = %s
+               AND stage_name = %s
                AND state = 'in_progress'
             """,
             (now, task_id, stage_name),
@@ -706,9 +706,9 @@ def _create_stage_pipeline_execution(
                 id, pipeline_name, project_id, status, inputs_json, session_id,
                 definition_json, created_at, updated_at
             )
-            SELECT ?, ?, project_id, 'pending', ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            SELECT %s, %s, project_id, 'pending', %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
               FROM tasks
-             WHERE id = ?
+             WHERE id = %s
             """,
             (
                 execution_id,
@@ -722,10 +722,10 @@ def _create_stage_pipeline_execution(
         cursor = conn.execute(
             """
             UPDATE task_dispatch_mutex
-               SET run_id = ?,
-                   action_kind = ?,
+               SET run_id = %s,
+                   action_kind = %s,
                    updated_at = CURRENT_TIMESTAMP
-             WHERE task_id = ?
+             WHERE task_id = %s
             """,
             (execution_id, f"stage-pipeline:{action.stage_name}", action.task_id),
         )
@@ -754,7 +754,7 @@ def count_active_agents(db: HubDatabase | None, project_id: str | None = None) -
             FROM agent_runs ar
             JOIN sessions parent_s ON parent_s.id = ar.parent_session_id
             WHERE ar.status IN ('pending', 'running')
-              AND parent_s.project_id = ?
+              AND parent_s.project_id = %s
             """,
             (project_id,),
         )

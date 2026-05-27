@@ -114,7 +114,7 @@ def resolve_stage_reviewer(
     if selector is None:
         return None
 
-    row = db.execute("SELECT category, task_type FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    row = db.execute("SELECT category, task_type FROM tasks WHERE id = %s", (task_id,)).fetchone()
     category = row["category"] if row is not None else None
     task_type = row["task_type"] if row is not None else None
 

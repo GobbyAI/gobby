@@ -49,7 +49,7 @@ _PLAN_ADVERSARY_TERMINATE_WORKFLOW = {
 def db(hub_db: HubDatabase) -> HubDatabase:
     database = hub_db
     database.execute(
-        "INSERT INTO projects (id, name) VALUES (?, ?)",
+        "INSERT INTO projects (id, name) VALUES (%s, %s)",
         ("proj1", "test-project"),
     )
     return database
@@ -66,7 +66,7 @@ def _insert_session(
         """
         INSERT INTO sessions (
             id, external_id, machine_id, source, project_id, status, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ) VALUES (%s, %s, %s, %s, %s, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         """,
         (session_id, external_id, "machine-1", "codex", project_id),
     )

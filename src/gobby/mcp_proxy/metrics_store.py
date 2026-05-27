@@ -114,16 +114,16 @@ class ToolMetricsStore:
                 call_count, success_count, failure_count,
                 total_latency_ms, avg_latency_ms,
                 last_called_at, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, 1, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT(project_id, server_name, tool_name) DO UPDATE SET
                 call_count = tool_metrics.call_count + 1,
-                success_count = tool_metrics.success_count + ?,
-                failure_count = tool_metrics.failure_count + ?,
-                total_latency_ms = tool_metrics.total_latency_ms + ?,
-                avg_latency_ms = (tool_metrics.total_latency_ms + ?) /
+                success_count = tool_metrics.success_count + %s,
+                failure_count = tool_metrics.failure_count + %s,
+                total_latency_ms = tool_metrics.total_latency_ms + %s,
+                avg_latency_ms = (tool_metrics.total_latency_ms + %s) /
                                  (tool_metrics.call_count + 1),
-                last_called_at = ?,
-                updated_at = ?
+                last_called_at = %s,
+                updated_at = %s
             """,
             (
                 # INSERT values
@@ -169,13 +169,13 @@ class ToolMetricsStore:
         params: list[Any] = []
 
         if project_id:
-            conditions.append("project_id = ?")
+            conditions.append("project_id = %s")
             params.append(project_id)
         if server_name:
-            conditions.append("server_name = ?")
+            conditions.append("server_name = %s")
             params.append(server_name)
         if tool_name:
-            conditions.append("tool_name = ?")
+            conditions.append("tool_name = %s")
             params.append(tool_name)
 
         where_clause = " AND ".join(conditions) if conditions else "1=1"
@@ -200,12 +200,12 @@ class ToolMetricsStore:
 
         if project_id:
             return self.db.fetchall(
-                f"SELECT * FROM tool_metrics WHERE project_id = ? ORDER BY {order_by} DESC LIMIT ?",  # nosec B608
+                f"SELECT * FROM tool_metrics WHERE project_id = %s ORDER BY {order_by} DESC LIMIT %s",  # nosec B608
                 (project_id, limit),
             )
         else:
             return self.db.fetchall(
-                f"SELECT * FROM tool_metrics ORDER BY {order_by} DESC LIMIT ?",  # nosec B608
+                f"SELECT * FROM tool_metrics ORDER BY {order_by} DESC LIMIT %s",  # nosec B608
                 (limit,),
             )
 
@@ -222,7 +222,7 @@ class ToolMetricsStore:
             """
             SELECT success_count, call_count
             FROM tool_metrics
-            WHERE project_id = ? AND server_name = ? AND tool_name = ?
+            WHERE project_id = %s AND server_name = %s AND tool_name = %s
             """,
             (project_id, server_name, tool_name),
         )
@@ -246,11 +246,11 @@ class ToolMetricsStore:
                 SELECT *,
                     CAST(failure_count AS REAL) / CAST(call_count AS REAL) as failure_rate
                 FROM tool_metrics
-                WHERE project_id = ?
+                WHERE project_id = %s
                     AND call_count > 0
-                    AND CAST(failure_count AS REAL) / CAST(call_count AS REAL) >= ?
+                    AND CAST(failure_count AS REAL) / CAST(call_count AS REAL) >= %s
                 ORDER BY failure_rate DESC
-                LIMIT ?
+                LIMIT %s
                 """,
                 (project_id, threshold, limit),
             )
@@ -261,9 +261,9 @@ class ToolMetricsStore:
                     CAST(failure_count AS REAL) / CAST(call_count AS REAL) as failure_rate
                 FROM tool_metrics
                 WHERE call_count > 0
-                    AND CAST(failure_count AS REAL) / CAST(call_count AS REAL) >= ?
+                    AND CAST(failure_count AS REAL) / CAST(call_count AS REAL) >= %s
                 ORDER BY failure_rate DESC
-                LIMIT ?
+                LIMIT %s
                 """,
                 (threshold, limit),
             )
@@ -281,13 +281,13 @@ class ToolMetricsStore:
         params: list[Any] = []
 
         if project_id:
-            conditions.append("project_id = ?")
+            conditions.append("project_id = %s")
             params.append(project_id)
         if server_name:
-            conditions.append("server_name = ?")
+            conditions.append("server_name = %s")
             params.append(server_name)
         if tool_name:
-            conditions.append("tool_name = ?")
+            conditions.append("tool_name = %s")
             params.append(tool_name)
 
         if conditions:
@@ -320,7 +320,7 @@ class ToolMetricsStore:
                 SUM(failure_count) as total_failure,
                 SUM(total_latency_ms) as total_latency
             FROM tool_metrics
-            WHERE last_called_at < ?
+            WHERE last_called_at < %s
             GROUP BY project_id, server_name, tool_name, date(last_called_at)
             """,
             (cutoff_str,),
@@ -342,7 +342,7 @@ class ToolMetricsStore:
                     project_id, server_name, tool_name, date,
                     call_count, success_count, failure_count,
                     total_latency_ms, avg_latency_ms, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT(project_id, server_name, tool_name, date) DO UPDATE SET
                     call_count = tool_metrics_daily.call_count + excluded.call_count,
                     success_count = tool_metrics_daily.success_count + excluded.success_count,
@@ -380,7 +380,7 @@ class ToolMetricsStore:
         cursor = self.db.execute(
             """
             DELETE FROM tool_metrics
-            WHERE last_called_at < ?
+            WHERE last_called_at < %s
             """,
             (cutoff_str,),
         )
@@ -402,19 +402,19 @@ class ToolMetricsStore:
         params: list[Any] = []
 
         if project_id:
-            conditions.append("project_id = ?")
+            conditions.append("project_id = %s")
             params.append(project_id)
         if server_name:
-            conditions.append("server_name = ?")
+            conditions.append("server_name = %s")
             params.append(server_name)
         if tool_name:
-            conditions.append("tool_name = ?")
+            conditions.append("tool_name = %s")
             params.append(tool_name)
         if start_date:
-            conditions.append("date >= ?")
+            conditions.append("date >= %s")
             params.append(start_date)
         if end_date:
-            conditions.append("date <= ?")
+            conditions.append("date <= %s")
             params.append(end_date)
 
         where_clause = " AND ".join(conditions) if conditions else "1=1"

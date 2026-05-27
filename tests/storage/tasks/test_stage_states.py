@@ -205,7 +205,7 @@ def test_selector_category_rules_take_precedence_over_task_type_rules(
     temp_db.execute(
         """
         UPDATE task_stages_registry
-           SET reviewer_agent_selector_json = ?
+           SET reviewer_agent_selector_json = %s
          WHERE name = 'development'
         """,
         (
@@ -360,7 +360,7 @@ def _closed_leaf_for_holistic_failure(temp_db, sample_project, parent_id: str, t
                closed_commit_sha = 'abc123',
                claimed_by_session_id = NULL,
                assignee = NULL
-         WHERE id = ?
+         WHERE id = %s
         """,
         (leaf.id,),
     )
@@ -404,11 +404,11 @@ def test_holistic_failure_reopens_single_cited_child_to_development(
     assert reopened["closed_commit_sha"] is None
     assert reopened["claimed_by_session_id"] is None
     parent_comment = temp_db.fetchone(
-        "SELECT body FROM task_comments WHERE task_id = ? ORDER BY created_at DESC LIMIT 1",
+        "SELECT body FROM task_comments WHERE task_id = %s ORDER BY created_at DESC LIMIT 1",
         (parent.id,),
     )
     child_comment = temp_db.fetchone(
-        "SELECT body FROM task_comments WHERE task_id = ? ORDER BY created_at DESC LIMIT 1",
+        "SELECT body FROM task_comments WHERE task_id = %s ORDER BY created_at DESC LIMIT 1",
         (leaf.id,),
     )
     assert parent_comment is not None
@@ -445,7 +445,7 @@ def test_holistic_failure_reactivates_merged_cited_child_worktree(
             agent_session_id, status, created_at, updated_at, merged_at, cleanup_after
         )
         VALUES (
-            'wt-reopened', ?, ?, 'task-reopened', '/tmp/gobby-reopened', 'main',
+            'wt-reopened', %s, %s, 'task-reopened', '/tmp/gobby-reopened', 'main',
             NULL, 'merged', '2026-05-07T00:00:00+00:00',
             '2026-05-07T00:00:00+00:00', '2026-05-07T00:00:00+00:00',
             '2026-05-14T00:00:00+00:00'
@@ -657,7 +657,7 @@ def test_move_to_stage_reopens_closed_task_and_clears_reset_metadata(
                completed_commit_sha = 'abc123',
                artifact_refs = '{"result":"stale"}',
                notes = 'stale note'
-         WHERE task_id = ? AND stage_name IN ('pr', 'merge')
+         WHERE task_id = %s AND stage_name IN ('pr', 'merge')
         """,
         (task.id,),
     )
@@ -674,7 +674,7 @@ def test_move_to_stage_reopens_closed_task_and_clears_reset_metadata(
                claimed_by_session_id = NULL,
                validation_fail_count = 4,
                dispatch_failure_count = 3
-         WHERE id = ?
+         WHERE id = %s
         """,
         (task.id,),
     )
@@ -727,7 +727,7 @@ def test_move_to_stage_rejects_other_session_claim_without_force(
         project_id=sample_project["id"],
     )
     temp_db.execute(
-        "UPDATE tasks SET claimed_by_session_id = ? WHERE id = ?",
+        "UPDATE tasks SET claimed_by_session_id = %s WHERE id = %s",
         (owner.id, task.id),
     )
 
@@ -751,7 +751,7 @@ def test_move_to_stage_preserves_same_session_claim(
         project_id=sample_project["id"],
     )
     temp_db.execute(
-        "UPDATE tasks SET claimed_by_session_id = ? WHERE id = ?",
+        "UPDATE tasks SET claimed_by_session_id = %s WHERE id = %s",
         (owner.id, task.id),
     )
 
@@ -777,7 +777,7 @@ def test_move_to_stage_force_overrides_other_session_claim(
         project_id=sample_project["id"],
     )
     temp_db.execute(
-        "UPDATE tasks SET claimed_by_session_id = ? WHERE id = ?",
+        "UPDATE tasks SET claimed_by_session_id = %s WHERE id = %s",
         (owner.id, task.id),
     )
 

@@ -195,7 +195,7 @@ def _subtree_tasks(db: HubDatabase, root_task_id: str) -> list[Task]:
     rows = db.fetchall(
         """
         WITH RECURSIVE subtree(id, depth) AS (
-            SELECT id, 0 FROM tasks WHERE id = ?
+            SELECT id, 0 FROM tasks WHERE id = %s
             UNION ALL
             SELECT child.id, parent.depth + 1
               FROM tasks child
@@ -283,7 +283,7 @@ def _nearest_ancestor_integration_branch(
 
 
 def _task_by_id(db: HubDatabase, task_id: str) -> Task | None:
-    row = db.fetchone("SELECT * FROM tasks WHERE id = ?", (task_id,))
+    row = db.fetchone("SELECT * FROM tasks WHERE id = %s", (task_id,))
     return Task.from_row(row) if row is not None else None
 
 

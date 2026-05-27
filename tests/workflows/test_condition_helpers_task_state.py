@@ -71,7 +71,7 @@ def test_task_state_in_uses_real_stage_native_task_fields(temp_db, sample_projec
 def test_task_state_in_defaults_to_ready_without_current_stage(temp_db, sample_project) -> None:
     manager = _manager(temp_db)
     task = _task(manager, sample_project)
-    temp_db.execute("DELETE FROM task_stage_states WHERE task_id = ?", (task.id,))
+    temp_db.execute("DELETE FROM task_stage_states WHERE task_id = %s", (task.id,))
 
     assert task_state_in(manager, task.id, "ready") is True
 

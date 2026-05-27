@@ -77,14 +77,14 @@ class TaskDispatchMutexManager:
 
     def get_mutex(self, task_id: str) -> DispatchMutex | None:
         row = self.db.fetchone(
-            "SELECT * FROM task_dispatch_mutex WHERE task_id = ?",
+            "SELECT * FROM task_dispatch_mutex WHERE task_id = %s",
             (task_id,),
         )
         return DispatchMutex.from_row(row) if row is not None else None
 
     def get_mutex_by_run_id(self, run_id: str) -> DispatchMutex | None:
         row = self.db.fetchone(
-            "SELECT * FROM task_dispatch_mutex WHERE run_id = ?",
+            "SELECT * FROM task_dispatch_mutex WHERE run_id = %s",
             (run_id,),
         )
         return DispatchMutex.from_row(row) if row is not None else None
@@ -105,7 +105,7 @@ class TaskDispatchMutexManager:
 
         with self.db.transaction_immediate(DispatchMutexRow(task_id=task_id)) as conn:
             row = conn.execute(
-                "SELECT lease_until, lease_holder FROM task_dispatch_mutex WHERE task_id = ?",
+                "SELECT lease_until, lease_holder FROM task_dispatch_mutex WHERE task_id = %s",
                 (task_id,),
             ).fetchone()
             if row is not None:
@@ -123,7 +123,7 @@ class TaskDispatchMutexManager:
                 INSERT INTO task_dispatch_mutex (
                     task_id, lease_until, lease_holder, run_id, action_kind, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 ON CONFLICT(task_id) DO UPDATE SET
                     lease_until = excluded.lease_until,
                     lease_holder = excluded.lease_holder,
@@ -138,7 +138,7 @@ class TaskDispatchMutexManager:
     def release_mutex(self, task_id: str, holder: str) -> bool:
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                "DELETE FROM task_dispatch_mutex WHERE task_id = ? AND lease_holder = ?",
+                "DELETE FROM task_dispatch_mutex WHERE task_id = %s AND lease_holder = %s",
                 (task_id, holder),
             )
             return cursor.rowcount > 0
@@ -146,7 +146,7 @@ class TaskDispatchMutexManager:
     def force_release(self, task_id: str) -> bool:
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                "DELETE FROM task_dispatch_mutex WHERE task_id = ?",
+                "DELETE FROM task_dispatch_mutex WHERE task_id = %s",
                 (task_id,),
             )
             return cursor.rowcount > 0
@@ -154,7 +154,7 @@ class TaskDispatchMutexManager:
     def clear_by_run_id(self, run_id: str) -> int:
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                "DELETE FROM task_dispatch_mutex WHERE run_id = ?",
+                "DELETE FROM task_dispatch_mutex WHERE run_id = %s",
                 (run_id,),
             )
             return cursor.rowcount
@@ -165,9 +165,9 @@ class TaskDispatchMutexManager:
             cursor = conn.execute(
                 """
                 UPDATE task_dispatch_mutex
-                   SET run_id = ?,
-                       updated_at = ?
-                 WHERE task_id = ?
+                   SET run_id = %s,
+                       updated_at = %s
+                 WHERE task_id = %s
                 """,
                 (run_id, updated_at, mutex_id),
             )
@@ -180,7 +180,7 @@ class TaskDispatchMutexManager:
                 """
                 DELETE FROM task_dispatch_mutex
                 WHERE lease_until IS NOT NULL
-                  AND lease_until < ?
+                  AND lease_until < %s
                 """,
                 (now_iso,),
             )

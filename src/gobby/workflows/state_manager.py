@@ -20,7 +20,7 @@ class WorkflowInstanceManager:
     def get_instance(self, session_id: str, workflow_name: str) -> WorkflowInstance | None:
         """Get a specific workflow instance by session and workflow name."""
         row = self.db.fetchone(
-            "SELECT * FROM workflow_instances WHERE session_id = ? AND workflow_name = ?",
+            "SELECT * FROM workflow_instances WHERE session_id = %s AND workflow_name = %s",
             (session_id, workflow_name),
         )
         if not row:
@@ -30,7 +30,7 @@ class WorkflowInstanceManager:
     def get_active_instances(self, session_id: str) -> list[WorkflowInstance]:
         """Get all enabled workflow instances for a session, sorted by priority."""
         rows = self.db.fetchall(
-            "SELECT * FROM workflow_instances WHERE session_id = ? AND enabled = ? "
+            "SELECT * FROM workflow_instances WHERE session_id = %s AND enabled = %s "
             "ORDER BY priority ASC",
             (session_id, True),
         )
@@ -45,7 +45,7 @@ class WorkflowInstanceManager:
                 id, session_id, workflow_name, enabled, priority,
                 current_step, step_entered_at, step_action_count, total_action_count,
                 variables, context_injected, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT(session_id, workflow_name) DO UPDATE SET
                 enabled = excluded.enabled,
                 priority = excluded.priority,
@@ -77,7 +77,7 @@ class WorkflowInstanceManager:
     def delete_instance(self, session_id: str, workflow_name: str) -> None:
         """Delete a workflow instance."""
         self.db.execute(
-            "DELETE FROM workflow_instances WHERE session_id = ? AND workflow_name = ?",
+            "DELETE FROM workflow_instances WHERE session_id = %s AND workflow_name = %s",
             (session_id, workflow_name),
         )
 
@@ -85,7 +85,7 @@ class WorkflowInstanceManager:
         """Delete all workflow instances for a session and return deleted row count."""
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                "DELETE FROM workflow_instances WHERE session_id = ?",
+                "DELETE FROM workflow_instances WHERE session_id = %s",
                 (session_id,),
             )
             return cursor.rowcount
@@ -94,8 +94,8 @@ class WorkflowInstanceManager:
         """Toggle the enabled state of a workflow instance."""
         now = datetime.now(UTC).isoformat()
         self.db.execute(
-            "UPDATE workflow_instances SET enabled = ?, updated_at = ? "
-            "WHERE session_id = ? AND workflow_name = ?",
+            "UPDATE workflow_instances SET enabled = %s, updated_at = %s "
+            "WHERE session_id = %s AND workflow_name = %s",
             (enabled, now, session_id, workflow_name),
         )
 
@@ -154,7 +154,7 @@ class SessionVariableManager:
         defaults = self._get_variable_defaults()
 
         row = self.db.fetchone(
-            "SELECT variables FROM session_variables WHERE session_id = ?",
+            "SELECT variables FROM session_variables WHERE session_id = %s",
             (session_id,),
         )
         session_vars = json.loads(row["variables"]) if row and row["variables"] else {}
@@ -179,7 +179,7 @@ class SessionVariableManager:
 
         rows = self.db.fetchall(
             "SELECT name, definition_json FROM workflow_definitions "
-            "WHERE workflow_type = 'variable' AND enabled = ? AND source = 'installed'",
+            "WHERE workflow_type = 'variable' AND enabled = %s AND source = 'installed'",
             (True,),
         )
         defaults: dict[str, Any] = {}
@@ -213,21 +213,21 @@ class SessionVariableManager:
         now = datetime.now(UTC).isoformat()
         with self.db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
             row = conn.execute(
-                "SELECT variables FROM session_variables WHERE session_id = ?",
+                "SELECT variables FROM session_variables WHERE session_id = %s",
                 (session_id,),
             ).fetchone()
             if row:
                 current = json.loads(row["variables"]) if row["variables"] else {}
                 current.update(updates)
                 conn.execute(
-                    "UPDATE session_variables SET variables = ?, updated_at = ? "
-                    "WHERE session_id = ?",
+                    "UPDATE session_variables SET variables = %s, updated_at = %s "
+                    "WHERE session_id = %s",
                     (json.dumps(current), now, session_id),
                 )
             else:
                 conn.execute(
                     "INSERT INTO session_variables (session_id, variables, updated_at) "
-                    "VALUES (?, ?, ?)",
+                    "VALUES (%s, %s, %s)",
                     (session_id, json.dumps(updates), now),
                 )
         return True
@@ -251,7 +251,7 @@ class SessionVariableManager:
         now = datetime.now(UTC).isoformat()
         with self.db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
             row = conn.execute(
-                "SELECT variables FROM session_variables WHERE session_id = ?",
+                "SELECT variables FROM session_variables WHERE session_id = %s",
                 (session_id,),
             ).fetchone()
             current_vars = json.loads(row["variables"]) if row and row["variables"] else {}
@@ -263,14 +263,14 @@ class SessionVariableManager:
             current_vars[name] = sorted(existing)
             if row:
                 conn.execute(
-                    "UPDATE session_variables SET variables = ?, updated_at = ? "
-                    "WHERE session_id = ?",
+                    "UPDATE session_variables SET variables = %s, updated_at = %s "
+                    "WHERE session_id = %s",
                     (json.dumps(current_vars), now, session_id),
                 )
             else:
                 conn.execute(
                     "INSERT INTO session_variables (session_id, variables, updated_at) "
-                    "VALUES (?, ?, ?)",
+                    "VALUES (%s, %s, %s)",
                     (session_id, json.dumps(current_vars), now),
                 )
         return True
@@ -295,7 +295,7 @@ class SessionVariableManager:
         now = datetime.now(UTC).isoformat()
         with self.db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
             row = conn.execute(
-                "SELECT variables FROM session_variables WHERE session_id = ?",
+                "SELECT variables FROM session_variables WHERE session_id = %s",
                 (session_id,),
             ).fetchone()
             current_vars = json.loads(row["variables"]) if row and row["variables"] else {}
@@ -313,14 +313,14 @@ class SessionVariableManager:
 
             if row:
                 conn.execute(
-                    "UPDATE session_variables SET variables = ?, updated_at = ? "
-                    "WHERE session_id = ?",
+                    "UPDATE session_variables SET variables = %s, updated_at = %s "
+                    "WHERE session_id = %s",
                     (json.dumps(current_vars), now, session_id),
                 )
             else:
                 conn.execute(
                     "INSERT INTO session_variables (session_id, variables, updated_at) "
-                    "VALUES (?, ?, ?)",
+                    "VALUES (%s, %s, %s)",
                     (session_id, json.dumps(current_vars), now),
                 )
         return True
@@ -328,6 +328,6 @@ class SessionVariableManager:
     def delete_variables(self, session_id: str) -> None:
         """Delete all session variables for a session."""
         self.db.execute(
-            "DELETE FROM session_variables WHERE session_id = ?",
+            "DELETE FROM session_variables WHERE session_id = %s",
             (session_id,),
         )

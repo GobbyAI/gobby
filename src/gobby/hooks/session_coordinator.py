@@ -418,7 +418,7 @@ class SessionCoordinator:
                     msg_row = db.fetchone(
                         """
                         SELECT content FROM inter_session_messages
-                        WHERE from_session = ?
+                        WHERE from_session = %s
                         ORDER BY created_at DESC
                         LIMIT 1
                         """,

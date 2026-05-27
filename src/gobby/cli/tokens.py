@@ -153,7 +153,7 @@ def audit_tokens(
             """
             params: tuple[Any, ...] = ()
             if project_id is not None:
-                query += "\n  AND project_id = ?"
+                query += "\n  AND project_id = %s"
                 params = (project_id,)
             query += "\n                ORDER BY updated_at DESC"
             rows = db.fetchall(query, params)
@@ -242,7 +242,7 @@ def token_stats(project_ref: str | None) -> None:
         breakdown = store.get_breakdown(project_id=project_id)
         total_rows = db.fetchone(
             "SELECT COUNT(*) AS count FROM token_events"
-            + (" WHERE project_id = ?" if project_id else ""),
+            + (" WHERE project_id = %s" if project_id else ""),
             (project_id,) if project_id else (),
         )
         click.echo(f"rows={int(total_rows['count'] or 0) if total_rows else 0}")

@@ -523,22 +523,22 @@ def find_stale_memories(
     if project_id:
         rows = db.fetchall(
             """SELECT * FROM memories
-               WHERE access_count <= ?
-                 AND COALESCE(updated_at, created_at) < ?
-                 AND (last_accessed_at IS NULL OR last_accessed_at < ?)
-                 AND (project_id = ? OR project_id IS NULL)
+               WHERE access_count <= %s
+                 AND COALESCE(updated_at, created_at) < %s
+                 AND (last_accessed_at IS NULL OR last_accessed_at < %s)
+                 AND (project_id = %s OR project_id IS NULL)
                ORDER BY COALESCE(last_accessed_at, updated_at, created_at) ASC
-               LIMIT ?""",
+               LIMIT %s""",
             (max_access_count, cutoff, cutoff, project_id, limit),
         )
     else:
         rows = db.fetchall(
             """SELECT * FROM memories
-               WHERE access_count <= ?
-                 AND COALESCE(updated_at, created_at) < ?
-                 AND (last_accessed_at IS NULL OR last_accessed_at < ?)
+               WHERE access_count <= %s
+                 AND COALESCE(updated_at, created_at) < %s
+                 AND (last_accessed_at IS NULL OR last_accessed_at < %s)
                ORDER BY COALESCE(last_accessed_at, updated_at, created_at) ASC
-               LIMIT ?""",
+               LIMIT %s""",
             (max_access_count, cutoff, cutoff, limit),
         )
 
@@ -692,7 +692,7 @@ def find_orphaned_memories(
     params: list[Any] = [cutoff]
     project_clause = ""
     if project_id:
-        project_clause = "AND (m.project_id = ? OR m.project_id IS NULL)"
+        project_clause = "AND (m.project_id = %s OR m.project_id IS NULL)"
         params.append(project_id)
     params.append(limit)
 
@@ -701,10 +701,10 @@ def find_orphaned_memories(
             LEFT JOIN sessions s ON m.source_session_id = s.id
             WHERE m.source_session_id IS NOT NULL
               AND s.id IS NULL
-              AND m.created_at < ?
+              AND m.created_at < %s
               {project_clause}
             ORDER BY m.created_at ASC
-            LIMIT ?""",  # nosec B608
+            LIMIT %s""",  # nosec B608
         tuple(params),
     )
 

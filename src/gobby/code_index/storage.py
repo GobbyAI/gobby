@@ -69,7 +69,7 @@ class CodeIndexStorage:
                     line_start, line_end, signature, docstring,
                     parent_symbol_id, content_hash, summary,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT(id) DO UPDATE SET
                     name=excluded.name,
                     qualified_name=excluded.qualified_name,
@@ -93,14 +93,14 @@ class CodeIndexStorage:
 
     def get_symbol(self, symbol_id: str) -> Symbol | None:
         """Get a single symbol by ID."""
-        row = self.db.fetchone("SELECT * FROM code_symbols WHERE id = ?", (symbol_id,))
+        row = self.db.fetchone("SELECT * FROM code_symbols WHERE id = %s", (symbol_id,))
         return Symbol.from_row(row) if row else None
 
     def get_symbols(self, symbol_ids: list[str]) -> list[Symbol]:
         """Batch-retrieve symbols by IDs."""
         if not symbol_ids:
             return []
-        placeholders = ",".join("?" for _ in symbol_ids)
+        placeholders = ",".join("%s" for _ in symbol_ids)
         rows = self.db.fetchall(
             f"SELECT * FROM code_symbols WHERE id IN ({placeholders})",
             tuple(symbol_ids),
@@ -110,7 +110,7 @@ class CodeIndexStorage:
     def get_symbols_for_file(self, project_id: str, file_path: str) -> list[Symbol]:
         """Get all symbols in a file."""
         rows = self.db.fetchall(
-            "SELECT * FROM code_symbols WHERE project_id = ? AND file_path = ? ORDER BY line_start",
+            "SELECT * FROM code_symbols WHERE project_id = %s AND file_path = %s ORDER BY line_start",
             (project_id, file_path),
         )
         return [Symbol.from_row(r) for r in rows]
@@ -129,26 +129,26 @@ class CodeIndexStorage:
         limit: int = 50,
     ) -> list[Symbol]:
         """Search symbols by name prefix/substring."""
-        conditions = ["project_id = ?"]
+        conditions = ["project_id = %s"]
         params: list[Any] = [project_id]
 
         # Support both prefix and substring matching
         escaped = self._escape_like(query)
-        conditions.append("(name LIKE ? ESCAPE '\\' OR qualified_name LIKE ? ESCAPE '\\')")
+        conditions.append("(name LIKE %s ESCAPE '\\' OR qualified_name LIKE %s ESCAPE '\\')")
         params.extend([f"%{escaped}%", f"%{escaped}%"])
 
         if kind:
-            conditions.append("kind = ?")
+            conditions.append("kind = %s")
             params.append(kind)
         if file_path:
-            conditions.append("file_path = ?")
+            conditions.append("file_path = %s")
             params.append(file_path)
 
         where = " AND ".join(conditions)
         params.append(limit)
 
         rows = self.db.fetchall(
-            f"SELECT * FROM code_symbols WHERE {where} ORDER BY name LIMIT ?",
+            f"SELECT * FROM code_symbols WHERE {where} ORDER BY name LIMIT %s",
             tuple(params),
         )
         return [Symbol.from_row(r) for r in rows]
@@ -182,7 +182,7 @@ class CodeIndexStorage:
         """Delete all symbols for a file. Returns count."""
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                "DELETE FROM code_symbols WHERE project_id = ? AND file_path = ?",
+                "DELETE FROM code_symbols WHERE project_id = %s AND file_path = %s",
                 (project_id, file_path),
             )
             return cursor.rowcount
@@ -191,7 +191,7 @@ class CodeIndexStorage:
         """Delete all symbols for a project."""
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                "DELETE FROM code_symbols WHERE project_id = ?",
+                "DELETE FROM code_symbols WHERE project_id = %s",
                 (project_id,),
             )
             return cursor.rowcount
@@ -206,7 +206,7 @@ class CodeIndexStorage:
                     id, project_id, file_path, language, content_hash,
                     symbol_count, byte_size, graph_synced, vectors_synced,
                     graph_sync_attempted_at, indexed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT(id) DO UPDATE SET
                     content_hash=excluded.content_hash,
                     symbol_count=excluded.symbol_count,
@@ -234,7 +234,7 @@ class CodeIndexStorage:
     def get_file(self, project_id: str, file_path: str) -> IndexedFile | None:
         """Get indexed file record."""
         row = self.db.fetchone(
-            "SELECT * FROM code_indexed_files WHERE project_id = ? AND file_path = ?",
+            "SELECT * FROM code_indexed_files WHERE project_id = %s AND file_path = %s",
             (project_id, file_path),
         )
         return IndexedFile.from_row(row) if row else None
@@ -242,7 +242,7 @@ class CodeIndexStorage:
     def list_files(self, project_id: str) -> list[IndexedFile]:
         """List all indexed files for a project."""
         rows = self.db.fetchall(
-            "SELECT * FROM code_indexed_files WHERE project_id = ? ORDER BY file_path",
+            "SELECT * FROM code_indexed_files WHERE project_id = %s ORDER BY file_path",
             (project_id,),
         )
         return [IndexedFile.from_row(r) for r in rows]
@@ -270,7 +270,7 @@ class CodeIndexStorage:
             )
             conn.execute("DELETE FROM _current_hashes")
             conn.executemany(
-                "INSERT INTO _current_hashes (file_path, content_hash) VALUES (?, ?)",
+                "INSERT INTO _current_hashes (file_path, content_hash) VALUES (%s, %s)",
                 list(current_hashes.items()),
             )
 
@@ -279,7 +279,7 @@ class CodeIndexStorage:
                 """
                 SELECT ch.file_path AS file_path FROM _current_hashes ch
                 LEFT JOIN code_indexed_files cf
-                    ON cf.project_id = ? AND cf.file_path = ch.file_path
+                    ON cf.project_id = %s AND cf.file_path = ch.file_path
                 WHERE cf.file_path IS NULL OR cf.content_hash != ch.content_hash
                 """,
                 (project_id,),
@@ -304,7 +304,7 @@ class CodeIndexStorage:
         """
         with self.db.transaction() as conn:
             rows = conn.execute(
-                "SELECT file_path AS file_path FROM code_indexed_files WHERE project_id = ?",
+                "SELECT file_path AS file_path FROM code_indexed_files WHERE project_id = %s",
                 (project_id,),
             ).fetchall()
 
@@ -314,8 +314,8 @@ class CodeIndexStorage:
         """Get files where graph/vector sync is incomplete."""
         rows = self.db.fetchall(
             """SELECT * FROM code_indexed_files
-               WHERE project_id = ? AND graph_synced IS FALSE
-               ORDER BY indexed_at LIMIT ?""",
+               WHERE project_id = %s AND graph_synced IS FALSE
+               ORDER BY indexed_at LIMIT %s""",
             (project_id, limit),
         )
         return [IndexedFile.from_row(r) for r in rows]
@@ -346,8 +346,8 @@ class CodeIndexStorage:
         where = " OR ".join(conditions)
         rows = self.db.fetchall(
             f"""SELECT * FROM code_indexed_files
-                WHERE project_id = ? AND ({where})
-                ORDER BY indexed_at LIMIT ?""",
+                WHERE project_id = %s AND ({where})
+                ORDER BY indexed_at LIMIT %s""",
             (project_id, limit),
         )
         return [IndexedFile.from_row(r) for r in rows]
@@ -356,7 +356,7 @@ class CodeIndexStorage:
         """Mark a file's vectors as synced. Returns True if updated."""
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                "UPDATE code_indexed_files SET vectors_synced = TRUE WHERE id = ?",
+                "UPDATE code_indexed_files SET vectors_synced = TRUE WHERE id = %s",
                 (file_id,),
             )
             return cursor.rowcount > 0
@@ -367,8 +367,8 @@ class CodeIndexStorage:
         with self.db.transaction() as conn:
             cursor = conn.execute(
                 """UPDATE code_indexed_files
-                   SET graph_synced = TRUE, graph_sync_attempted_at = ?
-                   WHERE id = ?""",
+                   SET graph_synced = TRUE, graph_sync_attempted_at = %s
+                   WHERE id = %s""",
                 (now, file_id),
             )
             return cursor.rowcount > 0
@@ -379,8 +379,8 @@ class CodeIndexStorage:
         with self.db.transaction() as conn:
             cursor = conn.execute(
                 """UPDATE code_indexed_files
-                   SET graph_synced = FALSE, graph_sync_attempted_at = ?
-                   WHERE id = ?""",
+                   SET graph_synced = FALSE, graph_sync_attempted_at = %s
+                   WHERE id = %s""",
                 (now, file_id),
             )
             return cursor.rowcount > 0
@@ -391,7 +391,7 @@ class CodeIndexStorage:
             cursor = conn.execute(
                 """UPDATE code_indexed_files
                    SET graph_synced = FALSE, graph_sync_attempted_at = NULL
-                   WHERE project_id = ?""",
+                   WHERE project_id = %s""",
                 (project_id,),
             )
             return cursor.rowcount
@@ -407,7 +407,7 @@ class CodeIndexStorage:
         """Replace import relations for a file. Returns count inserted."""
         with self.db.transaction() as conn:
             conn.execute(
-                "DELETE FROM code_imports WHERE project_id = ? AND source_file = ?",
+                "DELETE FROM code_imports WHERE project_id = %s AND source_file = %s",
                 (project_id, file_path),
             )
             if not imports:
@@ -415,7 +415,7 @@ class CodeIndexStorage:
             conn.executemany(
                 """INSERT INTO code_imports
                    (project_id, source_file, target_module)
-                   VALUES (?, ?, ?)
+                   VALUES (%s, %s, %s)
                    ON CONFLICT (project_id, source_file, target_module) DO NOTHING""",
                 [(project_id, imp.source_file, imp.target_module) for imp in imports],
             )
@@ -430,7 +430,7 @@ class CodeIndexStorage:
         """Replace call relations for a file. Returns count inserted."""
         with self.db.transaction() as conn:
             conn.execute(
-                "DELETE FROM code_calls WHERE project_id = ? AND file_path = ?",
+                "DELETE FROM code_calls WHERE project_id = %s AND file_path = %s",
                 (project_id, file_path),
             )
             if not calls:
@@ -441,7 +441,7 @@ class CodeIndexStorage:
                        project_id, caller_symbol_id, callee_symbol_id, callee_name,
                        callee_target_kind, callee_external_module, file_path, line
                    )
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                    ON CONFLICT (
                        project_id, caller_symbol_id, callee_symbol_id, callee_name,
                        callee_target_kind, callee_external_module, file_path, line
@@ -468,7 +468,7 @@ class CodeIndexStorage:
         """Get import relations for a file (for graph sync)."""
         rows = self.db.fetchall(
             """SELECT source_file, target_module FROM code_imports
-               WHERE project_id = ? AND source_file = ?""",
+               WHERE project_id = %s AND source_file = %s""",
             (project_id, file_path),
         )
         return [
@@ -481,7 +481,7 @@ class CodeIndexStorage:
             """SELECT caller_symbol_id, callee_symbol_id, callee_name, callee_target_kind,
                       callee_external_module, file_path, line
                FROM code_calls
-               WHERE project_id = ? AND file_path = ?""",
+               WHERE project_id = %s AND file_path = %s""",
             (project_id, file_path),
         )
         return [
@@ -501,7 +501,7 @@ class CodeIndexStorage:
         """Delete import relations for a file. Returns count deleted."""
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                "DELETE FROM code_imports WHERE project_id = ? AND source_file = ?",
+                "DELETE FROM code_imports WHERE project_id = %s AND source_file = %s",
                 (project_id, file_path),
             )
             return cursor.rowcount
@@ -510,7 +510,7 @@ class CodeIndexStorage:
         """Delete call relations for a file. Returns count deleted."""
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                "DELETE FROM code_calls WHERE project_id = ? AND file_path = ?",
+                "DELETE FROM code_calls WHERE project_id = %s AND file_path = %s",
                 (project_id, file_path),
             )
             return cursor.rowcount
@@ -519,7 +519,7 @@ class CodeIndexStorage:
         """Delete a file record (symbols deleted separately)."""
         with self.db.transaction() as conn:
             conn.execute(
-                "DELETE FROM code_indexed_files WHERE project_id = ? AND file_path = ?",
+                "DELETE FROM code_indexed_files WHERE project_id = %s AND file_path = %s",
                 (project_id, file_path),
             )
 
@@ -527,7 +527,7 @@ class CodeIndexStorage:
         """Delete all file records for a project. Returns count."""
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                "DELETE FROM code_indexed_files WHERE project_id = ?",
+                "DELETE FROM code_indexed_files WHERE project_id = %s",
                 (project_id,),
             )
             return cursor.rowcount
@@ -541,7 +541,7 @@ class CodeIndexStorage:
                 """INSERT INTO code_indexed_projects (
                     id, root_path, total_files, total_symbols,
                     last_indexed_at, index_duration_ms
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s)
                 ON CONFLICT(id) DO UPDATE SET
                     total_files=excluded.total_files,
                     total_symbols=excluded.total_symbols,
@@ -562,7 +562,7 @@ class CodeIndexStorage:
     def get_project_stats(self, project_id: str) -> IndexedProject | None:
         """Get project statistics."""
         row = self.db.fetchone(
-            "SELECT * FROM code_indexed_projects WHERE id = ?",
+            "SELECT * FROM code_indexed_projects WHERE id = %s",
             (project_id,),
         )
         return IndexedProject.from_row(row) if row else None
@@ -577,27 +577,27 @@ class CodeIndexStorage:
         with self.db.transaction() as conn:
             counts = {
                 "symbols": conn.execute(
-                    "DELETE FROM code_symbols WHERE project_id = ?",
+                    "DELETE FROM code_symbols WHERE project_id = %s",
                     (project_id,),
                 ).rowcount,
                 "files": conn.execute(
-                    "DELETE FROM code_indexed_files WHERE project_id = ?",
+                    "DELETE FROM code_indexed_files WHERE project_id = %s",
                     (project_id,),
                 ).rowcount,
                 "imports": conn.execute(
-                    "DELETE FROM code_imports WHERE project_id = ?",
+                    "DELETE FROM code_imports WHERE project_id = %s",
                     (project_id,),
                 ).rowcount,
                 "calls": conn.execute(
-                    "DELETE FROM code_calls WHERE project_id = ?",
+                    "DELETE FROM code_calls WHERE project_id = %s",
                     (project_id,),
                 ).rowcount,
                 "content_chunks": conn.execute(
-                    "DELETE FROM code_content_chunks WHERE project_id = ?",
+                    "DELETE FROM code_content_chunks WHERE project_id = %s",
                     (project_id,),
                 ).rowcount,
             }
-            cursor = conn.execute("DELETE FROM code_indexed_projects WHERE id = ?", (project_id,))
+            cursor = conn.execute("DELETE FROM code_indexed_projects WHERE id = %s", (project_id,))
             counts["projects"] = cursor.rowcount
             return counts
 
@@ -618,13 +618,13 @@ class CodeIndexStorage:
         """
         if kinds is None:
             kinds = ["function", "class", "method"]
-        placeholders = ",".join("?" for _ in kinds)
+        placeholders = ",".join("%s" for _ in kinds)
         rows = self.db.fetchall(
             f"""SELECT * FROM code_symbols
-                WHERE project_id = ? AND summary IS NULL
+                WHERE project_id = %s AND summary IS NULL
                   AND kind IN ({placeholders})
                 ORDER BY updated_at DESC
-                LIMIT ?""",
+                LIMIT %s""",
             (project_id, *kinds, limit),
         )
         return [Symbol.from_row(r) for r in rows]
@@ -633,7 +633,7 @@ class CodeIndexStorage:
         """Set the summary for a symbol. Returns True if updated."""
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                "UPDATE code_symbols SET summary = ? WHERE id = ?",
+                "UPDATE code_symbols SET summary = %s WHERE id = %s",
                 (summary, symbol_id),
             )
             return cursor.rowcount > 0
@@ -643,7 +643,7 @@ class CodeIndexStorage:
     def count_symbols(self, project_id: str) -> int:
         """Count total symbols for a project."""
         row = self.db.fetchone(
-            "SELECT COUNT(*) as cnt FROM code_symbols WHERE project_id = ?",
+            "SELECT COUNT(*) as cnt FROM code_symbols WHERE project_id = %s",
             (project_id,),
         )
         return cast(int, row["cnt"]) if row else 0
@@ -651,7 +651,7 @@ class CodeIndexStorage:
     def count_files(self, project_id: str) -> int:
         """Count total indexed files for a project."""
         row = self.db.fetchone(
-            "SELECT COUNT(*) as cnt FROM code_indexed_files WHERE project_id = ?",
+            "SELECT COUNT(*) as cnt FROM code_indexed_files WHERE project_id = %s",
             (project_id,),
         )
         return cast(int, row["cnt"]) if row else 0
@@ -682,7 +682,7 @@ class CodeIndexStorage:
                 """INSERT INTO code_content_chunks (
                     id, project_id, file_path, chunk_index,
                     line_start, line_end, content, language, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT(id) DO UPDATE SET
                     content = excluded.content,
                     line_start = excluded.line_start,
@@ -695,14 +695,14 @@ class CodeIndexStorage:
     def delete_content_chunks_for_file(self, project_id: str, file_path: str) -> None:
         """Delete all content chunks for a file."""
         self.db.execute(
-            "DELETE FROM code_content_chunks WHERE project_id = ? AND file_path = ?",
+            "DELETE FROM code_content_chunks WHERE project_id = %s AND file_path = %s",
             (project_id, file_path),
         )
 
     def delete_content_chunks_for_project(self, project_id: str) -> None:
         """Delete all content chunks for a project."""
         self.db.execute(
-            "DELETE FROM code_content_chunks WHERE project_id = ?",
+            "DELETE FROM code_content_chunks WHERE project_id = %s",
             (project_id,),
         )
 
@@ -717,12 +717,12 @@ class CodeIndexStorage:
         file_rows = self.db.fetchall(
             """SELECT f.file_path, f.language, f.symbol_count
                FROM code_indexed_files f
-               WHERE f.project_id = ?
+               WHERE f.project_id = %s
                ORDER BY
                  CASE WHEN f.language IN ('markdown','yaml','json')
                       THEN 1 ELSE 0 END,
                  f.symbol_count DESC, f.file_path
-               LIMIT ?""",
+               LIMIT %s""",
             (project_id, limit),
         )
 
@@ -746,11 +746,11 @@ class CodeIndexStorage:
 
         # Get top-level symbols for each file (limit to avoid explosion)
         if file_paths:
-            placeholders = ",".join("?" for _ in file_paths)
+            placeholders = ",".join("%s" for _ in file_paths)
             sym_rows = self.db.fetchall(
                 f"""SELECT id, name, kind, file_path, line_start, signature
                     FROM code_symbols
-                    WHERE project_id = ? AND file_path IN ({placeholders})
+                    WHERE project_id = %s AND file_path IN ({placeholders})
                       AND parent_symbol_id IS NULL
                     ORDER BY file_path, line_start""",
                 (project_id, *file_paths),
@@ -826,15 +826,15 @@ class CodeIndexStorage:
             like_query = f"%{query}%"
             params: list[Any] = [project_id, like_query]
             sql = """SELECT file_path, line_start, line_end, language,
-                        substr(content, max(1, instr(content, ?) - 60), 120) as snippet
+                        substr(content, max(1, instr(content, %s) - 60), 120) as snippet
                      FROM code_content_chunks
-                     WHERE project_id = ? AND content LIKE ?"""
+                     WHERE project_id = %s AND content LIKE %s"""
             if file_path:
-                sql += " AND file_path = ?"
+                sql += " AND file_path = %s"
                 params = [query, project_id, like_query, file_path]
             else:
                 params = [query, project_id, like_query]
-            sql += " LIMIT ?"
+            sql += " LIMIT %s"
             params.append(limit)
             rows = self.db.fetchall(sql, tuple(params))
             return [

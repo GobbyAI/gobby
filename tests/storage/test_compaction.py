@@ -31,12 +31,12 @@ def test_find_candidates(manager, sample_project):
 
     # Manually update updated_at to be old
     old_date = (datetime.now(UTC) - timedelta(days=40)).isoformat()
-    manager.db.execute("UPDATE tasks SET updated_at = ? WHERE id = ?", (old_date, t2.id))
+    manager.db.execute("UPDATE tasks SET updated_at = %s WHERE id = %s", (old_date, t2.id))
 
     # 3. Open task (not candidate)
     t3 = manager.create_task(proj_id, "Open Task")
     # Manually update updated_at to be old
-    manager.db.execute("UPDATE tasks SET updated_at = ? WHERE id = ?", (old_date, t3.id))
+    manager.db.execute("UPDATE tasks SET updated_at = %s WHERE id = %s", (old_date, t3.id))
 
     compactor = TaskCompactor(manager)
     candidates = compactor.find_candidates(days_closed=30)
@@ -62,7 +62,7 @@ def test_compact_task(manager, sample_project):
     assert task.description == summary
 
     # Verify compacted_at was set
-    row = manager.db.fetchone("SELECT compacted_at FROM tasks WHERE id = ?", (t1.id,))
+    row = manager.db.fetchone("SELECT compacted_at FROM tasks WHERE id = %s", (t1.id,))
     assert row["compacted_at"] is not None
 
 

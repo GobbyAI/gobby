@@ -430,8 +430,8 @@ class TestLocalCloneManagerList:
         # Verify query includes filters
         call_args = mock_db.fetchall.call_args
         query = call_args[0][0]
-        assert "project_id = ?" in query
-        assert "status = ?" in query
+        assert "project_id = %s" in query
+        assert "status = %s" in query
 
 
 class TestLocalCloneManagerUpdate:
@@ -455,7 +455,7 @@ class TestLocalCloneManagerUpdate:
         call_args = mock_db.execute.call_args
         query = call_args[0][0]
         assert "UPDATE clones SET" in query
-        assert "status = ?" in query
+        assert "status = %s" in query
 
     def test_update_agent_session(self, manager, mock_db) -> None:
         """Update clone agent session."""
@@ -464,7 +464,7 @@ class TestLocalCloneManagerUpdate:
         mock_db.execute.assert_called_once()
         call_args = mock_db.execute.call_args
         query = call_args[0][0]
-        assert "agent_session_id = ?" in query
+        assert "agent_session_id = %s" in query
 
     def test_update_last_sync(self, manager, mock_db) -> None:
         """Update clone last_sync_at."""
@@ -502,7 +502,7 @@ class TestLocalCloneManagerDelete:
         call_args = mock_db.execute.call_args
         query = call_args[0][0]
         assert "DELETE FROM clones" in query
-        assert "id = ?" in query
+        assert "id = %s" in query
 
 
 class TestLocalCloneManagerStatusMethods:
@@ -569,8 +569,8 @@ class TestLocalCloneManagerStatusMethods:
         mock_db.execute.assert_called_once()
         call_args = mock_db.execute.call_args
         query = call_args[0][0]
-        assert "status = ?" in query
-        assert "last_sync_at = ?" in query
+        assert "status = %s" in query
+        assert "last_sync_at = %s" in query
 
     def test_claim(self, manager, mock_db) -> None:
         """claim sets agent_session_id."""
@@ -596,7 +596,7 @@ class TestLocalCloneManagerStatusMethods:
         mock_db.execute.assert_called_once()
         call_args = mock_db.execute.call_args
         query = call_args[0][0]
-        assert "agent_session_id = ?" in query
+        assert "agent_session_id = %s" in query
 
     def test_release(self, manager, mock_db) -> None:
         """release clears agent_session_id."""
@@ -706,11 +706,11 @@ class TestLocalCloneManagerFindStale:
         mock_db.fetchall.assert_called_once()
         call_args = mock_db.fetchall.call_args
         query = call_args[0][0]
-        assert "project_id = ?" in query
-        assert "status = ?" in query
+        assert "project_id = %s" in query
+        assert "status = %s" in query
         assert "agent_session_id IS NULL" in query
-        assert "updated_at < ?" in query
-        assert "LIMIT ?" in query
+        assert "updated_at < %s" in query
+        assert "LIMIT %s" in query
 
     def test_find_stale_empty(self, manager, mock_db) -> None:
         """find_stale returns empty list when no stale clones."""

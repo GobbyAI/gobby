@@ -20,12 +20,12 @@ def test_session_registration_boolean_case_is_postgres_safe() -> None:
 
     assert "CASE WHEN ? THEN 1 ELSE is_local END" not in source
     assert "CASE WHEN ? THEN TRUE ELSE is_local END" not in source
-    assert "is_local = ?" in source
+    assert "is_local = %s" in source
     assert "WHEN ? = -1 THEN is_local" not in upsert_source
     assert "WHEN ? THEN TRUE" not in upsert_source
-    assert "WHEN ? THEN ?" in upsert_source
-    assert "?, 0, 0, 0, 0, NULL" not in source
-    assert "?, FALSE, 0, 0, 0, NULL" in source
+    assert "WHEN %s THEN %s" in upsert_source
+    assert "%s, 0, 0, 0, 0, NULL" not in source
+    assert "%s, FALSE, 0, 0, 0, NULL" in source
 
 
 def test_session_had_edits_updates_use_boolean_literals() -> None:
@@ -238,10 +238,10 @@ class TestSessionManagerRegistration:
         sample_project: dict,
     ) -> None:
         """Register self-heals the system parent row before inserting children."""
-        session_manager.db.execute("DELETE FROM sessions WHERE id = ?", (SYSTEM_SESSION_ID,))
+        session_manager.db.execute("DELETE FROM sessions WHERE id = %s", (SYSTEM_SESSION_ID,))
         assert (
             session_manager.db.fetchone(
-                "SELECT id FROM sessions WHERE id = ?", (SYSTEM_SESSION_ID,)
+                "SELECT id FROM sessions WHERE id = %s", (SYSTEM_SESSION_ID,)
             )
             is None
         )
@@ -255,7 +255,7 @@ class TestSessionManagerRegistration:
         )
 
         repaired = session_manager.db.fetchone(
-            "SELECT id, external_id, source FROM sessions WHERE id = ?",
+            "SELECT id, external_id, source FROM sessions WHERE id = %s",
             (SYSTEM_SESSION_ID,),
         )
         assert repaired is not None
@@ -283,7 +283,7 @@ class TestSessionManagerRegistration:
         assert hasattr(session, "last_assistant_content")
 
         # Verify values from DB
-        row = session_manager.db.fetchone("SELECT * FROM sessions WHERE id = ?", (session.id,))
+        row = session_manager.db.fetchone("SELECT * FROM sessions WHERE id = %s", (session.id,))
         assert "message_count" in row.keys()
         assert "turn_count" in row.keys()
         assert "tool_call_count" in row.keys()
@@ -331,7 +331,7 @@ class TestSessionManagerRegistration:
         )
 
         row = session_manager.db.fetchone(
-            "SELECT sandbox_enabled, sandbox_policy_hash FROM sessions WHERE id = ?",
+            "SELECT sandbox_enabled, sandbox_policy_hash FROM sessions WHERE id = %s",
             (session.id,),
         )
         assert row is not None

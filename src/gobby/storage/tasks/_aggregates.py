@@ -29,7 +29,7 @@ def _stage_state_filter_clause(
         [current_stage_state] if isinstance(current_stage_state, str) else list(current_stage_state)
     )
     normalized = [str(state).strip().lower().replace("-", "_") for state in states]
-    placeholders = ", ".join("?" for _ in normalized)
+    placeholders = ", ".join("%s" for _ in normalized)
     clauses = [f"current_stage.state IN ({placeholders})"]
     if "ready" in normalized:
         clauses.append(
@@ -101,7 +101,7 @@ def count_tasks(
     params: list[Any] = []
 
     if project_id:
-        query += " AND t.project_id = ?"
+        query += " AND t.project_id = %s"
         params.append(project_id)
     if current_stage_state:
         clause, clause_params = _stage_state_filter_clause(current_stage_state)
@@ -134,7 +134,7 @@ def count_by_state(
     params: list[Any] = []
 
     if project_id:
-        query += " WHERE t.project_id = ?"
+        query += " WHERE t.project_id = %s"
         params.append(project_id)
 
     query += " GROUP BY state_bucket"
@@ -178,7 +178,7 @@ def count_ready_tasks(
     params: list[Any] = []
 
     if project_id:
-        query += " AND t.project_id = ?"
+        query += " AND t.project_id = %s"
         params.append(project_id)
 
     result = db.fetchone(query, tuple(params))
@@ -200,14 +200,14 @@ def count_closed_since(
     Returns:
         Count of recently closed tasks
     """
-    closed_recent_sql = newer_than_now_expr(db, "closed_at", "?", "hour")
+    closed_recent_sql = newer_than_now_expr(db, "closed_at", "%s", "hour")
     query = (
         f"SELECT COUNT(*) as count FROM tasks WHERE closed_at IS NOT NULL AND {closed_recent_sql}"
     )
     params: list[Any] = [hours]
 
     if project_id:
-        query += " AND project_id = ?"
+        query += " AND project_id = %s"
         params.append(project_id)
 
     result = db.fetchone(query, tuple(params))
@@ -244,7 +244,7 @@ def count_blocked_tasks(
     params: list[Any] = []
 
     if project_id:
-        query += " AND t.project_id = ?"
+        query += " AND t.project_id = %s"
         params.append(project_id)
 
     result = db.fetchone(query, tuple(params))

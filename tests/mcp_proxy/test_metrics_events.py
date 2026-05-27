@@ -233,7 +233,7 @@ class TestArchive:
             temp_db.execute(
                 """INSERT INTO metrics_events
                    (event_type, name, server_name, success, latency_ms, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
+                   VALUES (%s, %s, %s, %s, %s, %s)""",
                 ("tool_call", "Read", "gobby-tasks", True, 10.0 + i, old_date),
             )
         # Insert a recent event that should survive
@@ -264,7 +264,7 @@ class TestArchive:
         temp_db.execute(
             """INSERT INTO metrics_events
                (event_type, name, server_name, success, latency_ms, created_at)
-               VALUES (?, ?, ?, ?, ?, ?)""",
+               VALUES (%s, %s, %s, %s, %s, %s)""",
             ("tool_call", "Read", "gobby-tasks", True, 10.0, old_date1),
         )
         event_store.archive_old_events(retention_days=30)
@@ -272,7 +272,7 @@ class TestArchive:
         temp_db.execute(
             """INSERT INTO metrics_events
                (event_type, name, server_name, success, latency_ms, created_at)
-               VALUES (?, ?, ?, ?, ?, ?)""",
+               VALUES (%s, %s, %s, %s, %s, %s)""",
             ("tool_call", "Read", "gobby-tasks", True, 20.0, old_date2),
         )
         event_store.archive_old_events(retention_days=30)
@@ -306,7 +306,7 @@ class TestPostgresArchive:
                 event_type, project_id, server_name, name,
                 call_count, success_count, failure_count,
                 total_latency_ms, block_count, allow_count
-            ) VALUES (?, ?, ?, ?, 2, 1, 1, 40.0, 1, 0)
+            ) VALUES (%s, %s, %s, %s, 2, 1, 1, 40.0, 1, 0)
             """,
             ("tool_call", project_id, "context7", "get-docs"),
         )
@@ -315,7 +315,7 @@ class TestPostgresArchive:
             INSERT INTO metrics_events (
                 event_type, project_id, server_name, name,
                 success, latency_ms, result, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """,
             ("tool_call", project_id, "context7", "get-docs", True, 10.0, "allow", old_date),
         )
@@ -324,7 +324,7 @@ class TestPostgresArchive:
             INSERT INTO metrics_events (
                 event_type, project_id, server_name, name,
                 success, latency_ms, result, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """,
             ("tool_call", project_id, "context7", "get-docs", False, 20.0, "block", old_date),
         )
@@ -337,7 +337,7 @@ class TestPostgresArchive:
                 call_count, success_count, failure_count,
                 total_latency_ms, block_count, allow_count
             FROM metrics_events_archive
-            WHERE event_type = ? AND project_id = ? AND server_name = ? AND name = ?
+            WHERE event_type = %s AND project_id = %s AND server_name = %s AND name = %s
             """,
             ("tool_call", project_id, "context7", "get-docs"),
         )

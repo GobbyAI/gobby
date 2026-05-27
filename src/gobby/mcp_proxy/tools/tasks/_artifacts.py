@@ -231,7 +231,7 @@ def create_ops_artifact_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
         with ctx.task_manager.db.transaction_immediate() as conn:
             row = conn.execute(
-                "SELECT description FROM tasks WHERE id = ?",
+                "SELECT description FROM tasks WHERE id = %s",
                 (resolved_id,),
             ).fetchone()
             if row is None:
@@ -249,8 +249,8 @@ def create_ops_artifact_registry(ctx: RegistryContext) -> InternalToolRegistry:
             conn.execute(
                 """
                 UPDATE tasks
-                SET description = ?, updated_at = ?
-                WHERE id = ?
+                SET description = %s, updated_at = %s
+                WHERE id = %s
                 """,
                 (next_description, datetime.now(UTC).isoformat(), resolved_id),
             )

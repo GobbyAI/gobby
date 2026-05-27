@@ -109,7 +109,7 @@ def register_task_dependency_routes(
     def _load_dependency_tasks(ids: list[str]) -> dict[str, EnrichmentTaskView | None]:
         if not ids:
             return {}
-        placeholders = ",".join("?" for _ in ids)
+        placeholders = ",".join("%s" for _ in ids)
         rows = server.task_manager.db.fetchall(
             f"SELECT id, seq_num, title, task_type FROM tasks WHERE id IN ({placeholders})",
             tuple(ids),

@@ -25,6 +25,6 @@ def test_cascade_uses_unattended_field(temp_db, sample_project) -> None:
         allow_automation=True,
         skip_stages=["qa"],
     )
-    row = temp_db.fetchone("SELECT unattended FROM tasks WHERE id = ?", (task.id,))
+    row = temp_db.fetchone("SELECT unattended FROM tasks WHERE id = %s", (task.id,))
 
     assert row["unattended"] == 1

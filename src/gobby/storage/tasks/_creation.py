@@ -127,7 +127,7 @@ def _create_task_in_transaction(
             task_id = generate_task_id(project_id, salt=str(attempt))
 
             max_seq_row = conn.execute(
-                "SELECT MAX(seq_num) as max_seq FROM tasks WHERE project_id = ?",
+                "SELECT MAX(seq_num) as max_seq FROM tasks WHERE project_id = %s",
                 (project_id,),
             ).fetchone()
             next_seq_num = ((max_seq_row["max_seq"] if max_seq_row else None) or 0) + 1
@@ -144,7 +144,7 @@ def _create_task_in_transaction(
                     assigned_agent, implementation_domain, additional_skills,
                     github_issue_number, github_pr_number, github_repo,
                     linear_issue_id, linear_team_id, seq_num
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 0, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     task_id,
@@ -183,7 +183,7 @@ def _create_task_in_transaction(
             depth = 0
             while current_parent and depth < max_depth:
                 parent_row = conn.execute(
-                    "SELECT seq_num, parent_task_id FROM tasks WHERE id = ?",
+                    "SELECT seq_num, parent_task_id FROM tasks WHERE id = %s",
                     (current_parent,),
                 ).fetchone()
                 if not parent_row or parent_row["seq_num"] is None:
@@ -195,7 +195,7 @@ def _create_task_in_transaction(
             path_parts.reverse()
             path_cache = ".".join(path_parts)
             conn.execute(
-                "UPDATE tasks SET path_cache = ? WHERE id = ?",
+                "UPDATE tasks SET path_cache = %s WHERE id = %s",
                 (path_cache, task_id),
             )
 

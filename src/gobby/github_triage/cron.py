@@ -130,7 +130,7 @@ def register_github_triage_cron(
         if not existing.is_system:
             with cron_storage.db.transaction() as conn:
                 conn.execute(
-                    "UPDATE cron_jobs SET is_system = TRUE WHERE id = ?",
+                    "UPDATE cron_jobs SET is_system = TRUE WHERE id = %s",
                     (existing.id,),
                 )
 

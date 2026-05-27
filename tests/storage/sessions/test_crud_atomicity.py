@@ -55,7 +55,7 @@ def test_create_web_chat_session_rolls_back_when_follow_up_update_fails(
     original_execute = session_manager.db.execute
 
     def fail_on_model_update(sql: str, params: tuple[object, ...] = ()) -> object:
-        if "SET model = COALESCE(?, model)" in sql:
+        if "SET model = COALESCE(%s, model)" in sql:
             raise RuntimeError("boom")
         return original_execute(sql, params)
 
@@ -96,14 +96,14 @@ def test_update_chat_mode_refreshes_updated_at(
     )
     stale_timestamp = "2000-01-01T00:00:00+00:00"
     session_manager.db.execute(
-        "UPDATE sessions SET updated_at = ? WHERE id = ?",
+        "UPDATE sessions SET updated_at = %s WHERE id = %s",
         (stale_timestamp, session.id),
     )
 
     session_manager.update_chat_mode(session.id, "bypass")
 
     row = session_manager.db.fetchone(
-        "SELECT chat_mode, updated_at FROM sessions WHERE id = ?",
+        "SELECT chat_mode, updated_at FROM sessions WHERE id = %s",
         (session.id,),
     )
     assert row is not None
@@ -123,14 +123,14 @@ def test_update_approved_tools_refreshes_updated_at(
     )
     stale_timestamp = "2000-01-01T00:00:00+00:00"
     session_manager.db.execute(
-        "UPDATE sessions SET updated_at = ? WHERE id = ?",
+        "UPDATE sessions SET updated_at = %s WHERE id = %s",
         (stale_timestamp, session.id),
     )
 
     session_manager.update_approved_tools(session.id, {"functions.exec_command"})
 
     row = session_manager.db.fetchone(
-        "SELECT approved_tools_json, updated_at FROM sessions WHERE id = ?",
+        "SELECT approved_tools_json, updated_at FROM sessions WHERE id = %s",
         (session.id,),
     )
     assert row is not None

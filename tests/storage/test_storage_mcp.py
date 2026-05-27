@@ -205,7 +205,7 @@ class TestLocalMCPManager:
         assert server.args == ["-y", CHROME_DEVTOOLS_NPM_PACKAGE, "--no-usage-statistics"]
 
         project_row = temp_db.fetchone(
-            "SELECT * FROM mcp_servers WHERE name = ? AND project_id = ?",
+            "SELECT * FROM mcp_servers WHERE name = %s AND project_id = %s",
             ("chrome-devtools", sample_project["id"]),
         )
         assert project_row is None
@@ -1031,7 +1031,7 @@ class TestLocalMCPManager:
             INSERT INTO mcp_servers (
                 id, name, project_id, transport, command, args, enabled, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             (
                 "legacy-chrome-server",
@@ -1053,7 +1053,7 @@ class TestLocalMCPManager:
         temp_db.execute(
             """
             INSERT INTO tools (id, mcp_server_id, name, description, input_schema, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             (
                 "legacy-chrome-tool",
@@ -1076,7 +1076,7 @@ class TestLocalMCPManager:
         assert global_server.args == ["-y", CHROME_DEVTOOLS_NPM_PACKAGE, "--no-usage-statistics"]
 
         legacy_row = temp_db.fetchone(
-            "SELECT * FROM mcp_servers WHERE id = ?",
+            "SELECT * FROM mcp_servers WHERE id = %s",
             ("legacy-chrome-server",),
         )
         assert legacy_row is None
@@ -1099,7 +1099,7 @@ class TestLocalMCPManager:
             INSERT INTO mcp_servers (
                 id, name, project_id, transport, command, args, enabled, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             (
                 "global-chrome-server",
@@ -1131,7 +1131,7 @@ class TestLocalMCPManager:
             INSERT INTO mcp_servers (
                 id, name, project_id, transport, command, args, enabled, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             (
                 "legacy-context7-server",
@@ -1146,7 +1146,7 @@ class TestLocalMCPManager:
         temp_db.execute(
             """
             INSERT INTO tools (id, mcp_server_id, name, description, input_schema, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             (
                 "legacy-context7-search",
@@ -1162,7 +1162,7 @@ class TestLocalMCPManager:
             INSERT INTO mcp_servers (
                 id, name, project_id, transport, command, args, enabled, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             (
                 "global-context7-server",
@@ -1177,7 +1177,7 @@ class TestLocalMCPManager:
         temp_db.execute(
             """
             INSERT INTO tools (id, mcp_server_id, name, description, input_schema, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             (
                 "global-context7-resolve",
@@ -1196,7 +1196,7 @@ class TestLocalMCPManager:
         assert {tool.name for tool in tools} == {"resolve_doc", "search_docs"}
 
         legacy_row = temp_db.fetchone(
-            "SELECT * FROM mcp_servers WHERE id = ?",
+            "SELECT * FROM mcp_servers WHERE id = %s",
             ("legacy-context7-server",),
         )
         assert legacy_row is None

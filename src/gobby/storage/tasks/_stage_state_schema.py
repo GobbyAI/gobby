@@ -102,7 +102,7 @@ class StageStateSchema:
                         review_round_count, max_work_attempts, max_review_rounds,
                         artifact_refs, notes, updated_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         row["task_id"],

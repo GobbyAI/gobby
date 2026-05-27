@@ -167,7 +167,7 @@ class InterSessionMessageManager:
             INSERT INTO inter_session_messages
             (id, from_session, to_session, content, priority, sent_at, read_at,
              message_type, metadata_json)
-            VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, NULL, %s, %s)
             """,
             (
                 message_id,
@@ -203,7 +203,7 @@ class InterSessionMessageManager:
             The InterSessionMessage if found, None otherwise
         """
         row = self.db.fetchone(
-            "SELECT * FROM inter_session_messages WHERE id = ?",
+            "SELECT * FROM inter_session_messages WHERE id = %s",
             (message_id,),
         )
 
@@ -224,10 +224,10 @@ class InterSessionMessageManager:
         if unread_only:
             query = """
                 SELECT * FROM inter_session_messages
-                WHERE to_session = ? AND read_at IS NULL
+                WHERE to_session = %s AND read_at IS NULL
             """
         else:
-            query = "SELECT * FROM inter_session_messages WHERE to_session = ?"
+            query = "SELECT * FROM inter_session_messages WHERE to_session = %s"
 
         rows = self.db.fetchall(query, (to_session,))
         return [InterSessionMessage.from_row(row) for row in rows]
@@ -246,14 +246,14 @@ class InterSessionMessageManager:
         row = self.db.fetchone(
             f"""
             SELECT 1 FROM inter_session_messages
-            WHERE to_session = ?
-              AND message_type = ?
+            WHERE to_session = %s
+              AND message_type = %s
               AND metadata_json IS NOT NULL
               {json_valid_sql}
               AND (
-                {completion_id_sql} = ?
-                OR {run_id_sql} = ?
-                OR {execution_id_sql} = ?
+                {completion_id_sql} = %s
+                OR {run_id_sql} = %s
+                OR {execution_id_sql} = %s
               )
             LIMIT 1
             """,  # nosec B608 # JSON expressions are generated from static keys.
@@ -276,7 +276,7 @@ class InterSessionMessageManager:
         read_at = datetime.now(UTC).isoformat()
 
         self.db.execute(
-            "UPDATE inter_session_messages SET read_at = ? WHERE id = ?",
+            "UPDATE inter_session_messages SET read_at = %s WHERE id = %s",
             (read_at, message_id),
         )
 
@@ -296,7 +296,7 @@ class InterSessionMessageManager:
         """
         rows = self.db.fetchall(
             """SELECT * FROM inter_session_messages
-               WHERE to_session = ? AND delivered_at IS NULL
+               WHERE to_session = %s AND delivered_at IS NULL
                ORDER BY sent_at""",
             (to_session,),
         )
@@ -334,13 +334,13 @@ class InterSessionMessageManager:
         params: list[Any] = []
 
         if direction == "inbox":
-            conditions.append("to_session = ?")
+            conditions.append("to_session = %s")
             params.append(session_id)
         elif direction == "sent":
-            conditions.append("from_session = ?")
+            conditions.append("from_session = %s")
             params.append(session_id)
         else:  # "all"
-            conditions.append("(from_session = ? OR to_session = ?)")
+            conditions.append("(from_session = %s OR to_session = %s)")
             params.extend([session_id, session_id])
 
         if unread_only:
@@ -348,13 +348,13 @@ class InterSessionMessageManager:
         if undelivered_only:
             conditions.append("delivered_at IS NULL")
         if message_type is not None:
-            conditions.append("message_type = ?")
+            conditions.append("message_type = %s")
             params.append(message_type)
 
         where = " AND ".join(conditions)
         query = (
             f"SELECT * FROM inter_session_messages WHERE {where} "
-            f"ORDER BY sent_at DESC LIMIT ? OFFSET ?"
+            f"ORDER BY sent_at DESC LIMIT %s OFFSET %s"
         )
         params.extend([limit, offset])
 
@@ -376,7 +376,7 @@ class InterSessionMessageManager:
         delivered_at = datetime.now(UTC).isoformat()
 
         self.db.execute(
-            "UPDATE inter_session_messages SET delivered_at = ? WHERE id = ?",
+            "UPDATE inter_session_messages SET delivered_at = %s WHERE id = %s",
             (delivered_at, message_id),
         )
 

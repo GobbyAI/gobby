@@ -316,7 +316,7 @@ class TestResolveReferenceExternalId:
                 INSERT INTO sessions (
                     id, external_id, machine_id, source, project_id,
                     status, created_at, updated_at, seq_num
-                ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, 'active', %s, %s, %s)
                 """,
                 (
                     str(_uuid.uuid4()),

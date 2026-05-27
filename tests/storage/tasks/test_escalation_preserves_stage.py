@@ -14,7 +14,7 @@ def test_round_trip_preserves_row(temp_db, sample_project) -> None:
     task = manager.create_task(project_id=sample_project["id"], title="Preserve stage")
 
     temp_db.execute(
-        "DELETE FROM task_stage_states WHERE task_id = ?",
+        "DELETE FROM task_stage_states WHERE task_id = %s",
         (task.id,),
     )
     temp_db.execute(
@@ -23,7 +23,7 @@ def test_round_trip_preserves_row(temp_db, sample_project) -> None:
             task_id, stage_name, position, state, review_policy, entered_at,
             work_attempt_count, review_round_count
         )
-        VALUES (?, 'development', 1, 'in_progress', 'required',
+        VALUES (%s, 'development', 1, 'in_progress', 'required',
                 '2026-05-02T00:00:00+00:00', 2, 0)
         """,
         (task.id,),
@@ -33,7 +33,7 @@ def test_round_trip_preserves_row(temp_db, sample_project) -> None:
             """
             SELECT stage_name, state, work_attempt_count, review_round_count, entered_at
               FROM task_stage_states
-             WHERE task_id = ? AND stage_name = 'development'
+             WHERE task_id = %s AND stage_name = 'development'
             """,
             (task.id,),
         )
@@ -47,7 +47,7 @@ def test_round_trip_preserves_row(temp_db, sample_project) -> None:
             """
             SELECT stage_name, state, work_attempt_count, review_round_count, entered_at
               FROM task_stage_states
-             WHERE task_id = ? AND stage_name = 'development'
+             WHERE task_id = %s AND stage_name = 'development'
             """,
             (task.id,),
         )
@@ -60,7 +60,7 @@ def test_de_escalate_can_reset_current_stage_work_attempts(temp_db, sample_proje
     task = manager.create_task(project_id=sample_project["id"], title="Reset stage attempts")
 
     temp_db.execute(
-        "DELETE FROM task_stage_states WHERE task_id = ?",
+        "DELETE FROM task_stage_states WHERE task_id = %s",
         (task.id,),
     )
     temp_db.execute(
@@ -69,7 +69,7 @@ def test_de_escalate_can_reset_current_stage_work_attempts(temp_db, sample_proje
             task_id, stage_name, position, state, review_policy, entered_at,
             work_attempt_count, review_round_count
         )
-        VALUES (?, 'development', 1, 'in_progress', 'required',
+        VALUES (%s, 'development', 1, 'in_progress', 'required',
                 '2026-05-02T00:00:00+00:00', 4, 2)
         """,
         (task.id,),
@@ -86,7 +86,7 @@ def test_de_escalate_can_reset_current_stage_work_attempts(temp_db, sample_proje
         """
         SELECT state, work_attempt_count, review_round_count, entered_at
           FROM task_stage_states
-         WHERE task_id = ? AND stage_name = 'development'
+         WHERE task_id = %s AND stage_name = 'development'
         """,
         (task.id,),
     )
@@ -109,7 +109,7 @@ def test_de_escalate_resets_exhausted_stage_named_by_escalation_reason(
     task = manager.create_task(project_id=sample_project["id"], title="Reset exhausted stage")
 
     temp_db.execute(
-        "DELETE FROM task_stage_states WHERE task_id = ?",
+        "DELETE FROM task_stage_states WHERE task_id = %s",
         (task.id,),
     )
     temp_db.executemany(
@@ -118,7 +118,7 @@ def test_de_escalate_resets_exhausted_stage_named_by_escalation_reason(
             task_id, stage_name, position, state, review_policy, entered_at,
             work_attempt_count, review_round_count
         )
-        VALUES (?, ?, ?, ?, 'required', '2026-05-02T00:00:00+00:00', ?, 0)
+        VALUES (%s, %s, %s, %s, 'required', '2026-05-02T00:00:00+00:00', %s, 0)
         """,
         [
             (task.id, "development", 0, "ready", 1),
@@ -140,7 +140,7 @@ def test_de_escalate_resets_exhausted_stage_named_by_escalation_reason(
             """
             SELECT stage_name, work_attempt_count
               FROM task_stage_states
-             WHERE task_id = ?
+             WHERE task_id = %s
             """,
             (task.id,),
         )

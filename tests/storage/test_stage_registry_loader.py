@@ -241,8 +241,8 @@ def test_sync_upserts_on_hash_drift(temp_db: HubDatabase) -> None:
     db.execute(
         """
         UPDATE task_stages_registry
-        SET bundled_hash = ?
-        WHERE name = ?
+        SET bundled_hash = %s
+        WHERE name = %s
         """,
         ("stale-hash", "planning"),
     )
@@ -273,7 +273,7 @@ def test_user_added_stage_preserved(temp_db: HubDatabase) -> None:
         INSERT INTO task_stages_registry (
             name, display_label, description, category, position_hint, requires_human,
             is_terminal, bundled_hash, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
         """,
         (
             "operator_review",

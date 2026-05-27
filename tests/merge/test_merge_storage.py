@@ -20,7 +20,7 @@ def _table_exists(db: HubDatabase, table_name: str) -> bool:
         SELECT 1
           FROM information_schema.tables
          WHERE table_schema = current_schema()
-           AND table_name = ?
+           AND table_name = %s
         """,
         (table_name,),
     )
@@ -45,7 +45,7 @@ def _table_columns(db: HubDatabase, table_name: str) -> dict[str, dict[str, obje
                ) AS is_primary_key
           FROM information_schema.columns c
          WHERE c.table_schema = current_schema()
-           AND c.table_name = ?
+           AND c.table_name = %s
         """,
         (table_name,),
     )
@@ -71,9 +71,9 @@ def _has_foreign_key(
            AND tc.table_schema = ccu.table_schema
          WHERE tc.table_schema = current_schema()
            AND tc.constraint_type = 'FOREIGN KEY'
-           AND tc.table_name = ?
-           AND kcu.column_name = ?
-           AND ccu.table_name = ?
+           AND tc.table_name = %s
+           AND kcu.column_name = %s
+           AND ccu.table_name = %s
         """,
         (table_name, column_name, foreign_table_name),
     )
@@ -245,23 +245,23 @@ class TestMergeResolutionDataclass:
 
         # Create prerequisites
         db.execute(
-            "INSERT INTO projects (id, name) VALUES (?, ?)",
+            "INSERT INTO projects (id, name) VALUES (%s, %s)",
             ("proj-1", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             ("wt-1", "proj-1", "feature", "/tmp/wt", "active"),
         )
 
         # Insert test data
         db.execute(
             """INSERT INTO merge_resolutions (id, worktree_id, source_branch, target_branch, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             ("mr-1", "wt-1", "feature/test", "main", "pending"),
         )
 
-        row = db.fetchone("SELECT * FROM merge_resolutions WHERE id = ?", ("mr-1",))
+        row = db.fetchone("SELECT * FROM merge_resolutions WHERE id = %s", ("mr-1",))
         assert row is not None
         resolution = MergeResolution.from_row(row)
 
@@ -328,26 +328,26 @@ class TestMergeConflictDataclass:
 
         # Create prerequisites
         db.execute(
-            "INSERT INTO projects (id, name) VALUES (?, ?)",
+            "INSERT INTO projects (id, name) VALUES (%s, %s)",
             ("proj-1", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             ("wt-1", "proj-1", "feature", "/tmp/wt", "active"),
         )
         db.execute(
             """INSERT INTO merge_resolutions (id, worktree_id, source_branch, target_branch, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             ("mr-1", "wt-1", "feature/test", "main", "pending"),
         )
         db.execute(
             """INSERT INTO merge_conflicts (id, resolution_id, file_path, status, ours_content, theirs_content, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+               VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             ("mc-1", "mr-1", "src/main.py", "pending", "our code", "their code"),
         )
 
-        row = db.fetchone("SELECT * FROM merge_conflicts WHERE id = ?", ("mc-1",))
+        row = db.fetchone("SELECT * FROM merge_conflicts WHERE id = %s", ("mc-1",))
         assert row is not None
         conflict = MergeConflict.from_row(row)
 
@@ -394,12 +394,12 @@ class TestMergeResolutionManagerCreate:
 
         # Create prerequisites
         db.execute(
-            "INSERT INTO projects (id, name) VALUES (?, ?)",
+            "INSERT INTO projects (id, name) VALUES (%s, %s)",
             ("proj-1", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             ("wt-1", "proj-1", "feature", "/tmp/wt", "active"),
         )
 
@@ -425,12 +425,12 @@ class TestMergeResolutionManagerCreate:
 
         # Create prerequisites
         db.execute(
-            "INSERT INTO projects (id, name) VALUES (?, ?)",
+            "INSERT INTO projects (id, name) VALUES (%s, %s)",
             ("proj-1", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             ("wt-1", "proj-1", "feature", "/tmp/wt", "active"),
         )
 
@@ -442,7 +442,7 @@ class TestMergeResolutionManagerCreate:
         )
 
         # Verify in database
-        row = db.fetchone("SELECT * FROM merge_resolutions WHERE id = ?", (resolution.id,))
+        row = db.fetchone("SELECT * FROM merge_resolutions WHERE id = %s", (resolution.id,))
         assert row is not None
         assert row["source_branch"] == "feature/test"
 
@@ -458,12 +458,12 @@ class TestMergeResolutionManagerGet:
 
         # Create prerequisites
         db.execute(
-            "INSERT INTO projects (id, name) VALUES (?, ?)",
+            "INSERT INTO projects (id, name) VALUES (%s, %s)",
             ("proj-1", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             ("wt-1", "proj-1", "feature", "/tmp/wt", "active"),
         )
 
@@ -500,12 +500,12 @@ class TestMergeResolutionManagerMergeLookup:
     ) -> tuple[MergeResolutionManager, HubDatabase]:
         db = hub_db
         db.execute(
-            "INSERT INTO projects (id, name) VALUES (?, ?)",
+            "INSERT INTO projects (id, name) VALUES (%s, %s)",
             ("proj-1", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             ("wt-1", "proj-1", "feature", "/tmp/wt", "active"),
         )
         return MergeResolutionManager(db), db
@@ -521,7 +521,7 @@ class TestMergeResolutionManagerMergeLookup:
         db.execute(
             """INSERT INTO merge_resolutions
                (id, worktree_id, source_branch, target_branch, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (%s, %s, %s, %s, %s, %s, %s)""",
             (
                 "mr-newer",
                 "wt-1",
@@ -608,12 +608,12 @@ class TestMergeResolutionManagerUpdate:
 
         # Create prerequisites
         db.execute(
-            "INSERT INTO projects (id, name) VALUES (?, ?)",
+            "INSERT INTO projects (id, name) VALUES (%s, %s)",
             ("proj-1", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             ("wt-1", "proj-1", "feature", "/tmp/wt", "active"),
         )
 
@@ -642,12 +642,12 @@ class TestMergeResolutionManagerUpdate:
 
         # Create prerequisites
         db.execute(
-            "INSERT INTO projects (id, name) VALUES (?, ?)",
+            "INSERT INTO projects (id, name) VALUES (%s, %s)",
             ("proj-1", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             ("wt-1", "proj-1", "feature", "/tmp/wt", "active"),
         )
 
@@ -661,7 +661,7 @@ class TestMergeResolutionManagerUpdate:
         manager.update_resolution(resolution.id, status="resolved")
 
         # Verify in database
-        row = db.fetchone("SELECT * FROM merge_resolutions WHERE id = ?", (resolution.id,))
+        row = db.fetchone("SELECT * FROM merge_resolutions WHERE id = %s", (resolution.id,))
         assert row is not None
         assert row["status"] == "resolved"
 
@@ -677,12 +677,12 @@ class TestMergeResolutionManagerDelete:
 
         # Create prerequisites
         db.execute(
-            "INSERT INTO projects (id, name) VALUES (?, ?)",
+            "INSERT INTO projects (id, name) VALUES (%s, %s)",
             ("proj-1", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             ("wt-1", "proj-1", "feature", "/tmp/wt", "active"),
         )
 
@@ -726,12 +726,12 @@ class TestMergeResolutionManagerCreateConflict:
 
         # Create prerequisites
         db.execute(
-            "INSERT INTO projects (id, name) VALUES (?, ?)",
+            "INSERT INTO projects (id, name) VALUES (%s, %s)",
             ("proj-1", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             ("wt-1", "proj-1", "feature", "/tmp/wt", "active"),
         )
 
@@ -766,12 +766,12 @@ class TestMergeResolutionManagerUpdateConflict:
 
         # Create prerequisites
         db.execute(
-            "INSERT INTO projects (id, name) VALUES (?, ?)",
+            "INSERT INTO projects (id, name) VALUES (%s, %s)",
             ("proj-1", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             ("wt-1", "proj-1", "feature", "/tmp/wt", "active"),
         )
 
@@ -815,12 +815,12 @@ class TestConflictStateTransitions:
 
         # Create prerequisites
         db.execute(
-            "INSERT INTO projects (id, name) VALUES (?, ?)",
+            "INSERT INTO projects (id, name) VALUES (%s, %s)",
             ("proj-1", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             ("wt-1", "proj-1", "feature", "/tmp/wt", "active"),
         )
 
@@ -856,12 +856,12 @@ class TestConflictStateTransitions:
 
         # Create prerequisites
         db.execute(
-            "INSERT INTO projects (id, name) VALUES (?, ?)",
+            "INSERT INTO projects (id, name) VALUES (%s, %s)",
             ("proj-1", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             ("wt-1", "proj-1", "feature", "/tmp/wt", "active"),
         )
 
@@ -891,12 +891,12 @@ class TestConflictStateTransitions:
 
         # Create prerequisites
         db.execute(
-            "INSERT INTO projects (id, name) VALUES (?, ?)",
+            "INSERT INTO projects (id, name) VALUES (%s, %s)",
             ("proj-1", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             ("wt-1", "proj-1", "feature", "/tmp/wt", "active"),
         )
 
@@ -935,12 +935,12 @@ class TestQueryResolutionsByFile:
 
         # Create prerequisites
         db.execute(
-            "INSERT INTO projects (id, name) VALUES (?, ?)",
+            "INSERT INTO projects (id, name) VALUES (%s, %s)",
             ("proj-1", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             ("wt-1", "proj-1", "feature", "/tmp/wt", "active"),
         )
 
@@ -981,12 +981,12 @@ class TestQueryResolutionsByBranch:
 
         # Create prerequisites
         db.execute(
-            "INSERT INTO projects (id, name) VALUES (?, ?)",
+            "INSERT INTO projects (id, name) VALUES (%s, %s)",
             ("proj-1", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             ("wt-1", "proj-1", "feature", "/tmp/wt", "active"),
         )
 
@@ -1015,12 +1015,12 @@ class TestQueryResolutionsByBranch:
 
         # Create prerequisites
         db.execute(
-            "INSERT INTO projects (id, name) VALUES (?, ?)",
+            "INSERT INTO projects (id, name) VALUES (%s, %s)",
             ("proj-1", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             ("wt-1", "proj-1", "feature", "/tmp/wt", "active"),
         )
 
@@ -1053,12 +1053,12 @@ class TestQueryResolutionsByStatus:
 
         # Create prerequisites
         db.execute(
-            "INSERT INTO projects (id, name) VALUES (?, ?)",
+            "INSERT INTO projects (id, name) VALUES (%s, %s)",
             ("proj-1", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             ("wt-1", "proj-1", "feature", "/tmp/wt", "active"),
         )
 
@@ -1089,12 +1089,12 @@ class TestQueryResolutionsByStatus:
 
         # Create prerequisites
         db.execute(
-            "INSERT INTO projects (id, name) VALUES (?, ?)",
+            "INSERT INTO projects (id, name) VALUES (%s, %s)",
             ("proj-1", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             ("wt-1", "proj-1", "feature", "/tmp/wt", "active"),
         )
 
@@ -1142,12 +1142,12 @@ class TestResolutionHistoryTracking:
 
         # Create prerequisites
         db.execute(
-            "INSERT INTO projects (id, name) VALUES (?, ?)",
+            "INSERT INTO projects (id, name) VALUES (%s, %s)",
             ("proj-1", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             ("wt-1", "proj-1", "feature", "/tmp/wt", "active"),
         )
 
@@ -1170,12 +1170,12 @@ class TestResolutionHistoryTracking:
 
         # Create prerequisites
         db.execute(
-            "INSERT INTO projects (id, name) VALUES (?, ?)",
+            "INSERT INTO projects (id, name) VALUES (%s, %s)",
             ("proj-1", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             ("wt-1", "proj-1", "feature", "/tmp/wt", "active"),
         )
 
@@ -1201,12 +1201,12 @@ class TestResolutionHistoryTracking:
 
         # Create prerequisites
         db.execute(
-            "INSERT INTO projects (id, name) VALUES (?, ?)",
+            "INSERT INTO projects (id, name) VALUES (%s, %s)",
             ("proj-1", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             ("wt-1", "proj-1", "feature", "/tmp/wt", "active"),
         )
 
@@ -1242,17 +1242,17 @@ class TestResolutionHistoryTracking:
 
         # Create multiple worktrees
         db.execute(
-            "INSERT INTO projects (id, name) VALUES (?, ?)",
+            "INSERT INTO projects (id, name) VALUES (%s, %s)",
             ("proj-1", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             ("wt-1", "proj-1", "feature1", "/tmp/wt1", "active"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+               VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             ("wt-2", "proj-1", "feature2", "/tmp/wt2", "active"),
         )
 

@@ -389,7 +389,7 @@ def _recover_agent_run(db: Any, session: Any, event: HookEvent) -> _AgentRunReco
     )
     if isinstance(run_id, str) and run_id:
         row = db.fetchone(
-            "SELECT id, workflow_name, agent_name, prompt FROM agent_runs WHERE id = ?",
+            "SELECT id, workflow_name, agent_name, prompt FROM agent_runs WHERE id = %s",
             (run_id,),
         )
         return _agent_run_from_row(row)
@@ -398,7 +398,7 @@ def _recover_agent_run(db: Any, session: Any, event: HookEvent) -> _AgentRunReco
         """
         SELECT id, workflow_name, agent_name, prompt
         FROM agent_runs
-        WHERE child_session_id = ? OR claimed_session_id = ?
+        WHERE child_session_id = %s OR claimed_session_id = %s
         ORDER BY updated_at DESC, created_at DESC
         LIMIT 1
         """,

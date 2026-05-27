@@ -33,7 +33,7 @@ class SpanStorage:
             span_id, trace_id, parent_span_id, name, kind,
             start_time_ns, end_time_ns, status, status_message,
             attributes_json, events_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
 
         rows = []
@@ -62,7 +62,7 @@ class SpanStorage:
 
     def get_trace(self, trace_id: str) -> list[dict[str, Any]]:
         """Retrieve all spans for a trace, ordered by start time."""
-        query = "SELECT * FROM spans WHERE trace_id = ? ORDER BY start_time_ns ASC"
+        query = "SELECT * FROM spans WHERE trace_id = %s ORDER BY start_time_ns ASC"
         rows = self.db.fetchall(query, (trace_id,))
         return [self._row_to_dict(row) for row in rows]
 
@@ -79,10 +79,10 @@ class SpanStorage:
 
         if project_id:
             project_id_sql = json_text_expr(self.db, "attributes_json", "project_id")
-            conditions.append(f"({project_id_sql} = ? OR {project_id_sql} IS NULL)")
+            conditions.append(f"({project_id_sql} = %s OR {project_id_sql} IS NULL)")
             params.append(project_id)
         if status:
-            conditions.append("status = ?")
+            conditions.append("status = %s")
             params.append(status)
 
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
@@ -96,7 +96,7 @@ class SpanStorage:
             {where}
             GROUP BY trace_id
             ORDER BY last_activity DESC
-            LIMIT ? OFFSET ?
+            LIMIT %s OFFSET %s
         ),
         RootSpans AS (
             SELECT *,
@@ -123,10 +123,10 @@ class SpanStorage:
         WITH SessionTraces AS (
             SELECT trace_id, MAX(start_time_ns) as last_activity
             FROM spans
-            WHERE {session_id_sql} = ?
+            WHERE {session_id_sql} = %s
             GROUP BY trace_id
             ORDER BY last_activity DESC
-            LIMIT ? OFFSET ?
+            LIMIT %s OFFSET %s
         ),
         RootSpans AS (
             SELECT *,
@@ -149,14 +149,14 @@ class SpanStorage:
         query = f"""
         SELECT COUNT(DISTINCT trace_id) as count
         FROM spans
-        WHERE {session_id_sql} = ?
+        WHERE {session_id_sql} = %s
         """  # nosec B608 # JSON expression is generated from a static key.
         row = self.db.fetchone(query, (session_id,))
         return row["count"] if row else 0
 
     def delete_old_spans(self, retention_days: int = 7) -> int:
         """Delete spans older than the specified retention period."""
-        cutoff_sql = older_than_now_expr(self.db, "created_at", "?", "day")
+        cutoff_sql = older_than_now_expr(self.db, "created_at", "%s", "day")
         query = f"DELETE FROM spans WHERE {cutoff_sql}"  # nosec B608
         cursor = self.db.execute(query, (retention_days,))
         return cursor.rowcount

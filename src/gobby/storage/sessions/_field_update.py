@@ -38,7 +38,7 @@ class _FieldUpdateMixin:
         now = datetime.now(UTC).isoformat()
         with self.db.transaction():
             self.db.execute(
-                "UPDATE sessions SET status = ?, updated_at = ? WHERE id = ?",
+                "UPDATE sessions SET status = %s, updated_at = %s WHERE id = %s",
                 (status, now, session_id),
             )
         updated = self.get(session_id)
@@ -67,8 +67,8 @@ class _FieldUpdateMixin:
                 UPDATE sessions
                 SET status = 'active',
                     transcript_processed = FALSE,
-                    updated_at = ?
-                WHERE id = ?
+                    updated_at = %s
+                WHERE id = %s
                   AND status = 'expired'
                   AND session_type = 'terminal'
                 """,
@@ -84,7 +84,7 @@ class _FieldUpdateMixin:
         now = datetime.now(UTC).isoformat()
         with self.db.transaction():
             self.db.execute(
-                "UPDATE sessions SET had_edits = TRUE, updated_at = ? WHERE id = ?",
+                "UPDATE sessions SET had_edits = TRUE, updated_at = %s WHERE id = %s",
                 (now, session_id),
             )
         return self.get(session_id)
@@ -94,7 +94,7 @@ class _FieldUpdateMixin:
         now = datetime.now(UTC).isoformat()
         with self.db.transaction():
             self.db.execute(
-                "UPDATE sessions SET had_edits = FALSE, updated_at = ? WHERE id = ?",
+                "UPDATE sessions SET had_edits = FALSE, updated_at = %s WHERE id = %s",
                 (now, session_id),
             )
 
@@ -107,7 +107,7 @@ class _FieldUpdateMixin:
         now = datetime.now(UTC).isoformat()
         with self.db.transaction():
             self.db.execute(
-                "UPDATE sessions SET chat_mode = ?, updated_at = ? WHERE id = ?",
+                "UPDATE sessions SET chat_mode = %s, updated_at = %s WHERE id = %s",
                 (chat_mode, now, session_id),
             )
 
@@ -119,7 +119,7 @@ class _FieldUpdateMixin:
         now = datetime.now(UTC).isoformat()
         with self.db.transaction():
             self.db.execute(
-                "UPDATE sessions SET approved_tools_json = ?, updated_at = ? WHERE id = ?",
+                "UPDATE sessions SET approved_tools_json = %s, updated_at = %s WHERE id = %s",
                 (tools_json, now, session_id),
             )
 
@@ -151,7 +151,7 @@ class _FieldUpdateMixin:
         if source_changed:
             values["title_source"] = title_source
         with self.db.transaction():
-            self.db.safe_update("sessions", values, "id = ?", (session_id,))
+            self.db.safe_update("sessions", values, "id = %s", (session_id,))
         updated = self.get(session_id)
         if updated is None:
             return None
@@ -222,10 +222,10 @@ class _FieldUpdateMixin:
         if source_changed:
             values["title_source"] = title_source
 
-        set_clause = ", ".join(f"{column} = ?" for column in values)
+        set_clause = ", ".join(f"{column} = %s" for column in values)
         with self.db.transaction() as conn:
             conn.execute(
-                f"UPDATE sessions SET {set_clause} WHERE id = ?",  # nosec B608
+                f"UPDATE sessions SET {set_clause} WHERE id = %s",  # nosec B608
                 (*values.values(), session_id),
             )
 
@@ -243,7 +243,7 @@ class _FieldUpdateMixin:
         now = datetime.now(UTC).isoformat()
         with self.db.transaction():
             self.db.execute(
-                "UPDATE sessions SET model = ?, updated_at = ? WHERE id = ?",
+                "UPDATE sessions SET model = %s, updated_at = %s WHERE id = %s",
                 (model, now, session_id),
             )
         updated = self.get(session_id)
@@ -263,10 +263,10 @@ class _FieldUpdateMixin:
             self.db.execute(
                 """
                 UPDATE sessions
-                SET summary_path = COALESCE(?, summary_path),
-                    summary_markdown = COALESCE(?, summary_markdown),
-                    updated_at = ?
-                WHERE id = ?
+                SET summary_path = COALESCE(%s, summary_path),
+                    summary_markdown = COALESCE(%s, summary_markdown),
+                    updated_at = %s
+                WHERE id = %s
                 """,
                 (summary_path, summary_markdown, now, session_id),
             )
@@ -284,9 +284,9 @@ class _FieldUpdateMixin:
             self.db.execute(
                 """
                 UPDATE sessions
-                SET digest_markdown = ?,
-                    updated_at = ?
-                WHERE id = ?
+                SET digest_markdown = %s,
+                    updated_at = %s
+                WHERE id = %s
                 """,
                 (digest_markdown, now, session_id),
             )
@@ -304,9 +304,9 @@ class _FieldUpdateMixin:
             self.db.execute(
                 """
                 UPDATE sessions
-                SET last_turn_markdown = ?,
-                    updated_at = ?
-                WHERE id = ?
+                SET last_turn_markdown = %s,
+                    updated_at = %s
+                WHERE id = %s
                 """,
                 (last_turn_markdown, now, session_id),
             )
@@ -324,9 +324,9 @@ class _FieldUpdateMixin:
             self.db.execute(
                 """
                 UPDATE sessions
-                SET last_digest_input_hash = ?,
-                    updated_at = ?
-                WHERE id = ?
+                SET last_digest_input_hash = %s,
+                    updated_at = %s
+                WHERE id = %s
                 """,
                 (hash_value, now, session_id),
             )
@@ -340,7 +340,7 @@ class _FieldUpdateMixin:
         now = datetime.now(UTC).isoformat()
         with self.db.transaction():
             self.db.execute(
-                "UPDATE sessions SET parent_session_id = ?, updated_at = ? WHERE id = ?",
+                "UPDATE sessions SET parent_session_id = %s, updated_at = %s WHERE id = %s",
                 (parent_session_id, now, session_id),
             )
         return self.get(session_id)

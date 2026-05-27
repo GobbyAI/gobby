@@ -47,21 +47,21 @@ def update_existing_session(
     conn.execute(
         """
         UPDATE sessions SET
-            title = COALESCE(?, title),
-            transcript_path = COALESCE(?, transcript_path),
-            git_branch = COALESCE(?, git_branch),
-            parent_session_id = COALESCE(?, parent_session_id),
-            terminal_context = COALESCE(?, terminal_context),
-            workflow_name = COALESCE(?, workflow_name),
+            title = COALESCE(%s, title),
+            transcript_path = COALESCE(%s, transcript_path),
+            git_branch = COALESCE(%s, git_branch),
+            parent_session_id = COALESCE(%s, parent_session_id),
+            terminal_context = COALESCE(%s, terminal_context),
+            workflow_name = COALESCE(%s, workflow_name),
             is_local = CASE
-                WHEN ? THEN ?
+                WHEN %s THEN %s
                 ELSE is_local
             END,
-            sandbox_enabled = COALESCE(?, sandbox_enabled),
-            sandbox_policy_hash = COALESCE(?, sandbox_policy_hash),
+            sandbox_enabled = COALESCE(%s, sandbox_enabled),
+            sandbox_policy_hash = COALESCE(%s, sandbox_policy_hash),
             status = 'active',
-            updated_at = ?
-        WHERE id = ?
+            updated_at = %s
+        WHERE id = %s
         """,
         (
             title,

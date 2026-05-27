@@ -130,7 +130,7 @@ def test_approved_writes_artifacts(
         """
         SELECT structured_pr_verdict, pr_report_ref
         FROM task_delivery_campaigns
-        WHERE task_id = ?
+        WHERE task_id = %s
         """,
         (ctx.task_id,),
     )

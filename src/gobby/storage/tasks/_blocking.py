@@ -13,7 +13,7 @@ def _fetch_all_blocker_map(db: HubDatabase, task_ids: Sequence[str]) -> dict[str
     if not task_ids:
         return {}
 
-    placeholders = ", ".join("?" for _ in task_ids)
+    placeholders = ", ".join("%s" for _ in task_ids)
     rows = db.fetchall(
         f"SELECT task_id, depends_on FROM task_dependencies "
         f"WHERE dep_type = 'blocks' AND task_id IN ({placeholders})",  # nosec B608
@@ -31,7 +31,7 @@ def _fetch_active_blocker_map(db: HubDatabase, task_ids: Sequence[str]) -> dict[
     if not task_ids:
         return {}
 
-    placeholders = ", ".join("?" for _ in task_ids)
+    placeholders = ", ".join("%s" for _ in task_ids)
     rows = db.fetchall(
         f"""
         SELECT d.task_id, d.depends_on

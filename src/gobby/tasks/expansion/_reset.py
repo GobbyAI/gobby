@@ -154,15 +154,15 @@ def _is_closed_obsolete_task(self: Any, task_id: str) -> bool:
 
 
 def _task_exists(self: Any, task_id: str) -> bool:
-    return self.db.fetchone("SELECT 1 FROM tasks WHERE id = ?", (task_id,)) is not None
+    return self.db.fetchone("SELECT 1 FROM tasks WHERE id = %s", (task_id,)) is not None
 
 
 def _ancestor_ids_between(self: Any, task_id: str, parent_task_id: str) -> set[str]:
     ancestors: set[str] = set()
-    current = self.db.fetchone("SELECT parent_task_id FROM tasks WHERE id = ?", (task_id,))
+    current = self.db.fetchone("SELECT parent_task_id FROM tasks WHERE id = %s", (task_id,))
     next_id = current["parent_task_id"] if current is not None else None
     while next_id and next_id != parent_task_id:
-        row = self.db.fetchone("SELECT parent_task_id FROM tasks WHERE id = ?", (next_id,))
+        row = self.db.fetchone("SELECT parent_task_id FROM tasks WHERE id = %s", (next_id,))
         if row is None:
             break
         ancestors.add(next_id)
@@ -209,7 +209,7 @@ def _child_rows_by_parent(self: Any, parent_ids: set[str]) -> dict[str, list[Any
     if not parent_ids:
         return {}
     ordered_parent_ids = sorted(parent_ids)
-    placeholders = ", ".join("?" for _ in ordered_parent_ids)
+    placeholders = ", ".join("%s" for _ in ordered_parent_ids)
     rows = self.db.fetchall(
         f"""
         SELECT id, seq_num, parent_task_id
@@ -246,7 +246,7 @@ def _bottom_up(self: Any, target_ids: set[str]) -> list[str]:
 
 
 def _depth(self: Any, task_id: str) -> int:
-    row = self.db.fetchone("SELECT path_cache FROM tasks WHERE id = ?", (task_id,))
+    row = self.db.fetchone("SELECT path_cache FROM tasks WHERE id = %s", (task_id,))
     path_cache = row["path_cache"] if row is not None else None
     if not path_cache:
         return 0
@@ -278,8 +278,8 @@ def _reset_parent_expansion_stage(
                    review_round_count = 0,
                    artifact_refs = NULL,
                    notes = NULL,
-                   updated_at = ?
-             WHERE task_id = ? AND stage_name = 'expansion'
+                   updated_at = %s
+             WHERE task_id = %s AND stage_name = 'expansion'
             """,
             (now, parent_task_id),
         )

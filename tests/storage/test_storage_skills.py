@@ -514,11 +514,11 @@ class TestSkillProjectScope:
         # Create two projects
         with db.transaction() as conn:
             conn.execute(
-                "INSERT INTO projects (id, name, created_at, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                "INSERT INTO projects (id, name, created_at, updated_at) VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
                 ("proj-1", "project-1"),
             )
             conn.execute(
-                "INSERT INTO projects (id, name, created_at, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                "INSERT INTO projects (id, name, created_at, updated_at) VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
                 ("proj-2", "project-2"),
             )
 
@@ -546,7 +546,7 @@ class TestSkillProjectScope:
         """Test global skills vs project-scoped skills."""
         with db.transaction() as conn:
             conn.execute(
-                "INSERT INTO projects (id, name, created_at, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                "INSERT INTO projects (id, name, created_at, updated_at) VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
                 ("proj-test", "test-project"),
             )
 

@@ -22,7 +22,7 @@ def test_cleanup_agent_runtime_state_releases_mutex_and_workflow(
         """
         INSERT INTO sessions (
             id, external_id, machine_id, source, project_id, status, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, 'active', NOW(), NOW())
+        ) VALUES (%s, %s, %s, %s, %s, 'active', NOW(), NOW())
         """,
         (
             "child-session",

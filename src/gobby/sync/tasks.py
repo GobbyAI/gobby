@@ -466,7 +466,7 @@ class TaskSyncManager:
                             depth = 0
                             while current_parent and depth < max_depth:
                                 parent_row = conn.execute(
-                                    "SELECT seq_num, parent_task_id FROM tasks WHERE id = ?",
+                                    "SELECT seq_num, parent_task_id FROM tasks WHERE id = %s",
                                     (current_parent,),
                                 ).fetchone()
                                 if not parent_row or parent_row["seq_num"] is None:
@@ -478,16 +478,16 @@ class TaskSyncManager:
 
                             # INSERT with all synced fields
                             columns = ", ".join(["id"] + list(synced_values.keys()))
-                            placeholders = ", ".join(["?"] * (1 + len(synced_values)))
+                            placeholders = ", ".join(["%s"] * (1 + len(synced_values)))
                             conn.execute(
                                 f"INSERT INTO {'tasks'} ({columns}) VALUES ({placeholders})",
                                 (task_id, *synced_values.values()),
                             )
                         else:
                             # Existing task: update synced fields while preserving local state.
-                            set_clause = ", ".join(f"{col} = ?" for col in synced_values)
+                            set_clause = ", ".join(f"{col} = %s" for col in synced_values)
                             conn.execute(
-                                f"UPDATE tasks SET {set_clause} WHERE id = ?",
+                                f"UPDATE tasks SET {set_clause} WHERE id = %s",
                                 (*synced_values.values(), task_id),
                             )
 
@@ -502,7 +502,7 @@ class TaskSyncManager:
                         """
                         INSERT INTO task_dependencies (
                             task_id, depends_on, dep_type, created_at
-                        ) VALUES (?, ?, 'blocks', ?)
+                        ) VALUES (%s, %s, 'blocks', %s)
                         ON CONFLICT (task_id, depends_on, dep_type) DO NOTHING
                         """,
                         (task_id, depends_on, datetime.now(UTC).isoformat()),
@@ -566,7 +566,7 @@ class TaskSyncManager:
 
             # Resolve project ID if not provided
             if not project_id:
-                row = self.db.fetchone("SELECT id FROM projects WHERE github_url = ?", (repo_url,))
+                row = self.db.fetchone("SELECT id FROM projects WHERE github_url = %s", (repo_url,))
                 if row:
                     project_id = row["id"]
 
@@ -629,21 +629,19 @@ class TaskSyncManager:
                     )
                     updated_at = datetime.now(UTC).isoformat()
 
-                    exists = self.db.fetchone("SELECT 1 FROM tasks WHERE id = ?", (task_id,))
+                    exists = self.db.fetchone("SELECT 1 FROM tasks WHERE id = %s", (task_id,))
                     if exists:
                         conn.execute(
-                            "UPDATE tasks SET title=?, description=?, labels=?, updated_at=? WHERE id=?",
+                            "UPDATE tasks SET title=%s, description=%s, labels=%s, updated_at=%s WHERE id=%s",
                             (title, desc, labels_json, updated_at, task_id),
                         )
                     else:
                         conn.execute(
                             """
-                            INSERT INTO """
-                            + "tasks"
-                            + """ (
+                            INSERT INTO tasks (
                                 id, project_id, title, description, task_type,
                                 labels, created_at, updated_at
-                            ) VALUES (?, ?, ?, ?, 'issue', ?, ?, ?)
+                            ) VALUES (%s, %s, %s, %s, 'issue', %s, %s, %s)
                             """,
                             (task_id, project_id, title, desc, labels_json, created_at, updated_at),
                         )

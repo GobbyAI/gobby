@@ -66,7 +66,7 @@ class StageRegistryManager:
             f"""
             SELECT *
               FROM task_stages_registry
-             WHERE name = ?
+             WHERE name = %s
                {deleted_filter}
             """,  # nosec B608 # deleted_filter is controlled by a boolean.
             (name,),
@@ -85,7 +85,7 @@ class StageRegistryManager:
                     requires_human, is_terminal, default_max_work_attempts,
                     default_max_review_rounds, bundled_hash, deleted_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, CURRENT_TIMESTAMP)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NULL, CURRENT_TIMESTAMP)
                 ON CONFLICT(name) DO UPDATE SET
                     display_label = excluded.display_label,
                     description = excluded.description,
@@ -132,7 +132,7 @@ class StageRegistryManager:
             """
             SELECT stage_name, position
               FROM task_type_default_stages
-             WHERE task_type = ?
+             WHERE task_type = %s
              ORDER BY position, stage_name
             """,
             (task_type,),
@@ -155,11 +155,11 @@ class StageRegistryManager:
             seen_positions.add(position)
 
         with self.db.transaction() as conn:
-            conn.execute("DELETE FROM task_type_default_stages WHERE task_type = ?", (task_type,))
+            conn.execute("DELETE FROM task_type_default_stages WHERE task_type = %s", (task_type,))
             conn.executemany(
                 """
                 INSERT INTO task_type_default_stages (task_type, stage_name, position)
-                VALUES (?, ?, ?)
+                VALUES (%s, %s, %s)
                 """,
                 [(task_type, stage_name, position) for stage_name, position in stages],
             )
@@ -180,23 +180,23 @@ class StageRegistryManager:
             cursor = conn.execute(
                 """
                 UPDATE task_stages_registry
-                   SET display_label = ?,
-                       description = ?,
-                       category = ?,
-                       default_agent = ?,
-                       reviewer_agent = ?,
-                       reviewer_agent_selector_json = ?,
-                       review_policy = ?,
-                       dispatch_type = ?,
-                       dispatch_target = ?,
-                       dispatch_inputs_json = ?,
-                       position_hint = ?,
-                       requires_human = ?,
-                       is_terminal = ?,
-                       default_max_work_attempts = ?,
-                       default_max_review_rounds = ?,
+                   SET display_label = %s,
+                       description = %s,
+                       category = %s,
+                       default_agent = %s,
+                       reviewer_agent = %s,
+                       reviewer_agent_selector_json = %s,
+                       review_policy = %s,
+                       dispatch_type = %s,
+                       dispatch_target = %s,
+                       dispatch_inputs_json = %s,
+                       position_hint = %s,
+                       requires_human = %s,
+                       is_terminal = %s,
+                       default_max_work_attempts = %s,
+                       default_max_review_rounds = %s,
                        updated_at = CURRENT_TIMESTAMP
-                 WHERE name = ?
+                 WHERE name = %s
                    AND deleted_at IS NULL
                 """,
                 (
@@ -249,8 +249,8 @@ class StageRegistryManager:
         self.db.execute(
             """
             UPDATE task_stages_registry
-               SET deleted_at = ?, updated_at = CURRENT_TIMESTAMP
-             WHERE name = ?
+               SET deleted_at = %s, updated_at = CURRENT_TIMESTAMP
+             WHERE name = %s
             """,
             (deleted_at, name),
         )
@@ -400,7 +400,7 @@ class StageRegistryManager:
             """
             SELECT task_id
               FROM task_stage_states
-             WHERE stage_name = ?
+             WHERE stage_name = %s
                AND state != 'done'
              LIMIT 1
             """,
@@ -409,7 +409,7 @@ class StageRegistryManager:
         if active_state is not None:
             return f"Stage '{name}' is referenced by active task stage states"
         default_ref = self.db.fetchone(
-            "SELECT task_type FROM task_type_default_stages WHERE stage_name = ? LIMIT 1",
+            "SELECT task_type FROM task_type_default_stages WHERE stage_name = %s LIMIT 1",
             (name,),
         )
         if default_ref is not None:
@@ -429,7 +429,7 @@ class StageRegistryManager:
             SELECT name
               FROM build_profiles
              WHERE deleted_at IS NULL
-               AND skip_stages_json @> ?::jsonb
+               AND skip_stages_json @> %s::jsonb
              LIMIT 1
             """,
             (json.dumps([name]),),

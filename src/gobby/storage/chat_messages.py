@@ -34,7 +34,7 @@ def save_message(
                 """
                 SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq
                   FROM chat_messages
-                 WHERE conversation_id = ?
+                 WHERE conversation_id = %s
                 """,
                 (conversation_id,),
             ).fetchone()
@@ -44,7 +44,7 @@ def save_message(
                    id, conversation_id, role, content, tool_calls_json,
                    content_blocks_json, metadata_json, seq
                )
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
             (
                 msg_id,
                 conversation_id,
@@ -71,9 +71,9 @@ def get_messages(
         """SELECT id, conversation_id, role, content, tool_calls_json, content_blocks_json,
                   metadata_json, seq, created_at
            FROM chat_messages
-           WHERE conversation_id = ? AND seq > ?
+           WHERE conversation_id = %s AND seq > %s
            ORDER BY seq ASC
-           LIMIT ?""",
+           LIMIT %s""",
         (conversation_id, after_seq, limit),
     )
     result = []
@@ -109,7 +109,7 @@ def delete_messages(db: HubDatabase, conversation_id: str) -> int:
     """Delete all messages for a conversation. Returns count deleted."""
     with db.transaction() as conn:
         cursor = conn.execute(
-            "DELETE FROM chat_messages WHERE conversation_id = ?",
+            "DELETE FROM chat_messages WHERE conversation_id = %s",
             (conversation_id,),
         )
         return cursor.rowcount
@@ -118,7 +118,7 @@ def delete_messages(db: HubDatabase, conversation_id: str) -> int:
 def get_max_seq(db: HubDatabase, conversation_id: str) -> int:
     """Get the maximum sequence number for a conversation."""
     row = db.fetchone(
-        "SELECT MAX(seq) as max_seq FROM chat_messages WHERE conversation_id = ?",
+        "SELECT MAX(seq) as max_seq FROM chat_messages WHERE conversation_id = %s",
         (conversation_id,),
     )
     return int(row["max_seq"]) if row and row["max_seq"] is not None else 0

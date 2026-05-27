@@ -57,7 +57,7 @@ def test_after_commit_async_reader_uses_committed_state(postgres_db: Any) -> Non
         def callback() -> None:
             def read_from_pool() -> None:
                 try:
-                    row = postgres_db.fetchone(f'SELECT value FROM "{table}" WHERE id = $1', (1,))
+                    row = postgres_db.fetchone(f'SELECT value FROM "{table}" WHERE id = %s', (1,))
                     results.put(None if row is None else row["value"])
                 except BaseException as exc:  # pragma: no cover - re-raised in main thread
                     results.put(exc)
@@ -69,7 +69,7 @@ def test_after_commit_async_reader_uses_committed_state(postgres_db: Any) -> Non
                 results.put(TimeoutError("after_commit reader did not finish"))
 
         with postgres_db.transaction() as txn:
-            txn.execute(f'INSERT INTO "{table}" (id, value) VALUES ($1, $2)', (1, "committed"))
+            txn.execute(f'INSERT INTO "{table}" (id, value) VALUES (%s, %s)', (1, "committed"))
             txn.after_commit(callback)
             assert results.empty()
 
@@ -104,7 +104,7 @@ def test_after_commit_reader_respects_long_running_snapshot(
             observed.append(int(row[0]))
 
         with postgres_db.transaction() as txn:
-            txn.execute(f'INSERT INTO "{table}" (id, value) VALUES ($1, $2)', (1, "committed"))
+            txn.execute(f'INSERT INTO "{table}" (id, value) VALUES (%s, %s)', (1, "committed"))
             txn.after_commit(callback)
 
         assert observed == [0]
@@ -130,9 +130,9 @@ def test_savepoint_callback_rollback_safe_with_postgres(postgres_db: Any) -> Non
         seen: list[int] = []
 
         with postgres_db.transaction() as txn:
-            txn.execute(f'INSERT INTO "{table}" (id, value) VALUES ($1, $2)', (1, "outer"))
+            txn.execute(f'INSERT INTO "{table}" (id, value) VALUES (%s, %s)', (1, "outer"))
             savepoint = txn.savepoint("mvcc_rollback")
-            txn.execute(f'INSERT INTO "{table}" (id, value) VALUES ($1, $2)', (2, "rolled-back"))
+            txn.execute(f'INSERT INTO "{table}" (id, value) VALUES (%s, %s)', (2, "rolled-back"))
             savepoint.rollback()
             savepoint.release()
             txn.after_commit(
@@ -151,7 +151,7 @@ def test_read_modify_write_path_serializes_concurrent_writers(postgres_db: Any) 
     table = "mvcc_counter"
     _drop_table(postgres_db, table)
     postgres_db.execute(f'CREATE TABLE "{table}" (id INTEGER PRIMARY KEY, value INTEGER NOT NULL)')
-    postgres_db.execute(f'INSERT INTO "{table}" (id, value) VALUES ($1, $2)', (1, 0))
+    postgres_db.execute(f'INSERT INTO "{table}" (id, value) VALUES (%s, %s)', (1, 0))
 
     try:
         errors: queue.Queue[BaseException] = queue.Queue()
@@ -161,13 +161,13 @@ def test_read_modify_write_path_serializes_concurrent_writers(postgres_db: Any) 
         def worker() -> None:
             try:
                 with postgres_db.transaction_immediate(_CounterLock(table)) as txn:
-                    row = txn.execute(f'SELECT value FROM "{table}" WHERE id = $1', (1,)).fetchone()
+                    row = txn.execute(f'SELECT value FROM "{table}" WHERE id = %s', (1,)).fetchone()
                     assert row is not None
                     next_value = int(row["value"]) + 1
                     if not first_writer_read.is_set():
                         first_writer_read.set()
                         assert release_first_writer.wait(timeout=1)
-                    txn.execute(f'UPDATE "{table}" SET value = $1 WHERE id = $2', (next_value, 1))
+                    txn.execute(f'UPDATE "{table}" SET value = %s WHERE id = %s', (next_value, 1))
             except BaseException as exc:  # pragma: no cover - re-raised in main thread
                 errors.put(exc)
 
@@ -183,7 +183,7 @@ def test_read_modify_write_path_serializes_concurrent_writers(postgres_db: Any) 
         if not errors.empty():
             raise AssertionError("concurrent writer failed") from errors.get()
 
-        row = postgres_db.fetchone(f'SELECT value FROM "{table}" WHERE id = $1', (1,))
+        row = postgres_db.fetchone(f'SELECT value FROM "{table}" WHERE id = %s', (1,))
         assert row is not None
         assert row["value"] == 2
     finally:

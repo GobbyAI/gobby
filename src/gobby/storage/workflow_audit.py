@@ -89,7 +89,7 @@ class WorkflowAuditManager:
                 """
                 INSERT INTO workflow_audit_log
                 (session_id, timestamp, step, event_type, tool_name, rule_id, condition, result, reason, context)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
                 (
@@ -301,13 +301,13 @@ class WorkflowAuditManager:
         params: list[Any] = []
 
         if session_id:
-            conditions.append("session_id = ?")
+            conditions.append("session_id = %s")
             params.append(session_id)
         if event_type:
-            conditions.append("event_type = ?")
+            conditions.append("event_type = %s")
             params.append(event_type)
         if result:
-            conditions.append("result = ?")
+            conditions.append("result = %s")
             params.append(result)
 
         where_clause = " AND ".join(conditions) if conditions else "1=1"
@@ -320,7 +320,7 @@ class WorkflowAuditManager:
             FROM workflow_audit_log
             WHERE {where_clause}
             ORDER BY timestamp DESC
-            LIMIT ? OFFSET ?
+            LIMIT %s OFFSET %s
             """,  # nosec B608
             tuple(params),
         )
@@ -366,7 +366,7 @@ class WorkflowAuditManager:
             Number of entries deleted.
         """
         try:
-            cutoff_sql = older_than_now_expr(self.db, "timestamp", "?", "day")
+            cutoff_sql = older_than_now_expr(self.db, "timestamp", "%s", "day")
             cursor = self.db.execute(
                 f"""
                 DELETE FROM workflow_audit_log
@@ -390,7 +390,7 @@ class WorkflowAuditManager:
         """
         if session_id:
             row = self.db.fetchone(
-                "SELECT COUNT(*) as count FROM workflow_audit_log WHERE session_id = ?",
+                "SELECT COUNT(*) as count FROM workflow_audit_log WHERE session_id = %s",
                 (session_id,),
             )
         else:

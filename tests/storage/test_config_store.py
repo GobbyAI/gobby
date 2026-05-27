@@ -140,7 +140,7 @@ class TestConfigStore:
 
     def test_source_tracking(self, store: ConfigStore):
         store.set("key", "val", source="migrated")
-        row = store.db.fetchone("SELECT source FROM config_store WHERE key = ?", ("key",))
+        row = store.db.fetchone("SELECT source FROM config_store WHERE key = %s", ("key",))
         assert row["source"] == "migrated"
 
     def test_preserves_types(self, store: ConfigStore):
@@ -177,7 +177,7 @@ class TestConfigStore:
         ConfigStore(db).set_secret("service.requirepass", "secret", FakeSecretStore())
 
         sql, params = db.executed[-1]
-        assert "VALUES (?, ?, ?, ?, ?)" in sql
+        assert "VALUES (%s, %s, %s, %s, %s)" in sql
         assert "is_secret = excluded.is_secret" in sql
         assert params[3] is True
 
@@ -193,7 +193,7 @@ class TestConfigStore:
         db = FakeDB()
         assert ConfigStore(db).get_secret_keys() == ["service.requirepass"]
         assert db.calls == [
-            ("SELECT key FROM config_store WHERE is_secret = ? ORDER BY key", (True,))
+            ("SELECT key FROM config_store WHERE is_secret = %s ORDER BY key", (True,))
         ]
 
 

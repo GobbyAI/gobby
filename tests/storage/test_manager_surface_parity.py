@@ -56,32 +56,32 @@ def test_local_task_manager_dual_backend(hub_db: object) -> None:
     db.execute("DELETE FROM manager_surface_items")
 
     insert_cursor = db.execute(
-        "INSERT INTO manager_surface_items (id, name, count) VALUES ($1, $2, $3)",
+        "INSERT INTO manager_surface_items (id, name, count) VALUES (%s, %s, %s)",
         (1, "one", 1),
     )
     assert insert_cursor.rowcount == 1
-    assert db.fetchone("SELECT name FROM manager_surface_items WHERE id = $1", (1,)) == {
+    assert db.fetchone("SELECT name FROM manager_surface_items WHERE id = %s", (1,)) == {
         "name": "one"
     }
 
     update_cursor = db.execute(
-        "UPDATE manager_surface_items SET count = count + $1 WHERE id = $2",
+        "UPDATE manager_surface_items SET count = count + %s WHERE id = %s",
         (2, 1),
     )
     assert update_cursor.rowcount == 1
 
-    db.safe_update("manager_surface_items", {"count": 7}, "id = $1", (1,))
-    assert db.fetchall("SELECT count FROM manager_surface_items WHERE id = $1", (1,)) == [
+    db.safe_update("manager_surface_items", {"count": 7}, "id = %s", (1,))
+    assert db.fetchall("SELECT count FROM manager_surface_items WHERE id = %s", (1,)) == [
         {"count": 7}
     ]
 
     with db.transaction_immediate(DispatchMutexRow(task_id="manager-surface")) as txn:
         txn.execute(
-            "UPDATE manager_surface_items SET count = count + $1 WHERE id = $2",
+            "UPDATE manager_surface_items SET count = count + %s WHERE id = %s",
             (1, 1),
         )
 
-    assert db.fetchone("SELECT count FROM manager_surface_items WHERE id = $1", (1,)) == {
+    assert db.fetchone("SELECT count FROM manager_surface_items WHERE id = %s", (1,)) == {
         "count": 8
     }
 
@@ -93,8 +93,8 @@ def test_ambient_transaction_groups_convenience_calls(hub_db: object) -> None:
 
     with pytest.raises(RuntimeError, match="rollback"):
         with db.transaction():
-            db.execute("INSERT INTO ambient_items (id, name) VALUES ($1, $2)", (1, "one"))
-            db.execute("INSERT INTO ambient_items (id, name) VALUES ($1, $2)", (2, "two"))
+            db.execute("INSERT INTO ambient_items (id, name) VALUES (%s, %s)", (1, "one"))
+            db.execute("INSERT INTO ambient_items (id, name) VALUES (%s, %s)", (2, "two"))
             raise RuntimeError("rollback")
 
     assert db.fetchall("SELECT id FROM ambient_items ORDER BY id") == []
@@ -109,8 +109,8 @@ def test_ambient_transaction_isolated_per_adapter() -> None:
 
         with pytest.raises(RuntimeError, match="rollback"):
             with primary_db.transaction():
-                primary_db.execute("INSERT INTO ambient_items (id) VALUES ($1)", (1,))
-                other_db.execute("INSERT INTO ambient_items (id) VALUES ($1)", (2,))
+                primary_db.execute("INSERT INTO ambient_items (id) VALUES (%s)", (1,))
+                other_db.execute("INSERT INTO ambient_items (id) VALUES (%s)", (2,))
                 raise RuntimeError("rollback")
 
         assert primary_db.fetchall("SELECT id FROM ambient_items") == []
@@ -172,7 +172,7 @@ def test_subtree_cascade_serializes_overlapping_subtrees(monkeypatch: pytest.Mon
         db.executemany(
             """
             INSERT INTO tasks (id, project_id, parent_task_id, task_type, closed_at)
-            VALUES ($1, $2, $3, $4, NULL)
+            VALUES (%s, %s, %s, %s, NULL)
             """,
             [("root", "project-1", None, "epic"), ("child", "project-1", "root", "task")],
         )

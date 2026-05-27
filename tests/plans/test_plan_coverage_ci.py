@@ -125,7 +125,7 @@ def _seed_registry(db: TestDatabase) -> dict[str, PlanRegistryEntry]:
                 id, project_id, plan_id, plan_path, plan_hash, plan_kind, state,
                 root_task_ref, created_at, updated_at, archived_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', %s)
             """,
             (
                 f"plan-{entry.plan_id}",
@@ -146,7 +146,7 @@ def _seed_project(db: TestDatabase) -> None:
     db.execute(
         """
         INSERT INTO projects (id, name, repo_path, created_at, updated_at)
-        VALUES (?, 'gobby', ?, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')
+        VALUES (%s, 'gobby', %s, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')
         ON CONFLICT (id) DO NOTHING
         """,
         (PROJECT_ID, str(PROJECT_ROOT)),
@@ -345,7 +345,7 @@ def test_plans_table_has_unique_project_plan_constraint(temp_db: TestDatabase) -
                 id, project_id, plan_id, plan_path, plan_hash, plan_kind, state,
                 root_task_ref, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')
             """,
             (
                 "duplicate-plan-row",

@@ -210,7 +210,7 @@ class CronExecutor:
             # Look up repo_path from projects table
             try:
                 row = self.storage.db.execute(
-                    "SELECT repo_path FROM projects WHERE id = ?",
+                    "SELECT repo_path FROM projects WHERE id = %s",
                     (job.project_id,),
                 ).fetchone()
                 if row and row["repo_path"]:

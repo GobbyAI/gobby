@@ -157,7 +157,7 @@ class LocalCloneManager:
                 last_sync_at, cleanup_after, created_at, updated_at,
                 workspace_role
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 clone_id,
@@ -196,23 +196,23 @@ class LocalCloneManager:
 
     def get(self, clone_id: str) -> Clone | None:
         """Get clone by ID."""
-        row = self.db.fetchone("SELECT * FROM clones WHERE id = ?", (clone_id,))
+        row = self.db.fetchone("SELECT * FROM clones WHERE id = %s", (clone_id,))
         return Clone.from_row(row) if row else None
 
     def get_by_task(self, task_id: str) -> Clone | None:
         """Get clone linked to a task."""
-        row = self.db.fetchone("SELECT * FROM clones WHERE task_id = ?", (task_id,))
+        row = self.db.fetchone("SELECT * FROM clones WHERE task_id = %s", (task_id,))
         return Clone.from_row(row) if row else None
 
     def get_by_path(self, clone_path: str) -> Clone | None:
         """Get clone by path."""
-        row = self.db.fetchone("SELECT * FROM clones WHERE clone_path = ?", (clone_path,))
+        row = self.db.fetchone("SELECT * FROM clones WHERE clone_path = %s", (clone_path,))
         return Clone.from_row(row) if row else None
 
     def get_by_branch(self, project_id: str, branch_name: str) -> Clone | None:
         """Get clone by project and branch name."""
         row = self.db.fetchone(
-            "SELECT * FROM clones WHERE project_id = ? AND branch_name = ?",
+            "SELECT * FROM clones WHERE project_id = %s AND branch_name = %s",
             (project_id, branch_name),
         )
         return Clone.from_row(row) if row else None
@@ -240,13 +240,13 @@ class LocalCloneManager:
         params: list[Any] = []
 
         if project_id:
-            conditions.append("project_id = ?")
+            conditions.append("project_id = %s")
             params.append(project_id)
         if status:
-            conditions.append("status = ?")
+            conditions.append("status = %s")
             params.append(status)
         if agent_session_id:
-            conditions.append("agent_session_id = ?")
+            conditions.append("agent_session_id = %s")
             params.append(agent_session_id)
 
         where_clause = " AND ".join(conditions) if conditions else "1=1"
@@ -257,7 +257,7 @@ class LocalCloneManager:
             SELECT * FROM clones
             WHERE {where_clause}
             ORDER BY created_at DESC
-            LIMIT ?
+            LIMIT %s
             """,  # nosec B608
             tuple(params),
         )
@@ -305,11 +305,11 @@ class LocalCloneManager:
         # Add updated_at timestamp
         fields["updated_at"] = datetime.now(UTC).isoformat()
 
-        set_clause = ", ".join(f"{key} = ?" for key in fields.keys())
+        set_clause = ", ".join(f"{key} = %s" for key in fields.keys())
         values = list(fields.values()) + [clone_id]
 
         self.db.execute(
-            f"UPDATE clones SET {set_clause} WHERE id = ?",  # nosec B608
+            f"UPDATE clones SET {set_clause} WHERE id = %s",  # nosec B608
             tuple(values),
         )
 
@@ -325,7 +325,7 @@ class LocalCloneManager:
         Returns:
             True if deleted, False if not found
         """
-        cursor = self.db.execute("DELETE FROM clones WHERE id = ?", (clone_id,))
+        cursor = self.db.execute("DELETE FROM clones WHERE id = %s", (clone_id,))
         return cursor.rowcount > 0
 
     # Status transition methods
@@ -430,7 +430,7 @@ class LocalCloneManager:
             """
             SELECT status, COUNT(*) as count
             FROM clones
-            WHERE project_id = ?
+            WHERE project_id = %s
             GROUP BY status
             """,
             (project_id,),
@@ -464,12 +464,12 @@ class LocalCloneManager:
         rows = self.db.fetchall(
             """
             SELECT * FROM clones
-            WHERE project_id = ?
-              AND status = ?
+            WHERE project_id = %s
+              AND status = %s
               AND agent_session_id IS NULL
-              AND updated_at < ?
+              AND updated_at < %s
             ORDER BY updated_at ASC
-            LIMIT ?
+            LIMIT %s
             """,
             (project_id, CloneStatus.ACTIVE.value, cutoff, limit),
         )
@@ -498,11 +498,11 @@ class LocalCloneManager:
             rows = self.db.fetchall(
                 """
                 SELECT * FROM clones
-                WHERE project_id = ?
+                WHERE project_id = %s
                   AND cleanup_after IS NOT NULL
-                  AND cleanup_after < ?
+                  AND cleanup_after < %s
                 ORDER BY cleanup_after ASC
-                LIMIT ?
+                LIMIT %s
                 """,
                 (project_id, now, limit),
             )
@@ -511,9 +511,9 @@ class LocalCloneManager:
                 """
                 SELECT * FROM clones
                 WHERE cleanup_after IS NOT NULL
-                  AND cleanup_after < ?
+                  AND cleanup_after < %s
                 ORDER BY cleanup_after ASC
-                LIMIT ?
+                LIMIT %s
                 """,
                 (now, limit),
             )

@@ -108,7 +108,7 @@ def test_audit_all_filters_by_project(runner: CliRunner, monkeypatch: pytest.Mon
 
     assert result.exit_code == 0
     query, params = fake_db.fetchall_calls[0]
-    assert "AND project_id = ?" in query
+    assert "AND project_id = %s" in query
     assert params == ("proj-1",)
 
 

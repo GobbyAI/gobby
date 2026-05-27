@@ -108,16 +108,14 @@ def _seed_plan_task_tree(
     return root, leaf, project.id
 
 
-def _write_plan_row(
-    temp_db: HubDatabase, *, project_id: str, root_ref: str, plan_id: str
-) -> None:
+def _write_plan_row(temp_db: HubDatabase, *, project_id: str, root_ref: str, plan_id: str) -> None:
     temp_db.execute(
         """
         INSERT INTO plans (
             id, project_id, plan_id, plan_path, plan_hash, plan_kind, state,
             root_task_ref, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, 'hash-1', 'implementation', 'active', ?,
+        VALUES (%s, %s, %s, %s, 'hash-1', 'implementation', 'active', %s,
                 '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')
         """,
         (

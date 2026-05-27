@@ -155,7 +155,7 @@ def test_build_history_finds_latest_coordinated_ancestor_run(temp_db) -> None:
         (unrelated_run, "2026-01-05T00:00:00+00:00"),
         (other_project_run, "2026-01-06T00:00:00+00:00"),
     ]:
-        temp_db.execute("UPDATE build_runs SET started_at = ? WHERE id = ?", (started_at, run.id))
+        temp_db.execute("UPDATE build_runs SET started_at = %s WHERE id = %s", (started_at, run.id))
 
     latest = history.latest_coordinated_run_for_task(project.id, leaf.id)
 

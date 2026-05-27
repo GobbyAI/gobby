@@ -150,7 +150,7 @@ class LocalWorkflowDefinitionManager:
                     version, enabled, priority, sources,
                     definition_json, canvas_json, source, tags,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     definition_id,
@@ -176,7 +176,7 @@ class LocalWorkflowDefinitionManager:
 
     def get(self, definition_id: str, include_deleted: bool = False) -> WorkflowDefinitionRow:
         """Get a workflow definition by primary key."""
-        sql = "SELECT * FROM workflow_definitions WHERE id = ?"
+        sql = "SELECT * FROM workflow_definitions WHERE id = %s"
         if not include_deleted:
             sql += " AND deleted_at IS NULL"
         row = self.db.fetchone(sql, (definition_id,))
@@ -194,13 +194,13 @@ class LocalWorkflowDefinitionManager:
         deleted_filter = "" if include_deleted else " AND deleted_at IS NULL"
         if project_id:
             row = self.db.fetchone(
-                f"SELECT * FROM workflow_definitions WHERE name = ? AND project_id = ?{deleted_filter}",
+                f"SELECT * FROM workflow_definitions WHERE name = %s AND project_id = %s{deleted_filter}",
                 (name, project_id),
             )
             if row:
                 return WorkflowDefinitionRow.from_row(row)
         row = self.db.fetchone(
-            f"SELECT * FROM workflow_definitions WHERE name = ? AND project_id IS NULL{deleted_filter}",
+            f"SELECT * FROM workflow_definitions WHERE name = %s AND project_id IS NULL{deleted_filter}",
             (name,),
         )
         return WorkflowDefinitionRow.from_row(row) if row else None
@@ -221,7 +221,7 @@ class LocalWorkflowDefinitionManager:
             return self.get(definition_id)
 
         values["updated_at"] = datetime.now(UTC).isoformat()
-        cursor = self.db.safe_update("workflow_definitions", values, "id = ?", (definition_id,))
+        cursor = self.db.safe_update("workflow_definitions", values, "id = %s", (definition_id,))
         if cursor.rowcount > 0:
             bump_workflow_definitions_revision()
         return self.get(definition_id)
@@ -231,7 +231,7 @@ class LocalWorkflowDefinitionManager:
         now = datetime.now(UTC).isoformat()
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                "UPDATE workflow_definitions SET deleted_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL",
+                "UPDATE workflow_definitions SET deleted_at = %s, updated_at = %s WHERE id = %s AND deleted_at IS NULL",
                 (now, now, definition_id),
             )
             deleted = cursor.rowcount > 0
@@ -242,7 +242,9 @@ class LocalWorkflowDefinitionManager:
     def hard_delete(self, definition_id: str) -> bool:
         """Permanently delete a workflow definition from the database."""
         with self.db.transaction() as conn:
-            cursor = conn.execute("DELETE FROM workflow_definitions WHERE id = ?", (definition_id,))
+            cursor = conn.execute(
+                "DELETE FROM workflow_definitions WHERE id = %s", (definition_id,)
+            )
             deleted = cursor.rowcount > 0
         if deleted:
             bump_workflow_definitions_revision()
@@ -253,7 +255,7 @@ class LocalWorkflowDefinitionManager:
         now = datetime.now(UTC).isoformat()
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                "UPDATE workflow_definitions SET deleted_at = NULL, updated_at = ? WHERE id = ? AND deleted_at IS NOT NULL",
+                "UPDATE workflow_definitions SET deleted_at = NULL, updated_at = %s WHERE id = %s AND deleted_at IS NOT NULL",
                 (now, definition_id),
             )
             if cursor.rowcount == 0:
@@ -265,7 +267,7 @@ class LocalWorkflowDefinitionManager:
         """Hard-delete rows that were soft-deleted more than older_than_days ago."""
         if older_than_days < 1:
             raise ValueError(f"older_than_days must be >= 1, got {older_than_days}")
-        deleted_before_sql = older_than_now_expr(self.db, "deleted_at", "?", "day")
+        deleted_before_sql = older_than_now_expr(self.db, "deleted_at", "%s", "day")
         with self.db.transaction() as conn:
             cursor = conn.execute(
                 f"""
@@ -296,15 +298,15 @@ class LocalWorkflowDefinitionManager:
             conditions.append("deleted_at IS NULL")
 
         if project_id:
-            conditions.append("(project_id = ? OR project_id IS NULL)")
+            conditions.append("(project_id = %s OR project_id IS NULL)")
             params.append(project_id)
 
         if workflow_type:
-            conditions.append("workflow_type = ?")
+            conditions.append("workflow_type = %s")
             params.append(workflow_type)
 
         if enabled is not None:
-            conditions.append("enabled = ?")
+            conditions.append("enabled = %s")
             params.append(enabled)
 
         where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
@@ -325,16 +327,16 @@ class LocalWorkflowDefinitionManager:
         conditions = [
             "workflow_type = 'rule'",
             "deleted_at IS NULL",
-            f"{event_sql} = ?",
+            f"{event_sql} = %s",
         ]
         params: list[Any] = [event]
 
         if project_id:
-            conditions.append("(project_id = ? OR project_id IS NULL)")
+            conditions.append("(project_id = %s OR project_id IS NULL)")
             params.append(project_id)
 
         if enabled is not None:
-            conditions.append("enabled = ?")
+            conditions.append("enabled = %s")
             params.append(enabled)
 
         where = f" WHERE {' AND '.join(conditions)}"
@@ -355,16 +357,16 @@ class LocalWorkflowDefinitionManager:
         conditions = [
             "workflow_type = 'rule'",
             "deleted_at IS NULL",
-            f"{group_sql} = ?",
+            f"{group_sql} = %s",
         ]
         params: list[Any] = [group]
 
         if project_id:
-            conditions.append("(project_id = ? OR project_id IS NULL)")
+            conditions.append("(project_id = %s OR project_id IS NULL)")
             params.append(project_id)
 
         if enabled is not None:
-            conditions.append("enabled = ?")
+            conditions.append("enabled = %s")
             params.append(enabled)
 
         where = f" WHERE {' AND '.join(conditions)}"

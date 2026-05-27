@@ -20,7 +20,7 @@ def sync_manager(hub_db):
 async def test_import_from_github_issues(sync_manager, hub_db):
     # Setup project with matching URL
     hub_db.execute(
-        "INSERT INTO projects (id, repo_path, name, github_url) VALUES (?, ?, ?, ?)",
+        "INSERT INTO projects (id, repo_path, name, github_url) VALUES (%s, %s, %s, %s)",
         ("proj-123", "/tmp/test", "Test Project", "https://github.com/owner/repo"),
     )
 
@@ -62,7 +62,7 @@ async def test_import_project_id_resolution(sync_manager, hub_db):
     repo_url = "https://github.com/test/resolution"
     expected_project_id = "proj-resolution-test"
     hub_db.execute(
-        "INSERT INTO projects (id, repo_path, name, github_url) VALUES (?, ?, ?, ?)",
+        "INSERT INTO projects (id, repo_path, name, github_url) VALUES (%s, %s, %s, %s)",
         (expected_project_id, "/tmp/resolution", "Resolution Project", repo_url),
     )
 
@@ -93,5 +93,5 @@ async def test_import_project_id_resolution(sync_manager, hub_db):
     assert result["count"] == 1
 
     # Verify the task was created with the correct project_id
-    row = hub_db.fetchone("SELECT project_id FROM tasks WHERE id = ?", ("gh-101",))
+    row = hub_db.fetchone("SELECT project_id FROM tasks WHERE id = %s", ("gh-101",))
     assert row["project_id"] == expected_project_id

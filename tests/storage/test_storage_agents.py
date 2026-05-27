@@ -50,7 +50,7 @@ class TestAgentRun:
             model="claude-3-opus",
         )
 
-        row = agent_manager.db.fetchone("SELECT * FROM agent_runs WHERE id = ?", (agent_run.id,))
+        row = agent_manager.db.fetchone("SELECT * FROM agent_runs WHERE id = %s", (agent_run.id,))
         assert row is not None
 
         agent_from_row = AgentRun.from_row(row)
@@ -77,7 +77,7 @@ class TestAgentRun:
 
         # Manually set counts to NULL in database
         agent_manager.db.execute(
-            "UPDATE agent_runs SET tool_calls_count = NULL, turns_used = NULL WHERE id = ?",
+            "UPDATE agent_runs SET tool_calls_count = NULL, turns_used = NULL WHERE id = %s",
             (agent_run.id,),
         )
 
@@ -704,11 +704,11 @@ class TestLocalAgentRunManager:
         agent_manager.complete(success_run.id, result="Done")
         agent_manager.start(running_run.id)
         agent_manager.db.execute(
-            "UPDATE agent_runs SET completed_at = NOW() - INTERVAL '2 hours' WHERE id = ?",
+            "UPDATE agent_runs SET completed_at = NOW() - INTERVAL '2 hours' WHERE id = %s",
             (two_hour_cancelled.id,),
         )
         agent_manager.db.execute(
-            "UPDATE agent_runs SET completed_at = NOW() - INTERVAL '25 hours' WHERE id = ?",
+            "UPDATE agent_runs SET completed_at = NOW() - INTERVAL '25 hours' WHERE id = %s",
             (old_cancelled.id,),
         )
 
@@ -798,7 +798,7 @@ class TestLocalAgentRunManager:
             SET created_at = NOW() - INTERVAL '48 hours',
                 completed_at = NOW() - INTERVAL '5 minutes',
                 updated_at = NOW() - INTERVAL '5 minutes'
-            WHERE id = ?
+            WHERE id = %s
             """,
             (old_created_run.id,),
         )
@@ -808,7 +808,7 @@ class TestLocalAgentRunManager:
             SET created_at = NOW() - INTERVAL '30 minutes',
                 completed_at = NOW() - INTERVAL '25 hours',
                 updated_at = NOW() - INTERVAL '25 hours'
-            WHERE id = ?
+            WHERE id = %s
             """,
             (recent_created_run.id,),
         )
@@ -844,11 +844,11 @@ class TestLocalAgentRunManager:
         recent_completed = (now - timedelta(minutes=30)).isoformat()
         old_completed = (now - timedelta(minutes=90)).isoformat()
         agent_manager.db.execute(
-            "UPDATE agent_runs SET completed_at = ?, updated_at = ? WHERE id = ?",
+            "UPDATE agent_runs SET completed_at = %s, updated_at = %s WHERE id = %s",
             (recent_completed, recent_completed, recent_run.id),
         )
         agent_manager.db.execute(
-            "UPDATE agent_runs SET completed_at = ?, updated_at = ? WHERE id = ?",
+            "UPDATE agent_runs SET completed_at = %s, updated_at = %s WHERE id = %s",
             (old_completed, old_completed, old_run.id),
         )
 
@@ -1219,7 +1219,7 @@ class TestLocalAgentRunManager:
         )
         session_manager.update_stats(child_session.id, tool_call_count=9, turn_count=4)
         agent_manager.db.execute(
-            "UPDATE sessions SET updated_at = NOW() - INTERVAL '40 minutes' WHERE id = ?",
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '40 minutes' WHERE id = %s",
             (child_session.id,),
         )
         run1 = agent_manager.create(
@@ -1232,7 +1232,7 @@ class TestLocalAgentRunManager:
 
         # Backdate the started_at
         agent_manager.db.execute(
-            "UPDATE agent_runs SET started_at = NOW() - INTERVAL '35 minutes' WHERE id = ?",
+            "UPDATE agent_runs SET started_at = NOW() - INTERVAL '35 minutes' WHERE id = %s",
             (run1.id,),
         )
 
@@ -1272,7 +1272,7 @@ class TestLocalAgentRunManager:
             UPDATE agent_runs
             SET started_at = NOW() - INTERVAL '35 minutes',
                 updated_at = NOW() - INTERVAL '35 minutes'
-            WHERE id = ?
+            WHERE id = %s
             """,
             (run.id,),
         )
@@ -1323,7 +1323,7 @@ class TestLocalAgentRunManager:
             UPDATE agent_runs
             SET started_at = NOW() - INTERVAL '35 minutes',
                 updated_at = NOW() - INTERVAL '35 minutes'
-            WHERE id = ?
+            WHERE id = %s
             """,
             (run.id,),
         )
@@ -1362,7 +1362,7 @@ class TestLocalAgentRunManager:
 
         # Backdate both (shouldn't affect them)
         agent_manager.db.execute(
-            "UPDATE agent_runs SET created_at = NOW() - INTERVAL '35 minutes' WHERE id IN (?, ?)",
+            "UPDATE agent_runs SET created_at = NOW() - INTERVAL '35 minutes' WHERE id IN (%s, %s)",
             (pending.id, completed.id),
         )
 
@@ -1383,7 +1383,7 @@ class TestLocalAgentRunManager:
 
         # Backdate the created_at
         agent_manager.db.execute(
-            "UPDATE agent_runs SET created_at = NOW() - INTERVAL '65 minutes' WHERE id = ?",
+            "UPDATE agent_runs SET created_at = NOW() - INTERVAL '65 minutes' WHERE id = %s",
             (pending.id,),
         )
 
@@ -1426,14 +1426,14 @@ class TestLocalAgentRunManager:
         )
         agent_manager.update_runtime(pending.id, tmux_session_name="gobby-agent-1")
         agent_manager.db.execute(
-            "UPDATE agent_runs SET created_at = NOW() - INTERVAL '23 hours' WHERE id = ?",
+            "UPDATE agent_runs SET created_at = NOW() - INTERVAL '23 hours' WHERE id = %s",
             (pending.id,),
         )
 
         assert agent_manager.cleanup_stale_pending_runs(timeout_minutes=60) == 0
 
         agent_manager.db.execute(
-            "UPDATE agent_runs SET created_at = NOW() - INTERVAL '25 hours' WHERE id = ?",
+            "UPDATE agent_runs SET created_at = NOW() - INTERVAL '25 hours' WHERE id = %s",
             (pending.id,),
         )
         assert agent_manager.cleanup_stale_pending_runs(timeout_minutes=60) == 1
@@ -1455,7 +1455,7 @@ class TestLocalAgentRunManager:
 
         # Backdate
         agent_manager.db.execute(
-            "UPDATE agent_runs SET created_at = NOW() - INTERVAL '65 minutes' WHERE id = ?",
+            "UPDATE agent_runs SET created_at = NOW() - INTERVAL '65 minutes' WHERE id = %s",
             (pending.id,),
         )
 
@@ -1495,7 +1495,7 @@ class TestLocalAgentRunManager:
 
         # Backdate both (shouldn't affect them)
         agent_manager.db.execute(
-            "UPDATE agent_runs SET created_at = NOW() - INTERVAL '65 minutes' WHERE id IN (?, ?)",
+            "UPDATE agent_runs SET created_at = NOW() - INTERVAL '65 minutes' WHERE id IN (%s, %s)",
             (running.id, completed.id),
         )
 

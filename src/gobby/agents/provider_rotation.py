@@ -71,7 +71,7 @@ def get_failed_providers_for_task(
     rows = agent_run_manager.db.fetchall(
         """
         SELECT provider, error FROM agent_runs
-        WHERE task_id = ? AND status IN ('error', 'timeout')
+        WHERE task_id = %s AND status IN ('error', 'timeout')
         ORDER BY created_at DESC
         LIMIT 20
         """,

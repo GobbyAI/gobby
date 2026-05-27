@@ -109,7 +109,7 @@ class MigrationRunner:
 
     def _record_applied_version(self, txn: Transaction, version: int) -> None:
         txn.execute(
-            "INSERT INTO schema_migrations(version, applied_at) VALUES ($1, NOW())",
+            "INSERT INTO schema_migrations(version, applied_at) VALUES (%s, NOW())",
             (version,),
         )
 

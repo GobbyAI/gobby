@@ -66,7 +66,7 @@ class ConfigStore:
 
         Returns None if key doesn't exist.
         """
-        row = self.db.fetchone("SELECT value FROM config_store WHERE key = ?", (key,))
+        row = self.db.fetchone("SELECT value FROM config_store WHERE key = %s", (key,))
         if not row:
             return None
         return json.loads(row["value"])
@@ -82,7 +82,7 @@ class ConfigStore:
         json_value = json.dumps(value)
         self.db.execute(
             """INSERT INTO config_store (key, value, source, updated_at)
-               VALUES (?, ?, ?, ?)
+               VALUES (%s, %s, %s, %s)
                ON CONFLICT(key) DO UPDATE SET
                    value = excluded.value,
                    source = excluded.source,
@@ -98,7 +98,7 @@ class ConfigStore:
             json_value = json.dumps(value)
             self.db.execute(
                 """INSERT INTO config_store (key, value, source, updated_at)
-                   VALUES (?, ?, ?, ?)
+                   VALUES (%s, %s, %s, %s)
                    ON CONFLICT(key) DO UPDATE SET
                        value = excluded.value,
                        source = excluded.source,
@@ -110,7 +110,7 @@ class ConfigStore:
 
     def delete(self, key: str) -> bool:
         """Delete a single key. Returns True if it existed."""
-        cursor = self.db.execute("DELETE FROM config_store WHERE key = ?", (key,))
+        cursor = self.db.execute("DELETE FROM config_store WHERE key = %s", (key,))
         return bool(cursor.rowcount and cursor.rowcount > 0)
 
     def delete_all(self) -> int:
@@ -122,7 +122,7 @@ class ConfigStore:
         """List all keys, optionally filtered by prefix."""
         if prefix:
             rows = self.db.fetchall(
-                "SELECT key FROM config_store WHERE key LIKE ? ORDER BY key",
+                "SELECT key FROM config_store WHERE key LIKE %s ORDER BY key",
                 (f"{prefix}%",),
             )
         else:
@@ -158,7 +158,7 @@ class ConfigStore:
             )
             self.db.execute(
                 """INSERT INTO config_store (key, value, source, is_secret, updated_at)
-                   VALUES (?, ?, ?, ?, ?)
+                   VALUES (%s, %s, %s, %s, %s)
                    ON CONFLICT(key) DO UPDATE SET
                        value = excluded.value,
                        source = excluded.source,
@@ -170,7 +170,7 @@ class ConfigStore:
     def get_secret_keys(self) -> list[str]:
         """Return all config keys flagged as secrets."""
         rows = self.db.fetchall(
-            "SELECT key FROM config_store WHERE is_secret = ? ORDER BY key",
+            "SELECT key FROM config_store WHERE is_secret = %s ORDER BY key",
             (True,),
         )
         return [row["key"] for row in rows]
@@ -183,7 +183,7 @@ class ConfigStore:
         """
         secret_name = config_key_to_secret_name(key)
         with self.db.transaction():
-            self.db.execute("DELETE FROM config_store WHERE key = ?", (key,))
+            self.db.execute("DELETE FROM config_store WHERE key = %s", (key,))
             secret_store.delete(secret_name)
 
 

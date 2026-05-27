@@ -21,14 +21,14 @@ def _set_config_value(db: Any, key: str, value: Any, *, is_secret: bool = False)
     db.execute(
         """
         INSERT INTO config_store (key, value, source, is_secret, updated_at)
-        VALUES (?, ?, 'test', ?, CURRENT_TIMESTAMP)
+        VALUES (%s, %s, 'test', %s, CURRENT_TIMESTAMP)
         """,
         (key, json.dumps(value), is_secret),
     )
 
 
 def _config_value(db: Any, key: str) -> Any | None:
-    row = db.fetchone("SELECT value FROM config_store WHERE key = ?", (key,))
+    row = db.fetchone("SELECT value FROM config_store WHERE key = %s", (key,))
     if row is None:
         return None
     return json.loads(row["value"])
@@ -73,7 +73,7 @@ class TestStaleNeo4jConfigStartup:
         from gobby.runner_init.storage import init_storage_and_config
 
         temp_db.execute(
-            "DELETE FROM config_store WHERE key = ?",
+            "DELETE FROM config_store WHERE key = %s",
             ("databases.falkordb.rrf_k",),
         )
         _set_config_value(temp_db, "databases.neo4j.rrf_k", 80)
@@ -128,7 +128,7 @@ class TestStaleNeo4jConfigStartup:
         assert _config_value(temp_db, "databases.neo4j.rrf_k") is None
         assert _config_value(temp_db, "databases.neo4j.auth") is None
         assert _config_value(temp_db, "mock.test.auth") == "$secret:auth"
-        assert temp_db.fetchone("SELECT name FROM secrets WHERE name = ?", ("auth",)) is not None
+        assert temp_db.fetchone("SELECT name FROM secrets WHERE name = %s", ("auth",)) is not None
 
 
 class TestSetMockDefault:

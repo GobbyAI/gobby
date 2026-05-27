@@ -55,14 +55,14 @@ def _make_event(
 
 def _create_session(db: "HubDatabase") -> None:
     db.execute(
-        "INSERT INTO projects (id, name, created_at) VALUES (?, ?, CURRENT_TIMESTAMP) "
+        "INSERT INTO projects (id, name, created_at) VALUES (%s, %s, CURRENT_TIMESTAMP) "
         "ON CONFLICT (id) DO NOTHING",
         ("project-1", "test-project"),
     )
     db.execute(
         "INSERT INTO sessions "
         "(id, external_id, machine_id, source, project_id, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
+        "VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
         "ON CONFLICT (id) DO NOTHING",
         (SESSION_ID, "ext-1", "machine-1", "claude", "project-1"),
     )
@@ -126,7 +126,7 @@ def _audit_rows(db: "HubDatabase") -> list[dict[str, Any]]:
         """
         SELECT step, event_type, tool_name, condition, result, reason, context
         FROM workflow_audit_log
-        WHERE session_id = ?
+        WHERE session_id = %s
         ORDER BY id
         """,
         (SESSION_ID,),

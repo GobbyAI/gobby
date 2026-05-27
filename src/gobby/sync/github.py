@@ -199,8 +199,8 @@ class GitHubSyncService:
         if issue_number is None:
             return None
         row = self.task_manager.db.execute(
-            "SELECT id FROM tasks WHERE github_repo = ? AND github_issue_number = ? "
-            "AND project_id = ? LIMIT 1",
+            "SELECT id FROM tasks WHERE github_repo = %s AND github_issue_number = %s "
+            "AND project_id = %s LIMIT 1",
             (repo, issue_number, self.project_id),
         ).fetchone()
         if row:

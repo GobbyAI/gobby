@@ -117,7 +117,7 @@ def resolve_agent_run_id(run_ref: str) -> str:
     # Try prefix match
     db = open_runtime_hub_database(apply_migrations=False)
     rows = db.fetchall(
-        "SELECT id FROM agent_runs WHERE id LIKE ? LIMIT 5",
+        "SELECT id FROM agent_runs WHERE id LIKE %s LIMIT 5",
         (f"{run_ref}%",),
     )
 
@@ -800,8 +800,8 @@ def cleanup_agents(timeout: int, dry_run: bool) -> None:
     if dry_run:
         # Show what would be cleaned up
         db = open_runtime_hub_database(apply_migrations=False)
-        running_age_filter = older_than_now_expr(db, "started_at", "?", "minute")
-        pending_age_filter = older_than_now_expr(db, "created_at", "?", "minute")
+        running_age_filter = older_than_now_expr(db, "started_at", "%s", "minute")
+        pending_age_filter = older_than_now_expr(db, "created_at", "%s", "minute")
         stale_running = db.fetchall(
             f"""
             SELECT * FROM agent_runs

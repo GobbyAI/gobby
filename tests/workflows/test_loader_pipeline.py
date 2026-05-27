@@ -392,7 +392,7 @@ class TestLoadPipeline:
                 """INSERT INTO workflow_definitions
                    (id, name, workflow_type, enabled, priority,
                     definition_json, source, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                 (
                     "bad-json-id",
                     "invalid",

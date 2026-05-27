@@ -142,7 +142,7 @@ class BinUpdateStateStore:
                 floor_drift,
                 updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s, %s, %s, %s, CURRENT_TIMESTAMP)
             ON CONFLICT(tool_name) DO UPDATE SET
                 installed_version = excluded.installed_version,
                 floor_version = excluded.floor_version,
@@ -184,7 +184,7 @@ class BinUpdateStateStore:
             f"""
             SELECT {_RECORD_COLUMNS}
               FROM bin_update_state
-             WHERE tool_name = ?
+             WHERE tool_name = %s
             """,
             (tool_name,),
         )

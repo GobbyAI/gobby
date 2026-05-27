@@ -35,7 +35,7 @@ def is_secret_reference(value: Any) -> bool:
 def mark_secret_keys(config_store: ConfigStore, keys: set[str]) -> None:
     if not keys:
         return
-    placeholders = ",".join("?" for _ in keys)
+    placeholders = ",".join("%s" for _ in keys)
     config_store.db.execute(
         f"UPDATE config_store SET is_secret = TRUE WHERE key IN ({placeholders})",
         tuple(sorted(keys)),
@@ -45,7 +45,7 @@ def mark_secret_keys(config_store: ConfigStore, keys: set[str]) -> None:
 def delete_all_except(config_store: ConfigStore, preserved_keys: set[str]) -> int:
     if not preserved_keys:
         return config_store.delete_all()
-    placeholders = ",".join("?" for _ in preserved_keys)
+    placeholders = ",".join("%s" for _ in preserved_keys)
     cursor = config_store.db.execute(
         f"DELETE FROM config_store WHERE key NOT IN ({placeholders})",
         tuple(sorted(preserved_keys)),

@@ -104,14 +104,14 @@ def _cascade_target_branch_to_subtree(
             WITH RECURSIVE subtree(id) AS (
                 SELECT id
                 FROM tasks
-                WHERE parent_task_id = ?
+                WHERE parent_task_id = %s
                 UNION ALL
                 SELECT child.id
                 FROM tasks child
                 JOIN subtree parent ON child.parent_task_id = parent.id
             )
             INSERT INTO task_artifacts (task_id, target_branch, updated_at)
-            SELECT id, ?, CURRENT_TIMESTAMP
+            SELECT id, %s, CURRENT_TIMESTAMP
             FROM subtree
             WHERE id IS NOT NULL
             ON CONFLICT(task_id) DO UPDATE SET

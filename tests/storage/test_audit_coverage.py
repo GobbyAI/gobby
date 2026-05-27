@@ -25,7 +25,7 @@ def _ensure_session(db: HubDatabase, session_id: str) -> None:
     db.execute(
         """
         INSERT INTO projects (id, name, created_at, updated_at)
-        VALUES (?, ?, NOW(), NOW())
+        VALUES (%s, %s, NOW(), NOW())
         ON CONFLICT (id) DO NOTHING
         """,
         ("audit-project", "Audit Project"),
@@ -33,7 +33,7 @@ def _ensure_session(db: HubDatabase, session_id: str) -> None:
     db.execute(
         """
         INSERT INTO sessions (id, external_id, machine_id, source, project_id)
-        VALUES (?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s)
         ON CONFLICT (id) DO NOTHING
         """,
         (session_id, session_id, "test-machine", "test", "audit-project"),
@@ -117,7 +117,7 @@ def test_cleanup_entries(audit_manager, test_db) -> None:
     # Insert old entry manually to bypass generic timestamp usage in log()
     old_time = (datetime.now(UTC) - timedelta(days=10)).isoformat()
     test_db.execute(
-        "INSERT INTO workflow_audit_log (session_id, timestamp, step, event_type, result) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO workflow_audit_log (session_id, timestamp, step, event_type, result) VALUES (%s, %s, %s, %s, %s)",
         ("old", old_time, "s", "e", "r"),
     )
 

@@ -34,6 +34,6 @@ async def test_cleanup_comms_messages_loop():
         # Verify DB execute was called with correct SQL
         assert conn_mock.execute.call_count == 1
         call_args = conn_mock.execute.call_args
-        assert "DELETE FROM comms_messages WHERE created_at < ?" in call_args[0][0]
+        assert "DELETE FROM comms_messages WHERE created_at < %s" in call_args[0][0]
 
         # Verify attachment cleanup was called

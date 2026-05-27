@@ -42,7 +42,7 @@ class SkillFilesMixin:
         with self.db.transaction() as conn:
             # Get existing files for this skill (including soft-deleted)
             existing_rows = conn.execute(
-                "SELECT id, path, content_hash, deleted_at FROM skill_files WHERE skill_id = ?",
+                "SELECT id, path, content_hash, deleted_at FROM skill_files WHERE skill_id = %s",
                 (skill_id,),
             ).fetchall()
             existing_by_path: dict[str, dict[str, Any]] = {
@@ -65,9 +65,9 @@ class SkillFilesMixin:
                         # Restore and update
                         conn.execute(
                             """UPDATE skill_files
-                               SET content = ?, content_hash = ?, size_bytes = ?,
-                                   file_type = ?, deleted_at = NULL, updated_at = ?
-                               WHERE id = ?""",
+                               SET content = %s, content_hash = %s, size_bytes = %s,
+                                   file_type = %s, deleted_at = NULL, updated_at = %s
+                               WHERE id = %s""",
                             (
                                 f.content,
                                 f.content_hash,
@@ -82,9 +82,9 @@ class SkillFilesMixin:
                         # Content changed — update
                         conn.execute(
                             """UPDATE skill_files
-                               SET content = ?, content_hash = ?, size_bytes = ?,
-                                   file_type = ?, updated_at = ?
-                               WHERE id = ?""",
+                               SET content = %s, content_hash = %s, size_bytes = %s,
+                                   file_type = %s, updated_at = %s
+                               WHERE id = %s""",
                             (
                                 f.content,
                                 f.content_hash,
@@ -103,7 +103,7 @@ class SkillFilesMixin:
                         """INSERT INTO skill_files
                            (id, skill_id, path, file_type, content, content_hash,
                             size_bytes, created_at, updated_at)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                         (
                             file_id,
                             skill_id,
@@ -122,7 +122,7 @@ class SkillFilesMixin:
             for path, info in existing_by_path.items():
                 if path not in incoming_paths and not info["deleted"]:
                     conn.execute(
-                        "UPDATE skill_files SET deleted_at = ?, updated_at = ? WHERE id = ?",
+                        "UPDATE skill_files SET deleted_at = %s, updated_at = %s WHERE id = %s",
                         (now, now, info["id"]),
                     )
 
@@ -146,11 +146,11 @@ class SkillFilesMixin:
         Returns:
             List of SkillFile objects (content field empty unless include_content=True)
         """
-        conditions = ["skill_id = ?", "deleted_at IS NULL"]
+        conditions = ["skill_id = %s", "deleted_at IS NULL"]
         params: list[Any] = [skill_id]
 
         if file_type:
-            conditions.append("file_type = ?")
+            conditions.append("file_type = %s")
             params.append(file_type)
 
         if exclude_license:
@@ -200,7 +200,7 @@ class SkillFilesMixin:
             SkillFile with content, or None if not found
         """
         row = self.db.fetchone(
-            "SELECT * FROM skill_files WHERE skill_id = ? AND path = ? AND deleted_at IS NULL",
+            "SELECT * FROM skill_files WHERE skill_id = %s AND path = %s AND deleted_at IS NULL",
             (skill_id, path),
         )
         return SkillFile.from_row(row) if row else None
@@ -217,8 +217,8 @@ class SkillFilesMixin:
         now = datetime.now(UTC).isoformat()
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                "UPDATE skill_files SET deleted_at = ?, updated_at = ? "
-                "WHERE skill_id = ? AND deleted_at IS NULL",
+                "UPDATE skill_files SET deleted_at = %s, updated_at = %s "
+                "WHERE skill_id = %s AND deleted_at IS NULL",
                 (now, now, skill_id),
             )
             return cursor.rowcount
@@ -235,8 +235,8 @@ class SkillFilesMixin:
         now = datetime.now(UTC).isoformat()
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                "UPDATE skill_files SET deleted_at = NULL, updated_at = ? "
-                "WHERE skill_id = ? AND deleted_at IS NOT NULL",
+                "UPDATE skill_files SET deleted_at = NULL, updated_at = %s "
+                "WHERE skill_id = %s AND deleted_at IS NOT NULL",
                 (now, skill_id),
             )
             return cursor.rowcount

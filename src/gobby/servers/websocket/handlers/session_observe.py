@@ -610,7 +610,7 @@ async def check_resume_blocked(mixin: SessionControlMixin, source_session: Any) 
         try:
             row = session_manager.db.fetchone(
                 "SELECT id FROM agent_runs "
-                "WHERE parent_session_id = ? AND status IN ('pending', 'running') "
+                "WHERE parent_session_id = %s AND status IN ('pending', 'running') "
                 "LIMIT 1",
                 (session_id,),
             )
@@ -623,7 +623,7 @@ async def check_resume_blocked(mixin: SessionControlMixin, source_session: Any) 
         try:
             row = session_manager.db.fetchone(
                 "SELECT id FROM pipeline_executions "
-                "WHERE session_id = ? AND status IN ('pending', 'running', 'waiting_approval') "
+                "WHERE session_id = %s AND status IN ('pending', 'running', 'waiting_approval') "
                 "LIMIT 1",
                 (session_id,),
             )

@@ -45,7 +45,7 @@ def reinstall_workflows(workflow_type: str | None, force: bool) -> None:
     with db.transaction() as conn:
         if workflow_type:
             cursor = conn.execute(
-                "DELETE FROM workflow_definitions WHERE workflow_type = ?",
+                "DELETE FROM workflow_definitions WHERE workflow_type = %s",
                 (workflow_type,),
             )
         else:

@@ -94,7 +94,7 @@ def _active_workspace_run(
         f"""
         SELECT id, status, agent_name, task_id, child_session_id
           FROM agent_runs
-         WHERE {column} = ?
+         WHERE {column} = %s
            AND status IN ('pending', 'running')
          ORDER BY created_at DESC
          LIMIT 1

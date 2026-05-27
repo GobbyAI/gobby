@@ -188,7 +188,7 @@ class CronJobStorage:
                 last_run_at, last_status, consecutive_failures,
                 created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 job.id,
@@ -217,7 +217,7 @@ class CronJobStorage:
 
     def get_job(self, job_id: str) -> CronJob | None:
         """Get a cron job by ID."""
-        row = self.db.fetchone("SELECT * FROM cron_jobs WHERE id = ?", (job_id,))
+        row = self.db.fetchone("SELECT * FROM cron_jobs WHERE id = %s", (job_id,))
         return CronJob.from_row(row) if row else None
 
     def get_job_by_name(self, name: str) -> CronJob | None:
@@ -229,12 +229,12 @@ class CronJobStorage:
         Returns:
             CronJob or None if not found
         """
-        row = self.db.fetchone("SELECT * FROM cron_jobs WHERE name = ?", (name,))
+        row = self.db.fetchone("SELECT * FROM cron_jobs WHERE name = %s", (name,))
         return CronJob.from_row(row) if row else None
 
     def mark_as_system_job(self, job_id: str) -> None:
         """Mark an existing cron row as gobby-managed system infrastructure."""
-        self.db.execute("UPDATE cron_jobs SET is_system = TRUE WHERE id = ?", (job_id,))
+        self.db.execute("UPDATE cron_jobs SET is_system = TRUE WHERE id = %s", (job_id,))
 
     def list_jobs(
         self,
@@ -248,13 +248,13 @@ class CronJobStorage:
         params: list[Any] = []
 
         if project_id:
-            conditions.append("project_id = ?")
+            conditions.append("project_id = %s")
             params.append(project_id)
         if enabled is not None:
-            conditions.append("enabled = ?")
+            conditions.append("enabled = %s")
             params.append(bool(enabled))
         if is_system is not None:
-            conditions.append("is_system = ?")
+            conditions.append("is_system = %s")
             params.append(bool(is_system))
 
         where_clause = " AND ".join(conditions) if conditions else "1=1"
@@ -265,7 +265,7 @@ class CronJobStorage:
             SELECT * FROM cron_jobs
             WHERE {where_clause}
             ORDER BY created_at DESC
-            LIMIT ?
+            LIMIT %s
             """,  # nosec B608
             tuple(params),
         )
@@ -311,10 +311,10 @@ class CronJobStorage:
         if "action_config" in fields and isinstance(fields["action_config"], dict):
             fields["action_config"] = json.dumps(fields["action_config"])
 
-        set_clause = ", ".join(f"{key} = ?" for key in fields.keys())
+        set_clause = ", ".join(f"{key} = %s" for key in fields.keys())
         values = list(fields.values()) + [job_id]
         self.db.execute(
-            f"UPDATE cron_jobs SET {set_clause} WHERE id = ?",  # nosec B608
+            f"UPDATE cron_jobs SET {set_clause} WHERE id = %s",  # nosec B608
             tuple(values),
         )
 
@@ -498,8 +498,8 @@ class CronJobStorage:
 
         with self.db.transaction() as conn:
             # Delete runs first (foreign key)
-            conn.execute("DELETE FROM cron_runs WHERE cron_job_id = ?", (job_id,))
-            cursor = conn.execute("DELETE FROM cron_jobs WHERE id = ?", (job_id,))
+            conn.execute("DELETE FROM cron_runs WHERE cron_job_id = %s", (job_id,))
+            cursor = conn.execute("DELETE FROM cron_jobs WHERE id = %s", (job_id,))
         return cursor.rowcount > 0
 
     def toggle_job(self, job_id: str) -> CronJob | None:
@@ -542,7 +542,7 @@ class CronJobStorage:
         rows = self.db.fetchall(
             """
             SELECT * FROM cron_jobs
-            WHERE enabled = TRUE AND next_run_at IS NOT NULL AND next_run_at <= ?
+            WHERE enabled = TRUE AND next_run_at IS NOT NULL AND next_run_at <= %s
             ORDER BY next_run_at ASC, created_at ASC
             """,
             (now,),
@@ -579,7 +579,7 @@ class CronJobStorage:
                 status, output, error, agent_run_id,
                 pipeline_execution_id, created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 run.id,
@@ -619,11 +619,11 @@ class CronJobStorage:
         if not fields:
             return self.get_run(run_id)
 
-        set_clause = ", ".join(f"{key} = ?" for key in fields.keys())
+        set_clause = ", ".join(f"{key} = %s" for key in fields.keys())
         values = list(fields.values()) + [run_id]
 
         self.db.execute(
-            f"UPDATE cron_runs SET {set_clause} WHERE id = ?",  # nosec B608
+            f"UPDATE cron_runs SET {set_clause} WHERE id = %s",  # nosec B608
             tuple(values),
         )
 
@@ -631,7 +631,7 @@ class CronJobStorage:
 
     def get_run(self, run_id: str) -> CronRun | None:
         """Get a cron run by ID."""
-        row = self.db.fetchone("SELECT * FROM cron_runs WHERE id = ?", (run_id,))
+        row = self.db.fetchone("SELECT * FROM cron_runs WHERE id = %s", (run_id,))
         return CronRun.from_row(row) if row else None
 
     def list_runs(self, cron_job_id: str, limit: int = 20) -> list[CronRun]:
@@ -639,9 +639,9 @@ class CronJobStorage:
         rows = self.db.fetchall(
             """
             SELECT * FROM cron_runs
-            WHERE cron_job_id = ?
+            WHERE cron_job_id = %s
             ORDER BY triggered_at DESC
-            LIMIT ?
+            LIMIT %s
             """,
             (cron_job_id, limit),
         )
@@ -658,7 +658,7 @@ class CronJobStorage:
             """
             SELECT 1
               FROM cron_runs
-             WHERE cron_job_id = ?
+             WHERE cron_job_id = %s
                AND status = 'running'
              LIMIT 1
             """,
@@ -675,10 +675,10 @@ class CronJobStorage:
             """
             UPDATE cron_runs
                SET status = 'failed',
-                   completed_at = ?,
-                   error = ?
+                   completed_at = %s,
+                   error = %s
              WHERE status = 'running'
-               AND COALESCE(started_at, triggered_at, created_at) < ?
+               AND COALESCE(started_at, triggered_at, created_at) < %s
             """,
             (
                 now.isoformat(),
@@ -700,8 +700,8 @@ class CronJobStorage:
             """
             UPDATE cron_runs
                SET status = 'failed',
-                   completed_at = ?,
-                   error = ?
+                   completed_at = %s,
+                   error = %s
              WHERE status = 'running'
             """,
             (now, error[:5000]),
@@ -712,7 +712,7 @@ class CronJobStorage:
         """Delete runs older than the given number of days."""
         cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
         cursor = self.db.execute(
-            "DELETE FROM cron_runs WHERE created_at < ?",
+            "DELETE FROM cron_runs WHERE created_at < %s",
             (cutoff,),
         )
         deleted = cursor.rowcount

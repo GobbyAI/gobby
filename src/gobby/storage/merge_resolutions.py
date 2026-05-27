@@ -182,7 +182,7 @@ class MergeResolutionManager:
                 INSERT INTO merge_resolutions (
                     id, worktree_id, source_branch, target_branch,
                     status, tier_used, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     resolution_id,
@@ -214,7 +214,7 @@ class MergeResolutionManager:
         row = self.db.fetchone(
             """
             SELECT * FROM merge_resolutions
-            WHERE worktree_id = ? AND source_branch = ? AND target_branch = ?
+            WHERE worktree_id = %s AND source_branch = %s AND target_branch = %s
             ORDER BY created_at DESC, updated_at DESC
             LIMIT 1
             """,
@@ -274,7 +274,7 @@ class MergeResolutionManager:
         Returns:
             The MergeResolution if found, None otherwise
         """
-        row = self.db.fetchone("SELECT * FROM merge_resolutions WHERE id = ?", (resolution_id,))
+        row = self.db.fetchone("SELECT * FROM merge_resolutions WHERE id = %s", (resolution_id,))
         if not row:
             return None
         return MergeResolution.from_row(row)
@@ -307,8 +307,8 @@ class MergeResolutionManager:
             conn.execute(
                 """
                 UPDATE merge_resolutions
-                SET status = ?, tier_used = ?, updated_at = ?
-                WHERE id = ?
+                SET status = %s, tier_used = %s, updated_at = %s
+                WHERE id = %s
                 """,
                 (new_status, new_tier, now, resolution_id),
             )
@@ -326,7 +326,7 @@ class MergeResolutionManager:
             True if deleted, False if not found
         """
         with self.db.transaction() as conn:
-            cursor = conn.execute("DELETE FROM merge_resolutions WHERE id = ?", (resolution_id,))
+            cursor = conn.execute("DELETE FROM merge_resolutions WHERE id = %s", (resolution_id,))
             if cursor.rowcount == 0:
                 return False
 
@@ -359,22 +359,22 @@ class MergeResolutionManager:
         params: list[Any] = []
 
         if worktree_id:
-            query += " AND worktree_id = ?"
+            query += " AND worktree_id = %s"
             params.append(worktree_id)
 
         if source_branch:
-            query += " AND source_branch = ?"
+            query += " AND source_branch = %s"
             params.append(source_branch)
 
         if target_branch:
-            query += " AND target_branch = ?"
+            query += " AND target_branch = %s"
             params.append(target_branch)
 
         if status:
-            query += " AND status = ?"
+            query += " AND status = %s"
             params.append(status)
 
-        query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        query += " ORDER BY created_at DESC LIMIT %s OFFSET %s"
         params.extend([limit, offset])
 
         rows = self.db.fetchall(query, tuple(params))
@@ -413,7 +413,7 @@ class MergeResolutionManager:
                 INSERT INTO merge_conflicts (
                     id, resolution_id, file_path, status,
                     ours_content, theirs_content, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     conflict_id,
@@ -444,7 +444,7 @@ class MergeResolutionManager:
         Returns:
             The MergeConflict if found, None otherwise
         """
-        row = self.db.fetchone("SELECT * FROM merge_conflicts WHERE id = ?", (conflict_id,))
+        row = self.db.fetchone("SELECT * FROM merge_conflicts WHERE id = %s", (conflict_id,))
         if not row:
             return None
         return MergeConflict.from_row(row)
@@ -486,9 +486,9 @@ class MergeResolutionManager:
             conn.execute(
                 """
                 UPDATE merge_conflicts
-                SET status = ?, ours_content = ?, theirs_content = ?, resolved_content = ?,
-                    updated_at = ?
-                WHERE id = ?
+                SET status = %s, ours_content = %s, theirs_content = %s, resolved_content = %s,
+                    updated_at = %s
+                WHERE id = %s
                 """,
                 (new_status, new_ours, new_theirs, new_resolved, now, conflict_id),
             )
@@ -506,7 +506,7 @@ class MergeResolutionManager:
             True if deleted, False if not found
         """
         with self.db.transaction() as conn:
-            cursor = conn.execute("DELETE FROM merge_conflicts WHERE id = ?", (conflict_id,))
+            cursor = conn.execute("DELETE FROM merge_conflicts WHERE id = %s", (conflict_id,))
             if cursor.rowcount == 0:
                 return False
 
@@ -537,18 +537,18 @@ class MergeResolutionManager:
         params: list[Any] = []
 
         if resolution_id:
-            query += " AND resolution_id = ?"
+            query += " AND resolution_id = %s"
             params.append(resolution_id)
 
         if file_path:
-            query += " AND file_path = ?"
+            query += " AND file_path = %s"
             params.append(file_path)
 
         if status:
-            query += " AND status = ?"
+            query += " AND status = %s"
             params.append(status)
 
-        query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        query += " ORDER BY created_at DESC LIMIT %s OFFSET %s"
         params.extend([limit, offset])
 
         rows = self.db.fetchall(query, tuple(params))
@@ -572,7 +572,7 @@ class MergeResolutionManager:
             row = self.db.fetchone(
                 """
                 SELECT * FROM merge_resolutions
-                WHERE worktree_id = ? AND status = 'pending'
+                WHERE worktree_id = %s AND status = 'pending'
                 ORDER BY created_at DESC
                 LIMIT 1
                 """,
@@ -594,7 +594,7 @@ class MergeResolutionManager:
         row = self.db.fetchone(
             """
             SELECT * FROM merge_resolutions
-            WHERE worktree_id = ?
+            WHERE worktree_id = %s
             ORDER BY updated_at DESC, created_at DESC
             LIMIT 1
             """,
@@ -619,7 +619,7 @@ class MergeResolutionManager:
             row = self.db.fetchone(
                 """
                 SELECT * FROM merge_conflicts
-                WHERE file_path = ? AND resolution_id = ?
+                WHERE file_path = %s AND resolution_id = %s
                 """,
                 (file_path, resolution_id),
             )
@@ -629,7 +629,7 @@ class MergeResolutionManager:
                 """
                 SELECT c.* FROM merge_conflicts c
                 JOIN merge_resolutions r ON c.resolution_id = r.id
-                WHERE c.file_path = ? AND r.status = 'pending'
+                WHERE c.file_path = %s AND r.status = 'pending'
                 ORDER BY c.created_at DESC
                 LIMIT 1
                 """,

@@ -93,7 +93,7 @@ class ValidationHistoryManager:
                 """INSERT INTO task_validation_history
                    (task_id, iteration, status, feedback, issues, context_type,
                     context_summary, validator_type)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
                 (
                     task_id,
                     iteration,
@@ -119,7 +119,7 @@ class ValidationHistoryManager:
         """
         rows = self.db.fetchall(
             """SELECT * FROM task_validation_history
-               WHERE task_id = ?
+               WHERE task_id = %s
                ORDER BY iteration ASC""",
             (task_id,),
         )
@@ -137,7 +137,7 @@ class ValidationHistoryManager:
         """
         row = self.db.fetchone(
             """SELECT * FROM task_validation_history
-               WHERE task_id = ?
+               WHERE task_id = %s
                ORDER BY iteration DESC
                LIMIT 1""",
             (task_id,),
@@ -155,7 +155,7 @@ class ValidationHistoryManager:
         """
         with self.db.transaction() as conn:
             conn.execute(
-                "DELETE FROM task_validation_history WHERE task_id = ?",
+                "DELETE FROM task_validation_history WHERE task_id = %s",
                 (task_id,),
             )
 

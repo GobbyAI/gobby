@@ -190,7 +190,7 @@ class ChatStreamPersistence:
                     session_manager.db.safe_update,
                     "sessions",
                     updates,
-                    "id = ?",
+                    "id = %s",
                     (db_sid,),
                 )
         except Exception:

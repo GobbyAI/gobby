@@ -182,7 +182,7 @@ class TemplatingMixin:
             return False
         row = self.db.fetchone(
             "SELECT 1 FROM inter_session_messages "
-            "WHERE to_session = ? AND delivered_at IS NULL LIMIT 1",
+            "WHERE to_session = %s AND delivered_at IS NULL LIMIT 1",
             (session_id,),
         )
         return row is not None
@@ -193,7 +193,7 @@ class TemplatingMixin:
             return 0
         row = self.db.fetchone(
             "SELECT COUNT(*) AS cnt FROM inter_session_messages "
-            "WHERE to_session = ? AND delivered_at IS NULL",
+            "WHERE to_session = %s AND delivered_at IS NULL",
             (session_id,),
         )
         return row["cnt"] if row else 0

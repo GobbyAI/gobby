@@ -33,7 +33,7 @@ def _current_stage_state_filter_sql(
     if not normalized_values:
         return None, []
 
-    placeholders = ", ".join("?" for _ in normalized_values)
+    placeholders = ", ".join("%s" for _ in normalized_values)
     clauses = [
         f"""
         EXISTS (
@@ -161,7 +161,7 @@ def list_tasks(
     params: list[Any] = []
 
     if project_id:
-        query += " AND project_id = ?"
+        query += " AND project_id = %s"
         params.append(project_id)
     if current_stage_state:
         clause, clause_params = _current_stage_state_filter_sql(current_stage_state)
@@ -171,13 +171,13 @@ def list_tasks(
             if closed is None:
                 query += " AND closed_at IS NULL"
     if priority:
-        query += " AND priority = ?"
+        query += " AND priority = %s"
         params.append(priority)
     if assignee:
-        query += " AND assignee = ?"
+        query += " AND assignee = %s"
         params.append(assignee)
     if claimed_by_session_id:
-        query += " AND claimed_by_session_id = ?"
+        query += " AND claimed_by_session_id = %s"
         params.append(claimed_by_session_id)
     if claimed is True:
         query += " AND claimed_by_session_id IS NOT NULL"
@@ -189,7 +189,7 @@ def list_tasks(
         query += " AND closed_at IS NULL"
     if task_type:
         task_type_values = task_type_filter_values(task_type)
-        placeholders = ", ".join("?" for _ in task_type_values)
+        placeholders = ", ".join("%s" for _ in task_type_values)
         query += f" AND task_type IN ({placeholders})"
         params.extend(task_type_values)
     if label:
@@ -197,10 +197,10 @@ def list_tasks(
         query += f" AND {label_clause}"
         params.extend(label_params)
     if parent_task_id:
-        query += " AND parent_task_id = ?"
+        query += " AND parent_task_id = %s"
         params.append(parent_task_id)
     if title_like:
-        query += " AND title LIKE ?"
+        query += " AND title LIKE %s"
         params.append(f"%{title_like}%")
 
     valid_sorts = {
@@ -212,11 +212,9 @@ def list_tasks(
     order_clause = valid_sorts.get(sort_by, valid_sorts["hierarchy"])
     direction = "DESC" if sort_order.lower() == "desc" else "ASC"
     if sort_by == "hierarchy":
-        query += f" ORDER BY {order_clause} LIMIT ? OFFSET ?"
+        query += f" ORDER BY {order_clause} LIMIT %s OFFSET %s"
     else:
-        query += (
-            f" ORDER BY {order_clause} {direction}, priority ASC, created_at DESC LIMIT ? OFFSET ?"
-        )
+        query += f" ORDER BY {order_clause} {direction}, priority ASC, created_at DESC LIMIT %s OFFSET %s"
     params.extend([limit, offset])
 
     rows = db.fetchall(query, tuple(params))
@@ -294,24 +292,24 @@ def list_ready_tasks(
     params: list[Any] = []
 
     if project_id:
-        query += " AND t.project_id = ?"
+        query += " AND t.project_id = %s"
         params.append(project_id)
     if priority:
-        query += " AND t.priority = ?"
+        query += " AND t.priority = %s"
         params.append(priority)
     if task_type:
-        query += " AND t.task_type = ?"
+        query += " AND t.task_type = %s"
         params.append(task_type)
     if assignee:
-        query += " AND t.assignee = ?"
+        query += " AND t.assignee = %s"
         params.append(assignee)
     if parent_task_id:
-        query += " AND t.parent_task_id = ?"
+        query += " AND t.parent_task_id = %s"
         params.append(parent_task_id)
 
     # Fetch all matching tasks (no SQL limit) so we can order hierarchically first
     internal_limit = 1000
-    query += " ORDER BY t.priority ASC, t.created_at ASC LIMIT ?"
+    query += " ORDER BY t.priority ASC, t.created_at ASC LIMIT %s"
     params.append(internal_limit)
 
     rows = db.fetchall(query, tuple(params))
@@ -354,15 +352,15 @@ def list_blocked_tasks(
     params: list[Any] = []
 
     if project_id:
-        query += " AND t.project_id = ?"
+        query += " AND t.project_id = %s"
         params.append(project_id)
     if parent_task_id:
-        query += " AND t.parent_task_id = ?"
+        query += " AND t.parent_task_id = %s"
         params.append(parent_task_id)
 
     # Fetch all matching tasks (no SQL limit) so we can order hierarchically first
     internal_limit = 1000
-    query += " ORDER BY t.priority ASC, t.created_at ASC LIMIT ?"
+    query += " ORDER BY t.priority ASC, t.created_at ASC LIMIT %s"
     params.append(internal_limit)
 
     rows = db.fetchall(query, tuple(params))

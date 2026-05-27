@@ -286,20 +286,20 @@ def _merge_session_variable(
     now = datetime.now(UTC).isoformat()
     with db.transaction_immediate() as conn:
         row = conn.execute(
-            "SELECT variables FROM session_variables WHERE session_id = ?",
+            "SELECT variables FROM session_variables WHERE session_id = %s",
             (session_id,),
         ).fetchone()
         variables = _load_variables(_row_variables(row))
         variables[name] = value
         if row:
             conn.execute(
-                "UPDATE session_variables SET variables = ?, updated_at = ? WHERE session_id = ?",
+                "UPDATE session_variables SET variables = %s, updated_at = %s WHERE session_id = %s",
                 (json.dumps(variables), now, session_id),
             )
         else:
             conn.execute(
                 "INSERT INTO session_variables (session_id, variables, updated_at) "
-                "VALUES (?, ?, ?)",
+                "VALUES (%s, %s, %s)",
                 (session_id, json.dumps(variables), now),
             )
 
@@ -312,7 +312,7 @@ def _pop_session_variable(db: HubDatabase, session_id: str, name: str) -> Any:
     now = datetime.now(UTC).isoformat()
     with db.transaction_immediate() as conn:
         row = conn.execute(
-            "SELECT variables FROM session_variables WHERE session_id = ?",
+            "SELECT variables FROM session_variables WHERE session_id = %s",
             (session_id,),
         ).fetchone()
         if not row:
@@ -321,7 +321,7 @@ def _pop_session_variable(db: HubDatabase, session_id: str, name: str) -> Any:
         value = variables.pop(name, None)
         if value is not None:
             conn.execute(
-                "UPDATE session_variables SET variables = ?, updated_at = ? WHERE session_id = ?",
+                "UPDATE session_variables SET variables = %s, updated_at = %s WHERE session_id = %s",
                 (json.dumps(variables), now, session_id),
             )
         return value

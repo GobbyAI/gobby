@@ -16,7 +16,7 @@ pytestmark = pytest.mark.unit
 def _seed_project(temp_db: HubDatabase) -> None:
     now = datetime.now(UTC).isoformat()
     temp_db.execute(
-        "INSERT INTO projects (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)",
+        "INSERT INTO projects (id, name, created_at, updated_at) VALUES (%s, %s, %s, %s)",
         ("project-1", "Test Project", now, now),
     )
 

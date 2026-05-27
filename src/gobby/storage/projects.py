@@ -100,7 +100,7 @@ class LocalProjectManager:
         self.db.execute(
             """
             INSERT INTO projects (id, name, repo_path, github_url, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s)
             """,
             (project_id, name, repo_path, github_url, now, now),
         )
@@ -116,16 +116,16 @@ class LocalProjectManager:
 
     def get(self, project_id: str) -> Project | None:
         """Get project by ID."""
-        row = self.db.fetchone("SELECT * FROM projects WHERE id = ?", (project_id,))
+        row = self.db.fetchone("SELECT * FROM projects WHERE id = %s", (project_id,))
         return Project.from_row(row) if row else None
 
     def get_by_name(self, name: str, include_deleted: bool = False) -> Project | None:
         """Get project by name. Excludes soft-deleted projects by default."""
         if include_deleted:
-            row = self.db.fetchone("SELECT * FROM projects WHERE name = ?", (name,))
+            row = self.db.fetchone("SELECT * FROM projects WHERE name = %s", (name,))
         else:
             row = self.db.fetchone(
-                "SELECT * FROM projects WHERE name = ? AND deleted_at IS NULL", (name,)
+                "SELECT * FROM projects WHERE name = %s AND deleted_at IS NULL", (name,)
             )
         return Project.from_row(row) if row else None
 
@@ -166,7 +166,7 @@ class LocalProjectManager:
         self.db.execute(
             """
             INSERT INTO projects (id, name, repo_path, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s)
             ON CONFLICT (id) DO NOTHING
             """,
             (project_id, name, repo_path, now, now),
@@ -218,11 +218,11 @@ class LocalProjectManager:
 
         fields["updated_at"] = datetime.now(UTC).isoformat()
 
-        set_clause = ", ".join(f"{k} = ?" for k in fields)
+        set_clause = ", ".join(f"{k} = %s" for k in fields)
         values = list(fields.values()) + [project_id]
 
         self.db.execute(
-            f"UPDATE projects SET {set_clause} WHERE id = ?",  # nosec B608
+            f"UPDATE projects SET {set_clause} WHERE id = %s",  # nosec B608
             tuple(values),
         )
 
@@ -235,7 +235,7 @@ class LocalProjectManager:
         Returns:
             True if deleted, False if not found
         """
-        cursor = self.db.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+        cursor = self.db.execute("DELETE FROM projects WHERE id = %s", (project_id,))
         return cursor.rowcount > 0
 
     def resolve_ref(self, ref: str) -> Project | None:
@@ -257,7 +257,7 @@ class LocalProjectManager:
         """
         now = datetime.now(UTC).isoformat()
         cursor = self.db.execute(
-            "UPDATE projects SET deleted_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL",
+            "UPDATE projects SET deleted_at = %s, updated_at = %s WHERE id = %s AND deleted_at IS NULL",
             (now, now, project_id),
         )
         return cursor.rowcount > 0

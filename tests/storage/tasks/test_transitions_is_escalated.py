@@ -15,7 +15,7 @@ def test_escalate_round_trip(temp_db, sample_project) -> None:
 
     escalated = manager.escalate_task(task.id, reason="blocked by operator")
     row = temp_db.fetchone(
-        "SELECT is_escalated, escalated_at, escalation_reason FROM tasks WHERE id = ?",
+        "SELECT is_escalated, escalated_at, escalation_reason FROM tasks WHERE id = %s",
         (task.id,),
     )
     assert row["is_escalated"] is True
@@ -25,7 +25,7 @@ def test_escalate_round_trip(temp_db, sample_project) -> None:
 
     de_escalated = manager.de_escalate_task(task.id, reason="operator cleared")
     row = temp_db.fetchone(
-        "SELECT is_escalated, escalated_at, escalation_reason FROM tasks WHERE id = ?",
+        "SELECT is_escalated, escalated_at, escalation_reason FROM tasks WHERE id = %s",
         (task.id,),
     )
     assert row["is_escalated"] is False
@@ -48,16 +48,16 @@ def test_de_escalate_releases_stale_claim(temp_db, sample_project, session_manag
     temp_db.execute(
         """
         UPDATE tasks
-           SET claimed_by_session_id = ?,
-               assignee = ?
-         WHERE id = ?
+           SET claimed_by_session_id = %s,
+               assignee = %s
+         WHERE id = %s
         """,
         (session.id, session.id, task.id),
     )
 
     de_escalated = manager.de_escalate_task(task.id, reason="operator cleared")
     row = temp_db.fetchone(
-        "SELECT claimed_by_session_id, assignee FROM tasks WHERE id = ?",
+        "SELECT claimed_by_session_id, assignee FROM tasks WHERE id = %s",
         (task.id,),
     )
 

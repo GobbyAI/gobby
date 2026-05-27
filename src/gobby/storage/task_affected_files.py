@@ -64,7 +64,7 @@ class TaskAffectedFileManager:
         """
         with self.db.transaction() as conn:
             conn.execute(
-                "DELETE FROM task_affected_files WHERE task_id = ? AND annotation_source = ?",
+                "DELETE FROM task_affected_files WHERE task_id = %s AND annotation_source = %s",
                 (task_id, source),
             )
             results = []
@@ -73,7 +73,7 @@ class TaskAffectedFileManager:
                     row = conn.execute(
                         """
                         INSERT INTO task_affected_files (task_id, file_path, annotation_source)
-                        VALUES (?, ?, ?)
+                        VALUES (%s, %s, %s)
                         RETURNING id, task_id, file_path, annotation_source, created_at
                         """,
                         (task_id, file_path, source),
@@ -88,7 +88,7 @@ class TaskAffectedFileManager:
     def get_files(self, task_id: str) -> list[TaskAffectedFile]:
         """Get all affected files for a task."""
         rows = self.db.fetchall(
-            "SELECT * FROM task_affected_files WHERE task_id = ? ORDER BY file_path",
+            "SELECT * FROM task_affected_files WHERE task_id = %s ORDER BY file_path",
             (task_id,),
         )
         return [TaskAffectedFile.from_row(row) for row in rows]
@@ -108,7 +108,7 @@ class TaskAffectedFileManager:
                 row = conn.execute(
                     """
                     INSERT INTO task_affected_files (task_id, file_path, annotation_source)
-                    VALUES (?, ?, ?)
+                    VALUES (%s, %s, %s)
                     RETURNING id, task_id, file_path, annotation_source, created_at
                     """,
                     (task_id, file_path, source),
@@ -122,7 +122,7 @@ class TaskAffectedFileManager:
         """Remove a single affected file from a task."""
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                "DELETE FROM task_affected_files WHERE task_id = ? AND file_path = ?",
+                "DELETE FROM task_affected_files WHERE task_id = %s AND file_path = %s",
                 (task_id, file_path),
             )
             deleted: bool = cursor.rowcount > 0
@@ -142,7 +142,7 @@ class TaskAffectedFileManager:
         if len(task_ids) < 2:
             return {}
 
-        placeholders = ",".join("?" * len(task_ids))
+        placeholders = ",".join("%s" for _ in task_ids)
         rows = self.db.fetchall(
             f"SELECT task_id, file_path FROM task_affected_files "
             f"WHERE task_id IN ({placeholders}) ORDER BY file_path",
@@ -170,7 +170,7 @@ class TaskAffectedFileManager:
     def get_tasks_for_file(self, file_path: str) -> list[TaskAffectedFile]:
         """Reverse lookup: get all tasks that affect a given file."""
         rows = self.db.fetchall(
-            "SELECT * FROM task_affected_files WHERE file_path = ? ORDER BY task_id",
+            "SELECT * FROM task_affected_files WHERE file_path = %s ORDER BY task_id",
             (file_path,),
         )
         return [TaskAffectedFile.from_row(row) for row in rows]

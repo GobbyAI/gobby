@@ -295,7 +295,7 @@ class LocalPromptManager:
                         id, name, description, content, version, variables,
                         scope, source_path, project_id, enabled,
                         created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         prompt_id,
@@ -332,7 +332,7 @@ class LocalPromptManager:
         Returns:
             PromptRecord or None if not found
         """
-        row = self.db.fetchone("SELECT * FROM prompts WHERE id = ?", (prompt_id,))
+        row = self.db.fetchone("SELECT * FROM prompts WHERE id = %s", (prompt_id,))
         if not row:
             return None
         return PromptRecord.from_row(row)
@@ -355,7 +355,7 @@ class LocalPromptManager:
             row = self.db.fetchone(
                 """
                 SELECT * FROM prompts
-                WHERE name = ? AND (project_id = ? OR project_id IS NULL)
+                WHERE name = %s AND (project_id = %s OR project_id IS NULL)
                 ORDER BY CASE scope
                     WHEN 'project' THEN 1
                     WHEN 'global' THEN 2
@@ -369,7 +369,7 @@ class LocalPromptManager:
             row = self.db.fetchone(
                 """
                 SELECT * FROM prompts
-                WHERE name = ? AND project_id IS NULL
+                WHERE name = %s AND project_id IS NULL
                 ORDER BY CASE scope
                     WHEN 'global' THEN 1
                     WHEN 'bundled' THEN 2
@@ -386,7 +386,7 @@ class LocalPromptManager:
         Useful for comparison/revert in the UI.
         """
         row = self.db.fetchone(
-            "SELECT * FROM prompts WHERE name = ? AND scope = 'bundled'",
+            "SELECT * FROM prompts WHERE name = %s AND scope = 'bundled'",
             (name,),
         )
         return PromptRecord.from_row(row) if row else None
@@ -417,35 +417,35 @@ class LocalPromptManager:
         params: list[Any] = []
 
         if name is not None:
-            updates.append("name = ?")
+            updates.append("name = %s")
             params.append(name)
         if description is not None:
-            updates.append("description = ?")
+            updates.append("description = %s")
             params.append(description)
         if content is not None:
-            updates.append("content = ?")
+            updates.append("content = %s")
             params.append(content)
         if version is not _UNSET:
-            updates.append("version = ?")
+            updates.append("version = %s")
             params.append(version)
         if variables is not _UNSET:
-            updates.append("variables = ?")
+            updates.append("variables = %s")
             params.append(json.dumps(variables) if variables else None)
         if source_path is not _UNSET:
-            updates.append("source_path = ?")
+            updates.append("source_path = %s")
             params.append(source_path)
         if enabled is not None:
-            updates.append("enabled = ?")
+            updates.append("enabled = %s")
             params.append(enabled)
 
         if not updates:
             return existing
 
-        updates.append("updated_at = ?")
+        updates.append("updated_at = %s")
         params.append(datetime.now(UTC).isoformat())
         params.append(prompt_id)
 
-        sql = f"UPDATE prompts SET {', '.join(updates)} WHERE id = ?"  # nosec B608
+        sql = f"UPDATE prompts SET {', '.join(updates)} WHERE id = %s"  # nosec B608
 
         with self.db.transaction() as conn:
             cursor = conn.execute(sql, tuple(params))
@@ -471,7 +471,7 @@ class LocalPromptManager:
         self._check_bundled_writable(record.scope)
 
         with self.db.transaction() as conn:
-            cursor = conn.execute("DELETE FROM prompts WHERE id = ?", (prompt_id,))
+            cursor = conn.execute("DELETE FROM prompts WHERE id = %s", (prompt_id,))
             if cursor.rowcount == 0:
                 return False
 
@@ -504,7 +504,7 @@ class LocalPromptManager:
         params: list[Any] = []
 
         if project_id:
-            query += " AND (project_id = ? OR project_id IS NULL)"
+            query += " AND (project_id = %s OR project_id IS NULL)"
             params.append(project_id)
         elif scope != "project":
             # When no project_id and not explicitly asking for project scope,
@@ -512,18 +512,18 @@ class LocalPromptManager:
             query += " AND project_id IS NULL"
 
         if scope is not None:
-            query += " AND scope = ?"
+            query += " AND scope = %s"
             params.append(scope)
 
         if category is not None:
-            query += " AND name LIKE ?"
+            query += " AND name LIKE %s"
             params.append(f"{category}/%")
 
         if enabled is not None:
-            query += " AND enabled = ?"
+            query += " AND enabled = %s"
             params.append(enabled)
 
-        query += " ORDER BY name ASC, scope ASC LIMIT ? OFFSET ?"
+        query += " ORDER BY name ASC, scope ASC LIMIT %s OFFSET %s"
         params.extend([limit, offset])
 
         rows = self.db.fetchall(query, tuple(params))
@@ -545,7 +545,7 @@ class LocalPromptManager:
         params: list[Any] = []
 
         if project_id:
-            query += " AND (project_id = ? OR project_id IS NULL)"
+            query += " AND (project_id = %s OR project_id IS NULL)"
             params.append(project_id)
 
         query += " ORDER BY name ASC"
@@ -562,15 +562,15 @@ class LocalPromptManager:
         escaped = query_text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         sql = """
             SELECT * FROM prompts
-            WHERE (name LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\')
+            WHERE (name LIKE %s ESCAPE '\\' OR description LIKE %s ESCAPE '\\')
         """
         params: list[Any] = [f"%{escaped}%", f"%{escaped}%"]
 
         if project_id:
-            sql += " AND (project_id = ? OR project_id IS NULL)"
+            sql += " AND (project_id = %s OR project_id IS NULL)"
             params.append(project_id)
 
-        sql += " ORDER BY name ASC LIMIT ?"
+        sql += " ORDER BY name ASC LIMIT %s"
         params.append(limit)
 
         rows = self.db.fetchall(sql, tuple(params))
@@ -586,11 +586,11 @@ class LocalPromptManager:
         params: list[Any] = []
 
         if project_id:
-            query += " AND (project_id = ? OR project_id IS NULL)"
+            query += " AND (project_id = %s OR project_id IS NULL)"
             params.append(project_id)
 
         if scope is not None:
-            query += " AND scope = ?"
+            query += " AND scope = %s"
             params.append(scope)
 
         row = self.db.fetchone(query, tuple(params))

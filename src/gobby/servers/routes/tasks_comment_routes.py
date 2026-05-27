@@ -48,7 +48,7 @@ def register_task_comment_routes(
             resolved_id = task.id
 
             total_row = server.task_manager.db.fetchone(
-                "SELECT COUNT(*) as total FROM task_comments WHERE task_id = ?",
+                "SELECT COUNT(*) as total FROM task_comments WHERE task_id = %s",
                 (resolved_id,),
             )
             total = total_row["total"] if total_row else 0
@@ -57,9 +57,9 @@ def register_task_comment_routes(
                 """SELECT id, task_id, parent_comment_id, author, author_type, body,
                           created_at, updated_at
                    FROM task_comments
-                   WHERE task_id = ?
+                   WHERE task_id = %s
                    ORDER BY created_at ASC
-                   LIMIT ? OFFSET ?""",
+                   LIMIT %s OFFSET %s""",
                 (resolved_id, limit, offset),
             )
             comments = [dict(row) for row in rows]
@@ -79,7 +79,7 @@ def register_task_comment_routes(
             comment_id = str(uuid.uuid4())
             server.task_manager.db.execute(
                 """INSERT INTO task_comments (id, task_id, parent_comment_id, author, author_type, body)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
+                   VALUES (%s, %s, %s, %s, %s, %s)""",
                 (
                     comment_id,
                     resolved_id,
@@ -91,7 +91,7 @@ def register_task_comment_routes(
             )
 
             row = server.task_manager.db.fetchone(
-                "SELECT * FROM task_comments WHERE id = ?", (comment_id,)
+                "SELECT * FROM task_comments WHERE id = %s", (comment_id,)
             )
             result = dict(row) if row else {"id": comment_id}
             task_ref = f"#{task.seq_num}" if task.seq_num else task.id[:8]
@@ -108,7 +108,7 @@ def register_task_comment_routes(
         try:
             task = resolve_task(task_id)
             server.task_manager.db.execute(
-                "DELETE FROM task_comments WHERE id = ? AND task_id = ?",
+                "DELETE FROM task_comments WHERE id = %s AND task_id = %s",
                 (comment_id, task.id),
             )
             return {"deleted": True}

@@ -45,14 +45,14 @@ def populated_hub_db(temp_hub_db):
     db.execute(
         """
         INSERT INTO projects (id, name, repo_path, github_url, created_at, updated_at)
-        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         """,
         ("project-alpha", "Project Alpha", "/path/alpha", None),
     )
     db.execute(
         """
         INSERT INTO projects (id, name, repo_path, github_url, created_at, updated_at)
-        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         """,
         ("project-beta", "Project Beta", "/path/beta", None),
     )
@@ -68,21 +68,21 @@ def populated_hub_db(temp_hub_db):
     db.execute(
         """
         INSERT INTO sessions (id, project_id, external_id, source, machine_id, status, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         """,
         ("sess-1", "project-alpha", "ext-1", "claude", "machine-1", "active"),
     )
     db.execute(
         """
         INSERT INTO sessions (id, project_id, external_id, source, machine_id, status, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         """,
         ("sess-2", "project-beta", "ext-2", "gemini", "machine-1", "ended"),
     )
     db.execute(
         """
         INSERT INTO sessions (id, project_id, external_id, source, machine_id, status, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         """,
         ("sess-3", "project-alpha", "ext-3", "claude", "machine-2", "ended"),
     )
@@ -98,7 +98,7 @@ class TestListAllProjects:
         non_local_hub_db.execute(
             """
             INSERT INTO projects (id, name, repo_path, github_url, created_at, updated_at)
-            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             ("active-db-project", "Active DB", "/path/active", None),
         )
@@ -147,14 +147,14 @@ class TestListAllProjects:
         db.execute(
             """
             INSERT INTO projects (id, name, repo_path, github_url, created_at, updated_at)
-            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             ("real-project", "my-app", "/path/app", None),
         )
         db.execute(
             """
             INSERT INTO projects (id, name, repo_path, github_url, created_at, updated_at)
-            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             ("system-1", "_orphaned_test", None, None),
         )

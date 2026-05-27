@@ -88,7 +88,7 @@ class StopRegistry:
             self.db.execute(
                 """
                 INSERT INTO session_stop_signals (session_id, source, reason, requested_at)
-                VALUES (?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s)
                 ON CONFLICT(session_id) DO UPDATE SET
                     source = excluded.source,
                     reason = excluded.reason,
@@ -122,7 +122,7 @@ class StopRegistry:
             """
             SELECT session_id, source, reason, requested_at, acknowledged_at
             FROM session_stop_signals
-            WHERE session_id = ?
+            WHERE session_id = %s
             """,
             (session_id,),
         )
@@ -167,8 +167,8 @@ class StopRegistry:
             result = self.db.execute(
                 """
                 UPDATE session_stop_signals
-                SET acknowledged_at = ?
-                WHERE session_id = ? AND acknowledged_at IS NULL
+                SET acknowledged_at = %s
+                WHERE session_id = %s AND acknowledged_at IS NULL
                 """,
                 (now.isoformat(), session_id),
             )
@@ -191,7 +191,7 @@ class StopRegistry:
         """
         with self._lock:
             result = self.db.execute(
-                "DELETE FROM session_stop_signals WHERE session_id = ?",
+                "DELETE FROM session_stop_signals WHERE session_id = %s",
                 (session_id,),
             )
 
@@ -215,7 +215,7 @@ class StopRegistry:
                 SELECT ss.session_id, ss.source, ss.reason, ss.requested_at, ss.acknowledged_at
                 FROM session_stop_signals ss
                 JOIN sessions s ON ss.session_id = s.id
-                WHERE ss.acknowledged_at IS NULL AND s.project_id = ?
+                WHERE ss.acknowledged_at IS NULL AND s.project_id = %s
                 ORDER BY ss.requested_at DESC
                 """,
                 (project_id,),
@@ -259,7 +259,7 @@ class StopRegistry:
                 """
                 DELETE FROM session_stop_signals
                 WHERE acknowledged_at IS NOT NULL
-                AND acknowledged_at < ?
+                AND acknowledged_at < %s
                 """,
                 (threshold.isoformat(),),
             )

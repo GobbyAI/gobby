@@ -112,7 +112,7 @@ async def _batch_load_session_info(
     if not session_ids:
         return {}
     try:
-        placeholders = ", ".join("?" for _ in session_ids)
+        placeholders = ", ".join("%s" for _ in session_ids)
 
         def do_query() -> list[Any]:
             return list(

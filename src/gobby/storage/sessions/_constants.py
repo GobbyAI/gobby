@@ -32,12 +32,12 @@ def ensure_system_session(db: HubDatabase) -> None:
     """Ensure the bootstrapped root session for cron/pipeline work exists."""
     had_existing_sessions = False
     with db.transaction_immediate(SystemSessionBootstrap()):
-        existing = db.fetchone("SELECT id FROM sessions WHERE id = ?", (SYSTEM_SESSION_ID,))
+        existing = db.fetchone("SELECT id FROM sessions WHERE id = %s", (SYSTEM_SESSION_ID,))
         if existing is not None:
             return
         had_existing_sessions = db.fetchone("SELECT 1 FROM sessions LIMIT 1") is not None
 
-        project = db.fetchone("SELECT id FROM projects WHERE id = ?", (SYSTEM_SESSION_PROJECT_ID,))
+        project = db.fetchone("SELECT id FROM projects WHERE id = %s", (SYSTEM_SESSION_PROJECT_ID,))
         if project is None:
             raise RuntimeError(
                 "Missing required _personal project for system session bootstrap "
@@ -51,7 +51,7 @@ def ensure_system_session(db: HubDatabase) -> None:
                 id, external_id, machine_id, source, project_id, title,
                 status, agent_depth, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, 'active', 0, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, 'active', 0, %s, %s)
             ON CONFLICT (id) DO NOTHING
             """,
             (
@@ -66,7 +66,7 @@ def ensure_system_session(db: HubDatabase) -> None:
             ),
         )
 
-        recreated = db.fetchone("SELECT id FROM sessions WHERE id = ?", (SYSTEM_SESSION_ID,))
+        recreated = db.fetchone("SELECT id FROM sessions WHERE id = %s", (SYSTEM_SESSION_ID,))
         if recreated is None:
             raise RuntimeError(f"Failed to recreate missing system session {SYSTEM_SESSION_ID}")
 

@@ -211,7 +211,7 @@ def test_complete_stage_keeps_other_running_agent_dispatch_mutex_blocking(
         )
 
     row = temp_db.fetchone(
-        "SELECT run_id, lease_holder FROM task_dispatch_mutex WHERE task_id = ?",
+        "SELECT run_id, lease_holder FROM task_dispatch_mutex WHERE task_id = %s",
         (task.id,),
     )
     assert row is not None

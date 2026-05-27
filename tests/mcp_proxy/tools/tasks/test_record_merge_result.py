@@ -144,7 +144,7 @@ def _artifact_row(temp_db, task_id: str) -> dict[str, object]:
         """
         SELECT merge_sha, merge_report_ref
         FROM task_delivery_campaigns
-        WHERE task_id = ?
+        WHERE task_id = %s
         """,
         (task_id,),
     )

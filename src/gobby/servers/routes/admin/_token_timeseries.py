@@ -74,10 +74,10 @@ def register_token_timeseries_routes(router: APIRouter, server: HTTPServer) -> N
         clauses: list[str] = []
         params: list[Any] = []
         if hours > 0:
-            clauses.append(f"AND {newer_than_now_expr(db, 'created_at', '?', 'hour')}")
+            clauses.append(f"AND {newer_than_now_expr(db, 'created_at', '%s', 'hour')}")
             params.append(hours)
         if project_id:
-            clauses.append("AND project_id = ?")
+            clauses.append("AND project_id = %s")
             params.append(project_id)
 
         where = " ".join(clauses)

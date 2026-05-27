@@ -435,8 +435,8 @@ class GitHubIssueTriageService:
         try:
             with self.db.transaction_immediate() as conn:
                 existing = conn.execute(
-                    "SELECT id FROM tasks WHERE project_id = ? AND github_repo = ? "
-                    "AND github_issue_number = ? LIMIT 1",
+                    "SELECT id FROM tasks WHERE project_id = %s AND github_repo = %s "
+                    "AND github_issue_number = %s LIMIT 1",
                     (project_id, issue.repo, issue.issue_number),
                 ).fetchone()
                 if existing:
@@ -461,8 +461,8 @@ class GitHubIssueTriageService:
                 )
         except psycopg.IntegrityError:
             existing = self.db.fetchone(
-                "SELECT id FROM tasks WHERE project_id = ? AND github_repo = ? "
-                "AND github_issue_number = ? LIMIT 1",
+                "SELECT id FROM tasks WHERE project_id = %s AND github_repo = %s "
+                "AND github_issue_number = %s LIMIT 1",
                 (project_id, issue.repo, issue.issue_number),
             )
             if existing is None:

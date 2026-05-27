@@ -9,7 +9,7 @@ pytestmark = pytest.mark.unit
 def db(temp_db):
     database = temp_db
     with database.transaction() as conn:
-        conn.execute("INSERT INTO projects (id, name) VALUES (?, ?)", ("p1", "test_project"))
+        conn.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", ("p1", "test_project"))
     return database
 
 

@@ -70,7 +70,7 @@ async def env(tmp_path: Path, hub_db: HubDatabase) -> AsyncGenerator[dict[str, A
         # Insert a valid project for FK constraints
         db.execute(
             "INSERT INTO projects (id, name, repo_path, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?)",
+            "VALUES (%s, %s, %s, %s, %s)",
             ("proj-1", "Test Project", str(tmp_path), datetime.now(), datetime.now()),
         )
 
@@ -110,7 +110,7 @@ async def test_full_lifecycle(env: dict[str, Any]) -> None:
     hm.handle(start_event)
 
     # Verify registration in DB
-    row = db.fetchone("SELECT id FROM sessions WHERE external_id = ?", ("cli-session-1",))
+    row = db.fetchone("SELECT id FROM sessions WHERE external_id = %s", ("cli-session-1",))
     assert row is not None
     session_id = row["id"]
 
@@ -127,7 +127,7 @@ async def test_full_lifecycle(env: dict[str, Any]) -> None:
 
     await wait_for_async_condition(
         lambda: len(
-            db.fetchall("SELECT * FROM session_messages WHERE session_id = ?", (session_id,))
+            db.fetchall("SELECT * FROM session_messages WHERE session_id = %s", (session_id,))
         )
         >= 1,
         timeout=2.0,
@@ -135,7 +135,7 @@ async def test_full_lifecycle(env: dict[str, Any]) -> None:
     )
 
     # 5. Verify DB Storage
-    msgs = db.fetchall("SELECT * FROM session_messages WHERE session_id = ?", (session_id,))
+    msgs = db.fetchall("SELECT * FROM session_messages WHERE session_id = %s", (session_id,))
     assert len(msgs) == 1
     assert msgs[0]["content"] == "Hello E2E"
 

@@ -40,8 +40,8 @@ def register_agent_step_workflow(
                 definition_json, canvas_json, source, tags,
                 created_at, updated_at
             ) VALUES (
-                $1, NULL, $2, $3, 'workflow', '2.0', FALSE, 100, NULL,
-                $4, NULL, 'agent', NULL, $5, $6
+                %s, NULL, %s, %s, 'workflow', '2.0', FALSE, 100, NULL,
+                %s, NULL, 'agent', NULL, %s, %s
             )
             ON CONFLICT(name, project_id, source) DO UPDATE SET
                 description = excluded.description,

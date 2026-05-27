@@ -312,12 +312,12 @@ class MailboxService:
 
     def _resolve_project_ref(self, project_ref: str) -> str:
         row = self._db.fetchone(
-            "SELECT id FROM projects WHERE id = ? AND deleted_at IS NULL",
+            "SELECT id FROM projects WHERE id = %s AND deleted_at IS NULL",
             (project_ref,),
         )
         if row is None:
             row = self._db.fetchone(
-                "SELECT id FROM projects WHERE name = ? AND deleted_at IS NULL",
+                "SELECT id FROM projects WHERE name = %s AND deleted_at IS NULL",
                 (project_ref,),
             )
         if row is None:
@@ -351,14 +351,14 @@ class MailboxService:
         return to_session_id
 
     def _all_recipient_session_ids(self, from_session_id: str) -> list[str]:
-        status_placeholders = ",".join("?" for _ in DELIVERABLE_SESSION_STATUSES)
+        status_placeholders = ",".join("%s" for _ in DELIVERABLE_SESSION_STATUSES)
         rows = self._db.fetchall(
             f"""
             SELECT id
               FROM sessions
              WHERE status IN ({status_placeholders})
-               AND id != ?
-               AND id != ?
+               AND id != %s
+               AND id != %s
              ORDER BY created_at ASC, id ASC
             """,
             (*DELIVERABLE_SESSION_STATUSES, SYSTEM_SESSION_ID, from_session_id),
@@ -371,7 +371,7 @@ class MailboxService:
         from_session_id: str,
         project_id: str,
     ) -> list[str]:
-        active_status_placeholders = ",".join("?" for _ in ACTIVE_AGENT_RUN_STATUSES)
+        active_status_placeholders = ",".join("%s" for _ in ACTIVE_AGENT_RUN_STATUSES)
         rows = self._db.fetchall(
             f"""
             SELECT
@@ -383,7 +383,7 @@ class MailboxService:
             LEFT JOIN sessions child ON child.id = ar.child_session_id
             LEFT JOIN sessions parent ON parent.id = ar.parent_session_id
             WHERE ar.status IN ({active_status_placeholders})
-              AND COALESCE(child.project_id, parent.project_id) = ?
+              AND COALESCE(child.project_id, parent.project_id) = %s
             ORDER BY ar.created_at ASC
             """,
             (*ACTIVE_AGENT_RUN_STATUSES, project_id),
@@ -397,11 +397,11 @@ class MailboxService:
         from_session_id: str,
         root_task_id: str,
     ) -> list[str]:
-        active_status_placeholders = ",".join("?" for _ in ACTIVE_AGENT_RUN_STATUSES)
+        active_status_placeholders = ",".join("%s" for _ in ACTIVE_AGENT_RUN_STATUSES)
         rows = self._db.fetchall(
             f"""
             WITH RECURSIVE subtree(id) AS (
-                SELECT id FROM tasks WHERE id = ?
+                SELECT id FROM tasks WHERE id = %s
                 UNION ALL
                 SELECT child.id
                   FROM tasks child
@@ -430,7 +430,7 @@ class MailboxService:
         agent_run_id: str,
         project_id: str | None,
     ) -> MailboxTargetResolution:
-        active_status_placeholders = ",".join("?" for _ in ACTIVE_AGENT_RUN_STATUSES)
+        active_status_placeholders = ",".join("%s" for _ in ACTIVE_AGENT_RUN_STATUSES)
         row = self._db.fetchone(
             f"""
             SELECT
@@ -444,7 +444,7 @@ class MailboxService:
             FROM agent_runs ar
             LEFT JOIN sessions child ON child.id = ar.child_session_id
             LEFT JOIN sessions parent ON parent.id = ar.parent_session_id
-            WHERE ar.id = ?
+            WHERE ar.id = %s
               AND ar.status IN ({active_status_placeholders})
             """,
             (agent_run_id, *ACTIVE_AGENT_RUN_STATUSES),
@@ -488,7 +488,7 @@ class MailboxService:
         sender_project_id = self._resolve_project_id(from_session_id, project_id)
 
         run_row = self._db.fetchone(
-            "SELECT id, project_id, root_task_id, input_ref FROM build_runs WHERE id = ?",
+            "SELECT id, project_id, root_task_id, input_ref FROM build_runs WHERE id = %s",
             (target_id,),
         )
         if run_row is not None:
@@ -508,8 +508,8 @@ class MailboxService:
             """
             SELECT id, project_id, root_task_id, input_ref
               FROM build_runs
-             WHERE project_id = ?
-               AND input_ref = ?
+             WHERE project_id = %s
+               AND input_ref = %s
              ORDER BY started_at DESC, id DESC
              LIMIT 1
             """,
@@ -564,7 +564,7 @@ class MailboxService:
         raise ValueError(f"Build run has no resolvable root task: {run_row['id']}")
 
     def _task_project_id(self, task_id: str) -> str:
-        row = self._db.fetchone("SELECT project_id FROM tasks WHERE id = ?", (task_id,))
+        row = self._db.fetchone("SELECT project_id FROM tasks WHERE id = %s", (task_id,))
         if row is None:
             raise ValueError(f"Task not found: {task_id}")
         return str(row["project_id"])

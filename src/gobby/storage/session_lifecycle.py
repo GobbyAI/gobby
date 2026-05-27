@@ -58,15 +58,15 @@ def expire_stale_sessions(db: HubDatabase, timeout_hours: int = 24) -> int:
     Returns:
         Number of sessions expired.
     """
-    updated_stale_sql = older_than_now_expr(db, "updated_at", "?", "hour")
-    empty_terminal_created_stale_sql = older_than_now_expr(db, "created_at", "?", "hour")
+    updated_stale_sql = older_than_now_expr(db, "updated_at", "%s", "hour")
+    empty_terminal_created_stale_sql = older_than_now_expr(db, "created_at", "%s", "hour")
     empty_terminal_context_sql = "terminal_context IS NULL"
     cursor = db.execute(
         f"""
         UPDATE sessions
         SET status = 'expired', updated_at = CURRENT_TIMESTAMP
         WHERE status IN ('active', 'paused', 'handoff_ready')
-        AND id != ?
+        AND id != %s
         AND (
             {updated_stale_sql}
             OR (
@@ -99,13 +99,13 @@ def expire_orphaned_handoff_sessions(db: HubDatabase, timeout_minutes: int = 30)
     Returns:
         Number of sessions expired.
     """
-    updated_stale_sql = older_than_now_expr(db, "updated_at", "?", "minute")
+    updated_stale_sql = older_than_now_expr(db, "updated_at", "%s", "minute")
     cursor = db.execute(
         f"""
         UPDATE sessions
         SET status = 'expired', updated_at = CURRENT_TIMESTAMP
         WHERE status = 'handoff_ready'
-        AND id != ?
+        AND id != %s
         AND {updated_stale_sql}
         """,  # nosec B608 # cutoff expression is selected by storage dialect.
         (SYSTEM_SESSION_ID, timeout_minutes),
@@ -130,13 +130,13 @@ def pause_inactive_active_sessions(db: HubDatabase, timeout_minutes: int = 30) -
     Returns:
         Number of sessions paused.
     """
-    updated_stale_sql = older_than_now_expr(db, "updated_at", "?", "minute")
+    updated_stale_sql = older_than_now_expr(db, "updated_at", "%s", "minute")
     cursor = db.execute(
         f"""
         UPDATE sessions
         SET status = 'paused'
         WHERE status = 'active'
-        AND id != ?
+        AND id != %s
         AND {updated_stale_sql}
         """,  # nosec B608 # cutoff expression is selected by storage dialect.
         (SYSTEM_SESSION_ID, timeout_minutes),
@@ -162,13 +162,13 @@ def expire_empty_sessions(db: HubDatabase, timeout_hours: int = 2) -> int:
     Returns:
         Number of sessions expired.
     """
-    updated_stale_sql = older_than_now_expr(db, "updated_at", "?", "hour")
+    updated_stale_sql = older_than_now_expr(db, "updated_at", "%s", "hour")
     cursor = db.execute(
         f"""
         UPDATE sessions
         SET status = 'expired', updated_at = CURRENT_TIMESTAMP
         WHERE status IN ('active', 'paused')
-        AND id != ?
+        AND id != %s
         AND COALESCE(message_count, 0) = 0
         AND {updated_stale_sql}
         """,  # nosec B608 # cutoff expression is selected by storage dialect.
@@ -196,10 +196,10 @@ def prune_empty_sessions(db: HubDatabase, min_age_hours: int = 1) -> int:
         Number of sessions deleted.
     """
     params = (min_age_hours,)
-    updated_stale_sql = older_than_now_expr(db, "updated_at", "?", "hour")
+    updated_stale_sql = older_than_now_expr(db, "updated_at", "%s", "hour")
     base_where = f"""
         status = 'expired'
-        AND id != ?
+        AND id != %s
         AND COALESCE(message_count, 0) = 0
         AND {updated_stale_sql}
     """  # nosec B608 # cutoff expression is selected by storage dialect.

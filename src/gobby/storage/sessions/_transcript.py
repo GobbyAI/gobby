@@ -37,7 +37,7 @@ class _TranscriptMixin:
             AND transcript_processed = FALSE
             AND transcript_path IS NOT NULL
             ORDER BY updated_at ASC
-            LIMIT ?
+            LIMIT %s
             """,
             (limit,),
         )
@@ -56,7 +56,7 @@ class _TranscriptMixin:
         now = datetime.now(UTC).isoformat()
         with self.db.transaction():
             self.db.execute(
-                "UPDATE sessions SET transcript_processed = TRUE, updated_at = ? WHERE id = ?",
+                "UPDATE sessions SET transcript_processed = TRUE, updated_at = %s WHERE id = %s",
                 (now, session_id),
             )
         return self.get(session_id)
@@ -74,7 +74,7 @@ class _TranscriptMixin:
         now = datetime.now(UTC).isoformat()
         with self.db.transaction():
             self.db.execute(
-                "UPDATE sessions SET transcript_processed = FALSE, updated_at = ? WHERE id = ?",
+                "UPDATE sessions SET transcript_processed = FALSE, updated_at = %s WHERE id = %s",
                 (now, session_id),
             )
         return self.get(session_id)

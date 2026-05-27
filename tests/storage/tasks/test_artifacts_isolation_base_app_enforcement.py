@@ -87,7 +87,7 @@ def _insert_legacy_worktree_row(temp_db: HubDatabase, task_id: str) -> None:
     temp_db.execute(
         """
         INSERT INTO task_artifacts (task_id, worktree_path, worktree_id)
-        VALUES (?, '/tmp/wt', 'wt-1')
+        VALUES (%s, '/tmp/wt', 'wt-1')
         """,
         (task_id,),
     )

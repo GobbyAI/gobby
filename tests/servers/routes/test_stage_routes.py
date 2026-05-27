@@ -124,7 +124,7 @@ def test_patch_move_to_stage_rejects_claimed_task_without_force(
         project_id=sample_project["id"],
     )
     temp_db.execute(
-        "UPDATE tasks SET claimed_by_session_id = ? WHERE id = ?",
+        "UPDATE tasks SET claimed_by_session_id = %s WHERE id = %s",
         (owner.id, task.id),
     )
 
@@ -153,7 +153,7 @@ def test_patch_move_to_stage_force_overrides_claim(
         project_id=sample_project["id"],
     )
     temp_db.execute(
-        "UPDATE tasks SET claimed_by_session_id = ? WHERE id = ?",
+        "UPDATE tasks SET claimed_by_session_id = %s WHERE id = %s",
         (owner.id, task.id),
     )
 

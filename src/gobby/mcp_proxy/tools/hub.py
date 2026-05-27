@@ -215,7 +215,7 @@ def create_hub_registry(
             where_clause = ""
             params: tuple[Any, ...]
             if state:
-                where_clause = "WHERE t.state_bucket = ?"
+                where_clause = "WHERE t.state_bucket = %s"
                 params = (state, limit)
             else:
                 params = (limit,)
@@ -248,7 +248,7 @@ def create_hub_registry(
                   ON registry.name = current_stage.stage_name
                 {where_clause}
                 ORDER BY t.updated_at DESC
-                LIMIT ?
+                LIMIT %s
                 """,
                     params,
                 )
@@ -302,7 +302,7 @@ def create_hub_registry(
                 FROM sessions
                 WHERE source != 'system'
                 ORDER BY created_at DESC
-                LIMIT ?
+                LIMIT %s
                 """,
                     (limit,),
                 )

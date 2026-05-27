@@ -36,7 +36,7 @@ def has_gobby_name_collision(db: HubDatabase, name: str) -> bool:
     tag_condition, tag_params = json_array_contains_condition(db, "tags", "gobby")
     row = db.fetchone(
         "SELECT id FROM workflow_definitions "
-        f"WHERE name = ? AND {tag_condition} "
+        f"WHERE name = %s AND {tag_condition} "
         "AND deleted_at IS NULL",
         (name, *tag_params),
     )

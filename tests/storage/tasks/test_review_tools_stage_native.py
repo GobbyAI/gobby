@@ -130,7 +130,7 @@ def test_approved_rejected_on_policy_none(temp_db, sample_project) -> None:
 def test_no_current_stage_errors(temp_db, sample_project) -> None:
     task = create_task(temp_db, sample_project, task_type="feature")
     temp_db.execute(
-        "UPDATE task_stage_states SET state = 'done' WHERE task_id = ?",
+        "UPDATE task_stage_states SET state = 'done' WHERE task_id = %s",
         (task.id,),
     )
 

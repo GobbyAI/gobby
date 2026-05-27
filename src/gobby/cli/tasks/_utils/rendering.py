@@ -219,7 +219,7 @@ def _resolve_session_refs(session_ids: set[str], db: HubDatabase | None = None) 
         return {}
     owner_db: HubDatabase = db or open_runtime_hub_database(apply_migrations=False)
     try:
-        placeholders = ",".join("?" * len(session_ids))
+        placeholders = ",".join("%s" for _ in session_ids)
         rows = owner_db.fetchall(
             f"SELECT id, seq_num FROM sessions WHERE id IN ({placeholders})",
             tuple(session_ids),
@@ -239,7 +239,7 @@ def _resolve_project_names(project_ids: set[str], db: HubDatabase | None = None)
         return {}
     owner_db: HubDatabase = db or open_runtime_hub_database(apply_migrations=False)
     try:
-        placeholders = ",".join("?" * len(project_ids))
+        placeholders = ",".join("%s" for _ in project_ids)
         rows = owner_db.fetchall(
             f"SELECT id, name FROM projects WHERE id IN ({placeholders})",
             tuple(project_ids),

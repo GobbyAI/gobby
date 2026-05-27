@@ -62,7 +62,7 @@ class LocalCheckpointManager:
             """INSERT INTO checkpoints
                (id, task_id, session_id, run_id, ref_name, commit_sha,
                 parent_sha, files_changed, message, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
             (
                 checkpoint.id,
                 checkpoint.task_id,
@@ -80,20 +80,20 @@ class LocalCheckpointManager:
 
     def get(self, checkpoint_id: str) -> Checkpoint | None:
         """Get a checkpoint by ID."""
-        row = self.db.fetchone("SELECT * FROM checkpoints WHERE id = ?", (checkpoint_id,))
+        row = self.db.fetchone("SELECT * FROM checkpoints WHERE id = %s", (checkpoint_id,))
         return Checkpoint.from_row(row) if row else None
 
     def list_for_task(self, task_id: str) -> list[Checkpoint]:
         """List all checkpoints for a task, newest first."""
         rows = self.db.fetchall(
-            "SELECT * FROM checkpoints WHERE task_id = ? ORDER BY created_at DESC",
+            "SELECT * FROM checkpoints WHERE task_id = %s ORDER BY created_at DESC",
             (task_id,),
         )
         return [Checkpoint.from_row(row) for row in rows]
 
     def delete(self, checkpoint_id: str) -> bool:
         """Delete a checkpoint by ID. Returns True if deleted."""
-        cursor = self.db.execute("DELETE FROM checkpoints WHERE id = ?", (checkpoint_id,))
+        cursor = self.db.execute("DELETE FROM checkpoints WHERE id = %s", (checkpoint_id,))
         return cursor.rowcount > 0
 
     def delete_old(self, task_id: str, keep_latest: int = 3) -> int:
@@ -108,11 +108,11 @@ class LocalCheckpointManager:
             raise ValueError(f"keep_latest must be >= 1, got {keep_latest}")
         cursor = self.db.execute(
             """DELETE FROM checkpoints
-               WHERE task_id = ? AND id NOT IN (
+               WHERE task_id = %s AND id NOT IN (
                    SELECT id FROM checkpoints
-                   WHERE task_id = ?
+                   WHERE task_id = %s
                    ORDER BY created_at DESC
-                   LIMIT ?
+                   LIMIT %s
                )""",
             (task_id, task_id, keep_latest),
         )
@@ -121,7 +121,7 @@ class LocalCheckpointManager:
     def count_for_task(self, task_id: str) -> int:
         """Count checkpoints for a task."""
         row = self.db.fetchone(
-            "SELECT COUNT(*) as cnt FROM checkpoints WHERE task_id = ?",
+            "SELECT COUNT(*) as cnt FROM checkpoints WHERE task_id = %s",
             (task_id,),
         )
         return row["cnt"] if row else 0

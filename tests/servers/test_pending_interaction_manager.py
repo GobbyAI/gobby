@@ -30,7 +30,7 @@ def db(hub_db):
         for sid in SESSION_IDS:
             conn.execute(
                 """INSERT INTO sessions (id, external_id, machine_id, source, project_id, session_type)
-                   VALUES (?, ?, 'test-machine', 'claude', 'test-project', 'web_chat')""",
+                   VALUES (%s, %s, 'test-machine', 'claude', 'test-project', 'web_chat')""",
                 (sid, sid),
             )
     return hub_db
@@ -64,7 +64,7 @@ class TestCreate:
             payload={"tool_name": "Read"},
             tool_name="Read",
         )
-        row = db.fetchone("SELECT * FROM pending_interactions WHERE id = ?", (iid,))
+        row = db.fetchone("SELECT * FROM pending_interactions WHERE id = %s", (iid,))
         assert row is not None
         assert row["session_id"] == "sess-1"
         assert row["kind"] == "tool"
@@ -80,7 +80,7 @@ class TestResolve:
         iid = await manager.create(session_id="sess-1", kind="tool", provider="claude", payload={})
         result = await manager.resolve(iid, "approve")
         assert result is True
-        row = db.fetchone("SELECT * FROM pending_interactions WHERE id = ?", (iid,))
+        row = db.fetchone("SELECT * FROM pending_interactions WHERE id = %s", (iid,))
         assert row["status"] == "resolved"
         assert row["decision"] == "approve"
 
@@ -109,7 +109,7 @@ class TestExpire:
     ) -> None:
         iid = await manager.create(session_id="sess-1", kind="tool", provider="claude", payload={})
         await manager.expire(iid)
-        row = db.fetchone("SELECT * FROM pending_interactions WHERE id = ?", (iid,))
+        row = db.fetchone("SELECT * FROM pending_interactions WHERE id = %s", (iid,))
         assert row["status"] == "expired"
         assert row["decision"] == "timeout"
 
@@ -137,7 +137,7 @@ class TestSupersede:
         _iid2 = await manager.create(
             session_id="sess-1", kind="tool", provider="claude", payload={"n": 2}
         )
-        row = db.fetchone("SELECT * FROM pending_interactions WHERE id = ?", (iid1,))
+        row = db.fetchone("SELECT * FROM pending_interactions WHERE id = %s", (iid1,))
         assert row["status"] == "expired"
 
 

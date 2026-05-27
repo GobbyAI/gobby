@@ -42,7 +42,7 @@ def _insert_task(
             seq_num, claimed_by_session_id, created_in_session_id, closed_in_session_id,
             created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             task_id,

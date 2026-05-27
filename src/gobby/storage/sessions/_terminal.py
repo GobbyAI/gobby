@@ -39,8 +39,8 @@ class _TerminalMixin:
             rows = self.db.fetchall(
                 """
                 SELECT * FROM sessions
-                WHERE created_at >= ?
-                AND project_id = ?
+                WHERE created_at >= %s
+                AND project_id = %s
                 ORDER BY created_at DESC
                 """,
                 (since_str, project_id),
@@ -49,7 +49,7 @@ class _TerminalMixin:
             rows = self.db.fetchall(
                 """
                 SELECT * FROM sessions
-                WHERE created_at >= ?
+                WHERE created_at >= %s
                 ORDER BY created_at DESC
                 """,
                 (since_str,),
@@ -97,7 +97,7 @@ class _TerminalMixin:
 
         values["updated_at"] = datetime.now(UTC).isoformat()
 
-        self.db.safe_update("sessions", values, "id = ?", (session_id,))
+        self.db.safe_update("sessions", values, "id = %s", (session_id,))
         return self.get(session_id)
 
     def record_skills_used(self: _ManagerState, session_id: str, skill_names: list[str]) -> int:
@@ -116,7 +116,7 @@ class _TerminalMixin:
             for name in skill_names:
                 cursor = self.db.execute(
                     "INSERT INTO session_skills (session_id, skill_name, created_at) "
-                    "VALUES (?, ?, ?) ON CONFLICT (session_id, skill_name) DO NOTHING",
+                    "VALUES (%s, %s, %s) ON CONFLICT (session_id, skill_name) DO NOTHING",
                     (session_id, name, now),
                 )
                 if cursor.rowcount == 1:
