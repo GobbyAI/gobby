@@ -1,7 +1,9 @@
-//! PostgreSQL hub connection helpers.
+//! PostgreSQL foundation adapter boundary and hub connection helpers.
 //!
-//! This module is intentionally schema-agnostic. Gobby-owned schemas are
-//! externally managed; consumers supply any table or index validation.
+//! This module is available with the `postgres` feature. Gobby-owned schemas are
+//! externally managed; adapter code must validate required objects without
+//! creating, altering, or dropping them. This module is intentionally
+//! schema-agnostic; consumers supply any table or index validation.
 
 use anyhow::Context;
 use postgres::{Client, NoTls};
