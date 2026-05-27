@@ -5,6 +5,7 @@ Effect types: block, set_variable, inject_context, mcp_call, observe,
 rewrite_input, load_skill.
 """
 
+import hashlib
 import json
 import logging
 import re
@@ -169,6 +170,11 @@ def _block_source_for_rule(rule_name: str) -> str:
     return "rule"
 
 
+def _block_reason_signature(rule_name: str, reason: str) -> str:
+    digest = hashlib.sha256(reason.encode("utf-8")).hexdigest()[:16]
+    return f"{rule_name}:{digest}"
+
+
 def _warn_block_fallback(
     *,
     session_id: str,
@@ -322,20 +328,24 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                             rule_name=resolved_rule_name,
                             reason=response.reason,
                         )
-                        # Verbose-once: collapse repeat blocks of the same rule
-                        # within a turn down to a single line. Cleared on TURN_START.
+                        # Verbose-once: collapse repeat identical blocks within a turn.
+                        # Dynamic reasons from the same rule still render in full.
+                        # Cleared on TURN_START.
                         # Stored as list[str] because session variables are JSON-persisted.
                         shown = variables.get("_block_reasons_shown")
                         if not isinstance(shown, list):
                             shown = []
                             variables["_block_reasons_shown"] = shown
-                        if resolved_rule_name in shown:
+                        block_signature = _block_reason_signature(
+                            resolved_rule_name, response.reason
+                        )
+                        if block_signature in shown:
                             response.reason = (
                                 f"Rule enforced by Gobby: [{resolved_rule_name}] "
                                 "(full reason shown earlier this turn — scroll up)."
                             )
                         else:
-                            shown.append(resolved_rule_name)
+                            shown.append(block_signature)
                     if span.is_recording():
                         span.set_attribute("final_decision", response.decision)
                         if response.reason:

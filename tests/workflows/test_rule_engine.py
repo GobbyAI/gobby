@@ -3012,7 +3012,7 @@ class TestLoadSkillEffect:
 
 
 class TestVerboseOnceBlockReason:
-    """Repeat blocks of the same rule within a turn collapse to a one-liner."""
+    """Repeat identical block reasons within a turn collapse to a one-liner."""
 
     _TERSE_HINT = "(full reason shown earlier this turn — scroll up)."
 
@@ -3046,7 +3046,9 @@ class TestVerboseOnceBlockReason:
         assert response.decision == "block"
         assert "gcode outline" in (response.reason or "")
         assert self._TERSE_HINT not in (response.reason or "")
-        assert variables["_block_reasons_shown"] == ["require-code-index-skill"]
+        shown = variables["_block_reasons_shown"]
+        assert len(shown) == 1
+        assert shown[0].startswith("require-code-index-skill:")
 
     @pytest.mark.asyncio
     async def test_second_block_same_rule_collapses_to_terse(
@@ -3070,6 +3072,52 @@ class TestVerboseOnceBlockReason:
         assert second.decision == "block"
         assert second.reason == (
             f"Rule enforced by Gobby: [require-code-index-skill] {self._TERSE_HINT}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_changed_claimed_task_required_skills_reason_emits_full_reason(
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        _insert_rule(
+            manager,
+            "require-claimed-task-required-skills",
+            RuleDefinitionBody(
+                event=RuleEvent.BEFORE_TOOL,
+                when="first_unloaded_claimed_task_required_skill() != ''",
+                effects=[
+                    RuleEffect(
+                        type="block",
+                        reason=(
+                            "{{ skill_fetch_directive("
+                            "first_unloaded_claimed_task_required_skill()) }}"
+                        ),
+                    )
+                ],
+            ),
+        )
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {
+            "claimed_task_required_skills": ["rust", "development-discipline"],
+            "loaded_skills": [],
+        }
+        event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Write"})
+
+        first = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        variables["loaded_skills"] = ["rust"]
+        second = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        third = await engine.evaluate(event, session_id="sess-1", variables=variables)
+
+        assert first.decision == "block"
+        assert first.reason is not None
+        assert first.reason.endswith(skill_fetch_directive("rust"))
+        assert self._TERSE_HINT not in first.reason
+        assert second.decision == "block"
+        assert second.reason is not None
+        assert second.reason.endswith(skill_fetch_directive("development-discipline"))
+        assert self._TERSE_HINT not in second.reason
+        assert third.decision == "block"
+        assert third.reason == (
+            f"Rule enforced by Gobby: [require-claimed-task-required-skills] {self._TERSE_HINT}"
         )
 
     @pytest.mark.asyncio
@@ -3119,10 +3167,8 @@ class TestVerboseOnceBlockReason:
         assert second.decision == "block"
         assert "Use uv instead" in (second.reason or "")
         assert self._TERSE_HINT not in (second.reason or "")
-        assert sorted(variables["_block_reasons_shown"]) == [
-            "require-code-index-skill",
-            "require-uv",
-        ]
+        shown_rules = {entry.split(":", 1)[0] for entry in variables["_block_reasons_shown"]}
+        assert shown_rules == {"require-code-index-skill", "require-uv"}
 
     @pytest.mark.asyncio
     async def test_turn_start_clears_shown_set(
@@ -3142,7 +3188,10 @@ class TestVerboseOnceBlockReason:
 
         await engine.evaluate(block_event, session_id="sess-1", variables=variables)
         await engine.evaluate(block_event, session_id="sess-1", variables=variables)
-        assert "require-code-index-skill" in variables["_block_reasons_shown"]
+        assert any(
+            entry.startswith("require-code-index-skill:")
+            for entry in variables["_block_reasons_shown"]
+        )
 
         # New turn: BEFORE_AGENT is the TURN_START transport event.
         await engine.evaluate(
