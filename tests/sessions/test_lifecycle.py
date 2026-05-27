@@ -757,6 +757,56 @@ class TestProcessSessionTranscriptParsers:
         )
 
     @pytest.mark.asyncio
+    async def test_codex_backfill_uses_latest_context_window_for_session_usage(
+        self, tmp_path, manager
+    ):
+        """Codex token_count backfill should hydrate context pie fields."""
+        transcript_path = tmp_path / "codex-rollout.jsonl"
+        transcript_path.write_text(
+            """
+{"timestamp":"2026-05-27T21:50:28.208Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":104960,"cached_input_tokens":93568,"output_tokens":342,"reasoning_output_tokens":156,"total_tokens":105302},"model_context_window":258400}}}
+""".lstrip()
+        )
+
+        session = MagicMock()
+        session.source = "codex"
+        session.transcript_path = str(transcript_path)
+        session.project_id = "project-id"
+        session.context_window = None
+        session.model = None
+        manager.session_manager.get.return_value = session
+
+        zero_totals = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_creation_tokens": 0,
+            "cache_read_tokens": 0,
+        }
+        manager.token_event_store = MagicMock()
+        manager.token_event_store.get_session_totals.side_effect = [
+            dict(zero_totals),
+            dict(zero_totals),
+        ]
+        manager.token_event_store.record.return_value = True
+
+        await manager._process_session_transcript("s1", str(transcript_path))
+
+        event = manager.token_event_store.record.call_args.args[0]
+        assert event.input_tokens == 11392
+        assert event.output_tokens == 498
+        assert event.cache_read_tokens == 93568
+        assert event.context_window == 258400
+        manager.session_manager.update_usage.assert_called_once_with(
+            session_id="s1",
+            input_tokens=104960,
+            output_tokens=498,
+            cache_creation_tokens=0,
+            cache_read_tokens=93568,
+            context_window=258400,
+            model=None,
+        )
+
+    @pytest.mark.asyncio
     async def test_session_not_found_returns_early(self, tmp_path, manager):
         """Returns early when session not found in DB."""
         transcript_path = tmp_path / "transcript.jsonl"

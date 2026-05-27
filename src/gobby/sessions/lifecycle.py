@@ -52,6 +52,28 @@ def _session_int(value: Any) -> int:
     return 0
 
 
+def _coerce_context_window(value: Any) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        coerced = int(value)
+    except (TypeError, ValueError):
+        return None
+    return coerced if coerced > 0 else None
+
+
+def _message_context_window(message: ParsedMessage) -> int | None:
+    payload = message.raw_json.get("payload")
+    if not isinstance(payload, dict):
+        return None
+    info = payload.get("info")
+    if not isinstance(info, dict):
+        return None
+    return _coerce_context_window(
+        info.get("model_context_window") or info.get("modelContextWindow")
+    )
+
+
 class SessionLifecycleManager:
     """
     Manages session lifecycle background jobs.
@@ -544,9 +566,7 @@ class SessionLifecycleManager:
 
         session_project_id = session.project_id if isinstance(session.project_id, str) else None
         session_source = session.source if isinstance(session.source, str) else "unknown"
-        session_context_window = (
-            session.context_window if isinstance(session.context_window, int) else None
-        )
+        session_context_window = _coerce_context_window(session.context_window)
         session_model = session.model if isinstance(session.model, str) and session.model else None
         last_model: str | None = session_model
         running_totals = self.token_event_store.get_session_totals(session_id)
@@ -555,6 +575,7 @@ class SessionLifecycleManager:
         if app_ctx is not None:
             ws_server = app_ctx.websocket_server
         saw_usage = False
+        latest_codex_totals: dict[str, int] | None = None
 
         for msg in messages:
             message_model = msg.model if isinstance(msg.model, str) and msg.model else None
@@ -584,6 +605,9 @@ class SessionLifecycleManager:
             ):
                 continue
             saw_usage = True
+            message_context_window = _message_context_window(msg) or session_context_window
+            if message_context_window is not None:
+                session_context_window = message_context_window
 
             event_timestamp = getattr(msg, "timestamp", None)
             if not isinstance(event_timestamp, datetime):
@@ -606,7 +630,7 @@ class SessionLifecycleManager:
                 output_tokens=usage.output_tokens,
                 cache_creation_tokens=usage.cache_creation_tokens,
                 cache_read_tokens=usage.cache_read_tokens,
-                context_window=session_context_window,
+                context_window=message_context_window,
                 event_at=canonicalize_event_timestamp(event_timestamp),
                 metadata=metadata,
             )
@@ -616,6 +640,15 @@ class SessionLifecycleManager:
                 running_totals["output_tokens"] += usage.output_tokens
                 running_totals["cache_creation_tokens"] += usage.cache_creation_tokens
                 running_totals["cache_read_tokens"] += usage.cache_read_tokens
+                if session_source == "codex":
+                    latest_codex_totals = {
+                        "input_tokens": usage.input_tokens
+                        + usage.cache_creation_tokens
+                        + usage.cache_read_tokens,
+                        "output_tokens": running_totals["output_tokens"],
+                        "cache_creation_tokens": usage.cache_creation_tokens,
+                        "cache_read_tokens": usage.cache_read_tokens,
+                    }
 
                 if ws_server is not None:
                     try:
@@ -634,7 +667,7 @@ class SessionLifecycleManager:
                                     "output_tokens": usage.output_tokens,
                                     "cache_creation_tokens": usage.cache_creation_tokens,
                                     "cache_read_tokens": usage.cache_read_tokens,
-                                    "context_window": session_context_window,
+                                    "context_window": message_context_window,
                                 },
                                 session_totals=running_totals,
                             )
@@ -661,14 +694,15 @@ class SessionLifecycleManager:
         totals = self.token_event_store.get_session_totals(session_id)
         if saw_usage and not any(totals.values()) and any(running_totals.values()):
             totals = dict(running_totals)
+        session_totals = latest_codex_totals if latest_codex_totals is not None else totals
 
         # Update session with aggregated usage
         self.session_manager.update_usage(
             session_id=session_id,
-            input_tokens=totals["input_tokens"],
-            output_tokens=totals["output_tokens"],
-            cache_creation_tokens=totals["cache_creation_tokens"],
-            cache_read_tokens=totals["cache_read_tokens"],
+            input_tokens=session_totals["input_tokens"],
+            output_tokens=session_totals["output_tokens"],
+            cache_creation_tokens=session_totals["cache_creation_tokens"],
+            cache_read_tokens=session_totals["cache_read_tokens"],
             context_window=session_context_window,
             model=last_model,
         )
