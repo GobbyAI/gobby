@@ -78,10 +78,24 @@ class BuildControlRequest(BaseModel):
     force: bool = False
     yes: bool = False
     no_resume: bool = False
+    skip_stages: list[str] = Field(default_factory=list)
+    workspace_backend: Literal["worktree", "clone"] | None = None
+    isolation: Literal["none", "worktree", "clone"] | None = None
+    clone: bool = False
+    no_merge: bool = False
+    pr: str | None = None
+    stage: list[str] = Field(default_factory=list)
+    target_branch: str | None = None
+    agent: str | None = None
+    max_retries: int | None = Field(default=None, ge=0)
+    planning_seed_state: Literal["drafted", "needs_review", "approved"] = "drafted"
+    completed_plan_review_rounds: int = Field(default=0, ge=0)
+    coordinator: str | None = None
 
 
 def _build_options(request_data: BuildRequest) -> BuildOptions:
     clones_dir = Path(request_data.clones_dir).expanduser() if request_data.clones_dir else None
+    cwd = Path(request_data.cwd).expanduser() if request_data.cwd else None
     isolation = resolve_build_isolation(
         isolation=request_data.isolation,
         workspace_backend=request_data.workspace_backend,
@@ -103,6 +117,7 @@ def _build_options(request_data: BuildRequest) -> BuildOptions:
         target_branch=request_data.target_branch,
         assigned_agent=request_data.agent,
         clones_dir=clones_dir,
+        cwd=cwd,
         reset_expansion_output=request_data.reset_expansion_output,
         max_active_agents=request_data.max_active_agents,
         max_retries=request_data.max_retries,
@@ -110,6 +125,53 @@ def _build_options(request_data: BuildRequest) -> BuildOptions:
         completed_plan_review_rounds=request_data.completed_plan_review_rounds,
         dry_run=request_data.dry_run,
         coordinator_session_ref=request_data.coordinator,
+    )
+
+
+def _restart_options(request_data: BuildControlRequest) -> BuildOptions:
+    cwd = Path(request_data.cwd).expanduser() if request_data.cwd else None
+    isolation = resolve_build_isolation(
+        isolation=request_data.isolation,
+        workspace_backend=request_data.workspace_backend,
+        clone=request_data.clone,
+    )
+    return BuildOptions(
+        skip_stages=request_data.skip_stages,
+        skip_stages_explicit="skip_stages" in request_data.model_fields_set,
+        isolation=isolation.isolation,
+        isolation_explicit=isolation.explicit,
+        no_merge=request_data.no_merge,
+        pr=request_data.pr,
+        stage_caps=_parse_stage_options(request_data.stage),
+        target_branch=request_data.target_branch,
+        assigned_agent=request_data.agent,
+        cwd=cwd,
+        max_retries=request_data.max_retries,
+        planning_seed_state=request_data.planning_seed_state,
+        completed_plan_review_rounds=request_data.completed_plan_review_rounds,
+        dry_run=request_data.dry_run,
+        coordinator_session_ref=request_data.coordinator,
+    )
+
+
+def _restart_options_were_supplied(request_data: BuildControlRequest) -> bool:
+    return bool(
+        request_data.model_fields_set
+        & {
+            "skip_stages",
+            "workspace_backend",
+            "isolation",
+            "clone",
+            "no_merge",
+            "pr",
+            "stage",
+            "target_branch",
+            "agent",
+            "max_retries",
+            "planning_seed_state",
+            "completed_plan_review_rounds",
+            "coordinator",
+        }
     )
 
 
@@ -315,6 +377,11 @@ def create_build_router(server: HTTPServer) -> APIRouter:
                 force=request_data.force,
                 yes=request_data.yes,
                 no_resume=request_data.no_resume,
+                opts=(
+                    _restart_options(request_data)
+                    if _restart_options_were_supplied(request_data)
+                    else None
+                ),
                 services=server.services,
             )
             return result.to_dict()

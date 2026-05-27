@@ -12,6 +12,17 @@ from click.testing import CliRunner
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture(autouse=True)
+def _stub_cli_config_loader(monkeypatch: pytest.MonkeyPatch) -> None:
+    import gobby.cli as cli_module
+
+    monkeypatch.setattr(
+        cli_module,
+        "load_full_config_from_db",
+        lambda _config=None: SimpleNamespace(),
+    )
+
+
 def test_build_command_is_registered_with_phase_3_flags() -> None:
     from gobby.cli import cli
 
@@ -338,6 +349,41 @@ def test_build_cli_bare_coordinator_requires_current_session(
     assert "pass --coordinator SESSION explicitly" in result.output
 
 
+def test_build_cli_prints_manifest_chain_when_present(tmp_path: Path) -> None:
+    from gobby.build.service import BuildResult, DispatcherTickSummary
+    from gobby.cli import cli
+
+    plan_file = tmp_path / "plan.md"
+    plan_file.write_text("# Plan\n")
+    build_result = BuildResult(
+        task_id="task-1",
+        created=True,
+        initial_lifecycle="planning",
+        applied_stages_skipped=["pr"],
+        tick_dispatched=0,
+        dispatcher_tick=DispatcherTickSummary(reason="dry_run"),
+        manifest=[
+            {"stage_name": "planning", "position": 0},
+            {"stage_name": "expansion", "position": 1},
+            {"stage_name": "development", "position": 2},
+            {"stage_name": "holistic_qa", "position": 3},
+            {"stage_name": "merge", "position": 4},
+        ],
+        dry_run=True,
+    )
+
+    with (
+        patch("gobby.cli.build.resolve_project_id", return_value="project-1"),
+        patch("gobby.cli.build._try_daemon_build", return_value=build_result),
+        patch("gobby.cli.build._open_database") as open_db,
+    ):
+        result = CliRunner().invoke(cli, ["build", str(plan_file), "--dry-run"])
+
+    assert result.exit_code == 0
+    assert "Lifecycle: planning -> expansion -> development -> holistic_qa -> merge" in result.output
+    open_db.assert_not_called()
+
+
 def test_build_payload_includes_project_context() -> None:
     from gobby.build.service import BuildOptions
     from gobby.cli.build import _build_payload
@@ -614,4 +660,60 @@ def test_build_restart_cli_forwards_dry_run_force_and_confirmation() -> None:
     assert call.kwargs["force"] is True
     assert call.kwargs["yes"] is True
     assert call.kwargs["no_resume"] is True
+    open_db.return_value.close.assert_called_once_with()
+
+
+def test_build_restart_cli_forwards_build_shaping_options() -> None:
+    from gobby.build.controls import BuildTargetControlResult, BuildTaskSummary
+    from gobby.cli import cli
+
+    control_result = BuildTargetControlResult(
+        action="restart",
+        project_id="project-1",
+        root_task_id="task-1",
+        affected_tasks=[
+            BuildTaskSummary("task-1", "#1", "Task", "task"),
+        ],
+    )
+
+    with (
+        patch("gobby.cli.build.resolve_project_id", return_value="project-1"),
+        patch("gobby.cli.build._open_database") as open_db,
+        patch("gobby.cli.build._try_daemon_build_control", return_value=None) as daemon,
+        patch("gobby.cli.build.asyncio.run", return_value=control_result),
+        patch("gobby.cli.build.build_restart_target", new=AsyncMock()) as restart_target,
+    ):
+        result = CliRunner().invoke(
+            cli,
+            [
+                "build",
+                "restart",
+                "#1",
+                "--yes",
+                "--skip-stage",
+                "pr",
+                "--isolation",
+                "clone",
+                "--target-branch",
+                "release/build",
+                "--stage",
+                "planning:max_work_attempts=99,max_review_rounds=99",
+                "--coordinator",
+                "#6075",
+            ],
+        )
+
+    assert result.exit_code == 0
+    daemon_opts = daemon.call_args.kwargs["opts"]
+    local_opts = restart_target.call_args.kwargs["opts"]
+    assert daemon_opts is local_opts
+    assert local_opts.skip_stages == ["pr"]
+    assert local_opts.isolation == "clone"
+    assert local_opts.isolation_explicit is True
+    assert local_opts.target_branch == "release/build"
+    assert local_opts.coordinator_session_ref == "#6075"
+    assert [
+        (item.stage_name, item.max_work_attempts, item.max_review_rounds)
+        for item in local_opts.stage_caps
+    ] == [("planning", 99, 99)]
     open_db.return_value.close.assert_called_once_with()

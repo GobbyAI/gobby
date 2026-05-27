@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -437,7 +438,17 @@ def test_post_api_build_restart_forwards_destructive_flags() -> None:
     ) as restart:
         response = _client().post(
             "/api/build/restart",
-            json={"input_ref": "#1", "dry_run": True, "force": True, "no_resume": True},
+            json={
+                "input_ref": "#1",
+                "dry_run": True,
+                "force": True,
+                "no_resume": True,
+                "skip_stages": ["pr"],
+                "isolation": "worktree",
+                "target_branch": "release/build",
+                "stage": ["planning:max_work_attempts=99,max_review_rounds=99"],
+                "coordinator": "#6075",
+            },
         )
 
     assert response.status_code == 200
@@ -446,6 +457,62 @@ def test_post_api_build_restart_forwards_destructive_flags() -> None:
     assert call.kwargs["dry_run"] is True
     assert call.kwargs["force"] is True
     assert call.kwargs["no_resume"] is True
+    opts = call.kwargs["opts"]
+    assert opts.skip_stages == ["pr"]
+    assert opts.isolation == "worktree"
+    assert opts.target_branch == "release/build"
+    assert opts.coordinator_session_ref == "#6075"
+    assert [
+        (item.stage_name, item.max_work_attempts, item.max_review_rounds)
+        for item in opts.stage_caps
+    ] == [("planning", 99, 99)]
+
+
+def test_post_api_build_resolves_relative_hidden_plan_from_request_cwd(
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    from gobby.build.service import DispatcherTickSummary
+    from gobby.servers.routes.build import create_build_router
+    from gobby.storage.projects import LocalProjectManager
+    from gobby.storage.tasks import LocalTaskManager
+
+    repo_path = tmp_path / "repo"
+    plan_dir = repo_path / ".gobby" / "plans"
+    plan_dir.mkdir(parents=True)
+    plan_file = plan_dir / "foundation.md"
+    plan_file.write_text("# Plan\n")
+    project = LocalProjectManager(temp_db).create(name="route-build", repo_path=str(repo_path))
+    task_manager = LocalTaskManager(temp_db)
+    server = SimpleNamespace(
+        services=SimpleNamespace(
+            database=temp_db,
+            task_manager=task_manager,
+            config=MagicMock(),
+        ),
+        resolve_project_id=MagicMock(return_value=project.id),
+    )
+    app = FastAPI()
+    app.include_router(create_build_router(server))
+
+    with patch(
+        "gobby.build.lifecycle._kick_dispatcher_tick",
+        new=AsyncMock(return_value=DispatcherTickSummary()),
+    ):
+        response = TestClient(app).post(
+            "/api/build",
+            json={
+                "input_ref": ".gobby/plans/foundation.md",
+                "project_id": project.id,
+                "cwd": str(repo_path),
+                "skip_stages": ["pr"],
+            },
+        )
+
+    assert response.status_code == 200
+    task_id = response.json()["task_id"]
+    artifacts = task_manager.artifacts.get_artifacts(task_id)
+    assert artifacts.plan_file_path == str(plan_file)
 
 
 def test_get_api_build_status_returns_observability_payload() -> None:

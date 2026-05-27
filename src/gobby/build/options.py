@@ -31,6 +31,7 @@ class BuildOptions:
     target_branch: str | None = None
     assigned_agent: str | None = None
     clones_dir: Path | None = None
+    cwd: Path | None = None
     reset_expansion_output: bool = False
     max_active_agents: int | None = None
     max_retries: int | None = None

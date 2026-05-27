@@ -118,9 +118,7 @@ def _initial_stage_names(
     input_kind: InputKind,
     opts: BuildOptions,
 ) -> list[str]:
-    if opts.stage_caps:
-        manifest = [_canonical_stage_name(override.stage_name) for override in opts.stage_caps]
-    elif input_kind == "leaf":
+    if input_kind == "leaf":
         manifest = [_leaf_primary_stage(task)]
     elif input_kind == "plan_file" and opts.planning_seed_state == "approved" and opts.quick:
         manifest = ["expansion"]

@@ -127,7 +127,7 @@ def _stage_cap_options(stage_caps: list[StageCapOverride]) -> list[str]:
 
 def _echo_build_result(result: BuildResult) -> None:
     click.echo(f"Task: {result.task_id}")
-    click.echo(f"Lifecycle: {result.initial_lifecycle}")
+    click.echo(f"Lifecycle: {_lifecycle_display(result)}")
     for warning in result.warnings:
         click.echo(f"Warning: {warning}", err=True)
     if result.applied_stages_skipped:
@@ -143,6 +143,17 @@ def _echo_build_result(result: BuildResult) -> None:
     click.echo(line)
     if tick.reason == "dispatcher_cron_disabled":
         click.echo("Dispatcher cron is disabled. Run `gobby build resume` to re-enable it.")
+
+
+def _lifecycle_display(result: BuildResult) -> str:
+    if not result.manifest:
+        return result.initial_lifecycle
+    stage_names = [
+        str(row["stage_name"])
+        for row in result.manifest
+        if isinstance(row, dict) and row.get("stage_name") is not None
+    ]
+    return " -> ".join(stage_names) if stage_names else result.initial_lifecycle
 
 
 def _build_payload(
@@ -170,6 +181,29 @@ def _build_payload(
         "completed_plan_review_rounds": opts.completed_plan_review_rounds,
         "dry_run": opts.dry_run,
     }
+    if opts.coordinator_session_ref:
+        payload["coordinator"] = opts.coordinator_session_ref
+    if opts.isolation_explicit:
+        payload["isolation"] = opts.isolation
+    return payload
+
+
+def _restart_options_payload(opts: BuildOptions) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "skip_stages": opts.skip_stages,
+        "no_merge": opts.no_merge,
+        "stage": _stage_cap_options(opts.stage_caps),
+        "planning_seed_state": opts.planning_seed_state,
+        "completed_plan_review_rounds": opts.completed_plan_review_rounds,
+    }
+    if opts.pr:
+        payload["pr"] = opts.pr
+    if opts.target_branch:
+        payload["target_branch"] = opts.target_branch
+    if opts.assigned_agent:
+        payload["agent"] = opts.assigned_agent
+    if opts.max_retries is not None:
+        payload["max_retries"] = opts.max_retries
     if opts.coordinator_session_ref:
         payload["coordinator"] = opts.coordinator_session_ref
     if opts.isolation_explicit:
@@ -285,6 +319,7 @@ def _try_daemon_build_control(
     force: bool = False,
     yes: bool = False,
     no_resume: bool = False,
+    opts: BuildOptions | None = None,
 ) -> dict[str, object] | None:
     try:
         import httpx
@@ -297,18 +332,21 @@ def _try_daemon_build_control(
         is_healthy, _ = client.check_health()
         if not is_healthy:
             return None
+        payload: dict[str, object] = {
+            "input_ref": input_ref,
+            "project_id": project_id,
+            "cwd": cwd,
+            "dry_run": dry_run,
+            "force": force,
+            "yes": yes,
+            "no_resume": no_resume,
+        }
+        if opts is not None:
+            payload.update(_restart_options_payload(opts))
         response = client.call_http_api(
             f"/api/build/{action}",
             method="POST",
-            json_data={
-                "input_ref": input_ref,
-                "project_id": project_id,
-                "cwd": cwd,
-                "dry_run": dry_run,
-                "force": force,
-                "yes": yes,
-                "no_resume": no_resume,
-            },
+            json_data=payload,
             timeout=DAEMON_BUILD_REQUEST_TIMEOUT_SECONDS,
         )
         if response.status_code == 200:
@@ -452,6 +490,65 @@ def _open_database() -> HubDatabase:
     return open_runtime_hub_database(apply_migrations=False)
 
 
+def _make_build_options(
+    *,
+    quick: bool,
+    skip_stage: tuple[str, ...],
+    stage_cap: tuple[str, ...],
+    isolation: Isolation | None,
+    use_clone: bool,
+    no_merge: bool,
+    pr: str | None,
+    target_branch: str | None,
+    assigned_agent: str | None,
+    reset_expansion_output: bool,
+    max_active_agents: int | None,
+    max_retries: int | None,
+    planning_seed_state: str,
+    completed_plan_review_rounds: int,
+    dry_run: bool,
+    coordinator: str | None,
+    cwd: Path,
+) -> BuildOptions:
+    resolved_isolation: Isolation = isolation or ("clone" if use_clone else "worktree")
+    return BuildOptions(
+        quick=quick,
+        skip_stages=_parse_skip_stages(skip_stage),
+        skip_stages_explicit=bool(skip_stage),
+        isolation=resolved_isolation,
+        isolation_explicit=isolation is not None or use_clone,
+        no_merge=no_merge,
+        pr=pr,
+        stage_caps=_parse_stage_cap(stage_cap),
+        target_branch=target_branch,
+        assigned_agent=assigned_agent,
+        cwd=cwd,
+        reset_expansion_output=reset_expansion_output,
+        max_active_agents=max_active_agents,
+        max_retries=max_retries,
+        planning_seed_state=cast(BuildPlanningSeedState, planning_seed_state),
+        completed_plan_review_rounds=completed_plan_review_rounds,
+        dry_run=dry_run,
+        coordinator_session_ref=_coordinator_session_ref(coordinator),
+    )
+
+
+def _restart_options_were_supplied(opts: BuildOptions) -> bool:
+    return bool(
+        opts.skip_stages
+        or opts.isolation_explicit
+        or opts.no_merge
+        or opts.pr
+        or opts.stage_caps
+        or opts.target_branch is not None
+        or opts.assigned_agent is not None
+        or opts.max_retries is not None
+        or opts.planning_seed_state != "drafted"
+        or opts.completed_plan_review_rounds != 0
+        or opts.coordinator_session_ref is not None
+    )
+
+
 @click.command("build")
 @click.argument("input_ref", required=False, metavar="[INPUT|ACTION]")
 @click.argument("target_ref", required=False, metavar="[REF]")
@@ -558,6 +655,33 @@ def build_command(
     if input_ref == "clean":
         _run_build_clean(target_ref, dry_run=dry_run, force=force, yes=yes)
         return
+    if input_ref is None:
+        invoke_build_skill()
+        return
+    if input_ref != "restart" and target_ref is not None:
+        raise click.ClickException(f"Unexpected build argument: {target_ref}")
+    if use_clone and isolation in {"none", "worktree"}:
+        raise click.ClickException(f"--clone conflicts with --isolation {isolation}")
+    cwd_path = Path.cwd()
+    opts = _make_build_options(
+        quick=quick,
+        skip_stage=skip_stage,
+        stage_cap=stage_cap,
+        isolation=isolation,
+        use_clone=use_clone,
+        no_merge=no_merge,
+        pr=pr,
+        target_branch=target_branch,
+        assigned_agent=assigned_agent,
+        reset_expansion_output=reset_expansion_output,
+        max_active_agents=max_active_agents,
+        max_retries=max_retries,
+        planning_seed_state=planning_seed_state,
+        completed_plan_review_rounds=completed_plan_review_rounds,
+        dry_run=dry_run,
+        coordinator=coordinator,
+        cwd=cwd_path,
+    )
     if input_ref == "restart":
         _run_build_restart(
             target_ref,
@@ -565,38 +689,11 @@ def build_command(
             force=force,
             yes=yes,
             no_resume=no_resume,
+            opts=opts if _restart_options_were_supplied(opts) else None,
         )
         return
-    if input_ref is None:
-        invoke_build_skill()
-        return
-    if target_ref is not None:
-        raise click.ClickException(f"Unexpected build argument: {target_ref}")
-    if use_clone and isolation in {"none", "worktree"}:
-        raise click.ClickException(f"--clone conflicts with --isolation {isolation}")
-    resolved_isolation: Isolation = isolation or ("clone" if use_clone else "worktree")
-
-    opts = BuildOptions(
-        quick=quick,
-        skip_stages=_parse_skip_stages(skip_stage),
-        skip_stages_explicit=bool(skip_stage),
-        isolation=resolved_isolation,
-        isolation_explicit=isolation is not None or use_clone,
-        no_merge=no_merge,
-        pr=pr,
-        stage_caps=_parse_stage_cap(stage_cap),
-        target_branch=target_branch,
-        assigned_agent=assigned_agent,
-        reset_expansion_output=reset_expansion_output,
-        max_active_agents=max_active_agents,
-        max_retries=max_retries,
-        planning_seed_state=cast(BuildPlanningSeedState, planning_seed_state),
-        completed_plan_review_rounds=completed_plan_review_rounds,
-        dry_run=dry_run,
-        coordinator_session_ref=_coordinator_session_ref(coordinator),
-    )
     project_id = resolve_project_id()
-    cwd = str(Path.cwd())
+    cwd = str(cwd_path)
     result = _try_daemon_build(input_ref, opts, project_id=project_id, cwd=cwd)
     if result is None:
         db = _open_database()
@@ -759,6 +856,7 @@ def _run_build_restart(
     force: bool,
     yes: bool,
     no_resume: bool = False,
+    opts: BuildOptions | None = None,
 ) -> None:
     if input_ref is None:
         raise click.ClickException("gobby build restart requires a task ref")
@@ -775,6 +873,7 @@ def _run_build_restart(
         force=force,
         yes=True,
         no_resume=no_resume,
+        opts=opts,
     )
     if daemon_payload is not None:
         _echo_target_control_result(daemon_payload)
@@ -790,6 +889,7 @@ def _run_build_restart(
                 force=force,
                 yes=True,
                 no_resume=no_resume,
+                opts=opts,
             )
         )
     except ValueError as exc:

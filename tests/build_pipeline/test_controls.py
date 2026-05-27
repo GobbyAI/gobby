@@ -784,6 +784,90 @@ async def test_restart_reseeds_exhausted_isolated_manifest_with_merge(
 
 
 @pytest.mark.asyncio
+async def test_restart_rebuilds_plan_file_root_manifest_from_options(
+    temp_db,
+    sample_project,
+    tmp_path: Path,
+) -> None:
+    from gobby.build.controls import build_restart_target
+    from gobby.build.dispatch_tick import DispatcherTickSummary
+    from gobby.build.service import BuildOptions
+    from gobby.config.build import StageCapOverride
+    from tests.storage.tasks._stage_test_helpers import initialize_manifest, spec
+
+    _set_project_repo(temp_db, sample_project["id"], tmp_path)
+    task_manager = LocalTaskManager(temp_db)
+    plan_file = tmp_path / "plan.md"
+    plan_file.write_text("# Plan\n")
+    root = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Plan-file root",
+        category="planning",
+        task_type="epic",
+    )
+    child = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Generated child",
+        category="code",
+        task_type="task",
+        parent_task_id=root.id,
+    )
+    task_manager.update_task(root.id, allow_automation=True, isolation="worktree")
+    task_manager.update_task(child.id, allow_automation=True, isolation="worktree")
+    task_manager.artifacts.set_artifacts_atomic(
+        root.id,
+        plan_file_path=str(plan_file),
+        target_branch="main",
+    )
+    initialize_manifest(temp_db, root.id, [spec("planning", 0), spec("merge", 1)])
+    initialize_manifest(temp_db, child.id, [spec("development", 0)])
+
+    with patch(
+        "gobby.build.controls._kick_dispatcher_tick",
+        new=AsyncMock(return_value=DispatcherTickSummary()),
+    ):
+        result = await build_restart_target(
+            f"#{root.seq_num}",
+            db=temp_db,
+            project_id=sample_project["id"],
+            force=True,
+            yes=True,
+            opts=BuildOptions(
+                skip_stages=["pr"],
+                skip_stages_explicit=True,
+                isolation="worktree",
+                isolation_explicit=True,
+                target_branch="release/build",
+                stage_caps=[
+                    StageCapOverride(
+                        "planning",
+                        max_work_attempts=99,
+                        max_review_rounds=99,
+                    )
+                ],
+            ),
+        )
+
+    root_rows = task_manager.stage_states.list_for_task(root.id)
+    child_rows = task_manager.stage_states.list_for_task(child.id)
+    planning = root_rows[0]
+    artifacts = task_manager.artifacts.get_artifacts(root.id)
+
+    assert result.stages_reset == 2
+    assert [row.stage_name for row in root_rows] == [
+        "planning",
+        "expansion",
+        "development",
+        "holistic_qa",
+        "merge",
+    ]
+    assert [row.stage_name for row in child_rows] == ["development", "merge"]
+    assert planning.max_work_attempts == 99
+    assert planning.max_review_rounds == 99
+    assert artifacts.target_branch == "release/build"
+
+
+@pytest.mark.asyncio
 async def test_restart_no_resume_resets_epic_tree_without_dispatch(
     temp_db,
     sample_project,

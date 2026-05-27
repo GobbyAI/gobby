@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime, timedelta
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from gobby.agents.kill import kill_agent
 from gobby.build.branch_cleanup import delete_orphan_build_branches
@@ -23,11 +23,20 @@ from gobby.build.dispatch_tick import (
 from gobby.build.dispatch_tick import (
     kick_dispatcher_tick as _kick_dispatcher_tick,
 )
+from gobby.build.options import BuildOptions
+from gobby.build.stage_manifest import (
+    InputKind,
+    _validate_skip_stages,
+    resolve_stage_manifest_specs,
+)
+from gobby.build.validation import _validate_no_merge, _validate_planning_seed, _validate_retry_caps
+from gobby.config.build import Isolation
 from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES, AgentRun, LocalAgentRunManager
 from gobby.storage.build_history import best_effort_record_event, best_effort_record_run
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, StageManifestSpec, StageState, Task
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+from gobby.storage.tasks._stage_manifest import derive_child_manifest_specs
 from gobby.storage.tasks._transitions import reset_current_non_ready_stage
 
 logger = logging.getLogger(__name__)
@@ -307,6 +316,7 @@ async def build_restart_target(
     force: bool = False,
     yes: bool = False,
     no_resume: bool = False,
+    opts: BuildOptions | None = None,
     services: object | None = None,
 ) -> BuildTargetControlResult:
     """Stop, clean, and resume automation for a task or epic subtree."""
@@ -342,9 +352,20 @@ async def build_restart_target(
     task_manager = LocalTaskManager(db)
     root = _resolve_task_ref(task_manager, input_ref, project_id)
     tasks = _affected_tasks(task_manager, root)
+    restart_opts = _effective_restart_options(root, opts)
+    if restart_opts is not None:
+        _validate_restart_options(restart_opts)
+        _persist_restart_artifacts(task_manager, root, restart_opts)
+        _apply_restart_task_controls(
+            task_manager,
+            root,
+            tasks,
+            restart_opts,
+            allow_automation=not no_resume,
+        )
     dispatch_failures_reset = _reset_restart_dispatch_failures(task_manager, tasks)
     escalations_cleared = _clear_restartable_escalations(task_manager, tasks)
-    restart_stage_resets = _reset_restart_stage_manifests(db, tasks)
+    restart_stage_resets = _reset_restart_stage_manifests(db, root, tasks, restart_opts)
     if no_resume:
         clean_result.action = "restart"
         clean_result.automation_updated = stop_result.automation_updated
@@ -633,7 +654,70 @@ def _is_build_owned_escalation(reason: str | None) -> bool:
     )
 
 
-def _reset_restart_stage_manifests(db: HubDatabase, tasks: list[Task]) -> int:
+def _effective_restart_options(root: Task, opts: BuildOptions | None) -> BuildOptions | None:
+    if opts is None:
+        return None
+    if opts.isolation_explicit:
+        return opts
+    return replace(opts, isolation=_task_isolation(root))
+
+
+def _task_isolation(task: Task) -> Isolation:
+    isolation = getattr(task.isolation, "value", task.isolation)
+    if isolation in {"none", "worktree", "clone"}:
+        return cast(Isolation, isolation)
+    return "worktree"
+
+
+def _validate_restart_options(opts: BuildOptions) -> None:
+    _validate_no_merge(opts)
+    _validate_retry_caps(opts)
+    _validate_planning_seed(opts)
+
+
+def _persist_restart_artifacts(
+    task_manager: LocalTaskManager,
+    root: Task,
+    opts: BuildOptions,
+) -> None:
+    if opts.target_branch is None:
+        return
+    task_manager.artifacts.set_artifact(root.id, "target_branch", opts.target_branch)
+
+
+def _apply_restart_task_controls(
+    task_manager: LocalTaskManager,
+    root: Task,
+    tasks: list[Task],
+    opts: BuildOptions,
+    *,
+    allow_automation: bool,
+) -> None:
+    for task in tasks:
+        if task.closed_at is not None:
+            continue
+        updates: dict[str, object] = {
+            "allow_automation": allow_automation,
+            "unattended": opts.unattended,
+            "isolation": opts.isolation,
+        }
+        if task.id == root.id and opts.assigned_agent is not None:
+            updates["assigned_agent"] = opts.assigned_agent
+        task_manager.update_task(task.id, **updates)
+
+
+def _reset_restart_stage_manifests(
+    db: HubDatabase,
+    root: Task,
+    tasks: list[Task],
+    opts: BuildOptions | None,
+) -> int:
+    if opts is not None:
+        return _reset_restart_stage_manifests_from_options(db, root, tasks, opts)
+    return _reset_restart_stage_manifests_legacy(db, tasks)
+
+
+def _reset_restart_stage_manifests_legacy(db: HubDatabase, tasks: list[Task]) -> int:
     task_manager = LocalTaskManager(db)
     reset = 0
     for task in tasks:
@@ -647,6 +731,82 @@ def _reset_restart_stage_manifests(db: HubDatabase, tasks: list[Task]) -> int:
         task_manager.stage_states.initialize_manifest(task.id, specs, by_session_id=None)
         reset += 1
     return reset
+
+
+def _reset_restart_stage_manifests_from_options(
+    db: HubDatabase,
+    root: Task,
+    tasks: list[Task],
+    opts: BuildOptions,
+) -> int:
+    task_manager = LocalTaskManager(db)
+    skip_stages = _validate_skip_stages(opts.skip_stages)
+    input_kind = _restart_root_input_kind(task_manager, root)
+    root_specs = resolve_stage_manifest_specs(task_manager, root, input_kind, opts, skip_stages)
+    reset = 0
+    for task in tasks:
+        if task.closed_at is not None:
+            continue
+        specs = (
+            root_specs
+            if task.id == root.id
+            else derive_child_manifest_specs(
+                root_specs,
+                include_holistic_qa=task.task_type == "epic",
+                include_merge_stage=opts.isolation in {"worktree", "clone"} and not opts.no_merge,
+            )
+        )
+        if not specs:
+            continue
+        db.execute("DELETE FROM task_stage_states WHERE task_id = ?", (task.id,))
+        task_manager.stage_states.initialize_manifest(task.id, specs, by_session_id=None)
+        reset += 1
+    if input_kind == "plan_file":
+        _seed_restart_plan_file_stage_state(task_manager, root.id, opts)
+    return reset
+
+
+def _restart_root_input_kind(task_manager: LocalTaskManager, root: Task) -> InputKind:
+    artifacts = task_manager.artifacts.get_artifacts(root.id)
+    if artifacts.plan_file_path:
+        return "plan_file"
+    if root.task_type != "epic":
+        return "leaf"
+    if _has_children(task_manager.db, root.id):
+        return "expanded_epic"
+    return "epic"
+
+
+def _seed_restart_plan_file_stage_state(
+    task_manager: LocalTaskManager,
+    task_id: str,
+    opts: BuildOptions,
+) -> None:
+    if opts.planning_seed_state != "needs_review":
+        return
+    if not task_manager.stage_states.get(task_id, "planning"):
+        raise ValueError("planning_seed_state=needs_review requires a planning stage")
+    now = datetime.now(UTC).isoformat()
+    with task_manager.db.transaction() as conn:
+        conn.execute(
+            """
+            UPDATE task_stage_states
+               SET state = 'needs_review',
+                   review_round_count = ?,
+                   entered_at = COALESCE(entered_at, ?),
+                   updated_at = ?,
+                   notes = ?
+             WHERE task_id = ?
+               AND stage_name = 'planning'
+            """,
+            (
+                opts.completed_plan_review_rounds,
+                now,
+                now,
+                "Seeded plan review state from build restart input.",
+                task_id,
+            ),
+        )
 
 
 def _restart_stage_specs(

@@ -52,6 +52,7 @@ from gobby.storage.build_history import (
     best_effort_update_run_context,
 )
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import (
     LocalTaskManager,
@@ -242,7 +243,7 @@ async def _build_impl(
     skip_stages = _validate_skip_stages(opts.skip_stages)
     warnings: list[str] = []
     task_manager = LocalTaskManager(db)
-    input_kind, task_or_plan = _resolve_input(input_ref, task_manager, project_id)
+    input_kind, task_or_plan = _resolve_input(input_ref, task_manager, project_id, opts)
 
     _validate_no_merge(opts)
     _validate_clones_dir(opts)
@@ -552,15 +553,41 @@ def _resolve_input(
     input_ref: str,
     task_manager: LocalTaskManager,
     project_id: str,
+    opts: BuildOptions,
 ) -> tuple[InputKind, Task | Path]:
     if _looks_like_task_ref(input_ref):
         task = task_manager.get_task(input_ref, project_id=project_id)
         return ("epic" if task.task_type == "epic" else "leaf", task)
 
-    plan_file = Path(input_ref)
+    plan_file = _resolve_plan_file_path(input_ref, task_manager, project_id, opts)
     if not plan_file.exists() or not plan_file.is_file():
         raise ValueError(f"plan file not found: {input_ref}")
     return "plan_file", plan_file
+
+
+def _resolve_plan_file_path(
+    input_ref: str,
+    task_manager: LocalTaskManager,
+    project_id: str,
+    opts: BuildOptions,
+) -> Path:
+    path = Path(input_ref).expanduser()
+    if path.is_absolute():
+        return path
+    return _plan_file_base_dir(task_manager, project_id, opts) / path
+
+
+def _plan_file_base_dir(
+    task_manager: LocalTaskManager,
+    project_id: str,
+    opts: BuildOptions,
+) -> Path:
+    if opts.cwd is not None:
+        return opts.cwd.expanduser()
+    project = LocalProjectManager(task_manager.db).get(project_id)
+    if project is not None and project.repo_path:
+        return Path(project.repo_path).expanduser()
+    return Path.cwd()
 
 
 async def _resume_existing_lifecycle(

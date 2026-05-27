@@ -559,8 +559,54 @@ async def test_build_plan_file_dry_run_rolls_back_preview_side_effects(
     assert result.tick_dispatched == 0
     assert result.manifest is not None
     assert result.manifest == second.manifest
-    assert [row["stage_name"] for row in result.manifest] == ["planning"]
+    assert [row["stage_name"] for row in result.manifest] == [
+        "planning",
+        "expansion",
+        "development",
+        "holistic_qa",
+        "pr",
+        "merge",
+    ]
     assert result.manifest[0]["max_work_attempts"] == 4
+
+
+@pytest.mark.asyncio
+async def test_plan_file_dry_run_skip_pr_returns_full_manifest_chain(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    project_id, _repo_path = _project(temp_db, tmp_path)
+    plan_file = tmp_path / "plan.md"
+    plan_file.write_text("# Plan\n")
+
+    async def fail_tick(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("dry-run must not call dispatcher tick")
+
+    monkeypatch.setattr("gobby.build.lifecycle._kick_dispatcher_tick", fail_tick)
+
+    result = await _build(
+        str(plan_file),
+        _options(
+            dry_run=True,
+            skip_stages=["pr"],
+            skip_stages_explicit=True,
+            planning_seed_state="needs_review",
+            completed_plan_review_rounds=2,
+        ),
+        db=temp_db,
+        project_id=project_id,
+    )
+
+    assert result.dry_run is True
+    assert result.manifest is not None
+    assert [row["stage_name"] for row in result.manifest] == [
+        "planning",
+        "expansion",
+        "development",
+        "holistic_qa",
+        "merge",
+    ]
 
 
 @pytest.mark.asyncio
@@ -596,6 +642,27 @@ async def test_build_persists_stage_caps_on_manifest_rows(temp_db, tmp_path: Pat
     assert rows["holistic_qa"].max_review_rounds == 5
     assert rows["pr"].max_review_rounds == 7
     assert result.stage_manifest is not None
+
+
+@pytest.mark.asyncio
+async def test_build_rejects_stage_cap_for_skipped_stage(temp_db, tmp_path: Path) -> None:
+    from gobby.config.build import StageCapOverride
+
+    project_id, _repo_path = _project(temp_db, tmp_path)
+    plan_file = tmp_path / "plan.md"
+    plan_file.write_text("# Plan\n")
+
+    with pytest.raises(ValueError, match="--stage target stage not in resolved manifest: pr"):
+        await _build(
+            str(plan_file),
+            _options(
+                skip_stages=["pr"],
+                skip_stages_explicit=True,
+                stage_caps=[StageCapOverride("pr", max_review_rounds=4)],
+            ),
+            db=temp_db,
+            project_id=project_id,
+        )
 
 
 @pytest.mark.asyncio
@@ -1063,7 +1130,7 @@ async def test_build_epic_cascade_initializes_child_from_resolved_scope(
     )
 
     child_rows = task_manager.stage_states.list_for_task(child.id)
-    assert [row.stage_name for row in child_rows] == ["development"]
+    assert [row.stage_name for row in child_rows] == ["development", "pr", "merge"]
     assert child_rows[0].max_review_rounds == 8
 
 
@@ -1313,7 +1380,7 @@ async def test_build_epic_cascade_skips_closed_descendants_with_existing_lifecyc
     assert closed_after.allow_automation is False
     assert closed_after.isolation == "worktree"
     assert [row.stage_name for row in closed_rows] == ["development", "pr", "merge"]
-    assert [row.stage_name for row in open_rows] == ["development"]
+    assert [row.stage_name for row in open_rows] == ["development", "pr", "merge"]
     assert open_rows[0].max_work_attempts == 6
 
 
@@ -1375,7 +1442,7 @@ async def test_build_epic_cascade_skips_busy_descendant_manifest_initialization(
     open_rows = task_manager.stage_states.list_for_task(open_child.id)
 
     assert [row.stage_name for row in busy_rows] == ["development", "pr", "merge"]
-    assert [row.stage_name for row in open_rows] == ["development"]
+    assert [row.stage_name for row in open_rows] == ["development", "pr", "merge"]
     assert open_rows[0].max_work_attempts == 6
 
 
