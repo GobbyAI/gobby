@@ -6,4 +6,6 @@
 
 pub mod bootstrap;
 pub mod daemon_url;
+#[cfg(feature = "postgres")]
+pub mod postgres;
 pub mod project;

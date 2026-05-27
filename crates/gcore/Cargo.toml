@@ -14,8 +14,12 @@ categories = ["development-tools"]
 [dependencies]
 anyhow = "1"
 dirs = "6"
+postgres = { version = "0.19", optional = true }
 serde_json = "1"
 serde_yaml = "0.9"
+
+[features]
+postgres = ["dep:postgres"]
 
 [dev-dependencies]
 tempfile = "3"

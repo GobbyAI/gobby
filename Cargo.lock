@@ -816,6 +816,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "dirs",
+ "postgres",
  "serde_json",
  "serde_yaml",
  "tempfile",
