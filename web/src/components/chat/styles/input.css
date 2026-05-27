@@ -611,6 +611,8 @@
 }
 
 .chat-input-toolbar {
+  --control-row-height-sm: var(--status-bar-control-height);
+
   display: flex;
   align-items: center;
   justify-content: space-between;

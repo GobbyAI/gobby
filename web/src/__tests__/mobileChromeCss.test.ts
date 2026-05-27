@@ -399,6 +399,9 @@ describe('mobile chrome CSS', () => {
     expectDeclarations(inputCss, '.chat-input-footer', {
       'padding-inline': '1rem',
     })
+    expectDeclarations(inputCss, '.chat-input-toolbar', {
+      '--control-row-height-sm': 'var(--status-bar-control-height)',
+    })
     expectNoDeclaration(inputCss, '.chat-input-toolbar', 'padding-right')
     expectContainerDeclarations(inputCss, '.chat-input-toolbar__left', narrowChatColumn, {
       gap: '0.25rem',
