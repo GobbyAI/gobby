@@ -49,17 +49,37 @@ pub fn is_binary(path: &Path) -> bool {
     buf[..n].contains(&0)
 }
 
-/// Check if any path component matches an exclusion pattern.
-pub fn should_exclude(path: &Path, patterns: &[String]) -> bool {
+/// Check if a path should be excluded, with root-relative handling for source
+/// directories that share names with generated output directories.
+pub fn should_exclude_path(root: &Path, path: &Path, patterns: &[String]) -> bool {
+    let rel = path.strip_prefix(root).unwrap_or(path);
+
     for pattern in patterns {
-        for component in path.components() {
+        if is_root_generated_dir(pattern) {
+            if rel
+                .components()
+                .next()
+                .map(|component| glob_match(pattern, &component.as_os_str().to_string_lossy()))
+                .unwrap_or(false)
+            {
+                return true;
+            }
+            continue;
+        }
+
+        for component in rel.components() {
             let name = component.as_os_str().to_string_lossy();
             if glob_match(pattern, &name) {
                 return true;
             }
         }
     }
+
     false
+}
+
+fn is_root_generated_dir(pattern: &str) -> bool {
+    matches!(pattern, "build" | "dist")
 }
 
 /// Check if file extension suggests secret content.

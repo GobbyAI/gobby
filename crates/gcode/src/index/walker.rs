@@ -90,7 +90,7 @@ fn is_safe_text_file(root: &Path, path: &Path, exclude_patterns: &[String]) -> b
     if !security::is_symlink_safe(path, root) {
         return false;
     }
-    if security::should_exclude(path, exclude_patterns) {
+    if security::should_exclude_path(root, path, exclude_patterns) {
         return false;
     }
     if security::has_secret_extension(path) {
@@ -185,5 +185,35 @@ mod tests {
             Some(FileClassification::ContentOnly)
         );
         assert_eq!(content_language(&root.join("Makefile")), "text");
+    }
+
+    #[test]
+    fn classifies_source_build_directory_as_ast_indexable() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        write_file(
+            root,
+            "src/gobby/build/workspaces.py",
+            b"class WorkspaceBuilder:\n    pass\n",
+        );
+        let excludes = vec!["build".to_string(), "dist".to_string()];
+
+        assert_eq!(
+            classify_file(root, &root.join("src/gobby/build/workspaces.py"), &excludes),
+            Some(FileClassification::Ast)
+        );
+    }
+
+    #[test]
+    fn skips_root_build_directory() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        write_file(root, "build/generated.py", b"class Generated:\n    pass\n");
+        let excludes = vec!["build".to_string(), "dist".to_string()];
+
+        assert_eq!(
+            classify_file(root, &root.join("build/generated.py"), &excludes),
+            None
+        );
     }
 }

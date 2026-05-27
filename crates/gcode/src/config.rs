@@ -133,7 +133,9 @@ pub fn resolve_project_identity(
         .canonicalize()
         .unwrap_or_else(|_| absolute_fallback(project_root));
 
-    if crate::project::read_isolation_marker(&root).is_some() {
+    if let Some(marker) = crate::project::read_isolation_marker(&root)
+        && !is_self_referential_isolation_marker(&marker, &root)
+    {
         return Ok(ProjectIdentity {
             project_id: crate::project::code_index_id_for_root(&root),
             root,
@@ -200,6 +202,23 @@ pub fn resolve_project_identity(
              or use `--project <path>` to specify a project directory."
         ),
     }
+}
+
+fn is_self_referential_isolation_marker(
+    marker: &crate::project::IsolationMarker,
+    root: &Path,
+) -> bool {
+    let Some(parent_project_path) = marker.parent_project_path.as_deref() else {
+        return false;
+    };
+    let parent = PathBuf::from(parent_project_path);
+    let parent = if parent.is_absolute() {
+        parent
+    } else {
+        root.join(parent)
+    };
+    let parent = parent.canonicalize().unwrap_or(parent);
+    parent == root
 }
 
 pub fn warn_project_identity(identity: &ProjectIdentity, quiet: bool) {
@@ -787,12 +806,34 @@ mod tests {
     }
 
     #[test]
+    fn self_referential_parent_marker_keeps_project_json_id() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path().canonicalize().expect("canonical root");
+        write_project_json(
+            &root,
+            serde_json::json!({
+                "id": "main-project-id",
+                "name": "main",
+                "parent_project_path": root.to_string_lossy(),
+                "parent_project_id": "main-project-id"
+            }),
+        );
+
+        let identity = resolve_project_identity(&root, MissingIdentity::Error).expect("identity");
+
+        assert_eq!(identity.project_id, "main-project-id");
+        assert_eq!(identity.source, ProjectIdentitySource::ProjectJson);
+        assert!(!identity.should_write_gcode_json);
+        assert!(identity.warning.is_none());
+    }
+
+    #[test]
     fn isolated_marker_uses_path_derived_id_without_warning() {
         let tmp = tempfile::tempdir().expect("tempdir");
         write_project_json(
             tmp.path(),
             serde_json::json!({
-                "id": "copied-parent-id",
+                "id": "parent-id",
                 "parent_project_path": "/parent",
                 "parent_project_id": "parent-id"
             }),

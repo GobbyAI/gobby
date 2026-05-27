@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.7] — gcode
+
+### Fixed
+
+#### gcode
+
+- **Project identity resolution** — self-referential
+  `parent_project_path` / `parent_project_id` markers now keep the owning
+  `.gobby/project.json` ID, while linked worktrees and isolated roots keep
+  filesystem-scoped code index IDs.
+- **Source `build` package indexing** — root generated `build` / `dist`
+  directories stay excluded, while source directories such as
+  `src/gobby/build/` are indexed.
+- **Duplicate-root pruning** — `gcode prune` now marks stale duplicate project
+  entries for an existing root when they differ from that root's resolved
+  project ID.
+
 ## [0.4.4] — gsqz
 
 ### Fixed
