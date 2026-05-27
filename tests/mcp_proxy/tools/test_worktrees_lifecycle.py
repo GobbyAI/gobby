@@ -546,6 +546,40 @@ async def test_delete_worktree_git_failure(
 
 
 @pytest.mark.asyncio
+async def test_delete_worktree_continues_when_git_failure_removed_path(
+    registry,
+    mock_worktree_storage,
+    mock_git_manager,
+) -> None:
+    """If git returns failure after deleting the path, DB cleanup still completes."""
+    wt = Worktree(
+        id="wt-1",
+        project_id="p1",
+        branch_name="b1",
+        worktree_path="/tmp/p1",
+        base_branch="main",
+        status="active",
+        created_at="",
+        updated_at="",
+        task_id=None,
+        agent_session_id=None,
+        merged_at=None,
+    )
+    mock_worktree_storage.get.return_value = wt
+    mock_worktree_storage.delete.return_value = True
+    mock_git_manager.get_worktree_status.return_value.has_uncommitted_changes = False
+    mock_git_manager.delete_worktree.return_value.success = False
+    mock_git_manager.delete_worktree.return_value.error = "Git delete failed after unlink"
+
+    with patch("pathlib.Path.exists", side_effect=[True, False]):
+        result = await registry.call("delete_worktree", {"worktree_id": "wt-1"})
+
+    assert result["success"] is True
+    mock_git_manager.prune_worktrees.assert_called_once()
+    mock_worktree_storage.delete.assert_called_once_with("wt-1")
+
+
+@pytest.mark.asyncio
 async def test_delete_worktree_clears_task_artifact_references(
     mock_worktree_storage,
     mock_git_manager,

@@ -186,13 +186,22 @@ def delete_worktree(
             args.append("--force")
         args.append(str(worktree_path))
 
+        path_existed_before_remove = worktree_path.exists()
         result = runner._run_git(args, timeout=30)
+        remove_warning = ""
 
         if result.returncode != 0:
+            if path_existed_before_remove and not worktree_path.exists():
+                prune_result = runner._run_git(["worktree", "prune"], timeout=10)
+                detail = result.stderr.strip() or result.stdout.strip()
+                remove_warning = f"; git remove reported: {detail}" if detail else ""
+                if prune_result.returncode != 0:
+                    prune_detail = prune_result.stderr.strip() or prune_result.stdout.strip()
+                    remove_warning += f"; prune reported: {prune_detail}"
             # git worktree remove --force only handles modified tracked files,
             # not untracked files (.mypy_cache, .ruff_cache, __pycache__, etc).
             # Fall back to manual removal + prune when force is requested.
-            if force and worktree_path.exists():
+            elif force and worktree_path.exists():
                 logger.warning(
                     "git worktree remove failed for %s; falling back to shutil.rmtree + worktree prune. stderr=%s",
                     worktree_path,
@@ -234,7 +243,8 @@ def delete_worktree(
         return GitOperationResult(
             success=True,
             message=f"Deleted worktree at {worktree_path}"
-            + (f" and branch {branch_name}" if delete_branch and branch_name else ""),
+            + (f" and branch {branch_name}" if delete_branch and branch_name else "")
+            + remove_warning,
             output=result.stdout,
         )
 

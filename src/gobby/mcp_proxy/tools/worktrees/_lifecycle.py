@@ -157,7 +157,14 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 branch_name=worktree.branch_name,
             )
             if not result.success:
-                return {"success": False, "error": result.error or "Failed to delete git worktree"}
+                if Path(worktree.worktree_path).exists():
+                    return {
+                        "success": False,
+                        "error": result.error or "Failed to delete git worktree",
+                    }
+                prune = getattr(resolved_git_mgr, "prune_worktrees", None)
+                if callable(prune):
+                    prune()
         elif not worktree_exists:
             logger.info(
                 f"Worktree path {worktree.worktree_path} doesn't exist, cleaning up DB record only"

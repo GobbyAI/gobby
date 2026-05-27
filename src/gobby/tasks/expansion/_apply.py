@@ -46,9 +46,16 @@ def _inherit_build_state(
         )
 
 
-def _complete_dev_only_run(self: Any, run_id: str, task: Task) -> ExpansionRun:
+def _complete_dev_only_run(
+    self: Any,
+    run_id: str,
+    task: Task,
+    *,
+    suppress_parent_stage_transition: bool = False,
+) -> ExpansionRun:
     """Complete dev-only builds without creating expansion children."""
-    self._complete_parent_expansion_stage_if_current(task.id, session_id=None)
+    if not suppress_parent_stage_transition:
+        self._complete_parent_expansion_stage_if_current(task.id, session_id=None)
     self.run_manager.append_log(
         run_id,
         level="info",
@@ -67,7 +74,13 @@ def _complete_dev_only_run(self: Any, run_id: str, task: Task) -> ExpansionRun:
     return cast(ExpansionRun, run)
 
 
-def apply_run(self: Any, run_id: str, *, session_id: str | None) -> ExpansionRun:
+def apply_run(
+    self: Any,
+    run_id: str,
+    *,
+    session_id: str | None,
+    suppress_parent_stage_transition: bool = False,
+) -> ExpansionRun:
     """Apply a compiled expansion spec to the task tree."""
     run = self.run_manager.get(run_id)
     if run is None:
@@ -247,7 +260,8 @@ def apply_run(self: Any, run_id: str, *, session_id: str | None) -> ExpansionRun
             )
         )
         self.task_manager.artifacts.set_artifact(task.id, "expansion_run_id", run_id)
-        self._complete_parent_expansion_stage_if_current(task.id, session_id=session_id)
+        if not suppress_parent_stage_transition:
+            self._complete_parent_expansion_stage_if_current(task.id, session_id=session_id)
         run = self.run_manager.save_apply_result(
             run_id,
             task_id_map=created_task_map,

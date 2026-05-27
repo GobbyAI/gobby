@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Any, ClassVar, Protocol
 
 from gobby.storage.session_models import Session
 
+from ._upsert import is_session_unique_conflict
+
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
 
@@ -67,6 +69,7 @@ class _BulkUpdateMixin:
             Updated Session or None if not found
         """
         values: dict[str, Any] = {}
+        current = self.get(session_id)
 
         if external_id is not None:
             values["external_id"] = external_id
@@ -114,8 +117,21 @@ class _BulkUpdateMixin:
 
         values["updated_at"] = datetime.now(UTC).isoformat()
 
-        with self.db.transaction():
-            self.db.safe_update("sessions", values, "id = ?", (session_id,))
+        try:
+            with self.db.transaction():
+                self.db.safe_update("sessions", values, "id = ?", (session_id,))
+        except Exception as exc:
+            if current is None or not is_session_unique_conflict(exc):
+                raise
+            conflicting = _conflicting_web_chat_session(self, current, values)
+            if conflicting is None:
+                raise
+            with self.db.transaction():
+                self.db.safe_update("sessions", values, "id = ?", (conflicting.id,))
+            updated = self.get(conflicting.id)
+            if updated is not None:
+                self._notify_session_change("session_updated", conflicting.id)
+            return updated
         updated = self.get(session_id)
         if updated is not None:
             event = "session_expired" if status == "expired" else "session_updated"
@@ -185,3 +201,51 @@ class _BulkUpdateMixin:
         with self.db.transaction():
             self.db.execute(sql, (now, session_id))
         return self.get(session_id)
+
+
+def _conflicting_web_chat_session(
+    manager: _ManagerState,
+    current: Session,
+    values: dict[str, Any],
+) -> Session | None:
+    target_session_type = values.get("session_type", current.session_type)
+    if target_session_type != "web_chat":
+        return None
+
+    external_id = values.get("external_id", current.external_id)
+    source = values.get("source", current.source)
+    project_id = values.get("project_id", current.project_id)
+    if not isinstance(external_id, str) or not isinstance(source, str):
+        return None
+
+    if project_id is None:
+        row = manager.db.fetchone(
+            """
+            SELECT *
+              FROM sessions
+             WHERE external_id = ?
+               AND machine_id = ?
+               AND source = ?
+               AND project_id IS NULL
+               AND session_type = 'web_chat'
+               AND id != ?
+             LIMIT 1
+            """,
+            (external_id, current.machine_id, source, current.id),
+        )
+    else:
+        row = manager.db.fetchone(
+            """
+            SELECT *
+              FROM sessions
+             WHERE external_id = ?
+               AND machine_id = ?
+               AND source = ?
+               AND project_id = ?
+               AND session_type = 'web_chat'
+               AND id != ?
+             LIMIT 1
+            """,
+            (external_id, current.machine_id, source, project_id, current.id),
+        )
+    return Session.from_row(row) if row else None

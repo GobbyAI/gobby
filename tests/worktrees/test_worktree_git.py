@@ -435,6 +435,36 @@ class TestWorktreeGitManagerDeleteWorktree:
         assert "Failed to remove" in result.message
 
     @patch("subprocess.run")
+    def test_delete_recovers_when_git_fails_after_removing_path(
+        self, mock_run, manager, tmp_path
+    ) -> None:
+        """A nonzero git exit is recoverable if the worktree path is already gone."""
+        worktree_path = tmp_path / "worktrees" / "feature-test"
+        worktree_path.mkdir(parents=True)
+
+        def run_side_effect(args, **_kwargs):
+            if args[:2] == ["git", "worktree"] and args[2] == "remove":
+                worktree_path.rmdir()
+                return subprocess.CompletedProcess(
+                    args=args,
+                    returncode=128,
+                    stdout="",
+                    stderr="fatal: validation failed after removing path",
+                )
+            if args[:3] == ["git", "worktree", "prune"]:
+                return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+        mock_run.side_effect = run_side_effect
+
+        result = manager.delete_worktree(worktree_path)
+
+        assert result.success is True
+        assert not worktree_path.exists()
+        assert "git remove reported" in result.message
+        assert ["git", "worktree", "prune"] in [call.args[0] for call in mock_run.call_args_list]
+
+    @patch("subprocess.run")
     def test_delete_force_fallback_on_untracked_files(self, mock_run, manager, tmp_path) -> None:
         """Force delete falls back to rmtree when git remove fails with untracked files."""
         worktree_path = tmp_path / "worktrees" / "feature-test"

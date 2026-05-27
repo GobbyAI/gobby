@@ -87,6 +87,7 @@ class BuildTargetControlResult:
     escalations_cleared: int = 0
     dispatch_failures_reset: int = 0
     dispatcher_tick: DispatcherTickSummary | None = None
+    manifest: list[dict[str, Any]] = field(default_factory=list)
     blocked_reasons: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -366,6 +367,7 @@ async def build_restart_target(
     dispatch_failures_reset = _reset_restart_dispatch_failures(task_manager, tasks)
     escalations_cleared = _clear_restartable_escalations(task_manager, tasks)
     restart_stage_resets = _reset_restart_stage_manifests(db, root, tasks, restart_opts)
+    restart_manifest = _root_manifest_payload(task_manager, root.id) if restart_opts else []
     if no_resume:
         clean_result.action = "restart"
         clean_result.automation_updated = stop_result.automation_updated
@@ -375,6 +377,7 @@ async def build_restart_target(
         clean_result.escalations_cleared = escalations_cleared
         clean_result.dispatch_failures_reset = dispatch_failures_reset
         clean_result.dispatcher_tick = None
+        clean_result.manifest = restart_manifest
         _record_target_history(db, clean_result, input_ref=input_ref)
         return clean_result
     resume_result = await build_resume_target(
@@ -391,6 +394,7 @@ async def build_restart_target(
     clean_result.escalations_cleared = escalations_cleared
     clean_result.dispatch_failures_reset = dispatch_failures_reset
     clean_result.dispatcher_tick = resume_result.dispatcher_tick
+    clean_result.manifest = restart_manifest
     _record_target_history(db, clean_result, input_ref=input_ref)
     return clean_result
 
@@ -764,6 +768,18 @@ def _reset_restart_stage_manifests_from_options(
     if input_kind == "plan_file":
         _seed_restart_plan_file_stage_state(task_manager, root.id, opts)
     return reset
+
+
+def _root_manifest_payload(task_manager: LocalTaskManager, task_id: str) -> list[dict[str, Any]]:
+    return [
+        {
+            "stage_name": row.stage_name,
+            "position": row.position,
+            "max_work_attempts": row.max_work_attempts,
+            "max_review_rounds": row.max_review_rounds,
+        }
+        for row in task_manager.stage_states.list_for_task(task_id)
+    ]
 
 
 def _restart_root_input_kind(task_manager: LocalTaskManager, root: Task) -> InputKind:

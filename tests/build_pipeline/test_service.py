@@ -485,7 +485,7 @@ async def test_build_plan_file_planning_spawn_uses_main_context_for_worktree_bui
     )
     result = await build(
         str(plan_file),
-        _options(quick=True, isolation="worktree", target_branch="main"),
+        _options(isolation="worktree", target_branch="main"),
         db=temp_db,
         project_id=project_id,
         services=SimpleNamespace(
@@ -887,6 +887,8 @@ async def test_explicit_build_tick_bypasses_paused_dispatcher_cron(
 
     assert result.tick_dispatched == 1
     assert tick_kwargs[0]["dispatcher_enabled"] is True
+    assert tick_kwargs[0]["max_ticks"] == 1
+    assert tick_kwargs[0]["max_actions"] == 1
 
 
 @pytest.mark.asyncio
@@ -1646,7 +1648,7 @@ async def test_build_leaf_with_services_creates_agent_run_by_completion(
 
     result = await build(
         f"#{leaf.seq_num}",
-        _options(quick=True, isolation="none", assigned_agent="backend-developer"),
+        _options(isolation="none", assigned_agent="backend-developer"),
         db=temp_db,
         project_id=sample_project["id"],
         services=services,

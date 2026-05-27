@@ -141,6 +141,46 @@ def test_repair_reseeds_stunted_plan_file_root_from_build_history(
     assert result.to_dict()["diagnostics"] == []
 
 
+def test_repair_reseeds_stunted_plan_file_root_from_build_run_summary(
+    temp_db,
+    sample_project,
+    tmp_path,
+) -> None:
+    from gobby.storage.build_history import BuildHistoryStorage
+
+    manager = LocalTaskManager(temp_db)
+    plan_file = tmp_path / "plan.md"
+    plan_file.write_text("# Plan\n")
+    root = manager.create_task(
+        project_id=sample_project["id"],
+        title="Stunted plan-file root from restart",
+        task_type="epic",
+        category="planning",
+    )
+    manager.artifacts.set_artifact(root.id, "plan_file_path", str(plan_file))
+    manager.initialize_task_manifest(root.id, stage_names=["planning", "merge"])
+    BuildHistoryStorage(temp_db).record_run(
+        project_id=sample_project["id"],
+        root_task_id=root.id,
+        input_ref=f"#{root.seq_num}",
+        action="restart",
+        summary={"manifest": _full_plan_file_manifest()},
+    )
+
+    result = LifecycleRepair(manager).run(task_id=root.id, apply=True)
+
+    assert result.diagnostics == []
+    assert result.candidates[0].action == "reseed_plan_file_manifest"
+    assert result.candidates[0].applied is True
+    assert _stage_names(manager, root.id) == [
+        "planning",
+        "expansion",
+        "development",
+        "holistic_qa",
+        "merge",
+    ]
+
+
 def test_repair_reports_diagnostic_for_stunted_plan_file_without_provenance(
     temp_db,
     sample_project,

@@ -208,6 +208,37 @@ def test_apply_completes_current_expansion_stage(temp_db, sample_project) -> Non
     assert row.state == "done"
 
 
+def test_apply_can_suppress_parent_expansion_stage_transition(temp_db, sample_project) -> None:
+    service = _service(temp_db)
+    parent = service.task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Pipeline-owned expansion parent",
+        task_type="epic",
+    )
+    service.task_manager.initialize_task_manifest(
+        parent.id,
+        stage_names=["expansion", "development"],
+    )
+    service.task_manager.stage_states.start_stage(parent.id, "expansion", by_session_id=None)
+    spec = {
+        "phases": [{"id": "phase-1", "title": "Phase 1", "task_ids": ["leaf"]}],
+        "tasks": [{"id": "leaf", "phase_id": "phase-1", "title": "Leaf", "category": "code"}],
+        "dependencies": [],
+    }
+    run = _save_run(service, parent, sample_project, spec)
+
+    applied = service.apply_run(
+        run.id,
+        session_id=None,
+        suppress_parent_stage_transition=True,
+    )
+
+    row = service.task_manager.stage_states.get(parent.id, "expansion")
+    assert row is not None
+    assert row.state == "in_progress"
+    assert applied.task_id_map["leaf"] in applied.created_task_ids
+
+
 def test_reset_deletes_only_expansion_output(temp_db, sample_project) -> None:
     service = _service(temp_db)
     parent = service.task_manager.create_task(

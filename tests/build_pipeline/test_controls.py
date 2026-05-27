@@ -792,6 +792,7 @@ async def test_restart_no_resume_rebuilds_plan_file_root_manifest_from_options(
     from gobby.build.controls import build_restart_target
     from gobby.build.service import BuildOptions
     from gobby.config.build import StageCapOverride
+    from gobby.storage.build_history import BuildHistoryStorage
     from tests.storage.tasks._stage_test_helpers import initialize_manifest, spec
 
     _set_project_repo(temp_db, sample_project["id"], tmp_path)
@@ -868,6 +869,44 @@ async def test_restart_no_resume_rebuilds_plan_file_root_manifest_from_options(
     assert task_manager.get_task(root.id).allow_automation is False
     assert task_manager.get_task(child.id).allow_automation is False
     assert artifacts.target_branch == "dev"
+    assert [row["stage_name"] for row in result.manifest] == [
+        "planning",
+        "expansion",
+        "development",
+        "holistic_qa",
+        "merge",
+    ]
+    assert result.manifest[0]["max_work_attempts"] == 99
+    assert result.manifest[0]["max_review_rounds"] == 99
+
+    history = BuildHistoryStorage(temp_db)
+    run = next(
+        item
+        for item in history.list_runs(
+            project_id=sample_project["id"],
+            root_task_id=root.id,
+            limit=10,
+        )
+        if item.action == "restart"
+    )
+    event = next(
+        item
+        for item in history.list_events(
+            project_id=sample_project["id"],
+            root_task_id=root.id,
+            limit=10,
+        )
+        if item.action == "restart"
+    )
+    assert run.action == "restart"
+    assert [row["stage_name"] for row in run.summary["manifest"]] == [
+        "planning",
+        "expansion",
+        "development",
+        "holistic_qa",
+        "merge",
+    ]
+    assert event.payload["manifest"] == run.summary["manifest"]
 
 
 @pytest.mark.asyncio

@@ -13,6 +13,7 @@ from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.expansion_runs import LocalExpansionRunManager
 from gobby.storage.tasks import TaskNotFoundError
+from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.tasks.expansion_qa_coverage import run_expansion_qa_coverage as run_qa_coverage
 from gobby.tasks.expansion_service import ExpansionService
 from gobby.utils.session_context import get_current_session_id
@@ -169,6 +170,11 @@ def _emit_terminal_event(
     emit(event_name, **kwargs)
 
 
+def _is_stage_pipeline_expansion_run(task_manager: Any, task_id: str) -> bool:
+    mutex = TaskDispatchMutexManager(task_manager.db).get_mutex(task_id)
+    return mutex is not None and mutex.action_kind == "stage-pipeline:expansion"
+
+
 async def _notify_completion_registry(
     completion_registry: Any | None,
     run_id: str,
@@ -206,6 +212,7 @@ async def _execute_run_impl(
     run_id: str,
     session_id: str | None,
     auto_apply: bool,
+    stage_pipeline_mode: bool = False,
 ) -> Any:
     service = ExpansionService(
         task_manager=task_manager,
@@ -215,14 +222,18 @@ async def _execute_run_impl(
     )
     try:
         run = await service.compile_and_apply_run(
-            run_id, session_id=session_id, auto_apply=auto_apply
+            run_id,
+            session_id=session_id,
+            auto_apply=auto_apply,
+            suppress_parent_stage_transition=stage_pipeline_mode,
         )
-        _emit_terminal_event(
-            completion_registry,
-            task_id=task_id,
-            run_id=run.id,
-            status=run.status,
-        )
+        if not stage_pipeline_mode:
+            _emit_terminal_event(
+                completion_registry,
+                task_id=task_id,
+                run_id=run.id,
+                status=run.status,
+            )
         await _notify_completion_registry(
             completion_registry,
             run.id,
@@ -233,12 +244,13 @@ async def _execute_run_impl(
     except asyncio.CancelledError:
         cancelled_run = run_manager.cancel(run_id, error="Expansion run cancelled")
         if cancelled_run is not None:
-            _emit_terminal_event(
-                completion_registry,
-                task_id=task_id,
-                run_id=cancelled_run.id,
-                status=cancelled_run.status,
-            )
+            if not stage_pipeline_mode:
+                _emit_terminal_event(
+                    completion_registry,
+                    task_id=task_id,
+                    run_id=cancelled_run.id,
+                    status=cancelled_run.status,
+                )
             await _notify_completion_registry(
                 completion_registry,
                 cancelled_run.id,
@@ -250,13 +262,14 @@ async def _execute_run_impl(
     except Exception as e:
         failed_run = run_manager.fail(run_id, str(e))
         if failed_run is not None:
-            _emit_terminal_event(
-                completion_registry,
-                task_id=task_id,
-                run_id=failed_run.id,
-                status=failed_run.status,
-                reason=str(e),
-            )
+            if not stage_pipeline_mode:
+                _emit_terminal_event(
+                    completion_registry,
+                    task_id=task_id,
+                    run_id=failed_run.id,
+                    status=failed_run.status,
+                    reason=str(e),
+                )
             await _notify_completion_registry(
                 completion_registry,
                 failed_run.id,
@@ -287,6 +300,7 @@ def start_expansion_run_impl(
     project: str | None = None,
     run_id: str | None = None,
     reset_output: bool = False,
+    stage_pipeline_mode: bool | None = None,
 ) -> ExpansionRunResult:
     """Start an expansion run from MCP or in-process dispatcher code."""
     _ = project
@@ -310,14 +324,20 @@ def start_expansion_run_impl(
         except ValueError as exc:
             return ExpansionRunResult(False, run_id, "failed", False, error=str(exc))
     existing_run = run_manager.get(run_id) if run_id is not None else None
+    resolved_stage_pipeline_mode = (
+        _is_stage_pipeline_expansion_run(task_manager, task.id)
+        if stage_pipeline_mode is None
+        else stage_pipeline_mode
+    )
     if existing_run is not None:
-        _emit_terminal_event(
-            completion_registry,
-            task_id=task.id,
-            run_id=existing_run.id,
-            status=existing_run.status,
-            reason=existing_run.error,
-        )
+        if not resolved_stage_pipeline_mode:
+            _emit_terminal_event(
+                completion_registry,
+                task_id=task.id,
+                run_id=existing_run.id,
+                status=existing_run.status,
+                reason=existing_run.error,
+            )
         return ExpansionRunResult(
             True,
             existing_run.id,
@@ -358,6 +378,7 @@ def start_expansion_run_impl(
         run_id=run.id,
         session_id=triggering_session_id,
         auto_apply=auto_apply,
+        stage_pipeline_mode=resolved_stage_pipeline_mode,
     )
     completed_run = _run_start_coroutine(coro)
     if completed_run is not None:
@@ -396,6 +417,7 @@ async def _execute_run_background(
         run_id=run.id,
         session_id=session_id,
         auto_apply=auto_apply,
+        stage_pipeline_mode=False,
     )
 
 
@@ -415,6 +437,7 @@ def create_expansion_registry(ctx: RegistryContext) -> InternalToolRegistry:
         provider: str | None = None,
         model: str | None = None,
         project: str | None = None,
+        stage_pipeline_mode: bool | None = None,
     ) -> dict[str, Any]:
         session_result = _resolve_current_session(ctx)
         if isinstance(session_result, dict):
@@ -444,6 +467,7 @@ def create_expansion_registry(ctx: RegistryContext) -> InternalToolRegistry:
             reset_output=reset_output,
             provider=provider,
             model=model,
+            stage_pipeline_mode=stage_pipeline_mode,
         )
         if result.run_id is not None:
             _subscribe_completion(ctx, result.run_id, resolved_session_id)
@@ -489,6 +513,14 @@ def create_expansion_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 "project": {
                     "type": "string",
                     "description": "Optional project ref for task resolution",
+                    "default": None,
+                },
+                "stage_pipeline_mode": {
+                    "type": ["boolean", "null"],
+                    "description": (
+                        "Internal: suppress parent expansion-stage transitions because "
+                        "the owning stage pipeline terminal handler will advance the stage"
+                    ),
                     "default": None,
                 },
             },

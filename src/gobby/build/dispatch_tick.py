@@ -143,6 +143,7 @@ async def kick_dispatcher_tick(
     dispatcher_enabled: bool | None = None,
     services: object | None = None,
     max_ticks: int | None = None,
+    max_actions: int | None = None,
     max_active_agents: int | None = None,
 ) -> DispatcherTickSummary:
     """Fire a bounded dispatcher heartbeat burst when the bundled cron row is enabled."""
@@ -175,6 +176,7 @@ async def kick_dispatcher_tick(
             db=db,
             project_id=project_id,
             services=services,
+            max_actions=max_actions,
             max_active_agents=max_active_agents,
         )
         reason = result.reason or ("cap_reached" if result.cap_reached else summary.reason)

@@ -206,9 +206,13 @@ def delete_artifacts(
             if artifact.family == "worktree":
                 if path.exists():
                     worktree_result = worktree_git.delete_worktree(path, force=force)
-                    if not worktree_result.success:
+                    if not worktree_result.success and path.exists():
                         artifact.error = worktree_result.error or worktree_result.message
                         continue
+                    if not worktree_result.success:
+                        prune = getattr(worktree_git, "prune_worktrees", None)
+                        if callable(prune):
+                            prune()
                 if artifact.artifact_id:
                     worktrees.delete(artifact.artifact_id)
             else:

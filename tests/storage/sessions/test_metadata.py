@@ -626,6 +626,49 @@ class TestSessionManagerMetadata:
         assert updated.session_type == "web_chat"
         assert updated.status == "active"
 
+    def test_update_resume_metadata_reuses_conflicting_web_chat_session(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Terminal-to-web resume is idempotent when the web chat row already exists."""
+        terminal = session_manager.register(
+            external_id="resume-dupe",
+            machine_id="machine",
+            source="codex",
+            project_id=sample_project["id"],
+            session_type="terminal",
+            title="Terminal",
+        )
+        web_chat = session_manager.register(
+            external_id="resume-dupe",
+            machine_id="machine",
+            source="codex",
+            project_id=sample_project["id"],
+            session_type="web_chat",
+            title="Existing web chat",
+        )
+
+        updated = session_manager.update(
+            terminal.id,
+            model="gpt-5.4",
+            chat_mode="accept_edits",
+            session_type="web_chat",
+            status="active",
+            title="Resumed web chat",
+        )
+
+        terminal_reloaded = session_manager.get(terminal.id)
+        assert updated is not None
+        assert updated.id == web_chat.id
+        assert updated.session_type == "web_chat"
+        assert updated.model == "gpt-5.4"
+        assert updated.chat_mode == "accept_edits"
+        assert updated.status == "active"
+        assert updated.title == "Resumed web chat"
+        assert terminal_reloaded is not None
+        assert terminal_reloaded.session_type == "terminal"
+
     def test_update_terminal_pickup_metadata(
         self,
         session_manager: SessionManager,

@@ -308,6 +308,30 @@ async def test_run_heartbeat_allows_disjoint_development_write_sets(
 
 
 @pytest.mark.asyncio
+async def test_run_heartbeat_max_actions_stops_after_one_lifecycle_action(
+    temp_db,
+    sample_project,
+) -> None:
+    """A quick dispatcher pass runs exactly one action even with multiple ready tasks."""
+    from gobby.dispatch import dispatcher
+
+    first = _task(temp_db, sample_project, "first quick action")
+    second = _task(temp_db, sample_project, "second quick action")
+
+    result = await dispatcher.run_heartbeat(
+        db=temp_db,
+        project_id=sample_project["id"],
+        max_actions=1,
+    )
+
+    stage_states = LocalTaskManager(temp_db).stage_states
+    assert result.executed == 1
+    assert result.cap_reached is True
+    assert stage_states.get(first.id, "development").state == "in_progress"
+    assert stage_states.get(second.id, "development").state == "ready"
+
+
+@pytest.mark.asyncio
 async def test_run_heartbeat_blocks_ready_task_behind_active_overlapping_write_set(
     temp_db,
     sample_project,
@@ -2152,6 +2176,59 @@ async def test_invalid_pipeline_target_escalates_and_releases(
 
     assert storage.get_mutex(task.id) is None
     assert get_task(temp_db, task.id).is_escalated is True
+
+
+@pytest.mark.asyncio
+async def test_stage_pipeline_runtime_mutex_failure_is_retry_neutral(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
+    """Internal stage-pipeline mutex races restore the stage without burning attempts."""
+    from gobby.dispatch import dispatcher
+    from gobby.dispatch.mutex import RuntimeDispatchMutexError
+    from tests.storage.tasks._stage_test_helpers import lifecycle_events, stage_row
+
+    task = _task(
+        temp_db,
+        sample_project,
+        lifecycle="expanding",
+        stage_state="in_progress",
+        isolation="worktree",
+    )
+    set_stage_state(temp_db, task.id, "expansion", "in_progress", work_attempt_count=1)
+    storage = _mutex_storage(temp_db)
+    services = SimpleNamespace(pipeline_executor=_FakePipelineExecutor())
+    monkeypatch.setattr(
+        dispatcher.dispatch_rules,
+        "evaluate",
+        lambda *args, **kwargs: _pipeline_action(task.id),
+    )
+
+    def fail_attach(*_args: object, **_kwargs: object) -> str:
+        raise RuntimeDispatchMutexError(
+            f"dispatch mutex for task {task.id!r} is held by another dispatcher"
+        )
+
+    monkeypatch.setattr(dispatcher, "_create_stage_pipeline_execution", fail_attach)
+
+    result = await dispatcher.run_heartbeat(
+        db=temp_db,
+        project_id=sample_project["id"],
+        services=services,
+    )
+
+    row = stage_row(temp_db, task.id, "expansion")
+    updated = get_task(temp_db, task.id)
+    assert result.executed == 1
+    assert storage.get_mutex(task.id) is None
+    assert row["state"] == "ready"
+    assert row["work_attempt_count"] == 0
+    assert updated.is_escalated is False
+    assert updated.dispatch_failure_count == 0
+    assert lifecycle_events(temp_db, task.id)[-1]["reason"].startswith(
+        "stage_pipeline_dispatch_retry_neutral:"
+    )
 
 
 @pytest.mark.asyncio

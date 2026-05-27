@@ -829,7 +829,11 @@ def _apply_stage_caps_to_existing_lifecycle(
 
 
 def _quick_tick_limit(opts: BuildOptions) -> int | None:
-    return 2 if opts.quick else None
+    return 1 if opts.quick else None
+
+
+def _quick_action_limit(opts: BuildOptions) -> int | None:
+    return 1 if opts.quick else None
 
 
 async def _build_dispatcher_tick(
@@ -848,6 +852,7 @@ async def _build_dispatcher_tick(
         dispatcher_enabled=dispatcher_enabled,
         services=services,
         max_ticks=_quick_tick_limit(opts),
+        max_actions=_quick_action_limit(opts),
         max_active_agents=opts.max_active_agents,
     )
 

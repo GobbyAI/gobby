@@ -28,7 +28,12 @@ logger = logging.getLogger(__name__)
 _BUNDLED_PROMPTS_DIR = Path(__file__).resolve().parents[2] / "install" / "shared" / "prompts"
 
 
-async def compile_run(self: Any, run_id: str) -> ExpansionRun:
+async def compile_run(
+    self: Any,
+    run_id: str,
+    *,
+    suppress_parent_stage_transition: bool = False,
+) -> ExpansionRun:
     """Compile an expansion run into a normalized compiled spec."""
     run = self.run_manager.get(run_id)
     if run is None:
@@ -39,7 +44,14 @@ async def compile_run(self: Any, run_id: str) -> ExpansionRun:
     self.run_manager.start(run_id)
     self.run_manager.append_log(run_id, level="info", message="Starting expansion compile")
     if _dev_is_only_enabled_stage(task):
-        return cast(ExpansionRun, self._complete_dev_only_run(run_id, task))
+        return cast(
+            ExpansionRun,
+            self._complete_dev_only_run(
+                run_id,
+                task,
+                suppress_parent_stage_transition=suppress_parent_stage_transition,
+            ),
+        )
 
     plan_doc = self._parse_contract_plan(run, task)
     if plan_doc is not None:
@@ -91,17 +103,28 @@ async def compile_and_apply_run(
     *,
     session_id: str | None,
     auto_apply: bool = True,
+    suppress_parent_stage_transition: bool = False,
 ) -> ExpansionRun:
     """Compile a run and optionally apply it."""
     run = self.run_manager.get(run_id)
     if run is None:
         raise ValueError(f"Expansion run {run_id} not found")
     if run.compiled_spec is None:
-        run = await self.compile_run(run_id)
+        run = await self.compile_run(
+            run_id,
+            suppress_parent_stage_transition=suppress_parent_stage_transition,
+        )
     if run.compiled_spec is None and run.status == "completed":
         return cast(ExpansionRun, run)
     if auto_apply:
-        return cast(ExpansionRun, self.apply_run(run.id, session_id=session_id))
+        return cast(
+            ExpansionRun,
+            self.apply_run(
+                run.id,
+                session_id=session_id,
+                suppress_parent_stage_transition=suppress_parent_stage_transition,
+            ),
+        )
     return cast(ExpansionRun, run)
 
 

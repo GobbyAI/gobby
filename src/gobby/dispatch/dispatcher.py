@@ -31,6 +31,7 @@ from gobby.dispatch.mutex import (
     DispatchCandidateChangedError,
     DispatchMutexUnavailableError,
     RuntimeDispatchMutex,
+    RuntimeDispatchMutexError,
     RuntimeStageSnapshotState,
 )
 from gobby.dispatch.spawn import (
@@ -108,6 +109,10 @@ def _cap_reached(result: HeartbeatResult) -> HeartbeatResult:
     )
 
 
+def _action_cap_reached(result: HeartbeatResult, max_actions: int | None) -> bool:
+    return max_actions is not None and result.executed >= max_actions
+
+
 def _unavailable(result: HeartbeatResult, reason: str) -> HeartbeatResult:
     return HeartbeatResult(result.scanned, result.executed, result.skipped + 1, False, reason)
 
@@ -121,6 +126,7 @@ async def run_heartbeat(
     holder: str = DISPATCH_HOLDER,
     ttl_seconds: int = DISPATCH_TTL_SECONDS,
     services: object | None = None,
+    max_actions: int | None = None,
 ) -> HeartbeatResult:
     """Scan automation candidates, acquire per-task leases, and execute first-match actions."""
     from gobby.agents.readiness import spawn_readiness_blocker
@@ -156,6 +162,8 @@ async def run_heartbeat(
     result = HeartbeatResult(scanned=len(candidates))
 
     for candidate in candidates:
+        if _action_cap_reached(result, max_actions):
+            return _cap_reached(result)
         if count_active_agents(resolved_db, project_id=project_id) >= cap:
             return _cap_reached(result)
 
@@ -538,6 +546,8 @@ async def _start_pipeline_action(
         return _escalate_pipeline_dispatch(
             action, mutex, db, f"pipeline_attach_failed:database:{exc}"
         )
+    except RuntimeDispatchMutexError as exc:
+        return _retry_neutral_pipeline_dispatch(action, mutex, db, str(exc))
     except RuntimeError as exc:
         return _escalate_pipeline_dispatch(action, mutex, db, f"pipeline_attach_failed:{exc}")
     except Exception as exc:
@@ -574,6 +584,60 @@ def _escalate_pipeline_dispatch(
     escalate_task(db=db, task_id=action.task_id, reason=f"stage_pipeline_dispatch:{reason}")
     mutex.release()
     return {"success": False, "error": reason}
+
+
+def _retry_neutral_pipeline_dispatch(
+    action: StartPipelineAction,
+    mutex: RuntimeDispatchMutex,
+    db: HubDatabase,
+    reason: str,
+) -> dict[str, object]:
+    mutex.release()
+    _restore_stage_pipeline_retry(db, action.task_id, action.stage_name, reason=reason)
+    return {"success": False, "error": reason, "retry_neutral": True}
+
+
+def _restore_stage_pipeline_retry(
+    db: HubDatabase,
+    task_id: str,
+    stage_name: str,
+    *,
+    reason: str,
+) -> bool:
+    stage = _stage_states_manager(db=db, services=None).get(task_id, stage_name)
+    if stage is None or stage.state != "in_progress":
+        return False
+    now = datetime.now(UTC).isoformat()
+    with db.transaction() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE task_stage_states
+               SET state = 'ready',
+                   entered_at = NULL,
+                   entered_by_session_id = NULL,
+                   artifact_refs = NULL,
+                   notes = NULL,
+                   work_attempt_count = CASE
+                       WHEN work_attempt_count > 0 THEN work_attempt_count - 1
+                       ELSE 0
+                   END,
+                   updated_at = ?
+             WHERE task_id = ?
+               AND stage_name = ?
+               AND state = 'in_progress'
+            """,
+            (now, task_id, stage_name),
+        )
+        restored = cursor.rowcount > 0
+    if restored:
+        TaskLifecycleEventManager(db).record_lifecycle_event(
+            task_id,
+            f"{stage_name}:in_progress",
+            f"{stage_name}:ready",
+            f"stage_pipeline_dispatch_retry_neutral:{reason}",
+            by_actor="dispatcher",
+        )
+    return restored
 
 
 def _render_dispatch_inputs(
