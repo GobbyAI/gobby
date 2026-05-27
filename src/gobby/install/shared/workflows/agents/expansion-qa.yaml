@@ -40,7 +40,8 @@ instructions: |
   - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.
   - Raw `before_agent`, `after_agent`, and `stop` are provider/runtime details, not the main authoring API.
   - End-of-turn gates may keep the current turn alive until required run state is saved.
-  - The terminate step is explicit shutdown after saving QA results, not stop-hook completion.
+  - The terminate step is explicit shutdown after saving QA results and recording the
+    expansion review verdict through approve_review or reject_review.
 
   CRITICAL RULES:
   - Do NOT use deprecated spec-on-task tools.
@@ -99,8 +100,6 @@ steps:
     transitions:
       - to: qa_check
         when: "vars.coverage_result_saved"
-      - to: terminate
-        when: "vars.coverage_result_failed"
 
   - name: qa_check
     description: "Validate expansion output: structural deps + plan comparison"
@@ -143,15 +142,11 @@ steps:
         value: true
     transitions:
       - to: terminate
-        when: "vars.review_complete"
-      - to: terminate
-        when: "vars.qa_result_saved"
-      - to: terminate
-        when: "vars.qa_result_failed"
+        when: "vars.review_complete and vars.qa_result_saved"
 
   - name: terminate
     description: "Self-terminate by calling end_agent_run"
-    status_message: "QA result saved. Call end_agent_run with no arguments to finish the run."
+    status_message: "QA result saved and review verdict recorded. Call end_agent_run with no arguments to finish the run."
     allowed_tools:
       - mcp__gobby__call_tool
       - mcp__gobby__list_mcp_servers

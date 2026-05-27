@@ -163,7 +163,7 @@
     "workflows/agents/deprecated/developer.yaml": "36c87835887cad6a7bfc0195e136b95c7752389b16ac731d058e8f4b384b2e56",
     "workflows/agents/deprecated/pipeline-worker.yaml": "ba7e0a64d52081c2154007aaf4605a4976da42a741ca9c94ca98a546f54ede58",
     "workflows/agents/doc-reviewer.yaml": "bfd79b595f0b060e4e8de64c950e00fe35d631740b7e47729135ce8354d0c62c",
-    "workflows/agents/expansion-qa.yaml": "a5a9f642100fcaa6219f18bda1ea7bfb8a3358a221bae076a6437c7544dfdcdc",
+    "workflows/agents/expansion-qa.yaml": "33af166c7b48e1f99c84f0717c08bc845297c2748e17c35181be930d9468c090",
     "workflows/agents/frontend-developer.yaml": "d65be96fd57b7c7d19a20ac71c1ad98ee3e0eea864cb77cee0181a8a42c15adf",
     "workflows/agents/fullstack-developer.yaml": "c654b06764705b7fb07e8b3fed924f9b4abd000c3e65a50f1f91fa4a92ec7288",
     "workflows/agents/gemini-image-gen.yaml": "2acf0ab723a7e7010a54eb2c5b5467c2e5f6b3bd9ca55f19d3f69bb919f68ebc",

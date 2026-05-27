@@ -234,3 +234,52 @@ def test_recovery_preserves_active_agent_owned_claim(
     payloads = _claim_recovery_payloads(temp_db, task.id)
     assert payloads[-1]["reason"] == "active_agent_owned"
     assert payloads[-1]["agent_run_id"] == run.id
+
+
+def test_recovery_releases_terminal_reviewer_owned_claim(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+    tmp_path: Path,
+) -> None:
+    from gobby.build import claim_recovery
+
+    task = _claimed_review_task(
+        temp_db,
+        sample_project,
+        tmp_path,
+        stage_state="needs_review",
+    )
+    task_manager = LocalTaskManager(temp_db)
+    owner_id = task_manager.get_task(task.id).claimed_by_session_id
+    assert owner_id is not None
+
+    sessions = SessionManager(temp_db)
+    parent = sessions.register(
+        external_id="claim-recovery-terminal-parent",
+        machine_id="machine-1",
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    run_manager = LocalAgentRunManager(temp_db)
+    run = run_manager.create(
+        parent_session_id=parent.id,
+        child_session_id=owner_id,
+        claimed_session_id=owner_id,
+        provider="codex",
+        prompt="review",
+        task_id=task.id,
+        agent_name="qa-reviewer",
+        run_id="run-terminal-claim-recovery",
+    )
+    run_manager.start(run.id)
+    run_manager.complete(run.id, result="review done")
+    monkeypatch.setattr(claim_recovery, "_git_status_lines", lambda _path: ([], None))
+
+    summary = claim_recovery.recover_safe_build_claims(temp_db, sample_project["id"])
+
+    assert summary.released == 1
+    assert task_manager.get_task(task.id).claimed_by_session_id is None
+    payloads = _claim_recovery_payloads(temp_db, task.id)
+    assert payloads[-1]["outcome"] == "released"
+    assert payloads[-1]["reason"] == "review_safe_workspace_clean"

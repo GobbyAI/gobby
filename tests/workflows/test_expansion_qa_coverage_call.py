@@ -57,6 +57,19 @@ def test_expansion_qa_yaml_wires_coverage_gate() -> None:
     assert any(hook["tool"] == "run_expansion_qa_coverage" for hook in step["on_mcp_success"])
 
 
+def test_expansion_qa_yaml_requires_review_verdict_before_terminate() -> None:
+    agent = yaml.safe_load(AGENT_PATH.read_text(encoding="utf-8"))
+    steps = {step["name"]: step for step in agent["steps"]}
+
+    assert not any(
+        transition["to"] == "terminate"
+        for transition in steps["coverage_check"].get("transitions", [])
+    )
+    assert steps["qa_check"]["transitions"] == [
+        {"to": "terminate", "when": "vars.review_complete and vars.qa_result_saved"}
+    ]
+
+
 def test_manifest_path_components_are_capped() -> None:
     sanitized = expansion_qa_coverage._sanitize("x" * 90, kind="plan_id")
 

@@ -24,6 +24,10 @@ from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.build_history import BuildHistoryStorage
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.storage.tasks._ancestor_gate import (
+    AncestorStageGate,
+    find_child_development_ancestor_gate,
+)
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 
 MAX_ACTIVE_AGENTS = 10
@@ -87,8 +91,19 @@ def explain_dispatch(
         "cap": cap,
         "cap_reached": active_count >= cap,
     }
+    ancestor_gate = find_child_development_ancestor_gate(
+        db,
+        candidate,
+        current_stage=current_stage,
+    )
 
-    reason = _dispatch_block_reason(candidate, current_stage, mutex, active_agents)
+    reason = _dispatch_block_reason(
+        candidate,
+        current_stage,
+        mutex,
+        active_agents,
+        ancestor_gate,
+    )
     action = None
     if reason is None:
         context = build_context(db, candidate, services=services)
@@ -103,6 +118,7 @@ def explain_dispatch(
         "reason": reason,
         "inputs": _dispatch_inputs(candidate),
         "current_stage": _stage_summary(current_stage),
+        "ancestor_gate": ancestor_gate.to_dict() if ancestor_gate is not None else None,
         "mutex": mutex,
         "active_agents": active_agents,
         "proposed_action": _action_summary(action),
@@ -418,6 +434,7 @@ def _dispatch_block_reason(
     current_stage: object | None,
     mutex: Mapping[str, Any],
     active_agents: Mapping[str, Any],
+    ancestor_gate: AncestorStageGate | None,
 ) -> str | None:
     if task.closed_at is not None:
         return "closed"
@@ -431,6 +448,8 @@ def _dispatch_block_reason(
         return "active_mutex"
     if task.active_blocked_by:
         return "dependency_block"
+    if ancestor_gate is not None:
+        return ancestor_gate.reason
     if current_stage is None:
         return "no_current_stage"
     if _field(current_stage, "state") not in {

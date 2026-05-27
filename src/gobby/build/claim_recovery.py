@@ -183,13 +183,7 @@ def _agent_claim_payload(
                 "agent_run_id": row["id"],
                 "agent_status": row["status"],
             }
-
-    latest = rows[0]
-    return {
-        "reason": "agent_claim_recovery_delegated",
-        "agent_run_id": latest["id"],
-        "agent_status": latest["status"],
-    }
+    return None
 
 
 def _workspace_check(task_manager: LocalTaskManager, task: Task) -> _WorkspaceCheck:

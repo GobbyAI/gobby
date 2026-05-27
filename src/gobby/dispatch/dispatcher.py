@@ -47,6 +47,7 @@ from gobby.mcp_proxy.tools.workflows._pipeline_execution import (
     _register_background_task,
 )
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.tasks._ancestor_gate import find_child_development_ancestor_gate
 from gobby.storage.tasks._artifacts import TaskArtifacts
 from gobby.storage.tasks._artifacts import (
     set_artifacts_atomic as _set_artifacts_atomic,
@@ -205,6 +206,13 @@ async def run_heartbeat(
                 continue
 
             context = build_context(resolved_db, current, services=services)
+            if find_child_development_ancestor_gate(
+                resolved_db,
+                current,
+                current_stage=getattr(context, "current_stage", None),
+            ):
+                result = _release_and_skip(mutex, result)
+                continue
             action = dispatch_rules.evaluate(current, context, _rules())
             if action is None:
                 result = _release_and_skip(mutex, result)

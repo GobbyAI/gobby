@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.tasks._ancestor_gate import find_child_development_ancestor_gate
 from gobby.storage.tasks._blocking import hydrate_task_blocking_state
 from gobby.storage.tasks._models import Task
 from gobby.storage.tasks._stage_hydration import hydrate_task_stage_state
@@ -69,7 +70,11 @@ def list_automation_candidates(
     tasks = [Task.from_row(row) for row in rows]
     hydrate_task_stage_state(db, tasks)
     hydrate_task_blocking_state(db, tasks)
-    return [task for task in tasks if not is_blocked_by_deps(task)]
+    return [
+        task
+        for task in tasks
+        if not is_blocked_by_deps(task) and find_child_development_ancestor_gate(db, task) is None
+    ]
 
 
 def sweep_stale_claims(

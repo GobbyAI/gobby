@@ -193,6 +193,27 @@ def test_explain_dispatch_reports_block_reasons_and_would_dispatch(temp_db) -> N
         "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (?, ?, 'blocks', NOW())",
         (blocked.id, blocker.id),
     )
+    parent = manager.create_task(project_id=project_id, title="Parent", task_type="epic")
+    manager.update_task(parent.id, allow_automation=False, isolation="none")
+    manager.initialize_task_manifest(
+        parent.id, stage_names=["planning", "expansion", "development"]
+    )
+    temp_db.execute(
+        "UPDATE task_stage_states SET state = 'done' WHERE task_id = ? AND stage_name = 'planning'",
+        (parent.id,),
+    )
+    temp_db.execute(
+        "UPDATE task_stage_states SET state = 'needs_review' WHERE task_id = ? AND stage_name = 'expansion'",
+        (parent.id,),
+    )
+    ancestor_blocked = manager.create_task(
+        project_id=project_id,
+        title="Ancestor blocked",
+        category="code",
+        parent_task_id=parent.id,
+    )
+    manager.initialize_task_manifest(ancestor_blocked.id, stage_names=["development"])
+    manager.update_task(ancestor_blocked.id, allow_automation=True, isolation="none")
     no_stage = manager.create_task(project_id=project_id, title="No stage")
     manager.update_task(no_stage.id, allow_automation=True)
     no_match = manager.create_task(project_id=project_id, title="No match", category="code")
@@ -209,6 +230,7 @@ def test_explain_dispatch_reports_block_reasons_and_would_dispatch(temp_db) -> N
         claimed.id: "claimed",
         mutexed.id: "active_mutex",
         blocked.id: "dependency_block",
+        ancestor_blocked.id: "ancestor_stage_pending",
         no_stage.id: "no_current_stage",
         no_match.id: "no_matching_rule",
     }
@@ -218,3 +240,8 @@ def test_explain_dispatch_reports_block_reasons_and_would_dispatch(temp_db) -> N
     explanation = explain_dispatch(ready.id, db=temp_db, project_id=project_id)
     assert explanation["eligible"] is True
     assert explanation["proposed_action"]["action"] == "start_stage"
+
+    blocked_explanation = explain_dispatch(ancestor_blocked.id, db=temp_db, project_id=project_id)
+    assert blocked_explanation["ancestor_gate"]["ancestor_ref"] == f"#{parent.seq_num}"
+    assert blocked_explanation["ancestor_gate"]["stage_name"] == "expansion"
+    assert blocked_explanation["ancestor_gate"]["stage_state"] == "needs_review"

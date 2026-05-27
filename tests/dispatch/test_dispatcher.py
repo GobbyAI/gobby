@@ -65,6 +65,37 @@ def _task(temp_db, sample_project, title: str = "Dispatch task", **fields):
     return get_task(temp_db, task.id)
 
 
+def _parent_with_stage_order(
+    temp_db,
+    sample_project,
+    *,
+    expansion_state: str,
+    development_state: str = "ready",
+):
+    manager = LocalTaskManager(temp_db)
+    parent = manager.create_task(
+        project_id=sample_project["id"],
+        title=f"Parent {expansion_state}",
+        task_type="epic",
+    )
+    update_task(
+        temp_db,
+        parent.id,
+        allow_automation=False,
+        task_type="epic",
+        isolation="none",
+    )
+    initialize_manifest(
+        temp_db,
+        parent.id,
+        [spec("planning", 0), spec("expansion", 1), spec("development", 2)],
+    )
+    set_stage_state(temp_db, parent.id, "planning", "done")
+    set_stage_state(temp_db, parent.id, "expansion", expansion_state)
+    set_stage_state(temp_db, parent.id, "development", development_state)
+    return get_task(temp_db, parent.id)
+
+
 def _mutex_storage(temp_db) -> TaskDispatchMutexManager:
     storage = TaskDispatchMutexManager(temp_db)
     storage.ensure_table()
@@ -206,6 +237,68 @@ def test_candidate_filter_excludes_claimed_leased_blocked_terminal(temp_db, samp
 
     assert [candidate.id for candidate in candidates] == [ready.id]
     assert not _crud.is_blocked_by_deps(candidates[0])
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_blocks_child_development_while_parent_expansion_needs_review(
+    temp_db,
+    sample_project,
+) -> None:
+    from gobby.dispatch import dispatcher
+    from gobby.storage.tasks import _crud
+
+    parent = _parent_with_stage_order(
+        temp_db,
+        sample_project,
+        expansion_state="needs_review",
+    )
+    child = _task(
+        temp_db,
+        sample_project,
+        title="Blocked child",
+        parent_task_id=parent.id,
+        stage_name="development",
+        stage_state="ready",
+    )
+
+    candidates = _crud.list_automation_candidates(temp_db, project_id=sample_project["id"])
+    result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+
+    assert child.id not in {candidate.id for candidate in candidates}
+    assert result.executed == 0
+    assert LocalTaskManager(temp_db).stage_states.get(child.id, "development").state == "ready"
+
+
+@pytest.mark.parametrize("parent_development_state", ["ready", "in_progress"])
+@pytest.mark.asyncio
+async def test_heartbeat_allows_child_development_after_parent_expansion_done(
+    parent_development_state: str,
+    temp_db,
+    sample_project,
+) -> None:
+    from gobby.dispatch import dispatcher
+
+    parent = _parent_with_stage_order(
+        temp_db,
+        sample_project,
+        expansion_state="done",
+        development_state=parent_development_state,
+    )
+    child = _task(
+        temp_db,
+        sample_project,
+        title=f"Allowed child {parent_development_state}",
+        parent_task_id=parent.id,
+        stage_name="development",
+        stage_state="ready",
+    )
+
+    result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+
+    assert result.executed == 1
+    assert LocalTaskManager(temp_db).stage_states.get(child.id, "development").state == (
+        "in_progress"
+    )
 
 
 def test_count_active_agents_scopes_by_parent_session_project(temp_db, sample_project) -> None:
