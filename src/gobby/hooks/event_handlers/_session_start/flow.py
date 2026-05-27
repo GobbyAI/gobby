@@ -9,6 +9,7 @@ from gobby.hooks.events import HookEvent, HookResponse
 from gobby.hooks.project_context import resolve_hook_project_context
 
 from .agents import _seed_memory_recall_helper_vars
+from .context import classify_session_start_context, mark_startup_context_injected
 from .handoff import find_parent_session, populate_handoff_session_variables
 from .types import AgentActivationResult
 
@@ -244,6 +245,18 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
         except Exception as e:
             handler.logger.warning(f"Failed to seed memory-recall-helper vars: {e}")
 
+    session_obj = None
+    if session_id and handler._session_manager:
+        session_obj = handler._session_manager.get(session_id)
+
+    context_decision = classify_session_start_context(
+        handler,
+        session_id=session_id,
+        session=session_obj,
+        session_source=session_source,
+        is_existing_session=False,
+    )
+
     _t_activate = time.monotonic()
     agent_result: AgentActivationResult | None = None
     if session_id and not input_data.get("skip_default_agent_activation"):
@@ -283,13 +296,17 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
 
     _t_handoff = time.monotonic()
     additional_context: list[str] = []
-    if agent_result and agent_result.context:
+    if context_decision.mode == "full" and agent_result and agent_result.context:
         additional_context.append(agent_result.context)
 
     populate_handoff_session_variables(handler, session_id, parent_session_id, session_source)
 
     if session_id and project_id and not event.task_id:
-        claimed_ctx = handler._build_claimed_task_context(session_id, project_id)
+        claimed_ctx = handler._build_claimed_task_context(
+            session_id,
+            project_id,
+            compact=context_decision.mode == "live",
+        )
         if claimed_ctx:
             additional_context.append(claimed_ctx)
 
@@ -307,10 +324,6 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
         task_title = event.metadata.get("_task_title", "Unknown Task")
         additional_context.append("\n## Active Task Context\n")
         additional_context.append(f"You are working on task: {task_title} ({event.task_id})")
-
-    session_obj = None
-    if session_id and handler._session_manager:
-        session_obj = handler._session_manager.get(session_id)
 
     if session_obj:
         _consume_pending_compact_self_continuation(
@@ -338,7 +351,7 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
         f"total={_ms(_t0, _t_end)}ms",
     )
 
-    return cast(
+    response = cast(
         HookResponse,
         handler._compose_session_response(
             session=session_obj,
@@ -355,6 +368,9 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
             claimed_tasks_info=claimed_tasks_info,
         ),
     )
+    if context_decision.mode == "full":
+        mark_startup_context_injected(handler, session_id)
+    return response
 
 
 def handle_pre_created_session(
@@ -441,6 +457,15 @@ def handle_pre_created_session(
 
     agent_result: AgentActivationResult | None = None
     input_data = event.data if event else {}
+    session_source = input_data.get("source", "startup")
+    context_decision = classify_session_start_context(
+        handler,
+        session_id=session_id,
+        session=session_obj,
+        session_source=session_source,
+        is_existing_session=True,
+    )
+
     try:
         agent_override = input_data.get("agent_name_override")
         agent_result = handler._activate_default_agent(
@@ -468,11 +493,15 @@ def handle_pre_created_session(
             handler.logger.warning(f"Failed to register with message processor: {e}")
 
     additional_context: list[str] = []
-    if agent_result and agent_result.context:
+    if context_decision.mode == "full" and agent_result and agent_result.context:
         additional_context.append(agent_result.context)
 
     if session_id and session_obj.project_id and not event.task_id:
-        claimed_ctx = handler._build_claimed_task_context(session_id, session_obj.project_id)
+        claimed_ctx = handler._build_claimed_task_context(
+            session_id,
+            session_obj.project_id,
+            compact=context_decision.mode == "live",
+        )
         if claimed_ctx:
             additional_context.append(claimed_ctx)
 
@@ -484,7 +513,7 @@ def handle_pre_created_session(
         target_session=session_obj,
     )
 
-    return cast(
+    response = cast(
         HookResponse,
         handler._compose_session_response(
             session=session_obj,
@@ -498,6 +527,10 @@ def handle_pre_created_session(
             is_pre_created=True,
             terminal_context=session_obj.terminal_context,
             agent_info=agent_result,
+            session_source=session_source,
             claimed_tasks_info=claimed_tasks_info,
         ),
     )
+    if context_decision.mode == "full":
+        mark_startup_context_injected(handler, session_id)
+    return response

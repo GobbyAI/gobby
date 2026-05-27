@@ -171,11 +171,13 @@ class SessionStartMixin(EventHandlersBase):
         self,
         session_id: str,
         project_id: str | None,
+        *,
+        compact: bool = False,
     ) -> str | None:
         """Delegate to module-level build_claimed_task_context."""
         from gobby.hooks.event_handlers._session_responses import build_claimed_task_context
 
-        return build_claimed_task_context(self, session_id, project_id)
+        return build_claimed_task_context(self, session_id, project_id, compact=compact)
 
     def _compose_session_response(
         self,

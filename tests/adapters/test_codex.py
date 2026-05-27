@@ -2422,6 +2422,25 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
         assert hso["hookEventName"] == "SessionStart"
         assert hso["additionalContext"].count("Session banner") == 1
 
+    def test_session_start_live_context_uses_additional_context(self) -> None:
+        """Live SessionStart context reaches Codex without startup persona replay."""
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+
+        adapter = CodexHooksAdapter()
+        response = HookResponse(
+            decision="allow",
+            system_message="Gobby Session ID: #6273 (sess-live-123)",
+            context="Claimed task refs: #15237 [in_progress]",
+        )
+        result = adapter.translate_from_hook_response(response, hook_type="SessionStart")
+
+        assert "systemMessage" not in result
+        ctx = result["hookSpecificOutput"]["additionalContext"]
+        assert "Gobby Session ID: #6273 (sess-live-123)" in ctx
+        assert "Claimed task refs: #15237 [in_progress]" in ctx
+        assert "## Role" not in ctx
+        assert "## Claimed Tasks (Persisted)" not in ctx
+
     def test_pre_tool_use_combines_system_message_and_context(self) -> None:
         """PreToolUse combines system_message and context_parts in systemMessage."""
         from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter

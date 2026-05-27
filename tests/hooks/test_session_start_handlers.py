@@ -7,11 +7,26 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gobby.hooks.event_handlers import EventHandlers
+from gobby.hooks.event_handlers._session_start import AgentActivationResult
 from gobby.hooks.events import HookEventType
 
 from ._event_handler_helpers import make_event
 
 pytestmark = pytest.mark.unit
+
+
+def _agent_activation_context() -> AgentActivationResult:
+    return AgentActivationResult(
+        context="## Role\nSenior engineer\n\n## Personality\nDirect and concise",
+        agent_name="default",
+        description=None,
+        role="Senior engineer",
+        goal=None,
+        rules_count=0,
+        skills_count=0,
+        variables_count=0,
+        injected_skill_names=[],
+    )
 
 
 class TestSessionHandlers:
@@ -310,6 +325,180 @@ class TestSessionStartPreCreatedSession:
 
         # Should still allow despite error
         assert response.decision == "allow"
+
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_live_pre_created_session_omits_startup_persona(
+        self,
+        mock_svm_cls: MagicMock,
+        mock_dependencies: dict,
+    ) -> None:
+        """Resumed sessions with prior context get live context, not startup persona."""
+        mock_session = MagicMock()
+        mock_session.id = "sess-pre-123"
+        mock_session.project_id = "proj-123"
+        mock_session.parent_session_id = None
+        mock_session.agent_depth = 0
+        mock_session.agent_run_id = None
+        mock_session.workflow_name = None
+        mock_session.terminal_context = None
+        mock_session.context_injected = True
+        mock_session.message_count = 4
+        mock_session.turn_count = 2
+        mock_session.seq_num = 6273
+
+        task = MagicMock()
+        task.seq_num = 15237
+        task.status = "in_progress"
+        task.title = "Fix prompt-boundary replays"
+        task.claimed_by_session_id = "sess-pre-123"
+
+        mock_svm = MagicMock()
+        mock_svm.get_variables.return_value = {
+            "_startup_context_injected": True,
+            "task_claimed": True,
+            "claimed_tasks": {"task-uuid": "#15237"},
+        }
+        mock_svm_cls.return_value = mock_svm
+        mock_dependencies["session_storage"].get.return_value = mock_session
+        mock_dependencies["session_manager"].update.return_value = mock_session
+        mock_dependencies["task_manager"].get_task.return_value = task
+
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.SESSION_START,
+            session_id="sess-pre-123",
+            data={"source": "resume", "transcript_path": "/path/to/transcript.jsonl"},
+        )
+
+        with (
+            patch.object(
+                handlers, "_activate_default_agent", return_value=_agent_activation_context()
+            ),
+            patch(
+                "gobby.hooks.event_handlers._session_start.consume_and_schedule_compact_self_continuation",
+                return_value=False,
+            ),
+        ):
+            response = handlers.handle_session_start(event)
+
+        assert response.system_message == "\nGobby Session ID: #6273 (sess-pre-123)"
+        assert response.context is not None
+        assert "Claimed task refs: #15237" in response.context
+        assert "## Role" not in response.context
+        assert "## Personality" not in response.context
+        assert "## Claimed Tasks (Persisted)" not in response.context
+        mock_dependencies["session_manager"].update_terminal_pickup_metadata.assert_not_called()
+
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_first_pre_created_pickup_gets_full_startup_persona(
+        self,
+        mock_svm_cls: MagicMock,
+        mock_dependencies: dict,
+    ) -> None:
+        """Pre-created sessions without prior context evidence get full startup context."""
+        mock_session = MagicMock()
+        mock_session.id = "sess-first-123"
+        mock_session.project_id = "proj-123"
+        mock_session.parent_session_id = None
+        mock_session.agent_depth = 0
+        mock_session.agent_run_id = None
+        mock_session.workflow_name = None
+        mock_session.terminal_context = None
+        mock_session.context_injected = False
+        mock_session.message_count = 0
+        mock_session.turn_count = 0
+        mock_session.seq_num = 6274
+
+        mock_svm = MagicMock()
+        mock_svm.get_variables.return_value = {}
+        mock_svm_cls.return_value = mock_svm
+        mock_dependencies["session_storage"].get.return_value = mock_session
+        mock_dependencies["session_manager"].update.return_value = mock_session
+
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.SESSION_START,
+            session_id="sess-first-123",
+            data={"source": "resume", "transcript_path": "/path/to/transcript.jsonl"},
+        )
+
+        with (
+            patch.object(
+                handlers, "_activate_default_agent", return_value=_agent_activation_context()
+            ),
+            patch(
+                "gobby.hooks.event_handlers._session_start.consume_and_schedule_compact_self_continuation",
+                return_value=False,
+            ),
+        ):
+            response = handlers.handle_session_start(event)
+
+        assert response.context is not None
+        assert "## Role" in response.context
+        assert "## Personality" in response.context
+        mock_dependencies[
+            "session_manager"
+        ].update_terminal_pickup_metadata.assert_called_once_with(
+            "sess-first-123",
+            context_injected=True,
+        )
+
+    @pytest.mark.parametrize(
+        ("source", "pending_reset"),
+        [("clear", False), ("compact", False), ("resume", True)],
+    )
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_context_loss_sources_get_full_startup_context(
+        self,
+        mock_svm_cls: MagicMock,
+        source: str,
+        pending_reset: bool,
+        mock_dependencies: dict,
+    ) -> None:
+        """Explicit context-loss starts replay full startup context."""
+        mock_session = MagicMock()
+        mock_session.id = f"sess-{source}-123"
+        mock_session.project_id = "proj-123"
+        mock_session.parent_session_id = None
+        mock_session.agent_depth = 0
+        mock_session.agent_run_id = None
+        mock_session.workflow_name = None
+        mock_session.terminal_context = None
+        mock_session.context_injected = True
+        mock_session.message_count = 8
+        mock_session.turn_count = 3
+        mock_session.seq_num = 7000
+
+        mock_svm = MagicMock()
+        mock_svm.get_variables.return_value = {
+            "_startup_context_injected": True,
+            "pending_context_reset": pending_reset,
+        }
+        mock_svm_cls.return_value = mock_svm
+        mock_dependencies["session_storage"].get.return_value = mock_session
+        mock_dependencies["session_manager"].update.return_value = mock_session
+
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.SESSION_START,
+            session_id=mock_session.id,
+            data={"source": source, "transcript_path": "/path/to/transcript.jsonl"},
+        )
+
+        with (
+            patch.object(
+                handlers, "_activate_default_agent", return_value=_agent_activation_context()
+            ),
+            patch(
+                "gobby.hooks.event_handlers._session_start.consume_and_schedule_compact_self_continuation",
+                return_value=False,
+            ),
+        ):
+            response = handlers.handle_session_start(event)
+
+        assert response.context is not None
+        assert "## Role" in response.context
+        assert "## Personality" in response.context
 
 
 class TestSessionStartNewSession:

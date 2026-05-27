@@ -459,6 +459,42 @@ def test_variables_seeded_when_activation_skipped_at_flow_level(
     assert variables["parent_turn_seq"] == 0
 
 
+def test_full_session_start_marks_startup_context_injected(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    """Full startup context records durable evidence for later live resumes."""
+    project_id = _make_project(temp_db, tmp_path)
+    handlers = _make_real_event_handlers(temp_db, project_id)
+    event = _make_hook_event(
+        {
+            "cwd": str(tmp_path),
+            "project_id": project_id,
+            "skip_default_agent_activation": True,
+        }
+    )
+
+    with (
+        patch.object(handlers, "_derive_transcript_path", return_value=None),
+        patch.object(handlers, "_setup_code_index"),
+        patch.object(handlers, "_activate_default_agent", return_value=None) as activate,
+        patch.object(
+            handlers,
+            "_compose_session_response",
+            return_value=HookResponse(decision="allow"),
+        ),
+    ):
+        handlers.handle_session_start(event)
+
+    activate.assert_not_called()
+    session_id = event.metadata["_platform_session_id"]
+    variables = SessionVariableManager(temp_db).get_variables(session_id)
+    session = SessionManager(temp_db).get(session_id)
+    assert variables["_startup_context_injected"] is True
+    assert session is not None
+    assert session.context_injected is True
+
+
 def test_variables_seeded_in_pre_created_session_flow(
     temp_db: HubDatabase,
     tmp_path: Path,

@@ -102,6 +102,9 @@ variables:
   _agent_context_injected:
     value: false
     description: "True after agent identity and instructions have been sent on first before_agent"
+  _startup_context_injected:
+    value: false
+    description: "True after full SessionStart startup context has been sent"
   _agent_identity_reinject:
     value: false
     description: "True when the next before_agent should re-inject role/goal/personality after a persona switch"

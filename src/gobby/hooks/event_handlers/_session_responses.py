@@ -122,6 +122,8 @@ def build_claimed_task_context(
     handler: EventHandlersBase,
     session_id: str,
     project_id: str | None,
+    *,
+    compact: bool = False,
 ) -> str | None:
     """Build additional_context string for claimed tasks.
 
@@ -131,6 +133,10 @@ def build_claimed_task_context(
     info = get_claimed_task_info(handler, session_id, project_id)
     if not info:
         return None
+
+    if compact:
+        refs = ", ".join(f"{ref} [{status}]" for ref, status, _title in info)
+        return f"Claimed task refs: {refs}"
 
     lines = ["\n## Claimed Tasks (Persisted)\n"]
     lines.append(
