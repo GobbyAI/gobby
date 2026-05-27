@@ -7,3 +7,6 @@
 pub mod bootstrap;
 pub mod daemon_url;
 pub mod project;
+
+#[cfg(feature = "search")]
+pub mod search;
