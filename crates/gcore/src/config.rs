@@ -122,6 +122,9 @@ impl ConfigSource for EnvOnlySource {
     }
 
     fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
+        if value.contains("$secret:") {
+            anyhow::bail!("secret resolution requires a datastore-backed config source");
+        }
         resolve_env_pattern(value)?.ok_or_else(|| anyhow::anyhow!("unresolved pattern: {value}"))
     }
 }
@@ -393,6 +396,18 @@ mod tests {
                 .iter()
                 .any(|value| value == "$secret:FALKOR_PASS")
         );
+    }
+
+    #[test]
+    fn env_only_source_rejects_secret_patterns() {
+        let _env = EnvGuard::new();
+        let mut source = EnvOnlySource;
+
+        let error = source
+            .resolve_value("$secret:FALKOR_PASS")
+            .expect_err("secret resolution should require a datastore-backed source");
+
+        assert!(error.to_string().contains("secret resolution"));
     }
 
     #[test]
