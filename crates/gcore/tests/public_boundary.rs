@@ -32,7 +32,7 @@ fn cargo_features_define_public_boundary() {
         r#"postgres = { version = "0.19", optional = true }"#,
         r#"postgres-types = { version = "0.2", optional = true }"#,
         r#"falkordb = { version = "0.2", optional = true }"#,
-        r#"reqwest = { version = "0.12", features = ["blocking", "json"], optional = true }"#,
+        r#"reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"], optional = true }"#,
         r#"ignore = { version = "0.4", optional = true }"#,
         r#"sha2 = { version = "0.10", optional = true }"#,
         r#"urlencoding = { version = "2", optional = true }"#,
