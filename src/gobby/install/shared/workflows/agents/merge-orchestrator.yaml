@@ -312,6 +312,7 @@ steps:
       - "gobby-merge:analyze_merge_landscape"
       - "gobby-merge:predict_conflicts"
       - "gobby-merge:inspect_merge_state"
+      - "gobby-merge:probe_branch_protection"
       - "gobby-worktrees:list_worktrees"
       - "gobby-worktrees:get_worktree"
       - "gobby-tasks:get_task"

@@ -391,6 +391,7 @@ def test_merge_orchestrator_plan_can_refresh_read_only_survey_state() -> None:
     assert "gobby-merge:inspect_merge_state" in plan_tools
     assert "gobby-merge:analyze_merge_landscape" in plan_tools
     assert "gobby-merge:predict_conflicts" in plan_tools
+    assert "gobby-merge:probe_branch_protection" in plan_tools
     assert "gobby-tasks-ops:get_artifacts" in plan_tools
 
 
