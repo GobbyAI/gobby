@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.protocol import HubDatabase, Transaction
 
 _ARTIFACT_FIELDS = frozenset(
     {
@@ -168,6 +168,51 @@ def _enforce_isolation_base(
         raise MissingIsolationBaseError()
 
 
+def _get_artifacts_in_transaction(conn: Transaction, task_id: str) -> TaskArtifacts:
+    row = conn.execute("SELECT * FROM task_artifacts WHERE task_id = ?", (task_id,)).fetchone()
+    if row is None:
+        return TaskArtifacts(task_id=task_id)
+    return TaskArtifacts.from_row(row)
+
+
+def _set_artifacts_in_transaction(
+    conn: Transaction,
+    task_id: str,
+    fields: dict[str, str | int | None],
+) -> TaskArtifacts:
+    _validate_field_names(set(fields))
+    current = asdict(_get_artifacts_in_transaction(conn, task_id))
+    next_values = {
+        field: current[field] for field in _ARTIFACT_FIELDS if field != "expansion_attempts"
+    }
+    next_values["expansion_attempts"] = int(current["expansion_attempts"] or 0)
+    next_values.update(fields)
+    if next_values["expansion_attempts"] is None:
+        next_values["expansion_attempts"] = 0
+    next_values["expansion_attempts"] = int(next_values["expansion_attempts"])
+    _validate_constraints(next_values)
+    _enforce_isolation_base(current, fields, next_values)
+
+    columns = sorted(_ARTIFACT_FIELDS)
+    placeholders = ", ".join("?" for _ in columns)
+    update_clause = ", ".join(f"{column} = excluded.{column}" for column in columns)
+    params = [task_id, *(next_values[column] for column in columns)]
+
+    conn.execute(
+        f"""
+        INSERT INTO task_artifacts (
+            task_id, {", ".join(columns)}, updated_at
+        )
+        VALUES (?, {placeholders}, CURRENT_TIMESTAMP)
+        ON CONFLICT(task_id) DO UPDATE SET
+            {update_clause},
+            updated_at = CURRENT_TIMESTAMP
+        """,  # nosec B608 # columns are validated static allowlist values.
+        tuple(params),
+    )
+    return _get_artifacts_in_transaction(conn, task_id)
+
+
 class TaskArtifactManager:
     """CRUD wrapper for sparse task artifact pointers."""
 
@@ -184,38 +229,8 @@ class TaskArtifactManager:
         return self.set_artifacts_atomic(task_id, **{field: value})
 
     def set_artifacts_atomic(self, task_id: str, **fields: str | int | None) -> TaskArtifacts:
-        _validate_field_names(set(fields))
-        current = asdict(self.get_artifacts(task_id))
-        next_values = {
-            field: current[field] for field in _ARTIFACT_FIELDS if field != "expansion_attempts"
-        }
-        next_values["expansion_attempts"] = int(current["expansion_attempts"] or 0)
-        next_values.update(fields)
-        if next_values["expansion_attempts"] is None:
-            next_values["expansion_attempts"] = 0
-        next_values["expansion_attempts"] = int(next_values["expansion_attempts"])
-        _validate_constraints(next_values)
-        _enforce_isolation_base(current, fields, next_values)
-
-        columns = sorted(_ARTIFACT_FIELDS)
-        placeholders = ", ".join("?" for _ in columns)
-        update_clause = ", ".join(f"{column} = excluded.{column}" for column in columns)
-        params = [task_id, *(next_values[column] for column in columns)]
-
         with self.db.transaction() as conn:
-            conn.execute(
-                f"""
-                INSERT INTO task_artifacts (
-                    task_id, {", ".join(columns)}, updated_at
-                )
-                VALUES (?, {placeholders}, CURRENT_TIMESTAMP)
-                ON CONFLICT(task_id) DO UPDATE SET
-                    {update_clause},
-                    updated_at = CURRENT_TIMESTAMP
-                """,  # nosec B608 # columns are validated static allowlist values.
-                tuple(params),
-            )
-        return self.get_artifacts(task_id)
+            return _set_artifacts_in_transaction(conn, task_id, fields)
 
     def clear_artifact(self, task_id: str, field: str) -> TaskArtifacts:
         _validate_field_names({field})
@@ -245,8 +260,8 @@ class TaskArtifactManager:
 
     def clear_worktree_references(self, worktree_id: str) -> int:
         """Clear task artifact pointers that reference a deleted worktree id."""
-        with self.db.transaction():
-            rows = self.db.fetchall(
+        with self.db.transaction() as conn:
+            rows = conn.execute(
                 """
                 SELECT task_id, worktree_id, integration_workspace_id
                   FROM task_artifacts
@@ -254,7 +269,7 @@ class TaskArtifactManager:
                  ORDER BY task_id
                 """,
                 (worktree_id, worktree_id),
-            )
+            ).fetchall()
             cleared = 0
             for row in rows:
                 fields: dict[str, str | int | None] = {}
@@ -274,7 +289,7 @@ class TaskArtifactManager:
                         }
                     )
                 if fields:
-                    self.set_artifacts_atomic(row["task_id"], **fields)
+                    _set_artifacts_in_transaction(conn, row["task_id"], fields)
                     cleared += 1
             return cleared
 

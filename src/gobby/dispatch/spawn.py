@@ -600,9 +600,9 @@ def _effective_spawn_isolation(
     action: SpawnAgentAction,
     agent_body: object | None,
 ) -> SpawnIsolation | None:
-    stage_name = _spawn_stage_name(action)
     if action.agent_slug in _MAIN_CONTEXT_AGENT_SLUGS:
         return "none"
+    stage_name = _spawn_stage_name(action)
     if stage_name in _PRE_DEVELOPMENT_ISOLATION_STAGES:
         return "none"
     if stage_name in _DEVELOPMENT_FORWARD_ISOLATION_STAGES:

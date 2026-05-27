@@ -25,7 +25,7 @@ jobs:
       requires_full_ci: ${{ steps.classify.outputs.requires_full_ci }}
       schemas_changed: ${{ steps.classify.outputs.schemas_changed }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.1.1, audited for persist-credentials=false
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -508,7 +508,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check Out Repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
 

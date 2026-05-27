@@ -468,6 +468,68 @@ def test_post_api_build_restart_forwards_destructive_flags() -> None:
     ] == [("planning", 99, 99)]
 
 
+def test_post_api_build_restart_explicit_default_options_do_not_create_opts() -> None:
+    from gobby.build.controls import BuildTargetControlResult, BuildTaskSummary
+
+    target_result = BuildTargetControlResult(
+        action="restart",
+        project_id="project-1",
+        root_task_id="task-1",
+        affected_tasks=[
+            BuildTaskSummary("task-1", "#1", "Task", "task"),
+        ],
+    )
+
+    with patch(
+        "gobby.servers.routes.build.build_restart_target",
+        new=AsyncMock(return_value=target_result),
+    ) as restart:
+        response = _client().post(
+            "/api/build/restart",
+            json={
+                "input_ref": "#1",
+                "skip_stages": [],
+                "clone": False,
+                "no_merge": False,
+                "stage": [],
+                "max_retries": None,
+                "planning_seed_state": "drafted",
+                "completed_plan_review_rounds": 0,
+            },
+        )
+
+    assert response.status_code == 200
+    assert restart.call_args.kwargs["opts"] is None
+
+
+def test_post_api_build_restart_empty_pr_creates_opts() -> None:
+    from gobby.build.controls import BuildTargetControlResult, BuildTaskSummary
+
+    target_result = BuildTargetControlResult(
+        action="restart",
+        project_id="project-1",
+        root_task_id="task-1",
+        affected_tasks=[
+            BuildTaskSummary("task-1", "#1", "Task", "task"),
+        ],
+    )
+
+    with patch(
+        "gobby.servers.routes.build.build_restart_target",
+        new=AsyncMock(return_value=target_result),
+    ) as restart:
+        response = _client().post(
+            "/api/build/restart",
+            json={
+                "input_ref": "#1",
+                "pr": "",
+            },
+        )
+
+    assert response.status_code == 200
+    assert restart.call_args.kwargs["opts"].pr == ""
+
+
 def test_post_api_build_resolves_relative_hidden_plan_from_request_cwd(
     temp_db,
     tmp_path: Path,

@@ -93,6 +93,39 @@ class BuildControlRequest(BaseModel):
     coordinator: str | None = None
 
 
+_RESTART_OPTION_FIELDS = frozenset(
+    {
+        "skip_stages",
+        "workspace_backend",
+        "isolation",
+        "clone",
+        "no_merge",
+        "pr",
+        "stage",
+        "target_branch",
+        "agent",
+        "max_retries",
+        "planning_seed_state",
+        "completed_plan_review_rounds",
+        "coordinator",
+    }
+)
+
+
+def _build_control_default(field_name: str) -> Any:
+    field = BuildControlRequest.model_fields[field_name]
+    return field.get_default(call_default_factory=True)
+
+
+def _restart_option_field_was_supplied(
+    request_data: BuildControlRequest,
+    field_name: str,
+) -> bool:
+    return field_name in request_data.model_fields_set and getattr(
+        request_data, field_name
+    ) != _build_control_default(field_name)
+
+
 def _build_options(request_data: BuildRequest) -> BuildOptions:
     clones_dir = Path(request_data.clones_dir).expanduser() if request_data.clones_dir else None
     cwd = Path(request_data.cwd).expanduser() if request_data.cwd else None
@@ -155,23 +188,9 @@ def _restart_options(request_data: BuildControlRequest) -> BuildOptions:
 
 
 def _restart_options_were_supplied(request_data: BuildControlRequest) -> bool:
-    return bool(
-        request_data.model_fields_set
-        & {
-            "skip_stages",
-            "workspace_backend",
-            "isolation",
-            "clone",
-            "no_merge",
-            "pr",
-            "stage",
-            "target_branch",
-            "agent",
-            "max_retries",
-            "planning_seed_state",
-            "completed_plan_review_rounds",
-            "coordinator",
-        }
+    return any(
+        _restart_option_field_was_supplied(request_data, field_name)
+        for field_name in _RESTART_OPTION_FIELDS
     )
 
 

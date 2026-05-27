@@ -196,11 +196,11 @@ def _restart_options_payload(opts: BuildOptions) -> dict[str, object]:
         "planning_seed_state": opts.planning_seed_state,
         "completed_plan_review_rounds": opts.completed_plan_review_rounds,
     }
-    if opts.pr:
+    if opts.pr is not None:
         payload["pr"] = opts.pr
-    if opts.target_branch:
+    if opts.target_branch is not None:
         payload["target_branch"] = opts.target_branch
-    if opts.assigned_agent:
+    if opts.assigned_agent is not None:
         payload["agent"] = opts.assigned_agent
     if opts.max_retries is not None:
         payload["max_retries"] = opts.max_retries
@@ -538,7 +538,7 @@ def _restart_options_were_supplied(opts: BuildOptions) -> bool:
         opts.skip_stages
         or opts.isolation_explicit
         or opts.no_merge
-        or opts.pr
+        or opts.pr is not None
         or opts.stage_caps
         or opts.target_branch is not None
         or opts.assigned_agent is not None

@@ -63,12 +63,7 @@ def _call_worktree_tool(
 
 def _delete_tool_succeeded(result: dict[str, Any]) -> bool:
     """Return whether a delete_worktree daemon response represents success."""
-    if result.get("success") is True:
-        return True
-    if result == {}:
-        return True
-    inner_result = result.get("result")
-    return inner_result == {} and "error" not in result
+    return result.get("success") is True
 
 
 @click.group()

@@ -280,7 +280,7 @@ class TestDeleteWorktreeErrors:
     @patch("gobby.cli.worktrees.resolve_worktree_id", return_value="wt-123")
     @patch("gobby.cli.worktrees.get_worktree_manager")
     @patch("httpx.post")
-    def test_delete_empty_result_payload_is_success(
+    def test_delete_empty_result_payload_is_failure(
         self,
         mock_post: MagicMock,
         mock_mgr: MagicMock,
@@ -294,7 +294,16 @@ class TestDeleteWorktreeErrors:
         mock_post.return_value = resp
         result = runner.invoke(worktrees, ["delete", "wt-123", "--yes"])
         assert result.exit_code == 0
-        assert "Deleted worktree: wt-123" in result.output
+        assert "Failed to delete worktree" in result.output
+
+    @pytest.mark.parametrize("payload", [{}, {"result": {}}])
+    def test_delete_helper_rejects_legacy_empty_success_payloads(
+        self,
+        payload: dict[str, object],
+    ) -> None:
+        from gobby.cli.worktrees import _delete_tool_succeeded
+
+        assert _delete_tool_succeeded(payload) is False
 
     @patch("gobby.cli.worktrees.resolve_worktree_id", side_effect=click.ClickException("not found"))
     @patch("gobby.cli.worktrees.get_worktree_manager")

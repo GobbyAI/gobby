@@ -721,3 +721,22 @@ def test_build_restart_cli_forwards_build_shaping_options() -> None:
         for item in local_opts.stage_caps
     ] == [("planning", 99, 99)]
     open_db.return_value.close.assert_called_once_with()
+
+
+def test_build_restart_empty_pr_counts_as_supplied() -> None:
+    from gobby.build.options import BuildOptions
+    from gobby.cli.build import _restart_options_payload, _restart_options_were_supplied
+
+    opts = BuildOptions(isolation_explicit=False, pr="")
+
+    assert _restart_options_were_supplied(opts) is True
+    assert _restart_options_payload(opts)["pr"] == ""
+
+
+def test_build_restart_empty_stage_caps_do_not_count_as_supplied() -> None:
+    from gobby.build.options import BuildOptions
+    from gobby.cli.build import _restart_options_were_supplied
+
+    opts = BuildOptions(isolation_explicit=False, stage_caps=[])
+
+    assert _restart_options_were_supplied(opts) is False

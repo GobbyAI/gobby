@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
+import gobby.storage.tasks._artifacts as artifact_module
 from gobby.storage.tasks import (
     LocalTaskManager,
     TaskArtifactConstraintError,
@@ -141,17 +142,25 @@ def test_clear_worktree_references_rolls_back_partial_failure(temp_db, sample_pr
             base_commit_sha="abc123",
         )
 
-    original_set_artifacts_atomic = manager.set_artifacts_atomic
+    original_set_artifacts_atomic = artifact_module._set_artifacts_in_transaction
     calls: list[str] = []
 
-    def fail_after_first_update(task_id: str, **fields: str | int | None):
+    def fail_after_first_update(
+        conn,
+        task_id: str,
+        fields: dict[str, str | int | None],
+    ):
         calls.append(task_id)
         if len(calls) == 2:
             raise RuntimeError("injected failure")
-        return original_set_artifacts_atomic(task_id, **fields)
+        return original_set_artifacts_atomic(conn, task_id, fields)
 
     with (
-        patch.object(manager, "set_artifacts_atomic", side_effect=fail_after_first_update),
+        patch.object(
+            artifact_module,
+            "_set_artifacts_in_transaction",
+            side_effect=fail_after_first_update,
+        ),
         pytest.raises(RuntimeError, match="injected failure"),
     ):
         manager.clear_worktree_references("wt-rollback")
