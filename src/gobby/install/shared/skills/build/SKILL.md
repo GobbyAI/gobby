@@ -44,7 +44,7 @@ Collect only options the user explicitly wants to change:
 
 1. `--quick` for exactly one lifecycle step.
 2. `--skip-stage <stage[,stage...]>`, only when starting a new lifecycle.
-3. `--stage <stage>[:key=value[,key=value...]]` for stage selection or caps.
+3. `--stage <stage>[:key=value[,key=value...]]` for stage cap/settings overrides.
 4. `--clone` to use clone workspaces instead of the default worktree backend.
 5. `--no-merge` to skip final promotion for the requested build.
 6. `--pr <number-or-url>`, optional.

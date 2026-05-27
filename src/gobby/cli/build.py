@@ -560,7 +560,7 @@ def _restart_options_were_supplied(opts: BuildOptions) -> bool:
     "--stage",
     "stage_cap",
     multiple=True,
-    help="Stage selector/cap override, e.g. development:max_review_rounds=4.",
+    help="Stage cap/settings override, e.g. development:max_review_rounds=4.",
 )
 @click.option(
     "--isolation",

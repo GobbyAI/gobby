@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -49,3 +50,28 @@ def test_repair_lifecycle_cli_dry_runs_by_default(hub_db) -> None:
     assert [row.stage_name for row in manager.stage_states.list_for_task(task.id)] == [
         "development"
     ]
+
+
+def test_repair_lifecycle_cli_json_includes_diagnostics(hub_db) -> None:
+    from gobby.storage.projects import LocalProjectManager
+
+    project = LocalProjectManager(hub_db).create(
+        name="test-project",
+        repo_path="/tmp/test-project",
+        github_url="https://github.com/test/test-project",
+    )
+    manager = LocalTaskManager(hub_db)
+    task = manager.create_task(
+        project_id=project.id,
+        title="CLI repair task",
+        task_type="task",
+    )
+    manager.initialize_task_manifest(task.id, stage_names=["development"])
+    runner = CliRunner()
+
+    with patch("gobby.cli.tasks.repair.get_task_manager", return_value=manager):
+        result = runner.invoke(repair_lifecycle_cmd, ["--task", task.id, "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["diagnostics"] == []

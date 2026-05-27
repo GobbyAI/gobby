@@ -58,6 +58,8 @@ def _render_repair_result(result: LifecycleRepairResult) -> str:
         status = "skipped" if candidate.skipped else "applied" if candidate.applied else "candidate"
         detail = candidate.skip_reason or candidate.reason
         lines.append(f"  {candidate.ref}  {candidate.action}  {status}: {detail}")
+    for diagnostic in result.diagnostics:
+        lines.append(f"  {diagnostic.ref}  diagnostic: {diagnostic.reason}")
     return "\n".join(lines)
 
 

@@ -505,6 +505,67 @@ async def test_build_plan_file_planning_spawn_uses_main_context_for_worktree_bui
 
 
 @pytest.mark.asyncio
+async def test_build_plan_file_plan_adversary_spawn_uses_main_context_for_worktree_build(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.build.service import build
+    from gobby.storage.agents import LocalAgentRunManager
+    from gobby.storage.sessions import SessionManager
+
+    project_id, _repo_path = _project(temp_db, tmp_path)
+    plan_file = tmp_path / "plan.md"
+    plan_file.write_text("# Plan\n")
+    sync_bundled_agents(temp_db)
+    task_manager = LocalTaskManager(temp_db)
+    session_manager = SessionManager(temp_db)
+    spawn_kwargs: dict[str, object] = {}
+
+    async def fake_spawn_agent_impl(**kwargs: object) -> dict[str, object]:
+        spawn_kwargs.update(kwargs)
+        run = LocalAgentRunManager(temp_db).create(
+            parent_session_id=str(kwargs["parent_session_id"]),
+            provider="codex",
+            prompt=str(kwargs["prompt"]),
+            agent_name=str(kwargs["agent_lookup_name"]),
+            task_id=str(kwargs["task_id"]),
+            run_id="run-build-plan-adversary",
+        )
+        return {"success": True, "run_id": run.id, "isolation": kwargs["isolation"]}
+
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+        fake_spawn_agent_impl,
+    )
+    result = await build(
+        str(plan_file),
+        _options(
+            quick=True,
+            isolation="worktree",
+            target_branch="main",
+            planning_seed_state="needs_review",
+        ),
+        db=temp_db,
+        project_id=project_id,
+        services=SimpleNamespace(
+            database=temp_db,
+            task_manager=task_manager,
+            session_manager=session_manager,
+            agent_runner=SimpleNamespace(),
+        ),
+    )
+    task = task_manager.get_task(result.task_id)
+
+    assert task.isolation == "worktree"
+    assert spawn_kwargs["agent_lookup_name"] == "plan-adversary"
+    assert spawn_kwargs["isolation"] == "none"
+    assert spawn_kwargs["worktree_id"] is None
+    assert spawn_kwargs["clone_id"] is None
+
+
+@pytest.mark.asyncio
 async def test_build_plan_file_dry_run_rolls_back_preview_side_effects(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
@@ -576,6 +637,8 @@ async def test_plan_file_dry_run_skip_pr_returns_full_manifest_chain(
     temp_db,
     tmp_path: Path,
 ) -> None:
+    from gobby.config.build import StageCapOverride
+
     project_id, _repo_path = _project(temp_db, tmp_path)
     plan_file = tmp_path / "plan.md"
     plan_file.write_text("# Plan\n")
@@ -591,6 +654,14 @@ async def test_plan_file_dry_run_skip_pr_returns_full_manifest_chain(
             dry_run=True,
             skip_stages=["pr"],
             skip_stages_explicit=True,
+            target_branch="dev",
+            stage_caps=[
+                StageCapOverride(
+                    "planning",
+                    max_work_attempts=99,
+                    max_review_rounds=99,
+                )
+            ],
             planning_seed_state="needs_review",
             completed_plan_review_rounds=2,
         ),
@@ -607,6 +678,88 @@ async def test_plan_file_dry_run_skip_pr_returns_full_manifest_chain(
         "holistic_qa",
         "merge",
     ]
+    manifest_by_stage = {row["stage_name"]: row for row in result.manifest}
+    assert manifest_by_stage["planning"]["max_work_attempts"] == 99
+    assert manifest_by_stage["planning"]["max_review_rounds"] == 99
+    for stage_name in ("expansion", "development", "holistic_qa", "merge"):
+        assert manifest_by_stage[stage_name]["max_work_attempts"] is None
+        assert manifest_by_stage[stage_name]["max_review_rounds"] is None
+
+
+@pytest.mark.asyncio
+async def test_plan_file_bare_stage_overrides_do_not_select_manifest(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    from gobby.config.build import StageCapOverride
+
+    project_id, _repo_path = _project(temp_db, tmp_path)
+    plan_file = tmp_path / "plan.md"
+    plan_file.write_text("# Plan\n")
+
+    async def fail_tick(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("dry-run must not call dispatcher tick")
+
+    monkeypatch.setattr("gobby.build.lifecycle._kick_dispatcher_tick", fail_tick)
+
+    result = await _build(
+        str(plan_file),
+        _options(
+            dry_run=True,
+            isolation="none",
+            skip_stages=["pr"],
+            skip_stages_explicit=True,
+            stage_caps=[
+                StageCapOverride("planning"),
+                StageCapOverride("expansion"),
+                StageCapOverride("development"),
+                StageCapOverride("holistic_qa"),
+                StageCapOverride("merge"),
+            ],
+        ),
+        db=temp_db,
+        project_id=project_id,
+    )
+
+    assert result.manifest is not None
+    assert [row["stage_name"] for row in result.manifest] == [
+        "planning",
+        "expansion",
+        "development",
+        "holistic_qa",
+        "merge",
+    ]
+    assert all(row["max_work_attempts"] is None for row in result.manifest)
+    assert all(row["max_review_rounds"] is None for row in result.manifest)
+
+
+@pytest.mark.asyncio
+async def test_plan_file_relative_hidden_path_resolves_from_request_cwd(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    project_id, repo_path = _project(temp_db, tmp_path)
+    plan_file = repo_path / ".gobby" / "plans" / "gcore-rust-foundation.md"
+    plan_file.parent.mkdir(parents=True)
+    plan_file.write_text("# Plan\n")
+
+    async def fail_tick(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("dry-run must not call dispatcher tick")
+
+    monkeypatch.setattr("gobby.build.lifecycle._kick_dispatcher_tick", fail_tick)
+
+    result = await _build(
+        ".gobby/plans/gcore-rust-foundation.md",
+        _options(dry_run=True, isolation="none", cwd=repo_path),
+        db=temp_db,
+        project_id=project_id,
+    )
+
+    assert result.created is True
+    assert result.manifest is not None
+    assert result.manifest[0]["stage_name"] == "planning"
 
 
 @pytest.mark.asyncio

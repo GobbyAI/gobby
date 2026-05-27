@@ -37,6 +37,8 @@ def test_build_command_is_registered_with_phase_3_flags() -> None:
     assert "--no-merge" in result.output
     assert "--pr" in result.output
     assert "--stage" in result.output
+    assert "Stage cap/settings override" in result.output
+    assert "Stage selector" not in result.output
     assert "--profile" not in result.output
     assert "--unattended" not in result.output
     assert "--yolo" not in result.output
@@ -380,7 +382,9 @@ def test_build_cli_prints_manifest_chain_when_present(tmp_path: Path) -> None:
         result = CliRunner().invoke(cli, ["build", str(plan_file), "--dry-run"])
 
     assert result.exit_code == 0
-    assert "Lifecycle: planning -> expansion -> development -> holistic_qa -> merge" in result.output
+    assert (
+        "Lifecycle: planning -> expansion -> development -> holistic_qa -> merge" in result.output
+    )
     open_db.assert_not_called()
 
 

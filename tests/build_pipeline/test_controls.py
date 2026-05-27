@@ -784,13 +784,12 @@ async def test_restart_reseeds_exhausted_isolated_manifest_with_merge(
 
 
 @pytest.mark.asyncio
-async def test_restart_rebuilds_plan_file_root_manifest_from_options(
+async def test_restart_no_resume_rebuilds_plan_file_root_manifest_from_options(
     temp_db,
     sample_project,
     tmp_path: Path,
 ) -> None:
     from gobby.build.controls import build_restart_target
-    from gobby.build.dispatch_tick import DispatcherTickSummary
     from gobby.build.service import BuildOptions
     from gobby.config.build import StageCapOverride
     from tests.storage.tasks._stage_test_helpers import initialize_manifest, spec
@@ -822,22 +821,20 @@ async def test_restart_rebuilds_plan_file_root_manifest_from_options(
     initialize_manifest(temp_db, root.id, [spec("planning", 0), spec("merge", 1)])
     initialize_manifest(temp_db, child.id, [spec("development", 0)])
 
-    with patch(
-        "gobby.build.controls._kick_dispatcher_tick",
-        new=AsyncMock(return_value=DispatcherTickSummary()),
-    ):
+    with patch("gobby.build.controls._kick_dispatcher_tick", new=AsyncMock()) as tick:
         result = await build_restart_target(
             f"#{root.seq_num}",
             db=temp_db,
             project_id=sample_project["id"],
             force=True,
             yes=True,
+            no_resume=True,
             opts=BuildOptions(
                 skip_stages=["pr"],
                 skip_stages_explicit=True,
                 isolation="worktree",
                 isolation_explicit=True,
-                target_branch="release/build",
+                target_branch="dev",
                 stage_caps=[
                     StageCapOverride(
                         "planning",
@@ -854,6 +851,8 @@ async def test_restart_rebuilds_plan_file_root_manifest_from_options(
     artifacts = task_manager.artifacts.get_artifacts(root.id)
 
     assert result.stages_reset == 2
+    assert result.dispatcher_tick is None
+    tick.assert_not_called()
     assert [row.stage_name for row in root_rows] == [
         "planning",
         "expansion",
@@ -864,7 +863,11 @@ async def test_restart_rebuilds_plan_file_root_manifest_from_options(
     assert [row.stage_name for row in child_rows] == ["development", "merge"]
     assert planning.max_work_attempts == 99
     assert planning.max_review_rounds == 99
-    assert artifacts.target_branch == "release/build"
+    assert all(row.max_work_attempts is None for row in root_rows[1:])
+    assert all(row.max_review_rounds is None for row in root_rows[1:])
+    assert task_manager.get_task(root.id).allow_automation is False
+    assert task_manager.get_task(child.id).allow_automation is False
+    assert artifacts.target_branch == "dev"
 
 
 @pytest.mark.asyncio

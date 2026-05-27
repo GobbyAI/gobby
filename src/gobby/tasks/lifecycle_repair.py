@@ -7,11 +7,22 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from gobby.storage.build_history import BuildHistoryStorage
 from gobby.storage.sql_dialect import json_array_contains_condition
 from gobby.storage.tasks import LocalTaskManager, StageManifestSpec, StageState, Task
 from gobby.storage.tasks._stage_manifest import derive_child_manifest_specs
 
-RepairAction = Literal["remove_unused_manifest", "reseed_expansion_manifest"]
+RepairAction = Literal[
+    "remove_unused_manifest",
+    "reseed_expansion_manifest",
+    "reseed_plan_file_manifest",
+]
+
+_PLAN_FILE_REQUIRED_STAGES = frozenset(
+    {"planning", "expansion", "development", "holistic_qa", "merge"}
+)
+_PLAN_FILE_KNOWN_STAGES = _PLAN_FILE_REQUIRED_STAGES | {"pr"}
+_PLAN_FILE_FORWARD_STAGES = frozenset({"expansion", "development", "holistic_qa"})
 
 
 @dataclass(slots=True)
@@ -43,10 +54,29 @@ class LifecycleRepairCandidate:
 
 
 @dataclass(slots=True)
+class LifecycleRepairDiagnostic:
+    task_id: str
+    ref: str
+    title: str
+    reason: str
+    current_manifest: list[dict[str, Any]]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "task_id": self.task_id,
+            "ref": self.ref,
+            "title": self.title,
+            "reason": self.reason,
+            "current_manifest": self.current_manifest,
+        }
+
+
+@dataclass(slots=True)
 class LifecycleRepairResult:
     apply: bool
     scope: str
     candidates: list[LifecycleRepairCandidate]
+    diagnostics: list[LifecycleRepairDiagnostic]
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -56,6 +86,7 @@ class LifecycleRepairResult:
             "applied_count": sum(1 for item in self.candidates if item.applied),
             "skipped_count": sum(1 for item in self.candidates if item.skipped),
             "candidates": [item.to_dict() for item in self.candidates],
+            "diagnostics": [item.to_dict() for item in self.diagnostics],
         }
 
 
@@ -81,22 +112,28 @@ class LifecycleRepair:
             raise ValueError("--force is only allowed with --task")
 
         tasks = self._scoped_tasks(task_id=task_id, provenance=provenance)
-        candidates = [
-            candidate
-            for task in tasks
-            if (
-                candidate := self._candidate_for_task(
-                    task, task_scoped=task_id is not None, force=force
-                )
+        diagnostics: list[LifecycleRepairDiagnostic] = []
+        candidates: list[LifecycleRepairCandidate] = []
+        for task in tasks:
+            candidate = self._candidate_for_task(
+                task,
+                task_scoped=task_id is not None,
+                force=force,
+                diagnostics=diagnostics,
             )
-            is not None
-        ]
+            if candidate is not None:
+                candidates.append(candidate)
         if apply:
             for candidate in candidates:
                 if not candidate.skipped:
                     self._apply_candidate(candidate, force=force and task_id is not None)
         scope = f"task:{task_id}" if task_id else f"provenance:{provenance}"
-        return LifecycleRepairResult(apply=apply, scope=scope, candidates=candidates)
+        return LifecycleRepairResult(
+            apply=apply,
+            scope=scope,
+            candidates=candidates,
+            diagnostics=diagnostics,
+        )
 
     def _scoped_tasks(self, *, task_id: str | None, provenance: str | None) -> list[Task]:
         if task_id is not None:
@@ -132,10 +169,78 @@ class LifecycleRepair:
         *,
         task_scoped: bool,
         force: bool,
+        diagnostics: list[LifecycleRepairDiagnostic],
     ) -> LifecycleRepairCandidate | None:
+        plan_file_candidate = self._plan_file_candidate(
+            task,
+            task_scoped=task_scoped,
+            force=force,
+            diagnostics=diagnostics,
+        )
+        if plan_file_candidate is not None:
+            return plan_file_candidate
         if _has_expansion_provenance(task):
             return self._expansion_candidate(task, task_scoped=task_scoped, force=force)
         return self._unused_auto_seed_candidate(task)
+
+    def _plan_file_candidate(
+        self,
+        task: Task,
+        *,
+        task_scoped: bool,
+        force: bool,
+        diagnostics: list[LifecycleRepairDiagnostic],
+    ) -> LifecycleRepairCandidate | None:
+        if task.task_type != "epic":
+            return None
+        artifacts = self.task_manager.artifacts.get_artifacts(task.id)
+        if not artifacts.plan_file_path:
+            return None
+        rows = self.task_manager.stage_states.list_for_task(task.id)
+        if not _looks_like_stunted_plan_file_manifest(rows):
+            return None
+
+        desired = self._latest_plan_file_manifest_specs(task)
+        if desired is None:
+            diagnostics.append(
+                LifecycleRepairDiagnostic(
+                    task_id=task.id,
+                    ref=_task_ref(task),
+                    title=task.title,
+                    reason="stunted plan-file manifest lacks non-stunted build history provenance",
+                    current_manifest=_rows_payload(rows),
+                )
+            )
+            return None
+        if _manifest_signature(rows) == _manifest_signature(desired):
+            return None
+
+        skipped = bool(rows) and not _is_pristine_manifest(rows) and not (force and task_scoped)
+        return LifecycleRepairCandidate(
+            task_id=task.id,
+            ref=_task_ref(task),
+            title=task.title,
+            action="reseed_plan_file_manifest",
+            reason="plan-file root manifest is missing development-forward lifecycle stages",
+            current_manifest=_rows_payload(rows),
+            desired_manifest=_specs_payload(desired),
+            skipped=skipped,
+            skip_reason="active_lifecycle_rows" if skipped else None,
+        )
+
+    def _latest_plan_file_manifest_specs(self, task: Task) -> list[StageManifestSpec] | None:
+        history = BuildHistoryStorage(self.task_manager.db)
+        events = history.list_events(project_id=task.project_id, root_task_id=task.id, limit=100)
+        for event in events:
+            specs = _plan_file_manifest_specs_from_payload(event.payload)
+            if specs is not None:
+                return specs
+        runs = history.list_runs(project_id=task.project_id, root_task_id=task.id, limit=100)
+        for run in runs:
+            specs = _plan_file_manifest_specs_from_payload(run.summary)
+            if specs is not None:
+                return specs
+        return None
 
     def _unused_auto_seed_candidate(self, task: Task) -> LifecycleRepairCandidate | None:
         rows = self.task_manager.stage_states.list_for_task(task.id)
@@ -231,7 +336,12 @@ class LifecycleRepair:
             specs,
             by_session_id=None,
         )
-        self._record(candidate, "repair-lifecycle:reseed-expansion-manifest")
+        reason = (
+            "repair-lifecycle:reseed-plan-file-manifest"
+            if candidate.action == "reseed_plan_file_manifest"
+            else "repair-lifecycle:reseed-expansion-manifest"
+        )
+        self._record(candidate, reason)
         candidate.applied = True
 
     def _record(self, candidate: LifecycleRepairCandidate, reason: str) -> None:
@@ -318,6 +428,71 @@ def _first_stage(rows: Sequence[StageState | StageManifestSpec]) -> str | None:
     if not rows:
         return None
     return min(rows, key=lambda item: item.position).stage_name
+
+
+def _looks_like_stunted_plan_file_manifest(rows: list[StageState]) -> bool:
+    if not rows:
+        return False
+    names = {row.stage_name for row in rows}
+    if (
+        "planning" not in names
+        or "merge" not in names
+        or not names.issubset(_PLAN_FILE_KNOWN_STAGES)
+    ):
+        return False
+    if _PLAN_FILE_REQUIRED_STAGES.issubset(names):
+        return False
+    return bool(_PLAN_FILE_FORWARD_STAGES - names)
+
+
+def _plan_file_manifest_specs_from_payload(
+    payload: dict[str, Any] | None,
+) -> list[StageManifestSpec] | None:
+    if payload is None:
+        return None
+    specs = _manifest_specs_from_value(payload.get("manifest"))
+    if specs is None or not _is_full_plan_file_manifest(specs):
+        return None
+    return specs
+
+
+def _manifest_specs_from_value(value: object) -> list[StageManifestSpec] | None:
+    if not isinstance(value, list):
+        return None
+    specs: list[StageManifestSpec] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            return None
+        stage_name = item.get("stage_name")
+        if not isinstance(stage_name, str) or not stage_name:
+            return None
+        position = _optional_int(item.get("position"), default=index)
+        if position is None:
+            return None
+        specs.append(
+            StageManifestSpec(
+                stage_name=stage_name,
+                position=position,
+                max_work_attempts=_optional_int(item.get("max_work_attempts")),
+                max_review_rounds=_optional_int(item.get("max_review_rounds")),
+            )
+        )
+    return sorted(specs, key=lambda item: item.position)
+
+
+def _optional_int(value: object, *, default: int | None = None) -> int | None:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    return None
+
+
+def _is_full_plan_file_manifest(rows: Sequence[StageState | StageManifestSpec]) -> bool:
+    names = {row.stage_name for row in rows}
+    return _PLAN_FILE_REQUIRED_STAGES.issubset(names)
 
 
 def _historical_development_first_specs(
