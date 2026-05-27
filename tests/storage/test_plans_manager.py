@@ -98,9 +98,7 @@ def test_update_plan_hash_regens_manifest(temp_db: HubDatabase, tmp_path: Path) 
     assert raw["header"]["plan_hash"] == updated.plan_hash
 
 
-def test_archive_plan_moves_file_and_removes_manifest(
-    temp_db: HubDatabase, tmp_path: Path
-) -> None:
+def test_archive_plan_moves_file_and_removes_manifest(temp_db: HubDatabase, tmp_path: Path) -> None:
     project_id = _project(temp_db, tmp_path)
     plan_path = _write_plan(tmp_path)
     manager = LocalPlanManager(temp_db)
@@ -128,9 +126,7 @@ def test_archive_plan_moves_file_and_removes_manifest(
     assert manager.archive_plan("task-100-demo", project_id=project_id) == archived
 
 
-def test_archive_plan_preserves_nested_relative_paths(
-    temp_db: HubDatabase, tmp_path: Path
-) -> None:
+def test_archive_plan_preserves_nested_relative_paths(temp_db: HubDatabase, tmp_path: Path) -> None:
     project_id = _project(temp_db, tmp_path)
     alpha_path = _write_plan(tmp_path, "alpha/task.md")
     beta_path = _write_plan(tmp_path, "beta/task.md")

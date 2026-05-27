@@ -264,6 +264,12 @@ async def _stop_started_services(
         except TimeoutError:
             _log_shutdown_timeout("Cron scheduler", shutdown_intent=shutdown_intent)
 
+    if getattr(runner, "system_automation_loop", None):
+        try:
+            await asyncio.wait_for(runner.system_automation_loop.stop(), timeout=2.0)
+        except TimeoutError:
+            _log_shutdown_timeout("System automation loop", shutdown_intent=shutdown_intent)
+
     if runner.message_processor:
         try:
             await asyncio.wait_for(runner.message_processor.stop(), timeout=2.0)

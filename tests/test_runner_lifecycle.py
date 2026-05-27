@@ -554,6 +554,7 @@ class TestShutdownDaemonServices:
     async def test_pending_interactions_and_http_sessions_stop_before_uvicorn_exit(self) -> None:
         runner = self._minimal_shutdown_runner(ShutdownIntent.STOP)
         server = SimpleNamespace(should_exit=False)
+
         async def server_done() -> None:
             return None
 
@@ -598,6 +599,7 @@ class TestShutdownDaemonServices:
     ) -> None:
         runner = self._minimal_shutdown_runner(ShutdownIntent.RESTART)
         server = SimpleNamespace(should_exit=False)
+
         async def server_done() -> None:
             return None
 
@@ -641,6 +643,7 @@ class TestShutdownDaemonServices:
     ) -> None:
         runner = self._minimal_shutdown_runner(ShutdownIntent.STOP)
         server = SimpleNamespace(should_exit=False)
+
         async def server_done() -> None:
             return None
 
@@ -675,7 +678,9 @@ class TestShutdownDaemonServices:
             )
 
         assert "Lifecycle manager shutdown timed out" in caplog.text
-        assert any("Lifecycle manager shutdown timed out" in record.message for record in caplog.records)
+        assert any(
+            "Lifecycle manager shutdown timed out" in record.message for record in caplog.records
+        )
 
     @pytest.mark.asyncio
     async def test_restart_reaps_only_non_terminal_agent_children(

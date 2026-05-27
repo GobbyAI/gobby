@@ -141,8 +141,8 @@ def _echo_build_result(result: BuildResult) -> None:
     elif tick.reason:
         line = f"{line} reason={tick.reason}"
     click.echo(line)
-    if tick.reason == "dispatcher_cron_disabled":
-        click.echo("Dispatcher cron is disabled. Run `gobby build resume` to re-enable it.")
+    if tick.reason == "automation_disabled":
+        click.echo("Build automation is paused. Run `gobby build resume` to re-enable it.")
 
 
 def _lifecycle_display(result: BuildResult) -> str:
@@ -433,7 +433,7 @@ def _is_profile_error(detail: Any, headers: Mapping[str, str] | None = None) -> 
 
 def _echo_build_control_result(result: BuildControlResult) -> None:
     state = "enabled" if result.enabled else "disabled"
-    click.echo(f"Dispatcher cron: {state}")
+    click.echo(f"Build automation: {state}")
     click.echo(f"Project: {result.project_id}")
     click.echo(f"Event: {result.lifecycle_event.reason}")
 

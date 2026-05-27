@@ -66,14 +66,14 @@ def test_build_skill_forbids_manual_dispatcher_ticks_during_unattended_e2e() -> 
 
     content = skill_path.read_text()
 
-    assert "project-wide `gobby:dispatcher` cron row is enabled" in content
+    assert "project build automation is enabled" in content
     assert "run `gobby build resume` once" in content
     assert "launch `gobby build #epic ...` once" in content
     assert "daemon-owned automation" in content
     assert "manual dispatcher ticks" in content
     assert "anti-pattern" in content
     assert "can hide a broken dispatcher loop" in content
-    assert "If the project dispatcher cron is disabled, use `gobby build resume`" in content
+    assert "If project automation is paused, use `gobby build resume`" in content
     assert "bounded explicit tick" in content
     assert "only as a diagnostic or recovery step" in content
 

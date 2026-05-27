@@ -352,6 +352,23 @@ def format_status_message(
         elif isinstance(lmstudio, dict):
             lines.append(f"  {'Embeddings:':<{_LW}}LM Studio (stopped)")
 
+        automation_loop = (
+            data.get("system_services", {}).get("automation_loop")
+            if isinstance(data.get("system_services"), dict)
+            else None
+        )
+        if isinstance(automation_loop, dict):
+            enabled = automation_loop.get("enabled")
+            running_loop = automation_loop.get("running")
+            interval = automation_loop.get("interval_seconds")
+            status_str = "running" if running_loop else "stopped"
+            if enabled is False:
+                status_str = "disabled"
+            detail = f"{status_str}"
+            if interval is not None:
+                detail += f" (every {interval}s)"
+            lines.append(f"  {'Automation:':<{_LW}}{detail}")
+
         lines.append("")
 
     # ---- Dependencies ----

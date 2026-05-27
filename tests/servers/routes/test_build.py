@@ -236,7 +236,6 @@ def test_post_api_build_stop_preserves_project_wide_control() -> None:
     control_result = BuildControlResult(
         project_id="project-1",
         enabled=False,
-        cron_job_id="cron-1",
         lifecycle_event=BuildLifecycleEvent(
             id=1,
             project_id="project-1",
@@ -261,7 +260,6 @@ def test_post_api_build_resume_kicks_dispatcher() -> None:
     control_result = BuildControlResult(
         project_id="project-1",
         enabled=True,
-        cron_job_id="cron-1",
         lifecycle_event=BuildLifecycleEvent(
             id=1,
             project_id="project-1",

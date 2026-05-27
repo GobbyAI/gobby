@@ -254,7 +254,7 @@ async def test_build_task_tool_rejects_workspace_backend_isolation_conflict(
 
 
 @pytest.mark.asyncio
-async def test_build_task_surfaces_disabled_dispatcher_cron(temp_db: Any) -> None:
+async def test_build_task_surfaces_paused_automation(temp_db: Any) -> None:
     from gobby.build.service import BuildResult, DispatcherTickSummary
 
     registry = _registry(temp_db)
@@ -265,14 +265,14 @@ async def test_build_task_surfaces_disabled_dispatcher_cron(temp_db: Any) -> Non
         initial_lifecycle="development",
         applied_stages_skipped=[],
         tick_dispatched=0,
-        dispatcher_tick=DispatcherTickSummary(reason="dispatcher_cron_disabled"),
+        dispatcher_tick=DispatcherTickSummary(reason="automation_disabled"),
     )
 
     with patch("gobby.mcp_proxy.tools.build.build", new=AsyncMock(return_value=build_result)):
         result = await build_task(input_ref="#42", project_id="project-1")
 
-    assert result["dispatcher_cron_disabled"] is True
+    assert result["automation_disabled"] is True
     assert result["message"] == (
-        "dispatcher_cron_disabled: dispatcher cron is disabled. "
+        "automation_disabled: project build automation is paused. "
         "Run `gobby build resume` to re-enable build automation."
     )

@@ -137,6 +137,7 @@ class TestSearchSkillsTool:
                 "get_skills_by_ids",
                 new=slow_get_skills_by_ids,
             ):
+
                 async def run_tools() -> list[dict[str, Any]]:
                     return await asyncio.gather(*(tool(query="git") for _ in range(20)))
 

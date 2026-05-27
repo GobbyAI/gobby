@@ -67,9 +67,7 @@ def test_rule_syncs_and_uses_helper_wiring(db: HubDatabase) -> None:
     assert "task_state_in" in (body.when or "")
 
 
-def test_delegated_path_blocks_non_artifact_and_allows_artifact(
-    db: HubDatabase, tmp_path
-) -> None:
+def test_delegated_path_blocks_non_artifact_and_allows_artifact(db: HubDatabase, tmp_path) -> None:
     body = _sync_bundled(db)
     engine = RuleEngine(db)
     artifact_rel = ".gobby/plans/task-42-plan.md"
@@ -89,9 +87,7 @@ def test_delegated_path_blocks_non_artifact_and_allows_artifact(
     )
 
 
-def test_planner_path_blocks_until_task_reaches_review_approved(
-    db: HubDatabase, tmp_path
-) -> None:
+def test_planner_path_blocks_until_task_reaches_review_approved(db: HubDatabase, tmp_path) -> None:
     body = _sync_bundled(db)
     project = LocalProjectManager(db).create(name="planner-project", repo_path=str(tmp_path))
     task_manager = LocalTaskManager(db)

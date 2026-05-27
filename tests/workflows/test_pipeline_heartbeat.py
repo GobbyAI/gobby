@@ -201,21 +201,22 @@ async def test_callable_cron_handler_interface(
 
 
 @pytest.mark.asyncio
-async def test_pipeline_heartbeat_cron_parks_when_idle(
+async def test_pipeline_heartbeat_cron_does_not_park_when_idle(
     heartbeat: PipelineHeartbeat,
     temp_db: HubDatabase,
 ) -> None:
-    """No running executions or stale task candidates parks the heartbeat row."""
+    """Pipeline heartbeat cron execution no longer parks system rows."""
     storage = CronJobStorage(temp_db)
     job = _create_pipeline_heartbeat_job(storage)
+    original_next_run = job.next_run_at
 
     result = await _execute_pipeline_heartbeat_cron(storage, heartbeat, job)
 
     assert result.status == "completed"
-    parked = storage.get_job(job.id)
-    assert parked is not None
-    assert parked.enabled is True
-    assert parked.next_run_at is None
+    scheduled = storage.get_job(job.id)
+    assert scheduled is not None
+    assert scheduled.enabled is True
+    assert scheduled.next_run_at == original_next_run
 
 
 @pytest.mark.asyncio

@@ -85,6 +85,9 @@ class ServiceContainer:
     cron_storage: Any | None = None  # CronJobStorage
     cron_scheduler: Any | None = None  # CronScheduler
 
+    # System Automation
+    system_automation_loop: Any | None = None  # SystemAutomationLoop
+
     # Skills
     skill_manager: Any | None = None  # LocalSkillManager
     hub_manager: Any | None = None  # HubManager

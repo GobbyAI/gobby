@@ -2,40 +2,30 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
-
 import pytest
 
 pytestmark = pytest.mark.unit
 
 
-def _park_dispatcher(temp_db, project_id: str) -> str:
-    from gobby.runner import DISPATCHER_CRON_JOB_NAME, install_dispatcher_cron_row
-    from gobby.storage.cron import CronJobStorage
+def _capture_dispatch_schedules(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
+    calls: list[tuple[str, str]] = []
 
-    job = install_dispatcher_cron_row(temp_db, project_id=project_id)
-    storage = CronJobStorage(temp_db)
-    parked = storage.park_system_job(job.id)
-    assert parked is not None
-    assert storage.get_job_by_name(DISPATCHER_CRON_JOB_NAME).next_run_at is None
-    return job.id
+    def schedule(db, *, project_id: str, reason: str, services=None) -> bool:
+        calls.append((project_id, reason))
+        return True
 
-
-def _assert_dispatcher_due_now(temp_db, job_id: str) -> None:
-    from gobby.storage.cron import CronJobStorage
-
-    job = CronJobStorage(temp_db).get_job(job_id)
-    assert job is not None
-    assert job.next_run_at is not None
-    due_at = datetime.fromisoformat(job.next_run_at)
-    if due_at.tzinfo is None:
-        due_at = due_at.replace(tzinfo=UTC)
-    assert due_at <= datetime.now(UTC) + timedelta(seconds=1)
+    monkeypatch.setattr("gobby.build.dispatch_tick.schedule_dispatcher_tick_for_project", schedule)
+    return calls
 
 
-def test_submit_for_review_wakes_parked_dispatcher_cron(temp_db, sample_project) -> None:
+def test_submit_for_review_schedules_direct_dispatch_tick(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
     from gobby.storage.tasks import LocalTaskManager, StageManifestSpec
 
+    calls = _capture_dispatch_schedules(monkeypatch)
     manager = LocalTaskManager(temp_db)
     task = manager.create_task(
         project_id=sample_project["id"],
@@ -50,16 +40,24 @@ def test_submit_for_review_wakes_parked_dispatcher_cron(temp_db, sample_project)
         by_session_id=None,
     )
     manager.stage_states.start_stage(task.id, "development", by_session_id="worker")
-    job_id = _park_dispatcher(temp_db, sample_project["id"])
+    calls.clear()
 
     manager.stage_states.submit_for_review(task.id, "development", by_session_id="worker")
 
-    _assert_dispatcher_due_now(temp_db, job_id)
+    assert calls == [(sample_project["id"], "task_change")]
+    from gobby.storage.cron import CronJobStorage
+
+    assert CronJobStorage(temp_db).get_job_by_name("gobby:dispatcher") is None
 
 
-def test_close_task_wakes_parked_dispatcher_cron(temp_db, sample_project) -> None:
+def test_close_task_schedules_direct_dispatch_tick(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
     from gobby.storage.tasks import LocalTaskManager
 
+    calls = _capture_dispatch_schedules(monkeypatch)
     manager = LocalTaskManager(temp_db)
     task = manager.create_task(
         project_id=sample_project["id"],
@@ -68,16 +66,23 @@ def test_close_task_wakes_parked_dispatcher_cron(temp_db, sample_project) -> Non
         task_type="feature",
     )
     manager.update_task(task.id, allow_automation=True, assigned_agent="backend-developer")
-    job_id = _park_dispatcher(temp_db, sample_project["id"])
 
     manager.close_task(task.id, reason="completed")
 
-    _assert_dispatcher_due_now(temp_db, job_id)
+    assert calls == [(sample_project["id"], "task_change")]
+    from gobby.storage.cron import CronJobStorage
+
+    assert CronJobStorage(temp_db).get_job_by_name("gobby:dispatcher") is None
 
 
-def test_dispatcher_wake_respects_stopped_automation(temp_db, sample_project) -> None:
+def test_dispatcher_wake_respects_stopped_automation(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
     from gobby.storage.tasks import LocalTaskManager, StageManifestSpec
 
+    calls = _capture_dispatch_schedules(monkeypatch)
     manager = LocalTaskManager(temp_db)
     task = manager.create_task(
         project_id=sample_project["id"],
@@ -92,10 +97,10 @@ def test_dispatcher_wake_respects_stopped_automation(temp_db, sample_project) ->
         by_session_id=None,
     )
     manager.stage_states.start_stage(task.id, "development", by_session_id="worker")
-    job_id = _park_dispatcher(temp_db, sample_project["id"])
 
     manager.stage_states.submit_for_review(task.id, "development", by_session_id="worker")
 
     from gobby.storage.cron import CronJobStorage
 
-    assert CronJobStorage(temp_db).get_job(job_id).next_run_at is None
+    assert calls == []
+    assert CronJobStorage(temp_db).get_job_by_name("gobby:dispatcher") is None

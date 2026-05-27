@@ -167,9 +167,7 @@ class TestIsolation:
 
 class TestRuntimeEnvironment:
     @pytest.mark.asyncio
-    async def test_spawn_depth_exceeded(
-        self, temp_db: HubDatabase, mock_runner: MagicMock
-    ) -> None:
+    async def test_spawn_depth_exceeded(self, temp_db: HubDatabase, mock_runner: MagicMock) -> None:
         """SPAWN_DEPTH_EXCEEDED when can_spawn returns False."""
         db = _setup_db(temp_db)
         _create_agent(db)

@@ -8,14 +8,11 @@ from dataclasses import dataclass
 from typing import Any
 
 from gobby.build.claim_recovery import recover_safe_build_claims
-from gobby.runner import install_dispatcher_cron_row
+from gobby.build.project_state import is_project_automation_enabled
 from gobby.storage.build_history import best_effort_record_event, best_effort_record_run
-from gobby.storage.cron import CronJobStorage
 from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
-
-PIPELINE_HEARTBEAT_CRON_JOB_NAME = "gobby:pipeline-heartbeat"
 
 
 @dataclass
@@ -44,6 +41,17 @@ def schedule_dispatcher_tick_for_project(
     dispatcher_services = _dispatcher_services_for_db(db, services)
     if dispatcher_services is None:
         return False
+
+    automation_loop = getattr(dispatcher_services, "system_automation_loop", None)
+    if automation_loop is not None:
+        scheduler = getattr(automation_loop, "schedule_project_dispatch", None)
+        if callable(scheduler):
+            return bool(
+                scheduler(
+                    project_id=project_id,
+                    reason=reason,
+                )
+            )
 
     try:
         loop = asyncio.get_running_loop()
@@ -146,20 +154,19 @@ async def kick_dispatcher_tick(
     max_actions: int | None = None,
     max_active_agents: int | None = None,
 ) -> DispatcherTickSummary:
-    """Fire a bounded dispatcher heartbeat burst when the bundled cron row is enabled."""
-    woke_system_jobs = False
-    if db is not None and project_id is not None and dispatcher_enabled is not False:
-        dispatcher_enabled = _wake_build_system_jobs(db, project_id)
-        woke_system_jobs = dispatcher_enabled
-    elif dispatcher_enabled is None:
+    """Fire a bounded dispatcher heartbeat burst without cron bookkeeping."""
+    if dispatcher_enabled is None:
         dispatcher_enabled = True
+
+    if dispatcher_enabled and db is not None and project_id is not None:
+        dispatcher_enabled = is_project_automation_enabled(db, project_id)
 
     if not dispatcher_enabled:
         logger.info(
             "dispatcher_tick_skipped",
-            extra={"project_id": project_id, "reason": "dispatcher_cron_disabled"},
+            extra={"project_id": project_id, "reason": "automation_disabled"},
         )
-        summary = DispatcherTickSummary(reason="dispatcher_cron_disabled")
+        summary = DispatcherTickSummary(reason="automation_disabled")
         _record_dispatcher_tick_history(db, project_id, summary)
         return summary
 
@@ -190,27 +197,8 @@ async def kick_dispatcher_tick(
         )
         if result.executed == 0 or result.cap_reached or result.reason:
             break
-    if woke_system_jobs:
-        _wake_existing_system_job(CronJobStorage(db), PIPELINE_HEARTBEAT_CRON_JOB_NAME)
     _record_dispatcher_tick_history(db, project_id, summary)
     return summary
-
-
-def _wake_build_system_jobs(db: HubDatabase, project_id: str) -> bool:
-    storage = CronJobStorage(db)
-    dispatcher = install_dispatcher_cron_row(db, project_id=project_id)
-    if not dispatcher.enabled:
-        return False
-    storage.wake_system_job(dispatcher.id)
-    _wake_existing_system_job(storage, PIPELINE_HEARTBEAT_CRON_JOB_NAME)
-    return True
-
-
-def _wake_existing_system_job(storage: CronJobStorage, name: str) -> None:
-    job = storage.get_job_by_name(name)
-    if job is None or not job.is_system:
-        return
-    storage.wake_system_job(job.id)
 
 
 def _record_dispatcher_tick_history(

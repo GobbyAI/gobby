@@ -22,6 +22,7 @@ def _candidate(stage_state: str = "in_progress") -> SimpleNamespace:
     stage = _stage("development", stage_state, "2026-05-02T00:00:00+00:00")
     return SimpleNamespace(
         id="task-1",
+        parent_task_id=None,
         lifecycle="in_development",
         status="open",
         current_stage=stage,

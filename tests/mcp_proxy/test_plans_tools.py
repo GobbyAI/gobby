@@ -92,9 +92,7 @@ async def test_plan_tools_return_invalid_ref_for_blank_plan_ref(
 
 
 @pytest.mark.asyncio
-async def test_create_plan_rejects_invalid_plan_kind(
-    temp_db: HubDatabase, tmp_path: Path
-) -> None:
+async def test_create_plan_rejects_invalid_plan_kind(temp_db: HubDatabase, tmp_path: Path) -> None:
     project_id = LocalProjectManager(temp_db).create(name="plans", repo_path=str(tmp_path)).id
     plan_path = _write_plan(tmp_path)
     registry = create_plan_registry(temp_db, default_project_id=project_id)

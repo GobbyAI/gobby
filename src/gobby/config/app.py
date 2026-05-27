@@ -57,6 +57,7 @@ from gobby.config.sessions import (
     SessionSummaryConfig,
 )
 from gobby.config.skills import SkillsConfig
+from gobby.config.system_loops import SystemLoopsConfig
 from gobby.config.tasks import CompactHandoffConfig, GobbyTasksConfig, WorkflowConfig
 from gobby.config.tmux import TmuxConfig
 from gobby.config.ui import (
@@ -388,6 +389,10 @@ class DaemonConfig(BaseModel):
     cron: CronConfig = Field(
         default_factory=CronConfig,
         description="Cron scheduler configuration",
+    )
+    system_loops: SystemLoopsConfig = Field(
+        default_factory=SystemLoopsConfig,
+        description="Daemon-owned system loop configuration",
     )
     conductor: ConductorConfig = Field(
         default_factory=ConductorConfig,

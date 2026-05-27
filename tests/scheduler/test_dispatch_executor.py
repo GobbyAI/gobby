@@ -54,7 +54,7 @@ async def test_dispatcher_action_invokes_run_heartbeat(
 
 
 @pytest.mark.asyncio
-async def test_idle_dispatcher_cron_run_parks_system_job(
+async def test_idle_dispatcher_cron_run_does_not_park_system_job(
     temp_db,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -86,7 +86,7 @@ async def test_idle_dispatcher_cron_run_parks_system_job(
     parked = storage.get_job(job.id)
     assert parked is not None
     assert parked.enabled is True
-    assert parked.next_run_at is None
+    assert parked.next_run_at == future
 
 
 @pytest.mark.asyncio
@@ -185,19 +185,14 @@ async def test_dispatcher_cron_burst_aggregates_reason_and_cap(
 
 async def test_disabled_dispatcher_tick_reports_hard_stop(temp_db) -> None:
     from gobby.build.dispatch_tick import kick_dispatcher_tick
-    from gobby.runner import install_dispatcher_cron_row
+    from gobby.build.service import build_stop
 
     _seed_project(temp_db)
     storage = CronJobStorage(temp_db)
-    job = install_dispatcher_cron_row(temp_db, project_id="project-1")
-    storage.update_job(job.id, enabled=False)
-    storage.update_system_job_bookkeeping(job.id, next_run_at=None)
+    build_stop(db=temp_db, project_id="project-1")
 
     summary = await kick_dispatcher_tick(db=temp_db, project_id="project-1")
 
     assert summary.ticks == 0
-    assert summary.reason == "dispatcher_cron_disabled"
-    stopped = storage.get_job(job.id)
-    assert stopped is not None
-    assert stopped.enabled is False
-    assert stopped.next_run_at is None
+    assert summary.reason == "automation_disabled"
+    assert storage.get_job_by_name("gobby:dispatcher") is None

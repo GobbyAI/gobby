@@ -42,7 +42,6 @@ if TYPE_CHECKING:
     from gobby.storage.clones import LocalCloneManager
     from gobby.storage.config_store import ConfigStore
     from gobby.storage.cron import CronJobStorage
-    from gobby.storage.cron_models import CronJob
     from gobby.storage.executor import DatabaseExecutor
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.mcp import LocalMCPManager
@@ -74,62 +73,6 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
-
-DISPATCHER_CRON_JOB_NAME = "gobby:dispatcher"
-DISPATCHER_CRON_DESCRIPTION = "System dispatcher heartbeat for task lifecycle automation"
-DISPATCHER_CRON_HANDLER = "dispatch.tick"
-DISPATCHER_CRON_INTERVAL_SECONDS = 60
-DISPATCHER_CRON_ACTION_CONFIG: dict[str, Any] = {"handler": DISPATCHER_CRON_HANDLER}
-
-
-def _ensure_dispatcher_project_row(db: HubDatabase, project_id: str) -> None:
-    db.execute(
-        """
-        INSERT INTO projects (id, name, created_at, updated_at)
-        VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        ON CONFLICT (id) DO NOTHING
-        """,
-        (project_id, f"project:{project_id}"),
-    )
-
-
-def install_dispatcher_cron_row(db: HubDatabase, *, project_id: str) -> CronJob:
-    """Install or reconcile the bundled dispatcher cron row."""
-    from gobby.storage.cron import CronJobStorage
-
-    _ensure_dispatcher_project_row(db, project_id)
-    storage = CronJobStorage(db)
-    existing = storage.get_job_by_name(DISPATCHER_CRON_JOB_NAME)
-    if existing is None:
-        return storage.create_job(
-            project_id=project_id,
-            name=DISPATCHER_CRON_JOB_NAME,
-            description=DISPATCHER_CRON_DESCRIPTION,
-            schedule_type="interval",
-            interval_seconds=DISPATCHER_CRON_INTERVAL_SECONDS,
-            action_type="handler",
-            action_config=DISPATCHER_CRON_ACTION_CONFIG,
-            enabled=True,
-            is_system=True,
-        )
-
-    if not existing.is_system:
-        storage.mark_as_system_job(existing.id)
-
-    reconciled = storage.reconcile_system_job_definition(
-        existing.id,
-        description=DISPATCHER_CRON_DESCRIPTION,
-        schedule_type="interval",
-        cron_expr=None,
-        interval_seconds=DISPATCHER_CRON_INTERVAL_SECONDS,
-        run_at=None,
-        timezone="UTC",
-        action_type="handler",
-        action_config=DISPATCHER_CRON_ACTION_CONFIG,
-    )
-    if reconciled is None:
-        raise RuntimeError(f"Dispatcher cron row disappeared during install: {existing.id}")
-    return reconciled
 
 
 class GobbyRunner:
@@ -210,6 +153,7 @@ class GobbyRunner:
     lifecycle_manager: SessionLifecycleManager
     cron_storage: CronJobStorage | None
     cron_scheduler: CronScheduler | None
+    system_automation_loop: Any | None
     communications_manager: Any | None
 
     # Phase 4: servers (init_servers)

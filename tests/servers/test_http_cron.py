@@ -119,6 +119,20 @@ class TestCronListJobs:
         assert resp.status_code == 200
         cron_storage.list_jobs.assert_called_once_with(project_id=None, enabled=True)
 
+    def test_list_jobs_filters_removed_automation_rows(self, client, cron_storage) -> None:
+        cron_storage.list_jobs.return_value = [
+            _make_job(name="User Job"),
+            _make_job(id="cj-system", name="gobby:dispatcher"),
+            _make_job(id="cj-heartbeat", name="gobby:pipeline-heartbeat"),
+        ]
+
+        resp = client.get("/api/cron/jobs")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["count"] == 1
+        assert data["jobs"][0]["name"] == "User Job"
+
 
 class TestCronCreateJob:
     def test_create_job(self, client, cron_storage) -> None:

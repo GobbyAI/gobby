@@ -436,7 +436,6 @@ def test_build_stop_cli_opens_hub_before_control_service() -> None:
     control_result = BuildControlResult(
         project_id="project-1",
         enabled=False,
-        cron_job_id="cron-1",
         lifecycle_event=BuildLifecycleEvent(
             id=1,
             project_id="project-1",
@@ -469,7 +468,6 @@ def test_build_resume_cli_kicks_dispatcher() -> None:
     control_result = BuildControlResult(
         project_id="project-1",
         enabled=True,
-        cron_job_id="cron-1",
         lifecycle_event=BuildLifecycleEvent(
             id=1,
             project_id="project-1",
@@ -490,7 +488,7 @@ def test_build_resume_cli_kicks_dispatcher() -> None:
         result = CliRunner().invoke(cli, ["build", "resume"])
 
     assert result.exit_code == 0
-    assert "Dispatcher cron: enabled" in result.output
+    assert "Build automation: enabled" in result.output
     assert "Project: project-1" in result.output
     assert "Event: gobby build resume" in result.output
     build_resume.assert_called_once_with(db=open_db.return_value, project_id="project-1")

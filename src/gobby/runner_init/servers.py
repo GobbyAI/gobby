@@ -62,6 +62,7 @@ def init_servers(runner: GobbyRunner) -> None:
         code_indexer=runner.code_indexer,
         cron_storage=runner.cron_storage,
         cron_scheduler=runner.cron_scheduler,
+        system_automation_loop=runner.system_automation_loop,
         skill_manager=runner.skill_manager,
         hub_manager=runner.hub_manager,
         config_store=runner.config_store,
@@ -76,6 +77,8 @@ def init_servers(runner: GobbyRunner) -> None:
     set_app_context(services)
     if runner.cron_scheduler and getattr(runner.cron_scheduler, "executor", None):
         runner.cron_scheduler.executor.services = services
+    if runner.system_automation_loop:
+        runner.system_automation_loop.set_services(services)
 
     if runner.communications_manager:
         from gobby.communications.reactions import ReactionHandler

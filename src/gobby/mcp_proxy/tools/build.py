@@ -16,8 +16,8 @@ if TYPE_CHECKING:
 
 WorkspaceBackend = Literal["worktree", "clone"]
 
-DISPATCHER_CRON_DISABLED_MESSAGE = (
-    "dispatcher_cron_disabled: dispatcher cron is disabled. "
+AUTOMATION_DISABLED_MESSAGE = (
+    "automation_disabled: project build automation is paused. "
     "Run `gobby build resume` to re-enable build automation."
 )
 
@@ -88,10 +88,10 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
         dispatcher_tick = payload.get("dispatcher_tick")
         if (
             isinstance(dispatcher_tick, dict)
-            and dispatcher_tick.get("reason") == "dispatcher_cron_disabled"
+            and dispatcher_tick.get("reason") == "automation_disabled"
         ):
-            payload["dispatcher_cron_disabled"] = True
-            payload["message"] = DISPATCHER_CRON_DISABLED_MESSAGE
+            payload["automation_disabled"] = True
+            payload["message"] = AUTOMATION_DISABLED_MESSAGE
         return payload
 
     registry.register(

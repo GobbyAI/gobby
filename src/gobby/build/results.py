@@ -43,7 +43,6 @@ class BuildControlResult:
 
     project_id: str
     enabled: bool
-    cron_job_id: str
     lifecycle_event: BuildLifecycleEvent
 
 

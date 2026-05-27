@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 from datetime import UTC, datetime
 
+from gobby.build.project_state import ensure_project_row
 from gobby.build.results import BuildControlResult, BuildLifecycleEvent
-from gobby.runner import install_dispatcher_cron_row
 from gobby.storage.build_history import best_effort_record_event, best_effort_record_run
-from gobby.storage.cron import CronJobStorage, compute_next_run
 from gobby.storage.hub.protocol import HubDatabase
 
 
@@ -36,20 +34,7 @@ def _set_dispatcher_enabled(
     project_id: str,
     enabled: bool,
 ) -> BuildControlResult:
-    job = install_dispatcher_cron_row(db, project_id=project_id)
-    next_run = compute_next_run(replace(job, enabled=True)) if enabled else None
-    storage = CronJobStorage(db)
-    updated = None
-    with db.transaction():
-        updated = storage.update_job(job.id, enabled=enabled)
-        if updated is None:
-            raise RuntimeError(f"Dispatcher cron row disappeared during build control: {job.id}")
-        updated = storage.update_system_job_bookkeeping(
-            job.id,
-            next_run_at=next_run.isoformat() if next_run else None,
-        )
-        if updated is None:
-            raise RuntimeError(f"Dispatcher cron row disappeared during build control: {job.id}")
+    ensure_project_row(db, project_id)
 
     event_name = "build_resume" if enabled else "build_stop"
     reason = "gobby build resume" if enabled else "gobby build stop"
@@ -66,7 +51,7 @@ def _set_dispatcher_enabled(
         action=event_name,
         status="completed",
         actor="build",
-        summary={"enabled": enabled, "cron_job_id": updated.id},
+        summary={"enabled": enabled},
     )
     best_effort_record_event(
         db,
@@ -75,12 +60,11 @@ def _set_dispatcher_enabled(
         event_type="project_build_control",
         action=event_name,
         message=reason,
-        payload={"enabled": enabled, "cron_job_id": updated.id},
+        payload={"enabled": enabled},
     )
     return BuildControlResult(
         project_id=project_id,
-        enabled=updated.enabled,
-        cron_job_id=updated.id,
+        enabled=enabled,
         lifecycle_event=event,
     )
 

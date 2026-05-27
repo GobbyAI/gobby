@@ -278,6 +278,17 @@ async def _start_cron_scheduler(runner: GobbyRunner, tracker: StartupTracker | N
             tracker.complete("Cron scheduler")
 
 
+async def _start_system_automation_loop(
+    runner: GobbyRunner,
+    tracker: StartupTracker | None,
+) -> None:
+    automation_loop = getattr(runner, "system_automation_loop", None)
+    if automation_loop:
+        await automation_loop.start()
+        if tracker:
+            tracker.complete("System automation loop")
+
+
 def _start_code_index_tasks(runner: GobbyRunner, tracker: StartupTracker | None) -> None:
     runner._code_index_task = None
     if runner.code_indexer:
@@ -479,10 +490,11 @@ async def init_subsystems(
     _start_websocket_server(runner, tracker)
     _maybe_start_ui_dev_server(runner)
 
-    if tracker:
-        tracker.finish()
     services = getattr(getattr(runner, "http_server", None), "services", None)
     if services is not None:
         services.startup_ready = True
         services.shutdown_in_progress = False
+    await _start_system_automation_loop(runner, tracker)
+    if tracker:
+        tracker.finish()
     logger.info("Subsystem initialization complete")

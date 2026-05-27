@@ -11,20 +11,21 @@ import pytest
 pytestmark = pytest.mark.unit
 
 
-def test_stop_disables_dispatcher_cron(temp_db) -> None:
+def test_stop_pauses_project_automation_without_cron_row(temp_db) -> None:
+    from gobby.build.project_state import is_project_automation_enabled
     from gobby.build.service import build_stop
-    from gobby.runner import DISPATCHER_CRON_JOB_NAME
     from gobby.storage.cron import CronJobStorage
 
     result = build_stop(db=temp_db, project_id="project-1")
 
     assert result.enabled is False
-    assert CronJobStorage(temp_db).get_job_by_name(DISPATCHER_CRON_JOB_NAME).enabled is False
+    assert is_project_automation_enabled(temp_db, "project-1") is False
+    assert CronJobStorage(temp_db).get_job_by_name("gobby:dispatcher") is None
 
 
-def test_resume_enables_dispatcher_cron(temp_db) -> None:
+def test_resume_enables_project_automation_without_cron_row(temp_db) -> None:
+    from gobby.build.project_state import is_project_automation_enabled
     from gobby.build.service import build_resume, build_stop
-    from gobby.runner import DISPATCHER_CRON_JOB_NAME
     from gobby.storage.cron import CronJobStorage
 
     build_stop(db=temp_db, project_id="project-1")
@@ -32,31 +33,20 @@ def test_resume_enables_dispatcher_cron(temp_db) -> None:
     result = build_resume(db=temp_db, project_id="project-1")
 
     assert result.enabled is True
-    assert CronJobStorage(temp_db).get_job_by_name(DISPATCHER_CRON_JOB_NAME).enabled is True
+    assert is_project_automation_enabled(temp_db, "project-1") is True
+    assert CronJobStorage(temp_db).get_job_by_name("gobby:dispatcher") is None
 
 
-def test_stop_rolls_back_when_dispatcher_bookkeeping_update_fails(
-    monkeypatch: pytest.MonkeyPatch,
+def test_stop_creates_project_row_for_control_event(
     temp_db,
 ) -> None:
     from gobby.build.service import build_stop
-    from gobby.runner import DISPATCHER_CRON_JOB_NAME, install_dispatcher_cron_row
-    from gobby.storage.cron import CronJobStorage
 
-    job = install_dispatcher_cron_row(temp_db, project_id="project-1")
-    assert job.enabled is True
-    monkeypatch.setattr(
-        CronJobStorage,
-        "update_system_job_bookkeeping",
-        lambda *args, **kwargs: None,
-    )
+    assert temp_db.fetchone("SELECT id FROM projects WHERE id = %s", ("project-1",)) is None
 
-    with pytest.raises(RuntimeError, match="Dispatcher cron row disappeared"):
-        build_stop(db=temp_db, project_id="project-1")
+    build_stop(db=temp_db, project_id="project-1")
 
-    persisted = CronJobStorage(temp_db).get_job_by_name(DISPATCHER_CRON_JOB_NAME)
-    assert persisted is not None
-    assert persisted.enabled is True
+    assert temp_db.fetchone("SELECT id FROM projects WHERE id = %s", ("project-1",)) is not None
 
 
 def test_lifecycle_event_appended(temp_db) -> None:
@@ -156,7 +146,7 @@ async def test_kick_no_op_when_dispatcher_disabled() -> None:
     summary = await _kick_dispatcher_tick(dispatcher_enabled=False)
 
     assert summary.ticks == 0
-    assert summary.reason == "dispatcher_cron_disabled"
+    assert summary.reason == "automation_disabled"
 
 
 @pytest.mark.asyncio

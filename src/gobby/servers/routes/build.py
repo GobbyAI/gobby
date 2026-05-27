@@ -238,13 +238,10 @@ def _resolve_request_project_id(
 def _build_result_json(result: BuildResult) -> dict[str, Any]:
     payload = asdict(result)
     dispatcher_tick = payload.get("dispatcher_tick")
-    if (
-        isinstance(dispatcher_tick, dict)
-        and dispatcher_tick.get("reason") == "dispatcher_cron_disabled"
-    ):
-        payload["dispatcher_cron_disabled"] = True
+    if isinstance(dispatcher_tick, dict) and dispatcher_tick.get("reason") == "automation_disabled":
+        payload["automation_disabled"] = True
         payload["message"] = (
-            "dispatcher_cron_disabled: dispatcher cron is disabled. "
+            "automation_disabled: project build automation is paused. "
             "Run `gobby build resume` to re-enable build automation."
         )
     return payload

@@ -79,6 +79,9 @@ def create_cron_router(server: "HTTPServer") -> APIRouter:
         try:
             storage = _get_storage()
             jobs = storage.list_jobs(project_id=project_id, enabled=enabled)
+            from gobby.system_automation import is_legacy_automation_cron_name
+
+            jobs = [job for job in jobs if not is_legacy_automation_cron_name(job.name)]
             return {
                 "status": "success",
                 "jobs": [j.to_dict() for j in jobs],

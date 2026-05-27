@@ -304,9 +304,7 @@ class CronExecutor:
         if not handler:
             available = list(self._handlers.keys())
             raise ValueError(f"No handler registered: '{name}'. Available: {available}")
-        result = await handler(job)
-        self._park_pipeline_heartbeat_if_idle(job, result)
-        return result
+        return await handler(job)
 
     async def _execute_dispatcher(self, job: CronJob) -> str:
         """Execute the dispatcher heartbeat action."""
@@ -340,14 +338,6 @@ class CronExecutor:
             if result.executed == 0 or result.cap_reached or result.reason:
                 break
 
-        if (
-            job.name == "gobby:dispatcher"
-            and scanned == 0
-            and executed == 0
-            and not cap_reached
-            and reason is None
-        ):
-            self._park_system_job(job)
         return (
             "Dispatcher heartbeat completed: "
             f"ticks={ticks}, "
@@ -370,16 +360,3 @@ class CronExecutor:
         if max_ticks < 1:
             raise ValueError("dispatcher action max_ticks must be a positive integer")
         return max_ticks
-
-    def _park_pipeline_heartbeat_if_idle(self, job: CronJob, result: object) -> None:
-        if job.name != "gobby:pipeline-heartbeat":
-            return
-        if bool(getattr(result, "should_park", False)):
-            self._park_system_job(job)
-
-    def _park_system_job(self, job: CronJob) -> None:
-        if not job.is_system:
-            return
-        updated = self.storage.park_system_job(job.id)
-        if updated is not None:
-            logger.debug("Parked idle system cron job %s (%s)", job.id, job.name)

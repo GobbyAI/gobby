@@ -116,6 +116,7 @@ class TestGenerateSessionSummaries:
                     return_value=("# Summary", None),
                 ),
             ):
+
                 async def run_summaries() -> list[dict[str, object]]:
                     return await asyncio.gather(
                         *(

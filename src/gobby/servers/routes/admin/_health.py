@@ -501,6 +501,13 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
             database_status["executor"] = executor_stats
 
         postgres_status = await _get_postgres_dashboard_status(server, database_status)
+        automation_loop = getattr(server.services, "system_automation_loop", None)
+        system_services: dict[str, Any] = {}
+        if automation_loop is not None:
+            try:
+                system_services["automation_loop"] = automation_loop.status_snapshot()
+            except Exception as e:
+                logger.warning(f"Failed to get automation loop status: {e}")
 
         payload: dict[str, Any] = {
             "status": "healthy" if server._running else "degraded",
@@ -525,6 +532,7 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
             "pipelines": pipeline_stats,
             "provider_models": provider_model_status,
             "database": database_status,
+            "system_services": system_services,
             "savings": savings_stats,
             "agents": agent_stats,
             "fd_usage": fd_usage,
