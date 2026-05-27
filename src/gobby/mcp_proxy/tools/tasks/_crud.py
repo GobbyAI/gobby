@@ -10,10 +10,12 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.projects import PERSONAL_PROJECT_ID
+from gobby.storage.task_affected_files import TaskAffectedFileManager
 from gobby.storage.task_dependencies import DependencyCycleError
 from gobby.storage.tasks import TASK_TYPE_CHOICES, VALID_CATEGORIES, TaskNotFoundError
 from gobby.tasks.categories import IMPLEMENTATION_DOMAINS
 from gobby.tasks.isolation import validate_task_isolation_artifacts
+from gobby.workflows.claimed_task_skills import build_claimed_task_skill_state
 
 logger = logging.getLogger(__name__)
 TASK_CATEGORY_ENUM = tuple(sorted(VALID_CATEGORIES))
@@ -51,6 +53,8 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         project: str | None = None,
         start_date: str | None = None,
         due_date: str | None = None,
+        additional_skills: list[str] | None = None,
+        affected_files: list[str] | None = None,
     ) -> dict[str, Any]:
         """Create a single task in the current project.
 
@@ -70,6 +74,8 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             validation_criteria: Acceptance criteria for validating completion.
             implementation_domain: Required code task implementation domain.
             claim: If True, auto-claim the task for the current session.
+            additional_skills: Optional skills required to work on the task.
+            affected_files: Optional file paths this task is expected to touch.
 
         Returns:
             Created task dict with id (minimal) or full task details based on config.
@@ -129,10 +135,16 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             category=category,
             validation_criteria=validation_criteria,
             implementation_domain=implementation_domain,
+            additional_skills=additional_skills,
             created_in_session_id=resolved_session_id,
         )
 
         task = ctx.task_manager.get_task(create_result["task"]["id"])
+
+        if affected_files:
+            TaskAffectedFileManager(ctx.task_manager.db).set_files(
+                task.id, affected_files, "manual"
+            )
 
         # Set scheduling fields if provided (post-create update)
         schedule_kwargs: dict[str, Any] = {}
@@ -188,6 +200,8 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 session_vars = ctx.session_var_manager.get_variables(resolved_session_id)
                 ref = f"#{task.seq_num}" if task.seq_num else task.id
                 merge_dict = add_claimed_task(session_vars, task.id, ref)
+                current_vars = {**session_vars, **merge_dict}
+                merge_dict.update(build_claimed_task_skill_state(current_vars, ctx.task_manager))
                 ctx.session_var_manager.merge_variables(resolved_session_id, merge_dict)
             except Exception as e:
                 logger.debug(f"Best-effort session variable update failed: {e}")
@@ -331,6 +345,18 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 "due_date": {
                     "type": "string",
                     "description": "Expected completion date (ISO 8601, e.g. '2025-03-15'). Optional.",
+                    "default": None,
+                },
+                "additional_skills": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Additional skills required for working on this task.",
+                    "default": None,
+                },
+                "affected_files": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Expected file paths this task will create or modify.",
                     "default": None,
                 },
             },

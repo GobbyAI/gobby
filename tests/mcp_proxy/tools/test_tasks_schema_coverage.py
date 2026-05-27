@@ -61,6 +61,20 @@ class TestToolSchemas:
         assert set(implementation_domain["enum"]) == {"backend", "frontend", "fullstack"}
         assert "implementation_domain" not in schema["inputSchema"]["required"]
 
+    def test_create_task_schema_has_skill_and_file_metadata(self, task_registry) -> None:
+        """Task creation exposes proactive skill-loading metadata fields."""
+        schema = task_registry.get_schema("create_task")
+
+        assert schema is not None
+        props = schema["inputSchema"]["properties"]
+
+        assert props["additional_skills"]["type"] == "array"
+        assert props["additional_skills"]["items"]["type"] == "string"
+        assert props["affected_files"]["type"] == "array"
+        assert props["affected_files"]["items"]["type"] == "string"
+        assert "additional_skills" not in schema["inputSchema"]["required"]
+        assert "affected_files" not in schema["inputSchema"]["required"]
+
     def test_update_task_schema_category_enum_includes_refactor(self, task_registry) -> None:
         """The update_task category enum must match create_task and accept refactor."""
         schema = task_registry.get_schema("update_task")

@@ -53,6 +53,7 @@ TASK_ENFORCEMENT_RULES = {
     "require-task-creation-skill-loaded",
     "require-task-transitions-skill-loaded",
     "require-task-before-edit",
+    "require-claimed-task-required-skills",
     "require-commit-before-status",
     "require-completion-readiness-evidence",
     "require-clean-tree-before-status",
@@ -337,6 +338,183 @@ class TestRequireTaskBeforeEdit:
         evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
         result = evaluator.evaluate(condition)
         assert result is True, "Should block if any touched file needs a task"
+
+
+class TestRequireClaimedTaskRequiredSkills:
+    """Verify claimed task metadata gates first source-code write."""
+
+    CONDITION = (
+        "event.data.get('canonical_tool_kind') == 'write' "
+        "and claimed_task_source_code_write(tool_input, event.data) "
+        "and first_unloaded_claimed_task_required_skill() != ''"
+    )
+
+    def _eval(
+        self,
+        *,
+        file_path: str = "/project/src/main.py",
+        required_skills: list[str] | None = None,
+        loaded_skills: list[str] | None = None,
+        canonical_tool_kind: str = "write",
+    ) -> bool:
+        from types import SimpleNamespace
+
+        from gobby.workflows.enforcement.blocking import claimed_task_source_code_write
+        from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
+
+        context = {
+            "variables": {
+                "claimed_task_required_skills": required_skills or [],
+                "loaded_skills": loaded_skills or [],
+            },
+            "event": SimpleNamespace(
+                data={
+                    "canonical_tool_kind": canonical_tool_kind,
+                    "canonical_file_path": file_path,
+                }
+            ),
+            "tool_input": {"file_path": file_path},
+        }
+        allowed_funcs = build_condition_helpers(context=context)
+        allowed_funcs["claimed_task_source_code_write"] = claimed_task_source_code_write
+
+        evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
+        return evaluator.evaluate(self.CONDITION)
+
+    def test_rule_syncs_with_dynamic_skill_directive(self, db, manager) -> None:
+        _sync_bundled(db)
+
+        row = manager.get_by_name("require-claimed-task-required-skills")
+        assert row is not None
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+
+        assert body.event.value == "before_tool"
+        assert body.effects[0].type == "block"
+        assert "first_unloaded_claimed_task_required_skill" in body.when
+        assert "skill_fetch_directive" in body.effects[0].reason
+
+    def test_condition_blocks_inferred_python_from_task_metadata(self) -> None:
+        assert self._eval(required_skills=["python", "development-discipline"]) is True
+
+    def test_condition_blocks_tdd_required_metadata(self) -> None:
+        assert (
+            self._eval(
+                file_path="/project/src/app.ts",
+                required_skills=["test-driven-development"],
+            )
+            is True
+        )
+
+    def test_condition_skips_non_source_code_writes(self) -> None:
+        assert (
+            self._eval(
+                file_path="/project/docs/notes.md",
+                required_skills=["development-discipline"],
+            )
+            is False
+        )
+
+    def test_condition_skips_when_skills_loaded(self) -> None:
+        assert (
+            self._eval(
+                required_skills=["python", "development-discipline"],
+                loaded_skills=["python", "development-discipline"],
+            )
+            is False
+        )
+
+    @pytest.mark.asyncio
+    async def test_rule_blocks_with_first_unloaded_skill_directive(self, db: HubDatabase) -> None:
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id="sess-1",
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={
+                "tool_name": "Write",
+                "canonical_tool_kind": "write",
+                "canonical_file_path": "/project/src/main.py",
+                "tool_input": {"file_path": "/project/src/main.py"},
+            },
+            metadata={},
+        )
+
+        response = await engine.evaluate(
+            event,
+            session_id="sess-1",
+            variables={
+                "task_claimed": True,
+                "claimed_task_required_skills": ["python", "development-discipline"],
+                "loaded_skills": [],
+            },
+        )
+
+        assert response.decision == "block"
+        assert response.reason is not None
+        assert response.reason.endswith(skill_fetch_directive("python"))
+
+    @pytest.mark.asyncio
+    async def test_rule_allows_when_all_required_skills_loaded(self, db: HubDatabase) -> None:
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id="sess-1",
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={
+                "tool_name": "Write",
+                "canonical_tool_kind": "write",
+                "canonical_file_path": "/project/src/main.py",
+                "tool_input": {"file_path": "/project/src/main.py"},
+            },
+            metadata={},
+        )
+
+        response = await engine.evaluate(
+            event,
+            session_id="sess-1",
+            variables={
+                "task_claimed": True,
+                "enforce_tdd": False,
+                "claimed_task_required_skills": ["python", "development-discipline"],
+                "loaded_skills": ["python", "development-discipline", "context7"],
+            },
+        )
+
+        assert response.decision == "allow", response.reason
+
+    @pytest.mark.asyncio
+    async def test_existing_path_gate_still_blocks_without_task_metadata(
+        self, db: HubDatabase
+    ) -> None:
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id="sess-1",
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={
+                "tool_name": "Write",
+                "canonical_tool_kind": "write",
+                "canonical_file_path": "/project/src/lib.rs",
+                "tool_input": {"file_path": "/project/src/lib.rs"},
+            },
+            metadata={},
+        )
+
+        response = await engine.evaluate(
+            event,
+            session_id="sess-1",
+            variables={"claimed_task_required_skills": [], "loaded_skills": []},
+        )
+
+        assert response.decision == "block"
+        assert response.reason is not None
+        assert response.reason.endswith(skill_fetch_directive("rust"))
 
 
 class TestIsPlanFile:

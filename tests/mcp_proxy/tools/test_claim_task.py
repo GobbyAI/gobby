@@ -573,6 +573,46 @@ class TestClaimTaskSessionVariables:
             assert merged_vars["task_claimed"] is True
             assert merged_vars["claimed_tasks"].get(sample_task.id) == "#42"
 
+    @pytest.mark.asyncio
+    async def test_claim_task_sets_required_skill_metadata_via_session_variables(
+        self, mock_task_manager, mock_sync_manager, sample_task
+    ) -> None:
+        """claim_task persists proactive skill gates for the claimed task."""
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
+            ) as MockSessionTaskManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVManager,
+        ):
+            MockSessionTaskManager.return_value = MagicMock()
+
+            mock_session_manager = MagicMock()
+            mock_session_manager.resolve_session_reference.return_value = "my-session-id"
+            mock_session_manager.get.return_value = MagicMock(project_id="proj-1")
+            MockSessionManager.return_value = mock_session_manager
+
+            mock_sv_manager = MagicMock()
+            mock_sv_manager.get_variables.return_value = {}
+            MockSVManager.return_value = mock_sv_manager
+
+            sample_task.seq_num = 42
+            sample_task.category = "code"
+            sample_task.validation_criteria = "Update src/gobby/tasks/demo.py"
+            mock_task_manager.get_task.return_value = sample_task
+            mock_task_manager.claim_task.return_value = sample_task
+
+            registry = create_task_registry(mock_task_manager, mock_sync_manager)
+            result = await registry.call("claim_task", {"task_id": sample_task.id})
+
+            assert "error" not in result
+            merged_vars = mock_sv_manager.merge_variables.call_args[0][1]
+            assert merged_vars["claimed_task_required_skills"] == [
+                "python",
+                "development-discipline",
+            ]
+            assert merged_vars["claimed_task_files"] == ["src/gobby/tasks/demo.py"]
+
 
 class TestClaimTaskVsUpdateTask:
     """Tests demonstrating why claim_task provides value over update_task."""

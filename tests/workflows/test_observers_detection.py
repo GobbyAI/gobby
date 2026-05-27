@@ -5,7 +5,7 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -23,6 +23,7 @@ from gobby.workflows.observers import (
     detect_plan_mode_from_context,
     detect_task_claim,
     detect_verification_evidence,
+    reconcile_claimed_tasks,
 )
 
 pytestmark = pytest.mark.unit
@@ -44,6 +45,33 @@ def mock_task_manager():
     mock_task.id = "task-uuid-123"
     mock.get_task.return_value = mock_task
     return mock
+
+
+def _claimed_task(
+    *,
+    task_id: str = "task-uuid-123",
+    title: str = "Task",
+    description: str | None = None,
+    labels: list[str] | None = None,
+    category: str | None = "code",
+    validation_criteria: str | None = None,
+    additional_skills: list[str] | None = None,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=task_id,
+        seq_num=123,
+        title=title,
+        description=description,
+        labels=labels or [],
+        category=category,
+        validation_criteria=validation_criteria,
+        additional_skills=additional_skills,
+        claimed_by_session_id=SESSION_ID,
+        assignee=None,
+        closed_at=None,
+        is_escalated=False,
+        stages=(),
+    )
 
 
 @pytest.fixture
@@ -497,6 +525,131 @@ class TestDetectTaskClaimClaimOperations:
 
         assert variables.get("task_claimed") is True
         assert "new-task-uuid" in variables.get("claimed_tasks", {})
+
+    def test_create_task_claim_caches_python_skill_metadata(
+        self, variables, make_after_tool_event, mock_task_manager
+    ) -> None:
+        mock_task_manager.get_task.return_value = _claimed_task(
+            task_id="new-task-uuid",
+            title="Update src/gobby/tasks/metadata.py",
+            validation_criteria="src/gobby/tasks/metadata.py handles task metadata",
+        )
+
+        event = make_after_tool_event(
+            "mcp__gobby__call_tool",
+            tool_input={
+                "server_name": "gobby-tasks",
+                "tool_name": "create_task",
+                "arguments": {"title": "New task", "claim": True},
+            },
+            tool_output={"success": True, "result": {"id": "new-task-uuid", "status": "open"}},
+        )
+
+        detect_task_claim(event, variables, SESSION_ID, task_manager=mock_task_manager)
+
+        assert variables["claimed_task_language_skills"] == ["python"]
+        assert variables["claimed_task_required_skills"] == [
+            "python",
+            "development-discipline",
+        ]
+        assert "src/gobby/tasks/metadata.py" in variables["claimed_task_files"]
+
+    def test_claim_task_caches_rust_skill_from_affected_files(
+        self, variables, make_after_tool_event, mock_task_manager
+    ) -> None:
+        task = _claimed_task(task_id="task-uuid-123", title="Update parser")
+        mock_task_manager.get_task.return_value = task
+
+        with patch(
+            "gobby.workflows.claimed_task_skills.TaskAffectedFileManager"
+        ) as MockAffectedFiles:
+            mock_af_manager = MagicMock()
+            mock_af_manager.get_files.return_value = [
+                SimpleNamespace(file_path="crates/gobby/src/lib.rs")
+            ]
+            MockAffectedFiles.return_value = mock_af_manager
+
+            event = make_after_tool_event(
+                "mcp__gobby__call_tool",
+                tool_input={
+                    "server_name": "gobby-tasks",
+                    "tool_name": "claim_task",
+                    "arguments": {"task_id": "task-123"},
+                },
+                tool_output={
+                    "success": True,
+                    "result": {"id": "task-uuid-123", "status": "in_progress"},
+                },
+            )
+
+            detect_task_claim(event, variables, SESSION_ID, task_manager=mock_task_manager)
+
+        assert variables["claimed_task_language_skills"] == ["rust"]
+        assert variables["claimed_task_required_skills"] == [
+            "rust",
+            "development-discipline",
+        ]
+        assert variables["claimed_task_files"] == ["crates/gobby/src/lib.rs"]
+
+    @pytest.mark.parametrize(
+        ("labels", "additional_skills", "validation_criteria"),
+        [
+            (["tdd:required"], [], "Implement src/app.py"),
+            ([], ["test-driven-development"], "Implement src/app.py"),
+            (
+                [],
+                [],
+                "TDD evidence required: red, green, refactor/final-green, exact test command.",
+            ),
+        ],
+    )
+    def test_tdd_markers_cache_test_driven_development_skill(
+        self,
+        variables,
+        make_after_tool_event,
+        mock_task_manager,
+        labels,
+        additional_skills,
+        validation_criteria,
+    ) -> None:
+        mock_task_manager.get_task.return_value = _claimed_task(
+            labels=labels,
+            additional_skills=additional_skills,
+            validation_criteria=validation_criteria,
+        )
+
+        event = make_after_tool_event(
+            "mcp__gobby__call_tool",
+            tool_input={
+                "server_name": "gobby-tasks",
+                "tool_name": "claim_task",
+                "arguments": {"task_id": "task-123"},
+            },
+            tool_output={"success": True, "result": {"id": "task-uuid-123"}},
+        )
+
+        detect_task_claim(event, variables, SESSION_ID, task_manager=mock_task_manager)
+
+        assert "test-driven-development" in variables["claimed_task_required_skills"]
+
+    def test_reconcile_claimed_tasks_refreshes_skill_metadata(
+        self, variables, mock_task_manager
+    ) -> None:
+        task = _claimed_task(
+            task_id="task-uuid-123",
+            title="Update src/gobby/workflows/hooks.py",
+            validation_criteria="src/gobby/workflows/hooks.py caches metadata",
+        )
+        mock_task_manager.get_task.return_value = task
+        variables["claimed_tasks"] = {"task-uuid-123": "#123"}
+
+        reconcile_claimed_tasks(variables, SESSION_ID, task_manager=mock_task_manager)
+
+        assert variables["task_claimed"] is True
+        assert variables["claimed_task_required_skills"] == [
+            "python",
+            "development-discipline",
+        ]
 
     def test_create_task_without_claim_does_not_set_task_claimed(
         self, variables, make_after_tool_event, mock_task_manager

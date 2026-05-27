@@ -1,0 +1,15 @@
+tags: [task-enforcement, enforcement, tasks, gobby, default]
+
+rules:
+  require-claimed-task-required-skills:
+    description: "Block first source-code write until claimed-task required skills are loaded"
+    event: before_tool
+    enabled: true
+    priority: 29
+    when: >
+      event.data.get('canonical_tool_kind') == 'write'
+      and claimed_task_source_code_write(tool_input, event.data)
+      and first_unloaded_claimed_task_required_skill() != ''
+    effects:
+      - type: block
+        reason: '{{ skill_fetch_directive(first_unloaded_claimed_task_required_skill()) }}'

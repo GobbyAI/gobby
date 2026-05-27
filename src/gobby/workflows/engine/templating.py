@@ -12,8 +12,10 @@ from typing import Any
 import psycopg
 
 from gobby.hooks.events import HookEvent
+from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.enforcement.blocking import (
+    claimed_task_source_code_write,
     get_touched_file_paths,
     is_current_plan_artifact,
     is_discovery_tool,
@@ -152,8 +154,10 @@ class TemplatingMixin:
             )
         )
         funcs["get_touched_file_paths"] = get_touched_file_paths
+        funcs["claimed_task_source_code_write"] = claimed_task_source_code_write
         funcs["requires_task_for_any_touched_file"] = requires_task_for_any_touched_file
         funcs["is_message_delivery_tool"] = is_message_delivery_tool
+        funcs["skill_fetch_directive"] = skill_fetch_directive
         funcs["has_pending_messages"] = self._has_pending_messages
         funcs["pending_message_count"] = self._pending_message_count
         return funcs

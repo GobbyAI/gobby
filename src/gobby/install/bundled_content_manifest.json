@@ -255,6 +255,7 @@
     "workflows/rules/task-enforcement/block-needs-review-interactive.yaml": "88586e7473d6a59458489b2d131f3485be9cce111b81e719e629b1838fe882d3",
     "workflows/rules/task-enforcement/block-reopen-task.yaml": "6ecd6ee48a03ecf9bc01bb487db35a1cd91abad842fd8299d0a3f3d319179177",
     "workflows/rules/task-enforcement/completion-readiness.yaml": "edfa4428450353fe1f6ef7a1594d0dd347e230bdd3d11492d51da1edb22a1411",
+    "workflows/rules/task-enforcement/require-claimed-task-required-skills.yaml": "1cc3b78e826f908a140246f0a2b387e0838034ca32207e1fdbb02c2dc190ee07",
     "workflows/rules/task-enforcement/require-commit-before-status.yaml": "6ad69b9ad426681ac8d45cb02ba6b19c0030f00496ffc3a6600b7d6fa2efa2f9",
     "workflows/rules/task-enforcement/require-task-before-edit.yaml": "32acc956e641d2c9068adef53e160b2d48e9ed19b2163c7449d0aea578e278a4",
     "workflows/rules/task-enforcement/require-task-creation-skill-loaded.yaml": "b0fa210dd92367434476adeaac279478f67bdd74145fc1a1d7d9e5ec990f2b9e",

@@ -93,6 +93,52 @@ class TestCreateTaskTool:
             assert call_kwargs["category"] == "refactor"
 
     @pytest.mark.asyncio
+    async def test_create_task_accepts_additional_skills_and_affected_files(
+        self, mock_task_manager, mock_sync_manager
+    ) -> None:
+        """create_task forwards skill metadata and stores explicit affected files."""
+        with patch(
+            "gobby.mcp_proxy.tools.tasks._crud.TaskAffectedFileManager"
+        ) as MockAffectedFiles:
+            mock_af_manager = MagicMock()
+            MockAffectedFiles.return_value = mock_af_manager
+
+            registry = create_task_registry(mock_task_manager, mock_sync_manager)
+
+            mock_task = MagicMock()
+            mock_task.id = "550e8400-e29b-41d4-a716-446655440088"
+            mock_task.seq_num = 88
+            mock_task.to_dict.return_value = {"id": mock_task.id, "title": "Metadata task"}
+            mock_task_manager.create_task_with_decomposition.return_value = {
+                "task": {"id": mock_task.id, "title": "Metadata task"},
+            }
+            mock_task_manager.get_task.return_value = mock_task
+
+            with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
+                mock_ctx.return_value = {"id": "proj-1"}
+
+                result = await registry.call(
+                    "create_task",
+                    {
+                        "title": "Metadata task",
+                        "category": "code",
+                        "implementation_domain": "backend",
+                        "validation_criteria": "Update src/gobby/tasks/demo.py",
+                        "additional_skills": ["test-driven-development"],
+                        "affected_files": ["src/gobby/tasks/demo.py"],
+                    },
+                )
+
+            assert result["id"] == mock_task.id
+            call_kwargs = mock_task_manager.create_task_with_decomposition.call_args.kwargs
+            assert call_kwargs["additional_skills"] == ["test-driven-development"]
+            mock_af_manager.set_files.assert_called_once_with(
+                mock_task.id,
+                ["src/gobby/tasks/demo.py"],
+                "manual",
+            )
+
+    @pytest.mark.asyncio
     async def test_create_task_with_blocks(self, mock_task_manager, mock_sync_manager):
         """Test create_task with blocks argument creates dependencies."""
         with patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager") as MockDepManager:
@@ -676,6 +722,69 @@ class TestCreateTaskTool:
                 merged_vars = call_args[0][1]
                 assert merged_vars["task_claimed"] is True
                 assert mock_task.id in merged_vars["claimed_tasks"]
+
+    @pytest.mark.asyncio
+    async def test_create_task_with_claim_sets_required_skill_metadata(
+        self, mock_task_manager, mock_sync_manager
+    ) -> None:
+        """create_task(claim=True) persists proactive claimed-task skill metadata."""
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
+            ) as MockSessionTaskManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVManager,
+        ):
+            MockSessionTaskManager.return_value = MagicMock()
+
+            mock_session_manager = MagicMock()
+            mock_session_manager.resolve_session_reference.return_value = "test-session"
+            mock_session_manager.get.return_value = MagicMock(project_id="proj-1")
+            MockSessionManager.return_value = mock_session_manager
+
+            mock_sv_manager = MagicMock()
+            mock_sv_manager.get_variables.return_value = {}
+            MockSVManager.return_value = mock_sv_manager
+
+            registry = create_task_registry(mock_task_manager, mock_sync_manager)
+
+            mock_task = MagicMock()
+            mock_task.id = "550e8400-e29b-41d4-a716-446655440021"
+            mock_task.seq_num = 101
+            mock_task.title = "Update src/gobby/tasks/demo.py"
+            mock_task.description = None
+            mock_task.category = "code"
+            mock_task.labels = []
+            mock_task.validation_criteria = "Update src/gobby/tasks/demo.py"
+            mock_task.additional_skills = None
+            mock_task.to_dict.return_value = {"id": mock_task.id, "title": mock_task.title}
+            mock_task_manager.create_task_with_decomposition.return_value = {
+                "task": {"id": mock_task.id},
+            }
+            mock_task_manager.get_task.return_value = mock_task
+            mock_task_manager.claim_task.return_value = mock_task
+
+            with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
+                mock_ctx.return_value = {"id": "proj-1"}
+
+                result = await registry.call(
+                    "create_task",
+                    {
+                        "title": mock_task.title,
+                        "category": "code",
+                        "implementation_domain": "backend",
+                        "validation_criteria": mock_task.validation_criteria,
+                        "claim": True,
+                    },
+                )
+
+            assert result["id"] == mock_task.id
+            merged_vars = mock_sv_manager.merge_variables.call_args[0][1]
+            assert merged_vars["claimed_task_required_skills"] == [
+                "python",
+                "development-discipline",
+            ]
+            assert merged_vars["claimed_task_files"] == ["src/gobby/tasks/demo.py"]
 
 
 # =============================================================================

@@ -167,6 +167,92 @@ _CLI_DIR_SEGMENTS = (
     f"{os.sep}.codex{os.sep}",
 )
 
+SOURCE_CODE_EXTENSIONS = frozenset(
+    {
+        ".py",
+        ".rs",
+        ".js",
+        ".jsx",
+        ".ts",
+        ".tsx",
+        ".mjs",
+        ".cjs",
+        ".html",
+        ".css",
+        ".scss",
+        ".sass",
+        ".less",
+        ".vue",
+        ".svelte",
+        ".astro",
+        ".go",
+        ".java",
+        ".kt",
+        ".kts",
+        ".scala",
+        ".groovy",
+        ".c",
+        ".h",
+        ".cpp",
+        ".hpp",
+        ".cc",
+        ".hh",
+        ".cxx",
+        ".hxx",
+        ".cs",
+        ".fs",
+        ".fsx",
+        ".swift",
+        ".m",
+        ".mm",
+        ".rb",
+        ".php",
+        ".phtml",
+        ".pl",
+        ".pm",
+        ".lua",
+        ".r",
+        ".R",
+        ".jl",
+        ".ex",
+        ".exs",
+        ".erl",
+        ".hrl",
+        ".hs",
+        ".lhs",
+        ".ml",
+        ".mli",
+        ".sql",
+        ".graphql",
+        ".gql",
+        ".proto",
+        ".thrift",
+        ".sh",
+        ".bash",
+        ".zsh",
+        ".fish",
+        ".ps1",
+        ".bat",
+        ".cmd",
+    }
+)
+
+SOURCE_CODE_FILENAMES = frozenset(
+    {
+        "Makefile",
+        "makefile",
+        "GNUmakefile",
+        "Dockerfile",
+        "dockerfile",
+        "Containerfile",
+        "Rakefile",
+        "rakefile",
+        "meson.build",
+        "SConstruct",
+        "SConscript",
+    }
+)
+
 
 def is_plan_file(file_path: str, source: str | None = None) -> bool:
     """Check if a file is a plan file that may be edited without a task.
@@ -193,6 +279,20 @@ def is_plan_file(file_path: str, source: str | None = None) -> bool:
         return False
 
     return any(seg in normalised for seg in _CLI_DIR_SEGMENTS)
+
+
+def is_source_code_path(file_path: str) -> bool:
+    """Return True when *file_path* looks like a source-code path."""
+    if not file_path:
+        return False
+
+    normalized = os.path.normpath(file_path.strip())
+    basename = os.path.basename(normalized)
+    if basename in SOURCE_CODE_FILENAMES:
+        return True
+
+    _, ext = os.path.splitext(basename)
+    return ext in SOURCE_CODE_EXTENSIONS
 
 
 def is_current_plan_artifact(
@@ -307,3 +407,23 @@ def requires_task_for_any_touched_file(
         return True
 
     return False
+
+
+def claimed_task_source_code_write(
+    tool_input: Any, event_data: dict[str, Any] | None = None
+) -> bool:
+    """Return True when a write-like tool touches source code.
+
+    This intentionally fails closed for write events with no parseable path; the
+    claimed-task skill gate should fire before an opaque source mutation.
+    """
+    touched_paths = get_touched_file_paths(tool_input)
+    if not touched_paths and isinstance(event_data, dict):
+        canonical_path = event_data.get("canonical_file_path")
+        if isinstance(canonical_path, str) and canonical_path.strip():
+            touched_paths = [canonical_path.strip()]
+
+    if not touched_paths:
+        return True
+
+    return any(is_source_code_path(path) for path in touched_paths)
