@@ -6,29 +6,90 @@ on:
     tags:
       - "v*"
       - "ci-*"
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - 'LICENSE*'
-      - '.gobby/**'
   pull_request:
     branches: [main]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - 'LICENSE*'
-      - '.gobby/**'
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Classify Changes
+    runs-on: ubuntu-latest
+    outputs:
+      requires_full_ci: ${{ steps.classify.outputs.requires_full_ci }}
+      schemas_changed: ${{ steps.classify.outputs.schemas_changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Classify changed paths
+        id: classify
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          requires_full_ci=false
+          schemas_changed=false
+
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            requires_full_ci=true
+          else
+            if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+              base="${{ github.event.pull_request.base.sha }}"
+              head="${{ github.sha }}"
+            else
+              base="${{ github.event.before }}"
+              head="${{ github.sha }}"
+            fi
+
+            if [[ -z "${base:-}" || -z "${head:-}" || "$base" =~ ^0+$ ]]; then
+              requires_full_ci=true
+            else
+              if ! git diff --name-only "$base" "$head" > changed-files.txt; then
+                echo "::warning::Could not diff $base..$head; running full CI"
+                requires_full_ci=true
+              elif [[ ! -s changed-files.txt ]]; then
+                requires_full_ci=true
+              else
+                while IFS= read -r file; do
+                  case "$file" in
+                    schemas/*)
+                      schemas_changed=true
+                      ;;
+                  esac
+
+                  case "$file" in
+                    *.md|docs/*|LICENSE*|.gobby/*|.github/ISSUE_TEMPLATE/*|.github/CODEOWNERS|.github/coderabbit.yaml)
+                      ;;
+                    *)
+                      requires_full_ci=true
+                      ;;
+                  esac
+                done < changed-files.txt
+              fi
+            fi
+          fi
+
+          echo "requires_full_ci=$requires_full_ci" >> "$GITHUB_OUTPUT"
+          echo "schemas_changed=$schemas_changed" >> "$GITHUB_OUTPUT"
+          {
+            echo "requires_full_ci=$requires_full_ci"
+            echo "schemas_changed=$schemas_changed"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   # Actions are major-version pinned so Dependabot and branch protection can
   # carry security updates without manual SHA digest churn on every workflow.
   lint:
     name: Lint
+    needs: changes
+    if: needs.changes.outputs.requires_full_ci == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -52,6 +113,8 @@ jobs:
 
   lint-frontend:
     name: Lint (Frontend)
+    needs: changes
+    if: needs.changes.outputs.requires_full_ci == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -73,6 +136,8 @@ jobs:
 
   typecheck:
     name: Type Check
+    needs: changes
+    if: needs.changes.outputs.requires_full_ci == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -93,6 +158,8 @@ jobs:
 
   typecheck-frontend:
     name: Type Check (Frontend)
+    needs: changes
+    if: needs.changes.outputs.requires_full_ci == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -114,6 +181,8 @@ jobs:
 
   test-frontend:
     name: Test (Frontend)
+    needs: changes
+    if: needs.changes.outputs.requires_full_ci == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -144,6 +213,8 @@ jobs:
 
   test:
     name: Test (Python ${{ matrix.python-version }})
+    needs: changes
+    if: needs.changes.outputs.requires_full_ci == 'true'
     runs-on: ubuntu-latest
     env:
       GOBBY_POSTGRES_TEST_CONTAINER: postgres-test
@@ -255,6 +326,8 @@ jobs:
 
   voice-extra:
     name: Voice Extra (safetensors rc0)
+    needs: changes
+    if: needs.changes.outputs.requires_full_ci == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -275,6 +348,8 @@ jobs:
 
   security:
     name: Security Scan
+    needs: changes
+    if: needs.changes.outputs.requires_full_ci == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -305,6 +380,8 @@ jobs:
 
   build:
     name: Build Package
+    needs: changes
+    if: needs.changes.outputs.requires_full_ci == 'true'
     runs-on: ubuntu-latest
     env:
       GOBBY_POSTGRES_TEST_CONTAINER: postgres-test
@@ -422,3 +499,109 @@ jobs:
           uv sync --dev
           GOBBY_TEST_PROTECT=1 GOBBY_RUN_WHEEL_UI_SMOKE=1 GOBBY_WHEEL_PATH="$wheel" \
             uv run pytest tests/packaging/test_installed_wheel_ui_smoke.py -v
+
+  schema-mirror:
+    name: Schema Mirror
+    needs: changes
+    if: needs.changes.outputs.schemas_changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Out Repo
+        uses: actions/checkout@v4
+
+      - name: Validate SOURCE_COMMIT
+        run: |
+          set -euo pipefail
+          source_commit="$(tr -d '\n' < schemas/SOURCE_COMMIT)"
+          if ! printf '%s' "$source_commit" | grep -Eq '^[0-9a-fA-F]{40}$'; then
+            echo "schemas/SOURCE_COMMIT must contain a bare 40-character hex SHA"
+            exit 1
+          fi
+          echo "SOURCE_COMMIT=$source_commit" >> "$GITHUB_ENV"
+
+      - name: Compare Mirrored Schemas
+        run: |
+          set -euo pipefail
+          base_url="https://raw.githubusercontent.com/GobbyAI/gobby-cli/${SOURCE_COMMIT}/crates/ghook/schemas"
+          tmp_dir="$(mktemp -d)"
+          trap 'rm -rf "$tmp_dir"' EXIT
+
+          for file in inbox-envelope.v1.schema.json diagnose-output.v1.schema.json diagnose-output.v2.schema.json; do
+            url="${base_url}/${file}"
+            if ! curl_error="$(curl -fSL --show-error "$url" -o "${tmp_dir}/${file}" 2>&1)"; then
+              echo "Failed to fetch ${url}: ${curl_error}"
+              exit 1
+            fi
+
+            local_sha="$(sha256sum "schemas/${file}" | awk '{print $1}')"
+            remote_sha="$(sha256sum "${tmp_dir}/${file}" | awk '{print $1}')"
+
+            if [[ "$local_sha" != "$remote_sha" ]]; then
+              echo "Schema mirror drift detected for ${file}"
+              echo "  local:  ${local_sha}"
+              echo "  remote: ${remote_sha}"
+              exit 1
+            fi
+          done
+          echo "All schemas verified successfully"
+
+  merge-gate:
+    name: Merge Gate
+    needs:
+      - changes
+      - lint
+      - lint-frontend
+      - typecheck
+      - typecheck-frontend
+      - test-frontend
+      - test
+      - voice-extra
+      - security
+      - build
+      - schema-mirror
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check gated jobs
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          failures=0
+          requires_full_ci="${{ needs.changes.outputs.requires_full_ci }}"
+          schemas_changed="${{ needs.changes.outputs.schemas_changed }}"
+
+          check_success() {
+            local name="$1"
+            local result="$2"
+            if [[ "$result" != "success" ]]; then
+              echo "::error::${name} ended with result: ${result}"
+              failures=$((failures + 1))
+            fi
+          }
+
+          check_success "Classify Changes" "${{ needs.changes.result }}"
+
+          if [[ "$requires_full_ci" == "true" ]]; then
+            check_success "Lint" "${{ needs.lint.result }}"
+            check_success "Lint (Frontend)" "${{ needs['lint-frontend'].result }}"
+            check_success "Type Check" "${{ needs.typecheck.result }}"
+            check_success "Type Check (Frontend)" "${{ needs['typecheck-frontend'].result }}"
+            check_success "Test (Frontend)" "${{ needs['test-frontend'].result }}"
+            check_success "Test (Python)" "${{ needs.test.result }}"
+            check_success "Voice Extra" "${{ needs['voice-extra'].result }}"
+            check_success "Security Scan" "${{ needs.security.result }}"
+            check_success "Build Package" "${{ needs.build.result }}"
+          fi
+
+          if [[ "$schemas_changed" == "true" ]]; then
+            check_success "Schema Mirror" "${{ needs['schema-mirror'].result }}"
+          fi
+
+          if [[ "$requires_full_ci" != "true" && "$schemas_changed" != "true" ]]; then
+            echo "Lightweight change set; full CI skipped."
+          fi
+
+          if [[ "$failures" -gt 0 ]]; then
+            exit 1
+          fi
