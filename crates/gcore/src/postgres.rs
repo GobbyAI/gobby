@@ -1,4 +1,4 @@
-//! PostgreSQL foundation adapter boundary.
+//! PostgreSQL foundation adapter boundary and hub connection helpers.
 //!
 //! This module is available with the `postgres` feature. Gobby-owned schemas are
 //! externally managed; adapter code must validate required objects without
