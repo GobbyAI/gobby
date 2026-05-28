@@ -59,6 +59,7 @@ mod tests {
         assert_cli_independent_contract::<crate::vector::code_symbols::CodeSymbolVectorSearchRequest>(
         );
         assert_cli_independent_contract::<crate::vector::code_symbols::CodeSymbolVectorSearchHit>();
+        assert_cli_independent_contract::<crate::vector::code_symbols::CodeSymbolVectorPayload>();
         assert_cli_independent_contract::<crate::projection::sync::ProjectionSyncRequest>();
         assert_cli_independent_contract::<crate::projection::sync::ProjectionSyncStatus>();
     }
