@@ -217,7 +217,12 @@ fn parse_point_id(id: &Value) -> Option<String> {
 fn is_qdrant_unreachable(error: &anyhow::Error) -> bool {
     error.chain().any(|cause| {
         cause.downcast_ref::<reqwest::Error>().is_some()
-            || cause.downcast_ref::<QdrantError>().is_some()
+            || matches!(
+                cause.downcast_ref::<QdrantError>(),
+                // Qdrant 4xx responses are caller/configuration errors; only 5xx
+                // responses represent service-side unavailability.
+                Some(QdrantError::HttpStatus { status, .. }) if status.is_server_error()
+            )
     })
 }
 
@@ -476,6 +481,23 @@ mod tests {
             }
             None => panic!("expected QdrantError, got {err}"),
         }
+    }
+
+    #[test]
+    fn qdrant_http_status_unreachable_only_for_server_errors() {
+        let client_error = anyhow::Error::new(QdrantError::HttpStatus {
+            operation: "search",
+            status: reqwest::StatusCode::BAD_REQUEST,
+            body: "bad request".to_string(),
+        });
+        let server_error = anyhow::Error::new(QdrantError::HttpStatus {
+            operation: "search",
+            status: reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+            body: "boom".to_string(),
+        });
+
+        assert!(!is_qdrant_unreachable(&client_error));
+        assert!(is_qdrant_unreachable(&server_error));
     }
 
     fn spawn_qdrant_response(status: u16, body: Value) -> (String, thread::JoinHandle<String>) {
