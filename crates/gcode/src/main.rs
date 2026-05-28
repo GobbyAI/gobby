@@ -288,7 +288,7 @@ fn main() -> anyhow::Result<()> {
             files,
             full,
             require_cpp_semantics,
-        } => commands::index::run(&ctx, path, files, full, require_cpp_semantics),
+        } => commands::index::run(&ctx, path, files, full, require_cpp_semantics, cli.format),
         Command::Status => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
             commands::status::run(&ctx, cli.format)

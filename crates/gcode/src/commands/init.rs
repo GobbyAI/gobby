@@ -2,7 +2,7 @@ use std::path::Path;
 
 use crate::config;
 use crate::db;
-use crate::index::indexer;
+use crate::index::api;
 use crate::output::{self, Format};
 use crate::project;
 use crate::skill;
@@ -53,13 +53,33 @@ pub fn run(project_root: &Path, format: Format, quiet: bool) -> anyhow::Result<(
     // Auto-index the project. The daemon process is not required, but a migrated
     // PostgreSQL hub must already be configured in Gobby bootstrap.
     let database_url = db::resolve_database_url()?;
-    let mut conn = db::connect_readwrite(&database_url)?;
-    let index_result =
-        indexer::index_directory(&mut conn, project_root, &project_id, true, quiet, false)?;
+    let index_ctx = config::Context {
+        database_url,
+        project_root: project_root.to_path_buf(),
+        project_id: project_id.clone(),
+        quiet,
+        falkordb: None,
+        qdrant: None,
+        embedding: None,
+        daemon_url: None,
+    };
+    let index_result = api::index_files(
+        api::IndexRequest {
+            project_root: project_root.to_path_buf(),
+            path_filter: None,
+            explicit_files: Vec::new(),
+            full: false,
+            require_cpp_semantics: false,
+            sync_projections: false,
+        },
+        &index_ctx,
+    )?;
     if !quiet {
         eprintln!(
             "Indexed {} files, {} symbols in {}ms",
-            index_result.files_indexed, index_result.symbols_found, index_result.duration_ms
+            index_result.indexed_files,
+            index_result.symbols_indexed,
+            index_result.durations.total_ms
         );
     }
 
@@ -69,9 +89,9 @@ pub fn run(project_root: &Path, format: Format, quiet: bool) -> anyhow::Result<(
                 "project_id": project_id,
                 "project_root": project_root.to_string_lossy(),
                 "status": status,
-                "files_indexed": index_result.files_indexed,
-                "symbols_found": index_result.symbols_found,
-                "duration_ms": index_result.duration_ms,
+                "files_indexed": index_result.indexed_files,
+                "symbols_found": index_result.symbols_indexed,
+                "duration_ms": index_result.durations.total_ms,
             });
             if !installed_skills.is_empty() {
                 result["skills_installed"] = serde_json::json!(installed_skills);
