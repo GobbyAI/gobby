@@ -208,6 +208,36 @@ async def test_list_worktrees(registry, mock_worktree_storage) -> None:
 
 
 @pytest.mark.asyncio
+async def test_list_worktrees_accepts_explicit_project_id(
+    registry, mock_worktree_storage
+) -> None:
+    wt1 = Worktree(
+        id="1",
+        project_id="target-proj",
+        branch_name="b1",
+        worktree_path="p1",
+        base_branch="main",
+        status="active",
+        created_at="",
+        updated_at="",
+        task_id=None,
+        agent_session_id=None,
+        merged_at=None,
+    )
+    mock_worktree_storage.list_worktrees.return_value = [wt1]
+
+    result = await registry.call(
+        "list_worktrees", {"status": "active", "project_id": "target-proj"}
+    )
+
+    assert result["success"] is True
+    assert result["count"] == 1
+    mock_worktree_storage.list_worktrees.assert_called_with(
+        project_id="target-proj", status="active", agent_session_id=None, limit=50
+    )
+
+
+@pytest.mark.asyncio
 async def test_claim_worktree_success(registry, mock_worktree_storage) -> None:
     wt = Worktree(
         id="wt-1",
