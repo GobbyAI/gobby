@@ -1,0 +1,127 @@
+# Gobby service dependencies
+# Installed via: gobby install
+# Managed by daemon start/stop via Docker Compose profiles.
+
+services:
+  falkordb:
+    image: falkordb/falkordb:latest
+    ports:
+      - "${GOBBY_FALKORDB_PORT:-16379}:6379"
+      - "${GOBBY_FALKORDB_BROWSER_PORT:-13000}:3000"
+    environment:
+      # Redis AUTH - REDIS_ARGS is the documented entry point for redis-server flags.
+      # FALKORDB_ARGS is reserved for module options; do not put auth there.
+      - REDIS_ARGS=--requirepass ${GOBBY_FALKORDB_PASSWORD:-gobbyfalkor}
+      # Pass-through so the healthcheck below can read the same value.
+      - GOBBY_FALKORDB_PASSWORD=${GOBBY_FALKORDB_PASSWORD:-gobbyfalkor}
+    volumes:
+      - gobby_falkordb_data:/data
+    healthcheck:
+      # Quote the shell-expanded password so future relaxed password rules do not word-split.
+      test:
+        - CMD-SHELL
+        - 'redis-cli -a "$$GOBBY_FALKORDB_PASSWORD" PING | grep -q PONG'
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    profiles: [falkordb, all]
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "${GOBBY_QDRANT_HTTP_PORT:-6333}:6333"
+      - "${GOBBY_QDRANT_GRPC_PORT:-6334}:6334"
+    environment:
+      # Auth disabled for local-only access (no TLS = no point in API key)
+      # To enable: set QDRANT__SERVICE__API_KEY and configure TLS
+      - QDRANT__LOG_LEVEL=${GOBBY_QDRANT_LOG_LEVEL:-WARN}
+    volumes:
+      - gobby_qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/localhost/6333 && printf \"GET /healthz HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n\" >&3 && grep -q \"healthz check passed\" <&3'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    profiles:
+      - qdrant
+      - all
+
+  postgres:
+    build:
+      context: ./postgres-pgsearch
+      args:
+        PG_SEARCH_VERSION: ${GOBBY_PG_SEARCH_VERSION:-0.23.4}
+        PG_SEARCH_SHA256: ${GOBBY_PG_SEARCH_SHA256}
+    image: gobby-postgres-local:18-pgsearch
+    container_name: gobby-postgres
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_search,pgaudit
+      - -c
+      - pgaudit.log=${GOBBY_PGAUDIT_LOG:-ddl}
+      - -c
+      - pgaudit.log_catalog=off
+      - -c
+      - logging_collector=on
+      - -c
+      - log_destination=stderr
+      - -c
+      - log_directory=/var/log/pgaudit
+      - -c
+      - log_filename=pgaudit-%Y-%m-%d_%H%M%S.log
+      - -c
+      - log_rotation_age=1d
+      - -c
+      - log_rotation_size=0
+      - -c
+      - log_file_mode=0640
+      - -c
+      - log_min_messages=log
+    environment:
+      POSTGRES_DB: ${GOBBY_POSTGRES_DB:-gobby}
+      POSTGRES_USER: ${GOBBY_POSTGRES_USER:-gobby}
+      POSTGRES_PASSWORD: ${GOBBY_POSTGRES_PASSWORD:-gobby_dev}
+      GOBBY_PGAUDIT_LOG: ${GOBBY_PGAUDIT_LOG:-ddl}
+    ports:
+      - "${GOBBY_POSTGRES_PORT:-60891}:5432"
+    volumes:
+      - gobby_postgres_data:/var/lib/postgresql
+      - gobby_pgaudit_log:/var/log/pgaudit
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          set -eu;
+          pg_isready -U ${GOBBY_POSTGRES_USER:-gobby};
+          test "$(psql -U ${GOBBY_POSTGRES_USER:-gobby} -d ${GOBBY_POSTGRES_DB:-gobby} -tAc "SELECT 1 FROM pg_extension WHERE extname='pgaudit'")" = "1";
+          expected_audit_log="$${GOBBY_PGAUDIT_LOG:-ddl}";
+          test "$(psql -U ${GOBBY_POSTGRES_USER:-gobby} -d ${GOBBY_POSTGRES_DB:-gobby} -tAc 'SHOW pgaudit.log')" = "$$expected_audit_log";
+          test -d /var/log/pgaudit;
+          audit_file="$$(find /var/log/pgaudit -name 'pgaudit-*.log' -size +0c -type f | sort | tail -n1)";
+          test -n "$$audit_file";
+          test "$$(stat -c '%U %a' "$$audit_file")" = "postgres 640";
+          if [ "$$expected_audit_log" = "write" ]; then
+            psql -U ${GOBBY_POSTGRES_USER:-gobby} -d ${GOBBY_POSTGRES_DB:-gobby} -c 'UPDATE _pgaudit_probe SET last_probed_at = NOW() WHERE id = 1 RETURNING last_probed_at;';
+            audit_file="$$(find /var/log/pgaudit -name 'pgaudit-*.log' -size +0c -type f | sort | tail -n1)";
+            tail -n 20 "$$audit_file" | grep -E 'LOG:  AUDIT: SESSION,.*UPDATE';
+          fi
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    profiles:
+      - postgres
+      - all
+
+volumes:
+  gobby_falkordb_data:
+    name: gobby_falkordb_data
+  gobby_qdrant_data:
+    name: gobby_qdrant_data
+  gobby_postgres_data:
+    name: gobby_postgres_data
+  gobby_pgaudit_log:
+    name: gobby_pgaudit_log

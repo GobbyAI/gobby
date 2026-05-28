@@ -43,7 +43,7 @@ pub(crate) fn parse_file_with_semantic(
     if !security::is_symlink_safe(file_path, root_path) {
         return Ok(None);
     }
-    if security::should_exclude(file_path, exclude_patterns) {
+    if security::should_exclude_path(root_path, file_path, exclude_patterns) {
         return Ok(None);
     }
     if security::has_secret_extension(file_path) {

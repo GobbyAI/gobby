@@ -1,21 +1,5 @@
-mod commands;
-mod config;
-mod db;
-mod falkor;
-mod freshness;
-mod git;
-mod index;
-mod models;
-mod output;
-mod progress;
-mod project;
-mod savings;
-mod schema;
-mod search;
-mod secrets;
-mod skill;
-
-use clap::{Parser, Subcommand};
+use clap::{ArgGroup, Parser, Subcommand};
+use gobby_code::{commands, config, freshness, output, setup};
 
 #[derive(Parser)]
 #[command(name = "gcode", version, about = "Fast code index CLI for Gobby")]
@@ -49,6 +33,51 @@ enum Command {
     // ── Project Setup ────────────────────────────────────────────────
     /// Initialize project context (.gobby/gcode.json)
     Init,
+    /// Explicitly create gcode-owned standalone database objects
+    Setup {
+        /// Required opt-in for setup writes in v1
+        #[arg(long, required = true)]
+        standalone: bool,
+        /// PostgreSQL database URL to set up
+        #[arg(long)]
+        database_url: Option<String>,
+        /// Skip Docker service provisioning
+        #[arg(long)]
+        no_services: bool,
+        /// Drop/recreate gcode-owned code-index state and clear code-index projections
+        #[arg(long)]
+        overwrite_code_index: bool,
+        /// PostgreSQL schema namespace for gcode-owned objects
+        #[arg(long, default_value = "public")]
+        schema: String,
+        /// Embedding provider to store in gcore.yaml
+        #[arg(long)]
+        embedding_provider: Option<String>,
+        /// OpenAI-compatible embedding API base URL
+        #[arg(long)]
+        embedding_api_base: Option<String>,
+        /// Embedding model name
+        #[arg(long)]
+        embedding_model: Option<String>,
+        /// Embedding vector dimension
+        #[arg(long)]
+        embedding_vector_dim: Option<usize>,
+        /// Environment variable name containing the embedding API key
+        #[arg(long)]
+        embedding_api_key_env: Option<String>,
+        /// FalkorDB host to store in gcore.yaml
+        #[arg(long)]
+        falkordb_host: Option<String>,
+        /// FalkorDB port to store in gcore.yaml
+        #[arg(long)]
+        falkordb_port: Option<u16>,
+        /// FalkorDB password for Docker provisioning or external config
+        #[arg(long)]
+        falkordb_password: Option<String>,
+        /// Qdrant URL to store in gcore.yaml when services are not provisioned
+        #[arg(long)]
+        qdrant_url: Option<String>,
+    },
     /// Index a directory (full or incremental). Writes symbols, files, and chunks to PostgreSQL hub
     Index {
         /// Path to index (default: project root)
@@ -62,6 +91,9 @@ enum Command {
         /// Fail C/C++ indexing when clangd or compile_commands.json semantics are unavailable
         #[arg(long)]
         require_cpp_semantics: bool,
+        /// Synchronously update graph and vector projections after PostgreSQL indexing
+        #[arg(long)]
+        sync_projections: bool,
     },
     /// Show project index status
     Status,
@@ -71,10 +103,15 @@ enum Command {
         #[arg(long)]
         force: bool,
     },
-    /// Manage code-index graph lifecycle through the Gobby daemon; read graph queries remain top-level [requires Gobby]
+    /// Manage and inspect the code-index graph projection [requires FalkorDB]
     Graph {
         #[command(subcommand)]
         command: GraphCommand,
+    },
+    /// Manage the code-symbol vector projection [requires Qdrant and embeddings]
+    Vector {
+        #[command(subcommand)]
+        command: VectorCommand,
     },
 
     // ── Search (works in all modes) ──────────────────────────────────
@@ -204,9 +241,77 @@ enum Command {
 
 #[derive(Subcommand)]
 enum GraphCommand {
-    /// Clear the current project's code-index graph projection via the Gobby daemon [requires Gobby]
+    /// Sync one indexed file into the code-index graph projection
+    SyncFile {
+        /// Indexed file path to sync
+        #[arg(long)]
+        file: String,
+    },
+    /// Clear the current project's code-index graph projection
+    Clear {
+        /// Clear graph projection for this project id without resolving cwd project context
+        #[arg(long)]
+        project_id: Option<String>,
+    },
+    /// Rebuild the current project's code-index graph projection from PostgreSQL facts
+    Rebuild,
+    /// Generate a project graph report
+    Report {
+        /// Number of top hotspot and target rows to include
+        #[arg(long, default_value = "10")]
+        top_n: usize,
+    },
+    /// Show an overview graph for the current project
+    Overview {
+        /// Maximum files to include
+        #[arg(long, default_value = "100")]
+        limit: usize,
+    },
+    /// Show graph nodes and links for one indexed file
+    File {
+        /// Indexed file path to inspect
+        #[arg(long)]
+        file: String,
+    },
+    /// Show graph neighbors for one symbol ID
+    Neighbors {
+        /// Symbol ID to inspect
+        #[arg(long)]
+        symbol_id: String,
+        #[arg(long, default_value = "100")]
+        limit: usize,
+    },
+    /// Show transitive graph impact for a symbol ID or file path
+    #[command(group(
+        ArgGroup::new("target")
+            .required(true)
+            .args(["symbol_id", "file"])
+    ))]
+    BlastRadius {
+        /// Symbol ID to inspect
+        #[arg(long)]
+        symbol_id: Option<String>,
+        /// Indexed file path to inspect
+        #[arg(long)]
+        file: Option<String>,
+        #[arg(long, default_value = "3")]
+        depth: usize,
+        #[arg(long, default_value = "100")]
+        limit: usize,
+    },
+}
+
+#[derive(Subcommand)]
+enum VectorCommand {
+    /// Sync one indexed file into the code-symbol vector projection
+    SyncFile {
+        /// Indexed file path to sync
+        #[arg(long)]
+        file: String,
+    },
+    /// Clear the current project's code-symbol vector projection
     Clear,
-    /// Rebuild the current project's code-index graph projection via the Gobby daemon [requires Gobby]
+    /// Rebuild the current project's code-symbol vector projection from PostgreSQL facts
     Rebuild,
 }
 
@@ -235,48 +340,200 @@ fn ensure_symbol_fresh(ctx: &config::Context, disabled: bool, id: &str) -> anyho
     Ok(())
 }
 
-fn main() -> anyhow::Result<()> {
-    let cli = Cli::parse();
-
-    // Commands that must run before Context::resolve() (work on uninitialized projects)
+fn dispatch_early_command<F>(cli: &Cli, setup_runner: F) -> anyhow::Result<bool>
+where
+    F: FnOnce(setup::StandaloneSetupRequest, output::Format, bool) -> anyhow::Result<()>,
+{
     match &cli.command {
         Command::Init => {
             let root = match &cli.project {
                 Some(p) => std::path::PathBuf::from(p).canonicalize()?,
                 None => config::detect_project_root()?,
             };
-            return commands::init::run(&root, cli.format, cli.quiet);
+            commands::init::run(&root, cli.format, cli.quiet)?;
+            Ok(true)
+        }
+        Command::Setup {
+            standalone,
+            database_url,
+            no_services,
+            overwrite_code_index,
+            schema,
+            embedding_provider,
+            embedding_api_base,
+            embedding_model,
+            embedding_vector_dim,
+            embedding_api_key_env,
+            falkordb_host,
+            falkordb_port,
+            falkordb_password,
+            qdrant_url,
+        } => {
+            let mut request = setup::StandaloneSetupRequest::new(
+                *standalone,
+                database_url.clone(),
+                Some(schema.clone()),
+            );
+            request.no_services = *no_services;
+            request.overwrite_code_index = *overwrite_code_index;
+            request.embedding_provider = embedding_provider.clone();
+            request.embedding_api_base = embedding_api_base.clone();
+            request.embedding_model = embedding_model.clone();
+            request.embedding_vector_dim = *embedding_vector_dim;
+            request.embedding_api_key_env = embedding_api_key_env.clone();
+            request.falkordb_host = falkordb_host.clone();
+            request.falkordb_port = *falkordb_port;
+            request.falkordb_password = falkordb_password.clone();
+            request.qdrant_url = qdrant_url.clone();
+            setup_runner(request, cli.format, cli.quiet)?;
+            Ok(true)
         }
         Command::Projects => {
-            return commands::status::projects(cli.format);
+            commands::status::projects(cli.format)?;
+            Ok(true)
         }
         Command::Prune { force } => {
-            return commands::status::prune(*force);
+            commands::status::prune(*force)?;
+            Ok(true)
         }
-        _ => {}
+        Command::Graph {
+            command:
+                GraphCommand::Clear {
+                    project_id: Some(project_id),
+                },
+        } => {
+            let ctx = config::Context::resolve_for_project_id(project_id, cli.quiet)?;
+            commands::graph::clear(&ctx, cli.format)?;
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
+}
+
+fn main() -> anyhow::Result<()> {
+    let cli = Cli::parse();
+
+    // Commands that must run before Context::resolve() (work on uninitialized projects)
+    if dispatch_early_command(&cli, commands::setup::run)? {
+        return Ok(());
     }
 
     let ctx = config::Context::resolve(cli.project.as_deref(), cli.quiet)?;
 
     match cli.command {
-        Command::Init | Command::Projects | Command::Prune { .. } => unreachable!(),
+        Command::Init | Command::Setup { .. } | Command::Projects | Command::Prune { .. } => {
+            unreachable!()
+        }
         Command::Index {
             path,
             files,
             full,
             require_cpp_semantics,
-        } => commands::index::run(&ctx, path, files, full, require_cpp_semantics),
+            sync_projections,
+        } => commands::index::run(
+            &ctx,
+            path,
+            files,
+            full,
+            require_cpp_semantics,
+            sync_projections,
+            cli.format,
+        ),
         Command::Status => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
             commands::status::run(&ctx, cli.format)
         }
         Command::Invalidate { force } => commands::status::invalidate(&ctx, force),
         Command::Graph {
-            command: GraphCommand::Clear,
+            command: GraphCommand::SyncFile { file },
+        } => {
+            ensure_files_fresh(
+                &ctx,
+                cli.no_freshness,
+                vec![std::path::PathBuf::from(&file)],
+            )?;
+            commands::graph::sync_file(&ctx, &file, cli.format)
+        }
+        Command::Graph {
+            command: GraphCommand::Clear { project_id: None },
         } => commands::graph::clear(&ctx, cli.format),
         Command::Graph {
+            command: GraphCommand::Clear {
+                project_id: Some(_),
+            },
+        } => unreachable!(),
+        Command::Graph {
             command: GraphCommand::Rebuild,
-        } => commands::graph::rebuild(&ctx, cli.format),
+        } => {
+            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            commands::graph::rebuild(&ctx, cli.format)
+        }
+        Command::Graph {
+            command: GraphCommand::Report { top_n },
+        } => {
+            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            commands::graph::report(&ctx, top_n, cli.format)
+        }
+        Command::Vector {
+            command: VectorCommand::SyncFile { file },
+        } => {
+            ensure_files_fresh(
+                &ctx,
+                cli.no_freshness,
+                vec![std::path::PathBuf::from(&file)],
+            )?;
+            commands::vector::sync_file(&ctx, &file, cli.format)
+        }
+        Command::Vector {
+            command: VectorCommand::Clear,
+        } => commands::vector::clear(&ctx, cli.format),
+        Command::Vector {
+            command: VectorCommand::Rebuild,
+        } => {
+            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            commands::vector::rebuild(&ctx, cli.format)
+        }
+        Command::Graph {
+            command: GraphCommand::Overview { limit },
+        } => {
+            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            commands::graph::overview(&ctx, limit, cli.format)
+        }
+        Command::Graph {
+            command: GraphCommand::File { file },
+        } => {
+            ensure_files_fresh(
+                &ctx,
+                cli.no_freshness,
+                vec![std::path::PathBuf::from(&file)],
+            )?;
+            commands::graph::file(&ctx, &file, cli.format)
+        }
+        Command::Graph {
+            command: GraphCommand::Neighbors { symbol_id, limit },
+        } => {
+            ensure_symbol_fresh(&ctx, cli.no_freshness, &symbol_id)?;
+            commands::graph::neighbors(&ctx, &symbol_id, limit, cli.format)
+        }
+        Command::Graph {
+            command:
+                GraphCommand::BlastRadius {
+                    symbol_id,
+                    file,
+                    depth,
+                    limit,
+                },
+        } => {
+            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            commands::graph::graph_blast_radius(
+                &ctx,
+                symbol_id.as_deref(),
+                file.as_deref(),
+                depth,
+                limit,
+                cli.format,
+            )
+        }
 
         Command::Search {
             query,
@@ -425,27 +682,231 @@ mod tests {
     use clap::Parser;
 
     #[test]
-    fn test_parse_graph_clear() {
-        let cli = Cli::try_parse_from(["gcode", "graph", "clear"]).expect("graph clear parses");
+    fn parse_projection_lifecycle_commands() {
+        let cli = Cli::try_parse_from([
+            "gcode",
+            "--format",
+            "text",
+            "graph",
+            "sync-file",
+            "--file",
+            "src/lib.rs",
+        ])
+        .expect("graph sync-file parses");
+        assert!(matches!(cli.format, output::Format::Text));
+        match cli.command {
+            Command::Graph {
+                command: GraphCommand::SyncFile { file },
+            } => assert_eq!(file, "src/lib.rs"),
+            _ => panic!("expected graph sync-file command"),
+        }
 
+        let cli = Cli::try_parse_from([
+            "gcode",
+            "--format",
+            "text",
+            "vector",
+            "sync-file",
+            "--file",
+            "src/lib.rs",
+        ])
+        .expect("vector sync-file parses");
+        assert!(matches!(cli.format, output::Format::Text));
+        match cli.command {
+            Command::Vector {
+                command: VectorCommand::SyncFile { file },
+            } => assert_eq!(file, "src/lib.rs"),
+            _ => panic!("expected vector sync-file command"),
+        }
+
+        let cli = Cli::try_parse_from(["gcode", "graph", "clear"]).expect("graph clear parses");
         assert!(matches!(
             cli.command,
             Command::Graph {
-                command: GraphCommand::Clear
+                command: GraphCommand::Clear { project_id: None }
             }
         ));
-    }
 
-    #[test]
-    fn test_parse_graph_rebuild() {
+        let cli = Cli::try_parse_from(["gcode", "graph", "clear", "--project-id", "project-1"])
+            .expect("graph clear --project-id parses");
+        assert!(matches!(
+            cli.command,
+            Command::Graph {
+                command: GraphCommand::Clear {
+                    project_id: Some(project_id)
+                }
+            } if project_id == "project-1"
+        ));
+
         let cli = Cli::try_parse_from(["gcode", "graph", "rebuild"]).expect("graph rebuild parses");
-
         assert!(matches!(
             cli.command,
             Command::Graph {
                 command: GraphCommand::Rebuild
             }
         ));
+
+        let cli = Cli::try_parse_from(["gcode", "graph", "report"]).expect("graph report parses");
+        assert!(matches!(
+            cli.command,
+            Command::Graph {
+                command: GraphCommand::Report { top_n: 10 }
+            }
+        ));
+
+        let cli =
+            Cli::try_parse_from(["gcode", "graph", "overview"]).expect("graph overview parses");
+        assert!(matches!(
+            cli.command,
+            Command::Graph {
+                command: GraphCommand::Overview { limit: 100 }
+            }
+        ));
+
+        let cli = Cli::try_parse_from(["gcode", "graph", "overview", "--limit", "25"])
+            .expect("graph overview limit parses");
+        assert!(matches!(
+            cli.command,
+            Command::Graph {
+                command: GraphCommand::Overview { limit: 25 }
+            }
+        ));
+
+        let cli = Cli::try_parse_from(["gcode", "graph", "file", "--file", "src/main.rs"])
+            .expect("graph file parses");
+        match cli.command {
+            Command::Graph {
+                command: GraphCommand::File { file },
+            } => assert_eq!(file, "src/main.rs"),
+            _ => panic!("expected graph file command"),
+        }
+
+        let cli = Cli::try_parse_from([
+            "gcode",
+            "graph",
+            "neighbors",
+            "--symbol-id",
+            "sym-1",
+            "--limit",
+            "7",
+        ])
+        .expect("graph neighbors parses");
+        match cli.command {
+            Command::Graph {
+                command: GraphCommand::Neighbors { symbol_id, limit },
+            } => {
+                assert_eq!(symbol_id, "sym-1");
+                assert_eq!(limit, 7);
+            }
+            _ => panic!("expected graph neighbors command"),
+        }
+
+        let cli = Cli::try_parse_from([
+            "gcode",
+            "graph",
+            "blast-radius",
+            "--symbol-id",
+            "sym-1",
+            "--depth",
+            "2",
+            "--limit",
+            "9",
+        ])
+        .expect("graph blast-radius symbol parses");
+        match cli.command {
+            Command::Graph {
+                command:
+                    GraphCommand::BlastRadius {
+                        symbol_id,
+                        file,
+                        depth,
+                        limit,
+                    },
+            } => {
+                assert_eq!(symbol_id.as_deref(), Some("sym-1"));
+                assert_eq!(file, None);
+                assert_eq!(depth, 2);
+                assert_eq!(limit, 9);
+            }
+            _ => panic!("expected graph blast-radius command"),
+        }
+
+        let cli = Cli::try_parse_from([
+            "gcode",
+            "graph",
+            "blast-radius",
+            "--file",
+            "src/lib.rs",
+            "--depth",
+            "2",
+            "--limit",
+            "9",
+        ])
+        .expect("graph blast-radius file parses");
+        match cli.command {
+            Command::Graph {
+                command:
+                    GraphCommand::BlastRadius {
+                        symbol_id,
+                        file,
+                        depth,
+                        limit,
+                    },
+            } => {
+                assert_eq!(symbol_id, None);
+                assert_eq!(file.as_deref(), Some("src/lib.rs"));
+                assert_eq!(depth, 2);
+                assert_eq!(limit, 9);
+            }
+            _ => panic!("expected graph blast-radius command"),
+        }
+
+        let cli = Cli::try_parse_from(["gcode", "vector", "clear"]).expect("vector clear parses");
+        assert!(matches!(
+            cli.command,
+            Command::Vector {
+                command: VectorCommand::Clear
+            }
+        ));
+
+        let cli =
+            Cli::try_parse_from(["gcode", "vector", "rebuild"]).expect("vector rebuild parses");
+        assert!(matches!(
+            cli.command,
+            Command::Vector {
+                command: VectorCommand::Rebuild
+            }
+        ));
+
+        let cli =
+            Cli::try_parse_from(["gcode", "index", "--sync-projections"]).expect("index parses");
+        match cli.command {
+            Command::Index {
+                sync_projections, ..
+            } => assert!(sync_projections),
+            _ => panic!("expected index command"),
+        }
+    }
+
+    #[test]
+    fn parse_graph_report_global_format() {
+        let cli = Cli::try_parse_from([
+            "gcode", "graph", "report", "--top-n", "5", "--format", "text",
+        ])
+        .expect("graph report parses");
+        assert!(matches!(cli.format, output::Format::Text));
+        match cli.command {
+            Command::Graph {
+                command: GraphCommand::Report { top_n },
+            } => assert_eq!(top_n, 5),
+            _ => panic!("expected graph report command"),
+        }
+
+        let err = match Cli::try_parse_from(["gcode", "graph", "report", "--limit", "5"]) {
+            Ok(_) => panic!("report keeps minimal args"),
+            Err(err) => err,
+        };
+        assert_eq!(err.kind(), clap::error::ErrorKind::UnknownArgument);
     }
 
     #[test]
@@ -456,8 +917,12 @@ mod tests {
         match cli.command {
             Command::Index {
                 require_cpp_semantics,
+                sync_projections,
                 ..
-            } => assert!(require_cpp_semantics),
+            } => {
+                assert!(require_cpp_semantics);
+                assert!(!sync_projections);
+            }
             _ => panic!("expected index command"),
         }
     }
@@ -699,5 +1164,91 @@ mod tests {
 
         assert!(cli.no_freshness);
         assert!(matches!(cli.command, Command::Tree));
+    }
+
+    #[test]
+    fn parse_setup_standalone() {
+        let cli = Cli::try_parse_from([
+            "gcode",
+            "setup",
+            "--standalone",
+            "--database-url",
+            "postgresql://localhost/gcode",
+            "--no-services",
+            "--overwrite-code-index",
+            "--embedding-provider",
+            "ollama",
+            "--embedding-vector-dim",
+            "768",
+            "--falkordb-password",
+            "secret-pass",
+        ])
+        .expect("setup parses");
+
+        match cli.command {
+            Command::Setup {
+                standalone,
+                database_url,
+                no_services,
+                overwrite_code_index,
+                schema,
+                embedding_provider,
+                embedding_vector_dim,
+                falkordb_password,
+                ..
+            } => {
+                assert!(standalone);
+                assert_eq!(
+                    database_url.as_deref(),
+                    Some("postgresql://localhost/gcode")
+                );
+                assert!(no_services);
+                assert!(overwrite_code_index);
+                assert_eq!(schema, "public");
+                assert_eq!(embedding_provider.as_deref(), Some("ollama"));
+                assert_eq!(embedding_vector_dim, Some(768));
+                assert_eq!(falkordb_password.as_deref(), Some("secret-pass"));
+            }
+            _ => panic!("expected setup command"),
+        }
+    }
+
+    #[test]
+    fn setup_runs_before_context_resolve() {
+        let project = tempfile::tempdir().expect("temp project");
+        let cli = Cli::try_parse_from([
+            "gcode",
+            "--project",
+            project.path().to_str().expect("utf8 temp path"),
+            "setup",
+            "--standalone",
+            "--database-url",
+            "postgresql://localhost/gcode",
+            "--overwrite-code-index",
+            "--embedding-api-base",
+            "https://embeddings.example/v1",
+        ])
+        .expect("setup parses");
+
+        let mut called = false;
+        let dispatched = dispatch_early_command(&cli, |request, _format, _quiet| {
+            called = true;
+            assert!(request.standalone);
+            assert_eq!(
+                request.database_url.as_deref(),
+                Some("postgresql://localhost/gcode")
+            );
+            assert_eq!(request.schema, "public");
+            assert!(request.overwrite_code_index);
+            assert_eq!(
+                request.embedding_api_base.as_deref(),
+                Some("https://embeddings.example/v1")
+            );
+            Ok(())
+        })
+        .expect("early dispatch succeeds without resolving project context");
+
+        assert!(dispatched);
+        assert!(called);
     }
 }

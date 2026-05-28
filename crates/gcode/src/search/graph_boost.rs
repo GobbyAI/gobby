@@ -9,7 +9,7 @@ use std::collections::HashSet;
 
 use crate::config::Context;
 use crate::db;
-use crate::falkor;
+use crate::graph::code_graph;
 use crate::search::fts;
 
 /// Get symbol IDs related to query via the call/import graph.
@@ -30,8 +30,8 @@ pub fn graph_boost(ctx: &Context, query: &str) -> Vec<String> {
         return vec![];
     };
 
-    let callers = falkor::find_callers(ctx, &symbol.id, 0, 10).unwrap_or_default();
-    let usages = falkor::find_usages(ctx, &symbol.id, 0, 10).unwrap_or_default();
+    let callers = code_graph::find_callers(ctx, &symbol.id, 0, 10).unwrap_or_default();
+    let usages = code_graph::find_usages(ctx, &symbol.id, 0, 10).unwrap_or_default();
 
     let mut ids = Vec::new();
     let mut seen = HashSet::new();
@@ -55,9 +55,9 @@ pub fn graph_expand(ctx: &Context, seed_ids: &[String]) -> Vec<String> {
     }
 
     // Callees first — "what do these symbols call?" surfaces implementation details
-    let callees = falkor::find_callees_batch(ctx, seed_ids, 30).unwrap_or_default();
+    let callees = code_graph::find_callees_batch(ctx, seed_ids, 30).unwrap_or_default();
     // Callers second — "who calls these symbols?" surfaces broader context
-    let callers = falkor::find_callers_batch(ctx, seed_ids, 30).unwrap_or_default();
+    let callers = code_graph::find_callers_batch(ctx, seed_ids, 30).unwrap_or_default();
 
     let mut ids = Vec::new();
     let mut seen = HashSet::new();
@@ -83,6 +83,7 @@ mod tests {
             falkordb: None,
             qdrant: None,
             embedding: None,
+            code_vectors: crate::config::CodeVectorSettings::default(),
             daemon_url: None,
         }
     }

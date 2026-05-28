@@ -1,5 +1,14 @@
 //! Content chunking: 100-line chunks with 10-line overlap.
 //! Ports logic from src/gobby/code_index/chunker.py.
+//!
+//! This remains gcode-owned because BM25 content indexing stores
+//! line-based `ContentChunk` records with project, path, line range, language,
+//! and timestamp fields. The generic `gobby_core::indexing::Chunk` and
+//! `ChunkIdentity` primitives model byte ranges with opaque metadata, so
+//! composing them here would hide a domain-specific projection rather than
+//! remove shared foundation logic. gcode also derives incremental state from
+//! PostgreSQL `indexed_files.content_hash` rows instead of consuming core
+//! `IndexEvent` snapshots.
 
 use crate::models::ContentChunk;
 
@@ -60,4 +69,23 @@ fn epoch_secs_str() -> String {
         .unwrap_or_default()
         .as_secs();
     format!("{secs}")
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn chunker_stays_gcode_owned_with_documented_narrowing() {
+        let source = include_str!("chunker.rs");
+        let doc_phrase = ["line-based `ContentChunk`", " records"].concat();
+        assert!(source.contains(&doc_phrase));
+
+        for forbidden in [
+            ["use gobby_core", "::indexing::Chunk"].concat(),
+            ["use gobby_core", "::indexing::ChunkIdentity"].concat(),
+            ["use gobby_core", "::indexing::IndexEvent"].concat(),
+            ["use gobby_core", "::indexing::index_events_from_hashes"].concat(),
+        ] {
+            assert!(!source.contains(&forbidden));
+        }
+    }
 }

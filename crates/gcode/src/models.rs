@@ -9,6 +9,103 @@ pub const CODE_INDEX_UUID_NAMESPACE: Uuid = Uuid::from_bytes([
     0xc0, 0xde, 0x1d, 0xe0, 0x00, 0x00, 0x40, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ]);
 
+pub const SOURCE_SYSTEM_GCODE: &str = "gcode";
+
+/// Producer confidence classification for graph and vector projection facts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ProjectionProvenance {
+    Extracted,
+    Inferred,
+    Ambiguous,
+}
+
+impl ProjectionProvenance {
+    pub fn from_wire_value(value: &str) -> Option<Self> {
+        match value {
+            "EXTRACTED" | "extracted" => Some(Self::Extracted),
+            "INFERRED" | "inferred" => Some(Self::Inferred),
+            "AMBIGUOUS" | "ambiguous" => Some(Self::Ambiguous),
+            _ => None,
+        }
+    }
+}
+
+/// Optional provenance attached to graph results and projection payloads.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProjectionMetadata {
+    pub provenance: ProjectionProvenance,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f64>,
+    pub source_system: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_file_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_line: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_symbol_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub matching_method: Option<String>,
+}
+
+impl ProjectionMetadata {
+    pub fn new(provenance: ProjectionProvenance, source_system: impl Into<String>) -> Self {
+        Self {
+            provenance,
+            confidence: None,
+            source_system: source_system.into(),
+            source_file_path: None,
+            source_line: None,
+            source_symbol_id: None,
+            matching_method: None,
+        }
+    }
+
+    pub fn gcode_extracted() -> Self {
+        Self::new(ProjectionProvenance::Extracted, SOURCE_SYSTEM_GCODE).with_confidence(Some(1.0))
+    }
+
+    pub fn inferred(source_system: impl Into<String>, confidence: Option<f64>) -> Self {
+        Self::new(ProjectionProvenance::Inferred, source_system).with_confidence(confidence)
+    }
+
+    pub fn ambiguous(source_system: impl Into<String>, confidence: Option<f64>) -> Self {
+        Self::new(ProjectionProvenance::Ambiguous, source_system).with_confidence(confidence)
+    }
+
+    pub fn with_confidence(mut self, confidence: Option<f64>) -> Self {
+        self.confidence = confidence;
+        self
+    }
+
+    pub fn with_source_file_path(mut self, file_path: impl Into<String>) -> Self {
+        self.source_file_path = Some(file_path.into());
+        self
+    }
+
+    pub fn with_source_line(mut self, line: usize) -> Self {
+        self.source_line = Some(line);
+        self
+    }
+
+    pub fn with_source_symbol_id(mut self, symbol_id: impl Into<String>) -> Self {
+        self.source_symbol_id = Some(symbol_id.into());
+        self
+    }
+
+    pub fn with_matching_method(mut self, matching_method: impl Into<String>) -> Self {
+        self.matching_method = Some(matching_method.into());
+        self
+    }
+
+    pub fn is_hypothesis(&self) -> bool {
+        matches!(
+            self.provenance,
+            ProjectionProvenance::Inferred | ProjectionProvenance::Ambiguous
+        )
+    }
+}
+
 /// A code symbol extracted from AST parsing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Symbol {
@@ -116,6 +213,21 @@ impl Symbol {
             sources: None,
         }
     }
+}
+
+pub fn make_unresolved_callee_id(project_id: &str, callee_name: &str) -> String {
+    let key = format!("unresolved:{project_id}:{callee_name}");
+    Uuid::new_v5(&CODE_INDEX_UUID_NAMESPACE, key.as_bytes()).to_string()
+}
+
+pub fn make_external_symbol_id(
+    project_id: &str,
+    callee_name: &str,
+    module: Option<&str>,
+) -> String {
+    let module_key = module.unwrap_or_default();
+    let key = format!("external:{project_id}:{module_key}:{callee_name}");
+    Uuid::new_v5(&CODE_INDEX_UUID_NAMESPACE, key.as_bytes()).to_string()
 }
 
 fn i64_to_usize(value: i64, column: &str) -> anyhow::Result<usize> {
@@ -284,6 +396,8 @@ pub struct GraphResult {
     pub relation: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub distance: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<ProjectionMetadata>,
 }
 
 /// Result of parsing a single file.
@@ -347,19 +461,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_uuid5_parity_with_python() {
-        // Python: Symbol.make_id("proj1", "src/main.py", "foo", "function", 42)
-        // Must produce the same UUID in Rust.
-        let id = Symbol::make_id("proj1", "src/main.py", "foo", "function", 42);
-        // The key is "proj1:src/main.py:foo:function:42"
-        // This is a deterministic UUID5 — verify it's stable across runs.
-        let id2 = Symbol::make_id("proj1", "src/main.py", "foo", "function", 42);
-        assert_eq!(id, id2);
-
-        // Verify the namespace UUID bytes match Python's c0de1de0-0000-4000-8000-000000000000
+    fn uuid5_python_parity() {
         assert_eq!(
             CODE_INDEX_UUID_NAMESPACE.to_string(),
             "c0de1de0-0000-4000-8000-000000000000"
+        );
+        assert_eq!(
+            Symbol::make_id("proj1", "src/main.py", "foo", "function", 42),
+            "403e2117-92e7-5390-ad83-226629486481"
+        );
+        assert_eq!(
+            make_unresolved_callee_id("proj1", "missing_func"),
+            "42693df1-99e6-5daa-be29-3535096cd2b5"
+        );
+        assert_eq!(
+            make_external_symbol_id("proj1", "get", Some("requests")),
+            "7c7e6ebe-47c6-5a3d-a83d-d5160f10cb74"
+        );
+        assert_eq!(
+            make_external_symbol_id("proj1", "println", None),
+            "c6b97498-448e-5ef1-9cb5-ab1cf37b6596"
         );
     }
     #[test]
@@ -374,5 +495,22 @@ mod tests {
 
         assert_eq!(call.callee_symbol_id.as_deref(), Some("callee-id"));
         assert_eq!(call.callee_target_kind, CallTargetKind::Symbol);
+    }
+
+    #[test]
+    fn graph_result_metadata_is_optional_for_json_compatibility() {
+        let old_json = serde_json::json!({
+            "id": "sym-1",
+            "name": "foo",
+            "file_path": "src/main.rs",
+            "line": 10
+        });
+
+        let parsed: GraphResult =
+            serde_json::from_value(old_json).expect("old graph result JSON still parses");
+        assert!(parsed.metadata.is_none());
+
+        let serialized = serde_json::to_value(&parsed).expect("graph result serializes");
+        assert!(serialized.get("metadata").is_none());
     }
 }

@@ -9,6 +9,116 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.2] — gcode
+
+### Added
+
+#### gcode
+
+- **Project-id graph clear** — `gcode graph clear --project-id <PROJECT_ID>`
+  now clears a code graph projection by explicit project id before normal
+  project-root resolution. This is the daemon stale-project cleanup path and can
+  run from any cwd without `.gobby/project.json`.
+
+### Fixed
+
+#### gcode
+
+- **Deleted-file projection cleanup** — `gcode index` now removes FalkorDB code
+  graph nodes/edges and Qdrant code-symbol vectors for deleted files before
+  deleting PostgreSQL hub facts. This covers missing explicit
+  `--files <deleted-file>` inputs and whole-project stale/orphan cleanup without
+  relying on daemon reconciliation.
+- **Projection ownership boundary** — code graph clears remain scoped to
+  code-index FalkorDB labels, and code vector clears remain scoped to
+  `code_symbols_{project_id}`. Memory graph nodes and memory vector collections
+  are not targeted by these lifecycle paths.
+
+## [0.9.1] — gcode
+
+### Added
+
+#### gcode
+
+- **Overview graph limit** — `gcode graph overview` now accepts `--limit N`
+  to cap the number of files included in the overview graph, matching the
+  daemon's graph overview limit contract.
+
+### Fixed
+
+#### gcode
+
+- **File graph read aliases** — `gcode graph file` now keeps node file paths
+  and edge metadata file paths under distinct FalkorDB result aliases, fixing
+  duplicate-column failures when returning JSON graph payloads.
+
+## [0.9.0] — gcode
+
+### Added
+
+#### gcode
+
+- **Standalone setup reset boundary** — `gcode setup --standalone` now fails
+  safely when it detects incompatible existing code-index PostgreSQL state and
+  prints guidance to rerun with `--overwrite-code-index` only when a full
+  code-index reset is intended.
+- **Advanced full code-index overwrite** —
+  `gcode setup --standalone --overwrite-code-index` drops/recreates only
+  allowlisted gcode code-index PostgreSQL relations and BM25 indexes, clears
+  code-index graph nodes in FalkorDB, and deletes Qdrant collections with the
+  `code_symbols_` prefix. Gobby project files, config, secrets, tasks,
+  sessions, memory, and daemon-owned data stay untouched.
+- **Rust graph/vector projection lifecycle** — graph reads, graph reports,
+  vector projection sync, and graph/vector lifecycle operations now route
+  through the Rust `gobby-code` library boundary for daemon adoption.
+
+### Changed
+
+#### gcode
+
+- **Project-scoped invalidation** — `gcode invalidate` remains the normal
+  project reset. PostgreSQL deletes stay filtered to the current project, and
+  configured standalone FalkorDB/Qdrant projections are cleaned only for that
+  project.
+- **Shared foundation dependency** — `gobby-code` now consumes
+  `gobby-core 0.2`.
+
+## [0.2.0] — gobby-core
+
+### Added
+
+#### gobby-core
+
+- **Expanded shared foundation** — added reusable context/config contracts,
+  attached/standalone setup contracts, PostgreSQL hub helpers, FalkorDB and
+  Qdrant adapters, standalone service provisioning helpers, indexing
+  primitives, search-fusion primitives, and degradation vocabulary for Rust
+  Gobby CLI consumers.
+
+### Changed
+
+#### gobby-core
+
+- **Consumer dependency line** — workspace consumers now target the
+  `gobby-core 0.2` minor line.
+
+## [0.8.7] — gcode
+
+### Fixed
+
+#### gcode
+
+- **Project identity resolution** — self-referential
+  `parent_project_path` / `parent_project_id` markers now keep the owning
+  `.gobby/project.json` ID, while linked worktrees and isolated roots keep
+  filesystem-scoped code index IDs.
+- **Source `build` package indexing** — root generated `build` / `dist`
+  directories stay excluded, while source directories such as
+  `src/gobby/build/` are indexed.
+- **Duplicate-root pruning** — `gcode prune` now marks stale duplicate project
+  entries for an existing root when they differ from that root's resolved
+  project ID.
+
 ## [0.4.4] — gsqz
 
 ### Fixed

@@ -1,153 +1,24 @@
-use anyhow::Context as _;
-use reqwest::StatusCode;
-use serde_json::Value;
-
 use crate::config::Context;
 use crate::db;
-use crate::falkor;
+use crate::graph::code_graph::{
+    self, GraphBlastRadiusTarget, GraphLifecycleAction, GraphLifecycleOutput, GraphPayload,
+};
+use crate::graph::report::{ProjectGraphReport, ProjectGraphReportOptions};
 use crate::models::PagedResponse;
 use crate::output::{self, Format};
+use crate::projection::sync::ProjectionSyncReport;
 use crate::search::fts::{self, ResolvedGraphSymbol};
+use serde_json::{Value, json};
 
 const GOBBY_HINT: &str =
     "Graph commands require FalkorDB, available with Gobby. See: https://github.com/GobbyAI/gobby";
-
-#[derive(Clone, Copy, Debug)]
-enum GraphLifecycleAction {
-    Clear,
-    Rebuild,
-}
-
-impl GraphLifecycleAction {
-    fn cli_command(self) -> &'static str {
-        match self {
-            Self::Clear => "gcode graph clear",
-            Self::Rebuild => "gcode graph rebuild",
-        }
-    }
-
-    fn endpoint_path(self) -> &'static str {
-        match self {
-            Self::Clear => "/api/code-index/graph/clear",
-            Self::Rebuild => "/api/code-index/graph/rebuild",
-        }
-    }
-
-    fn success_prefix(self) -> &'static str {
-        match self {
-            Self::Clear => "Cleared code-index graph",
-            Self::Rebuild => "Rebuilt code-index graph",
-        }
-    }
-}
-
-fn require_daemon_url(
-    daemon_url: Option<&str>,
-    action: GraphLifecycleAction,
-) -> anyhow::Result<&str> {
-    daemon_url.ok_or_else(|| {
-        anyhow::anyhow!(
-            "Gobby daemon URL is not configured. `{}` requires the Gobby daemon.",
-            action.cli_command()
-        )
-    })
-}
-
-fn build_lifecycle_url(
-    base_url: &str,
-    action: GraphLifecycleAction,
-    project_id: &str,
-) -> anyhow::Result<reqwest::Url> {
-    let base = base_url.trim_end_matches('/');
-    let mut url = reqwest::Url::parse(&format!("{base}{}", action.endpoint_path()))
-        .with_context(|| format!("invalid Gobby daemon URL: {base_url}"))?;
-    url.query_pairs_mut().append_pair("project_id", project_id);
-    Ok(url)
-}
-
-fn compact_detail(body: &str) -> String {
-    let detail = body.split_whitespace().collect::<Vec<_>>().join(" ");
-    let detail = detail.trim();
-    if detail.len() > 240 {
-        format!("{}...", &detail[..237])
-    } else {
-        detail.to_string()
-    }
-}
-
-fn format_http_error(
-    action: GraphLifecycleAction,
-    url: &reqwest::Url,
-    status: StatusCode,
-    body: &str,
-) -> String {
-    let detail = compact_detail(body);
-    if detail.is_empty() {
-        format!(
-            "`{}` failed: daemon returned HTTP {status} from {url}",
-            action.cli_command()
-        )
-    } else {
-        format!(
-            "`{}` failed: daemon returned HTTP {status} from {url}: {detail}",
-            action.cli_command()
-        )
-    }
-}
-
-fn parse_success_payload(
-    action: GraphLifecycleAction,
-    status: StatusCode,
-    body: &str,
-) -> anyhow::Result<Value> {
-    serde_json::from_str(body).map_err(|err| {
-        let detail = compact_detail(body);
-        if detail.is_empty() {
-            anyhow::anyhow!(
-                "`{}` failed: daemon returned HTTP {status} with invalid JSON: {err}",
-                action.cli_command()
-            )
-        } else {
-            anyhow::anyhow!(
-                "`{}` failed: daemon returned HTTP {status} with invalid JSON: {err}. Response: {detail}",
-                action.cli_command()
-            )
-        }
-    })
-}
-
-fn extract_summary_text(payload: &Value) -> Option<String> {
-    match payload {
-        Value::String(text) => {
-            let text = text.trim();
-            (!text.is_empty()).then(|| text.to_string())
-        }
-        Value::Object(map) => ["summary", "message", "detail", "status"]
-            .iter()
-            .find_map(|key| map.get(*key).and_then(Value::as_str))
-            .map(str::trim)
-            .filter(|text| !text.is_empty())
-            .map(ToOwned::to_owned),
-        _ => None,
-    }
-}
-
-fn format_success_text(
-    action: GraphLifecycleAction,
-    project_id: &str,
-    payload: &Value,
-) -> anyhow::Result<String> {
-    let detail = match extract_summary_text(payload) {
-        Some(summary) => summary,
-        None => serde_json::to_string(payload)?,
-    };
-
-    Ok(format!(
+fn format_success_text(output: &GraphLifecycleOutput) -> String {
+    format!(
         "{} for project {}: {}",
-        action.success_prefix(),
-        project_id,
-        detail
-    ))
+        output.action.success_prefix(),
+        output.project_id,
+        output.summary
+    )
 }
 
 fn run_lifecycle_action(
@@ -155,41 +26,155 @@ fn run_lifecycle_action(
     action: GraphLifecycleAction,
     format: Format,
 ) -> anyhow::Result<()> {
-    let daemon_url = require_daemon_url(ctx.daemon_url.as_deref(), action)?;
-    let url = build_lifecycle_url(daemon_url, action, &ctx.project_id)?;
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .context("failed to build HTTP client")?;
-
-    let response = client
-        .post(url.clone())
-        .header("Accept", "application/json")
-        .send()
-        .with_context(|| {
-            format!(
-                "Failed to reach Gobby daemon at {daemon_url} for `{}`",
-                action.cli_command()
-            )
-        })?;
-
-    let status = response.status();
-    let body = response.text().unwrap_or_default();
-    if !status.is_success() {
-        anyhow::bail!("{}", format_http_error(action, &url, status, &body));
-    }
-
-    let payload = parse_success_payload(action, status, &body)?;
+    let output = match action {
+        GraphLifecycleAction::Clear => clear_project_graph(ctx)?,
+        GraphLifecycleAction::Rebuild => rebuild_project_graph(ctx)?,
+    };
     match format {
-        Format::Json => output::print_json(&payload),
+        Format::Json => output::print_json(&output.payload),
         Format::Text => {
-            eprintln!(
-                "{}",
-                format_success_text(action, &ctx.project_id, &payload)?
-            );
-            output::print_json_compact(&payload)
+            output::print_text(&format_success_text(&output))?;
+            output::print_json_compact(&output.payload)
         }
     }
+}
+
+fn lifecycle_output(
+    action: GraphLifecycleAction,
+    ctx: &Context,
+    payload: Value,
+) -> GraphLifecycleOutput {
+    let summary = code_graph::extract_summary_text(&payload).unwrap_or_else(|| payload.to_string());
+    GraphLifecycleOutput {
+        project_id: ctx.project_id.clone(),
+        action,
+        summary,
+        payload,
+    }
+}
+
+struct GraphFileSyncOutcome {
+    relationships_written: usize,
+    symbols_synced: usize,
+}
+
+fn sync_file_graph(ctx: &Context, file_path: &str) -> anyhow::Result<GraphFileSyncOutcome> {
+    code_graph::require_graph_reads(ctx)?;
+    let mut conn = db::connect_readwrite(&ctx.database_url)?;
+    let facts = db::read_graph_file_facts(&mut conn, &ctx.project_id, file_path)?;
+    if !db::mark_graph_sync_attempted(&mut conn, &ctx.project_id, file_path)? {
+        anyhow::bail!(
+            "indexed file `{file_path}` was not found for project {}",
+            ctx.project_id
+        );
+    }
+    let relationships_written = code_graph::sync_file_graph(
+        ctx,
+        &facts.file_path,
+        &facts.imports,
+        &facts.definitions,
+        &facts.calls,
+    )?;
+    db::mark_graph_synced(&mut conn, &ctx.project_id, file_path)?;
+    Ok(GraphFileSyncOutcome {
+        relationships_written,
+        symbols_synced: facts.definitions.len(),
+    })
+}
+
+fn clear_project_graph(ctx: &Context) -> anyhow::Result<GraphLifecycleOutput> {
+    code_graph::require_graph_reads(ctx)?;
+    let mut conn = db::connect_readwrite(&ctx.database_url)?;
+    let files_marked_pending = db::reset_graph_sync_for_project(&mut conn, &ctx.project_id)?;
+    code_graph::clear_project(ctx)?;
+    let report = ProjectionSyncReport::ok(0, 0);
+    Ok(lifecycle_output(
+        GraphLifecycleAction::Clear,
+        ctx,
+        json!({
+            "success": true,
+            "project_id": ctx.project_id,
+            "status": report.status,
+            "synced_files": report.synced_files,
+            "synced_symbols": report.synced_symbols,
+            "degraded": report.degraded,
+            "error": report.error,
+            "files_marked_pending": files_marked_pending,
+            "summary": format!("marked {files_marked_pending} files pending and cleared graph projection"),
+        }),
+    ))
+}
+
+fn rebuild_project_graph(ctx: &Context) -> anyhow::Result<GraphLifecycleOutput> {
+    code_graph::require_graph_reads(ctx)?;
+    let mut conn = db::connect_readwrite(&ctx.database_url)?;
+    let file_paths = db::list_indexed_file_paths(&mut conn, &ctx.project_id)?;
+    code_graph::clear_project(ctx)?;
+    db::reset_graph_sync_for_project(&mut conn, &ctx.project_id)?;
+
+    let mut files_synced = 0usize;
+    let mut symbols_synced = 0usize;
+    let mut errors = Vec::new();
+    for file_path in &file_paths {
+        let synced_symbols =
+            match db::mark_graph_sync_attempted(&mut conn, &ctx.project_id, file_path)
+                .and_then(|updated| {
+                    if updated {
+                        Ok(())
+                    } else {
+                        anyhow::bail!("indexed file no longer exists")
+                    }
+                })
+                .and_then(|_| {
+                    let facts = db::read_graph_file_facts(&mut conn, &ctx.project_id, file_path)?;
+                    code_graph::sync_file_graph(
+                        ctx,
+                        &facts.file_path,
+                        &facts.imports,
+                        &facts.definitions,
+                        &facts.calls,
+                    )?;
+                    db::mark_graph_synced(&mut conn, &ctx.project_id, file_path)?;
+                    Ok(facts.definitions.len())
+                }) {
+                Ok(symbols) => symbols,
+                Err(err) => {
+                    errors.push(format!("{file_path}: {err}"));
+                    continue;
+                }
+            };
+        files_synced += 1;
+        symbols_synced += synced_symbols;
+    }
+
+    let report = if errors.is_empty() {
+        ProjectionSyncReport::ok(files_synced, symbols_synced)
+    } else {
+        ProjectionSyncReport::degraded(
+            "sync_failed",
+            errors.join("; "),
+            files_synced,
+            symbols_synced,
+        )
+    };
+    Ok(lifecycle_output(
+        GraphLifecycleAction::Rebuild,
+        ctx,
+        json!({
+            "success": true,
+            "project_id": ctx.project_id,
+            "status": report.status,
+            "synced_files": report.synced_files,
+            "synced_symbols": report.synced_symbols,
+            "degraded": report.degraded,
+            "error": report.error,
+            "files_processed": file_paths.len(),
+            "files_synced": files_synced,
+            "files_failed": errors.len(),
+            "errors": errors,
+            "summary": format!("synced {files_synced}/{} files", file_paths.len()),
+        }),
+    ))
 }
 
 pub fn clear(ctx: &Context, format: Format) -> anyhow::Result<()> {
@@ -198,6 +183,127 @@ pub fn clear(ctx: &Context, format: Format) -> anyhow::Result<()> {
 
 pub fn rebuild(ctx: &Context, format: Format) -> anyhow::Result<()> {
     run_lifecycle_action(ctx, GraphLifecycleAction::Rebuild, format)
+}
+
+pub fn sync_file(ctx: &Context, file_path: &str, format: Format) -> anyhow::Result<()> {
+    let sync = sync_file_graph(ctx, file_path)?;
+    let relationships_written = sync.relationships_written;
+    let report = ProjectionSyncReport::ok(1, sync.symbols_synced);
+    let summary = format!("synced {relationships_written} graph relationships for {file_path}");
+    let payload = json!({
+        "success": true,
+        "project_id": ctx.project_id,
+        "file_path": file_path,
+        "status": report.status,
+        "synced_files": report.synced_files,
+        "synced_symbols": report.synced_symbols,
+        "degraded": report.degraded,
+        "error": report.error,
+        "relationships_written": relationships_written,
+        "summary": summary,
+    });
+    match format {
+        Format::Json => output::print_json(&payload),
+        Format::Text => {
+            output::print_text(&format!(
+                "Synced code-index graph for project {}: {summary}",
+                ctx.project_id
+            ))?;
+            output::print_json_compact(&payload)
+        }
+    }
+}
+
+fn format_graph_payload_text(payload: &GraphPayload) -> String {
+    let mut lines = Vec::new();
+    lines.push(format!(
+        "nodes: {}, links: {}",
+        payload.nodes.len(),
+        payload.links.len()
+    ));
+    if let Some(center) = &payload.center {
+        lines.push(format!("center: {center}"));
+    }
+    for node in &payload.nodes {
+        let file = node.file_path.as_deref().unwrap_or("");
+        if file.is_empty() {
+            lines.push(format!(
+                "node {} [{}] {}",
+                node.id, node.node_type, node.name
+            ));
+        } else {
+            lines.push(format!(
+                "node {} [{}] {} {}",
+                node.id, node.node_type, node.name, file
+            ));
+        }
+    }
+    for link in &payload.links {
+        lines.push(format!(
+            "link {} -[{}]-> {}",
+            link.source, link.link_type, link.target
+        ));
+    }
+    lines.join("\n")
+}
+
+fn print_graph_payload(payload: &GraphPayload, format: Format) -> anyhow::Result<()> {
+    match format {
+        Format::Json => output::print_json(payload),
+        Format::Text => output::print_text(&format_graph_payload_text(payload)),
+    }
+}
+
+fn format_report_text(report: &ProjectGraphReport) -> anyhow::Result<String> {
+    Ok(serde_json::to_string_pretty(report)?)
+}
+
+pub fn report(ctx: &Context, top_n: usize, format: Format) -> anyhow::Result<()> {
+    let report = crate::graph::report::generate_report_with_options(
+        ctx,
+        ProjectGraphReportOptions { top_n },
+    )?;
+    match format {
+        Format::Json => output::print_json(&report),
+        Format::Text => output::print_text(&format_report_text(&report)?),
+    }
+}
+
+pub fn overview(ctx: &Context, limit: usize, format: Format) -> anyhow::Result<()> {
+    let payload = code_graph::project_overview_graph(ctx, limit)?;
+    print_graph_payload(&payload, format)
+}
+
+pub fn file(ctx: &Context, file_path: &str, format: Format) -> anyhow::Result<()> {
+    let payload = code_graph::file_graph(ctx, file_path)?;
+    print_graph_payload(&payload, format)
+}
+
+pub fn neighbors(
+    ctx: &Context,
+    symbol_id: &str,
+    limit: usize,
+    format: Format,
+) -> anyhow::Result<()> {
+    let payload = code_graph::symbol_neighbors(ctx, symbol_id, limit)?;
+    print_graph_payload(&payload, format)
+}
+
+pub fn graph_blast_radius(
+    ctx: &Context,
+    symbol_id: Option<&str>,
+    file_path: Option<&str>,
+    depth: usize,
+    limit: usize,
+    format: Format,
+) -> anyhow::Result<()> {
+    let target = match (symbol_id, file_path) {
+        (Some(symbol_id), None) => GraphBlastRadiusTarget::SymbolId(symbol_id.to_string()),
+        (None, Some(file_path)) => GraphBlastRadiusTarget::FilePath(file_path.to_string()),
+        _ => anyhow::bail!("provide exactly one of --symbol-id or --file"),
+    };
+    let payload = code_graph::blast_radius_graph(ctx, target, depth, limit)?;
+    print_graph_payload(&payload, format)
 }
 
 fn hint_for(ctx: &Context) -> Option<String> {
@@ -259,12 +365,13 @@ pub fn callers(
     offset: usize,
     format: Format,
 ) -> anyhow::Result<()> {
+    code_graph::require_graph_reads(ctx)?;
     let symbol = match resolve_symbol(ctx, symbol_name) {
         Some(symbol) => symbol,
         None => return empty_response_for_unresolved(ctx, format),
     };
-    let total = falkor::count_callers(ctx, &symbol.id)?;
-    let results = falkor::find_callers(ctx, &symbol.id, offset, limit)?;
+    let total = code_graph::count_callers(ctx, &symbol.id)?;
+    let results = code_graph::find_callers(ctx, &symbol.id, offset, limit)?;
 
     match format {
         Format::Json => output::print_json(&PagedResponse {
@@ -309,12 +416,13 @@ pub fn usages(
     offset: usize,
     format: Format,
 ) -> anyhow::Result<()> {
+    code_graph::require_graph_reads(ctx)?;
     let symbol = match resolve_symbol(ctx, symbol_name) {
         Some(symbol) => symbol,
         None => return empty_response_for_unresolved(ctx, format),
     };
-    let total = falkor::count_usages(ctx, &symbol.id)?;
-    let results = falkor::find_usages(ctx, &symbol.id, offset, limit)?;
+    let total = code_graph::count_usages(ctx, &symbol.id)?;
+    let results = code_graph::find_usages(ctx, &symbol.id, offset, limit)?;
 
     match format {
         Format::Json => output::print_json(&PagedResponse {
@@ -354,7 +462,8 @@ pub fn usages(
 }
 
 pub fn imports(ctx: &Context, file: &str, format: Format) -> anyhow::Result<()> {
-    let results = falkor::get_imports(ctx, file)?;
+    code_graph::require_graph_reads(ctx)?;
+    let results = code_graph::get_imports(ctx, file)?;
     let total = results.len();
     match format {
         Format::Json => output::print_json(&PagedResponse {
@@ -385,11 +494,12 @@ pub fn blast_radius(
     depth: usize,
     format: Format,
 ) -> anyhow::Result<()> {
+    code_graph::require_graph_reads(ctx)?;
     let symbol = match resolve_symbol(ctx, target) {
         Some(symbol) => symbol,
         None => return empty_response_for_unresolved(ctx, format),
     };
-    let results = falkor::blast_radius(ctx, &symbol.id, depth)?;
+    let results = code_graph::blast_radius(ctx, &symbol.id, depth)?;
     let total = results.len();
     match format {
         Format::Json => output::print_json(&PagedResponse {
@@ -418,11 +528,94 @@ pub fn blast_radius(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::{GraphResult, ProjectionMetadata, ProjectionProvenance};
     use serde_json::json;
+    use std::path::PathBuf;
+
+    fn make_ctx_no_falkordb() -> Context {
+        Context {
+            database_url: "postgresql://localhost/nonexistent".to_string(),
+            project_root: PathBuf::from("/nonexistent"),
+            project_id: "test-project".to_string(),
+            quiet: true,
+            falkordb: None,
+            qdrant: None,
+            embedding: None,
+            code_vectors: crate::config::CodeVectorSettings::default(),
+            daemon_url: None,
+        }
+    }
+
+    #[test]
+    fn graph_reads_require_falkor() {
+        let ctx = make_ctx_no_falkordb();
+
+        let err = imports(&ctx, "src/lib.rs", Format::Json).expect_err("imports must fail");
+
+        assert!(matches!(
+            err.downcast_ref::<code_graph::GraphReadError>(),
+            Some(code_graph::GraphReadError::NotConfigured)
+        ));
+        assert!(
+            err.to_string().contains("FalkorDB is not configured"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn report_text_structured_output() {
+        let report = crate::graph::report::empty_report("project-123");
+
+        let text = format_report_text(&report).expect("format report text");
+        let value: serde_json::Value = serde_json::from_str(&text).expect("structured JSON text");
+
+        assert_eq!(value["project_id"], "project-123");
+        assert_eq!(value["summary"]["node_count"], 0);
+        assert!(
+            value["markdown"]
+                .as_str()
+                .expect("markdown field")
+                .contains("# Project Graph Report")
+        );
+        assert!(!text.trim_start().starts_with('#'));
+    }
+
+    #[test]
+    fn report_requires_graph_service() {
+        let ctx = make_ctx_no_falkordb();
+
+        let err = report(&ctx, 10, Format::Json).expect_err("report must fail");
+
+        assert!(matches!(
+            err.downcast_ref::<crate::graph::report::ProjectGraphReportError>(),
+            Some(crate::graph::report::ProjectGraphReportError::GraphServiceNotConfigured)
+        ));
+        assert!(
+            err.to_string()
+                .contains("project graph report requires FalkorDB"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn graph_lifecycle_commands_call_core_directly() {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let source = std::fs::read_to_string(manifest_dir.join("src/commands/graph.rs"))
+            .expect("read commands/graph.rs");
+        let clear_project = ["code_graph", "::clear_project(ctx)"].concat();
+        let sync_file_graph = ["code_graph", "::sync_file_graph("].concat();
+        let lifecycle_request = ["GraphLifecycleRequest", "::from_context"].concat();
+        let daemon_lifecycle = ["code_graph", "::run_lifecycle_action"].concat();
+
+        assert!(source.contains(&clear_project));
+        assert!(source.contains(&sync_file_graph));
+        assert!(!source.contains(&lifecycle_request));
+        assert!(!source.contains(&daemon_lifecycle));
+    }
 
     #[test]
     fn test_build_lifecycle_url_clear_uses_project_id_query() {
-        let url = build_lifecycle_url(
+        let url = code_graph::build_lifecycle_url(
             "http://localhost:60887/",
             GraphLifecycleAction::Clear,
             "project-123",
@@ -437,7 +630,7 @@ mod tests {
 
     #[test]
     fn test_build_lifecycle_url_rebuild_uses_project_id_query() {
-        let url = build_lifecycle_url(
+        let url = code_graph::build_lifecycle_url(
             "http://localhost:60887",
             GraphLifecycleAction::Rebuild,
             "project-123",
@@ -452,7 +645,8 @@ mod tests {
 
     #[test]
     fn test_require_daemon_url_errors_when_missing() {
-        let err = require_daemon_url(None, GraphLifecycleAction::Clear).expect_err("must fail");
+        let err = code_graph::require_daemon_url(None, GraphLifecycleAction::Clear)
+            .expect_err("must fail");
 
         assert!(
             err.to_string()
@@ -469,10 +663,10 @@ mod tests {
     fn test_format_http_error_includes_status_and_body() {
         let url = reqwest::Url::parse("http://localhost:60887/api/code-index/graph/clear")
             .expect("valid url");
-        let message = format_http_error(
+        let message = code_graph::format_http_error(
             GraphLifecycleAction::Clear,
             &url,
-            StatusCode::BAD_GATEWAY,
+            reqwest::StatusCode::BAD_GATEWAY,
             "daemon upstream unavailable",
         );
 
@@ -485,8 +679,12 @@ mod tests {
 
     #[test]
     fn test_parse_success_payload_fails_on_invalid_json() {
-        let err = parse_success_payload(GraphLifecycleAction::Rebuild, StatusCode::OK, "not json")
-            .expect_err("invalid json must fail");
+        let err = code_graph::parse_success_payload(
+            GraphLifecycleAction::Rebuild,
+            reqwest::StatusCode::OK,
+            "not json",
+        )
+        .expect_err("invalid json must fail");
 
         assert!(
             err.to_string().contains("invalid JSON"),
@@ -504,9 +702,13 @@ mod tests {
             "message": "cleared 12 graph nodes",
             "removed_nodes": 12
         });
-
-        let text = format_success_text(GraphLifecycleAction::Clear, "project-123", &payload)
-            .expect("text formats");
+        let output = GraphLifecycleOutput {
+            project_id: "project-123".to_string(),
+            action: GraphLifecycleAction::Clear,
+            summary: "cleared 12 graph nodes".to_string(),
+            payload,
+        };
+        let text = format_success_text(&output);
 
         assert_eq!(
             text,
@@ -520,13 +722,78 @@ mod tests {
             "replayed": 18,
             "synced": 18
         });
-
-        let text = format_success_text(GraphLifecycleAction::Rebuild, "project-123", &payload)
-            .expect("text formats");
+        let output = GraphLifecycleOutput {
+            project_id: "project-123".to_string(),
+            action: GraphLifecycleAction::Rebuild,
+            summary: payload.to_string(),
+            payload,
+        };
+        let text = format_success_text(&output);
 
         assert_eq!(
             text,
             "Rebuilt code-index graph for project project-123: {\"replayed\":18,\"synced\":18}"
+        );
+    }
+
+    #[test]
+    fn top_level_read_commands_preserve_json_shape() {
+        let response = PagedResponse {
+            project_id: "project-123".to_string(),
+            total: 1,
+            offset: 0,
+            limit: 10,
+            results: vec![GraphResult {
+                id: "sym-1".to_string(),
+                name: "run".to_string(),
+                file_path: "src/lib.rs".to_string(),
+                line: 12,
+                relation: Some("CALLS".to_string()),
+                distance: Some(1),
+                metadata: None,
+            }],
+            hint: None,
+        };
+
+        let value = serde_json::to_value(&response).expect("serialize response");
+
+        assert_eq!(value["project_id"], "project-123");
+        assert_eq!(value["total"], 1);
+        assert_eq!(value["offset"], 0);
+        assert_eq!(value["limit"], 10);
+        assert_eq!(value["results"][0]["id"], "sym-1");
+        assert_eq!(value["results"][0]["name"], "run");
+        assert_eq!(value["results"][0]["file_path"], "src/lib.rs");
+        assert_eq!(value["results"][0]["line"], 12);
+        assert_eq!(value["results"][0]["relation"], "CALLS");
+        assert_eq!(value["results"][0]["distance"], 1);
+        assert!(value["hint"].is_null());
+        assert!(value["results"][0].get("metadata").is_none());
+
+        let response = PagedResponse {
+            project_id: "project-123".to_string(),
+            total: 1,
+            offset: 0,
+            limit: 10,
+            results: vec![GraphResult {
+                id: "sym-1".to_string(),
+                name: "run".to_string(),
+                file_path: "src/lib.rs".to_string(),
+                line: 12,
+                relation: Some("CALLS".to_string()),
+                distance: Some(1),
+                metadata: Some(
+                    ProjectionMetadata::new(ProjectionProvenance::Extracted, "gcode")
+                        .with_source_file_path("src/lib.rs"),
+                ),
+            }],
+            hint: None,
+        };
+        let value = serde_json::to_value(&response).expect("serialize metadata response");
+
+        assert_eq!(
+            value["results"][0]["metadata"]["source_file_path"],
+            "src/lib.rs"
         );
     }
 }

@@ -4,6 +4,7 @@ use crate::db;
 use crate::models::Symbol;
 use crate::output::{self, Format};
 use crate::savings;
+use crate::utils::short_id;
 
 pub fn outline(ctx: &Context, file: &str, format: Format, verbose: bool) -> anyhow::Result<()> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
@@ -112,10 +113,6 @@ fn format_outline_text_line(symbol: &Symbol) -> String {
         line.push_str(sig);
     }
     line
-}
-
-fn short_id(id: &str) -> &str {
-    id.get(..8).unwrap_or(id)
 }
 
 pub fn symbol(ctx: &Context, id: &str, format: Format) -> anyhow::Result<()> {
@@ -331,10 +328,5 @@ mod tests {
         assert!(line.contains("src/commands.rs:7-63 [function] outline"));
         assert!(line.contains("id=12345678-1234-5678-1234-567812345678"));
         assert!(line.contains("sig=pub fn outline() -> anyhow::Result<()> {"));
-    }
-
-    #[test]
-    fn short_id_truncates_long_ids() {
-        assert_eq!(short_id("1234567890"), "12345678");
     }
 }

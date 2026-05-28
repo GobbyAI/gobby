@@ -3,16 +3,6 @@
 //! score(rank) = 1.0 / (K + rank) where K = 60.
 //! Ports logic from src/gobby/code_index/searcher.py.
 
-use std::collections::HashMap;
-
-/// RRF constant — matches Python RRF_K in code_index/searcher.py and memory/manager.py.
-const RRF_K: f64 = 60.0;
-
-/// Compute RRF score for a given rank (0-indexed).
-fn rrf_score(rank: usize) -> f64 {
-    1.0 / (RRF_K + rank as f64)
-}
-
 /// Merged result: (symbol_id, combined_score, source_names).
 pub type MergedResult = (String, f64, Vec<String>);
 
@@ -23,50 +13,15 @@ pub type MergedResult = (String, f64, Vec<String>);
 ///
 /// Returns `(id, score, sources)` sorted by score descending.
 pub fn merge(sources: Vec<(&str, Vec<String>)>) -> Vec<MergedResult> {
-    let mut entries: HashMap<String, HashMap<String, usize>> = HashMap::new();
-
-    for (source_name, ids) in &sources {
-        for (rank, id) in ids.iter().enumerate() {
-            entries
-                .entry(id.clone())
-                .or_default()
-                .insert(source_name.to_string(), rank);
-        }
-    }
-
-    let mut results: Vec<MergedResult> = entries
+    gobby_core::search::rrf_merge(sources)
         .into_iter()
-        .map(|(id, source_ranks)| {
-            let score: f64 = source_ranks.values().map(|&rank| rrf_score(rank)).sum();
-            let mut source_names: Vec<String> = source_ranks.into_keys().collect();
-            source_names.sort();
-            (id, score, source_names)
-        })
-        .collect();
-
-    results.sort_by(|a, b| {
-        b.1.partial_cmp(&a.1)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| a.0.cmp(&b.0))
-    });
-    results
+        .map(|result| (result.id, result.score, result.sources))
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_rrf_score_rank_zero() {
-        let score = rrf_score(0);
-        assert!((score - 1.0 / 60.0).abs() < 1e-10);
-    }
-
-    #[test]
-    fn test_rrf_score_rank_ten() {
-        let score = rrf_score(10);
-        assert!((score - 1.0 / 70.0).abs() < 1e-10);
-    }
 
     #[test]
     fn test_merge_single_source() {
@@ -84,9 +39,9 @@ mod tests {
             ("fts", vec!["a".into(), "b".into()]),
             ("graph", vec!["a".into(), "c".into()]),
         ]);
-        // "a" appears in both sources at rank 0, so it gets 2 * rrf_score(0)
+        // "a" appears in both sources at rank 0, so it gets two rank-zero contributions.
         let a_result = results.iter().find(|r| r.0 == "a").unwrap();
-        let expected = 2.0 * rrf_score(0);
+        let expected = 2.0 * (1.0 / 60.0);
         assert!((a_result.1 - expected).abs() < 1e-10);
         assert_eq!(a_result.2.len(), 2);
         // "a" should be ranked first
@@ -129,5 +84,31 @@ mod tests {
     fn test_merge_empty_id_lists() {
         let results = merge(vec![("fts", vec![]), ("graph", vec![])]);
         assert!(results.is_empty());
+    }
+
+    #[test]
+    fn merge_delegates_to_gobby_core_rrf() {
+        let sources = vec![
+            (
+                "fts",
+                vec!["a".to_string(), "a".to_string(), "b".to_string()],
+            ),
+            ("semantic", vec!["b".to_string()]),
+        ];
+        let results = merge(sources.clone());
+        let expected = gobby_core::search::rrf_merge(sources);
+
+        assert_eq!(results.len(), expected.len());
+        for (actual, expected) in results.iter().zip(expected.iter()) {
+            assert_eq!(actual.0, expected.id);
+            assert!((actual.1 - expected.score).abs() < 1e-10);
+            assert_eq!(actual.2, expected.sources);
+        }
+
+        let source = include_str!("rrf.rs");
+        let delegate = ["gobby_core", "::search::rrf_merge"].concat();
+        let local_const = ["const ", "RRF_K"].concat();
+        assert!(source.contains(&delegate));
+        assert!(!source.contains(&local_const));
     }
 }

@@ -1,11 +1,15 @@
-use std::path::Path;
+use std::collections::{BTreeMap, HashSet};
+use std::path::{Path, PathBuf};
 
 use crate::config;
 use crate::config::Context;
 use crate::db;
+use crate::graph::code_graph;
 use crate::index::indexer;
 use crate::models::IndexedProject;
 use crate::output::{self, Format};
+use crate::utils::short_id;
+use crate::vector::code_symbols;
 
 /// Format a `last_indexed_at` value for display.
 /// Handles both epoch seconds ("1774970556") and ISO 8601 ("2026-03-29T18:52:25.750230+00:00").
@@ -123,7 +127,20 @@ pub fn invalidate(ctx: &Context, force: bool) -> anyhow::Result<()> {
     }
 
     let mut conn = db::connect_readwrite(&ctx.database_url)?;
-    indexer::invalidate(&mut conn, &ctx.project_id, ctx.daemon_url.as_deref())
+    indexer::invalidate(&mut conn, &ctx.project_id, ctx.daemon_url.as_deref())?;
+    cleanup_project_projections(ctx)
+}
+
+fn cleanup_project_projections(ctx: &Context) -> anyhow::Result<()> {
+    if ctx.falkordb.is_some() {
+        code_graph::clear_project(ctx)
+            .map_err(|err| anyhow::anyhow!("failed to clear FalkorDB projection: {err}"))?;
+    }
+    if let Some(qdrant) = &ctx.qdrant {
+        code_symbols::delete_project_collection(qdrant, &ctx.project_id)
+            .map_err(|err| anyhow::anyhow!("failed to delete Qdrant projection: {err}"))?;
+    }
+    Ok(())
 }
 
 /// Collect indexed projects from the PostgreSQL hub.
@@ -240,13 +257,72 @@ fn is_stale(p: &IndexedProject) -> Option<&'static str> {
     None
 }
 
+#[derive(Debug)]
+struct StaleProject<'a> {
+    project: &'a IndexedProject,
+    reason: String,
+}
+
+fn stale_projects(projects: &[IndexedProject]) -> Vec<StaleProject<'_>> {
+    let mut stale = Vec::new();
+    let mut stale_ids = HashSet::new();
+
+    for project in projects {
+        if let Some(reason) = is_stale(project) {
+            stale_ids.insert(project.id.clone());
+            stale.push(StaleProject {
+                project,
+                reason: reason.to_string(),
+            });
+        }
+    }
+
+    let mut by_root: BTreeMap<PathBuf, Vec<&IndexedProject>> = BTreeMap::new();
+    for project in projects {
+        if stale_ids.contains(&project.id) {
+            continue;
+        }
+        let Ok(canonical_root) = Path::new(&project.root_path).canonicalize() else {
+            continue;
+        };
+        by_root.entry(canonical_root).or_default().push(project);
+    }
+
+    for (root, entries) in by_root {
+        if entries.len() < 2 {
+            continue;
+        }
+        let Ok(identity) = config::resolve_project_identity(&root, config::MissingIdentity::Error)
+        else {
+            continue;
+        };
+        if !entries
+            .iter()
+            .any(|project| project.id == identity.project_id)
+        {
+            continue;
+        }
+        for project in entries {
+            if project.id == identity.project_id || !stale_ids.insert(project.id.clone()) {
+                continue;
+            }
+            stale.push(StaleProject {
+                project,
+                reason: format!(
+                    "duplicate root superseded by current project id {}",
+                    short_id(&identity.project_id)
+                ),
+            });
+        }
+    }
+
+    stale
+}
+
 /// Remove stale project entries from the code index.
 pub fn prune(force: bool) -> anyhow::Result<()> {
     let all_projects = collect_projects()?;
-    let stale: Vec<_> = all_projects
-        .iter()
-        .filter_map(|p| is_stale(p).map(|reason| (p, reason)))
-        .collect();
+    let stale = stale_projects(&all_projects);
 
     if stale.is_empty() {
         eprintln!("No stale projects found.");
@@ -254,8 +330,12 @@ pub fn prune(force: bool) -> anyhow::Result<()> {
     }
 
     eprintln!("Found {} stale project(s):", stale.len());
-    for (p, reason) in &stale {
-        eprintln!("  {} — {}", display_name(p), reason);
+    for stale_project in &stale {
+        eprintln!(
+            "  {} — {}",
+            display_name(stale_project.project),
+            stale_project.reason
+        );
     }
 
     if !force {
@@ -274,8 +354,8 @@ pub fn prune(force: bool) -> anyhow::Result<()> {
     let database_url = db::resolve_database_url()?;
     let mut conn = db::connect_readwrite(&database_url)?;
 
-    for (p, _) in &stale {
-        indexer::invalidate(&mut conn, &p.id, daemon_url.as_deref())?;
+    for stale_project in &stale {
+        indexer::invalidate(&mut conn, &stale_project.project.id, daemon_url.as_deref())?;
     }
 
     eprintln!("Pruned {} stale project(s).", stale.len());
@@ -327,5 +407,59 @@ pub fn repo_outline(ctx: &Context, format: Format) -> anyhow::Result<()> {
             }
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn indexed_project(id: &str, root_path: &Path) -> IndexedProject {
+        IndexedProject {
+            id: id.to_string(),
+            root_path: root_path.to_string_lossy().to_string(),
+            total_files: 1,
+            total_symbols: 1,
+            last_indexed_at: "1".to_string(),
+            index_duration_ms: 1,
+            total_eligible_files: Some(1),
+        }
+    }
+
+    fn write_project_json(root: &Path, id: &str) {
+        let gobby_dir = root.join(".gobby");
+        std::fs::create_dir_all(&gobby_dir).expect("create .gobby");
+        std::fs::write(
+            gobby_dir.join("project.json"),
+            serde_json::json!({
+                "id": id,
+                "name": "project",
+                "parent_project_path": root.to_string_lossy(),
+                "parent_project_id": id
+            })
+            .to_string(),
+        )
+        .expect("write project.json");
+    }
+
+    #[test]
+    fn duplicate_root_prune_detection_keeps_resolved_project_id() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path().canonicalize().expect("canonical root");
+        let current_id = "d45545c5-current-project-id";
+        let stale_id = "39c31b8f-stale-project-id";
+        write_project_json(&root, current_id);
+
+        let projects = vec![
+            indexed_project(current_id, &root),
+            indexed_project(stale_id, &root),
+        ];
+
+        let stale = stale_projects(&projects);
+
+        assert_eq!(stale.len(), 1);
+        assert_eq!(stale[0].project.id, stale_id);
+        assert!(stale[0].reason.contains("duplicate root"));
+        assert!(stale.iter().all(|entry| entry.project.id != current_id));
     }
 }

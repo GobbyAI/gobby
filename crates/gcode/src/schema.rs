@@ -12,7 +12,7 @@ const REQUIRED_TABLES: &[&str] = &[
 
 const REQUIRED_BM25_INDEXES: &[&str] = &["code_symbols_search_bm25", "code_content_search_bm25"];
 
-const MIGRATION_HINT: &str = "Configure the Gobby PostgreSQL hub with the required code-index schema, `pg_search` extension, and BM25 indexes.";
+const MIGRATION_HINT: &str = "Configure the Gobby PostgreSQL hub with the required code-index schema, `pg_search` extension, and BM25 indexes. For standalone databases, run `gcode setup --standalone --database-url <dsn>`.";
 
 /// Validate that the Gobby-owned PostgreSQL hub schema exists.
 ///
@@ -91,5 +91,13 @@ mod tests {
         let mut client =
             Client::connect(&database_url, NoTls).expect("connect test PostgreSQL hub");
         validate_runtime_schema(&mut client).expect("validate test PostgreSQL hub schema");
+    }
+
+    #[test]
+    fn missing_schema_requires_setup() {
+        assert!(
+            MIGRATION_HINT.contains("gcode setup --standalone"),
+            "missing runtime schema guidance must point standalone users at explicit setup"
+        );
     }
 }

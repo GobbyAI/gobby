@@ -2,9 +2,11 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context as _, anyhow, bail};
-use postgres::{Client, NoTls};
+use gobby_core::provisioning::{GCORE_CONFIG_FILENAME, StandaloneConfig};
+use postgres::{Client, GenericClient};
 use serde::Deserialize;
 
+use crate::models::{CallRelation, CallTargetKind, ImportRelation, Symbol};
 use crate::schema;
 
 const GCODE_DATABASE_URL_ENV: &str = "GCODE_DATABASE_URL";
@@ -58,11 +60,19 @@ fn resolve_database_url_from_sources(
 ) -> anyhow::Result<String> {
     let path = home.join("bootstrap.yaml");
 
+    if let Some(database_url) = resolve_database_url_from_env(get_var) {
+        return Ok(database_url);
+    }
+
     if let Ok(database_url) = broker_resolver(&path) {
         return Ok(database_url);
     }
 
-    if let Some(database_url) = resolve_database_url_from_env(get_var) {
+    if let Some(database_url) = resolve_database_url_from_bootstrap_file(&path)? {
+        return Ok(database_url);
+    }
+
+    if let Some(database_url) = resolve_database_url_from_gcore_config(home)? {
         return Ok(database_url);
     }
 
@@ -72,14 +82,28 @@ fn resolve_database_url_from_sources(
         return Ok(database_url);
     }
 
-    let contents = std::fs::read_to_string(&path).with_context(|| {
-        format!(
-            "missing Gobby bootstrap at {}. Configure the Gobby PostgreSQL hub before running gcode.",
-            path.display()
-        )
-    })?;
+    bail!(
+        "missing Gobby PostgreSQL configuration. Run `gcode setup --standalone`, set {GCODE_DATABASE_URL_ENV}, or configure the Gobby daemon bootstrap."
+    )
+}
+
+fn resolve_database_url_from_bootstrap_file(path: &Path) -> anyhow::Result<Option<String>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let contents = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read Gobby bootstrap at {}", path.display()))?;
     let bootstrap = parse_bootstrap_database(&contents)?;
-    resolve_database_url_from_bootstrap(&bootstrap)
+    resolve_database_url_from_bootstrap(&bootstrap).map(Some)
+}
+
+fn resolve_database_url_from_gcore_config(home: &Path) -> anyhow::Result<Option<String>> {
+    let Some(config) = StandaloneConfig::read_at(&home.join(GCORE_CONFIG_FILENAME))? else {
+        return Ok(None);
+    };
+    Ok(config
+        .get("databases.postgres.dsn")
+        .and_then(|value| non_empty_trimmed(Some(value.to_string()))))
 }
 
 fn resolve_database_url_from_env(
@@ -225,7 +249,9 @@ fn request_broker_database_url(daemon_url: &str, token: &str) -> anyhow::Result<
 /// keeping the intent explicit preserves a routing point for future pools,
 /// permissions, or replicas.
 pub fn connect_readwrite(database_url: &str) -> anyhow::Result<Client> {
-    connect(database_url)
+    let mut client = gobby_core::postgres::connect_readwrite(database_url)?;
+    schema::validate_runtime_schema(&mut client)?;
+    Ok(client)
 }
 
 /// Open a connection for command paths that only read from the hub.
@@ -234,7 +260,230 @@ pub fn connect_readwrite(database_url: &str) -> anyhow::Result<Client> {
 /// keeping the intent explicit preserves a routing point for future pools,
 /// permissions, or replicas.
 pub fn connect_readonly(database_url: &str) -> anyhow::Result<Client> {
-    connect(database_url)
+    let mut client = gobby_core::postgres::connect_readonly(database_url)?;
+    schema::validate_runtime_schema(&mut client)?;
+    Ok(client)
+}
+
+pub fn read_config_value(conn: &mut Client, key: &str) -> anyhow::Result<Option<String>> {
+    gobby_core::postgres::read_config_value(conn, key)
+}
+
+#[derive(Debug, Clone)]
+pub struct GraphFileFacts {
+    pub file_path: String,
+    pub imports: Vec<ImportRelation>,
+    pub definitions: Vec<Symbol>,
+    pub calls: Vec<CallRelation>,
+}
+
+pub fn list_indexed_file_paths(
+    conn: &mut impl GenericClient,
+    project_id: &str,
+) -> anyhow::Result<Vec<String>> {
+    let rows = conn.query(
+        "SELECT file_path FROM code_indexed_files WHERE project_id = $1 ORDER BY file_path",
+        &[&project_id],
+    )?;
+    rows.into_iter()
+        .map(|row| row.try_get("file_path").map_err(Into::into))
+        .collect()
+}
+
+pub fn read_graph_file_facts(
+    conn: &mut impl GenericClient,
+    project_id: &str,
+    file_path: &str,
+) -> anyhow::Result<GraphFileFacts> {
+    let imports = read_imports_for_file(conn, project_id, file_path)?;
+    let definitions = read_symbols_for_file(conn, project_id, file_path)?;
+    let calls = read_calls_for_file(conn, project_id, file_path)?;
+
+    Ok(GraphFileFacts {
+        file_path: file_path.to_string(),
+        imports,
+        definitions,
+        calls,
+    })
+}
+
+pub fn indexed_file_exists(
+    conn: &mut impl GenericClient,
+    project_id: &str,
+    file_path: &str,
+) -> anyhow::Result<bool> {
+    Ok(conn
+        .query_opt(
+            "SELECT 1 FROM code_indexed_files
+             WHERE project_id = $1 AND file_path = $2",
+            &[&project_id, &file_path],
+        )?
+        .is_some())
+}
+
+pub fn mark_graph_sync_attempted(
+    conn: &mut impl GenericClient,
+    project_id: &str,
+    file_path: &str,
+) -> anyhow::Result<bool> {
+    let updated = conn.execute(
+        "UPDATE code_indexed_files
+         SET graph_synced = false, graph_sync_attempted_at = NOW()
+         WHERE project_id = $1 AND file_path = $2",
+        &[&project_id, &file_path],
+    )?;
+    Ok(updated > 0)
+}
+
+pub fn mark_graph_synced(
+    conn: &mut impl GenericClient,
+    project_id: &str,
+    file_path: &str,
+) -> anyhow::Result<bool> {
+    let updated = conn.execute(
+        "UPDATE code_indexed_files
+         SET graph_synced = true, graph_sync_attempted_at = NOW()
+         WHERE project_id = $1 AND file_path = $2",
+        &[&project_id, &file_path],
+    )?;
+    Ok(updated > 0)
+}
+
+pub fn reset_graph_sync_for_project(
+    conn: &mut impl GenericClient,
+    project_id: &str,
+) -> anyhow::Result<u64> {
+    Ok(conn.execute(
+        "UPDATE code_indexed_files
+         SET graph_synced = false, graph_sync_attempted_at = NULL
+         WHERE project_id = $1",
+        &[&project_id],
+    )?)
+}
+
+pub fn mark_vectors_synced(
+    conn: &mut impl GenericClient,
+    project_id: &str,
+    file_path: &str,
+) -> anyhow::Result<bool> {
+    let updated = conn.execute(
+        "UPDATE code_indexed_files
+         SET vectors_synced = true
+         WHERE project_id = $1 AND file_path = $2",
+        &[&project_id, &file_path],
+    )?;
+    Ok(updated > 0)
+}
+
+pub fn mark_project_vectors_synced(
+    conn: &mut impl GenericClient,
+    project_id: &str,
+) -> anyhow::Result<u64> {
+    Ok(conn.execute(
+        "UPDATE code_indexed_files
+         SET vectors_synced = true
+         WHERE project_id = $1",
+        &[&project_id],
+    )?)
+}
+
+pub fn reset_vectors_sync_for_project(
+    conn: &mut impl GenericClient,
+    project_id: &str,
+) -> anyhow::Result<u64> {
+    Ok(conn.execute(
+        "UPDATE code_indexed_files
+         SET vectors_synced = false
+         WHERE project_id = $1",
+        &[&project_id],
+    )?)
+}
+
+fn read_imports_for_file(
+    conn: &mut impl GenericClient,
+    project_id: &str,
+    file_path: &str,
+) -> anyhow::Result<Vec<ImportRelation>> {
+    let rows = conn.query(
+        "SELECT source_file, target_module
+         FROM code_imports
+         WHERE project_id = $1 AND source_file = $2
+         ORDER BY target_module",
+        &[&project_id, &file_path],
+    )?;
+    rows.into_iter()
+        .map(|row| {
+            Ok(ImportRelation {
+                file_path: row.try_get("source_file")?,
+                module_name: row.try_get("target_module")?,
+            })
+        })
+        .collect()
+}
+
+fn read_symbols_for_file(
+    conn: &mut impl GenericClient,
+    project_id: &str,
+    file_path: &str,
+) -> anyhow::Result<Vec<Symbol>> {
+    let query = format!(
+        "SELECT {} FROM code_symbols s
+         WHERE s.project_id = $1 AND s.file_path = $2
+         ORDER BY s.line_start, s.byte_start",
+        symbol_select_columns("s")
+    );
+    let rows = conn.query(&query, &[&project_id, &file_path])?;
+    rows.iter().map(Symbol::from_row).collect()
+}
+
+fn read_calls_for_file(
+    conn: &mut impl GenericClient,
+    project_id: &str,
+    file_path: &str,
+) -> anyhow::Result<Vec<CallRelation>> {
+    let rows = conn.query(
+        "SELECT caller_symbol_id, callee_symbol_id, callee_name,
+                callee_target_kind, callee_external_module, file_path, line::BIGINT AS line
+         FROM code_calls
+         WHERE project_id = $1 AND file_path = $2
+         ORDER BY line, caller_symbol_id, callee_name",
+        &[&project_id, &file_path],
+    )?;
+    rows.into_iter()
+        .map(|row| {
+            let target_kind: String = row.try_get("callee_target_kind")?;
+            let callee_symbol_id: String = row.try_get("callee_symbol_id")?;
+            let callee_external_module: String = row.try_get("callee_external_module")?;
+            Ok(CallRelation {
+                caller_symbol_id: row.try_get("caller_symbol_id")?,
+                callee_symbol_id: non_empty(callee_symbol_id),
+                callee_name: row.try_get("callee_name")?,
+                callee_target_kind: call_target_kind_from_str(&target_kind)?,
+                callee_external_module: non_empty(callee_external_module),
+                file_path: row.try_get("file_path")?,
+                line: i64_to_usize(row.try_get("line")?, "line")?,
+            })
+        })
+        .collect()
+}
+
+fn non_empty(value: String) -> Option<String> {
+    if value.is_empty() { None } else { Some(value) }
+}
+
+fn call_target_kind_from_str(value: &str) -> anyhow::Result<CallTargetKind> {
+    match value {
+        "symbol" => Ok(CallTargetKind::Symbol),
+        "unresolved" => Ok(CallTargetKind::Unresolved),
+        "external" => Ok(CallTargetKind::External),
+        other => bail!("unknown code_calls.callee_target_kind `{other}`"),
+    }
+}
+
+fn i64_to_usize(value: i64, column: &str) -> anyhow::Result<usize> {
+    value
+        .try_into()
+        .with_context(|| format!("column `{column}` contains negative or too-large value {value}"))
 }
 
 pub fn symbol_select_columns(alias: &str) -> String {
@@ -252,13 +501,6 @@ pub fn symbol_select_columns(alias: &str) -> String {
          {p}created_at::TEXT AS created_at, {p}updated_at::TEXT AS updated_at",
         p = prefix
     )
-}
-
-fn connect(database_url: &str) -> anyhow::Result<Client> {
-    let mut client = Client::connect(database_url, NoTls)
-        .context("failed to connect to the Gobby PostgreSQL hub")?;
-    schema::validate_runtime_schema(&mut client)?;
-    Ok(client)
 }
 
 #[cfg(test)]
@@ -308,7 +550,7 @@ mod tests {
     }
 
     #[test]
-    fn database_url_sources_prefer_daemon_broker() {
+    fn database_url_sources_prefer_env_over_daemon_broker() {
         let home = tempfile::tempdir().expect("temp home");
 
         let resolved = resolve_database_url_from_sources(
@@ -321,24 +563,21 @@ mod tests {
         )
         .expect("resolve database url");
 
-        assert_eq!(resolved, "postgresql://broker/db");
+        assert_eq!(resolved, "postgresql://env/db");
     }
 
     #[test]
-    fn database_url_sources_fall_back_to_env_when_daemon_is_unavailable() {
+    fn database_url_sources_use_daemon_broker_after_env() {
         let home = tempfile::tempdir().expect("temp home");
 
         let resolved = resolve_database_url_from_sources(
             home.path(),
-            |_| bail!("daemon unavailable"),
-            |name| match name {
-                GOBBY_POSTGRES_DSN_ENV => Some("postgresql://env/db".to_string()),
-                _ => None,
-            },
+            |_| Ok("postgresql://broker/db".to_string()),
+            |_| None,
         )
         .expect("resolve database url");
 
-        assert_eq!(resolved, "postgresql://env/db");
+        assert_eq!(resolved, "postgresql://broker/db");
     }
 
     #[test]
@@ -358,6 +597,30 @@ mod tests {
         .expect("resolve database url");
 
         assert_eq!(resolved, "postgresql://inline/db");
+    }
+
+    #[test]
+    fn database_url_sources_fall_back_to_gcore_before_legacy_gcode_config() {
+        let home = tempfile::tempdir().expect("temp home");
+        std::fs::write(
+            home.path().join(GCORE_CONFIG_FILENAME),
+            "databases.postgres.dsn: postgresql://gcore/db\n",
+        )
+        .expect("write gcore config");
+        std::fs::write(
+            home.path().join(GCODE_CONFIG_FILENAME),
+            "database_url: postgresql://legacy/db\n",
+        )
+        .expect("write legacy config");
+
+        let resolved = resolve_database_url_from_sources(
+            home.path(),
+            |_| bail!("daemon unavailable"),
+            |_| None,
+        )
+        .expect("resolve database url");
+
+        assert_eq!(resolved, "postgresql://gcore/db");
     }
 
     #[test]

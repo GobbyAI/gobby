@@ -1,21 +1,40 @@
 [package]
 name = "gobby-core"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Josh Wilhelmi <hello@gobby.ai>"]
-description = "Shared primitives for Gobby CLI tools — project root resolution, bootstrap config, daemon URL helpers"
+description = "Shared foundation primitives for Gobby CLI tools"
 license = "Apache-2.0"
 repository = "https://github.com/GobbyAI/gobby-cli"
 homepage = "https://gobby.ai"
 keywords = ["gobby", "cli"]
 categories = ["development-tools"]
 
+[features]
+default = []
+postgres = ["dep:postgres", "dep:postgres-types"]
+falkor = ["dep:falkordb", "dep:urlencoding"]
+qdrant = ["dep:reqwest"]
+indexing = ["dep:ignore", "dep:sha2"]
+search = []
+full = ["postgres", "falkor", "qdrant", "indexing", "search"]
+
 [dependencies]
 anyhow = "1"
 dirs = "6"
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
+thiserror = "2"
+
+postgres = { version = "0.19", optional = true }
+postgres-types = { version = "0.2", optional = true }
+falkordb = { version = "0.2", optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"], optional = true }
+ignore = { version = "0.4", optional = true }
+sha2 = { version = "0.10", optional = true }
+urlencoding = { version = "2", optional = true }
 
 [dev-dependencies]
 tempfile = "3"

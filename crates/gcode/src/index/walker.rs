@@ -3,8 +3,6 @@
 
 use std::path::{Path, PathBuf};
 
-use ignore::WalkBuilder;
-
 use crate::index::languages;
 use crate::index::security;
 
@@ -24,12 +22,11 @@ pub fn discover_files(root: &Path, exclude_patterns: &[String]) -> (Vec<PathBuf>
     let mut candidates = Vec::new();
     let mut content_only = Vec::new();
 
-    let walker = WalkBuilder::new(root)
-        .hidden(true)
-        .git_ignore(true)
-        .git_global(true)
-        .git_exclude(true)
-        .build();
+    let mut settings = gobby_core::indexing::WalkerSettings::new(root);
+    settings.max_filesize = Some(MAX_FILE_SIZE);
+    let mut builder = settings.into_walker();
+    builder.hidden(true);
+    let walker = builder.build();
 
     for entry in walker.flatten() {
         let path = entry.path();
@@ -90,7 +87,7 @@ fn is_safe_text_file(root: &Path, path: &Path, exclude_patterns: &[String]) -> b
     if !security::is_symlink_safe(path, root) {
         return false;
     }
-    if security::should_exclude(path, exclude_patterns) {
+    if security::should_exclude_path(root, path, exclude_patterns) {
         return false;
     }
     if security::has_secret_extension(path) {
@@ -185,5 +182,45 @@ mod tests {
             Some(FileClassification::ContentOnly)
         );
         assert_eq!(content_language(&root.join("Makefile")), "text");
+    }
+
+    #[test]
+    fn classifies_source_build_directory_as_ast_indexable() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        write_file(
+            root,
+            "src/gobby/build/workspaces.py",
+            b"class WorkspaceBuilder:\n    pass\n",
+        );
+        let excludes = vec!["build".to_string(), "dist".to_string()];
+
+        assert_eq!(
+            classify_file(root, &root.join("src/gobby/build/workspaces.py"), &excludes),
+            Some(FileClassification::Ast)
+        );
+    }
+
+    #[test]
+    fn skips_root_build_directory() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        write_file(root, "build/generated.py", b"class Generated:\n    pass\n");
+        let excludes = vec!["build".to_string(), "dist".to_string()];
+
+        assert_eq!(
+            classify_file(root, &root.join("build/generated.py"), &excludes),
+            None
+        );
+    }
+
+    #[test]
+    fn walker_consumes_gobby_core_walker_settings() {
+        let source = include_str!("walker.rs");
+        let settings = ["gobby_core", "::indexing::WalkerSettings"].concat();
+        let direct_builder = ["WalkBuilder", "::new(root)"].concat();
+
+        assert!(source.contains(&settings));
+        assert!(!source.contains(&direct_builder));
     }
 }

@@ -18,6 +18,10 @@ const SECRET_PREFIXES: &[&str] = &["credentials", ".env", "id_rsa", "id_ed25519"
 
 const SECRET_SUBSTRINGS: &[&str] = &["api_key", "apikey", "_secret.", "_token."];
 
+/// Generated output directories that are excluded only when they are the
+/// first component under the indexed root.
+const ROOT_GENERATED_DIRS: &[&str] = &["build", "dist"];
+
 /// Check that `path` resolves within `root` (prevents directory traversal).
 pub fn validate_path(path: &Path, root: &Path) -> bool {
     match (path.canonicalize(), root.canonicalize()) {
@@ -49,17 +53,40 @@ pub fn is_binary(path: &Path) -> bool {
     buf[..n].contains(&0)
 }
 
-/// Check if any path component matches an exclusion pattern.
-pub fn should_exclude(path: &Path, patterns: &[String]) -> bool {
+/// Check if a path should be excluded.
+///
+/// Patterns listed in `ROOT_GENERATED_DIRS` match only the first relative path
+/// component, so source paths like `src/package/build/mod.rs` remain indexable.
+/// Other exclude patterns match any component of the relative path.
+pub fn should_exclude_path(root: &Path, path: &Path, patterns: &[String]) -> bool {
+    let rel = path.strip_prefix(root).unwrap_or(path);
+
     for pattern in patterns {
-        for component in path.components() {
+        if is_root_generated_dir(pattern) {
+            if rel
+                .components()
+                .next()
+                .map(|component| glob_match(pattern, &component.as_os_str().to_string_lossy()))
+                .unwrap_or(false)
+            {
+                return true;
+            }
+            continue;
+        }
+
+        for component in rel.components() {
             let name = component.as_os_str().to_string_lossy();
             if glob_match(pattern, &name) {
                 return true;
             }
         }
     }
+
     false
+}
+
+fn is_root_generated_dir(pattern: &str) -> bool {
+    ROOT_GENERATED_DIRS.contains(&pattern)
 }
 
 /// Check if file extension suggests secret content.
