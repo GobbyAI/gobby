@@ -1,5 +1,6 @@
 //! Generic indexing primitives shared by indexing consumers.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use ignore::{WalkBuilder, overrides::OverrideBuilder};
@@ -102,6 +103,32 @@ pub enum IndexEvent {
     Unchanged(PathBuf),
     Deleted(PathBuf),
     Skipped { path: PathBuf, reason: String },
+}
+
+/// Classify content-hash snapshots into deterministic incremental index events.
+pub fn index_events_from_hashes(
+    previous_hashes: &BTreeMap<PathBuf, String>,
+    current_hashes: &BTreeMap<PathBuf, String>,
+) -> Vec<IndexEvent> {
+    let paths: BTreeSet<&PathBuf> = previous_hashes
+        .keys()
+        .chain(current_hashes.keys())
+        .collect();
+
+    paths
+        .into_iter()
+        .map(
+            |path| match (previous_hashes.get(path), current_hashes.get(path)) {
+                (None, Some(_)) => IndexEvent::Added(path.clone()),
+                (Some(previous), Some(current)) if previous != current => {
+                    IndexEvent::Changed(path.clone())
+                }
+                (Some(_), Some(_)) => IndexEvent::Unchanged(path.clone()),
+                (Some(_), None) => IndexEvent::Deleted(path.clone()),
+                (None, None) => unreachable!("path came from at least one snapshot"),
+            },
+        )
+        .collect()
 }
 
 #[cfg(test)]
@@ -237,6 +264,30 @@ mod tests {
             IndexEvent::Skipped { path, reason }
                 if path == &PathBuf::from("large.bin") && reason == "too large"
         ));
+    }
+
+    #[test]
+    fn index_events_from_hashes_classify_incremental_flow() {
+        let previous = std::collections::BTreeMap::from([
+            (PathBuf::from("changed.md"), "old".to_string()),
+            (PathBuf::from("deleted.md"), "gone".to_string()),
+            (PathBuf::from("same.md"), "same".to_string()),
+        ]);
+        let current = std::collections::BTreeMap::from([
+            (PathBuf::from("added.md"), "new".to_string()),
+            (PathBuf::from("changed.md"), "new".to_string()),
+            (PathBuf::from("same.md"), "same".to_string()),
+        ]);
+
+        assert_eq!(
+            index_events_from_hashes(&previous, &current),
+            vec![
+                IndexEvent::Added(PathBuf::from("added.md")),
+                IndexEvent::Changed(PathBuf::from("changed.md")),
+                IndexEvent::Deleted(PathBuf::from("deleted.md")),
+                IndexEvent::Unchanged(PathBuf::from("same.md")),
+            ]
+        );
     }
 
     #[test]
