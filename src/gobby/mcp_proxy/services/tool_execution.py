@@ -19,6 +19,11 @@ def _schema_requires_session_id(input_schema: dict[str, Any]) -> bool:
     return isinstance(required, list) and "session_id" in required
 
 
+def _schema_requires_project_id(input_schema: dict[str, Any]) -> bool:
+    required = input_schema.get("required", [])
+    return isinstance(required, list) and "project_id" in required
+
+
 def _inject_required_session_id_argument(
     arguments: dict[str, Any],
     input_schema: dict[str, Any],
@@ -31,6 +36,16 @@ def _inject_required_session_id_argument(
         and _schema_requires_session_id(input_schema)
     ):
         arguments["session_id"] = effective_session_id
+
+
+def _inject_required_project_id_argument(
+    arguments: dict[str, Any],
+    input_schema: dict[str, Any],
+    project_id: str | None,
+) -> None:
+    """Use resolved wrapper/ambient project context for target tools that require it."""
+    if project_id and "project_id" not in arguments and _schema_requires_project_id(input_schema):
+        arguments["project_id"] = project_id
 
 
 async def list_tools(
@@ -159,7 +174,8 @@ async def call_tool(
     session_manager = getattr(hook_manager, "_session_manager", None) if hook_manager else None
     project_ctx = get_project_context()
     project_id = project_ctx.get("id") if project_ctx else None
-    if not isinstance(project_id, str):
+    project_id_from_context = isinstance(project_id, str)
+    if not project_id_from_context:
         project_id = None
     if project_id is None:
         manager_project_id = getattr(getattr(service, "_mcp_manager", None), "project_id", None)
@@ -224,7 +240,7 @@ async def call_tool(
             }
 
     should_check_schema = service._validate_arguments and (
-        bool(arguments) or effective_session_id is not None
+        bool(arguments) or effective_session_id is not None or project_id_from_context
     )
     if should_check_schema:
         schema_result = await service.get_tool_schema(server_name, tool_name)
@@ -236,6 +252,7 @@ async def call_tool(
                     input_schema,
                     effective_session_id,
                 )
+                _inject_required_project_id_argument(arguments, input_schema, project_id)
                 if not arguments:
                     return await _execute_tool_dispatch(
                         service=service,

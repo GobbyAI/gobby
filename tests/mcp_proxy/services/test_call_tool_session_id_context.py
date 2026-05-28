@@ -6,10 +6,20 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
+from gobby.utils.project_context import reset_project_context, set_project_context
 from gobby.utils.session_context import session_context_for_test
 
 pytestmark = pytest.mark.unit
 
+
+PROJECT_ID_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "project_id": {"type": "string"},
+        "run_id": {"type": "string"},
+    },
+    "required": ["project_id"],
+}
 
 SESSION_ID_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -373,4 +383,58 @@ async def test_wrapper_and_nested_session_refs_resolve_independently(
         "get_session",
         {"session_id": SESSION_UUID_7},
         session_id=SESSION_UUID_3,
+    )
+
+
+@pytest.mark.asyncio
+async def test_required_project_id_uses_ambient_project_context(
+    tool_proxy: tuple[ToolProxyService, MagicMock],
+) -> None:
+    proxy, mcp_manager = tool_proxy
+    _use_schema(proxy, PROJECT_ID_SCHEMA)
+
+    token = set_project_context({"id": "target-project-id"})
+    try:
+        result = await proxy.call_tool(
+            "gobby-tasks-ops",
+            "run_expansion_qa_coverage",
+            arguments={"run_id": "expand-123"},
+            enforce_workflow=False,
+        )
+    finally:
+        reset_project_context(token)
+
+    assert result["success"] is True
+    mcp_manager.call_tool.assert_awaited_once_with(
+        "gobby-tasks-ops",
+        "run_expansion_qa_coverage",
+        {"run_id": "expand-123", "project_id": "target-project-id"},
+        session_id=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_required_project_id_uses_ambient_project_context_for_empty_arguments(
+    tool_proxy: tuple[ToolProxyService, MagicMock],
+) -> None:
+    proxy, mcp_manager = tool_proxy
+    _use_schema(proxy, PROJECT_ID_SCHEMA)
+
+    token = set_project_context({"id": "empty-target-project-id"})
+    try:
+        result = await proxy.call_tool(
+            "gobby-tasks-ops",
+            "run_expansion_qa_coverage",
+            arguments={},
+            enforce_workflow=False,
+        )
+    finally:
+        reset_project_context(token)
+
+    assert result["success"] is True
+    mcp_manager.call_tool.assert_awaited_once_with(
+        "gobby-tasks-ops",
+        "run_expansion_qa_coverage",
+        {"project_id": "empty-target-project-id"},
+        session_id=None,
     )
