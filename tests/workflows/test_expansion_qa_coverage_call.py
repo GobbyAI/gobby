@@ -60,11 +60,16 @@ def test_expansion_qa_yaml_wires_coverage_gate() -> None:
 def test_expansion_qa_yaml_requires_review_verdict_before_terminate() -> None:
     agent = yaml.safe_load(AGENT_PATH.read_text(encoding="utf-8"))
     steps = {step["name"]: step for step in agent["steps"]}
+    coverage_step = steps["coverage_check"]
+    coverage_success_tools = {handler["tool"] for handler in coverage_step["on_mcp_success"]}
+    coverage_blocked = set(coverage_step["blocked_mcp_tools"])
 
     assert not any(
-        transition["to"] == "terminate"
-        for transition in steps["coverage_check"].get("transitions", [])
+        transition["to"] == "terminate" for transition in coverage_step.get("transitions", [])
     )
+    assert {"gobby-tasks-ops:approve_review", "gobby-tasks-ops:reject_review"} <= coverage_blocked
+    assert "approve_review" not in coverage_success_tools
+    assert "reject_review" not in coverage_success_tools
     assert steps["qa_check"]["transitions"] == [
         {"to": "terminate", "when": "vars.review_complete and vars.qa_result_saved"}
     ]

@@ -35,6 +35,9 @@ instructions: |
     with approval_notes that include the manifest path.
   - If coverage returns missing or invalid rows, call reject_review with `stage_name="expansion"`
     with the rejection_notes returned by run_expansion_qa_coverage.
+  - Do not call approve_review or reject_review before the coverage result has
+    moved you into the QA check step; early verdicts leave the run without saved
+    QA evidence and will be blocked.
 
   LIFECYCLE MODEL:
   - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.
@@ -71,6 +74,8 @@ steps:
       - "gobby-tasks:de_escalate_task"
       - "gobby-tasks:delete_task"
       - "gobby-tasks:escalate_task"
+      - "gobby-tasks-ops:approve_review"
+      - "gobby-tasks-ops:reject_review"
       - "gobby-tasks-ops:submit_for_review"
       - "gobby-tasks:reopen_task"
       - "gobby-agents:spawn_agent"
@@ -80,16 +85,6 @@ steps:
         tool: run_expansion_qa_coverage
         action: set_variable
         variable: coverage_result_saved
-        value: true
-      - server: gobby-tasks-ops
-        tool: approve_review
-        action: set_variable
-        variable: review_complete
-        value: true
-      - server: gobby-tasks-ops
-        tool: reject_review
-        action: set_variable
-        variable: review_complete
         value: true
     on_mcp_error:
       - server: gobby-tasks-ops
