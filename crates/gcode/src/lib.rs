@@ -130,6 +130,36 @@ mod tests {
     }
 
     #[test]
+    fn indexing_search_primitive_migration() {
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+
+        let walker = std::fs::read_to_string(manifest_dir.join("src/index/walker.rs"))
+            .expect("read index/walker.rs");
+        assert!(walker.contains("gobby_core::indexing::WalkerSettings"));
+        let local_walker_builder = ["WalkBuilder", "::new(root)"].concat();
+        assert!(!walker.contains(&local_walker_builder));
+
+        let hasher = std::fs::read_to_string(manifest_dir.join("src/index/hasher.rs"))
+            .expect("read index/hasher.rs");
+        assert!(hasher.contains("gobby_core::indexing::file_content_hash"));
+        let local_buffer = format!("let mut buf = [0u8; {}]", 64 * 1024);
+        assert!(!hasher.contains(&local_buffer));
+
+        let rrf =
+            std::fs::read_to_string(manifest_dir.join("src/search/rrf.rs")).expect("read rrf.rs");
+        assert!(rrf.contains("gobby_core::search::rrf_merge"));
+        let local_rrf_const = ["const ", "RRF_K"].concat();
+        assert!(!rrf.contains(&local_rrf_const));
+
+        let chunker = std::fs::read_to_string(manifest_dir.join("src/index/chunker.rs"))
+            .expect("read index/chunker.rs");
+        assert!(!chunker.contains("use gobby_core::indexing::Chunk"));
+        assert!(!chunker.contains("use gobby_core::indexing::ChunkIdentity"));
+        assert!(!chunker.contains("use gobby_core::indexing::IndexEvent"));
+        assert!(!chunker.contains("use gobby_core::indexing::index_events_from_hashes"));
+    }
+
+    #[test]
     fn falkor_facade_exception_scoped_to_falkor_rs() {
         let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let src_dir = manifest_dir.join("src");
