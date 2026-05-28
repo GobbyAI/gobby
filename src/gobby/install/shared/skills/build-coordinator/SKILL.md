@@ -91,8 +91,10 @@ loop is:
    immediate dispatch path are fixed or explicitly documented as non-blocking.
 5. When agents are running and there are no actionable coordination bugs, check
    context health. Use `gobby-sessions:compact_self` when context pressure or
-   handoff risk is high. Use `gobby-agents:wait_for_agent` only as a bounded wait
-   for a specific run result.
+   handoff risk is high. Use `gobby-agents:wait_for_agent` as a bounded
+   five-minute wait (`timeout_seconds=300`) for a specific run result, then run
+   another full status and health sweep. Shorter waits are for diagnostics or
+   recovery only.
 
 Do not keep the build moving by repeatedly manual-ticking the dispatcher. A
 normal build is daemon-owned automation. Use resume or explicit ticks only after
@@ -203,9 +205,9 @@ Monitor dispatch and the coordination epic every loop: build status, stage
 state, active agents, build history, workspace health, and open child bugs. Work
 actionable build bugs under the coordination epic before waiting. When agents are
 running and no actionable coordinator work remains, check context health, then
-use gobby-sessions:compact_self for context pressure or a bounded
-gobby-agents:wait_for_agent for a specific run result. Resolve escalations
-yourself unless a genuine user decision is required.
+use gobby-sessions:compact_self for context pressure or a bounded five-minute
+gobby-agents:wait_for_agent (`timeout_seconds=300`) for a specific run result.
+Resolve escalations yourself unless a genuine user decision is required.
 
 Completion requires the target work complete, all discovered build bugs fixed and
 closed with linked commits, required validation run, no unexpected running agents

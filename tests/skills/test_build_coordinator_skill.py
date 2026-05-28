@@ -62,6 +62,8 @@ def test_build_coordinator_documents_unattended_build_discipline() -> None:
     assert "Work the highest-priority actionable coordination bug" in body
     assert "When agents are running and there are no actionable coordination bugs" in body
     assert "gobby-agents:wait_for_agent" in body
+    assert "five-minute wait (`timeout_seconds=300`)" in body
+    assert "Shorter waits are for diagnostics or recovery only" in normalized
 
 
 def test_build_coordinator_documents_compact_self_tool_path() -> None:
