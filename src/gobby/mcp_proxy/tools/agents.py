@@ -41,15 +41,14 @@ _WAIT_FOR_AGENT_TRANSPORT_BOUNDARY_SECONDS = 120.0
 _WAIT_FOR_AGENT_TRANSPORT_HEADROOM_SECONDS = 5.0
 
 
-def _agent_result_payload(run: Any) -> dict[str, Any]:
-    return {
+def _agent_result_payload(run: Any, *, include_prompt: bool = True) -> dict[str, Any]:
+    payload = {
         "run_id": run.id,
         "status": run.status,
         "result": run.result,
         "error": run.error,
         "provider": run.provider,
         "model": run.model,
-        "prompt": run.prompt,
         "tool_calls_count": run.tool_calls_count,
         "turns_used": run.turns_used,
         "started_at": run.started_at,
@@ -57,6 +56,9 @@ def _agent_result_payload(run: Any) -> dict[str, Any]:
         "child_session_id": run.child_session_id,
         "terminal_reason": run.terminal_reason,
     }
+    if include_prompt:
+        payload["prompt"] = run.prompt
+    return payload
 
 
 def _fire_synthetic_stop(
@@ -326,7 +328,7 @@ def create_agents_registry(
             if not run:
                 return {"success": False, "error": f"Agent run {run_id} not found"}
 
-            payload = _agent_result_payload(run)
+            payload = _agent_result_payload(run, include_prompt=False)
             if run.status in _TERMINAL_AGENT_STATUSES:
                 return {"success": True, "completed": True, **payload}
 

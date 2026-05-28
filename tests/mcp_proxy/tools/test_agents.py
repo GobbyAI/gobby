@@ -244,6 +244,9 @@ class TestWaitForAgent:
         assert result["completed"] is True
         assert result["status"] == "success"
         assert result["result"] == "done"
+        assert "prompt" not in result
+        assert result["tool_calls_count"] == 4
+        assert result["turns_used"] == 2
 
     @pytest.mark.asyncio
     async def test_running_run_times_out_with_latest_status(self):
@@ -275,6 +278,9 @@ class TestWaitForAgent:
         assert result["status"] == "running"
         assert result["timeout_seconds"] == 0.0
         assert result["requested_timeout_seconds"] == 0.0
+        assert "prompt" not in result
+        assert result["tool_calls_count"] == 1
+        assert result["turns_used"] == 1
 
     @pytest.mark.asyncio
     async def test_long_running_wait_returns_before_transport_boundary(self):
