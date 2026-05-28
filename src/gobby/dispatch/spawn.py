@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
@@ -52,6 +52,15 @@ class DispatchSpawnUnavailable(RuntimeError):
 
 class DispatchSpawnFailed(RuntimeError):
     """Raised when the daemon spawn path returns an unsuccessful result."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        stage_failure_cited_subtasks: Sequence[str] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.stage_failure_cited_subtasks = tuple(stage_failure_cited_subtasks or ())
 
 
 async def spawn_agent(
@@ -328,8 +337,37 @@ def _prepare_spawn_artifacts(
             merge_closed_descendant_commits=True,
         )
     except BuildWorkspaceError as exc:
-        raise DispatchSpawnFailed(str(exc)) from exc
+        raise DispatchSpawnFailed(
+            str(exc),
+            stage_failure_cited_subtasks=_holistic_workspace_failure_cited_subtasks(
+                action=action,
+                task=task,
+                task_manager=task_manager,
+            ),
+        ) from exc
     return TaskArtifactManager(db).get_artifacts(action.task_id)
+
+
+def _holistic_workspace_failure_cited_subtasks(
+    *,
+    action: SpawnAgentAction,
+    task: Task,
+    task_manager: LocalTaskManager,
+) -> tuple[str, ...]:
+    if action.agent_slug != "holistic-reviewer":
+        return ()
+    initial_variables = action.initial_variables or {}
+    if initial_variables.get("stage_name") != "holistic_qa":
+        return ()
+    if task.task_type != "epic":
+        return ()
+    children = task_manager.list_tasks(
+        project_id=task.project_id,
+        parent_task_id=task.id,
+        closed=True,
+        limit=1000,
+    )
+    return tuple(child.id for child in children if child.allow_automation)
 
 
 def _sanitize_reusable_spawn_artifacts(

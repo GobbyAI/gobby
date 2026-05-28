@@ -1543,6 +1543,19 @@ async def test_epic_holistic_workspace_conflict_rolls_back_without_heartbeat_err
         task_type="epic",
         isolation="worktree",
         assigned_agent="holistic-reviewer",
+        dispatch_failure_count=2,
+    )
+    child = _task(
+        temp_db,
+        sample_project,
+        title="Conflicting child",
+        parent_task_id=task.id,
+        stage_name="development",
+        stage_state="done",
+        task_type="feature",
+        isolation="worktree",
+        assigned_agent="backend-developer",
+        status="closed",
     )
     TaskArtifactManager(temp_db).set_artifacts_atomic(
         task.id,
@@ -1589,10 +1602,14 @@ async def test_epic_holistic_workspace_conflict_rolls_back_without_heartbeat_err
     )
 
     updated = get_task(temp_db, task.id)
+    reopened_child = get_task(temp_db, child.id)
     assert result.executed == 1
     assert storage.get_mutex(task.id) is None
     assert task_manager.stage_states.get(task.id, "holistic_qa").state == "ready"
-    assert updated.dispatch_failure_count == 1
+    assert task_manager.stage_states.get(child.id, "development").state == "ready"
+    assert reopened_child.closed_at is None
+    assert updated.dispatch_failure_count == 0
+    assert updated.is_escalated is False
     assert "### Dispatch spawn failed" in updated.description
     assert "failed to refresh integration workspace: CONFLICT" in updated.description
     assert "Dispatcher heartbeat candidate failed" not in caplog.text

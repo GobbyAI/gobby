@@ -7,7 +7,7 @@ import inspect
 import json
 import logging
 import uuid
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
@@ -423,7 +423,14 @@ async def _execute_spawn_action(
         mutex.release()
         raise
     except DispatchSpawnFailed as exc:
-        _handle_spawn_failure(action, mutex=mutex, db=db, context=context, error=str(exc))
+        _handle_spawn_failure(
+            action,
+            mutex=mutex,
+            db=db,
+            context=context,
+            error=str(exc),
+            cited_subtasks=exc.stage_failure_cited_subtasks,
+        )
         return None
     except BaseException:
         if mutex.run_id is None:
@@ -776,15 +783,22 @@ def _handle_spawn_failure(
     db: HubDatabase,
     context: object | None,
     error: str,
+    cited_subtasks: Sequence[str] | None = None,
 ) -> None:
     try:
         append_audit_marker(db, action.task_id, "Dispatch spawn failed", error)
-        task = get_task(db, action.task_id)
-        failure_count = int(getattr(task, "dispatch_failure_count", 0) or 0) + 1
-        update_task(db, action.task_id, dispatch_failure_count=failure_count)
+        cited_subtask_ids = tuple(cited_subtasks or ())
+        failure_count = 0
+        if not cited_subtask_ids:
+            task = get_task(db, action.task_id)
+            failure_count = int(getattr(task, "dispatch_failure_count", 0) or 0) + 1
+            update_task(db, action.task_id, dispatch_failure_count=failure_count)
         stage = _field(context, "current_stage")
         stage_name = _stage_name(stage)
         if stage_name and _field(stage, "state") == "in_progress":
+            failure_reason = (
+                f"dispatch_spawn_failed:{error}" if cited_subtask_ids else "dispatch_spawn_failed"
+            )
             try:
                 _stage_states_manager(
                     db=db,
@@ -792,8 +806,9 @@ def _handle_spawn_failure(
                 ).fail_stage(
                     action.task_id,
                     stage_name,
-                    reason="dispatch_spawn_failed",
+                    reason=failure_reason,
                     by_session_id="dispatcher",
+                    cited_subtasks=cited_subtask_ids,
                 )
             except IllegalStageTransitionError:
                 fresh_stage = _stage_states_manager(
@@ -816,7 +831,7 @@ def _handle_spawn_failure(
                     "dispatcher",
                     exc_info=True,
                 )
-        if failure_count >= MAX_DISPATCH_SPAWN_ATTEMPTS:
+        if not cited_subtask_ids and failure_count >= MAX_DISPATCH_SPAWN_ATTEMPTS:
             escalate_task(
                 db=db,
                 task_id=action.task_id,
