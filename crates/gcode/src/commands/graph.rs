@@ -1,12 +1,16 @@
 use crate::config::Context;
 use crate::db;
-use crate::graph::code_graph::{self, GraphLifecycleAction, GraphLifecycleOutput};
+use crate::graph::code_graph::{
+    self, GraphBlastRadiusTarget, GraphLifecycleAction, GraphLifecycleOutput, GraphPayload,
+};
 use crate::models::PagedResponse;
 use crate::output::{self, Format};
 use crate::search::fts::{self, ResolvedGraphSymbol};
+use serde_json::{Value, json};
 
 const GOBBY_HINT: &str =
     "Graph commands require FalkorDB, available with Gobby. See: https://github.com/GobbyAI/gobby";
+const DEFAULT_OVERVIEW_LIMIT: usize = 100;
 
 fn format_success_text(output: &GraphLifecycleOutput) -> String {
     format!(
@@ -22,15 +26,118 @@ fn run_lifecycle_action(
     action: GraphLifecycleAction,
     format: Format,
 ) -> anyhow::Result<()> {
-    let request = code_graph::GraphLifecycleRequest::from_context(ctx);
-    let output = code_graph::run_lifecycle_action(&request, action)?;
+    let output = match action {
+        GraphLifecycleAction::Clear => clear_project_graph(ctx)?,
+        GraphLifecycleAction::Rebuild => rebuild_project_graph(ctx)?,
+    };
     match format {
         Format::Json => output::print_json(&output.payload),
         Format::Text => {
-            eprintln!("{}", format_success_text(&output));
+            output::print_text(&format_success_text(&output))?;
             output::print_json_compact(&output.payload)
         }
     }
+}
+
+fn lifecycle_output(
+    action: GraphLifecycleAction,
+    ctx: &Context,
+    payload: Value,
+) -> GraphLifecycleOutput {
+    let summary = code_graph::extract_summary_text(&payload).unwrap_or_else(|| payload.to_string());
+    GraphLifecycleOutput {
+        project_id: ctx.project_id.clone(),
+        action,
+        summary,
+        payload,
+    }
+}
+
+fn sync_file_graph(ctx: &Context, file_path: &str) -> anyhow::Result<usize> {
+    let mut conn = db::connect_readwrite(&ctx.database_url)?;
+    let facts = db::read_graph_file_facts(&mut conn, &ctx.project_id, file_path)?;
+    if !db::mark_graph_sync_attempted(&mut conn, &ctx.project_id, file_path)? {
+        anyhow::bail!(
+            "indexed file `{file_path}` was not found for project {}",
+            ctx.project_id
+        );
+    }
+    let relationships_written = code_graph::sync_file_graph(
+        ctx,
+        &facts.file_path,
+        &facts.imports,
+        &facts.definitions,
+        &facts.calls,
+    )?;
+    db::mark_graph_synced(&mut conn, &ctx.project_id, file_path)?;
+    Ok(relationships_written)
+}
+
+fn clear_project_graph(ctx: &Context) -> anyhow::Result<GraphLifecycleOutput> {
+    let mut conn = db::connect_readwrite(&ctx.database_url)?;
+    let files_marked_pending = db::reset_graph_sync_for_project(&mut conn, &ctx.project_id)?;
+    code_graph::clear_project(ctx)?;
+    Ok(lifecycle_output(
+        GraphLifecycleAction::Clear,
+        ctx,
+        json!({
+            "success": true,
+            "project_id": ctx.project_id,
+            "files_marked_pending": files_marked_pending,
+            "summary": format!("marked {files_marked_pending} files pending and cleared graph projection"),
+        }),
+    ))
+}
+
+fn rebuild_project_graph(ctx: &Context) -> anyhow::Result<GraphLifecycleOutput> {
+    let mut conn = db::connect_readwrite(&ctx.database_url)?;
+    let file_paths = db::list_indexed_file_paths(&mut conn, &ctx.project_id)?;
+    code_graph::clear_project(ctx)?;
+    db::reset_graph_sync_for_project(&mut conn, &ctx.project_id)?;
+
+    let mut files_synced = 0usize;
+    let mut errors = Vec::new();
+    for file_path in &file_paths {
+        if let Err(err) = db::mark_graph_sync_attempted(&mut conn, &ctx.project_id, file_path)
+            .and_then(|updated| {
+                if updated {
+                    Ok(())
+                } else {
+                    anyhow::bail!("indexed file no longer exists")
+                }
+            })
+            .and_then(|_| {
+                let facts = db::read_graph_file_facts(&mut conn, &ctx.project_id, file_path)?;
+                code_graph::sync_file_graph(
+                    ctx,
+                    &facts.file_path,
+                    &facts.imports,
+                    &facts.definitions,
+                    &facts.calls,
+                )?;
+                db::mark_graph_synced(&mut conn, &ctx.project_id, file_path)?;
+                Ok(())
+            })
+        {
+            errors.push(format!("{file_path}: {err}"));
+            continue;
+        }
+        files_synced += 1;
+    }
+
+    Ok(lifecycle_output(
+        GraphLifecycleAction::Rebuild,
+        ctx,
+        json!({
+            "success": true,
+            "project_id": ctx.project_id,
+            "files_processed": file_paths.len(),
+            "files_synced": files_synced,
+            "files_failed": errors.len(),
+            "errors": errors,
+            "summary": format!("synced {files_synced}/{} files", file_paths.len()),
+        }),
+    ))
 }
 
 pub fn clear(ctx: &Context, format: Format) -> anyhow::Result<()> {
@@ -39,6 +146,105 @@ pub fn clear(ctx: &Context, format: Format) -> anyhow::Result<()> {
 
 pub fn rebuild(ctx: &Context, format: Format) -> anyhow::Result<()> {
     run_lifecycle_action(ctx, GraphLifecycleAction::Rebuild, format)
+}
+
+pub fn sync_file(ctx: &Context, file_path: &str, format: Format) -> anyhow::Result<()> {
+    let relationships_written = sync_file_graph(ctx, file_path)?;
+    let summary = format!("synced {relationships_written} graph relationships for {file_path}");
+    let payload = json!({
+        "success": true,
+        "project_id": ctx.project_id,
+        "file_path": file_path,
+        "relationships_written": relationships_written,
+        "summary": summary,
+    });
+    match format {
+        Format::Json => output::print_json(&payload),
+        Format::Text => {
+            output::print_text(&format!(
+                "Synced code-index graph for project {}: {summary}",
+                ctx.project_id
+            ))?;
+            output::print_json_compact(&payload)
+        }
+    }
+}
+
+fn format_graph_payload_text(payload: &GraphPayload) -> String {
+    let mut lines = Vec::new();
+    lines.push(format!(
+        "nodes: {}, links: {}",
+        payload.nodes.len(),
+        payload.links.len()
+    ));
+    if let Some(center) = &payload.center {
+        lines.push(format!("center: {center}"));
+    }
+    for node in &payload.nodes {
+        let file = node.file_path.as_deref().unwrap_or("");
+        if file.is_empty() {
+            lines.push(format!(
+                "node {} [{}] {}",
+                node.id, node.node_type, node.name
+            ));
+        } else {
+            lines.push(format!(
+                "node {} [{}] {} {}",
+                node.id, node.node_type, node.name, file
+            ));
+        }
+    }
+    for link in &payload.links {
+        lines.push(format!(
+            "link {} -[{}]-> {}",
+            link.source, link.link_type, link.target
+        ));
+    }
+    lines.join("\n")
+}
+
+fn print_graph_payload(payload: &GraphPayload, format: Format) -> anyhow::Result<()> {
+    match format {
+        Format::Json => output::print_json(payload),
+        Format::Text => output::print_text(&format_graph_payload_text(payload)),
+    }
+}
+
+pub fn overview(ctx: &Context, format: Format) -> anyhow::Result<()> {
+    let payload = code_graph::project_overview_graph(ctx, DEFAULT_OVERVIEW_LIMIT)?;
+    print_graph_payload(&payload, format)
+}
+
+pub fn file(ctx: &Context, file_path: &str, format: Format) -> anyhow::Result<()> {
+    let payload = code_graph::file_graph(ctx, file_path)?;
+    print_graph_payload(&payload, format)
+}
+
+pub fn neighbors(
+    ctx: &Context,
+    symbol_id: &str,
+    limit: usize,
+    format: Format,
+) -> anyhow::Result<()> {
+    let payload = code_graph::symbol_neighbors(ctx, symbol_id, limit)?;
+    print_graph_payload(&payload, format)
+}
+
+pub fn graph_blast_radius(
+    ctx: &Context,
+    symbol_id: Option<&str>,
+    file_path: Option<&str>,
+    depth: usize,
+    limit: usize,
+    format: Format,
+) -> anyhow::Result<()> {
+    let target = match (symbol_id, file_path) {
+        (Some(symbol_id), None) => GraphBlastRadiusTarget::SymbolId(symbol_id.to_string()),
+        (None, Some(file_path)) => GraphBlastRadiusTarget::FilePath(file_path.to_string()),
+        _ => anyhow::bail!("provide exactly one of --symbol-id or --file"),
+    };
+    let payload = code_graph::blast_radius_graph(ctx, target, depth, limit)?;
+    print_graph_payload(&payload, format)
 }
 
 fn hint_for(ctx: &Context) -> Option<String> {
@@ -263,6 +469,7 @@ pub fn blast_radius(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::{GraphResult, ProjectionMetadata, ProjectionProvenance};
     use serde_json::json;
     use std::path::PathBuf;
 
@@ -294,6 +501,22 @@ mod tests {
             err.to_string().contains("FalkorDB is not configured"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn graph_lifecycle_commands_call_core_directly() {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let source = std::fs::read_to_string(manifest_dir.join("src/commands/graph.rs"))
+            .expect("read commands/graph.rs");
+        let clear_project = ["code_graph", "::clear_project(ctx)"].concat();
+        let sync_file_graph = ["code_graph", "::sync_file_graph("].concat();
+        let lifecycle_request = ["GraphLifecycleRequest", "::from_context"].concat();
+        let daemon_lifecycle = ["code_graph", "::run_lifecycle_action"].concat();
+
+        assert!(source.contains(&clear_project));
+        assert!(source.contains(&sync_file_graph));
+        assert!(!source.contains(&lifecycle_request));
+        assert!(!source.contains(&daemon_lifecycle));
     }
 
     #[test]
@@ -416,6 +639,67 @@ mod tests {
         assert_eq!(
             text,
             "Rebuilt code-index graph for project project-123: {\"replayed\":18,\"synced\":18}"
+        );
+    }
+
+    #[test]
+    fn top_level_read_commands_preserve_json_shape() {
+        let response = PagedResponse {
+            project_id: "project-123".to_string(),
+            total: 1,
+            offset: 0,
+            limit: 10,
+            results: vec![GraphResult {
+                id: "sym-1".to_string(),
+                name: "run".to_string(),
+                file_path: "src/lib.rs".to_string(),
+                line: 12,
+                relation: Some("CALLS".to_string()),
+                distance: Some(1),
+                metadata: None,
+            }],
+            hint: None,
+        };
+
+        let value = serde_json::to_value(&response).expect("serialize response");
+
+        assert_eq!(value["project_id"], "project-123");
+        assert_eq!(value["total"], 1);
+        assert_eq!(value["offset"], 0);
+        assert_eq!(value["limit"], 10);
+        assert_eq!(value["results"][0]["id"], "sym-1");
+        assert_eq!(value["results"][0]["name"], "run");
+        assert_eq!(value["results"][0]["file_path"], "src/lib.rs");
+        assert_eq!(value["results"][0]["line"], 12);
+        assert_eq!(value["results"][0]["relation"], "CALLS");
+        assert_eq!(value["results"][0]["distance"], 1);
+        assert!(value["hint"].is_null());
+        assert!(value["results"][0].get("metadata").is_none());
+
+        let response = PagedResponse {
+            project_id: "project-123".to_string(),
+            total: 1,
+            offset: 0,
+            limit: 10,
+            results: vec![GraphResult {
+                id: "sym-1".to_string(),
+                name: "run".to_string(),
+                file_path: "src/lib.rs".to_string(),
+                line: 12,
+                relation: Some("CALLS".to_string()),
+                distance: Some(1),
+                metadata: Some(
+                    ProjectionMetadata::new(ProjectionProvenance::Extracted, "gcode")
+                        .with_source_file_path("src/lib.rs"),
+                ),
+            }],
+            hint: None,
+        };
+        let value = serde_json::to_value(&response).expect("serialize metadata response");
+
+        assert_eq!(
+            value["results"][0]["metadata"]["source_file_path"],
+            "src/lib.rs"
         );
     }
 }

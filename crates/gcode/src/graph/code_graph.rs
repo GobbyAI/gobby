@@ -172,7 +172,7 @@ pub fn sync_file_graph(
     definitions: &[Symbol],
     calls: &[CallRelation],
 ) -> anyhow::Result<usize> {
-    with_core_graph(ctx, 0, |client| {
+    with_required_core_graph(ctx, |client| {
         CodeGraph::new(&ctx.project_id, client).sync_file(file_path, imports, definitions, calls)
     })
 }
@@ -182,19 +182,19 @@ pub fn delete_file_graph(
     file_path: &str,
     current_symbol_ids: &[String],
 ) -> anyhow::Result<()> {
-    with_core_graph(ctx, (), |client| {
+    with_required_core_graph(ctx, |client| {
         CodeGraph::new(&ctx.project_id, client).delete_file_graph(file_path, current_symbol_ids)
     })
 }
 
 pub fn cleanup_orphans(ctx: &Context) -> anyhow::Result<()> {
-    with_core_graph(ctx, (), |client| {
+    with_required_core_graph(ctx, |client| {
         CodeGraph::new(&ctx.project_id, client).cleanup_orphans()
     })
 }
 
 pub fn clear_project(ctx: &Context) -> anyhow::Result<()> {
-    with_core_graph(ctx, (), |client| {
+    with_required_core_graph(ctx, |client| {
         CodeGraph::new(&ctx.project_id, client).clear_project()
     })
 }
@@ -886,7 +886,7 @@ pub(crate) fn parse_success_payload(
     })
 }
 
-fn extract_summary_text(payload: &Value) -> Option<String> {
+pub(crate) fn extract_summary_text(payload: &Value) -> Option<String> {
     match payload {
         Value::String(text) => {
             let text = text.trim();
@@ -1682,38 +1682,6 @@ pub fn blast_radius_graph(
 
         Ok(payload)
     })
-}
-
-fn with_core_graph<T: Clone>(
-    ctx: &Context,
-    default: T,
-    f: impl FnOnce(&mut GraphClient) -> anyhow::Result<T>,
-) -> anyhow::Result<T> {
-    let Some(config) = ctx.falkordb.as_ref() else {
-        return Ok(default);
-    };
-
-    let connection_config = config.connection_config();
-    match gobby_core::falkor::with_graph(
-        Some(&connection_config),
-        &config.graph_name,
-        default.clone(),
-        f,
-    ) {
-        Ok((value, ServiceState::Unreachable { message })) => {
-            if !ctx.quiet {
-                eprintln!("Warning: FalkorDB connection failed: {message}");
-            }
-            Ok(value)
-        }
-        Ok((value, _)) => Ok(value),
-        Err(e) => {
-            if !ctx.quiet {
-                eprintln!("Warning: FalkorDB query failed: {e}");
-            }
-            Ok(default)
-        }
-    }
 }
 
 pub fn count_callers(ctx: &Context, symbol_id: &str) -> anyhow::Result<usize> {
