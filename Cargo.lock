@@ -770,7 +770,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-code"
-version = "0.9.3"
+version = "0.9.4"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -821,7 +821,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-core"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "dirs",
@@ -843,7 +843,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-hooks"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
