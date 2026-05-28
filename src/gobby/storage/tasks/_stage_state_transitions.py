@@ -322,11 +322,7 @@ class StageStateTransitions:
             now=now,
             holder=holder,
         )
-        follow_up_body = (
-            "## Holistic QA Follow-Up\n\n"
-            "This task was reopened because parent holistic QA requested changes.\n\n"
-            f"{body}"
-        )
+        follow_up_body = self._holistic_follow_up_body(body)
         for cited_id in cited_subtasks:
             self.append_task_comment(
                 conn,
@@ -335,6 +331,35 @@ class StageStateTransitions:
                 now=now,
                 holder=holder,
             )
+
+    def _holistic_follow_up_body(self, body: str) -> str:
+        follow_up_body = (
+            "## Holistic QA Follow-Up\n\n"
+            "This task was reopened because parent holistic QA requested changes.\n\n"
+        )
+        if body.startswith("dispatch_spawn_failed:failed to refresh integration workspace"):
+            follow_up_body += self._integration_refresh_follow_up_guidance(body)
+        return f"{follow_up_body}{body}"
+
+    def _integration_refresh_follow_up_guidance(self, body: str) -> str:
+        base_ref = self._integration_refresh_base_ref(body)
+        base_note = (
+            f"`{base_ref}`"
+            if base_ref
+            else "the parent integration branch named after `from` in the failure below"
+        )
+        return (
+            "The parent epic integration workspace could not refresh before holistic QA. "
+            f"Resolve this by merging {base_note} into this task branch/worktree, preserving "
+            "the already-integrated parent modules, then commit and submit the task for review.\n\n"
+        )
+
+    def _integration_refresh_base_ref(self, body: str) -> str | None:
+        try:
+            after_from = body.split(" from ", 1)[1]
+            return after_from.split(":", 1)[0].strip() or None
+        except IndexError:
+            return None
 
     def append_task_comment(
         self,

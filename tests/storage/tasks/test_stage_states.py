@@ -445,7 +445,10 @@ def test_retry_neutral_holistic_spawn_failure_resets_cited_child_attempts(
     updated = manager.stage_states.fail_stage(
         parent.id,
         "holistic_qa",
-        reason="dispatch_spawn_failed:failed to refresh integration workspace",
+        reason=(
+            "dispatch_spawn_failed:failed to refresh integration workspace "
+            "/tmp/integration from gobby/integration/210-build: CONFLICT"
+        ),
         by_session_id="dispatcher",
         cited_subtasks=[leaf.id],
     )
@@ -459,6 +462,17 @@ def test_retry_neutral_holistic_spawn_failure_resets_cited_child_attempts(
     assert reopened["closed_at"] is None
     assert parent_row["is_escalated"] is False
     assert reopened["is_escalated"] is False
+    child_comment = temp_db.fetchone(
+        "SELECT body FROM task_comments WHERE task_id = %s ORDER BY created_at DESC LIMIT 1",
+        (leaf.id,),
+    )
+    assert child_comment is not None
+    assert "parent epic integration workspace could not refresh" in child_comment["body"]
+    assert "`gobby/integration/210-build`" in child_comment["body"]
+    assert (
+        "merging `gobby/integration/210-build` into this task branch/worktree"
+        in child_comment["body"]
+    )
 
 
 def test_holistic_failure_reactivates_merged_cited_child_worktree(
