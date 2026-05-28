@@ -62,6 +62,12 @@ impl FalkorClient {
             }
         }
     }
+
+    /// Execute a typed query after its parameters have been rendered safely.
+    pub fn query_typed(&mut self, query: typed_query::TypedQuery) -> anyhow::Result<Vec<Row>> {
+        let typed_query::TypedQuery { cypher, params } = query;
+        self.query(&cypher, Some(params))
+    }
 }
 
 pub fn cypher_string_literal(s: &str) -> String {
