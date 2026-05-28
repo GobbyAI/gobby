@@ -499,6 +499,41 @@ mod tests {
     }
 
     #[test]
+    fn qdrant_and_embedding_resolution_order() {
+        {
+            let env = EnvGuard::new();
+            env.set("GOBBY_QDRANT_API_KEY", "env-qdrant-key");
+            env.set("GOBBY_EMBEDDING_MODEL", "env-embedding-model");
+
+            let mut source = TestSource::with_values([
+                ("databases.qdrant.url", "http://stored-qdrant:6333"),
+                ("databases.qdrant.api_key", "stored-qdrant-key"),
+                ("embeddings.api_base", "http://stored-embedding:11434/v1"),
+                ("embeddings.model", "stored-embedding-model"),
+                ("embeddings.api_key", "$secret:EMBEDDING_KEY"),
+            ]);
+
+            let qdrant = resolve_qdrant_config(&mut source).expect("qdrant config");
+            let embedding = resolve_embedding_config(&mut source).expect("embedding config");
+
+            assert_eq!(qdrant.url.as_deref(), Some("http://stored-qdrant:6333"));
+            assert_eq!(qdrant.api_key.as_deref(), Some("env-qdrant-key"));
+            assert_eq!(embedding.api_base, "http://stored-embedding:11434/v1");
+            assert_eq!(embedding.model, "env-embedding-model");
+            assert_eq!(embedding.api_key.as_deref(), Some("resolved-EMBEDDING_KEY"));
+        }
+
+        let _env = EnvGuard::new();
+        let mut default_source =
+            TestSource::with_values([("embeddings.api_base", "http://stored-embedding:11434/v1")]);
+        let default_embedding =
+            resolve_embedding_config(&mut default_source).expect("embedding config");
+
+        assert_eq!(default_embedding.model, EMBEDDING_DEFAULT_MODEL);
+        assert!(resolve_qdrant_config(&mut TestSource::default()).is_none());
+    }
+
+    #[test]
     fn falkordb_config_has_no_domain_graph_name() {
         let config = FalkorConfig {
             host: "falkor.local".to_string(),

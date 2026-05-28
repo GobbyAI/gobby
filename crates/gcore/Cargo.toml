@@ -31,7 +31,7 @@ thiserror = "2"
 postgres = { version = "0.19", optional = true }
 postgres-types = { version = "0.2", optional = true }
 falkordb = { version = "0.2", optional = true }
-reqwest = { version = "0.12", features = ["blocking", "json"], optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"], optional = true }
 ignore = { version = "0.4", optional = true }
 sha2 = { version = "0.10", optional = true }
 urlencoding = { version = "2", optional = true }
