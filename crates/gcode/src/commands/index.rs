@@ -1,6 +1,6 @@
 use crate::config;
 use crate::config::Context;
-use crate::index::api::{self, IndexOutcome, IndexRequest};
+use crate::index::api::{self, IndexDegradation, IndexOutcome, IndexRequest};
 use crate::output::{self, Format};
 use crate::projection::sync::{self, ProjectionSyncReports};
 use crate::utils::short_id;
@@ -63,6 +63,8 @@ pub(crate) struct IndexSyncProjectionsOutput {
     pub skipped_files: usize,
     pub symbols_indexed: usize,
     pub chunks_indexed: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub degraded: Vec<IndexDegradation>,
     pub projections: ProjectionSyncReports,
 }
 
@@ -75,6 +77,7 @@ pub(crate) fn sync_projections_payload(
         skipped_files: outcome.skipped_files,
         symbols_indexed: outcome.symbols_indexed,
         chunks_indexed: outcome.chunks_indexed,
+        degraded: outcome.degraded.clone(),
         projections,
     }
 }

@@ -168,6 +168,30 @@ impl Context {
             daemon_url,
         })
     }
+
+    /// Resolve service config for a caller-supplied project id without touching cwd identity.
+    pub fn resolve_for_project_id(project_id: &str, quiet: bool) -> anyhow::Result<Self> {
+        let project_id = normalize_project_id(project_id)?;
+        let database_url = db::resolve_database_url()?;
+
+        let standalone_config = read_standalone_config();
+        let mut conn = db::connect_readonly(&database_url)?;
+        let falkordb = resolve_falkordb_config(&mut conn, standalone_config, quiet);
+
+        let daemon_url = resolve_daemon_url();
+
+        Ok(Self {
+            database_url,
+            project_root: PathBuf::new(),
+            project_id,
+            quiet,
+            falkordb,
+            qdrant: None,
+            embedding: None,
+            code_vectors: CodeVectorSettings::default(),
+            daemon_url,
+        })
+    }
 }
 
 pub fn resolve_project_identity(
@@ -264,6 +288,14 @@ fn is_self_referential_isolation_marker(
     };
     let parent = parent.canonicalize().unwrap_or(parent);
     parent == root
+}
+
+fn normalize_project_id(project_id: &str) -> anyhow::Result<String> {
+    let project_id = project_id.trim();
+    if project_id.is_empty() {
+        anyhow::bail!("--project-id must not be empty");
+    }
+    Ok(project_id.to_string())
 }
 
 pub fn warn_project_identity(identity: &ProjectIdentity, quiet: bool) {
@@ -998,5 +1030,13 @@ mod tests {
             identity.project_id,
             crate::project::code_index_id_for_root(tmp.path())
         );
+    }
+
+    #[test]
+    fn project_id_only_context_rejects_empty_id_before_runtime_resolution() {
+        let err = Context::resolve_for_project_id("  ", true)
+            .expect_err("empty project id should fail before DB resolution");
+
+        assert!(err.to_string().contains("--project-id must not be empty"));
     }
 }

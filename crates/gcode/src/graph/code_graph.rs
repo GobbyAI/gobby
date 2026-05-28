@@ -153,6 +153,19 @@ impl<'a> CodeGraph<'a> {
         Ok(())
     }
 
+    pub fn delete_file_node(&mut self, file_path: &str) -> anyhow::Result<()> {
+        execute_write_query(
+            self.client,
+            delete_file_node_query(self.project_id, file_path)?,
+        )
+    }
+
+    pub fn delete_file_projection(&mut self, file_path: &str) -> anyhow::Result<()> {
+        self.delete_file_graph(file_path, &[])?;
+        self.delete_file_node(file_path)?;
+        self.cleanup_orphans()
+    }
+
     pub fn cleanup_orphans(&mut self) -> anyhow::Result<()> {
         for query in cleanup_orphans_queries(self.project_id)? {
             execute_write_query(self.client, query)?;
@@ -184,6 +197,12 @@ pub fn delete_file_graph(
 ) -> anyhow::Result<()> {
     with_required_core_graph(ctx, |client| {
         CodeGraph::new(&ctx.project_id, client).delete_file_graph(file_path, current_symbol_ids)
+    })
+}
+
+pub fn delete_file_projection(ctx: &Context, file_path: &str) -> anyhow::Result<()> {
+    with_required_core_graph(ctx, |client| {
+        CodeGraph::new(&ctx.project_id, client).delete_file_projection(file_path)
     })
 }
 
@@ -546,6 +565,20 @@ pub(crate) fn delete_file_graph_queries(
     }
 
     Ok(queries)
+}
+
+pub(crate) fn delete_file_node_query(
+    project_id: &str,
+    file_path: &str,
+) -> anyhow::Result<TypedQuery> {
+    typed_query(
+        "MATCH (f:CodeFile {path: $file_path, project: $project})
+         DETACH DELETE f",
+        [
+            ("project", TypedValue::String(project_id.to_string())),
+            ("file_path", TypedValue::String(file_path.to_string())),
+        ],
+    )
 }
 
 pub(crate) fn cleanup_orphans_queries(project_id: &str) -> anyhow::Result<Vec<TypedQuery>> {
@@ -1981,6 +2014,28 @@ mod tests {
     }
 
     #[test]
+    fn delete_file_node_is_project_and_path_scoped() {
+        let query = delete_file_node_query("project-1", "src/lib.rs").expect("query");
+
+        assert!(
+            query
+                .cypher
+                .contains("MATCH (f:CodeFile {path: $file_path, project: $project})"),
+            "{}",
+            query.cypher
+        );
+        assert!(query.cypher.contains("DETACH DELETE f"), "{}", query.cypher);
+        assert_eq!(
+            query.params.get("project").map(String::as_str),
+            Some("'project-1'")
+        );
+        assert_eq!(
+            query.params.get("file_path").map(String::as_str),
+            Some("'src/lib.rs'")
+        );
+    }
+
+    #[test]
     fn clear_project_is_project_scoped() {
         let query = clear_project_query("project-1").expect("query");
 
@@ -1991,6 +2046,36 @@ mod tests {
             query.params.get("project").map(String::as_str),
             Some("'project-1'")
         );
+    }
+
+    #[test]
+    fn clear_project_targets_only_code_index_labels() {
+        let query = clear_project_query("project-1").expect("query");
+
+        for code_label in [
+            "n:CodeFile",
+            "n:CodeSymbol",
+            "n:CodeModule",
+            "n:UnresolvedCallee",
+            "n:ExternalSymbol",
+        ] {
+            assert!(query.cypher.contains(code_label), "missing {code_label}");
+        }
+
+        for memory_label in [
+            "Memory",
+            "MemoryNode",
+            "MemoryGraph",
+            "Entity",
+            "Observation",
+            "Relationship",
+            "RELATES_TO_CODE",
+        ] {
+            assert!(
+                !query.cypher.contains(memory_label),
+                "code graph clear must not target memory label {memory_label}"
+            );
+        }
     }
 
     #[test]

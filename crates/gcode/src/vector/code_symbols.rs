@@ -233,6 +233,16 @@ pub fn delete_project_collection(
     delete_qdrant_collection(&client, qdrant, &collection)
 }
 
+pub fn delete_file_vectors(
+    qdrant: &QdrantConfig,
+    project_id: &str,
+    file_path: &str,
+) -> Result<bool, VectorLifecycleError> {
+    let client = qdrant_http_client()?;
+    let collection = collection_name(CODE_SYMBOL_COLLECTION_PREFIX, project_id);
+    delete_vectors_for_filter(&client, qdrant, &collection, project_id, Some(file_path))
+}
+
 pub fn delete_code_symbol_collections_with_prefix(
     qdrant: &QdrantConfig,
 ) -> Result<Vec<String>, VectorLifecycleError> {
@@ -626,33 +636,14 @@ impl CodeSymbolVectorLifecycle {
     }
 
     fn delete_vectors(&self, file_path: Option<&str>) -> Result<(), VectorLifecycleError> {
-        let mut must = vec![json!({
-            "key": "project_id",
-            "match": {"value": self.project_id},
-        })];
-        if let Some(file_path) = file_path {
-            must.push(json!({
-                "key": "file_path",
-                "match": {"value": file_path},
-            }));
-        }
-        let body = json!({
-            "filter": {
-                "must": must,
-            },
-        });
-        let resp = self
-            .qdrant_request(
-                reqwest::Method::POST,
-                &format!("/collections/{}/points/delete", self.collection),
-            )?
-            .json(&body)
-            .send()
-            .map_err(|err| VectorLifecycleError::QdrantOperation(err.to_string()))?;
-        if !resp.status().is_success() {
-            return Err(qdrant_http_error("delete points", resp.status(), resp));
-        }
-        Ok(())
+        delete_vectors_for_filter(
+            &self.client,
+            &self.qdrant,
+            &self.collection,
+            &self.project_id,
+            file_path,
+        )
+        .map(|_| ())
     }
 
     fn upsert_points(&self, points: Vec<UpsertRequest>) -> Result<(), VectorLifecycleError> {
@@ -828,6 +819,47 @@ fn delete_qdrant_collection(
     Ok(true)
 }
 
+fn delete_vectors_for_filter(
+    client: &reqwest::blocking::Client,
+    qdrant: &QdrantConfig,
+    collection: &str,
+    project_id: &str,
+    file_path: Option<&str>,
+) -> Result<bool, VectorLifecycleError> {
+    let mut must = vec![json!({
+        "key": "project_id",
+        "match": {"value": project_id},
+    })];
+    if let Some(file_path) = file_path {
+        must.push(json!({
+            "key": "file_path",
+            "match": {"value": file_path},
+        }));
+    }
+    let body = json!({
+        "filter": {
+            "must": must,
+        },
+    });
+    let resp = qdrant_request_for_config(
+        client,
+        qdrant,
+        reqwest::Method::POST,
+        &format!("/collections/{collection}/points/delete"),
+    )?
+    .json(&body)
+    .send()
+    .map_err(|err| VectorLifecycleError::QdrantOperation(err.to_string()))?;
+    let status = resp.status();
+    if status == StatusCode::NOT_FOUND {
+        return Ok(false);
+    }
+    if !status.is_success() {
+        return Err(qdrant_http_error("delete points", status, resp));
+    }
+    Ok(true)
+}
+
 fn qdrant_http_error(
     operation: &'static str,
     status: StatusCode,
@@ -986,6 +1018,84 @@ mod tests {
         assert!(requests[0].contains("DELETE /collections/code_symbols_project-1 HTTP/1.1"));
         assert!(requests[0].contains("api-key: qdrant-key"));
         assert!(!requests[0].contains("project-2"));
+    }
+
+    #[test]
+    fn delete_file_vectors_filters_by_project_and_file_without_embedding() {
+        let (qdrant_url, handle) =
+            spawn_http_responses(vec![(200, json!({"result": {"operation_id": 1}}))]);
+        let deleted = delete_file_vectors(
+            &QdrantConfig {
+                url: Some(qdrant_url),
+                api_key: Some("qdrant-key".to_string()),
+            },
+            "project-1",
+            "src/lib.rs",
+        )
+        .expect("delete vectors");
+        let requests = handle.join().expect("qdrant requests");
+
+        assert!(deleted);
+        assert_eq!(requests.len(), 1);
+        assert!(
+            requests[0].contains("POST /collections/code_symbols_project-1/points/delete HTTP/1.1")
+        );
+        assert!(requests[0].contains("api-key: qdrant-key"));
+        assert!(requests[0].contains(r#""key":"project_id""#));
+        assert!(requests[0].contains(r#""value":"project-1""#));
+        assert!(requests[0].contains(r#""key":"file_path""#));
+        assert!(requests[0].contains(r#""value":"src/lib.rs""#));
+    }
+
+    #[test]
+    fn clear_project_vectors_does_not_touch_memory_vector_collections() {
+        let (qdrant_url, handle) = spawn_http_responses(vec![
+            (
+                200,
+                json!({"result": {"config": {"params": {"vectors": {"size": 3, "distance": "Cosine"}}}}}),
+            ),
+            (200, json!({"result": {"operation_id": 1}})),
+        ]);
+        let mut lifecycle = CodeSymbolVectorLifecycle::new(
+            "project-1".to_string(),
+            QdrantConfig {
+                url: Some(qdrant_url),
+                api_key: None,
+            },
+            EmbeddingConfig {
+                api_base: "http://127.0.0.1:9/v1".to_string(),
+                model: "unused".to_string(),
+                api_key: None,
+            },
+            CodeVectorSettings {
+                vector_dim: Some(3),
+            },
+        )
+        .expect("lifecycle");
+
+        let cleared = lifecycle.clear_project_vectors().expect("clear vectors");
+        let requests = handle.join().expect("qdrant requests");
+
+        assert_eq!(cleared.vectors_deleted, 1);
+        assert_eq!(requests.len(), 2);
+        assert!(requests[0].contains("GET /collections/code_symbols_project-1 HTTP/1.1"));
+        assert!(
+            requests[1].contains("POST /collections/code_symbols_project-1/points/delete HTTP/1.1")
+        );
+        assert!(requests[1].contains(r#""key":"project_id""#));
+        assert!(requests[1].contains(r#""value":"project-1""#));
+        assert!(!requests[1].contains(r#""key":"file_path""#));
+        assert!(requests.iter().all(|request| !request.contains("memory")));
+        assert!(
+            requests
+                .iter()
+                .all(|request| !request.contains("GET /collections HTTP/1.1"))
+        );
+        assert!(
+            requests
+                .iter()
+                .all(|request| !request.contains("DELETE /collections/"))
+        );
     }
 
     #[test]

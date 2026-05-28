@@ -248,7 +248,11 @@ enum GraphCommand {
         file: String,
     },
     /// Clear the current project's code-index graph projection
-    Clear,
+    Clear {
+        /// Clear graph projection for this project id without resolving cwd project context
+        #[arg(long)]
+        project_id: Option<String>,
+    },
     /// Rebuild the current project's code-index graph projection from PostgreSQL facts
     Rebuild,
     /// Generate a project graph report
@@ -392,6 +396,16 @@ where
             commands::status::prune(*force)?;
             Ok(true)
         }
+        Command::Graph {
+            command:
+                GraphCommand::Clear {
+                    project_id: Some(project_id),
+                },
+        } => {
+            let ctx = config::Context::resolve_for_project_id(project_id, cli.quiet)?;
+            commands::graph::clear(&ctx, cli.format)?;
+            Ok(true)
+        }
         _ => Ok(false),
     }
 }
@@ -441,8 +455,13 @@ fn main() -> anyhow::Result<()> {
             commands::graph::sync_file(&ctx, &file, cli.format)
         }
         Command::Graph {
-            command: GraphCommand::Clear,
+            command: GraphCommand::Clear { project_id: None },
         } => commands::graph::clear(&ctx, cli.format),
+        Command::Graph {
+            command: GraphCommand::Clear {
+                project_id: Some(_),
+            },
+        } => unreachable!(),
         Command::Graph {
             command: GraphCommand::Rebuild,
         } => {
@@ -704,8 +723,19 @@ mod tests {
         assert!(matches!(
             cli.command,
             Command::Graph {
-                command: GraphCommand::Clear
+                command: GraphCommand::Clear { project_id: None }
             }
+        ));
+
+        let cli = Cli::try_parse_from(["gcode", "graph", "clear", "--project-id", "project-1"])
+            .expect("graph clear --project-id parses");
+        assert!(matches!(
+            cli.command,
+            Command::Graph {
+                command: GraphCommand::Clear {
+                    project_id: Some(project_id)
+                }
+            } if project_id == "project-1"
         ));
 
         let cli = Cli::try_parse_from(["gcode", "graph", "rebuild"]).expect("graph rebuild parses");

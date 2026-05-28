@@ -142,8 +142,9 @@ gcode usages "handleAuth"                 # Incoming call sites
 gcode imports src/auth.ts                 # Import graph for a file
 gcode blast-radius "handleAuth" --depth 3 # Transitive impact analysis
 
-# Graph lifecycle (requires Gobby daemon)
+# Graph lifecycle (requires FalkorDB)
 gcode graph clear                         # Clear current project's graph projection
+gcode graph clear --project-id <id>       # Clear graph projection by explicit project id
 gcode graph rebuild                       # Rebuild current project's graph projection
 
 # Project management
@@ -195,7 +196,7 @@ source of truth for code-index rows.
 codebase → tree-sitter → PostgreSQL hub + pg_search BM25
                           FalkorDB              → call graphs, blast radius, imports
                           Qdrant + embeddings   → semantic vector search
-                          Gobby daemon          → auto-indexing, graph/vector sync,
+                          Gobby daemon          → auto-indexing, graph/vector orchestration,
                                                   config, secrets, sessions, agents
 ```
 
@@ -219,7 +220,7 @@ bootstrap `database_url`. Bootstrap `database_url_ref` is rejected.
 | Semantic vector search | When Qdrant + embeddings are configured | Yes |
 | Call graph / blast radius | When FalkorDB is configured | Yes |
 | Import graph | When FalkorDB is configured | Yes |
-| Graph clear / rebuild lifecycle | Requires daemon | Yes |
+| Graph clear / rebuild lifecycle | When FalkorDB is configured | Yes |
 | Auto-indexing on file change | Manual `gcode index` | Yes (daemon file watcher) |
 | Centralized config + secrets | Reads PostgreSQL `config_store` + secrets | Yes |
 | Shared index (daemon + CLI) | PostgreSQL hub | PostgreSQL hub |
@@ -239,9 +240,11 @@ Get started with Gobby at [github.com/GobbyAI/gobby](https://github.com/GobbyAI/
 | PostgreSQL hub unavailable | Runtime index/search commands fail with a bootstrap or connection error. |
 | No index yet | Commands error with `Run gcode init to initialize`. |
 
-Read-side graph commands depend on FalkorDB. `gcode graph clear` and `gcode graph rebuild`
-are separate lifecycle operations routed through the Gobby daemon for the
-current resolved project.
+Read-side graph commands and graph lifecycle depend on FalkorDB. Vector
+lifecycle depends on Qdrant plus embeddings for sync/rebuild. All code-index
+projection lifecycle paths are Rust-owned and scoped to code projection state:
+graph clears target code-index FalkorDB labels only, and vector clears target
+only `code_symbols_{project_id}` rather than memory vector collections.
 
 ## Language Support
 

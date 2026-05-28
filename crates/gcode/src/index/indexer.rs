@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::Context;
 use crate::db;
+use crate::graph::code_graph;
 use crate::index::api;
 use crate::index::chunker;
 use crate::index::hasher;
@@ -28,6 +29,7 @@ use crate::models::{
 use crate::projection::sync::{
     self, ProjectionSyncRequest, ProjectionSyncStatus, ProjectionTarget,
 };
+use crate::vector::code_symbols;
 
 /// Default exclude patterns (matching Python CodeIndexConfig defaults).
 const DEFAULT_EXCLUDES: &[&str] = &[
@@ -72,8 +74,18 @@ pub struct IndexDurations {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum IndexDegradation {
-    FileIndexError { file_path: String, message: String },
-    ProjectionSyncSkipped { reason: String },
+    FileIndexError {
+        file_path: String,
+        message: String,
+    },
+    ProjectionSyncSkipped {
+        reason: String,
+    },
+    ProjectionCleanupFailed {
+        file_path: String,
+        target: ProjectionTarget,
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -198,26 +210,27 @@ where
 
 pub fn index_files(request: IndexRequest, ctx: &Context) -> anyhow::Result<IndexOutcome> {
     let mut conn = db::connect_readwrite(&ctx.database_url)?;
-    index_files_with_connection(&mut conn, request, &ctx.project_id)
+    index_files_with_connection(&mut conn, request, ctx)
 }
 
 fn index_files_with_connection(
     conn: &mut Client,
     request: IndexRequest,
-    project_id: &str,
+    ctx: &Context,
 ) -> anyhow::Result<IndexOutcome> {
     if request.explicit_files.is_empty() {
-        index_discovered_files(conn, &request, project_id)
+        index_discovered_files(conn, &request, ctx)
     } else {
-        index_explicit_files_with_connection(conn, &request, project_id)
+        index_explicit_files_with_connection(conn, &request, ctx)
     }
 }
 
 fn index_discovered_files(
     conn: &mut Client,
     request: &IndexRequest,
-    project_id: &str,
+    ctx: &Context,
 ) -> anyhow::Result<IndexOutcome> {
+    let project_id = ctx.project_id.as_str();
     let start = Instant::now();
     let discovery_start = Instant::now();
     let root_path = &request.project_root;
@@ -246,6 +259,7 @@ fn index_discovered_files(
     if request.path_filter.is_none() {
         let orphans = get_orphan_files(conn, project_id, &current_hashes);
         for orphan in &orphans {
+            cleanup_deleted_file_projections(ctx, orphan, &mut outcome);
             api::delete_file_facts(conn, project_id, orphan)?;
         }
     }
@@ -317,8 +331,9 @@ fn index_discovered_files(
 fn index_explicit_files_with_connection(
     conn: &mut Client,
     request: &IndexRequest,
-    project_id: &str,
+    ctx: &Context,
 ) -> anyhow::Result<IndexOutcome> {
+    let project_id = ctx.project_id.as_str();
     let start = Instant::now();
     let discovery_start = Instant::now();
     let root_path = &request.project_root;
@@ -339,8 +354,8 @@ fn index_explicit_files_with_connection(
         };
 
         if !abs.exists() {
-            // File deleted — clean up hub rows (daemon handles external cleanup).
             let rel = requested_relative_path(root_path, fp);
+            cleanup_deleted_file_projections(ctx, &rel, &mut outcome);
             api::delete_file_facts(conn, project_id, &rel)?;
             continue;
         }
@@ -649,6 +664,53 @@ fn requested_relative_path(root_path: &Path, requested_path: &Path) -> String {
             .to_string();
     }
     requested_path.to_string_lossy().to_string()
+}
+
+fn cleanup_deleted_file_projections(ctx: &Context, file_path: &str, outcome: &mut IndexOutcome) {
+    if let Err(error) = code_graph::delete_file_projection(ctx, file_path) {
+        push_projection_cleanup_degradation(
+            outcome,
+            file_path,
+            ProjectionTarget::Graph,
+            error.to_string(),
+        );
+    }
+
+    match ctx.qdrant.as_ref() {
+        Some(qdrant) => {
+            if let Err(error) =
+                code_symbols::delete_file_vectors(qdrant, &ctx.project_id, file_path)
+            {
+                push_projection_cleanup_degradation(
+                    outcome,
+                    file_path,
+                    ProjectionTarget::Vectors,
+                    error.to_string(),
+                );
+            }
+        }
+        None => push_projection_cleanup_degradation(
+            outcome,
+            file_path,
+            ProjectionTarget::Vectors,
+            "Qdrant config is required for deleted-file vector cleanup".to_string(),
+        ),
+    }
+}
+
+fn push_projection_cleanup_degradation(
+    outcome: &mut IndexOutcome,
+    file_path: &str,
+    target: ProjectionTarget,
+    message: String,
+) {
+    outcome
+        .degraded
+        .push(IndexDegradation::ProjectionCleanupFailed {
+            file_path: file_path.to_string(),
+            target,
+            message,
+        });
 }
 
 fn attach_projection_sync(outcome: &mut IndexOutcome, request: &IndexRequest) {
@@ -1112,5 +1174,43 @@ mod tests {
             explicit_file_route(root, &root.join("image.bin"), &excludes),
             ExplicitFileRoute::Skip
         );
+    }
+
+    #[test]
+    fn deleted_file_projection_cleanup_degrades_without_services() {
+        let ctx = Context {
+            database_url: "postgresql://localhost/nonexistent".to_string(),
+            project_root: PathBuf::from("/project"),
+            project_id: "project-1".to_string(),
+            quiet: true,
+            falkordb: None,
+            qdrant: None,
+            embedding: None,
+            code_vectors: crate::config::CodeVectorSettings { vector_dim: None },
+            daemon_url: None,
+        };
+        let mut outcome = IndexOutcome::new("project-1");
+
+        cleanup_deleted_file_projections(&ctx, "src/deleted.rs", &mut outcome);
+
+        assert_eq!(outcome.degraded.len(), 2);
+        assert!(outcome.degraded.iter().any(|degradation| matches!(
+            degradation,
+            IndexDegradation::ProjectionCleanupFailed {
+                file_path,
+                target: ProjectionTarget::Graph,
+                message,
+            } if file_path == "src/deleted.rs"
+                && message.contains("FalkorDB is not configured")
+        )));
+        assert!(outcome.degraded.iter().any(|degradation| matches!(
+            degradation,
+            IndexDegradation::ProjectionCleanupFailed {
+                file_path,
+                target: ProjectionTarget::Vectors,
+                message,
+            } if file_path == "src/deleted.rs"
+                && message.contains("Qdrant config is required")
+        )));
     }
 }

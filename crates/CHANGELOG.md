@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.2] — gcode
+
+### Added
+
+#### gcode
+
+- **Project-id graph clear** — `gcode graph clear --project-id <PROJECT_ID>`
+  now clears a code graph projection by explicit project id before normal
+  project-root resolution. This is the daemon stale-project cleanup path and can
+  run from any cwd without `.gobby/project.json`.
+
+### Fixed
+
+#### gcode
+
+- **Deleted-file projection cleanup** — `gcode index` now removes FalkorDB code
+  graph nodes/edges and Qdrant code-symbol vectors for deleted files before
+  deleting PostgreSQL hub facts. This covers missing explicit
+  `--files <deleted-file>` inputs and whole-project stale/orphan cleanup without
+  relying on daemon reconciliation.
+- **Projection ownership boundary** — code graph clears remain scoped to
+  code-index FalkorDB labels, and code vector clears remain scoped to
+  `code_symbols_{project_id}`. Memory graph nodes and memory vector collections
+  are not targeted by these lifecycle paths.
+
 ## [0.9.1] — gcode
 
 ### Added
