@@ -215,6 +215,21 @@ impl Symbol {
     }
 }
 
+pub fn make_unresolved_callee_id(project_id: &str, callee_name: &str) -> String {
+    let key = format!("unresolved:{project_id}:{callee_name}");
+    Uuid::new_v5(&CODE_INDEX_UUID_NAMESPACE, key.as_bytes()).to_string()
+}
+
+pub fn make_external_symbol_id(
+    project_id: &str,
+    callee_name: &str,
+    module: Option<&str>,
+) -> String {
+    let module_key = module.unwrap_or_default();
+    let key = format!("external:{project_id}:{module_key}:{callee_name}");
+    Uuid::new_v5(&CODE_INDEX_UUID_NAMESPACE, key.as_bytes()).to_string()
+}
+
 fn i64_to_usize(value: i64, column: &str) -> anyhow::Result<usize> {
     value
         .try_into()
@@ -446,19 +461,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_uuid5_parity_with_python() {
-        // Python: Symbol.make_id("proj1", "src/main.py", "foo", "function", 42)
-        // Must produce the same UUID in Rust.
-        let id = Symbol::make_id("proj1", "src/main.py", "foo", "function", 42);
-        // The key is "proj1:src/main.py:foo:function:42"
-        // This is a deterministic UUID5 — verify it's stable across runs.
-        let id2 = Symbol::make_id("proj1", "src/main.py", "foo", "function", 42);
-        assert_eq!(id, id2);
-
-        // Verify the namespace UUID bytes match Python's c0de1de0-0000-4000-8000-000000000000
+    fn uuid5_python_parity() {
         assert_eq!(
             CODE_INDEX_UUID_NAMESPACE.to_string(),
             "c0de1de0-0000-4000-8000-000000000000"
+        );
+        assert_eq!(
+            Symbol::make_id("proj1", "src/main.py", "foo", "function", 42),
+            "403e2117-92e7-5390-ad83-226629486481"
+        );
+        assert_eq!(
+            make_unresolved_callee_id("proj1", "missing_func"),
+            "42693df1-99e6-5daa-be29-3535096cd2b5"
+        );
+        assert_eq!(
+            make_external_symbol_id("proj1", "get", Some("requests")),
+            "7c7e6ebe-47c6-5a3d-a83d-d5160f10cb74"
+        );
+        assert_eq!(
+            make_external_symbol_id("proj1", "println", None),
+            "c6b97498-448e-5ef1-9cb5-ab1cf37b6596"
         );
     }
     #[test]
