@@ -100,6 +100,7 @@ pub fn callers(
     offset: usize,
     format: Format,
 ) -> anyhow::Result<()> {
+    code_graph::require_graph_reads(ctx)?;
     let symbol = match resolve_symbol(ctx, symbol_name) {
         Some(symbol) => symbol,
         None => return empty_response_for_unresolved(ctx, format),
@@ -150,6 +151,7 @@ pub fn usages(
     offset: usize,
     format: Format,
 ) -> anyhow::Result<()> {
+    code_graph::require_graph_reads(ctx)?;
     let symbol = match resolve_symbol(ctx, symbol_name) {
         Some(symbol) => symbol,
         None => return empty_response_for_unresolved(ctx, format),
@@ -195,6 +197,7 @@ pub fn usages(
 }
 
 pub fn imports(ctx: &Context, file: &str, format: Format) -> anyhow::Result<()> {
+    code_graph::require_graph_reads(ctx)?;
     let results = code_graph::get_imports(ctx, file)?;
     let total = results.len();
     match format {
@@ -226,6 +229,7 @@ pub fn blast_radius(
     depth: usize,
     format: Format,
 ) -> anyhow::Result<()> {
+    code_graph::require_graph_reads(ctx)?;
     let symbol = match resolve_symbol(ctx, target) {
         Some(symbol) => symbol,
         None => return empty_response_for_unresolved(ctx, format),
@@ -260,6 +264,37 @@ pub fn blast_radius(
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::path::PathBuf;
+
+    fn make_ctx_no_falkordb() -> Context {
+        Context {
+            database_url: "postgresql://localhost/nonexistent".to_string(),
+            project_root: PathBuf::from("/nonexistent"),
+            project_id: "test-project".to_string(),
+            quiet: true,
+            falkordb: None,
+            qdrant: None,
+            embedding: None,
+            code_vectors: crate::config::CodeVectorSettings::default(),
+            daemon_url: None,
+        }
+    }
+
+    #[test]
+    fn graph_reads_require_falkor() {
+        let ctx = make_ctx_no_falkordb();
+
+        let err = imports(&ctx, "src/lib.rs", Format::Json).expect_err("imports must fail");
+
+        assert!(matches!(
+            err.downcast_ref::<code_graph::GraphReadError>(),
+            Some(code_graph::GraphReadError::NotConfigured)
+        ));
+        assert!(
+            err.to_string().contains("FalkorDB is not configured"),
+            "unexpected error: {err}"
+        );
+    }
 
     #[test]
     fn test_build_lifecycle_url_clear_uses_project_id_query() {

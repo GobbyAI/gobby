@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt;
 
 use anyhow::Context as _;
 use reqwest::StatusCode;
@@ -16,8 +17,34 @@ use gobby_core::falkor::{GraphClient, Row};
 
 const CALL_TARGET_PREDICATE: &str =
     "target:CodeSymbol OR target:UnresolvedCallee OR target:ExternalSymbol";
+const NEIGHBOR_PREDICATE: &str =
+    "neighbor:CodeSymbol OR neighbor:UnresolvedCallee OR neighbor:ExternalSymbol";
 const PROJECT_NODE_PREDICATE: &str =
     "n:CodeFile OR n:CodeSymbol OR n:CodeModule OR n:UnresolvedCallee OR n:ExternalSymbol";
+const TARGET_TYPE_CASE: &str = "CASE \
+     WHEN target:CodeSymbol THEN coalesce(target.kind, 'function') \
+     WHEN target:ExternalSymbol THEN 'external' \
+     ELSE 'unresolved' \
+     END";
+const NEIGHBOR_TYPE_CASE: &str = "CASE \
+     WHEN neighbor:CodeSymbol THEN coalesce(neighbor.kind, 'function') \
+     WHEN neighbor:ExternalSymbol THEN 'external' \
+     ELSE 'unresolved' \
+     END";
+const NODE_TYPE_CASE: &str = "CASE \
+     WHEN n:CodeFile THEN 'file' \
+     WHEN n:CodeModule THEN 'module' \
+     WHEN n:CodeSymbol THEN coalesce(n.kind, 'function') \
+     WHEN n:ExternalSymbol THEN 'external' \
+     ELSE 'unresolved' \
+     END";
+const LINK_METADATA_RETURN: &str = "r.provenance AS provenance, \
+     r.confidence AS confidence, \
+     r.source_system AS source_system, \
+     r.source_file_path AS source_file_path, \
+     r.source_line AS source_line, \
+     r.source_symbol_id AS source_symbol_id, \
+     r.matching_method AS matching_method";
 const MAX_GRAPH_LIMIT: usize = 100;
 const EXTRACTED_PROVENANCE: &str = "EXTRACTED";
 const SOURCE_SYSTEM_GCODE: &str = crate::models::SOURCE_SYSTEM_GCODE;
@@ -598,6 +625,192 @@ pub struct GraphReadRequest {
     pub depth: usize,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct GraphPayload {
+    pub nodes: Vec<GraphNode>,
+    pub links: Vec<GraphLink>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub center: Option<String>,
+}
+
+impl GraphPayload {
+    pub fn with_center(center: impl Into<String>) -> Self {
+        Self {
+            nodes: vec![],
+            links: vec![],
+            center: Some(center.into()),
+        }
+    }
+
+    pub fn push_node(&mut self, node: GraphNode) {
+        if node.id.is_empty() || self.nodes.iter().any(|existing| existing.id == node.id) {
+            return;
+        }
+        self.nodes.push(node);
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GraphNode {
+    pub id: String,
+    pub name: String,
+    #[serde(rename = "type")]
+    pub node_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line_start: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub symbol_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blast_distance: Option<usize>,
+}
+
+impl GraphNode {
+    pub fn new(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        node_type: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            name: name.into(),
+            node_type: node_type.into(),
+            kind: None,
+            file_path: None,
+            line_start: None,
+            signature: None,
+            symbol_count: None,
+            language: None,
+            blast_distance: None,
+        }
+    }
+
+    fn from_row(row: &Row, default_type: &str) -> Option<Self> {
+        let id = row_string(row, &["id", "node_id"])?;
+        let mut node = Self::new(
+            id.clone(),
+            row_string(row, &["name", "node_name"]).unwrap_or(id),
+            row_string(row, &["type", "node_type"]).unwrap_or_else(|| default_type.to_string()),
+        );
+        node.kind = row_string(row, &["kind"]);
+        node.file_path = row_string(row, &["file_path"]);
+        node.line_start = row_usize(row, &["line_start", "line"]);
+        node.signature = row_string(row, &["signature"]);
+        node.symbol_count = row_usize(row, &["symbol_count"]);
+        node.language = row_string(row, &["language"]);
+        node.blast_distance = row_usize(row, &["blast_distance", "distance"]);
+        Some(node)
+    }
+
+    fn from_prefixed_row(row: &Row, prefix: &str, default_type: &str) -> Option<Self> {
+        let id_key = format!("{prefix}_id");
+        let name_key = format!("{prefix}_name");
+        let type_key = format!("{prefix}_type");
+        let kind_key = format!("{prefix}_kind");
+        let file_path_key = format!("{prefix}_file_path");
+        let line_start_key = format!("{prefix}_line_start");
+        let signature_key = format!("{prefix}_signature");
+
+        let id = row_string_owned(row, &[id_key.as_str()])?;
+        let mut node = Self::new(
+            id.clone(),
+            row_string_owned(row, &[name_key.as_str()]).unwrap_or(id),
+            row_string_owned(row, &[type_key.as_str()]).unwrap_or_else(|| default_type.to_string()),
+        );
+        node.kind = row_string_owned(row, &[kind_key.as_str()]);
+        node.file_path = row_string_owned(row, &[file_path_key.as_str()]);
+        node.line_start = row_usize_owned(row, &[line_start_key.as_str()]);
+        node.signature = row_string_owned(row, &[signature_key.as_str()]);
+        Some(node)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GraphLink {
+    pub source: String,
+    pub target: String,
+    #[serde(rename = "type")]
+    pub link_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub distance: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<ProjectionMetadata>,
+}
+
+impl GraphLink {
+    pub fn new(
+        source: impl Into<String>,
+        target: impl Into<String>,
+        link_type: impl Into<String>,
+    ) -> Self {
+        Self {
+            source: source.into(),
+            target: target.into(),
+            link_type: link_type.into(),
+            line: None,
+            distance: None,
+            metadata: None,
+        }
+    }
+
+    pub fn from_row(row: &Row) -> Self {
+        let mut link = Self::new(
+            row_string(row, &["source"]).unwrap_or_default(),
+            row_string(row, &["target"]).unwrap_or_default(),
+            row_string(row, &["type", "rel_type"]).unwrap_or_else(|| "CALLS".to_string()),
+        );
+        link.line = row_usize(row, &["line"]);
+        link.distance = row_usize(row, &["distance"]);
+        link.metadata = row_to_projection_metadata(row);
+        link
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GraphBlastRadiusTarget {
+    SymbolId(String),
+    FilePath(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GraphReadError {
+    NotConfigured,
+    Unreachable { message: String },
+    QueryFailed { message: String },
+    InvalidTarget { message: String },
+}
+
+impl fmt::Display for GraphReadError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotConfigured => {
+                f.write_str("FalkorDB is not configured; graph read APIs require FalkorDB")
+            }
+            Self::Unreachable { message } => {
+                write!(
+                    f,
+                    "FalkorDB is unreachable; graph read APIs require FalkorDB: {message}"
+                )
+            }
+            Self::QueryFailed { message } => {
+                write!(f, "FalkorDB graph read failed: {message}")
+            }
+            Self::InvalidTarget { message } => f.write_str(message),
+        }
+    }
+}
+
+impl std::error::Error for GraphReadError {}
+
 pub fn require_daemon_url(
     daemon_url: Option<&str>,
     action: GraphLifecycleAction,
@@ -817,6 +1030,57 @@ fn row_to_projection_metadata(row: &Row) -> Option<ProjectionMetadata> {
     Some(metadata)
 }
 
+fn row_string(row: &Row, keys: &[&str]) -> Option<String> {
+    row_string_owned(row, keys)
+}
+
+fn row_string_owned(row: &Row, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .find_map(|key| row.get(*key).and_then(|value| value.as_str()))
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn row_usize(row: &Row, keys: &[&str]) -> Option<usize> {
+    row_usize_owned(row, keys)
+}
+
+fn row_usize_owned(row: &Row, keys: &[&str]) -> Option<usize> {
+    keys.iter()
+        .find_map(|key| row.get(*key))
+        .and_then(|value| {
+            value
+                .as_u64()
+                .or_else(|| value.as_i64().and_then(|value| value.try_into().ok()))
+        })
+        .map(|value| value as usize)
+}
+
+fn add_link_from_row(payload: &mut GraphPayload, row: &Row) {
+    let link = GraphLink::from_row(row);
+    if link.source.is_empty() || link.target.is_empty() {
+        return;
+    }
+    payload.links.push(link);
+}
+
+fn add_node_from_row(payload: &mut GraphPayload, row: &Row, default_type: &str) {
+    if let Some(node) = GraphNode::from_row(row, default_type) {
+        payload.push_node(node);
+    }
+}
+
+fn add_prefixed_node_from_row(
+    payload: &mut GraphPayload,
+    row: &Row,
+    prefix: &str,
+    default_type: &str,
+) {
+    if let Some(node) = GraphNode::from_prefixed_row(row, prefix, default_type) {
+        payload.push_node(node);
+    }
+}
+
 fn clamp_limit(limit: usize) -> usize {
     typed_query::clamp_limit(limit, MAX_GRAPH_LIMIT)
 }
@@ -962,6 +1226,211 @@ pub(crate) fn blast_radius_query(depth: usize, limit: usize) -> String {
     )
 }
 
+fn project_overview_files_query(
+    project_id: &str,
+    limit: usize,
+) -> (String, HashMap<String, String>) {
+    let limit = clamp_limit(limit);
+    (
+        format!(
+            "MATCH (f:CodeFile {{project: $project}}) \
+             OPTIONAL MATCH (f)-[:DEFINES]->(s:CodeSymbol) \
+             WITH f, count(DISTINCT s) AS sym_count \
+             OPTIONAL MATCH (f)-[:IMPORTS]->(m:CodeModule) \
+             WITH f, sym_count, count(m) AS imp_count \
+             RETURN f.path AS id, f.path AS name, 'file' AS type, \
+                    f.path AS file_path, sym_count AS symbol_count \
+             ORDER BY imp_count DESC, sym_count DESC, f.path \
+             LIMIT {limit}"
+        ),
+        typed_query::string_params(&[("project", project_id)]),
+    )
+}
+
+fn project_overview_imports_query(
+    project_id: &str,
+    file_paths: &[String],
+    limit: usize,
+) -> (String, HashMap<String, String>) {
+    let limit = clamp_limit(limit);
+    let file_paths = typed_query::id_list_literal(file_paths);
+    (
+        format!(
+            "MATCH (f:CodeFile {{project: $project}})-[r:IMPORTS]->(m:CodeModule {{project: $project}}) \
+             WHERE f.path IN [{file_paths}] \
+             RETURN f.path AS source, m.name AS target, 'IMPORTS' AS type, {LINK_METADATA_RETURN} \
+             LIMIT {limit}"
+        ),
+        typed_query::string_params(&[("project", project_id)]),
+    )
+}
+
+fn project_overview_defines_query(
+    project_id: &str,
+    file_paths: &[String],
+    limit: usize,
+) -> (String, HashMap<String, String>) {
+    let limit = clamp_limit(limit);
+    let file_paths = typed_query::id_list_literal(file_paths);
+    (
+        format!(
+            "MATCH (f:CodeFile {{project: $project}})-[r:DEFINES]->(s:CodeSymbol {{project: $project}}) \
+             WHERE f.path IN [{file_paths}] \
+             RETURN f.path AS source, s.id AS target, 'DEFINES' AS type, \
+                    s.name AS symbol_name, s.kind AS symbol_kind, \
+                    s.file_path AS symbol_file_path, s.line_start AS line_start, \
+                    {LINK_METADATA_RETURN} \
+             LIMIT {limit}"
+        ),
+        typed_query::string_params(&[("project", project_id)]),
+    )
+}
+
+fn project_overview_calls_query(
+    project_id: &str,
+    file_paths: &[String],
+    limit: usize,
+) -> (String, HashMap<String, String>) {
+    let limit = clamp_limit(limit);
+    let file_paths = typed_query::id_list_literal(file_paths);
+    (
+        format!(
+            "MATCH (f:CodeFile {{project: $project}})-[:DEFINES]->(s:CodeSymbol {{project: $project}})-[r:CALLS]->(target {{project: $project}}) \
+             WHERE f.path IN [{file_paths}] AND ({CALL_TARGET_PREDICATE}) \
+             RETURN s.id AS source, target.id AS target, 'CALLS' AS type, \
+                    target.name AS target_name, {TARGET_TYPE_CASE} AS target_type, \
+                    target.kind AS target_kind, target.file_path AS target_file_path, \
+                    target.line_start AS target_line_start, r.line AS line, \
+                    {LINK_METADATA_RETURN} \
+             LIMIT {limit}"
+        ),
+        typed_query::string_params(&[("project", project_id)]),
+    )
+}
+
+fn file_symbols_query(project_id: &str, file_path: &str) -> (String, HashMap<String, String>) {
+    (
+        format!(
+            "MATCH (:CodeFile {{path: $path, project: $project}})-[r:DEFINES]->(s:CodeSymbol {{project: $project}}) \
+             RETURN s.id AS id, s.name AS name, coalesce(s.kind, 'function') AS type, \
+                    s.kind AS kind, s.file_path AS file_path, \
+                    s.line_start AS line_start, s.signature AS signature, \
+                    {LINK_METADATA_RETURN}"
+        ),
+        typed_query::string_params(&[("project", project_id), ("path", file_path)]),
+    )
+}
+
+fn file_calls_query(project_id: &str, file_path: &str) -> (String, HashMap<String, String>) {
+    (
+        format!(
+            "MATCH (source:CodeSymbol {{project: $project}})-[r:CALLS]->(target {{project: $project}}) \
+             WHERE ({CALL_TARGET_PREDICATE}) \
+               AND (source.file_path = $path OR (target:CodeSymbol AND target.file_path = $path)) \
+             RETURN source.id AS source_id, source.name AS source_name, \
+                    coalesce(source.kind, 'function') AS source_type, \
+                    source.kind AS source_kind, source.file_path AS source_file_path, \
+                    source.line_start AS source_line_start, source.signature AS source_signature, \
+                    target.id AS target_id, target.name AS target_name, \
+                    {TARGET_TYPE_CASE} AS target_type, target.kind AS target_kind, \
+                    target.file_path AS target_file_path, \
+                    target.line_start AS target_line_start, target.signature AS target_signature, \
+                    source.id AS source, target.id AS target, 'CALLS' AS type, r.line AS line, \
+                    {LINK_METADATA_RETURN}"
+        ),
+        typed_query::string_params(&[("project", project_id), ("path", file_path)]),
+    )
+}
+
+fn symbol_neighbors_query(
+    project_id: &str,
+    symbol_id: &str,
+    limit: usize,
+) -> (String, HashMap<String, String>) {
+    let limit = clamp_limit(limit);
+    (
+        format!(
+            "MATCH (center {{id: $id, project: $project}}) \
+             WHERE center:CodeSymbol OR center:UnresolvedCallee OR center:ExternalSymbol \
+             MATCH (center)-[r:CALLS]-(neighbor {{project: $project}}) \
+             WHERE {NEIGHBOR_PREDICATE} \
+             RETURN neighbor.id AS id, neighbor.name AS name, {NEIGHBOR_TYPE_CASE} AS type, \
+                    neighbor.kind AS kind, neighbor.file_path AS file_path, \
+                    neighbor.line_start AS line_start, neighbor.signature AS signature, \
+                    CASE WHEN startNode(r) = center THEN 'outgoing' ELSE 'incoming' END AS direction, \
+                    r.line AS line, {LINK_METADATA_RETURN} \
+             LIMIT {limit}"
+        ),
+        typed_query::string_params(&[("project", project_id), ("id", symbol_id)]),
+    )
+}
+
+fn blast_radius_center_query(
+    project_id: &str,
+    symbol_id: &str,
+) -> (String, HashMap<String, String>) {
+    (
+        format!(
+            "MATCH (n {{id: $id, project: $project}}) \
+             WHERE n:CodeSymbol OR n:UnresolvedCallee OR n:ExternalSymbol \
+             RETURN n.id AS id, n.name AS name, {NODE_TYPE_CASE} AS type, \
+                    n.kind AS kind, n.file_path AS file_path \
+             LIMIT 1"
+        ),
+        typed_query::string_params(&[("project", project_id), ("id", symbol_id)]),
+    )
+}
+
+fn blast_radius_file_call_query(
+    project_id: &str,
+    file_path: &str,
+    depth: usize,
+    limit: usize,
+) -> (String, HashMap<String, String>) {
+    let depth = depth.clamp(1, 5);
+    let limit = clamp_limit(limit);
+    (
+        format!(
+            "MATCH (tf:CodeFile {{path: $path, project: $project}})-[:DEFINES]->(target_sym:CodeSymbol {{project: $project}}) \
+             MATCH path = (affected:CodeSymbol {{project: $project}})-[:CALLS*1..{depth}]->(target_sym) \
+             WITH affected, min(length(path)) AS distance \
+             OPTIONAL MATCH (file:CodeFile {{project: $project}})-[:DEFINES]->(affected) \
+             RETURN DISTINCT affected.id AS node_id, \
+                    affected.name AS node_name, \
+                    affected.kind AS kind, file.path AS file_path, \
+                    affected.line_start AS line, distance, 'call' AS rel_type, \
+                    coalesce(affected.kind, 'function') AS node_type \
+             ORDER BY distance ASC, affected.name ASC \
+             LIMIT {limit}"
+        ),
+        typed_query::string_params(&[("project", project_id), ("path", file_path)]),
+    )
+}
+
+fn blast_radius_file_import_query(
+    project_id: &str,
+    file_path: &str,
+    depth: usize,
+    limit: usize,
+) -> (String, HashMap<String, String>) {
+    let depth = depth.clamp(1, 5);
+    let limit = clamp_limit(limit);
+    (
+        format!(
+            "MATCH (tf:CodeFile {{path: $path, project: $project}})-[:IMPORTS]->(m:CodeModule {{project: $project}}) \
+             MATCH path = (importer:CodeFile {{project: $project}})-[:IMPORTS*1..{depth}]->(m) \
+             WHERE importer.path <> $path \
+             WITH importer, min(length(path)) AS distance \
+             RETURN DISTINCT importer.path AS node_id, \
+                    importer.path AS node_name, NULL AS kind, importer.path AS file_path, \
+                    NULL AS line, distance, 'import' AS rel_type, 'file' AS node_type \
+             ORDER BY distance ASC \
+             LIMIT {limit}"
+        ),
+        typed_query::string_params(&[("project", project_id), ("path", file_path)]),
+    )
+}
+
 fn count_from_rows(rows: &[Row]) -> usize {
     rows.first()
         .and_then(|r| r.get("cnt"))
@@ -970,6 +1439,249 @@ fn count_from_rows(rows: &[Row]) -> usize {
                 .or_else(|| v.as_i64().and_then(|value| value.try_into().ok()))
         })
         .unwrap_or(0) as usize
+}
+
+pub fn require_graph_reads(ctx: &Context) -> anyhow::Result<()> {
+    if ctx.falkordb.is_none() {
+        return Err(GraphReadError::NotConfigured.into());
+    }
+    Ok(())
+}
+
+fn with_required_core_graph<T>(
+    ctx: &Context,
+    f: impl FnOnce(&mut GraphClient) -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    let config = ctx.falkordb.as_ref().ok_or(GraphReadError::NotConfigured)?;
+    let connection_config = config.connection_config();
+    match gobby_core::falkor::with_graph(
+        Some(&connection_config),
+        &config.graph_name,
+        None,
+        |client| f(client).map(Some),
+    ) {
+        Ok((Some(value), ServiceState::Available)) => Ok(value),
+        Ok((_, ServiceState::NotConfigured)) => Err(GraphReadError::NotConfigured.into()),
+        Ok((_, ServiceState::Unreachable { message })) => {
+            Err(GraphReadError::Unreachable { message }.into())
+        }
+        Ok((None, ServiceState::Available)) => Err(GraphReadError::QueryFailed {
+            message: "graph read returned no value".to_string(),
+        }
+        .into()),
+        Err(error) => Err(GraphReadError::QueryFailed {
+            message: error.to_string(),
+        }
+        .into()),
+    }
+}
+
+pub fn project_overview_graph(ctx: &Context, limit: usize) -> anyhow::Result<GraphPayload> {
+    with_required_core_graph(ctx, |client| {
+        let limit = clamp_limit(limit);
+        let link_limit = clamp_limit(limit.saturating_mul(4));
+        let max_nodes = limit.saturating_mul(8);
+
+        let (query, params) = project_overview_files_query(&ctx.project_id, limit);
+        let file_rows = client.query(&query, Some(params))?;
+        let mut payload = GraphPayload::default();
+        for row in &file_rows {
+            add_node_from_row(&mut payload, row, "file");
+        }
+
+        let file_paths = payload
+            .nodes
+            .iter()
+            .filter(|node| node.node_type == "file")
+            .map(|node| node.id.clone())
+            .collect::<Vec<_>>();
+        if file_paths.is_empty() {
+            return Ok(payload);
+        }
+
+        let (query, params) =
+            project_overview_imports_query(&ctx.project_id, &file_paths, link_limit);
+        for row in client.query(&query, Some(params))? {
+            add_link_from_row(&mut payload, &row);
+            if let Some(module_id) = row_string(&row, &["target"]) {
+                payload.push_node(GraphNode::new(module_id.clone(), module_id, "module"));
+            }
+            if payload.nodes.len() >= max_nodes {
+                break;
+            }
+        }
+
+        let (query, params) =
+            project_overview_defines_query(&ctx.project_id, &file_paths, link_limit);
+        for row in client.query(&query, Some(params))? {
+            add_link_from_row(&mut payload, &row);
+            if let Some(symbol_id) = row_string(&row, &["target"]) {
+                let mut node = GraphNode::new(
+                    symbol_id.clone(),
+                    row_string(&row, &["symbol_name"]).unwrap_or(symbol_id),
+                    row_string(&row, &["symbol_kind"]).unwrap_or_else(|| "function".to_string()),
+                );
+                node.kind = row_string(&row, &["symbol_kind"]);
+                node.file_path = row_string(&row, &["symbol_file_path", "source"]);
+                node.line_start = row_usize(&row, &["line_start"]);
+                payload.push_node(node);
+            }
+            if payload.nodes.len() >= max_nodes {
+                break;
+            }
+        }
+
+        let (query, params) =
+            project_overview_calls_query(&ctx.project_id, &file_paths, link_limit);
+        for row in client.query(&query, Some(params))? {
+            add_link_from_row(&mut payload, &row);
+            if let Some(target_id) = row_string(&row, &["target"]) {
+                let mut node = GraphNode::new(
+                    target_id.clone(),
+                    row_string(&row, &["target_name"]).unwrap_or(target_id),
+                    row_string(&row, &["target_type"]).unwrap_or_else(|| "unresolved".to_string()),
+                );
+                node.kind = row_string(&row, &["target_kind"]);
+                node.file_path = row_string(&row, &["target_file_path"]);
+                node.line_start = row_usize(&row, &["target_line_start"]);
+                payload.push_node(node);
+            }
+            if payload.nodes.len() >= max_nodes {
+                break;
+            }
+        }
+
+        Ok(payload)
+    })
+}
+
+pub fn file_graph(ctx: &Context, file_path: &str) -> anyhow::Result<GraphPayload> {
+    with_required_core_graph(ctx, |client| {
+        let mut payload = GraphPayload::default();
+        let (query, params) = file_symbols_query(&ctx.project_id, file_path);
+        for row in client.query(&query, Some(params))? {
+            add_node_from_row(&mut payload, &row, "function");
+            if let Some(symbol_id) = row_string(&row, &["id"]) {
+                let mut link = GraphLink::new(file_path, symbol_id, "DEFINES");
+                link.metadata = row_to_projection_metadata(&row);
+                payload.links.push(link);
+            }
+        }
+
+        let (query, params) = file_calls_query(&ctx.project_id, file_path);
+        for row in client.query(&query, Some(params))? {
+            add_prefixed_node_from_row(&mut payload, &row, "source", "function");
+            add_prefixed_node_from_row(&mut payload, &row, "target", "unresolved");
+            add_link_from_row(&mut payload, &row);
+        }
+
+        Ok(payload)
+    })
+}
+
+pub fn symbol_neighbors(
+    ctx: &Context,
+    symbol_id: &str,
+    limit: usize,
+) -> anyhow::Result<GraphPayload> {
+    with_required_core_graph(ctx, |client| {
+        let (query, params) = symbol_neighbors_query(&ctx.project_id, symbol_id, limit);
+        let rows = client.query(&query, Some(params))?;
+        let mut payload = GraphPayload::default();
+
+        for row in rows {
+            add_node_from_row(&mut payload, &row, "unresolved");
+            let Some(neighbor_id) = row_string(&row, &["id"]) else {
+                continue;
+            };
+            let direction = row_string(&row, &["direction"]).unwrap_or_default();
+            let mut link = if direction == "outgoing" {
+                GraphLink::new(symbol_id, neighbor_id, "CALLS")
+            } else {
+                GraphLink::new(neighbor_id, symbol_id, "CALLS")
+            };
+            link.line = row_usize(&row, &["line"]);
+            link.metadata = row_to_projection_metadata(&row);
+            payload.links.push(link);
+        }
+
+        Ok(payload)
+    })
+}
+
+pub fn blast_radius_graph(
+    ctx: &Context,
+    target: GraphBlastRadiusTarget,
+    depth: usize,
+    limit: usize,
+) -> anyhow::Result<GraphPayload> {
+    with_required_core_graph(ctx, |client| {
+        let (center_id, mut center_node, rows) = match target {
+            GraphBlastRadiusTarget::SymbolId(symbol_id) => {
+                let (query, params) = blast_radius_center_query(&ctx.project_id, &symbol_id);
+                let center_rows = client.query(&query, Some(params))?;
+                let center_node = center_rows
+                    .first()
+                    .and_then(|row| GraphNode::from_row(row, "function"))
+                    .unwrap_or_else(|| GraphNode::new(&symbol_id, &symbol_id, "function"));
+
+                let query = blast_radius_query(depth, limit);
+                let params =
+                    typed_query::string_params(&[("project", &ctx.project_id), ("id", &symbol_id)]);
+                (symbol_id, center_node, client.query(&query, Some(params))?)
+            }
+            GraphBlastRadiusTarget::FilePath(file_path) => {
+                let mut rows = vec![];
+                let (query, params) =
+                    blast_radius_file_call_query(&ctx.project_id, &file_path, depth, limit);
+                rows.extend(client.query(&query, Some(params))?);
+                let (query, params) =
+                    blast_radius_file_import_query(&ctx.project_id, &file_path, depth, limit);
+                rows.extend(client.query(&query, Some(params))?);
+                (
+                    file_path.clone(),
+                    GraphNode::new(&file_path, &file_path, "file"),
+                    rows,
+                )
+            }
+        };
+
+        center_node.blast_distance = Some(0);
+        let mut payload = GraphPayload::with_center(center_id.clone());
+        payload.push_node(center_node);
+
+        for row in rows {
+            let Some(node_id) = row_string(&row, &["node_id"]) else {
+                continue;
+            };
+            let mut node = GraphNode::new(
+                node_id.clone(),
+                row_string(&row, &["node_name"]).unwrap_or_else(|| node_id.clone()),
+                row_string(&row, &["node_type"]).unwrap_or_else(|| "function".to_string()),
+            );
+            node.kind = row_string(&row, &["kind"]);
+            node.file_path = row_string(&row, &["file_path"]);
+            node.line_start = row_usize(&row, &["line"]);
+            node.blast_distance = row_usize(&row, &["distance"]);
+            payload.push_node(node);
+
+            let relation = row_string(&row, &["rel_type"]).unwrap_or_else(|| "call".to_string());
+            let mut link = GraphLink::new(
+                node_id,
+                &center_id,
+                if relation == "call" {
+                    "CALLS"
+                } else {
+                    "IMPORTS"
+                },
+            );
+            link.distance = row_usize(&row, &["distance"]);
+            link.metadata = row_to_projection_metadata(&row);
+            payload.links.push(link);
+        }
+
+        Ok(payload)
+    })
 }
 
 fn with_core_graph<T: Clone>(
@@ -1005,7 +1717,7 @@ fn with_core_graph<T: Clone>(
 }
 
 pub fn count_callers(ctx: &Context, symbol_id: &str) -> anyhow::Result<usize> {
-    with_core_graph(ctx, 0, |client| {
+    with_required_core_graph(ctx, |client| {
         let (query, params) = count_callers_query(&ctx.project_id, symbol_id);
         let rows = client.query(&query, Some(params))?;
         Ok(count_from_rows(&rows))
@@ -1013,7 +1725,7 @@ pub fn count_callers(ctx: &Context, symbol_id: &str) -> anyhow::Result<usize> {
 }
 
 pub fn count_usages(ctx: &Context, symbol_id: &str) -> anyhow::Result<usize> {
-    with_core_graph(ctx, 0, |client| {
+    with_required_core_graph(ctx, |client| {
         let (query, params) = count_usages_query(&ctx.project_id, symbol_id);
         let rows = client.query(&query, Some(params))?;
         Ok(count_from_rows(&rows))
@@ -1026,7 +1738,7 @@ pub fn find_callers(
     offset: usize,
     limit: usize,
 ) -> anyhow::Result<Vec<GraphResult>> {
-    with_core_graph(ctx, vec![], |client| {
+    with_required_core_graph(ctx, |client| {
         let (query, params) = find_callers_query(&ctx.project_id, symbol_id, offset, limit);
         let rows = client.query(&query, Some(params))?;
         Ok(rows.iter().map(row_to_graph_result).collect())
@@ -1039,7 +1751,7 @@ pub fn find_usages(
     offset: usize,
     limit: usize,
 ) -> anyhow::Result<Vec<GraphResult>> {
-    with_core_graph(ctx, vec![], |client| {
+    with_required_core_graph(ctx, |client| {
         let (query, params) = find_usages_query(&ctx.project_id, symbol_id, offset, limit);
         let rows = client.query(&query, Some(params))?;
         Ok(rows.iter().map(row_to_graph_result).collect())
@@ -1054,7 +1766,7 @@ pub fn find_callers_batch(
     if symbol_ids.is_empty() {
         return Ok(vec![]);
     }
-    with_core_graph(ctx, vec![], |client| {
+    with_required_core_graph(ctx, |client| {
         let (query, params) = find_callers_batch_query(&ctx.project_id, symbol_ids, limit);
         let rows = client.query(&query, Some(params))?;
         Ok(rows.iter().map(row_to_graph_result).collect())
@@ -1069,7 +1781,7 @@ pub fn find_callees_batch(
     if symbol_ids.is_empty() {
         return Ok(vec![]);
     }
-    with_core_graph(ctx, vec![], |client| {
+    with_required_core_graph(ctx, |client| {
         let (query, params) = find_callees_batch_query(&ctx.project_id, symbol_ids, limit);
         let rows = client.query(&query, Some(params))?;
         Ok(rows.iter().map(row_to_graph_result).collect())
@@ -1077,7 +1789,7 @@ pub fn find_callees_batch(
 }
 
 pub fn get_imports(ctx: &Context, file_path: &str) -> anyhow::Result<Vec<GraphResult>> {
-    with_core_graph(ctx, vec![], |client| {
+    with_required_core_graph(ctx, |client| {
         let (query, params) = get_imports_query(&ctx.project_id, file_path);
         let rows = client.query(&query, Some(params))?;
         Ok(rows.iter().map(row_to_graph_result).collect())
@@ -1089,7 +1801,7 @@ pub fn blast_radius(
     symbol_id: &str,
     depth: usize,
 ) -> anyhow::Result<Vec<GraphResult>> {
-    with_core_graph(ctx, vec![], |client| {
+    with_required_core_graph(ctx, |client| {
         let query = blast_radius_query(depth, MAX_GRAPH_LIMIT);
         let params = typed_query::string_params(&[("project", &ctx.project_id), ("id", symbol_id)]);
         let rows = client.query(&query, Some(params))?;
@@ -1101,6 +1813,7 @@ pub fn blast_radius(
 mod tests {
     use super::*;
     use crate::models::{ProjectionProvenance, SOURCE_SYSTEM_GCODE};
+    use serde_json::json;
 
     #[test]
     fn code_edges_carry_provenance() {
@@ -1112,6 +1825,36 @@ mod tests {
         assert_eq!(metadata.source_file_path.as_deref(), Some("src/lib.rs"));
         assert_eq!(metadata.source_line, Some(42));
         assert_eq!(metadata.source_symbol_id.as_deref(), Some("caller-1"));
+    }
+
+    #[test]
+    fn read_apis_return_node_link_payloads_with_link_metadata() {
+        let mut payload = GraphPayload::default();
+        payload.push_node(GraphNode::new("src/lib.rs", "src/lib.rs", "file"));
+
+        let link_row = Row::from([
+            ("source".to_string(), json!("src/lib.rs")),
+            ("target".to_string(), json!("symbol-1")),
+            ("type".to_string(), json!("DEFINES")),
+            ("line".to_string(), json!(12)),
+            ("provenance".to_string(), json!("EXTRACTED")),
+            ("confidence".to_string(), json!(1.0)),
+            ("source_system".to_string(), json!("gcode")),
+            ("source_file_path".to_string(), json!("src/lib.rs")),
+            ("source_line".to_string(), json!(12)),
+            ("source_symbol_id".to_string(), json!("symbol-1")),
+        ]);
+        payload.links.push(GraphLink::from_row(&link_row));
+
+        let encoded = serde_json::to_value(&payload).expect("payload serializes");
+
+        assert_eq!(encoded["nodes"][0]["id"], "src/lib.rs");
+        assert_eq!(encoded["nodes"][0]["type"], "file");
+        assert_eq!(encoded["links"][0]["source"], "src/lib.rs");
+        assert_eq!(encoded["links"][0]["target"], "symbol-1");
+        assert_eq!(encoded["links"][0]["type"], "DEFINES");
+        assert_eq!(encoded["links"][0]["metadata"]["provenance"], "EXTRACTED");
+        assert_eq!(encoded["links"][0]["metadata"]["source_system"], "gcode");
     }
 
     #[test]

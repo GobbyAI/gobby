@@ -613,4 +613,24 @@ mod tests {
             assert!(source.contains(fragment), "missing {fragment}");
         }
     }
+
+    #[test]
+    fn read_helpers_delegate_to_code_graph() {
+        let source = include_str!("falkor.rs");
+        for fragment in [
+            "crate::graph::code_graph::count_callers(ctx, symbol_id)",
+            "crate::graph::code_graph::count_usages(ctx, symbol_id)",
+            "crate::graph::code_graph::find_callers(ctx, symbol_id, offset, limit)",
+            "crate::graph::code_graph::find_usages(ctx, symbol_id, offset, limit)",
+            "crate::graph::code_graph::find_callers(",
+            "crate::graph::code_graph::find_callees_batch(",
+            "crate::graph::code_graph::get_imports(ctx, file_path)",
+            "crate::graph::code_graph::blast_radius(ctx, symbol_id, depth)",
+        ] {
+            assert!(
+                source.contains(fragment),
+                "missing delegation fragment {fragment}"
+            );
+        }
+    }
 }
