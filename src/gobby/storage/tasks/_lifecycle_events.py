@@ -8,7 +8,7 @@ from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
 
-# Reason recorded by ``gobby build`` (see gobby.build.lifecycle._record_build_event).
+# Reason recorded by ``gobby build`` (see gobby.build.lifecycle_state.record_build_event).
 # This is the durable, append-only signal that automation was ever started for a
 # task; stopping a build clears ``allow_automation`` but never removes this row,
 # so it remains the source of truth for "has this task ever been built".
