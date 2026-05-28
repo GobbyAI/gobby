@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -87,6 +88,43 @@ def test_get_build_status_reports_agents_mutex_artifacts_events_and_comments(
     assert status["artifact_health"]["ok"] is False
     assert status["artifact_health"]["items"][0]["artifacts"][0]["exists"] is False
     assert status["recent_events"][0]["reason"] == BUILD_EVENT_REASON
+
+
+def test_get_build_status_reports_active_run_expired_mutex_lease(temp_db) -> None:
+    from gobby.build.observability import explain_dispatch, get_build_status
+    from gobby.storage.agents import LocalAgentRunManager
+    from gobby.storage.sessions import SYSTEM_SESSION_ID
+    from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+
+    project_id = _project(temp_db, "observability-active-expired")
+    task = _automated_task(temp_db, project_id)
+    run = LocalAgentRunManager(temp_db).create(
+        parent_session_id=SYSTEM_SESSION_ID,
+        provider="codex",
+        prompt="work",
+        agent_name="backend-developer",
+        task_id=task.id,
+    )
+    TaskDispatchMutexManager(temp_db).acquire_mutex(
+        task.id,
+        holder="dispatcher",
+        kind="heartbeat",
+        ttl_seconds=60,
+        run_id=run.id,
+        now=datetime.now(UTC) - timedelta(minutes=5),
+    )
+
+    status = get_build_status(f"#{task.seq_num}", db=temp_db, project_id=project_id)
+
+    mutex = status["mutexes"][0]
+    assert mutex["state"] == "active_run_expired_lease"
+    assert mutex["blocks_dispatch"] is True
+    assert mutex["lease_expired"] is True
+    assert mutex["run_active"] is True
+
+    explanation = explain_dispatch(task.id, db=temp_db, project_id=project_id)
+    assert explanation["reason"] == "active_mutex"
+    assert explanation["mutex"]["state"] == "active_run_expired_lease"
 
 
 def test_get_build_status_counts_closed_and_escalated_nodes(temp_db) -> None:

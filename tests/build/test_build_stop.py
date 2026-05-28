@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -164,3 +165,61 @@ def test_no_task_flag_exposed() -> None:
 
     param_names = {param.name for param in build_stop_command.params}
     assert "task" not in param_names
+
+
+def test_resume_cleanup_preserves_expired_mutex_for_active_run(temp_db) -> None:
+    from gobby.build.controls import _clear_stale_dispatch_mutexes
+    from gobby.storage.agents import LocalAgentRunManager
+    from gobby.storage.projects import LocalProjectManager
+    from gobby.storage.sessions import SYSTEM_SESSION_ID
+    from gobby.storage.tasks import LocalTaskManager
+    from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+
+    project = LocalProjectManager(temp_db).create(
+        name="resume-cleanup-active-run",
+        repo_path="/tmp/resume-cleanup-active-run",
+    )
+    task_manager = LocalTaskManager(temp_db)
+    active_task = task_manager.create_task(
+        project_id=project.id,
+        title="Active",
+        category="code",
+    )
+    orphan_task = task_manager.create_task(
+        project_id=project.id,
+        title="Orphan",
+        category="code",
+    )
+    run = LocalAgentRunManager(temp_db).create(
+        parent_session_id=SYSTEM_SESSION_ID,
+        provider="codex",
+        prompt="work",
+        task_id=active_task.id,
+    )
+    mutexes = TaskDispatchMutexManager(temp_db)
+    expired_at = datetime.now(UTC) - timedelta(minutes=5)
+    mutexes.acquire_mutex(
+        active_task.id,
+        holder="dispatcher",
+        kind="heartbeat",
+        ttl_seconds=60,
+        run_id=run.id,
+        now=expired_at,
+    )
+    mutexes.acquire_mutex(
+        orphan_task.id,
+        holder="dispatcher",
+        kind="heartbeat",
+        ttl_seconds=60,
+        now=expired_at,
+    )
+
+    cleared = _clear_stale_dispatch_mutexes(
+        temp_db,
+        [active_task.id, orphan_task.id],
+        now=datetime.now(UTC),
+    )
+
+    assert cleared == 1
+    assert mutexes.get_mutex(active_task.id) is not None
+    assert mutexes.get_mutex(orphan_task.id) is None

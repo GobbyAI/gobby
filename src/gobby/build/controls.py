@@ -508,7 +508,7 @@ def _clear_stale_dispatch_mutexes(
 ) -> int:
     mutexes = TaskDispatchMutexManager(db)
     resolved_now = now or datetime.now(UTC)
-    cleared = int(mutexes.sweep_expired(now=resolved_now))
+    cleared = 0
     active_run_ids = {run.id for run in LocalAgentRunManager(db).list_active(limit=1000)}
     for task_id in task_ids:
         mutex = mutexes.get_mutex(task_id)

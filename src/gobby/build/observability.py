@@ -344,7 +344,9 @@ def _mutex_diagnosis(db: HubDatabase, task_id: str) -> dict[str, Any]:
     expired = lease_until is not None and lease_until <= now
     run_active = bool(mutex.run_id and mutex.run_id in active_run_ids)
     no_run = mutex.run_id is None
-    if expired:
+    if run_active and expired:
+        state = "active_run_expired_lease"
+    elif expired:
         state = "expired"
     elif no_run:
         state = "active_no_run"
@@ -355,7 +357,9 @@ def _mutex_diagnosis(db: HubDatabase, task_id: str) -> dict[str, Any]:
     return {
         "task_id": task_id,
         "state": state,
-        "blocks_dispatch": state in {"active_no_run", "active_run"},
+        "blocks_dispatch": state in {"active_no_run", "active_run", "active_run_expired_lease"},
+        "lease_expired": expired,
+        "run_active": run_active,
         "lease_until": mutex.lease_until,
         "lease_holder": mutex.lease_holder,
         "run_id": mutex.run_id,
