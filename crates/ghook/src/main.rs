@@ -139,7 +139,7 @@ fn run_gobby_owned(args: &Args) -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    if planned_shutdown::should_continue_before_dispatch(hook_type) {
+    if planned_shutdown::should_skip_dispatch(hook_type) {
         return emit_action(continue_action());
     }
 

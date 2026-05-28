@@ -374,6 +374,22 @@ fn resolve_symbol(ctx: &Context, input: &str) -> Option<ResolvedGraphSymbol> {
     resolved
 }
 
+fn resolve_symbol_or_empty_response(
+    ctx: &Context,
+    input: &str,
+    offset: usize,
+    limit: usize,
+    format: Format,
+) -> anyhow::Result<Option<ResolvedGraphSymbol>> {
+    match resolve_symbol(ctx, input) {
+        Some(symbol) => Ok(Some(symbol)),
+        None => {
+            empty_paged_response::<crate::models::GraphResult>(ctx, offset, limit, format)?;
+            Ok(None)
+        }
+    }
+}
+
 pub fn callers(
     ctx: &Context,
     symbol_name: &str,
@@ -387,11 +403,9 @@ pub fn callers(
         }
         return Err(err);
     }
-    let symbol = match resolve_symbol(ctx, symbol_name) {
-        Some(symbol) => symbol,
-        None => {
-            return empty_paged_response::<crate::models::GraphResult>(ctx, offset, limit, format);
-        }
+    let Some(symbol) = resolve_symbol_or_empty_response(ctx, symbol_name, offset, limit, format)?
+    else {
+        return Ok(());
     };
     let total = match code_graph::count_callers(ctx, &symbol.id) {
         Ok(total) => total,
@@ -457,11 +471,9 @@ pub fn usages(
         }
         return Err(err);
     }
-    let symbol = match resolve_symbol(ctx, symbol_name) {
-        Some(symbol) => symbol,
-        None => {
-            return empty_paged_response::<crate::models::GraphResult>(ctx, offset, limit, format);
-        }
+    let Some(symbol) = resolve_symbol_or_empty_response(ctx, symbol_name, offset, limit, format)?
+    else {
+        return Ok(());
     };
     let total = match code_graph::count_usages(ctx, &symbol.id) {
         Ok(total) => total,
@@ -565,9 +577,8 @@ pub fn blast_radius(
         }
         return Err(err);
     }
-    let symbol = match resolve_symbol(ctx, target) {
-        Some(symbol) => symbol,
-        None => return empty_paged_response::<crate::models::GraphResult>(ctx, 0, 0, format),
+    let Some(symbol) = resolve_symbol_or_empty_response(ctx, target, 0, 0, format)? else {
+        return Ok(());
     };
     let results = match code_graph::blast_radius(ctx, &symbol.id, depth) {
         Ok(results) => results,

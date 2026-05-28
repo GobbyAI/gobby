@@ -19,8 +19,8 @@ const ACTIVE_MARKER: &str = "shutdown_intent_active.json";
 const LEGACY_MARKER: &str = "shutdown_source.json";
 const ALLOWED_SOURCES: [&str; 4] = ["cli_", "http_", "service_", "mcp_"];
 
-pub fn should_continue_before_dispatch(hook_type: &str) -> bool {
-    should_continue_before_dispatch_with(
+pub fn should_skip_dispatch(hook_type: &str) -> bool {
+    should_skip_dispatch_with(
         hook_type,
         || marker_home().is_some_and(|home| fresh_shutdown_marker(&home)),
         || daemon_is_reachable(&daemon_url()),
@@ -67,7 +67,7 @@ pub fn is_stop_hook(hook_type: &str) -> bool {
     hook_type.eq_ignore_ascii_case("stop")
 }
 
-fn should_continue_before_dispatch_with(
+fn should_skip_dispatch_with(
     hook_type: &str,
     marker_active: impl FnOnce() -> bool,
     daemon_reachable: impl FnOnce() -> bool,
@@ -338,32 +338,16 @@ mod tests {
     }
 
     #[test]
-    fn preflight_shortcut_requires_stop_marker_and_unreachable_daemon() {
-        assert!(should_continue_before_dispatch_with(
-            "Stop",
-            || true,
-            || false
-        ));
-        assert!(should_continue_before_dispatch_with(
-            "stop",
-            || true,
-            || false
-        ));
-        assert!(!should_continue_before_dispatch_with(
-            "PreToolUse",
-            || true,
-            || false
-        ));
-        assert!(!should_continue_before_dispatch_with(
+    fn skip_dispatch_requires_stop_marker_and_unreachable_daemon() {
+        assert!(should_skip_dispatch_with("Stop", || true, || false));
+        assert!(should_skip_dispatch_with("stop", || true, || false));
+        assert!(!should_skip_dispatch_with("PreToolUse", || true, || false));
+        assert!(!should_skip_dispatch_with(
             "Stop",
             || false,
             || { panic!("daemon probe should not run without a marker") }
         ));
-        assert!(!should_continue_before_dispatch_with(
-            "Stop",
-            || true,
-            || true
-        ));
+        assert!(!should_skip_dispatch_with("Stop", || true, || true));
     }
 
     #[test]

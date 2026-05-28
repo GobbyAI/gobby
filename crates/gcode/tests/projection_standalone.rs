@@ -1,3 +1,6 @@
+mod common;
+
+use common::{ProjectCleanup, cleanup_project};
 use postgres::{Client, NoTls};
 use serde_json::{Value, json};
 use std::fs;
@@ -63,8 +66,8 @@ fn graph_and_vector_lifecycle_commands_run_without_daemon() {
     .expect("write gcode identity");
 
     let mut conn = Client::connect(&env.database_url, NoTls).expect("connect PostgreSQL");
+    let _cleanup = ProjectCleanup::new(&env.database_url, TEST_PROJECT_ID);
     seed_project(&mut conn);
-    let _cleanup = ProjectCleanup::new(&env.database_url);
 
     let graph_sync = json_command(
         &env,
@@ -148,26 +151,6 @@ struct StandaloneEnv {
     falkor_password: Option<String>,
 }
 
-struct ProjectCleanup {
-    database_url: String,
-}
-
-impl ProjectCleanup {
-    fn new(database_url: &str) -> Self {
-        Self {
-            database_url: database_url.to_string(),
-        }
-    }
-}
-
-impl Drop for ProjectCleanup {
-    fn drop(&mut self) {
-        if let Ok(mut conn) = Client::connect(&self.database_url, NoTls) {
-            cleanup_project(&mut conn);
-        }
-    }
-}
-
 impl StandaloneEnv {
     fn from_env() -> Option<Self> {
         Some(Self {
@@ -234,7 +217,7 @@ fn assert_success(output: Output, label: &str) -> Value {
 }
 
 fn seed_project(conn: &mut Client) {
-    cleanup_project(conn);
+    cleanup_project(conn, TEST_PROJECT_ID).expect("cleanup projection rows");
     conn.batch_execute(
         "INSERT INTO code_indexed_projects
             (id, root_path, total_files, total_symbols, last_indexed_at, index_duration_ms)
@@ -271,18 +254,6 @@ fn seed_project(conn: &mut Client) {
              'callee', 'symbol', '', 'src/lib.rs', 1);",
     )
     .expect("seed projection rows");
-}
-
-fn cleanup_project(conn: &mut Client) {
-    conn.batch_execute(
-        "DELETE FROM code_calls WHERE project_id = 'projection-standalone-project';
-         DELETE FROM code_imports WHERE project_id = 'projection-standalone-project';
-         DELETE FROM code_symbols WHERE project_id = 'projection-standalone-project';
-         DELETE FROM code_content_chunks WHERE project_id = 'projection-standalone-project';
-         DELETE FROM code_indexed_files WHERE project_id = 'projection-standalone-project';
-         DELETE FROM code_indexed_projects WHERE id = 'projection-standalone-project';",
-    )
-    .expect("cleanup projection rows");
 }
 
 fn spawn_http_responses(responses: Vec<(u16, Value)>) -> (String, thread::JoinHandle<Vec<String>>) {

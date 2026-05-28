@@ -34,6 +34,13 @@ and the daemon health endpoint is unreachable, `ghook` returns
 `GOBBY_SHUTDOWN_HOOK_ALLOW_SECONDS` overrides marker freshness when it is a
 positive number; the default is 120 seconds.
 
+After enqueue, the same fresh-window rule, including
+`GOBBY_SHUTDOWN_HOOK_ALLOW_SECONDS`, is applied to Stop live POST failures. The
+live POST URL uses `GOBBY_DAEMON_URL` when set. Only `Connect` and `Timeout`
+failures are suppressed; HTTP responses stay on the normal daemon-response path.
+When suppression applies, `ghook` deletes the just-enqueued envelope and returns
+`{"continue":true}`.
+
 ## Schemas
 
 - `schemas/inbox-envelope.v1.schema.json` — what lands in the inbox.

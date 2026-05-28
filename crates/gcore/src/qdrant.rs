@@ -11,6 +11,16 @@ use std::time::Duration;
 
 const QDRANT_TIMEOUT: Duration = Duration::from_secs(5);
 
+#[derive(Debug, thiserror::Error)]
+pub enum QdrantError {
+    #[error("Qdrant {operation} failed: HTTP {status}")]
+    HttpStatus {
+        operation: &'static str,
+        status: reqwest::StatusCode,
+        body: String,
+    },
+}
+
 /// Scope for a Qdrant collection, allowing caller-controlled naming.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CollectionScope<'a> {
@@ -109,7 +119,15 @@ pub fn search(
     let resp = req.json(&body).send()?;
     let status = resp.status();
     if !status.is_success() {
-        anyhow::bail!("Qdrant search failed: HTTP {status}");
+        let body = resp
+            .text()
+            .unwrap_or_else(|err| format!("<failed to read response body: {err}>"));
+        return Err(QdrantError::HttpStatus {
+            operation: "search",
+            status,
+            body,
+        }
+        .into());
     }
 
     let data: Value = resp.json()?;
@@ -162,7 +180,15 @@ pub fn upsert(
     let resp = req.json(&body).send()?;
     let status = resp.status();
     if !status.is_success() {
-        anyhow::bail!("Qdrant upsert failed: HTTP {status}");
+        let body = resp
+            .text()
+            .unwrap_or_else(|err| format!("<failed to read response body: {err}>"));
+        return Err(QdrantError::HttpStatus {
+            operation: "upsert",
+            status,
+            body,
+        }
+        .into());
     }
 
     Ok(())
@@ -189,7 +215,10 @@ fn parse_point_id(id: &Value) -> Option<String> {
 }
 
 fn is_qdrant_unreachable(error: &anyhow::Error) -> bool {
-    error.downcast_ref::<reqwest::Error>().is_some() || error.to_string().starts_with("Qdrant ")
+    error.chain().any(|cause| {
+        cause.downcast_ref::<reqwest::Error>().is_some()
+            || cause.downcast_ref::<QdrantError>().is_some()
+    })
 }
 
 #[cfg(test)]
@@ -385,6 +414,68 @@ mod tests {
             ServiceState::Unreachable { ref message }
                 if message.contains("Qdrant search failed: HTTP 503")
         ));
+    }
+
+    #[test]
+    fn qdrant_http_failures_are_typed_errors() {
+        let (search_url, search_handle) =
+            spawn_qdrant_response(503, json!({"status": "service unavailable"}));
+        let search_config = QdrantConfig {
+            url: Some(search_url),
+            api_key: None,
+        };
+        let err = search(
+            &search_config,
+            "collection",
+            SearchRequest {
+                vector: vec![0.1],
+                limit: 1,
+                filter: None,
+            },
+        )
+        .expect_err("search HTTP failure is typed");
+        search_handle.join().expect("search request thread");
+        match err.downcast_ref::<QdrantError>() {
+            Some(QdrantError::HttpStatus {
+                operation,
+                status,
+                body,
+            }) => {
+                assert_eq!(*operation, "search");
+                assert_eq!(*status, reqwest::StatusCode::SERVICE_UNAVAILABLE);
+                assert!(body.contains("service unavailable"));
+            }
+            None => panic!("expected QdrantError, got {err}"),
+        }
+
+        let (upsert_url, upsert_handle) = spawn_qdrant_response(500, json!({"status": "boom"}));
+        let upsert_config = QdrantConfig {
+            url: Some(upsert_url),
+            api_key: None,
+        };
+        let err = upsert(
+            &upsert_config,
+            "collection",
+            vec![UpsertRequest {
+                id: "point-1".to_string(),
+                vector: vec![0.1],
+                payload: Map::new(),
+            }],
+        )
+        .expect_err("upsert HTTP failure is typed");
+        upsert_handle.join().expect("upsert request thread");
+        match err.downcast_ref::<QdrantError>() {
+            Some(QdrantError::HttpStatus {
+                operation,
+                status,
+                body,
+            }) => {
+                assert_eq!(*operation, "upsert");
+                assert_eq!(*status, reqwest::StatusCode::INTERNAL_SERVER_ERROR);
+                assert!(body.contains("boom"));
+            }
+            None => panic!("expected QdrantError, got {err}"),
+        }
     }
 
     fn spawn_qdrant_response(status: u16, body: Value) -> (String, thread::JoinHandle<String>) {
