@@ -1,0 +1,135 @@
+//! PostgreSQL foundation adapter boundary and hub connection helpers.
+//!
+//! This module is available with the `postgres` feature. Gobby-owned schemas are
+//! externally managed; adapter code must validate required objects without
+//! creating, altering, or dropping them. This module is intentionally
+//! schema-agnostic; consumers supply any table or index validation.
+
+use anyhow::Context;
+use postgres::{Client, NoTls};
+
+/// Connect to the PostgreSQL hub in read-only mode.
+///
+/// Sets `default_transaction_read_only = on` to guard against accidental writes.
+pub fn connect_readonly(database_url: &str) -> anyhow::Result<Client> {
+    let mut client = connect(database_url)?;
+    client
+        .execute("SET default_transaction_read_only = on", &[])
+        .context("failed to set PostgreSQL connection read-only")?;
+    Ok(client)
+}
+
+/// Connect to the PostgreSQL hub with write access.
+pub fn connect_readwrite(database_url: &str) -> anyhow::Result<Client> {
+    connect(database_url)
+}
+
+/// Read a raw config value from the Gobby `config_store` table.
+///
+/// Returns the raw stored value (which may be JSON-encoded). Callers should
+/// decode JSON string encoding and resolve `$secret:NAME` or `${VAR}` values
+/// in their own config layer.
+///
+/// Returns `None` for missing keys. Does not write.
+pub fn read_config_value(conn: &mut Client, key: &str) -> anyhow::Result<Option<String>> {
+    let row = conn
+        .query_opt("SELECT value FROM config_store WHERE key = $1", &[&key])
+        .with_context(|| format!("failed to read config_store key {key:?}"))?;
+    row.map(|r| {
+        r.try_get("value")
+            .with_context(|| format!("config_store key {key:?} value was not text"))
+    })
+    .transpose()
+}
+
+/// Result of a single schema object check (table, index, column, etc.).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SchemaCheck {
+    /// Object name (for example, `symbols` or `bm25_symbols_idx`).
+    pub object_name: String,
+    /// What was checked (for example, `table exists` or `column type`).
+    pub check_kind: String,
+    /// Whether the check passed.
+    pub passed: bool,
+    /// Detail on failure.
+    pub detail: Option<String>,
+}
+
+/// Run a consumer-supplied schema validator for attached-mode checks.
+///
+/// The callback receives a mutable connection because `postgres::Client`
+/// query methods require `&mut self`. `gobby-core` does not know which tables
+/// to check and never runs migrations.
+pub fn validate_schema(
+    conn: &mut Client,
+    validator: impl FnOnce(&mut Client) -> Vec<SchemaCheck>,
+) -> Vec<SchemaCheck> {
+    run_schema_validator(conn, validator)
+}
+
+fn connect(database_url: &str) -> anyhow::Result<Client> {
+    Client::connect(database_url, NoTls).context("failed to connect to the Gobby PostgreSQL hub")
+}
+
+fn run_schema_validator<C>(
+    conn: &mut C,
+    validator: impl FnOnce(&mut C) -> Vec<SchemaCheck>,
+) -> Vec<SchemaCheck> {
+    validator(conn)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn attached_validation_is_non_destructive() {
+        let mut conn = vec!["existing-state"];
+
+        let checks = run_schema_validator(&mut conn, |conn| {
+            assert_eq!(conn.as_slice(), ["existing-state"]);
+            conn.push("validator-ran");
+            vec![SchemaCheck {
+                object_name: "consumer_table".to_string(),
+                check_kind: "table exists".to_string(),
+                passed: true,
+                detail: None,
+            }]
+        });
+
+        assert_eq!(conn, vec!["existing-state", "validator-ran"]);
+        assert_eq!(checks.len(), 1);
+        assert_eq!(checks[0].object_name, "consumer_table");
+        assert!(checks[0].passed);
+    }
+
+    #[test]
+    fn schema_validator_is_domain_supplied() {
+        let mut domain_objects = ["domain_symbols", "domain_bm25_idx"].into_iter();
+
+        let checks = run_schema_validator(&mut domain_objects, |objects| {
+            objects
+                .map(|object_name| SchemaCheck {
+                    object_name: object_name.to_string(),
+                    check_kind: "consumer supplied".to_string(),
+                    passed: true,
+                    detail: None,
+                })
+                .collect::<Vec<_>>()
+        });
+
+        assert_eq!(
+            checks
+                .iter()
+                .map(|check| check.object_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["domain_symbols", "domain_bm25_idx"]
+        );
+    }
+
+    #[test]
+    fn validate_schema_accepts_postgres_client_validators() {
+        let _validate: fn(&mut Client, fn(&mut Client) -> Vec<SchemaCheck>) -> Vec<SchemaCheck> =
+            validate_schema;
+    }
+}
