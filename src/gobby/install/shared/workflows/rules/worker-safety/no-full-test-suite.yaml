@@ -33,7 +33,7 @@ rules:
           Target specific test files or use filters.
 
   no-full-cargo-test:
-    description: "Block spawned agents from running the full cargo test suite."
+    description: "Block spawned agents from running the full Cargo test suite."
     event: before_tool
     enabled: true
     priority: 50
@@ -42,9 +42,9 @@ rules:
       - type: block
         tools: [Bash]
         command_pattern: "\\bcargo\\s+test\\b"
-        command_not_pattern: "\\bcargo\\s+test\\s+\\S|\\bcargo\\s+test\\s.*-p\\s"
+        command_not_pattern: "\\bcargo\\s+test\\b[^;&|]*(?:\\s(?:-p|--package|--test|--bin)\\s+\\S+|\\s(?!-)[^\\s;&|]+)"
         reason: >-
-          Running the full cargo test suite is not allowed for agents.
+          Running the full Cargo test suite is not allowed for agents.
           Target specific tests or packages (cargo test <name>, cargo test -p <package>).
 
   no-full-go-test:

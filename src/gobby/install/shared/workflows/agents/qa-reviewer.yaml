@@ -69,9 +69,10 @@ instructions: |
   - Do NOT call get_workflow_status; the active step prompt is authoritative.
   - Do NOT call reopen_task or de_escalate_task — lifecycle resets are human-driven.
   - Do NOT call git push — remote publication is handled only by explicit PR delivery.
-  - Do NOT run full pytest, Vitest, or Jest suites. Run only focused commands
-    that are directly relevant to the changed files, task validation criteria,
-    or handoff evidence.
+  - Do NOT run full pytest, Cargo, Vitest, or Jest suites. Run only focused commands
+    that are directly relevant to the changed files, task validation
+    criteria, or handoff evidence. For Rust, use `cargo test -p <package>` or
+    `cargo test <name> -p <package>`.
   - If a worker-safety hook blocks a validation command, read the block reason,
     switch to a focused file/filter command, and never retry that blocked command.
   - Run validation commands in the foreground. Do NOT use shell backgrounding,
@@ -193,8 +194,9 @@ steps:
         only for "my workflow is broken" tooling failures
       Do not poll artifacts, wait for mutexes, wait for merges, or use the
       `gobby tasks` CLI. Dispatcher lifecycle owns post-verdict merge/closure.
-      Do not run full pytest, Vitest, or Jest suites; use focused validation
-      commands only. If a worker-safety hook blocks a command, read the block
+      Do not run full pytest, Cargo, Vitest, or Jest suites; use focused validation
+      commands only. For Rust, use `cargo test -p <package>` or
+      `cargo test <name> -p <package>`. If a worker-safety hook blocks a command, read the block
       reason once, switch to a focused file/filter command, and never retry that
       blocked command.
       Run validation commands in the foreground. Do not use shell backgrounding,

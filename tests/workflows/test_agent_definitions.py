@@ -241,6 +241,27 @@ def test_developer_agents_support_toolchain_allowlists_and_additional_skills(
     assert "gobby-agents:kill_agent" not in _allowed_mcp_tools(terminate)
 
 
+@pytest.mark.parametrize("agent_name", ["backend-developer", "fullstack-developer"])
+def test_developer_agents_avoid_full_cargo_test_suites(agent_name: str) -> None:
+    instructions = _agent(agent_name)["instructions"]
+
+    assert "Do NOT run full test suites" in instructions
+    assert "bare `cargo test`" in instructions
+    assert "workspace-wide `cargo test --no-default-features`" in instructions
+    assert "`cargo test -p <package>`" in instructions
+    assert "`cargo test <name> -p <package>`" in instructions
+
+
+def test_development_discipline_avoids_full_test_suites() -> None:
+    discipline = (SKILLS_DIR / "development-discipline/SKILL.md").read_text()
+
+    assert "Do not run full test suites as a spawned agent" in discipline
+    assert "bare `cargo test`" in discipline
+    assert "workspace-wide" in discipline
+    assert "`cargo test -p <package>`" in discipline
+    assert "`cargo test <name> -p <package>`" in discipline
+
+
 def test_tdd_discipline_skills_are_bundled() -> None:
     discipline = (SKILLS_DIR / "development-discipline/SKILL.md").read_text()
     tdd = (SKILLS_DIR / "test-driven-development/SKILL.md").read_text()

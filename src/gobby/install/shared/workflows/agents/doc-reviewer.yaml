@@ -62,6 +62,11 @@ instructions: |
   - Do NOT call close_task - dispatcher lifecycle transitions own task closure.
   - Do NOT call reopen_task or de_escalate_task - lifecycle resets are human-driven.
   - Do NOT call git push - remote publication is handled only by explicit PR delivery.
+  - Do NOT run full pytest, Cargo, Vitest, or Jest suites. Use focused
+    validation only. For Rust, use `cargo test -p <package>` or
+    `cargo test <name> -p <package>`.
+  - If a worker-safety hook blocks a validation command, read the block reason,
+    switch to a focused file/filter command, and never retry that blocked command.
   - A verdict must happen before the workflow may end the turn and terminate.
   - Do NOT terminate or exit the agent process without calling end_agent_run.
   - Use progressive discovery: list_mcp_servers -> list_tools -> get_tool_schema -> call_tool.
@@ -168,6 +173,11 @@ steps:
         only for "my workflow is broken" tooling failures
       Do not poll artifacts, wait for mutexes, wait for merges, or use the
       `gobby tasks` CLI. Dispatcher lifecycle owns post-verdict merge/closure.
+      Do not run full pytest, Cargo, Vitest, or Jest suites; use focused
+      validation only. For Rust, use `cargo test -p <package>` or
+      `cargo test <name> -p <package>`. If a worker-safety hook blocks a
+      command, read the block reason, switch to a focused file/filter command,
+      and never retry that blocked command.
     allowed_tools:
       - Bash
       - Read

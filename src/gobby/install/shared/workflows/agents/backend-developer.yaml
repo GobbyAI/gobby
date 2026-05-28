@@ -67,6 +67,9 @@ instructions: |
   - Do NOT call reopen_task or de_escalate_task.
   - Do NOT spawn other agents.
   - Do NOT terminate without calling end_agent_run.
+  - Do NOT run full test suites. For Rust, do NOT run bare `cargo test`
+    or workspace-wide `cargo test --no-default-features`; use
+    `cargo test -p <package>` or `cargo test <name> -p <package>`.
   - Always use `uv run` for Python commands.
   - Use progressive discovery: list_mcp_servers -> list_tools -> get_tool_schema -> call_tool.
 

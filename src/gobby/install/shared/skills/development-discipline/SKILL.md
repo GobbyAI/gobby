@@ -27,6 +27,15 @@ Every completion or review handoff must include:
 - Why those commands cover the changed behavior.
 - Any test gap that remains, with the reason it is acceptable.
 
+## Validation Scope
+
+Do not run full test suites as a spawned agent. Use focused files, packages,
+or test-name filters for the changed behavior.
+
+For Rust work, do not run bare `cargo test` or workspace-wide
+`cargo test --no-default-features`. Use focused commands such as
+`cargo test -p <package>` or `cargo test <name> -p <package>`.
+
 ## Test Changes
 
 Add or update tests when behavior changes. Skipping tests is acceptable only for

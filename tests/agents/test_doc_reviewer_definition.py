@@ -35,6 +35,24 @@ def test_doc_reviewer_is_read_only() -> None:
     assert "read-only" in agent["instructions"]
 
 
+def test_doc_reviewer_avoids_full_test_suites() -> None:
+    agent = _agent()
+    instructions = agent["instructions"]
+    status_message = next(step for step in agent["steps"] if step["name"] == "review")[
+        "status_message"
+    ]
+
+    assert "Do NOT run full pytest, Cargo, Vitest, or Jest suites" in instructions
+    assert "`cargo test -p <package>`" in instructions
+    assert "`cargo test <name> -p <package>`" in instructions
+    assert "worker-safety hook blocks a validation command" in instructions
+    assert "Do not run full pytest, Cargo, Vitest, or Jest suites" in status_message
+    assert "`cargo test -p <package>`" in status_message
+    assert "`cargo test <name> -p <package>`" in status_message
+    assert "worker-safety hook blocks a" in status_message
+    assert "never retry that blocked command" in status_message
+
+
 def test_doc_reviewer_loads_required_skills() -> None:
     agent = _agent()
     load_step = next(step for step in agent["steps"] if step["name"] == "load_skills")

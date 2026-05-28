@@ -188,3 +188,55 @@ class TestNoFullVitestSuiteRule:
         effect = self._effect(db, manager)
 
         assert not self._is_blocked(effect, command)
+
+
+class TestNoFullCargoSuiteRule:
+    """Verify full-suite Cargo test runs are blocked without blocking focused runs."""
+
+    def _effect(self, db, manager):
+        _sync_bundled(db)
+
+        row = manager.get_by_name("no-full-cargo-test")
+        assert row is not None
+
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        return body.effects[0]
+
+    @staticmethod
+    def _is_blocked(effect, command: str) -> bool:
+        assert effect.command_pattern is not None
+        if not re.search(effect.command_pattern, command):
+            return False
+        if effect.command_not_pattern and re.search(effect.command_not_pattern, command):
+            return False
+        return True
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "cargo test",
+            "cargo test --no-default-features",
+            "cargo test --workspace",
+            "cargo test --all-features",
+        ],
+    )
+    def test_blocks_unscoped_cargo_test_runs(self, db, manager, command: str) -> None:
+        effect = self._effect(db, manager)
+
+        assert self._is_blocked(effect, command)
+        assert "full Cargo test suite" in effect.reason
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "cargo test -p gobby-code --no-default-features",
+            "cargo test --package gobby-core search::tests",
+            "cargo test graph_report -p gcode",
+            "cargo test --test cli_graph_report",
+            "cargo test --bin gcode graph_report",
+        ],
+    )
+    def test_allows_focused_cargo_test_runs(self, db, manager, command: str) -> None:
+        effect = self._effect(db, manager)
+
+        assert not self._is_blocked(effect, command)

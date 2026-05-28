@@ -151,7 +151,9 @@ def test_reviewer_avoids_workflow_status_and_full_test_suites() -> None:
     status_message = review_step["status_message"]
 
     assert "Do NOT call get_workflow_status" in instructions
-    assert "Do NOT run full pytest, Vitest, or Jest suites" in instructions
+    assert "Do NOT run full pytest, Cargo, Vitest, or Jest suites" in instructions
+    assert "`cargo test -p <package>`" in instructions
+    assert "`cargo test <name> -p <package>`" in instructions
     assert "focused commands" in instructions
     assert "worker-safety hook blocks a validation command" in instructions
     assert "never retry that blocked command" in instructions
@@ -160,8 +162,10 @@ def test_reviewer_avoids_workflow_status_and_full_test_suites() -> None:
     assert "Monitor, TaskOutput, or tmux polling" in instructions
     assert "do not launch" in instructions
     assert "duplicate validation commands" in instructions
-    assert "Do not run full pytest, Vitest, or Jest suites" in status_message
+    assert "Do not run full pytest, Cargo, Vitest, or Jest suites" in status_message
     assert "focused validation" in status_message
+    assert "`cargo test -p <package>`" in status_message
+    assert "`cargo test <name> -p <package>`" in status_message
     assert "worker-safety hook blocks a command" in status_message
     assert "never retry that\nblocked command" in status_message
     assert "Run validation commands in the foreground" in status_message
