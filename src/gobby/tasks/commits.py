@@ -34,6 +34,18 @@ class TaskDiffResult:
     file_count: int = 0
 
 
+def _diff_commits_for_task(task: Any) -> list[str]:
+    linked_commits = list(task.commits or [])
+    if linked_commits:
+        return linked_commits
+
+    closed_commit_sha = getattr(task, "closed_commit_sha", None)
+    if isinstance(closed_commit_sha, str) and closed_commit_sha.strip():
+        return [closed_commit_sha.strip()]
+
+    return []
+
+
 def get_task_diff(
     task_id: str,
     task_manager: "LocalTaskManager",
@@ -58,7 +70,7 @@ def get_task_diff(
     task = task_manager.get_task(task_id)
 
     # Handle no commits
-    commits = task.commits or []
+    commits = _diff_commits_for_task(task)
     if not commits and not include_uncommitted:
         return TaskDiffResult(diff="", commits=[], has_uncommitted_changes=False)
 

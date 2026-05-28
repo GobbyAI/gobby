@@ -104,6 +104,38 @@ class TestGetTaskDiff:
         assert result.diff == ""
         assert result.commits == []
 
+    def test_uses_closed_commit_sha_when_no_linked_commits(self, mock_task_manager) -> None:
+        """Test that closed tasks still expose their recorded commit diff."""
+        mock_task = MagicMock()
+        mock_task.commits = None
+        mock_task.closed_commit_sha = "abc123"
+        mock_task_manager.get_task.return_value = mock_task
+
+        with patch("gobby.tasks.commits.run_git_command") as mock_git:
+            mock_git.return_value = "diff --git a/file.py b/file.py\n+added line"
+
+            result = get_task_diff("gt-test123", mock_task_manager)
+
+            assert "added line" in result.diff
+            assert result.commits == ["abc123"]
+            mock_git.assert_called_once()
+            assert mock_git.call_args.args[0] == ["git", "show", "--format=", "abc123"]
+
+    def test_linked_commits_take_precedence_over_closed_commit(self, mock_task_manager) -> None:
+        """Test that the closed commit is only a fallback."""
+        mock_task = MagicMock()
+        mock_task.commits = ["linked123"]
+        mock_task.closed_commit_sha = "closed456"
+        mock_task_manager.get_task.return_value = mock_task
+
+        with patch("gobby.tasks.commits.run_git_command") as mock_git:
+            mock_git.return_value = "diff from linked commit"
+
+            result = get_task_diff("gt-test123", mock_task_manager)
+
+            assert result.commits == ["linked123"]
+            assert mock_git.call_args.args[0] == ["git", "show", "--format=", "linked123"]
+
     def test_returns_empty_diff_when_no_changes(self, mock_task_manager) -> None:
         """Test that empty diff is returned when commits have no diff."""
         mock_task = MagicMock()
