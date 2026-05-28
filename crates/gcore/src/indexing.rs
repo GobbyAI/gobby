@@ -199,4 +199,36 @@ mod tests {
 
         assert!(!manifest.contains("tree-sitter"));
     }
+
+    #[test]
+    fn manifest_keeps_indexing_feature_generic() {
+        let manifest = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"))
+            .expect("read manifest");
+
+        let feature_sections = manifest
+            .lines()
+            .filter(|line| line.trim() == "[features]")
+            .count();
+        assert_eq!(
+            feature_sections, 1,
+            "gcore manifest should have exactly one [features] section"
+        );
+
+        let indexing_feature = manifest
+            .lines()
+            .find(|line| line.trim_start().starts_with("indexing = ["))
+            .expect("indexing feature");
+        for dependency in ["dep:ignore", "dep:sha2"] {
+            assert!(
+                indexing_feature.contains(&format!("\"{dependency}\"")),
+                "indexing feature should include {dependency}"
+            );
+        }
+        for forbidden in ["tree-sitter", "markdown", "wiki"] {
+            assert!(
+                !indexing_feature.contains(forbidden),
+                "indexing feature should not include domain dependency {forbidden:?}"
+            );
+        }
+    }
 }
