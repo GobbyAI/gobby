@@ -1034,8 +1034,10 @@ mod tests {
 
     #[test]
     fn project_id_only_context_rejects_empty_id_before_runtime_resolution() {
-        let err = Context::resolve_for_project_id("  ", true)
-            .expect_err("empty project id should fail before DB resolution");
+        let err = match Context::resolve_for_project_id("  ", true) {
+            Ok(_) => panic!("empty project id should fail before DB resolution"),
+            Err(err) => err,
+        };
 
         assert!(err.to_string().contains("--project-id must not be empty"));
     }
