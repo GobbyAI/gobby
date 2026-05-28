@@ -1,4 +1,7 @@
 //! Generic indexing primitives shared by indexing consumers.
+//!
+//! This module is available with the `indexing` feature. Domain-specific
+//! parsers, symbol models, and graph facts stay in consumer crates.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, Read};

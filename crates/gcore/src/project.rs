@@ -37,3 +37,31 @@ pub fn read_project_id(project_root: &Path) -> anyhow::Result<String> {
         .map(String::from)
         .context("'id' field not found in .gobby/project.json")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn read_project_id_is_non_destructive() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let gobby_dir = tmp.path().join(".gobby");
+        fs::create_dir(&gobby_dir).expect("create .gobby");
+        let project_json = gobby_dir.join("project.json");
+        let contents = r#"{
+  "id": "project-id",
+  "name": "example"
+}
+"#;
+        fs::write(&project_json, contents).expect("write project json");
+
+        let project_id = read_project_id(tmp.path()).expect("read project id");
+
+        assert_eq!(project_id, "project-id");
+        assert_eq!(
+            fs::read_to_string(&project_json).expect("read project json"),
+            contents
+        );
+    }
+}

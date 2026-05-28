@@ -1,4 +1,7 @@
 //! Generic search result and rank-fusion primitives.
+//!
+//! This module is available with the `search` feature. Domain-specific query
+//! behavior stays with the consuming crate.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
