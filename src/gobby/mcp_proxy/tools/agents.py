@@ -317,9 +317,14 @@ def create_agents_registry(
         requested_timeout = max(
             0.0, min(float(timeout_seconds), _WAIT_FOR_AGENT_MAX_TIMEOUT_SECONDS)
         )
-        timeout = requested_timeout
-        if timeout >= _WAIT_FOR_AGENT_TRANSPORT_BOUNDARY_SECONDS:
-            timeout = max(0.0, timeout - _WAIT_FOR_AGENT_TRANSPORT_HEADROOM_SECONDS)
+        timeout = min(
+            requested_timeout,
+            max(
+                0.0,
+                _WAIT_FOR_AGENT_TRANSPORT_BOUNDARY_SECONDS
+                - _WAIT_FOR_AGENT_TRANSPORT_HEADROOM_SECONDS,
+            ),
+        )
         interval = max(0.1, min(float(poll_interval_seconds), 30.0))
         deadline = time.monotonic() + timeout
 
