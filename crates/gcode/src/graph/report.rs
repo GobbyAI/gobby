@@ -192,6 +192,10 @@ impl std::error::Error for ProjectGraphReportError {}
 struct ReportGraphSnapshot {
     nodes: Vec<ReportNode>,
     code_edges: Vec<ReportCodeEdge>,
+    summary: Option<GraphReportSummary>,
+    hotspots: Option<GraphReportHotspots>,
+    unresolved_targets: Option<Vec<TargetFrequency>>,
+    external_targets: Option<Vec<TargetFrequency>>,
     bridge_edges: BridgeEdgeInput,
 }
 
@@ -204,6 +208,7 @@ struct ReportNode {
 }
 
 impl ReportNode {
+    #[cfg(test)]
     fn new(id: impl Into<String>, name: impl Into<String>, node_type: impl Into<String>) -> Self {
         Self {
             id: id.into(),
@@ -228,6 +233,7 @@ struct ReportCodeEdge {
 }
 
 impl ReportCodeEdge {
+    #[cfg(test)]
     fn new(
         source: impl Into<String>,
         target: impl Into<String>,
@@ -282,11 +288,12 @@ pub fn generate_report_with_options(
     };
 
     let connection_config = config.connection_config();
+    let options = options.normalized();
     let result = gobby_core::falkor::with_graph(
         Some(&connection_config),
         &config.graph_name,
         ReportGraphSnapshot::default(),
-        |client| load_report_snapshot(client, &ctx.project_id),
+        |client| load_report_snapshot(client, &ctx.project_id, options.top_n),
     );
 
     match result {
@@ -340,16 +347,24 @@ fn generate_report_from_snapshot_with_options(
         .map(|node| (node.id.as_str(), node))
         .collect::<HashMap<_, _>>();
 
-    let summary = summarize_graph(&snapshot.nodes, &snapshot.code_edges);
-    let hotspots = summarize_hotspots(&snapshot.nodes, &snapshot.code_edges, options.top_n);
-    let unresolved_targets = target_frequencies(
-        &snapshot.code_edges,
-        &node_by_id,
-        "unresolved",
-        options.top_n,
-    );
-    let external_targets =
-        target_frequencies(&snapshot.code_edges, &node_by_id, "external", options.top_n);
+    let summary = snapshot
+        .summary
+        .clone()
+        .unwrap_or_else(|| summarize_graph(&snapshot.nodes, &snapshot.code_edges));
+    let hotspots = snapshot.hotspots.clone().unwrap_or_else(|| {
+        summarize_hotspots(&snapshot.nodes, &snapshot.code_edges, options.top_n)
+    });
+    let unresolved_targets = snapshot.unresolved_targets.clone().unwrap_or_else(|| {
+        target_frequencies(
+            &snapshot.code_edges,
+            &node_by_id,
+            "unresolved",
+            options.top_n,
+        )
+    });
+    let external_targets = snapshot.external_targets.clone().unwrap_or_else(|| {
+        target_frequencies(&snapshot.code_edges, &node_by_id, "external", options.top_n)
+    });
 
     let (bridge_edges, mut degradation_details) = match snapshot.bridge_edges {
         BridgeEdgeInput::Available(edges) => (normalize_bridge_edges(edges), vec![]),
@@ -402,20 +417,32 @@ fn generate_report_from_snapshot_with_options(
 fn load_report_snapshot(
     client: &mut GraphClient,
     project_id: &str,
+    top_n: usize,
 ) -> anyhow::Result<ReportGraphSnapshot> {
-    let (query, params) = report_nodes_query(project_id);
-    let nodes = client
-        .query(&query, Some(params))?
-        .iter()
-        .filter_map(row_to_report_node)
-        .collect::<Vec<_>>();
+    let (query, params) = report_node_counts_query(project_id);
+    let node_counts_by_type = rows_to_named_counts(client.query(&query, Some(params))?);
+    let node_count = node_counts_by_type.values().sum();
 
-    let (query, params) = report_code_edges_query(project_id);
-    let code_edges = client
-        .query(&query, Some(params))?
-        .iter()
-        .filter_map(row_to_report_code_edge)
-        .collect::<Vec<_>>();
+    let (query, params) = report_code_edge_counts_query(project_id);
+    let code_edge_counts = rows_to_named_counts(client.query(&query, Some(params))?);
+    let edge_count = code_edge_counts.values().sum();
+
+    let summary = GraphReportSummary {
+        node_count,
+        edge_count,
+        node_counts_by_type,
+        code_edge_counts,
+    };
+
+    let hotspots = GraphReportHotspots {
+        high_degree_files: load_hotspots(client, project_id, "file", top_n)?,
+        high_degree_symbols: load_hotspots(client, project_id, "symbol", top_n)?,
+        high_degree_modules: load_hotspots(client, project_id, "module", top_n)?,
+        incoming_call_hotspots: load_incoming_call_hotspots(client, project_id, top_n)?,
+    };
+
+    let unresolved_targets = load_target_frequencies(client, project_id, "unresolved", top_n)?;
+    let external_targets = load_target_frequencies(client, project_id, "external", top_n)?;
 
     let (query, params) = report_bridge_edges_query(project_id);
     let bridge_edges = match client.query(&query, Some(params)) {
@@ -428,40 +455,138 @@ fn load_report_snapshot(
     };
 
     Ok(ReportGraphSnapshot {
-        nodes,
-        code_edges,
+        nodes: vec![],
+        code_edges: vec![],
+        summary: Some(summary),
+        hotspots: Some(hotspots),
+        unresolved_targets: Some(unresolved_targets),
+        external_targets: Some(external_targets),
         bridge_edges,
     })
 }
 
-fn report_nodes_query(project_id: &str) -> (String, HashMap<String, String>) {
+fn report_node_type_case(alias: &str) -> String {
+    format!(
+        "CASE \
+          WHEN {alias}:CodeFile THEN 'file' \
+          WHEN {alias}:CodeModule THEN 'module' \
+          WHEN {alias}:CodeSymbol THEN coalesce({alias}.kind, 'symbol') \
+          WHEN {alias}:UnresolvedCallee THEN 'unresolved' \
+          WHEN {alias}:ExternalSymbol THEN 'external' \
+          ELSE 'node' \
+        END"
+    )
+}
+
+fn report_node_id_expr(alias: &str) -> String {
+    format!("coalesce({alias}.id, {alias}.path, {alias}.name)")
+}
+
+fn report_node_name_expr(alias: &str) -> String {
+    format!("coalesce({alias}.name, {alias}.path, {alias}.id)")
+}
+
+fn report_node_counts_query(project_id: &str) -> (String, HashMap<String, String>) {
     (
         "MATCH (n {project: $project}) \
          WHERE n:CodeFile OR n:CodeSymbol OR n:CodeModule OR n:UnresolvedCallee OR n:ExternalSymbol \
-         RETURN coalesce(n.id, n.path, n.name) AS id, \
-                coalesce(n.name, n.path, n.id) AS name, \
-                CASE \
+         RETURN CASE \
                   WHEN n:CodeFile THEN 'file' \
                   WHEN n:CodeModule THEN 'module' \
                   WHEN n:CodeSymbol THEN coalesce(n.kind, 'symbol') \
                   WHEN n:UnresolvedCallee THEN 'unresolved' \
                   WHEN n:ExternalSymbol THEN 'external' \
                   ELSE 'node' \
-                END AS node_type, \
-                coalesce(n.file_path, n.path) AS file_path"
+                END AS name, \
+                count(n) AS count"
             .to_string(),
         typed_query::string_params(&[("project", project_id)]),
     )
 }
 
-fn report_code_edges_query(project_id: &str) -> (String, HashMap<String, String>) {
+fn report_code_edge_counts_query(project_id: &str) -> (String, HashMap<String, String>) {
     (
         "MATCH (source {project: $project})-[r]->(target {project: $project}) \
          WHERE type(r) IN ['DEFINES', 'IMPORTS', 'CALLS'] \
-         RETURN coalesce(source.id, source.path, source.name) AS source, \
-                coalesce(target.id, target.path, target.name) AS target, \
-                type(r) AS edge_type"
+         RETURN type(r) AS name, count(r) AS count"
             .to_string(),
+        typed_query::string_params(&[("project", project_id)]),
+    )
+}
+
+fn report_hotspots_query(
+    project_id: &str,
+    node_class: &str,
+    top_n: usize,
+) -> (String, HashMap<String, String>) {
+    let predicate = match node_class {
+        "file" => "n:CodeFile",
+        "module" => "n:CodeModule",
+        _ => "n:CodeSymbol",
+    };
+    let limit = top_n.max(1);
+    (
+        format!(
+            "MATCH (n {{project: $project}}) \
+             WHERE {predicate} \
+             OPTIONAL MATCH (n)-[out]->(out_target {{project: $project}}) \
+             WHERE type(out) IN ['DEFINES', 'IMPORTS', 'CALLS'] \
+               AND (out_target:CodeFile OR out_target:CodeSymbol OR out_target:CodeModule OR out_target:UnresolvedCallee OR out_target:ExternalSymbol) \
+             WITH n, count(out) AS outgoing \
+             OPTIONAL MATCH (in_source {{project: $project}})-[inc]->(n) \
+             WHERE type(inc) IN ['DEFINES', 'IMPORTS', 'CALLS'] \
+               AND (in_source:CodeFile OR in_source:CodeSymbol OR in_source:CodeModule OR in_source:UnresolvedCallee OR in_source:ExternalSymbol) \
+             WITH n, outgoing, count(inc) AS incoming \
+             WITH n, outgoing, incoming, outgoing + incoming AS degree \
+             WHERE degree > 0 \
+             RETURN {} AS id, {} AS name, {} AS node_type, degree, incoming, outgoing, coalesce(n.file_path, n.path) AS file_path \
+             ORDER BY degree DESC, name ASC, id ASC \
+             LIMIT {limit}",
+            report_node_id_expr("n"),
+            report_node_name_expr("n"),
+            report_node_type_case("n")
+        ),
+        typed_query::string_params(&[("project", project_id)]),
+    )
+}
+
+fn report_incoming_call_hotspots_query(
+    project_id: &str,
+    top_n: usize,
+) -> (String, HashMap<String, String>) {
+    let limit = top_n.max(1);
+    (
+        format!(
+            "MATCH (:CodeSymbol {{project: $project}})-[r:CALLS]->(n:CodeSymbol {{project: $project}}) \
+             WITH n, count(r) AS incoming \
+             WHERE incoming > 0 \
+             RETURN n.id AS id, coalesce(n.name, n.id) AS name, {} AS node_type, incoming AS degree, incoming, 0 AS outgoing, n.file_path AS file_path \
+             ORDER BY degree DESC, name ASC, id ASC \
+             LIMIT {limit}",
+            report_node_type_case("n")
+        ),
+        typed_query::string_params(&[("project", project_id)]),
+    )
+}
+
+fn report_target_frequencies_query(
+    project_id: &str,
+    target_type: &str,
+    top_n: usize,
+) -> (String, HashMap<String, String>) {
+    let target_label = if target_type == "external" {
+        "ExternalSymbol"
+    } else {
+        "UnresolvedCallee"
+    };
+    let limit = top_n.max(1);
+    (
+        format!(
+            "MATCH (:CodeSymbol {{project: $project}})-[r:CALLS]->(target:{target_label} {{project: $project}}) \
+             RETURN target.id AS id, coalesce(target.name, target.id) AS name, count(r) AS count \
+             ORDER BY count DESC, name ASC, id ASC \
+             LIMIT {limit}"
+        ),
         typed_query::string_params(&[("project", project_id)]),
     )
 }
@@ -484,20 +609,75 @@ fn report_bridge_edges_query(project_id: &str) -> (String, HashMap<String, Strin
     )
 }
 
-fn row_to_report_node(row: &Row) -> Option<ReportNode> {
-    let id = row_string(row, &["id"])?;
-    let name = row_string(row, &["name"]).unwrap_or_else(|| id.clone());
-    let node_type = row_string(row, &["node_type"]).unwrap_or_else(|| "node".to_string());
-    let mut node = ReportNode::new(id, name, node_type);
-    node.file_path = row_string(row, &["file_path"]);
-    Some(node)
+fn rows_to_named_counts(rows: Vec<Row>) -> BTreeMap<String, usize> {
+    rows.iter()
+        .filter_map(|row| {
+            let name = row_string(row, &["name"])?;
+            let count = row_usize(row, &["count"]).unwrap_or(0);
+            Some((name, count))
+        })
+        .collect()
 }
 
-fn row_to_report_code_edge(row: &Row) -> Option<ReportCodeEdge> {
-    let source = row_string(row, &["source"])?;
-    let target = row_string(row, &["target"])?;
-    let edge_type = row_string(row, &["edge_type"]).unwrap_or_else(|| "CALLS".to_string());
-    Some(ReportCodeEdge::new(source, target, edge_type))
+fn load_hotspots(
+    client: &mut GraphClient,
+    project_id: &str,
+    node_class: &str,
+    top_n: usize,
+) -> anyhow::Result<Vec<GraphHotspot>> {
+    let (query, params) = report_hotspots_query(project_id, node_class, top_n);
+    Ok(client
+        .query(&query, Some(params))?
+        .iter()
+        .filter_map(row_to_graph_hotspot)
+        .collect())
+}
+
+fn load_incoming_call_hotspots(
+    client: &mut GraphClient,
+    project_id: &str,
+    top_n: usize,
+) -> anyhow::Result<Vec<GraphHotspot>> {
+    let (query, params) = report_incoming_call_hotspots_query(project_id, top_n);
+    Ok(client
+        .query(&query, Some(params))?
+        .iter()
+        .filter_map(row_to_graph_hotspot)
+        .collect())
+}
+
+fn load_target_frequencies(
+    client: &mut GraphClient,
+    project_id: &str,
+    target_type: &str,
+    top_n: usize,
+) -> anyhow::Result<Vec<TargetFrequency>> {
+    let (query, params) = report_target_frequencies_query(project_id, target_type, top_n);
+    Ok(client
+        .query(&query, Some(params))?
+        .iter()
+        .filter_map(row_to_target_frequency)
+        .collect())
+}
+
+fn row_to_graph_hotspot(row: &Row) -> Option<GraphHotspot> {
+    Some(GraphHotspot {
+        id: row_string(row, &["id"])?,
+        name: row_string(row, &["name"])?,
+        node_type: row_string(row, &["node_type"]).unwrap_or_else(|| "node".to_string()),
+        degree: row_usize(row, &["degree"]).unwrap_or(0),
+        incoming: row_usize(row, &["incoming"]).unwrap_or(0),
+        outgoing: row_usize(row, &["outgoing"]).unwrap_or(0),
+        file_path: row_string(row, &["file_path"]),
+    })
+}
+
+fn row_to_target_frequency(row: &Row) -> Option<TargetFrequency> {
+    Some(TargetFrequency {
+        id: row_string(row, &["id"])?,
+        name: row_string(row, &["name"])?,
+        count: row_usize(row, &["count"]).unwrap_or(0),
+    })
 }
 
 fn row_to_bridge_edge_hypothesis(row: &Row) -> Option<BridgeEdgeHypothesis> {
@@ -979,6 +1159,7 @@ mod tests {
                 "gobby-memory",
                 Some(0.72),
             )]),
+            ..ReportGraphSnapshot::default()
         };
 
         let report = generate_report_from_snapshot("project-1", "2026-05-28T00:00:00Z", snapshot);
@@ -1023,6 +1204,7 @@ mod tests {
             nodes: vec![ReportNode::new("symbol-1", "handler", "function")],
             code_edges: vec![],
             bridge_edges: BridgeEdgeInput::available(vec![edge]),
+            ..ReportGraphSnapshot::default()
         };
         let report = generate_report_from_snapshot("project-1", "2026-05-28T00:00:00Z", snapshot);
         let json = serde_json::to_value(&report).expect("report serializes");
@@ -1057,6 +1239,7 @@ mod tests {
                 nodes: vec![ReportNode::new("symbol-1", "handler", "function")],
                 code_edges: vec![],
                 bridge_edges: BridgeEdgeInput::unavailable("bridge edge query timed out"),
+                ..ReportGraphSnapshot::default()
             },
         );
 

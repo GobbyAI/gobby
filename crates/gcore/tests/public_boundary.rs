@@ -21,7 +21,7 @@ fn cargo_features_define_public_boundary() {
 
     for expected in [
         "default = []",
-        r#"postgres = ["dep:postgres", "dep:postgres-types"]"#,
+        r#"postgres = ["dep:postgres", "dep:postgres-types", "dep:postgres-native-tls", "dep:native-tls"]"#,
         r#"falkor = ["dep:falkordb", "dep:urlencoding"]"#,
         r#"qdrant = ["dep:reqwest"]"#,
         r#"indexing = ["dep:ignore", "dep:sha2"]"#,
@@ -31,6 +31,8 @@ fn cargo_features_define_public_boundary() {
         r#"thiserror = "2""#,
         r#"postgres = { version = "0.19", optional = true }"#,
         r#"postgres-types = { version = "0.2", optional = true }"#,
+        r#"postgres-native-tls = { version = "0.5", optional = true }"#,
+        r#"native-tls = { version = "0.2", optional = true }"#,
         r#"falkordb = { version = "0.2", optional = true }"#,
         r#"reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"], optional = true }"#,
         r#"ignore = { version = "0.4", optional = true }"#,

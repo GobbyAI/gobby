@@ -115,7 +115,7 @@ fn resolve_index_context(
                 "Warning: path '{}' belongs to project {} (not {}), re-resolving context",
                 p,
                 short_id(&identity.project_id),
-                &ctx.project_id[..8]
+                short_id(&ctx.project_id)
             );
         }
         if identity.should_write_gcode_json {

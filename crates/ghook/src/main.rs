@@ -27,6 +27,7 @@ mod cli_config;
 mod detach;
 mod diagnose;
 mod envelope;
+mod planned_shutdown;
 mod statusline;
 mod terminal_context;
 mod transport;
@@ -138,6 +139,10 @@ fn run_gobby_owned(args: &Args) -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    if planned_shutdown::should_continue_before_dispatch(hook_type) {
+        return emit_action(continue_action());
+    }
+
     if statusline::is_statusline_hook(cli, hook_type) {
         let mut stdin_raw = Vec::with_capacity(4096);
         if let Err(e) = std::io::stdin().read_to_end(&mut stdin_raw) {
@@ -238,7 +243,7 @@ fn run_gobby_owned(args: &Args) -> ExitCode {
     }
 
     // Best-effort POST. Enqueue file is deleted on 2xx; otherwise kept.
-    let daemon_url = gobby_core::daemon_url::daemon_url();
+    let daemon_url = planned_shutdown::daemon_url();
     let report = transport::post_and_cleanup(&env, &enqueued_path, &daemon_url);
     let action = match report.outcome {
         transport::DeliveryOutcome::Delivered => {
@@ -254,6 +259,14 @@ fn run_gobby_owned(args: &Args) -> ExitCode {
             }
         }
         transport::DeliveryOutcome::Enqueued => {
+            if planned_shutdown::suppress_after_failed_post(
+                hook_type,
+                report.failure_kind,
+                &enqueued_path,
+            ) {
+                return emit_action(continue_action());
+            }
+
             let detail = report
                 .response_body
                 .or(report.transport_error)
@@ -270,6 +283,14 @@ fn run_gobby_owned(args: &Args) -> ExitCode {
     };
 
     emit_action(action)
+}
+
+fn continue_action() -> HookAction {
+    HookAction {
+        exit_code: 0,
+        stdout_json: Some(serde_json::json!({"continue": true}).to_string()),
+        stderr_message: None,
+    }
 }
 
 fn hooks_disabled_by_env() -> bool {

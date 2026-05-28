@@ -58,6 +58,8 @@ pub fn is_binary(path: &Path) -> bool {
 /// Patterns listed in `ROOT_GENERATED_DIRS` match only the first relative path
 /// component, so source paths like `src/package/build/mod.rs` remain indexable.
 /// Other exclude patterns match any component of the relative path.
+/// Root-generated directory names are literal component names; wildcard
+/// patterns such as `build*` do not get root-only special handling.
 pub fn should_exclude_path(root: &Path, path: &Path, patterns: &[String]) -> bool {
     let rel = path.strip_prefix(root).unwrap_or(path);
 

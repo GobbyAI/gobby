@@ -464,8 +464,9 @@ impl CodeSymbolVectorLifecycle {
     ) -> Result<CodeSymbolVectorLifecycleOutput, VectorLifecycleError> {
         self.ensure_collection()?;
         let points = self.points_for_symbols(symbols)?;
-        self.delete_vectors(Some(file_path))?;
+        let point_ids = point_ids(&points);
         self.upsert_points(points)?;
+        self.delete_stale_vectors(Some(file_path), &point_ids)?;
 
         Ok(self.output(
             CodeSymbolVectorLifecycleAction::SyncFile,
@@ -479,11 +480,18 @@ impl CodeSymbolVectorLifecycle {
     pub fn clear_project_vectors(
         &mut self,
     ) -> Result<CodeSymbolVectorLifecycleOutput, VectorLifecycleError> {
-        let expected = self.expected_schema()?;
         self.require_qdrant_boundary()?;
         let deleted = match self.get_collection_schema()? {
             Some(found) => {
-                self.ensure_compatible_schema(expected, found)?;
+                if let Some(size) = self.settings.vector_dim {
+                    self.ensure_compatible_schema(
+                        VectorCollectionSchema {
+                            size,
+                            distance: VECTOR_DISTANCE_COSINE.to_string(),
+                        },
+                        found,
+                    )?;
+                }
                 self.delete_vectors(None)?;
                 1
             }
@@ -499,8 +507,9 @@ impl CodeSymbolVectorLifecycle {
     ) -> Result<CodeSymbolVectorLifecycleOutput, VectorLifecycleError> {
         self.ensure_collection()?;
         let points = self.points_for_symbols(symbols)?;
-        self.delete_vectors(None)?;
+        let point_ids = point_ids(&points);
         self.upsert_points(points)?;
+        self.delete_stale_vectors(None, &point_ids)?;
 
         Ok(self.output(
             CodeSymbolVectorLifecycleAction::Rebuild,
@@ -646,6 +655,22 @@ impl CodeSymbolVectorLifecycle {
         .map(|_| ())
     }
 
+    fn delete_stale_vectors(
+        &self,
+        file_path: Option<&str>,
+        keep_point_ids: &[String],
+    ) -> Result<(), VectorLifecycleError> {
+        delete_vectors_for_filter_excluding_ids(
+            &self.client,
+            &self.qdrant,
+            &self.collection,
+            &self.project_id,
+            file_path,
+            keep_point_ids,
+        )
+        .map(|_| ())
+    }
+
     fn upsert_points(&self, points: Vec<UpsertRequest>) -> Result<(), VectorLifecycleError> {
         if points.is_empty() {
             return Ok(());
@@ -740,6 +765,10 @@ fn payload_map(
     }
 }
 
+fn point_ids(points: &[UpsertRequest]) -> Vec<String> {
+    points.iter().map(|point| point.id.clone()).collect()
+}
+
 fn parse_collection_schema(data: &Value) -> Option<ExistingVectorCollectionSchema> {
     let vectors = data.pointer("/result/config/params/vectors")?;
     let size = vectors
@@ -826,6 +855,17 @@ fn delete_vectors_for_filter(
     project_id: &str,
     file_path: Option<&str>,
 ) -> Result<bool, VectorLifecycleError> {
+    delete_vectors_for_filter_excluding_ids(client, qdrant, collection, project_id, file_path, &[])
+}
+
+fn delete_vectors_for_filter_excluding_ids(
+    client: &reqwest::blocking::Client,
+    qdrant: &QdrantConfig,
+    collection: &str,
+    project_id: &str,
+    file_path: Option<&str>,
+    keep_point_ids: &[String],
+) -> Result<bool, VectorLifecycleError> {
     let mut must = vec![json!({
         "key": "project_id",
         "match": {"value": project_id},
@@ -836,11 +876,16 @@ fn delete_vectors_for_filter(
             "match": {"value": file_path},
         }));
     }
-    let body = json!({
-        "filter": {
-            "must": must,
-        },
-    });
+    let mut filter = json!({ "must": must });
+    if !keep_point_ids.is_empty()
+        && let Some(filter) = filter.as_object_mut()
+    {
+        filter.insert(
+            "must_not".to_string(),
+            json!([{ "has_id": keep_point_ids }]),
+        );
+    }
+    let body = json!({ "filter": filter });
     let resp = qdrant_request_for_config(
         client,
         qdrant,

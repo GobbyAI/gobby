@@ -68,8 +68,16 @@ pub fn with_qdrant<T>(
         return Ok((default, ServiceState::NotConfigured));
     }
 
-    let value = f(config)?;
-    Ok((value, ServiceState::Available))
+    match f(config) {
+        Ok(value) => Ok((value, ServiceState::Available)),
+        Err(error) if is_qdrant_unreachable(&error) => Ok((
+            default,
+            ServiceState::Unreachable {
+                message: error.to_string(),
+            },
+        )),
+        Err(error) => Err(error),
+    }
 }
 
 /// Execute a vector search via Qdrant REST API.
@@ -178,6 +186,10 @@ fn parse_point_id(id: &Value) -> Option<String> {
         Value::Number(value) => Some(value.to_string()),
         _ => None,
     }
+}
+
+fn is_qdrant_unreachable(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<reqwest::Error>().is_some() || error.to_string().starts_with("Qdrant ")
 }
 
 #[cfg(test)]
@@ -353,7 +365,7 @@ mod tests {
             url: Some(base_url),
             api_key: None,
         };
-        let err = with_qdrant(Some(&config), Vec::<SearchHit>::new(), |cfg| {
+        let (hits, state) = with_qdrant(Some(&config), Vec::<SearchHit>::new(), |cfg| {
             search(
                 cfg,
                 "collection",
@@ -364,10 +376,15 @@ mod tests {
                 },
             )
         })
-        .expect_err("http errors propagate out of qdrant boundary");
+        .expect("http errors degrade out of qdrant boundary");
         request_handle.join().expect("request thread");
 
-        assert!(err.to_string().contains("Qdrant search failed: HTTP 503"));
+        assert!(hits.is_empty());
+        assert!(matches!(
+            state,
+            ServiceState::Unreachable { ref message }
+                if message.contains("Qdrant search failed: HTTP 503")
+        ));
     }
 
     fn spawn_qdrant_response(status: u16, body: Value) -> (String, thread::JoinHandle<String>) {

@@ -150,25 +150,26 @@ pub fn validate_identifier(identifier: &str, kind: IdentifierKind) -> Result<(),
 }
 
 fn render_string_literal(value: &str) -> Result<String, TypedQueryError> {
-    reject_control_characters(value, ValueContext::String)?;
     Ok(cypher_string_literal(value))
 }
 
-fn reject_control_characters(value: &str, context: ValueContext) -> Result<(), TypedQueryError> {
-    if let Some(ch) = value.chars().find(|ch| ch.is_control()) {
-        return Err(TypedQueryError::ControlCharacter {
-            context,
-            codepoint: ch as u32,
-        });
-    }
-    Ok(())
-}
-
 fn escape_string_contents(value: &str) -> String {
-    value
-        .replace('\\', "\\\\")
-        .replace('\'', "\\'")
-        .replace('"', "\\\"")
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '\\' => escaped.push_str("\\\\"),
+            '\'' => escaped.push_str("\\'"),
+            '"' => escaped.push_str("\\\""),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            '\u{0008}' => escaped.push_str("\\b"),
+            '\u{000C}' => escaped.push_str("\\f"),
+            ch if ch.is_control() => escaped.push_str(&format!("\\u{:04X}", ch as u32)),
+            ch => escaped.push(ch),
+        }
+    }
+    escaped
 }
 
 fn render_float(value: f64) -> Result<String, TypedQueryError> {
@@ -304,6 +305,37 @@ mod tests {
     }
 
     #[test]
+    fn string_literals_escape_control_characters() {
+        let rendered = render_cypher_value(&TypedValue::String(
+            "line\ncarriage\rtab\tbackspace\u{0008}form\u{000C}escape\u{001B}".into(),
+        ))
+        .expect("control characters should render as escaped literals");
+
+        assert_eq!(
+            rendered,
+            "'line\\ncarriage\\rtab\\tbackspace\\bform\\fescape\\u001B'"
+        );
+    }
+
+    #[test]
+    fn nested_string_values_escape_control_characters() {
+        let mut props = BTreeMap::new();
+        props.insert(
+            "items".to_string(),
+            TypedValue::List(vec![TypedValue::String("line\nitem".to_string())]),
+        );
+        props.insert(
+            "label".to_string(),
+            TypedValue::String("tab\tvalue".to_string()),
+        );
+
+        let rendered =
+            render_cypher_value(&TypedValue::Map(props)).expect("nested strings should render");
+
+        assert_eq!(rendered, "{items: ['line\\nitem'], label: 'tab\\tvalue'}");
+    }
+
+    #[test]
     fn invalid_identifiers_return_typed_errors() {
         let param_error =
             TypedQuery::with_params("RETURN $bad", [("bad-name", TypedValue::Bool(true))])
@@ -331,19 +363,6 @@ mod tests {
 
     #[test]
     fn unsafe_values_return_typed_errors() {
-        let control_error = TypedQuery::with_params(
-            "RETURN $name",
-            [("name", TypedValue::String("line\nbreak".to_string()))],
-        )
-        .expect_err("control characters should fail");
-        assert!(matches!(
-            control_error,
-            TypedQueryError::ControlCharacter {
-                context: ValueContext::String,
-                ..
-            }
-        ));
-
         for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
             let error = render_cypher_value(&TypedValue::Float(value))
                 .expect_err("non-finite float should fail");

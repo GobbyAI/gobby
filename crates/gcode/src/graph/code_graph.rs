@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use anyhow::Context as _;
@@ -1494,6 +1494,34 @@ fn blast_radius_file_import_query(
     )
 }
 
+fn dedupe_limited_blast_rows(mut rows: Vec<Row>, limit: usize) -> Vec<Row> {
+    rows.sort_by(|left, right| {
+        row_usize(left, &["distance"])
+            .unwrap_or(usize::MAX)
+            .cmp(&row_usize(right, &["distance"]).unwrap_or(usize::MAX))
+            .then_with(|| {
+                row_string(left, &["node_name"])
+                    .unwrap_or_default()
+                    .cmp(&row_string(right, &["node_name"]).unwrap_or_default())
+            })
+            .then_with(|| {
+                row_string(left, &["node_id"])
+                    .unwrap_or_default()
+                    .cmp(&row_string(right, &["node_id"]).unwrap_or_default())
+            })
+    });
+
+    let mut seen = HashSet::new();
+    rows.retain(|row| {
+        let Some(node_id) = row_string(row, &["node_id"]) else {
+            return false;
+        };
+        seen.insert(node_id)
+    });
+    rows.truncate(clamp_limit(limit));
+    rows
+}
+
 fn count_from_rows(rows: &[Row]) -> usize {
     rows.first()
         .and_then(|r| r.get("cnt"))
@@ -1621,6 +1649,10 @@ pub fn project_overview_graph(ctx: &Context, limit: usize) -> anyhow::Result<Gra
 pub fn file_graph(ctx: &Context, file_path: &str) -> anyhow::Result<GraphPayload> {
     with_required_core_graph(ctx, |client| {
         let mut payload = GraphPayload::default();
+        let mut file_node = GraphNode::new(file_path, file_path, "file");
+        file_node.file_path = Some(file_path.to_string());
+        payload.push_node(file_node);
+
         let (query, params) = file_symbols_query(&ctx.project_id, file_path);
         for row in client.query(&query, Some(params))? {
             add_node_from_row(&mut payload, &row, "function");
@@ -1648,9 +1680,17 @@ pub fn symbol_neighbors(
     limit: usize,
 ) -> anyhow::Result<GraphPayload> {
     with_required_core_graph(ctx, |client| {
+        let mut payload = GraphPayload::with_center(symbol_id.to_string());
+        let (query, params) = blast_radius_center_query(&ctx.project_id, symbol_id);
+        let center_rows = client.query(&query, Some(params))?;
+        let center_node = center_rows
+            .first()
+            .and_then(|row| GraphNode::from_row(row, "function"))
+            .unwrap_or_else(|| GraphNode::new(symbol_id, symbol_id, "function"));
+        payload.push_node(center_node);
+
         let (query, params) = symbol_neighbors_query(&ctx.project_id, symbol_id, limit);
         let rows = client.query(&query, Some(params))?;
-        let mut payload = GraphPayload::default();
 
         for row in rows {
             add_node_from_row(&mut payload, &row, "unresolved");
@@ -1701,6 +1741,7 @@ pub fn blast_radius_graph(
                 let (query, params) =
                     blast_radius_file_import_query(&ctx.project_id, &file_path, depth, limit);
                 rows.extend(client.query(&query, Some(params))?);
+                let rows = dedupe_limited_blast_rows(rows, limit);
                 (
                     file_path.clone(),
                     GraphNode::new(&file_path, &file_path, "file"),
@@ -1886,6 +1927,36 @@ mod tests {
         assert_eq!(encoded["links"][0]["type"], "DEFINES");
         assert_eq!(encoded["links"][0]["metadata"]["provenance"], "EXTRACTED");
         assert_eq!(encoded["links"][0]["metadata"]["source_system"], "gcode");
+    }
+
+    #[test]
+    fn file_blast_rows_are_deduped_and_limited_after_merge() {
+        let rows = vec![
+            Row::from([
+                ("node_id".to_string(), json!("symbol-2")),
+                ("node_name".to_string(), json!("zeta")),
+                ("distance".to_string(), json!(2)),
+            ]),
+            Row::from([
+                ("node_id".to_string(), json!("symbol-1")),
+                ("node_name".to_string(), json!("alpha")),
+                ("distance".to_string(), json!(1)),
+            ]),
+            Row::from([
+                ("node_id".to_string(), json!("symbol-1")),
+                ("node_name".to_string(), json!("alpha")),
+                ("distance".to_string(), json!(3)),
+            ]),
+        ];
+
+        let rows = dedupe_limited_blast_rows(rows, 1);
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            row_string(&rows[0], &["node_id"]).as_deref(),
+            Some("symbol-1")
+        );
+        assert_eq!(row_usize(&rows[0], &["distance"]), Some(1));
     }
 
     #[test]

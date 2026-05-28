@@ -688,6 +688,38 @@ fn make_executable(path: &Path) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::TEST_ENV_LOCK;
+    use std::sync::MutexGuard;
+
+    struct ScopedEnvVar {
+        key: &'static str,
+        previous: Option<String>,
+        _lock: MutexGuard<'static, ()>,
+    }
+
+    impl ScopedEnvVar {
+        fn set(key: &'static str, value: &str) -> Self {
+            let lock = TEST_ENV_LOCK
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let previous = std::env::var(key).ok();
+            unsafe { std::env::set_var(key, value) };
+            Self {
+                key,
+                previous,
+                _lock: lock,
+            }
+        }
+    }
+
+    impl Drop for ScopedEnvVar {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => unsafe { std::env::set_var(self.key, value) },
+                None => unsafe { std::env::remove_var(self.key) },
+            }
+        }
+    }
 
     #[test]
     fn gcore_yaml_reads_flat_and_nested_keys() {
@@ -735,7 +767,7 @@ embeddings:
 
     #[test]
     fn standalone_config_resolves_service_keys_and_api_key_env() {
-        unsafe { std::env::set_var("GCORE_TEST_EMBEDDING_KEY", "test-key") };
+        let _env = ScopedEnvVar::set("GCORE_TEST_EMBEDDING_KEY", "test-key");
         let mut config = StandaloneConfig::from_yaml_str(
             r#"
 databases.falkordb.host: 127.0.0.1
@@ -755,7 +787,6 @@ embeddings.api_key_env: GCORE_TEST_EMBEDDING_KEY
         assert_eq!(qdrant.url.as_deref(), Some("http://localhost:6333"));
         let embedding = crate::config::resolve_embedding_config(&mut config).expect("embedding");
         assert_eq!(embedding.api_key.as_deref(), Some("test-key"));
-        unsafe { std::env::remove_var("GCORE_TEST_EMBEDDING_KEY") };
     }
 
     #[test]

@@ -1,6 +1,6 @@
 [package]
 name = "gobby-core"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Josh Wilhelmi <hello@gobby.ai>"]
@@ -13,7 +13,7 @@ categories = ["development-tools"]
 
 [features]
 default = []
-postgres = ["dep:postgres", "dep:postgres-types"]
+postgres = ["dep:postgres", "dep:postgres-types", "dep:postgres-native-tls", "dep:native-tls"]
 falkor = ["dep:falkordb", "dep:urlencoding"]
 qdrant = ["dep:reqwest"]
 indexing = ["dep:ignore", "dep:sha2"]
@@ -30,6 +30,8 @@ thiserror = "2"
 
 postgres = { version = "0.19", optional = true }
 postgres-types = { version = "0.2", optional = true }
+postgres-native-tls = { version = "0.5", optional = true }
+native-tls = { version = "0.2", optional = true }
 falkordb = { version = "0.2", optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"], optional = true }
 ignore = { version = "0.4", optional = true }

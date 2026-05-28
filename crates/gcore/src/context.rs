@@ -4,7 +4,7 @@
 //! owns the public location for cross-crate project, daemon, and service context
 //! types as the Rust foundation expands.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::config::{
     ConfigSource, EmbeddingConfig, FalkorConfig, QdrantConfig, resolve_embedding_config,
@@ -15,19 +15,19 @@ use crate::config::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoreContext {
     /// Project root directory containing `.gobby/`.
-    pub project_root: PathBuf,
+    project_root: PathBuf,
     /// Project ID from `.gobby/project.json`.
-    pub project_id: String,
+    project_id: String,
     /// PostgreSQL hub DSN resolved by the consumer.
-    pub database_url: Option<String>,
+    database_url: Option<String>,
     /// FalkorDB config when available.
-    pub falkordb: Option<FalkorConfig>,
+    falkordb: Option<FalkorConfig>,
     /// Qdrant config when available.
-    pub qdrant: Option<QdrantConfig>,
+    qdrant: Option<QdrantConfig>,
     /// Embedding API config when available.
-    pub embedding: Option<EmbeddingConfig>,
+    embedding: Option<EmbeddingConfig>,
     /// Gobby daemon base URL.
-    pub daemon_url: Option<String>,
+    daemon_url: String,
 }
 
 impl CoreContext {
@@ -41,7 +41,7 @@ impl CoreContext {
         let falkordb = resolve_falkordb_config(source);
         let qdrant = resolve_qdrant_config(source);
         let embedding = resolve_embedding_config(source);
-        let daemon_url = Some(crate::daemon_url::daemon_url());
+        let daemon_url = crate::daemon_url::daemon_url();
 
         Self {
             project_root,
@@ -52,6 +52,34 @@ impl CoreContext {
             embedding,
             daemon_url,
         }
+    }
+
+    pub fn project_root(&self) -> &Path {
+        &self.project_root
+    }
+
+    pub fn project_id(&self) -> &str {
+        &self.project_id
+    }
+
+    pub fn database_url(&self) -> Option<&str> {
+        self.database_url.as_deref()
+    }
+
+    pub fn falkordb(&self) -> Option<&FalkorConfig> {
+        self.falkordb.as_ref()
+    }
+
+    pub fn qdrant(&self) -> Option<&QdrantConfig> {
+        self.qdrant.as_ref()
+    }
+
+    pub fn embedding(&self) -> Option<&EmbeddingConfig> {
+        self.embedding.as_ref()
+    }
+
+    pub fn daemon_url(&self) -> &str {
+        &self.daemon_url
     }
 }
 
@@ -110,13 +138,13 @@ mod tests {
 
         let context = CoreContext::build(root.clone(), "project-id".to_string(), None, &mut source);
 
-        assert_eq!(context.project_root, root);
-        assert_eq!(context.project_id, "project-id");
-        assert_eq!(context.database_url, None);
-        assert!(context.falkordb.is_none());
-        assert!(context.qdrant.is_none());
-        assert!(context.embedding.is_none());
-        assert!(context.daemon_url.is_some());
+        assert_eq!(context.project_root(), root.as_path());
+        assert_eq!(context.project_id(), "project-id");
+        assert_eq!(context.database_url(), None);
+        assert!(context.falkordb().is_none());
+        assert!(context.qdrant().is_none());
+        assert!(context.embedding().is_none());
+        assert!(!context.daemon_url().is_empty());
     }
 
     #[test]
@@ -138,25 +166,25 @@ mod tests {
             &mut source,
         );
 
-        assert_eq!(context.project_root, root);
-        assert_eq!(context.project_id, "project-id");
-        assert_eq!(context.database_url.as_deref(), Some("postgres://example"));
+        assert_eq!(context.project_root(), root.as_path());
+        assert_eq!(context.project_id(), "project-id");
+        assert_eq!(context.database_url(), Some("postgres://example"));
         assert_eq!(
-            context.falkordb.as_ref().map(|c| c.host.as_str()),
+            context.falkordb().map(|c| c.host.as_str()),
             Some("env-falkor.local")
         );
         assert_eq!(
-            context.qdrant.as_ref().and_then(|c| c.url.as_deref()),
+            context.qdrant().and_then(|c| c.url.as_deref()),
             Some("http://env-qdrant:6333")
         );
         assert_eq!(
-            context.embedding.as_ref().map(|c| c.api_base.as_str()),
+            context.embedding().map(|c| c.api_base.as_str()),
             Some("http://env-embedding:11434")
         );
         assert_eq!(
-            context.embedding.as_ref().map(|c| c.model.as_str()),
+            context.embedding().map(|c| c.model.as_str()),
             Some("env-model")
         );
-        assert!(context.daemon_url.is_some());
+        assert!(!context.daemon_url().is_empty());
     }
 }

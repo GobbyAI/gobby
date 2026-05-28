@@ -9,6 +9,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2] — gobby-hooks
+
+### Added
+
+#### gobby-hooks
+
+- **Native planned-shutdown Stop handling** — `ghook` now recognizes fresh
+  daemon shutdown markers for intentional `stop`/`restart` windows. If a Stop
+  hook fires after the daemon is already unreachable, it returns
+  `{"continue":true}` without reading stdin or enqueueing a duplicate Stop
+  envelope.
+
+### Fixed
+
+#### gobby-hooks
+
+- **Stop daemon-death race cleanup** — when the live Stop POST fails with a
+  connection or timeout error during a fresh planned shutdown, `ghook` removes
+  the just-enqueued Stop envelope and lets the host CLI continue. HTTP errors,
+  non-Stop hooks, stale or invalid markers, and envelope delete failures keep
+  the existing fail-closed behavior.
+
+## [0.9.3] — gcode
+
+### Changed
+
+#### gcode
+
+- **Shared foundation floor** — `gobby-code` now requires `gobby-core 0.2.1`
+  so published installs pick up the context, PostgreSQL, and Qdrant behavior
+  used by this release.
+
+### Fixed
+
+#### gcode
+
+- **Graph read degradation** — callers, usages, imports, and blast-radius
+  graph commands now return empty paged results when FalkorDB is unavailable
+  instead of failing before a readable response can be produced.
+- **Graph payload completeness** — file and symbol graph payloads now include
+  their center nodes, and file-target blast-radius queries dedupe merged
+  call/import rows before applying the requested limit.
+- **Graph report scalability** — graph reports now load aggregate FalkorDB
+  summaries instead of materializing every node and edge for production
+  snapshots.
+- **Index write throughput** — symbol upserts now batch rows in PostgreSQL
+  instead of issuing one statement per symbol.
+- **Vector sync lifecycle** — code-symbol vector rebuilds now upsert fresh
+  points before deleting stale vectors, and clear operations avoid unnecessary
+  embedding schema probes.
+- **Standalone setup atomicity** — standalone setup wraps reset/create work in
+  an explicit PostgreSQL transaction and reports failed creation entries.
+- **Short project ids** — short-id rendering now uses Unicode-safe character
+  boundaries.
+- **Typed graph query literals** — Cypher string literal rendering now escapes
+  control characters instead of rejecting otherwise valid strings.
+
+## [0.2.1] — gobby-core
+
+### Changed
+
+#### gobby-core
+
+- **Context API boundary** — `CoreContext` now exposes accessor methods rather
+  than public fields, and stores `daemon_url` as a concrete string.
+- **PostgreSQL TLS handling** — PostgreSQL connections now honor `sslmode` and
+  use native TLS for `prefer` and `require` modes.
+
+### Fixed
+
+#### gobby-core
+
+- **Qdrant degradation** — Qdrant HTTP and transport failures now return
+  `ServiceState::Unreachable` from `with_qdrant` instead of surfacing as hard
+  command errors.
+- **Provisioning tests** — environment-variable mutation in provisioning tests
+  now uses a scoped lock/restore guard.
+
 ## [0.9.2] — gcode
 
 ### Added

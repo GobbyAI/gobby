@@ -1,7 +1,7 @@
 use gobby_core::setup::{
     OwnedObject, SetupContext, SetupError, SetupReport, StandaloneSetup, StoreKind,
 };
-use postgres::Client;
+use postgres::{Client, GenericClient};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
@@ -593,7 +593,7 @@ impl StandaloneSetup for GcodeStandaloneSetup {
                 Ok(()) => report.created.push(object.name),
                 Err(err) => {
                     report.failed.push((object.name, err.to_string()));
-                    return Err(err);
+                    break;
                 }
             }
         }
@@ -608,21 +608,46 @@ pub fn run_standalone_setup(
     validate_standalone_request(request)?;
 
     let setup = GcodeStandaloneSetup::new(request.schema.clone());
+    begin_postgres_transaction(client)?;
+    let mut reset_report = SetupReport::default();
     if request.overwrite_code_index {
-        reset_postgres_code_index(client, setup.schema())?;
+        if let Err(err) = reset_postgres_code_index(client, setup.schema()) {
+            reset_report
+                .failed
+                .push(("code-index overwrite reset".to_string(), err.to_string()));
+            rollback_postgres_transaction(client, "code-index overwrite reset rollback")?;
+            return Ok(standalone_setup_status(&setup, reset_report));
+        }
     } else {
-        ensure_postgres_code_index_compatible(client, setup.schema())?;
+        if let Err(err) = ensure_postgres_code_index_compatible(client, setup.schema()) {
+            rollback_postgres_transaction(client, "code-index preflight rollback")?;
+            return Err(err);
+        }
     }
 
-    let mut ctx = SetupContext {
-        pg: Some(client),
-        falkor_config: None,
-        qdrant_config: None,
-        non_interactive: true,
+    let report = {
+        let mut ctx = SetupContext {
+            pg: Some(client),
+            falkor_config: None,
+            qdrant_config: None,
+            non_interactive: true,
+        };
+        setup.create(&mut ctx)?
     };
-    let report = setup.create(&mut ctx)?;
+    if report.failed.is_empty() {
+        commit_postgres_transaction(client)?;
+    } else {
+        rollback_postgres_transaction(client, "standalone setup rollback")?;
+    }
 
-    Ok(StandaloneSetupStatus {
+    Ok(standalone_setup_status(&setup, report))
+}
+
+fn standalone_setup_status(
+    setup: &GcodeStandaloneSetup,
+    report: SetupReport,
+) -> StandaloneSetupStatus {
+    StandaloneSetupStatus {
         namespace: setup.namespace().to_string(),
         schema: setup.schema().to_string(),
         created: report.created,
@@ -631,11 +656,38 @@ pub fn run_standalone_setup(
         config_file: None,
         services: None,
         embedding: None,
-    })
+    }
+}
+
+fn begin_postgres_transaction(client: &mut Client) -> Result<(), SetupError> {
+    client
+        .batch_execute("BEGIN")
+        .map_err(|err| SetupError::CreationFailed {
+            object: "standalone setup transaction".to_string(),
+            message: err.to_string(),
+        })
+}
+
+fn commit_postgres_transaction(client: &mut Client) -> Result<(), SetupError> {
+    client
+        .batch_execute("COMMIT")
+        .map_err(|err| SetupError::CreationFailed {
+            object: "standalone setup commit".to_string(),
+            message: err.to_string(),
+        })
+}
+
+fn rollback_postgres_transaction(client: &mut Client, object: &str) -> Result<(), SetupError> {
+    client
+        .batch_execute("ROLLBACK")
+        .map_err(|err| SetupError::CreationFailed {
+            object: object.to_string(),
+            message: err.to_string(),
+        })
 }
 
 pub(crate) fn ensure_postgres_code_index_compatible(
-    client: &mut Client,
+    client: &mut impl GenericClient,
     schema: &str,
 ) -> Result<(), SetupError> {
     let issues = incompatible_postgres_code_index_relations(client, schema)?;
@@ -653,7 +705,7 @@ pub(crate) fn ensure_postgres_code_index_compatible(
 }
 
 pub(crate) fn reset_postgres_code_index(
-    client: &mut Client,
+    client: &mut impl GenericClient,
     schema: &str,
 ) -> Result<(), SetupError> {
     let sql = postgres_overwrite_reset_sql(schema)?;
@@ -683,7 +735,7 @@ pub(crate) fn postgres_overwrite_reset_sql(schema: &str) -> Result<String, Setup
 }
 
 fn incompatible_postgres_code_index_relations(
-    client: &mut Client,
+    client: &mut impl GenericClient,
     schema: &str,
 ) -> Result<Vec<String>, SetupError> {
     let mut issues = Vec::new();
@@ -697,7 +749,7 @@ fn incompatible_postgres_code_index_relations(
 }
 
 fn inspect_table_contract(
-    client: &mut Client,
+    client: &mut impl GenericClient,
     schema: &str,
     contract: &TableContract,
     issues: &mut Vec<String>,
@@ -731,7 +783,7 @@ fn inspect_table_contract(
 }
 
 fn inspect_index_contract(
-    client: &mut Client,
+    client: &mut impl GenericClient,
     schema: &str,
     contract: &IndexContract,
     issues: &mut Vec<String>,
@@ -764,7 +816,7 @@ fn inspect_index_contract(
 }
 
 fn relation_kind(
-    client: &mut Client,
+    client: &mut impl GenericClient,
     schema: &str,
     relation: &str,
 ) -> Result<Option<String>, SetupError> {
@@ -784,7 +836,7 @@ fn relation_kind(
 }
 
 fn table_columns(
-    client: &mut Client,
+    client: &mut impl GenericClient,
     schema: &str,
     table: &str,
 ) -> Result<HashSet<String>, SetupError> {
@@ -814,7 +866,7 @@ struct ExistingIndexInfo {
 }
 
 fn index_info(
-    client: &mut Client,
+    client: &mut impl GenericClient,
     schema: &str,
     index: &str,
 ) -> Result<Option<ExistingIndexInfo>, SetupError> {

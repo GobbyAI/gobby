@@ -6,7 +6,8 @@
 //! schema-agnostic; consumers supply any table or index validation.
 
 use anyhow::Context;
-use postgres::{Client, NoTls};
+use postgres::{Client, NoTls, config::SslMode};
+use postgres_native_tls::MakeTlsConnector;
 
 /// Connect to the PostgreSQL hub in read-only mode.
 ///
@@ -68,7 +69,25 @@ pub fn validate_schema(
 }
 
 fn connect(database_url: &str) -> anyhow::Result<Client> {
-    Client::connect(database_url, NoTls).context("failed to connect to the Gobby PostgreSQL hub")
+    let config = database_url
+        .parse::<postgres::Config>()
+        .context("failed to parse PostgreSQL connection URL")?;
+    match config.get_ssl_mode() {
+        SslMode::Disable => config
+            .connect(NoTls)
+            .context("failed to connect to the Gobby PostgreSQL hub"),
+        SslMode::Prefer | SslMode::Require => {
+            let connector = native_tls::TlsConnector::builder()
+                .build()
+                .context("failed to build PostgreSQL TLS connector")?;
+            config
+                .connect(MakeTlsConnector::new(connector))
+                .context("failed to connect to the Gobby PostgreSQL hub")
+        }
+        _ => config
+            .connect(NoTls)
+            .context("failed to connect to the Gobby PostgreSQL hub"),
+    }
 }
 
 fn run_schema_validator<C>(
@@ -131,5 +150,18 @@ mod tests {
     fn validate_schema_accepts_postgres_client_validators() {
         let _validate: fn(&mut Client, fn(&mut Client) -> Vec<SchemaCheck>) -> Vec<SchemaCheck> =
             validate_schema;
+    }
+
+    #[test]
+    fn sslmode_parser_selects_tls_modes() {
+        let require = "postgresql://user:pass@localhost/db?sslmode=require"
+            .parse::<postgres::Config>()
+            .expect("parse require");
+        let disable = "postgresql://user:pass@localhost/db?sslmode=disable"
+            .parse::<postgres::Config>()
+            .expect("parse disable");
+
+        assert_eq!(require.get_ssl_mode(), SslMode::Require);
+        assert_eq!(disable.get_ssl_mode(), SslMode::Disable);
     }
 }

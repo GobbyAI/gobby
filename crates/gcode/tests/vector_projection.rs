@@ -5,8 +5,9 @@ use gobby_code::vector::code_symbols::{
 };
 use serde_json::{Value, json};
 use std::io::{Read, Write};
-use std::net::TcpListener;
+use std::net::{TcpListener, TcpStream};
 use std::thread;
+use std::time::Duration;
 
 fn symbol(id: &str, file_path: &str, summary: Option<&str>) -> Symbol {
     Symbol {
@@ -85,19 +86,21 @@ fn ensure_creates_missing_and_reuses_compatible() {
     assert!(qdrant_requests[1].contains("PUT /collections/code_symbols_project-1 HTTP/1.1"));
     assert!(qdrant_requests[1].contains(r#""size":3"#));
     assert!(qdrant_requests[1].contains(r#""distance":"Cosine""#));
+    assert!(qdrant_requests[2].contains("PUT /collections/code_symbols_project-1/points HTTP/1.1"));
+    assert!(qdrant_requests[2].contains(r#""provenance":"EXTRACTED""#));
+    assert!(qdrant_requests[2].contains(r#""source_system":"gcode""#));
+    assert!(qdrant_requests[2].contains(r#""source_line_start":3"#));
+    assert!(qdrant_requests[2].contains(r#""source_byte_end":40"#));
     assert!(
-        qdrant_requests[2]
+        qdrant_requests[3]
             .contains("POST /collections/code_symbols_project-1/points/delete HTTP/1.1")
     );
-    assert!(qdrant_requests[2].contains(r#""key":"project_id""#));
-    assert!(qdrant_requests[2].contains(r#""value":"project-1""#));
-    assert!(qdrant_requests[2].contains(r#""key":"file_path""#));
-    assert!(qdrant_requests[2].contains(r#""value":"src/lib.rs""#));
-    assert!(qdrant_requests[3].contains("PUT /collections/code_symbols_project-1/points HTTP/1.1"));
-    assert!(qdrant_requests[3].contains(r#""provenance":"EXTRACTED""#));
-    assert!(qdrant_requests[3].contains(r#""source_system":"gcode""#));
-    assert!(qdrant_requests[3].contains(r#""source_line_start":3"#));
-    assert!(qdrant_requests[3].contains(r#""source_byte_end":40"#));
+    assert!(qdrant_requests[3].contains(r#""key":"project_id""#));
+    assert!(qdrant_requests[3].contains(r#""value":"project-1""#));
+    assert!(qdrant_requests[3].contains(r#""key":"file_path""#));
+    assert!(qdrant_requests[3].contains(r#""value":"src/lib.rs""#));
+    assert!(qdrant_requests[3].contains(r#""must_not""#));
+    assert!(qdrant_requests[3].contains(r#""has_id":["sym-1"]"#));
     assert!(qdrant_requests[4].contains("GET /collections/code_symbols_project-1 HTTP/1.1"));
     assert!(!qdrant_requests[4].contains("DELETE"));
 }
@@ -154,11 +157,13 @@ fn clear_and_rebuild_delete_project_and_upsert_current_symbols() {
     );
     assert!(qdrant_requests[1].contains(r#""key":"project_id""#));
     assert!(!qdrant_requests[1].contains(r#""key":"file_path""#));
+    assert!(qdrant_requests[3].contains("PUT /collections/code_symbols_project-1/points HTTP/1.1"));
     assert!(
-        qdrant_requests[3]
+        qdrant_requests[4]
             .contains("POST /collections/code_symbols_project-1/points/delete HTTP/1.1")
     );
-    assert!(qdrant_requests[4].contains("PUT /collections/code_symbols_project-1/points HTTP/1.1"));
+    assert!(qdrant_requests[4].contains(r#""must_not""#));
+    assert!(qdrant_requests[4].contains(r#""has_id":["sym-1"]"#));
 }
 
 #[test]
@@ -244,13 +249,27 @@ fn spawn_http_responses(responses: Vec<(u16, Value)>) -> (String, thread::JoinHa
     (format!("http://{addr}"), handle)
 }
 
-fn read_http_request(stream: &mut impl Read) -> String {
+fn read_http_request(stream: &mut TcpStream) -> String {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .expect("set read timeout");
     let mut request = Vec::new();
     let mut buffer = [0; 4096];
     let mut expected_len = None;
 
     loop {
-        let n = stream.read(&mut buffer).expect("read request");
+        let n = match stream.read(&mut buffer) {
+            Ok(n) => n,
+            Err(err)
+                if matches!(
+                    err.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                break;
+            }
+            Err(err) => panic!("read request: {err}"),
+        };
         if n == 0 {
             break;
         }

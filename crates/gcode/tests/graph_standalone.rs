@@ -38,6 +38,7 @@ fn graph_commands_run_without_daemon_when_services_are_available() {
 
     let mut conn = Client::connect(&env.database_url, NoTls).expect("connect PostgreSQL");
     seed_project(&mut conn);
+    let _cleanup = ProjectCleanup::new(&env.database_url);
 
     let sync = run_gcode(
         &env,
@@ -121,8 +122,6 @@ fn graph_commands_run_without_daemon_when_services_are_available() {
     assert_eq!(rebuild["success"], true);
     assert_eq!(rebuild["files_processed"], 1);
     assert_eq!(rebuild["files_synced"], 1);
-
-    cleanup_project(&mut conn);
 }
 
 struct StandaloneEnv {
@@ -130,6 +129,26 @@ struct StandaloneEnv {
     falkor_host: String,
     falkor_port: String,
     falkor_password: Option<String>,
+}
+
+struct ProjectCleanup {
+    database_url: String,
+}
+
+impl ProjectCleanup {
+    fn new(database_url: &str) -> Self {
+        Self {
+            database_url: database_url.to_string(),
+        }
+    }
+}
+
+impl Drop for ProjectCleanup {
+    fn drop(&mut self) {
+        if let Ok(mut conn) = Client::connect(&self.database_url, NoTls) {
+            cleanup_project(&mut conn);
+        }
+    }
 }
 
 impl StandaloneEnv {

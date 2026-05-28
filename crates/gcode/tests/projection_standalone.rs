@@ -2,9 +2,10 @@ use postgres::{Client, NoTls};
 use serde_json::{Value, json};
 use std::fs;
 use std::io::{Read, Write};
-use std::net::TcpListener;
+use std::net::{TcpListener, TcpStream};
 use std::process::{Command, Output};
 use std::thread;
+use std::time::{Duration, Instant};
 
 const TEST_PROJECT_ID: &str = "projection-standalone-project";
 const TEST_FILE: &str = "src/lib.rs";
@@ -63,6 +64,7 @@ fn graph_and_vector_lifecycle_commands_run_without_daemon() {
 
     let mut conn = Client::connect(&env.database_url, NoTls).expect("connect PostgreSQL");
     seed_project(&mut conn);
+    let _cleanup = ProjectCleanup::new(&env.database_url);
 
     let graph_sync = json_command(
         &env,
@@ -137,8 +139,6 @@ fn graph_and_vector_lifecycle_commands_run_without_daemon() {
             "PUT /collections/code_symbols_projection-standalone-project/points HTTP/1.1"
         ))
     );
-
-    cleanup_project(&mut conn);
 }
 
 struct StandaloneEnv {
@@ -146,6 +146,26 @@ struct StandaloneEnv {
     falkor_host: String,
     falkor_port: String,
     falkor_password: Option<String>,
+}
+
+struct ProjectCleanup {
+    database_url: String,
+}
+
+impl ProjectCleanup {
+    fn new(database_url: &str) -> Self {
+        Self {
+            database_url: database_url.to_string(),
+        }
+    }
+}
+
+impl Drop for ProjectCleanup {
+    fn drop(&mut self) {
+        if let Ok(mut conn) = Client::connect(&self.database_url, NoTls) {
+            cleanup_project(&mut conn);
+        }
+    }
 }
 
 impl StandaloneEnv {
@@ -267,11 +287,15 @@ fn cleanup_project(conn: &mut Client) {
 
 fn spawn_http_responses(responses: Vec<(u16, Value)>) -> (String, thread::JoinHandle<Vec<String>>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+    listener
+        .set_nonblocking(true)
+        .expect("set test server nonblocking");
     let addr = listener.local_addr().expect("local addr");
     let handle = thread::spawn(move || {
         let mut requests = Vec::new();
         for (status, body) in responses {
-            let (mut stream, _) = listener.accept().expect("accept request");
+            let mut stream =
+                accept_with_timeout(&listener, Duration::from_secs(5)).expect("accept request");
             requests.push(read_http_request(&mut stream));
 
             let body = body.to_string();
@@ -288,13 +312,46 @@ fn spawn_http_responses(responses: Vec<(u16, Value)>) -> (String, thread::JoinHa
     (format!("http://{addr}"), handle)
 }
 
-fn read_http_request(stream: &mut impl Read) -> String {
+fn accept_with_timeout(listener: &TcpListener, timeout: Duration) -> std::io::Result<TcpStream> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match listener.accept() {
+            Ok((stream, _)) => return Ok(stream),
+            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                if Instant::now() >= deadline {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "timed out waiting for test HTTP request",
+                    ));
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(err) => return Err(err),
+        }
+    }
+}
+
+fn read_http_request(stream: &mut TcpStream) -> String {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .expect("set read timeout");
     let mut request = Vec::new();
     let mut buffer = [0; 4096];
     let mut expected_len = None;
 
     loop {
-        let n = stream.read(&mut buffer).expect("read request");
+        let n = match stream.read(&mut buffer) {
+            Ok(n) => n,
+            Err(err)
+                if matches!(
+                    err.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                break;
+            }
+            Err(err) => panic!("read request: {err}"),
+        };
         if n == 0 {
             break;
         }

@@ -9,6 +9,8 @@ use crate::models::{
     CallRelation, ContentChunk, ImportRelation, IndexedFile, IndexedProject, Symbol,
 };
 
+const SYMBOL_UPSERT_BATCH_SIZE: usize = 500;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodeFactWriteRequest {
     pub project_id: String,
@@ -73,7 +75,63 @@ pub fn delete_file_facts(
 }
 
 pub fn upsert_symbols(conn: &mut impl GenericClient, symbols: &[Symbol]) -> anyhow::Result<usize> {
-    for sym in symbols {
+    for chunk in symbols.chunks(SYMBOL_UPSERT_BATCH_SIZE) {
+        let ids = chunk.iter().map(|sym| sym.id.clone()).collect::<Vec<_>>();
+        let project_ids = chunk
+            .iter()
+            .map(|sym| sym.project_id.clone())
+            .collect::<Vec<_>>();
+        let file_paths = chunk
+            .iter()
+            .map(|sym| sym.file_path.clone())
+            .collect::<Vec<_>>();
+        let names = chunk.iter().map(|sym| sym.name.clone()).collect::<Vec<_>>();
+        let qualified_names = chunk
+            .iter()
+            .map(|sym| sym.qualified_name.clone())
+            .collect::<Vec<_>>();
+        let kinds = chunk.iter().map(|sym| sym.kind.clone()).collect::<Vec<_>>();
+        let languages = chunk
+            .iter()
+            .map(|sym| sym.language.clone())
+            .collect::<Vec<_>>();
+        let byte_starts = chunk
+            .iter()
+            .map(|sym| to_i32(sym.byte_start))
+            .collect::<Vec<_>>();
+        let byte_ends = chunk
+            .iter()
+            .map(|sym| to_i32(sym.byte_end))
+            .collect::<Vec<_>>();
+        let line_starts = chunk
+            .iter()
+            .map(|sym| to_i32(sym.line_start))
+            .collect::<Vec<_>>();
+        let line_ends = chunk
+            .iter()
+            .map(|sym| to_i32(sym.line_end))
+            .collect::<Vec<_>>();
+        let signatures = chunk
+            .iter()
+            .map(|sym| sym.signature.clone())
+            .collect::<Vec<_>>();
+        let docstrings = chunk
+            .iter()
+            .map(|sym| sym.docstring.clone())
+            .collect::<Vec<_>>();
+        let parent_symbol_ids = chunk
+            .iter()
+            .map(|sym| sym.parent_symbol_id.clone())
+            .collect::<Vec<_>>();
+        let content_hashes = chunk
+            .iter()
+            .map(|sym| sym.content_hash.clone())
+            .collect::<Vec<_>>();
+        let summaries = chunk
+            .iter()
+            .map(|sym| sym.summary.clone())
+            .collect::<Vec<_>>();
+
         conn.execute(
             "INSERT INTO code_symbols (
                 id, project_id, file_path, name, qualified_name,
@@ -81,7 +139,24 @@ pub fn upsert_symbols(conn: &mut impl GenericClient, symbols: &[Symbol]) -> anyh
                 line_start, line_end, signature, docstring,
                 parent_symbol_id, content_hash, summary,
                 created_at, updated_at
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NOW(),NOW())
+            )
+            SELECT
+                id, project_id, file_path, name, qualified_name,
+                kind, language, byte_start, byte_end,
+                line_start, line_end, signature, docstring,
+                parent_symbol_id, content_hash, summary,
+                NOW(), NOW()
+            FROM unnest(
+                $1::text[], $2::text[], $3::text[], $4::text[],
+                $5::text[], $6::text[], $7::text[], $8::int4[],
+                $9::int4[], $10::int4[], $11::int4[], $12::text[],
+                $13::text[], $14::text[], $15::text[], $16::text[]
+            ) AS t(
+                id, project_id, file_path, name, qualified_name,
+                kind, language, byte_start, byte_end,
+                line_start, line_end, signature, docstring,
+                parent_symbol_id, content_hash, summary
+            )
             ON CONFLICT(id) DO UPDATE SET
                 name=excluded.name, qualified_name=excluded.qualified_name,
                 kind=excluded.kind, byte_start=excluded.byte_start,
@@ -93,22 +168,22 @@ pub fn upsert_symbols(conn: &mut impl GenericClient, symbols: &[Symbol]) -> anyh
                              THEN NULL ELSE code_symbols.summary END,
                 updated_at=NOW()",
             &[
-                &sym.id,
-                &sym.project_id,
-                &sym.file_path,
-                &sym.name,
-                &sym.qualified_name,
-                &sym.kind,
-                &sym.language,
-                &to_i32(sym.byte_start),
-                &to_i32(sym.byte_end),
-                &to_i32(sym.line_start),
-                &to_i32(sym.line_end),
-                &sym.signature,
-                &sym.docstring,
-                &sym.parent_symbol_id,
-                &sym.content_hash,
-                &sym.summary,
+                &ids,
+                &project_ids,
+                &file_paths,
+                &names,
+                &qualified_names,
+                &kinds,
+                &languages,
+                &byte_starts,
+                &byte_ends,
+                &line_starts,
+                &line_ends,
+                &signatures,
+                &docstrings,
+                &parent_symbol_ids,
+                &content_hashes,
+                &summaries,
             ],
         )?;
     }

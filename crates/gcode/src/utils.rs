@@ -1,5 +1,5 @@
-pub fn short_id(id: &str) -> &str {
-    id.get(..8).unwrap_or(id)
+pub fn short_id(id: &str) -> String {
+    id.chars().take(8).collect()
 }
 
 #[cfg(test)]
@@ -19,5 +19,10 @@ mod tests {
     #[test]
     fn short_id_returns_input_for_exact_length() {
         assert_eq!(short_id("12345678"), "12345678");
+    }
+
+    #[test]
+    fn short_id_handles_unicode() {
+        assert_eq!(short_id("ééééééééé"), "éééééééé");
     }
 }

@@ -31,6 +31,19 @@ pub fn run(request: StandaloneSetupRequest, format: Format, quiet: bool) -> anyh
         clear_overwrite_projections(&home, &request, &service_options, service_report.as_ref())?;
     }
     let mut status = setup::run_standalone_setup(&request, &mut client)?;
+    if !status.failed.is_empty() {
+        match format {
+            Format::Json => {
+                output::print_json(&status)?;
+            }
+            Format::Text => {
+                for (object, message) in &status.failed {
+                    eprintln!("Failed to create {object}: {message}");
+                }
+            }
+        }
+        anyhow::bail!("standalone gcode setup failed");
+    }
 
     let config_file = write_gcore_config(
         &home,

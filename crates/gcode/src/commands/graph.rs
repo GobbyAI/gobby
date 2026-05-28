@@ -8,6 +8,7 @@ use crate::models::PagedResponse;
 use crate::output::{self, Format};
 use crate::projection::sync::ProjectionSyncReport;
 use crate::search::fts::{self, ResolvedGraphSymbol};
+use serde::Serialize;
 use serde_json::{Value, json};
 
 const GOBBY_HINT: &str =
@@ -320,13 +321,28 @@ fn print_graph_hint_text(ctx: &Context) {
     }
 }
 
-fn empty_response_for_unresolved(ctx: &Context, format: Format) -> anyhow::Result<()> {
+fn graph_read_unavailable(error: &anyhow::Error) -> bool {
+    matches!(
+        error.downcast_ref::<code_graph::GraphReadError>(),
+        Some(
+            code_graph::GraphReadError::NotConfigured
+                | code_graph::GraphReadError::Unreachable { .. }
+        )
+    )
+}
+
+fn empty_paged_response<T: Serialize>(
+    ctx: &Context,
+    offset: usize,
+    limit: usize,
+    format: Format,
+) -> anyhow::Result<()> {
     match format {
-        Format::Json => output::print_json(&PagedResponse::<Vec<()>> {
+        Format::Json => output::print_json(&PagedResponse::<T> {
             project_id: ctx.project_id.clone(),
             total: 0,
-            offset: 0,
-            limit: 0,
+            offset,
+            limit,
             results: vec![],
             hint: hint_for(ctx),
         }),
@@ -365,13 +381,32 @@ pub fn callers(
     offset: usize,
     format: Format,
 ) -> anyhow::Result<()> {
-    code_graph::require_graph_reads(ctx)?;
+    if let Err(err) = code_graph::require_graph_reads(ctx) {
+        if graph_read_unavailable(&err) {
+            return empty_paged_response::<crate::models::GraphResult>(ctx, offset, limit, format);
+        }
+        return Err(err);
+    }
     let symbol = match resolve_symbol(ctx, symbol_name) {
         Some(symbol) => symbol,
-        None => return empty_response_for_unresolved(ctx, format),
+        None => {
+            return empty_paged_response::<crate::models::GraphResult>(ctx, offset, limit, format);
+        }
     };
-    let total = code_graph::count_callers(ctx, &symbol.id)?;
-    let results = code_graph::find_callers(ctx, &symbol.id, offset, limit)?;
+    let total = match code_graph::count_callers(ctx, &symbol.id) {
+        Ok(total) => total,
+        Err(err) if graph_read_unavailable(&err) => {
+            return empty_paged_response::<crate::models::GraphResult>(ctx, offset, limit, format);
+        }
+        Err(err) => return Err(err),
+    };
+    let results = match code_graph::find_callers(ctx, &symbol.id, offset, limit) {
+        Ok(results) => results,
+        Err(err) if graph_read_unavailable(&err) => {
+            return empty_paged_response::<crate::models::GraphResult>(ctx, offset, limit, format);
+        }
+        Err(err) => return Err(err),
+    };
 
     match format {
         Format::Json => output::print_json(&PagedResponse {
@@ -416,13 +451,32 @@ pub fn usages(
     offset: usize,
     format: Format,
 ) -> anyhow::Result<()> {
-    code_graph::require_graph_reads(ctx)?;
+    if let Err(err) = code_graph::require_graph_reads(ctx) {
+        if graph_read_unavailable(&err) {
+            return empty_paged_response::<crate::models::GraphResult>(ctx, offset, limit, format);
+        }
+        return Err(err);
+    }
     let symbol = match resolve_symbol(ctx, symbol_name) {
         Some(symbol) => symbol,
-        None => return empty_response_for_unresolved(ctx, format),
+        None => {
+            return empty_paged_response::<crate::models::GraphResult>(ctx, offset, limit, format);
+        }
     };
-    let total = code_graph::count_usages(ctx, &symbol.id)?;
-    let results = code_graph::find_usages(ctx, &symbol.id, offset, limit)?;
+    let total = match code_graph::count_usages(ctx, &symbol.id) {
+        Ok(total) => total,
+        Err(err) if graph_read_unavailable(&err) => {
+            return empty_paged_response::<crate::models::GraphResult>(ctx, offset, limit, format);
+        }
+        Err(err) => return Err(err),
+    };
+    let results = match code_graph::find_usages(ctx, &symbol.id, offset, limit) {
+        Ok(results) => results,
+        Err(err) if graph_read_unavailable(&err) => {
+            return empty_paged_response::<crate::models::GraphResult>(ctx, offset, limit, format);
+        }
+        Err(err) => return Err(err),
+    };
 
     match format {
         Format::Json => output::print_json(&PagedResponse {
@@ -462,8 +516,19 @@ pub fn usages(
 }
 
 pub fn imports(ctx: &Context, file: &str, format: Format) -> anyhow::Result<()> {
-    code_graph::require_graph_reads(ctx)?;
-    let results = code_graph::get_imports(ctx, file)?;
+    if let Err(err) = code_graph::require_graph_reads(ctx) {
+        if graph_read_unavailable(&err) {
+            return empty_paged_response::<crate::models::GraphResult>(ctx, 0, 0, format);
+        }
+        return Err(err);
+    }
+    let results = match code_graph::get_imports(ctx, file) {
+        Ok(results) => results,
+        Err(err) if graph_read_unavailable(&err) => {
+            return empty_paged_response::<crate::models::GraphResult>(ctx, 0, 0, format);
+        }
+        Err(err) => return Err(err),
+    };
     let total = results.len();
     match format {
         Format::Json => output::print_json(&PagedResponse {
@@ -494,12 +559,23 @@ pub fn blast_radius(
     depth: usize,
     format: Format,
 ) -> anyhow::Result<()> {
-    code_graph::require_graph_reads(ctx)?;
+    if let Err(err) = code_graph::require_graph_reads(ctx) {
+        if graph_read_unavailable(&err) {
+            return empty_paged_response::<crate::models::GraphResult>(ctx, 0, 0, format);
+        }
+        return Err(err);
+    }
     let symbol = match resolve_symbol(ctx, target) {
         Some(symbol) => symbol,
-        None => return empty_response_for_unresolved(ctx, format),
+        None => return empty_paged_response::<crate::models::GraphResult>(ctx, 0, 0, format),
     };
-    let results = code_graph::blast_radius(ctx, &symbol.id, depth)?;
+    let results = match code_graph::blast_radius(ctx, &symbol.id, depth) {
+        Ok(results) => results,
+        Err(err) if graph_read_unavailable(&err) => {
+            return empty_paged_response::<crate::models::GraphResult>(ctx, 0, 0, format);
+        }
+        Err(err) => return Err(err),
+    };
     let total = results.len();
     match format {
         Format::Json => output::print_json(&PagedResponse {
@@ -547,19 +623,10 @@ mod tests {
     }
 
     #[test]
-    fn graph_reads_require_falkor() {
+    fn graph_reads_degrade_when_falkor_missing() {
         let ctx = make_ctx_no_falkordb();
 
-        let err = imports(&ctx, "src/lib.rs", Format::Json).expect_err("imports must fail");
-
-        assert!(matches!(
-            err.downcast_ref::<code_graph::GraphReadError>(),
-            Some(code_graph::GraphReadError::NotConfigured)
-        ));
-        assert!(
-            err.to_string().contains("FalkorDB is not configured"),
-            "unexpected error: {err}"
-        );
+        imports(&ctx, "src/lib.rs", Format::Text).expect("imports degrade to empty output");
     }
 
     #[test]
