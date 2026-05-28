@@ -15,8 +15,11 @@ from gobby.code_index.gcode_gateway import (
     GcodeUnavailableError,
     GcodeVersionError,
 )
+from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
 
 pytestmark = pytest.mark.unit
+GCODE_PIN = MANAGED_BIN_VERSION_PINS["gcode"]
+GCODE_PIN_STDOUT = f"gcode {GCODE_PIN}\n".encode()
 
 
 class FakeProcess:
@@ -66,7 +69,7 @@ async def test_gateway_checks_version_once_and_builds_sync_file_args(
     tmp_path: Path,
 ) -> None:
     processes = [
-        FakeProcess(stdout=b"gcode 0.9.2\n"),
+        FakeProcess(stdout=GCODE_PIN_STDOUT),
         FakeProcess(stdout=b'{"status": "ok"}'),
         FakeProcess(stdout=b'{"nodes": []}'),
     ]
@@ -103,7 +106,7 @@ async def test_gateway_checks_version_once_and_builds_sync_file_args(
             "--quiet",
         ),
     ]
-    assert gateway.checked_version == "0.9.2"
+    assert gateway.checked_version == GCODE_PIN
 
 
 async def test_gateway_builds_clear_and_rebuild_args(
@@ -111,7 +114,7 @@ async def test_gateway_builds_clear_and_rebuild_args(
     tmp_path: Path,
 ) -> None:
     processes = [
-        FakeProcess(stdout=b"gcode 0.9.2\n"),
+        FakeProcess(stdout=GCODE_PIN_STDOUT),
         FakeProcess(stdout=b'{"success": true}'),
         FakeProcess(stdout=b'{"success": true}'),
     ]
@@ -150,7 +153,7 @@ async def test_gateway_builds_graph_read_args(
     tmp_path: Path,
 ) -> None:
     processes = [
-        FakeProcess(stdout=b"gcode 0.9.2\n"),
+        FakeProcess(stdout=GCODE_PIN_STDOUT),
         FakeProcess(stdout=b'{"nodes": []}'),
         FakeProcess(stdout=b'{"nodes": []}'),
         FakeProcess(stdout=b'{"nodes": []}'),
@@ -227,16 +230,16 @@ async def test_gateway_builds_graph_read_args(
 
 
 async def test_gateway_rejects_stale_version(monkeypatch: pytest.MonkeyPatch) -> None:
-    _patch_subprocess(monkeypatch, [FakeProcess(stdout=b"gcode 0.9.1\n")])
+    _patch_subprocess(monkeypatch, [FakeProcess(stdout=b"gcode 0.0.0\n")])
     gateway = GcodeGateway(binary="/tmp/gcode")
 
-    with pytest.raises(GcodeVersionError, match="gcode >= 0.9.2 required"):
+    with pytest.raises(GcodeVersionError, match=f"gcode >= {GCODE_PIN} required"):
         await gateway.graph_clear("proj-1")
 
 
 async def test_gateway_raises_for_invalid_json(monkeypatch: pytest.MonkeyPatch) -> None:
     processes = [
-        FakeProcess(stdout=b"gcode 0.9.2\n"),
+        FakeProcess(stdout=GCODE_PIN_STDOUT),
         FakeProcess(stdout=b"not-json"),
     ]
     _patch_subprocess(monkeypatch, processes)
@@ -249,7 +252,7 @@ async def test_gateway_raises_for_invalid_json(monkeypatch: pytest.MonkeyPatch) 
 async def test_gateway_raises_for_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     timeout_proc = FakeProcess(timeout=True)
     processes = [
-        FakeProcess(stdout=b"gcode 0.9.2\n"),
+        FakeProcess(stdout=GCODE_PIN_STDOUT),
         timeout_proc,
     ]
     _patch_subprocess(monkeypatch, processes)
@@ -272,7 +275,7 @@ async def test_gateway_raises_when_binary_missing(monkeypatch: pytest.MonkeyPatc
 
 async def test_gateway_raises_for_nonzero_command(monkeypatch: pytest.MonkeyPatch) -> None:
     processes = [
-        FakeProcess(stdout=b"gcode 0.9.2\n"),
+        FakeProcess(stdout=GCODE_PIN_STDOUT),
         FakeProcess(returncode=2, stderr=b"boom"),
     ]
     _patch_subprocess(monkeypatch, processes)
