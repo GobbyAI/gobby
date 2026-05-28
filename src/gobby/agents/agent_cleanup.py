@@ -417,11 +417,14 @@ class AgentCleanupHandler:
         transitioned = False
 
         if run.status in ("pending", "running"):
+            tool_calls_count, turns_used = await self._completion_stats_for_run(run)
             if is_success:
                 updated = await self._run_db(
                     self._agent_run_manager.complete,
                     run.id,
                     result=terminal_payload,
+                    tool_calls_count=tool_calls_count,
+                    turns_used=turns_used,
                 )
                 if updated is not None:
                     terminal_run = updated
@@ -431,6 +434,8 @@ class AgentCleanupHandler:
                     self._agent_run_manager.timeout,
                     run.id,
                     error=terminal_payload,
+                    tool_calls_count=tool_calls_count,
+                    turns_used=turns_used,
                 )
                 if updated is not None:
                     terminal_run = updated
@@ -445,6 +450,8 @@ class AgentCleanupHandler:
                     self._agent_run_manager.fail,
                     run.id,
                     error=terminal_payload,
+                    tool_calls_count=tool_calls_count,
+                    turns_used=turns_used,
                 )
                 if updated is not None:
                     terminal_run = updated

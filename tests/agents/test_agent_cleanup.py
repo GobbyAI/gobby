@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -15,34 +15,49 @@ from gobby.storage.agents import AgentRun
 pytestmark = pytest.mark.unit
 
 
-def _run(task_id: str | None = "task-1") -> AgentRun:
+def _run(
+    task_id: str | None = "task-1",
+    *,
+    status: str = "success",
+    tool_calls_count: int = 0,
+    turns_used: int = 0,
+) -> AgentRun:
     return AgentRun(
         id="run-1",
         parent_session_id="parent-1",
         child_session_id="child-1",
         provider="codex",
         prompt="test",
-        status="success",
+        status=status,
         created_at="2026-05-20T00:00:00+00:00",
         updated_at="2026-05-20T00:00:00+00:00",
         task_id=task_id,
         worktree_id="wt-1",
+        tool_calls_count=tool_calls_count,
+        turns_used=turns_used,
     )
 
 
-def _handler(db: object, run_db=None) -> AgentCleanupHandler:
+def _handler(
+    db: object,
+    run_db=None,
+    *,
+    agent_run_manager=None,
+    session_manager=None,
+    task_recovery=None,
+) -> AgentCleanupHandler:
     async def default_run_db(func, *args, **kwargs):
         return func(*args, **kwargs)
 
     clearable = MagicMock()
     return AgentCleanupHandler(
-        agent_run_manager=MagicMock(),
+        agent_run_manager=agent_run_manager or MagicMock(),
         db=db,
-        get_session_manager=lambda: None,
+        get_session_manager=lambda: session_manager,
         get_session_coordinator=lambda: None,
         clone_storage=None,
         completion_registry=None,
-        task_recovery=MagicMock(),
+        task_recovery=task_recovery or AsyncMock(),
         prompt_detector=clearable,
         terminal_prompt_monitor=clearable,
         stall_classifier=clearable,
@@ -158,3 +173,51 @@ async def test_post_terminal_cleanup_skips_merge_artifact_cleanup_without_task(
 
     assert result is None
     cleanup.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_cleanup_agent_failure_persists_child_session_progress_stats() -> None:
+    failed_run = _run(status="error", tool_calls_count=7, turns_used=4)
+    recovered: list[tuple[AgentRun, str]] = []
+    cleanup_runs: list[AgentRun] = []
+
+    class RunManager:
+        failed_with: dict[str, object] | None = None
+
+        def fail(self, run_id: str, **kwargs: object) -> AgentRun:
+            self.failed_with = {"run_id": run_id, **kwargs}
+            return failed_run
+
+    class SessionManager:
+        def get(self, session_id: str) -> SimpleNamespace:
+            assert session_id == "child-1"
+            return SimpleNamespace(tool_call_count=7, turn_count=4)
+
+    class TaskRecovery:
+        async def recover_task_from_terminal_agent(self, run: AgentRun, *, outcome: str) -> None:
+            recovered.append((run, outcome))
+
+    run_manager = RunManager()
+    handler = _handler(
+        object(),
+        agent_run_manager=run_manager,
+        session_manager=SessionManager(),
+        task_recovery=TaskRecovery(),
+    )
+
+    async def post_terminal_cleanup(run: AgentRun) -> None:
+        cleanup_runs.append(run)
+
+    handler.post_terminal_cleanup = post_terminal_cleanup  # type: ignore[method-assign]
+    terminal_payload = "Agent idle: idle after max reprompt attempts"
+
+    await handler.cleanup_agent(_run(status="running"), terminal_payload=terminal_payload)
+
+    assert run_manager.failed_with == {
+        "run_id": "run-1",
+        "error": terminal_payload,
+        "tool_calls_count": 7,
+        "turns_used": 4,
+    }
+    assert recovered == [(failed_run, "failed")]
+    assert cleanup_runs == [failed_run]
