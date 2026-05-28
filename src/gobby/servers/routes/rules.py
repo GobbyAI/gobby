@@ -120,7 +120,7 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
             }
         except Exception as e:
             logger.exception("Error listing rule groups")
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.get("/tags")
     async def list_tags() -> dict[str, Any]:
@@ -138,7 +138,7 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
             }
         except Exception as e:
             logger.exception("Error listing rule tags")
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     # -----------------------------------------------------------------
     # GET /api/rules
@@ -171,7 +171,7 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
             }
         except Exception as e:
             logger.exception("Error listing rules")
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     # -----------------------------------------------------------------
     # POST /api/rules
@@ -227,7 +227,7 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
             return {"status": "success", "count": count}
         except Exception as e:
             logger.exception("Error in bulk toggle")
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     # -----------------------------------------------------------------
     # GET /api/rules/{name}
@@ -284,7 +284,7 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
         try:
             updated = manager.update(row.id, **fields)
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
         body = json.loads(updated.definition_json)
         return {

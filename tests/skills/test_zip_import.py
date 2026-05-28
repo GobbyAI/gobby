@@ -257,6 +257,16 @@ Content
 
         assert skill.name == "test-skill"
 
+    def test_load_from_zip_rejects_internal_path_escape(self, tmp_path) -> None:
+        """Internal paths must stay within the extracted ZIP root."""
+        zip_path = tmp_path / "nested.zip"
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("repo/skills/my-skill/SKILL.md", "# Test\n\nValid content")
+
+        loader = SkillLoader()
+        with pytest.raises(SkillLoadError, match="escape extracted ZIP"):
+            loader.load_from_zip(zip_path, internal_path="../outside")
+
     def test_load_from_zip_file_not_found(self, tmp_path) -> None:
         """Test that SkillLoadError is raised for missing ZIP."""
         loader = SkillLoader()

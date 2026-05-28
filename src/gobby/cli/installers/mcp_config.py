@@ -55,10 +55,7 @@ def _remove_toml_table_block(existing_text: str, *, table_prefix: str) -> str:
 
         block_end = headers[next_index].start() if next_index < len(headers) else len(existing_text)
         block = existing_text[run_start:block_end]
-        preserved_suffix = ""
-        suffix_match = re.search(r"(?s)(?P<suffix>(?:[ \t]*\n|[ \t]*#.*\n)+)\Z", block)
-        if suffix_match:
-            preserved_suffix = suffix_match.group("suffix")
+        preserved_suffix = _trailing_blank_or_comment_lines(block)
 
         rebuilt.append(existing_text[cursor:run_start])
         rebuilt.append(preserved_suffix)
@@ -67,6 +64,19 @@ def _remove_toml_table_block(existing_text: str, *, table_prefix: str) -> str:
 
     rebuilt.append(existing_text[cursor:])
     return "".join(rebuilt)
+
+
+def _trailing_blank_or_comment_lines(text: str) -> str:
+    lines = text.splitlines(keepends=True)
+    suffix: list[str] = []
+    for line in reversed(lines):
+        stripped = line.strip()
+        if stripped == "" or stripped.startswith("#"):
+            suffix.append(line)
+            continue
+        break
+    suffix.reverse()
+    return "".join(suffix)
 
 
 def _command_basename(command: Any) -> str | None:
@@ -876,9 +886,8 @@ def install_default_mcp_servers() -> dict[str, Any]:
                     except (ImportError, OSError, RuntimeError, psycopg.Error) as exc:
                         secret_store_init_failed = True
                         logger.warning(
-                            "Failed to initialize secret store for optional MCP args: %s",
-                            exc,
-                            exc_info=True,
+                            "Failed to initialize secret store for optional MCP args",
+                            exc_info=exc,
                         )
                     except Exception:
                         logger.exception(
@@ -893,15 +902,11 @@ def install_default_mcp_servers() -> dict[str, Any]:
                                 args.extend(extra_args + [secret_value])
                     except (OSError, RuntimeError, psycopg.Error) as exc:
                         logger.warning(
-                            "Failed to read optional MCP secret %s: %s",
-                            secret_name,
-                            exc,
-                            exc_info=True,
+                            "Failed to read optional MCP secret",
+                            exc_info=exc,
                         )
                     except Exception:
-                        logger.exception(
-                            "Unexpected error reading optional MCP secret %s", secret_name
-                        )
+                        logger.exception("Unexpected error reading optional MCP secret")
                         raise
 
             existing_config["servers"].append(

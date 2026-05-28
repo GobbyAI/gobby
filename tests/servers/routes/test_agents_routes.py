@@ -407,6 +407,17 @@ class TestImportDefinition:
             response = client.post("/api/agents/definitions/import/missing")
         assert response.status_code == 404
 
+    def test_import_rejects_unsafe_name(self, client: TestClient, tmp_path: Path) -> None:
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+
+        with patch(
+            "gobby.agents.sync.get_bundled_agents_path",
+            return_value=agents_dir,
+        ):
+            response = client.post("/api/agents/definitions/import/..secret")
+        assert response.status_code == 400
+
     def test_import_with_project_id(
         self, client: TestClient, project_manager, tmp_path: Path
     ) -> None:

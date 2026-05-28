@@ -247,9 +247,7 @@ def _prompt_hub_api_keys(
                     # breadcrumb pointing at the exact hub that was pending when
                     # the user (or upstream) interrupted.
                     logger.debug(
-                        "Hub key prompt aborted at hub=%r key=%r; remaining=%d",
-                        hub_name,
-                        auth_key_name,
+                        "Hub key prompt aborted; remaining=%d",
                         len(pending) - idx,
                         exc_info=abort_exc,
                     )
@@ -266,18 +264,19 @@ def _prompt_hub_api_keys(
                             category="integration",
                             description=f"API key for {hub_name} skill hub",
                         )
-                        click.echo(f"    Stored {auth_key_name}")
+                        click.echo("    Stored credential")
                         result["stored"] += 1
                     except Exception as e:
-                        logger.warning("Failed to store %s: %s", auth_key_name, e)
-                        click.echo(f"    Warning: Failed to store {auth_key_name}: {e}")
+                        logger.warning("Failed to store hub credential", exc_info=e)
+                        click.echo("    Warning: Failed to store credential")
                         result["unresolved"].append((hub_name, auth_key_name))
                 else:
                     result["skipped"] += 1
                     result["unresolved"].append((hub_name, auth_key_name))
             return result
     except Exception as e:
-        click.echo(f"  Warning: Could not initialize hub key prompt: {e}")
+        logger.debug("Could not initialize hub key prompt", exc_info=e)
+        click.echo("  Warning: Could not initialize hub key prompt")
         return result
 
 
@@ -343,17 +342,18 @@ def _prompt_api_keys(
                             category=key_info["category"],
                             description=key_info["description"],
                         )
-                        click.echo(f"    Stored {secret_name}")
+                        click.echo("    Stored secret")
                         result["stored"] += 1
                     except Exception as e:
-                        logger.warning("Failed to store %s: %s", secret_name, e)
-                        click.echo(f"    Warning: Failed to store {secret_name}: {e}")
+                        logger.warning("Failed to store prompted secret", exc_info=e)
+                        click.echo("    Warning: Failed to store secret")
                 else:
                     result["skipped"] += 1
 
             return result
     except Exception as e:
-        click.echo(f"  Warning: Could not initialize secret store: {e}")
+        logger.debug("Could not initialize secret store prompt", exc_info=e)
+        click.echo("  Warning: Could not initialize secret store")
         return result
 
 

@@ -288,7 +288,7 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
             logger.error(f"Error initiating restart: {e}", exc_info=True)
             return {
                 "status": "error",
-                "message": f"Restart failed to initiate: {e}",
+                "message": "Restart failed to initiate",
             }
 
     @router.post("/workflows/reload")
@@ -327,7 +327,7 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
                 logger.error(f"Failed to execute reload_cache: {e}")
                 return {
                     "status": "error",
-                    "message": f"Failed to reload cache: {e}",
+                    "message": "Failed to reload cache",
                 }
 
             response_time_ms = (time.perf_counter() - start_time) * 1000
@@ -341,4 +341,4 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
 
         except Exception as e:
             logger.error(f"Error reloading workflows: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e

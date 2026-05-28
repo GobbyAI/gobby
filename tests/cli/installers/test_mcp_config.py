@@ -41,6 +41,23 @@ def test_remove_toml_table_block_preserves_trailing_comments_after_last_table() 
     assert updated.endswith("\n# trailing comment\n\n")
 
 
+def test_remove_toml_table_block_preserves_blank_comment_suffix_linearly() -> None:
+    content = (
+        "[mcp_servers.gobby]\n"
+        'command = "gobby"\n'
+        "\n"
+        "# trailing comment\n"
+        "\n"
+        "[mcp_servers.other]\n"
+        'command = "other"\n'
+    )
+
+    updated = _remove_toml_table_block(content, table_prefix="mcp_servers.gobby")
+
+    assert updated.startswith("\n# trailing comment\n\n")
+    assert "[mcp_servers.other]" in updated
+
+
 # ---------------------------------------------------------------------------
 # configure_mcp_server_json
 # ---------------------------------------------------------------------------
@@ -1023,7 +1040,8 @@ class TestInstallDefaultMCPServers:
             result = install_default_mcp_servers()
 
         assert result["success"] is True
-        assert "Failed to read optional MCP secret context7_api_key" in caplog.text
+        assert "Failed to read optional MCP secret" in caplog.text
+        assert "context7_api_key" not in caplog.text
         config = json.loads(mcp_path.read_text())
         context7 = next(server for server in config["servers"] if server["name"] == "context7")
         assert context7["args"] == ["-y", "@upstash/context7-mcp"]
@@ -1044,3 +1062,4 @@ class TestInstallDefaultMCPServers:
         ):
             with pytest.raises(TypeError, match="bad read"):
                 install_default_mcp_servers()
+        assert mock_secret_store.get.call_count == 0

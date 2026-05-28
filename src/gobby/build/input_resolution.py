@@ -75,13 +75,13 @@ def resolve_plan_file_path(
     opts: BuildOptions,
 ) -> Path:
     path = Path(input_ref).expanduser()
-    if path.is_absolute():
-        return path
     base_dir = plan_file_base_dir(task_manager, project_id, opts)
-    direct_path = base_dir / path
+    direct_path = _resolve_under_base(path, base_dir, label="plan file")
     if direct_path.exists() or path.parent != Path("."):
         return direct_path
-    plans_path = base_dir / ".gobby" / "plans" / path.name
+    plans_path = _resolve_under_base(
+        Path(".gobby") / "plans" / path.name, base_dir, label="plan file"
+    )
     if plans_path.exists():
         return plans_path
     return direct_path
@@ -93,11 +93,22 @@ def plan_file_base_dir(
     opts: BuildOptions,
 ) -> Path:
     if opts.cwd is not None:
-        return opts.cwd.expanduser()
+        return opts.cwd.expanduser().resolve()
     project = LocalProjectManager(task_manager.db).get(project_id)
     if project is not None and project.repo_path:
-        return Path(project.repo_path).expanduser()
-    return Path.cwd()
+        return Path(project.repo_path).expanduser().resolve()
+    return Path.cwd().resolve()
+
+
+def _resolve_under_base(path: Path, base_dir: Path, *, label: str) -> Path:
+    base = base_dir.expanduser().resolve()
+    candidate = path if path.is_absolute() else base / path
+    resolved = candidate.expanduser().resolve()
+    try:
+        resolved.relative_to(base)
+    except ValueError:
+        raise ValueError(f"{label} must stay inside {base}") from None
+    return resolved
 
 
 def looks_like_task_ref(input_ref: str) -> bool:

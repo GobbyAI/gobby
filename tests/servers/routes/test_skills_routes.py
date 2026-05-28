@@ -8,6 +8,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
+from gobby.storage.projects import LocalProjectManager
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
@@ -33,10 +34,11 @@ def websocket_server():
 
 
 @pytest.fixture
-def server(skill_manager, hub_manager, websocket_server):
+def server(skill_manager, hub_manager, websocket_server, temp_db):
     svr = create_http_server(
         config=DaemonConfig(),
         websocket_server=websocket_server,
+        database=temp_db,
     )
     # Monkey-patch these managers since they aren't part of ServiceContainer initially
     svr.skill_manager = skill_manager
@@ -47,6 +49,13 @@ def server(skill_manager, hub_manager, websocket_server):
 @pytest.fixture
 def client(server) -> TestClient:
     return TestClient(server.app)
+
+
+@pytest.fixture
+def skill_project(temp_db, tmp_path):
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    return LocalProjectManager(temp_db).create(name="skills-project", repo_path=str(repo_path))
 
 
 class TestListSkills:
@@ -216,7 +225,7 @@ class TestImportSkill:
         )
 
     @patch("gobby.skills.loader.SkillLoader")
-    def test_import_zip(self, MockLoader, client: TestClient, skill_manager) -> None:
+    def test_import_zip(self, MockLoader, client: TestClient, skill_manager, skill_project) -> None:
         mock_loader = MockLoader.return_value
         parsed_mock = MagicMock()
         parsed_mock.name = "zip-skill"
@@ -227,11 +236,16 @@ class TestImportSkill:
         skill_mock.to_dict.return_value = {"name": "zip-skill"}
         skill_manager.create_skill.return_value = skill_mock
 
-        response = client.post("/api/skills/import", json={"source": "file.zip"})
+        response = client.post(
+            "/api/skills/import",
+            json={"source": "file.zip", "project_id": skill_project.id},
+        )
         assert response.status_code == 200
 
     @patch("gobby.skills.loader.SkillLoader")
-    def test_import_local(self, MockLoader, client: TestClient, skill_manager) -> None:
+    def test_import_local(
+        self, MockLoader, client: TestClient, skill_manager, skill_project
+    ) -> None:
         mock_loader = MockLoader.return_value
         parsed_mock = MagicMock()
         parsed_mock.name = "local-skill"
@@ -240,16 +254,33 @@ class TestImportSkill:
 
         skill_manager.create_skill.side_effect = ValueError("duplicate")
 
-        response = client.post("/api/skills/import", json={"source": "/local/path"})
+        response = client.post(
+            "/api/skills/import",
+            json={"source": ".", "project_id": skill_project.id},
+        )
         assert response.status_code == 200
         assert response.json()["imported"] == 0
 
     @patch("gobby.skills.loader.SkillLoader")
-    def test_import_error(self, MockLoader, client: TestClient) -> None:
+    def test_import_error(self, MockLoader, client: TestClient, skill_project) -> None:
         mock_loader = MockLoader.return_value
         mock_loader.load_skill.side_effect = Exception("Fail")
-        response = client.post("/api/skills/import", json={"source": "/local/path"})
+        response = client.post(
+            "/api/skills/import",
+            json={"source": ".", "project_id": skill_project.id},
+        )
         assert response.status_code == 500
+
+    def test_import_local_requires_project_id(self, client: TestClient) -> None:
+        response = client.post("/api/skills/import", json={"source": "file.zip"})
+        assert response.status_code == 400
+
+    def test_import_local_rejects_project_escape(self, client: TestClient, skill_project) -> None:
+        response = client.post(
+            "/api/skills/import",
+            json={"source": "../outside.zip", "project_id": skill_project.id},
+        )
+        assert response.status_code == 403
 
 
 class TestScanSkill:

@@ -4,7 +4,6 @@ Prompt template data models.
 Contains dataclasses for representing prompt templates with metadata.
 """
 
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -25,16 +24,24 @@ def parse_frontmatter(content: str) -> tuple[dict[str, Any], str]:
     Returns:
         Tuple of (frontmatter dict, body content)
     """
-    frontmatter_pattern = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
-    match = frontmatter_pattern.match(content)
-
-    if match:
-        try:
-            frontmatter = yaml.safe_load(match.group(1)) or {}
-            body = content[match.end() :]
-            return frontmatter, body
-        except yaml.YAMLError:
+    if not content.startswith("---"):
+        return {}, content
+    first_newline = content.find("\n")
+    if first_newline == -1 or content[:first_newline].strip() != "---":
+        return {}, content
+    body_start = first_newline + 1
+    search_from = body_start
+    while search_from < len(content):
+        line_end = content.find("\n", search_from)
+        if line_end == -1:
             return {}, content
+        if content[search_from:line_end].strip() == "---":
+            try:
+                frontmatter = yaml.safe_load(content[body_start:search_from]) or {}
+                return frontmatter, content[line_end + 1 :]
+            except yaml.YAMLError:
+                return {}, content
+        search_from = line_end + 1
 
     return {}, content
 

@@ -202,3 +202,24 @@ class TestExample:
     assert [issue.fingerprint for issue in report.issues] == [
         "tests/test_sample.py::TestExample.test_padding::ASSERT_TRUE"
     ]
+
+
+def test_script_test_name_parser_handles_escaped_quotes(tmp_path: Path) -> None:
+    tests_dir = tmp_path / "web" / "src" / "__tests__"
+    tests_dir.mkdir(parents=True)
+    path = tests_dir / "sample.test.ts"
+    path.write_text(
+        """
+import { it, expect } from 'vitest'
+
+it("handles \\"quoted\\" names", () => {
+  expect(true).toBe(true)
+})
+""",
+        encoding="utf-8",
+    )
+
+    report = audit_paths([path], root=tmp_path)
+
+    assert report.tests_scanned == 1
+    assert report.issues == ()

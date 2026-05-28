@@ -73,6 +73,7 @@ import {
   formatFieldName,
   getSchemaProperties,
   getSchemaType,
+  splitSafeConfigPath,
   toApprovalRuleRows,
 } from './ConfigurationPage.helpers'
 import { SchemaField, SchemaSection } from './ConfigurationPage.SchemaField'
@@ -106,7 +107,8 @@ function ConfigFormTab({ schema, values: initialValues, onSave, onReset, secretK
   const handleChange = useCallback((path: string, value: unknown) => {
     setLocalValues(prev => {
       const next = { ...prev }
-      const parts = path.split('.')
+      const parts = splitSafeConfigPath(path)
+      if (!parts) return prev
       let current: Record<string, unknown> = next
       for (let i = 0; i < parts.length - 1; i++) {
         if (!current[parts[i]] || typeof current[parts[i]] !== 'object') {

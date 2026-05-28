@@ -3,6 +3,7 @@ import { cn } from '../../lib/utils'
 import { useDialogFocus } from '../../hooks/useDialogFocus'
 import { SOURCE_BADGE_CLS, SOURCE_BADGE_BG, FORM_CANCEL_BTN_CLS, FORM_SAVE_BTN_CLS } from './styles'
 import { Heading } from '../shared/Heading'
+import { detectSourceType } from './sourceType'
 
 const OVERLAY_CLS =
   'fixed inset-0 z-[100] flex items-center justify-center bg-[var(--surface-scrim)] [animation:fade-in_0.2s_ease]'
@@ -22,15 +23,6 @@ const FOOTER_CLS = 'flex justify-end gap-2 border-t border-[var(--border)] px-5 
 interface SkillImportModalProps {
   onImport: (source: string) => Promise<void>
   onClose: () => void
-}
-
-function detectSourceType(source: string): string {
-  const s = source.trim()
-  if (s.startsWith('github:') || s.startsWith('https://github.com') || s.startsWith('http://github.com')) return 'github'
-  if (s.endsWith('.zip')) return 'zip'
-  if (s.startsWith('/') || s.startsWith('./') || s.startsWith('~')) return 'local'
-  if (s.includes('/') && !s.startsWith('http')) return 'github'
-  return 'unknown'
 }
 
 export function SkillImportModal({ onImport, onClose }: SkillImportModalProps) {

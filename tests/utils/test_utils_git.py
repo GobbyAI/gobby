@@ -394,6 +394,15 @@ class TestGetGitMetadata:
 
         assert result == {}
 
+    def test_file_path_is_rejected(self, tmp_path: Path) -> None:
+        """Git metadata extraction requires a directory cwd."""
+        file_path = tmp_path / "not-a-dir"
+        file_path.write_text("x", encoding="utf-8")
+
+        result = get_git_metadata(file_path)
+
+        assert result == {}
+
     def test_default_cwd(self) -> None:
         """Test uses current working directory when cwd is None."""
         with (

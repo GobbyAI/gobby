@@ -23,6 +23,12 @@ logger = logging.getLogger(__name__)
 OutputCallback = Callable[[str, str], Awaitable[None]]
 
 
+def _safe_fifo_component(value: str) -> str:
+    cleaned = "".join(char if char.isalnum() or char in {"-", "_"} else "-" for char in value)
+    cleaned = cleaned.strip("-_")
+    return cleaned[:80] or "default"
+
+
 class TmuxOutputReader:
     """Streams output from tmux panes via ``pipe-pane`` to a named FIFO.
 
@@ -98,8 +104,12 @@ class TmuxOutputReader:
 
             # Create FIFO
             fifo_dir = tempfile.gettempdir()
-            socket_prefix = self._config.socket_name or "default"
-            fifo_path = os.path.join(fifo_dir, f"gobby-tmux-{socket_prefix}-{session_name}.pipe")
+            socket_prefix = _safe_fifo_component(self._config.socket_name or "default")
+            session_component = _safe_fifo_component(session_name)
+            fifo_path = os.path.join(
+                fifo_dir,
+                f"gobby-tmux-{socket_prefix}-{session_component}.pipe",
+            )
 
             # Clean up stale FIFO from previous run
             try:

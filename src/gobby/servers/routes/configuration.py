@@ -70,7 +70,7 @@ def _validate_falkordb_secret(key: str, value: Any) -> None:
 def _falkordb_validation_response(error: ValueError) -> JSONResponse:
     return JSONResponse(
         status_code=422,
-        content={"detail": str(error), "key": FALKOR_REQUIREPASS_KEY},
+        content={"detail": "Invalid FalkorDB password", "key": FALKOR_REQUIREPASS_KEY},
     )
 
 
@@ -314,7 +314,7 @@ def create_configuration_router(server: "HTTPServer") -> APIRouter:
             return JSONResponse(content={"ok": True, "requires_restart": True})
         except Exception as e:
             logger.error(f"Config reset failed: {e}")
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     # =========================================================================
     # Template (full defaults + DB overrides as YAML)
@@ -335,7 +335,7 @@ def create_configuration_router(server: "HTTPServer") -> APIRouter:
             return JSONResponse(content={"content": content})
         except Exception as e:
             logger.error(f"Failed to generate config template: {e}")
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.put("/template")
     async def save_config_template(request: SaveTemplateRequest) -> JSONResponse:
@@ -461,8 +461,8 @@ def create_configuration_router(server: "HTTPServer") -> APIRouter:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Failed to list secrets: {e}")
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            logger.error("Failed to list secrets", exc_info=e)
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/secrets")
     async def save_secret(request: SaveSecretRequest) -> JSONResponse:
@@ -481,8 +481,8 @@ def create_configuration_router(server: "HTTPServer") -> APIRouter:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Failed to save secret: {e}")
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            logger.error("Failed to save secret", exc_info=e)
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.delete("/secrets/{name}")
     async def delete_secret(name: str) -> JSONResponse:
@@ -495,8 +495,8 @@ def create_configuration_router(server: "HTTPServer") -> APIRouter:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Failed to delete secret: {e}")
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            logger.error("Failed to delete secret", exc_info=e)
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     # =========================================================================
     # Prompts
@@ -557,7 +557,7 @@ def create_configuration_router(server: "HTTPServer") -> APIRouter:
             )
         except Exception as e:
             logger.error(f"Failed to list prompts: {e}")
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.get("/prompts/{path:path}")
     async def get_prompt_detail(path: str) -> JSONResponse:
@@ -609,7 +609,7 @@ def create_configuration_router(server: "HTTPServer") -> APIRouter:
             raise
         except Exception as e:
             logger.error(f"Failed to get prompt: {e}")
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.put("/prompts/{path:path}")
     async def save_prompt_override(path: str, request: SavePromptOverrideRequest) -> JSONResponse:
@@ -661,7 +661,7 @@ def create_configuration_router(server: "HTTPServer") -> APIRouter:
             return JSONResponse(content={"ok": True})
         except Exception as e:
             logger.error(f"Failed to save prompt override: {e}")
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.delete("/prompts/{path:path}")
     async def delete_prompt_override(path: str) -> JSONResponse:
@@ -691,7 +691,7 @@ def create_configuration_router(server: "HTTPServer") -> APIRouter:
             raise
         except Exception as e:
             logger.error(f"Failed to delete prompt override: {e}")
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     # =========================================================================
     # Export / Import
@@ -747,7 +747,7 @@ def create_configuration_router(server: "HTTPServer") -> APIRouter:
             )
         except Exception as e:
             logger.error(f"Config export failed: {e}")
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/import")
     async def import_config(request: ImportConfigRequest) -> JSONResponse:
@@ -922,7 +922,7 @@ def create_configuration_router(server: "HTTPServer") -> APIRouter:
             return JSONResponse(content=result)
         except Exception as e:
             logger.error(f"Failed to get UI settings: {e}")
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.put("/ui-settings")
     async def save_ui_settings(request: SaveUISettingsRequest) -> JSONResponse:
@@ -939,7 +939,7 @@ def create_configuration_router(server: "HTTPServer") -> APIRouter:
             return JSONResponse(content={"ok": True})
         except Exception as e:
             logger.error(f"Failed to save UI settings: {e}")
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.delete("/ui-settings/{key}")
     async def delete_ui_setting(key: str) -> JSONResponse:
@@ -958,7 +958,7 @@ def create_configuration_router(server: "HTTPServer") -> APIRouter:
             raise
         except Exception as e:
             logger.error(f"Failed to delete UI setting '{key}': {e}")
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.get("/tool-approvals/global")
     async def get_global_tool_approval_rules() -> JSONResponse:
@@ -974,7 +974,7 @@ def create_configuration_router(server: "HTTPServer") -> APIRouter:
             )
         except Exception as e:
             logger.error(f"Failed to get global tool approval rules: {e}")
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.put("/tool-approvals/global")
     async def save_global_tool_approval_rules(request: SaveApprovalRulesRequest) -> JSONResponse:
@@ -993,6 +993,6 @@ def create_configuration_router(server: "HTTPServer") -> APIRouter:
             )
         except Exception as e:
             logger.error(f"Failed to save global tool approval rules: {e}")
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     return router

@@ -207,7 +207,7 @@ class SecretStore:
             decrypted: str = fernet.decrypt(row["encrypted_value"].encode("utf-8")).decode("utf-8")
             return decrypted
         except InvalidToken:
-            logger.error(f"Failed to decrypt secret '{name}' - machine ID may have changed")
+            logger.error("Failed to decrypt configured secret - machine ID may have changed")
             return None
 
     def delete(self, name: str) -> bool:
@@ -271,7 +271,7 @@ class SecretStore:
             value = self.get(name)
             if value is not None:
                 return value
-            logger.warning(f"Secret reference '$secret:{name}' not found")
+            logger.warning("Configured secret reference not found")
             return match.group(0)
 
         return SECRET_REF_PATTERN.sub(_replace, text)

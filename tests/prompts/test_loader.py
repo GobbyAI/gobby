@@ -2,7 +2,7 @@
 
 import pytest
 
-from gobby.prompts import PromptLoader, PromptTemplate
+from gobby.prompts import PromptLoader, PromptTemplate, parse_frontmatter
 from gobby.prompts.sync import sync_bundled_prompts
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.prompts import LocalPromptManager, PromptChangeNotifier
@@ -258,6 +258,14 @@ class TestPromptTemplate:
         assert template.variables["complex_var"].type == "int"
         assert template.variables["complex_var"].default == 10
         assert template.variables["complex_var"].required is True
+
+    def test_parse_frontmatter_uses_linear_delimiter_scan(self) -> None:
+        frontmatter, body = parse_frontmatter(
+            "---\ndescription: test\nnotes: |\n  --- inside yaml text\n---\nPrompt body\n"
+        )
+
+        assert frontmatter["description"] == "test"
+        assert body == "Prompt body\n"
 
 
 class TestBundledTemplates:

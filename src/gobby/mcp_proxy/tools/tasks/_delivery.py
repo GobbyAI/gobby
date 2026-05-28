@@ -565,10 +565,10 @@ def _github_token(db: Any) -> str | None:
         for name in _GITHUB_TOKEN_SECRET_NAMES:
             token = store.get(name)
             if token:
-                logger.debug("Using GitHub token from secret store entry %s", name)
+                logger.debug("Using GitHub token from configured secret store entry")
                 return token
     except (AttributeError, LookupError, OSError, RuntimeError, psycopg.Error) as exc:
-        logger.debug("GitHub token lookup from secret store failed: %s", exc, exc_info=True)
+        logger.debug("GitHub token lookup from secret store failed", exc_info=exc)
         return None
     logger.debug("No GitHub token found in environment or stored secrets")
     return None

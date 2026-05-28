@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from gobby.skills import scanner as skill_scanner
-from gobby.skills.scanner import scan_skill_content
+from gobby.skills.scanner import _safe_temp_component, scan_skill_content
 
 if TYPE_CHECKING:
     from clawcare.models import Finding, Severity
@@ -54,6 +54,10 @@ def _scan(
     """Run scan_skill_content with mocked ClawCare findings."""
     with patch("clawcare.scanner.scanner.scan_root", return_value=findings or []):
         return scan_skill_content(content, name=name)
+
+
+def test_safe_temp_component_removes_path_separators() -> None:
+    assert _safe_temp_component("../bad/name") == "bad-name"
 
 
 class TestNoFindings:

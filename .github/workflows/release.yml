@@ -12,6 +12,8 @@ on:
         default: true
         type: boolean
 
+permissions: {}
+
 jobs:
   verify-ci:
     name: Verify CI gate
@@ -40,6 +42,8 @@ jobs:
     needs: verify-ci
     if: ${{ github.event_name == 'push' && !inputs.gate_only }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -114,6 +118,7 @@ jobs:
     needs: github-release
     if: ${{ github.event_name == 'push' && !inputs.gate_only }}
     runs-on: ubuntu-latest
+    permissions: {}
     steps:
       - name: Dispatch tap workflow
         env:

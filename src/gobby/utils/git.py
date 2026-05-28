@@ -92,6 +92,19 @@ def run_git_command(command: list[str], cwd: str | Path, timeout: int = 5) -> st
         return None
 
 
+def _resolve_git_directory(cwd: str | Path | None) -> Path | None:
+    candidate = Path.cwd() if cwd is None else Path(cwd).expanduser()
+    try:
+        resolved = candidate.resolve(strict=True)
+    except OSError:
+        logger.warning("Git metadata path does not exist")
+        return None
+    if not resolved.is_dir():
+        logger.warning("Git metadata path is not a directory")
+        return None
+    return resolved
+
+
 def get_github_url(cwd: str | Path) -> str | None:
     """
     Extract git repository URL from origin remote.
@@ -176,14 +189,8 @@ def get_git_metadata(cwd: str | Path | None = None) -> GitMetadata:
         >>> metadata["git_branch"]
         'main'
     """
+    cwd = _resolve_git_directory(cwd)
     if cwd is None:
-        cwd = Path.cwd()
-    else:
-        cwd = Path(cwd)
-
-    # Verify path exists
-    if not cwd.exists():
-        logger.warning(f"Path does not exist: {cwd}")
         return GitMetadata()
 
     # Check if directory is in a git repository

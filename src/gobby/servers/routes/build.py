@@ -128,9 +128,18 @@ def _restart_option_field_was_supplied(
     ) != _build_control_default(field_name)
 
 
+def _existing_directory(value: str | None, *, field_name: str) -> Path | None:
+    if value is None:
+        return None
+    path = Path(value).expanduser().resolve()
+    if not path.is_dir():
+        raise ValueError(f"{field_name} must be an existing directory")
+    return path
+
+
 def _build_options(request_data: BuildRequest) -> BuildOptions:
-    clones_dir = Path(request_data.clones_dir).expanduser() if request_data.clones_dir else None
-    cwd = Path(request_data.cwd).expanduser() if request_data.cwd else None
+    clones_dir = _existing_directory(request_data.clones_dir, field_name="clones_dir")
+    cwd = _existing_directory(request_data.cwd, field_name="cwd")
     isolation = resolve_build_isolation(
         isolation=request_data.isolation,
         workspace_backend=request_data.workspace_backend,
@@ -165,7 +174,7 @@ def _build_options(request_data: BuildRequest) -> BuildOptions:
 
 
 def _restart_options(request_data: BuildControlRequest) -> BuildOptions:
-    cwd = Path(request_data.cwd).expanduser() if request_data.cwd else None
+    cwd = _existing_directory(request_data.cwd, field_name="cwd")
     isolation = resolve_build_isolation(
         isolation=request_data.isolation,
         workspace_backend=request_data.workspace_backend,

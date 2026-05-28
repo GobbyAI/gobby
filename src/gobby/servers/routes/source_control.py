@@ -521,7 +521,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
             raise
         except Exception as e:
             logger.warning(f"Failed to list PRs: {e}")
-            return {"prs": [], "github_available": True, "error": str(e)}
+            return {"prs": [], "github_available": True, "error": "Failed to list pull requests"}
 
     @router.get("/prs/{number}")
     async def get_pull_request(
@@ -574,7 +574,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
             return {"checks": checks if isinstance(checks, list) else [], "status": "ok"}
         except Exception as e:
             logger.warning(f"Failed to get PR checks: {e}")
-            return {"checks": [], "status": "error", "error": str(e)}
+            return {"checks": [], "status": "error", "error": "Failed to get pull request checks"}
 
     @router.get("/issues")
     async def list_issues(
@@ -634,7 +634,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
             raise
         except Exception as e:
             logger.warning(f"Failed to list issues: {e}")
-            return {"issues": [], "github_available": True, "error": str(e)}
+            return {"issues": [], "github_available": True, "error": "Failed to list issues"}
 
     @router.get("/issues/{number}")
     async def get_issue(
@@ -659,7 +659,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
             raise
         except Exception as e:
             logger.warning(f"Failed to get issue #{number}: {e}")
-            raise HTTPException(502, f"Failed to fetch issue: {e}") from e
+            raise HTTPException(502, "Failed to fetch issue") from e
 
     @router.get("/cicd/runs")
     async def list_cicd_runs(
@@ -712,7 +712,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
             return result
         except Exception as e:
             logger.warning(f"Failed to list CI/CD runs: {e}")
-            return {"runs": [], "github_available": True, "error": str(e)}
+            return {"runs": [], "github_available": True, "error": "Failed to list CI/CD runs"}
 
     # --- Worktrees ---
 

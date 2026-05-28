@@ -196,6 +196,16 @@ def _is_binary_file(file_path: Path) -> bool:
         return True  # Can't read = skip
 
 
+def _resolve_within_directory(base: Path, relative_path: str) -> Path:
+    resolved_base = base.resolve()
+    resolved = (resolved_base / relative_path).resolve()
+    try:
+        resolved.relative_to(resolved_base)
+    except ValueError:
+        raise SkillLoadError("Path would escape extracted ZIP", base) from None
+    return resolved
+
+
 def parse_github_url(url: str) -> GitHubRef:
     """Parse a GitHub URL into its components.
 
@@ -866,7 +876,7 @@ class SkillLoader:
         with extract_zip(zip_path) as temp_path:
             # Determine the skill path within the extracted contents
             if internal_path:
-                skill_path = temp_path / internal_path
+                skill_path = _resolve_within_directory(temp_path, internal_path)
             else:
                 # Check for SKILL.md at root
                 if (temp_path / "SKILL.md").exists():

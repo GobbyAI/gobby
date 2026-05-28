@@ -172,11 +172,8 @@ class HubManager:
             if self._api_keys.get(config.auth_key_name):
                 continue
             logger.warning(
-                "Skill hub '%s' is missing required auth (%s). "
-                "Run 'gobby install' or 'gobby secrets set %s' to configure.",
+                "Skill hub '%s' is missing required auth. Run 'gobby install' to configure.",
                 hub_name,
-                config.auth_key_name,
-                config.auth_key_name,
             )
 
     def _create_provider(self, hub_name: str) -> HubProvider:
@@ -210,9 +207,7 @@ class HubManager:
         if config.auth_key_name:
             auth_token = self._api_keys.get(config.auth_key_name)
             if auth_token is None:
-                logger.debug(
-                    f"Auth key '{config.auth_key_name}' not found in api_keys for hub '{hub_name}'"
-                )
+                logger.debug("Configured auth key not found for skill hub '%s'", hub_name)
 
         # Determine base_url - use config value or derive from hub type
         base_url = config.base_url or ""

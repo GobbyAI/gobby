@@ -139,7 +139,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
             }
         except Exception as e:
             logger.exception("Error listing workflow definitions")
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.get("/{definition_id}/export")
     async def export_workflow(definition_id: str) -> Response:
@@ -156,7 +156,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except Exception as e:
             logger.error(f"Error exporting workflow definition: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.get("/{definition_id}")
     async def get_workflow(definition_id: str) -> dict[str, Any]:
@@ -169,7 +169,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except Exception as e:
             logger.error(f"Error getting workflow definition: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/import")
     async def import_workflow(request: ImportYAMLRequest) -> dict[str, Any]:
@@ -183,7 +183,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:
             logger.error(f"Error importing workflow definition: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/{definition_id}/duplicate")
     async def duplicate_workflow(definition_id: str, request: DuplicateRequest) -> dict[str, Any]:
@@ -197,7 +197,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except Exception as e:
             logger.error(f"Error duplicating workflow definition: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("")
     async def create_workflow(request: CreateWorkflowRequest) -> dict[str, Any]:
@@ -222,7 +222,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
             return {"status": "success", "definition": row.to_dict()}
         except Exception as e:
             logger.error(f"Error creating workflow definition: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.put("/{definition_id}/toggle")
     async def toggle_workflow(definition_id: str) -> dict[str, Any]:
@@ -237,7 +237,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except Exception as e:
             logger.error(f"Error toggling workflow definition: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.put("/{definition_id}")
     async def update_workflow(definition_id: str, request: UpdateWorkflowRequest) -> dict[str, Any]:
@@ -256,7 +256,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
             raise
         except Exception as e:
             logger.error(f"Error updating workflow definition: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.delete("/{definition_id}")
     async def delete_workflow(definition_id: str) -> dict[str, Any]:
@@ -272,7 +272,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
             raise
         except Exception as e:
             logger.error(f"Error deleting workflow definition: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/{definition_id}/restore-from-template")
     async def restore_from_template(definition_id: str) -> dict[str, Any]:
@@ -304,7 +304,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except Exception as e:
             logger.error(f"Error restoring from template: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/{definition_id}/move-to-project")
     async def move_to_project(definition_id: str, request: MoveToProjectRequest) -> dict[str, Any]:
@@ -320,7 +320,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=status, detail=msg) from e
         except Exception as e:
             logger.error(f"Error moving definition to project: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/{definition_id}/move-to-global")
     async def move_to_global(definition_id: str) -> dict[str, Any]:
@@ -336,7 +336,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=status, detail=msg) from e
         except Exception as e:
             logger.error(f"Error moving definition to global: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/{definition_id}/restore")
     async def restore_workflow(definition_id: str) -> dict[str, Any]:
@@ -350,7 +350,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except Exception as e:
             logger.error(f"Error restoring workflow definition: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     # --- Session Variables (top-level shortcuts) ---
 
@@ -393,7 +393,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
             )
         except Exception as e:
             logger.error(f"Error setting variable: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/variables/get")
     async def get_variable(request: GetVariableRequest) -> dict[str, Any]:
@@ -418,6 +418,6 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
             )
         except Exception as e:
             logger.error(f"Error getting variable: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     return router

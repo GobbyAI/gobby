@@ -1,6 +1,7 @@
 """Setup endpoints for admin router (Web onboarding)."""
 
 import json
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -10,6 +11,8 @@ from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
+
+logger = logging.getLogger(__name__)
 
 
 class SetupStateUpdate(BaseModel):
@@ -30,7 +33,8 @@ def register_setup_routes(router: APIRouter, server: "HTTPServer") -> None:
             data["exists"] = True
             return data
         except (json.JSONDecodeError, OSError) as exc:
-            return {"exists": False, "error": str(exc)}
+            logger.warning("Failed to read setup state", exc_info=exc)
+            return {"exists": False, "error": "Setup state unavailable"}
 
     @router.post("/setup-state")
     async def update_setup_state(request: SetupStateUpdate) -> dict[str, Any]:
@@ -49,4 +53,5 @@ def register_setup_routes(router: APIRouter, server: "HTTPServer") -> None:
                 await f.write(json.dumps(data, indent=2))
             return {"success": True}
         except (json.JSONDecodeError, OSError) as exc:
-            return {"success": False, "error": str(exc)}
+            logger.warning("Failed to update setup state", exc_info=exc)
+            return {"success": False, "error": "Setup state unavailable"}

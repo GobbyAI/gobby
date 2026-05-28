@@ -6,7 +6,9 @@ and hub browsing/install endpoints for the skill system.
 """
 
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -78,6 +80,22 @@ class HubInstallRequest(BaseModel):
     project_id: str | None = Field(default=None, description="Project scope")
 
 
+def _is_github_http_url(source: str) -> bool:
+    parsed = urlparse(source)
+    return parsed.scheme in {"http", "https"} and parsed.hostname == "github.com"
+
+
+def _is_github_source(source: str) -> bool:
+    if source.startswith("github:") or _is_github_http_url(source):
+        return True
+    return (
+        "/" in source
+        and not source.startswith("/")
+        and "://" not in source
+        and not source.endswith(".zip")
+    )
+
+
 # =============================================================================
 # Router
 # =============================================================================
@@ -97,6 +115,29 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
                 logger.warning(
                     f"Failed to broadcast skill event '{event}' for skill {skill_id}: {e}"
                 )
+
+    def _resolve_project_import_path(source: str, project_id: str | None) -> str:
+        if not project_id:
+            raise HTTPException(
+                status_code=400,
+                detail="project_id is required for local or ZIP skill imports",
+            )
+        from gobby.storage.projects import LocalProjectManager
+
+        project = LocalProjectManager(server.services.database).get(project_id)
+        if project is None or not project.repo_path:
+            raise HTTPException(status_code=400, detail="Project repo_path is required")
+        root = Path(project.repo_path).expanduser().resolve()
+        source_path = Path(source).expanduser()
+        candidate = source_path if source_path.is_absolute() else root / source_path
+        resolved = candidate.resolve()
+        try:
+            resolved.relative_to(root)
+        except ValueError:
+            raise HTTPException(
+                status_code=403, detail="Import path must stay inside project"
+            ) from None
+        return str(resolved)
 
     @router.get("")
     def list_skills(
@@ -239,14 +280,18 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
             source = request_data.source.strip()
 
             # Detect source type and load
-            if source.startswith(("github:", "https://github.com", "http://github.com")) or (
-                "/" in source and not source.startswith("/") and not source.endswith(".zip")
-            ):
+            if _is_github_source(source):
                 parsed = loader.load_from_github(source, validate=True)
             elif source.endswith(".zip"):
-                parsed = loader.load_from_zip(source, validate=True)
+                parsed = loader.load_from_zip(
+                    _resolve_project_import_path(source, request_data.project_id),
+                    validate=True,
+                )
             else:
-                parsed = loader.load_skill(source, validate=True)
+                parsed = loader.load_skill(
+                    _resolve_project_import_path(source, request_data.project_id),
+                    validate=True,
+                )
 
             # Handle single skill or list
             skills_list = parsed if isinstance(parsed, list) else [parsed]
@@ -282,9 +327,11 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
                 "imported": len(imported),
                 "skills": imported,
             }
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Failed to import skill: {e}")
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/scan")
     def scan_skill(request_data: SkillScanRequest) -> dict[str, Any]:

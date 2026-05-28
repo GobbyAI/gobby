@@ -13,11 +13,19 @@ export function toApprovalRuleRows(rules: string[]): ApprovalRuleRow[] {
 }
 
 const SECRET_PATTERNS = ['api_key', 'api_token', 'api_secret', 'password', 'access_token', 'auth_token', 'secret_key', 'secret', 'credentials', 'private_key', 'client_secret']
+const UNSAFE_PATH_SEGMENTS = new Set(['__proto__', 'prototype', 'constructor'])
 
 export function isSecretField(path: string, secretKeys: string[]): boolean {
   if (secretKeys.includes(path)) return true
   const last = path.split('.').pop() || ''
   return SECRET_PATTERNS.some(p => last.includes(p))
+}
+
+export function splitSafeConfigPath(path: string): string[] | null {
+  const parts = path.split('.')
+  if (parts.length === 0) return null
+  if (parts.some(part => !part || UNSAFE_PATH_SEGMENTS.has(part))) return null
+  return parts
 }
 
 export function formatFieldName(name: string): string {

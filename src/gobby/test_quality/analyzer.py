@@ -44,7 +44,6 @@ _MOCK_FACTORY_NAMES = {
 _PYTHON_SUFFIX = ".py"
 _SCRIPT_TEST_SUFFIXES = {".js", ".jsx", ".ts", ".tsx"}
 _SCRIPT_TEST_CALL_RE = re.compile(r"\b(?P<name>it|test)(?P<modifier>\.\w+)?\s*\(")
-_SCRIPT_TEST_NAME_RE = re.compile(r"""\(\s*(['"`])(?P<name>(?:\\.|(?!\1).)*?)\1""")
 _SCRIPT_ASSERTION_RE = re.compile(r"\b(?:expect|assert(?:\.\w+)?)\s*\(")
 _SCRIPT_SLEEP_RE = re.compile(r"\b(?:setTimeout|setInterval)\s*\(")
 
@@ -456,8 +455,7 @@ def _iter_script_tests(source: str) -> Iterable[tuple[str, str | None, str, int]
                     final_close_paren = each_close_paren
 
         call_source = source[match.start() : final_close_paren + 1]
-        name_match = _SCRIPT_TEST_NAME_RE.search(call_source)
-        test_name = name_match.group("name") if name_match else f"{match.group('name')}_at_line"
+        test_name = _script_test_name(call_source) or f"{match.group('name')}_at_line"
         line = source.count("\n", 0, match.start()) + 1
         yield test_name, match.group("modifier"), call_source, line
         offset = final_close_paren + 1
@@ -495,6 +493,35 @@ def _find_matching_delimiter(
 
         index += 1
 
+    return None
+
+
+def _script_test_name(call_source: str) -> str | None:
+    open_paren = call_source.find("(")
+    if open_paren == -1:
+        return None
+    index = _next_non_whitespace_index(call_source, open_paren + 1)
+    if index is None:
+        return None
+    quote = call_source[index]
+    if quote not in {"'", '"', "`"}:
+        return None
+
+    chars: list[str] = []
+    escaped = False
+    index += 1
+    while index < len(call_source):
+        char = call_source[index]
+        if escaped:
+            chars.append(char)
+            escaped = False
+        elif char == "\\":
+            escaped = True
+        elif char == quote:
+            return "".join(chars)
+        else:
+            chars.append(char)
+        index += 1
     return None
 
 

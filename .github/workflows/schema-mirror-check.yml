@@ -7,6 +7,9 @@ on:
       - "schemas/**"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   verify-mirror:
     runs-on: ubuntu-latest

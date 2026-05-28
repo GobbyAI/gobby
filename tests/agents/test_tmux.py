@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.agents.tmux.errors import TmuxNotFoundError, TmuxSessionError
-from gobby.agents.tmux.output_reader import TmuxOutputReader
+from gobby.agents.tmux.output_reader import TmuxOutputReader, _safe_fifo_component
 from gobby.agents.tmux.pty_bridge import TmuxPTYBridge
 from gobby.agents.tmux.session_manager import TmuxSessionInfo, TmuxSessionManager
 from gobby.agents.tmux.spawner import TmuxSpawner
@@ -572,6 +572,9 @@ class TestTmuxOutputReader:
         reader = TmuxOutputReader(config)
         args = reader._base_args()
         assert args == ["tmux", "-S", "/tmp/tmux-1000/gobby"]
+
+    def test_safe_fifo_component_removes_path_separators(self) -> None:
+        assert _safe_fifo_component("../session/name") == "session-name"
 
     @pytest.mark.asyncio
     async def test_stop_reader_not_running(self) -> None:

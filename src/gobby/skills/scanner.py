@@ -9,6 +9,13 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+
+def _safe_temp_component(value: str) -> str:
+    cleaned = "".join(char if char.isalnum() or char in {"-", "_"} else "-" for char in value)
+    cleaned = cleaned.strip("-_")
+    return cleaned[:48] or "skill"
+
+
 SEVERITY_ORDER = {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1, "INFO": 0}
 _DEFAULT_CLAWCARE_RULESET = "default"
 
@@ -116,7 +123,7 @@ def scan_skill_content(content: str, name: str = "untitled") -> dict[str, Any]:
     start = time.monotonic()
 
     # ClawCare expects an on-disk root so it can apply the Codex skill adapter.
-    with tempfile.TemporaryDirectory(prefix=f"skill-{name}-") as temp_dir:
+    with tempfile.TemporaryDirectory(prefix=f"skill-{_safe_temp_component(name)}-") as temp_dir:
         temp_path = Path(temp_dir)
         skill_md = temp_path / "SKILL.md"
         skill_md.write_text(content, encoding="utf-8")

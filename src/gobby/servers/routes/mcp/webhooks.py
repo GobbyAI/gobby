@@ -149,11 +149,12 @@ def create_webhooks_router() -> APIRouter:
         except httpx.TimeoutException:
             return {"success": False, "error": "Request timed out"}
         except httpx.RequestError as e:
-            return {"success": False, "error": f"Request failed: {e}"}
+            logger.warning("Webhook test request failed", exc_info=e)
+            return {"success": False, "error": "Request failed"}
         except HTTPException:
             raise
         except Exception as e:
             logger.error(f"Webhook test error: {e}", exc_info=True)
-            return {"success": False, "error": str(e)}
+            return {"success": False, "error": "Webhook test failed"}
 
     return router

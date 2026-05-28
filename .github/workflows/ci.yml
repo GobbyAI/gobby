@@ -21,6 +21,8 @@ jobs:
   changes:
     name: Classify Changes
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       requires_full_ci: ${{ steps.classify.outputs.requires_full_ci }}
       schemas_changed: ${{ steps.classify.outputs.schemas_changed }}
@@ -92,6 +94,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.requires_full_ci == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -117,6 +121,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.requires_full_ci == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -140,6 +146,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.requires_full_ci == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -162,6 +170,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.requires_full_ci == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -185,6 +195,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.requires_full_ci == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -217,6 +229,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.requires_full_ci == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     env:
       GOBBY_POSTGRES_TEST_CONTAINER: postgres-test
       GOBBY_POSTGRES_TEST_DB: gobby_test
@@ -330,6 +344,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.requires_full_ci == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -352,6 +368,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.requires_full_ci == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 

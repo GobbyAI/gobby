@@ -54,7 +54,7 @@ def register_analytics_routes(
             raise
         except Exception as e:
             logger.error(f"Update session summary error: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/{session_id}/generate-summary")
     async def generate_session_summary(session_id: str) -> dict[str, Any]:
@@ -113,7 +113,7 @@ def register_analytics_routes(
             raise
         except Exception as e:
             logger.error(f"Generate summary error: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/{session_id}/stop")
     async def stop_session(session_id: str, request: Request) -> dict[str, Any]:
@@ -175,7 +175,7 @@ def register_analytics_routes(
             raise
         except Exception as e:
             logger.error(f"Error sending stop signal: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.get("/{session_id}/stop")
     async def get_stop_signal(session_id: str, request: Request) -> dict[str, Any]:
@@ -224,7 +224,7 @@ def register_analytics_routes(
             raise
         except Exception as e:
             logger.error(f"Error checking stop signal: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.delete("/{session_id}/stop")
     async def clear_stop_signal(session_id: str, request: Request) -> dict[str, Any]:
@@ -266,4 +266,4 @@ def register_analytics_routes(
             raise
         except Exception as e:
             logger.error(f"Error clearing stop signal: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e

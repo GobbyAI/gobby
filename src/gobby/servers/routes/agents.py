@@ -6,6 +6,8 @@ Provides endpoints for viewing and managing agent definitions
 """
 
 import logging
+import re
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import yaml
@@ -19,6 +21,19 @@ if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
 
 logger = logging.getLogger(__name__)
+_SAFE_DEFINITION_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
+
+
+def _bundled_definition_path(agents_path: Path, name: str) -> Path:
+    if not _SAFE_DEFINITION_NAME.fullmatch(name):
+        raise HTTPException(status_code=400, detail="Invalid agent definition name")
+    base = agents_path.resolve()
+    yaml_path = (base / f"{name}.yaml").resolve()
+    try:
+        yaml_path.relative_to(base)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid agent definition name") from None
+    return yaml_path
 
 
 class CreateAgentDefinitionRequest(BaseModel):
@@ -226,7 +241,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             }
         except Exception as e:
             logger.error(f"Error listing agent definitions: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.get("/definitions/{name}/export")
     async def export_definition(
@@ -256,7 +271,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             raise
         except Exception as e:
             logger.error(f"Error exporting agent definition '{name}': {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.get("/definitions/{name}")
     async def get_definition(
@@ -275,7 +290,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             raise
         except Exception as e:
             logger.error(f"Error getting agent definition '{name}': {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/definitions")
     async def create_definition(
@@ -326,7 +341,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             return {"status": "success", "definition": row.to_dict()}
         except Exception as e:
             logger.error(f"Error creating agent definition: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.put("/definitions/{definition_id}")
     async def update_definition(
@@ -407,7 +422,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             raise
         except Exception as e:
             logger.error(f"Error updating agent definition: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.delete("/definitions/{definition_id}")
     async def delete_definition(definition_id: str) -> dict[str, Any]:
@@ -422,7 +437,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             raise
         except Exception as e:
             logger.error(f"Error deleting agent definition: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/definitions/{definition_id}/restore")
     async def restore_definition(definition_id: str) -> dict[str, Any]:
@@ -435,7 +450,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except Exception as e:
             logger.error(f"Error restoring agent definition: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     # -------------------------------------------------------------------------
     # Rules and variables PATCH endpoints
@@ -490,7 +505,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except Exception as e:
             logger.error(f"Error patching rules: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.patch("/definitions/{definition_id}/rule-selectors")
     async def patch_rule_selectors(
@@ -532,7 +547,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except Exception as e:
             logger.error(f"Error patching rule selectors: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.patch("/definitions/{definition_id}/variables")
     async def patch_variables(definition_id: str, request: PatchVariablesRequest) -> dict[str, Any]:
@@ -562,7 +577,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except Exception as e:
             logger.error(f"Error patching variables: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     # -------------------------------------------------------------------------
     # Running agents and agent runs
@@ -583,7 +598,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             }
         except Exception as e:
             logger.error(f"Error listing running agents: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.get("/runs")
     async def list_agent_runs(
@@ -620,7 +635,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             }
         except Exception as e:
             logger.error(f"Error listing agent runs: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.get("/runs/{run_id}")
     async def get_agent_run_detail(run_id: str) -> dict[str, Any]:
@@ -648,7 +663,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             raise
         except Exception as e:
             logger.error(f"Error getting agent run detail: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/runs/{run_id}/cancel")
     async def cancel_agent_run(run_id: str) -> dict[str, Any]:
@@ -678,7 +693,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             raise
         except Exception as e:
             logger.error(f"Error cancelling agent run '{run_id}': {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/definitions/{name}/install")
     async def install_definition_from_template(
@@ -705,7 +720,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
 
             # Load from bundled agents directory
             agents_path = get_bundled_agents_path()
-            yaml_path = agents_path / f"{name}.yaml"
+            yaml_path = _bundled_definition_path(agents_path, name)
             if not yaml_path.exists():
                 raise HTTPException(
                     status_code=404,
@@ -729,6 +744,6 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             raise
         except Exception as e:
             logger.error(f"Error importing agent definition '{name}': {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     return router
