@@ -6,9 +6,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::config::Context;
-use crate::falkor::{self, Row};
 use crate::graph::typed_query;
 use crate::models::{GraphResult, ProjectionMetadata, ProjectionProvenance};
+use gobby_core::degradation::ServiceState;
+use gobby_core::falkor::{GraphClient, Row};
 
 const CALL_TARGET_PREDICATE: &str =
     "target:CodeSymbol OR target:UnresolvedCallee OR target:ExternalSymbol";
@@ -450,8 +451,40 @@ fn count_from_rows(rows: &[Row]) -> usize {
         .unwrap_or(0) as usize
 }
 
+fn with_core_graph<T: Clone>(
+    ctx: &Context,
+    default: T,
+    f: impl FnOnce(&mut GraphClient) -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    let Some(config) = ctx.falkordb.as_ref() else {
+        return Ok(default);
+    };
+
+    let connection_config = config.connection_config();
+    match gobby_core::falkor::with_graph(
+        Some(&connection_config),
+        &config.graph_name,
+        default.clone(),
+        f,
+    ) {
+        Ok((value, ServiceState::Unreachable { message })) => {
+            if !ctx.quiet {
+                eprintln!("Warning: FalkorDB connection failed: {message}");
+            }
+            Ok(value)
+        }
+        Ok((value, _)) => Ok(value),
+        Err(e) => {
+            if !ctx.quiet {
+                eprintln!("Warning: FalkorDB query failed: {e}");
+            }
+            Ok(default)
+        }
+    }
+}
+
 pub fn count_callers(ctx: &Context, symbol_id: &str) -> anyhow::Result<usize> {
-    falkor::with_falkor(ctx, 0, |client| {
+    with_core_graph(ctx, 0, |client| {
         let (query, params) = count_callers_query(&ctx.project_id, symbol_id);
         let rows = client.query(&query, Some(params))?;
         Ok(count_from_rows(&rows))
@@ -459,7 +492,7 @@ pub fn count_callers(ctx: &Context, symbol_id: &str) -> anyhow::Result<usize> {
 }
 
 pub fn count_usages(ctx: &Context, symbol_id: &str) -> anyhow::Result<usize> {
-    falkor::with_falkor(ctx, 0, |client| {
+    with_core_graph(ctx, 0, |client| {
         let (query, params) = count_usages_query(&ctx.project_id, symbol_id);
         let rows = client.query(&query, Some(params))?;
         Ok(count_from_rows(&rows))
@@ -472,7 +505,7 @@ pub fn find_callers(
     offset: usize,
     limit: usize,
 ) -> anyhow::Result<Vec<GraphResult>> {
-    falkor::with_falkor(ctx, vec![], |client| {
+    with_core_graph(ctx, vec![], |client| {
         let (query, params) = find_callers_query(&ctx.project_id, symbol_id, offset, limit);
         let rows = client.query(&query, Some(params))?;
         Ok(rows.iter().map(row_to_graph_result).collect())
@@ -485,7 +518,7 @@ pub fn find_usages(
     offset: usize,
     limit: usize,
 ) -> anyhow::Result<Vec<GraphResult>> {
-    falkor::with_falkor(ctx, vec![], |client| {
+    with_core_graph(ctx, vec![], |client| {
         let (query, params) = find_usages_query(&ctx.project_id, symbol_id, offset, limit);
         let rows = client.query(&query, Some(params))?;
         Ok(rows.iter().map(row_to_graph_result).collect())
@@ -500,7 +533,7 @@ pub fn find_callers_batch(
     if symbol_ids.is_empty() {
         return Ok(vec![]);
     }
-    falkor::with_falkor(ctx, vec![], |client| {
+    with_core_graph(ctx, vec![], |client| {
         let (query, params) = find_callers_batch_query(&ctx.project_id, symbol_ids, limit);
         let rows = client.query(&query, Some(params))?;
         Ok(rows.iter().map(row_to_graph_result).collect())
@@ -515,7 +548,7 @@ pub fn find_callees_batch(
     if symbol_ids.is_empty() {
         return Ok(vec![]);
     }
-    falkor::with_falkor(ctx, vec![], |client| {
+    with_core_graph(ctx, vec![], |client| {
         let (query, params) = find_callees_batch_query(&ctx.project_id, symbol_ids, limit);
         let rows = client.query(&query, Some(params))?;
         Ok(rows.iter().map(row_to_graph_result).collect())
@@ -523,7 +556,7 @@ pub fn find_callees_batch(
 }
 
 pub fn get_imports(ctx: &Context, file_path: &str) -> anyhow::Result<Vec<GraphResult>> {
-    falkor::with_falkor(ctx, vec![], |client| {
+    with_core_graph(ctx, vec![], |client| {
         let (query, params) = get_imports_query(&ctx.project_id, file_path);
         let rows = client.query(&query, Some(params))?;
         Ok(rows.iter().map(row_to_graph_result).collect())
@@ -535,7 +568,7 @@ pub fn blast_radius(
     symbol_id: &str,
     depth: usize,
 ) -> anyhow::Result<Vec<GraphResult>> {
-    falkor::with_falkor(ctx, vec![], |client| {
+    with_core_graph(ctx, vec![], |client| {
         let query = blast_radius_query(depth, MAX_GRAPH_LIMIT);
         let params = typed_query::string_params(&[("project", &ctx.project_id), ("id", symbol_id)]);
         let rows = client.query(&query, Some(params))?;

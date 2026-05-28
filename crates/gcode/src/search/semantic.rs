@@ -4,10 +4,41 @@
 
 pub use crate::vector::code_symbols::{embed_query, vector_search};
 
-use crate::config::Context;
+use crate::config::{CODE_SYMBOL_COLLECTION_PREFIX, Context};
+use gobby_core::qdrant::{CollectionScope, SearchRequest};
 
 pub fn semantic_search(ctx: &Context, query: &str, limit: usize) -> Vec<(String, f64)> {
-    crate::vector::code_symbols::semantic_search(ctx, query, limit)
+    let Some(embedding_config) = ctx.embedding.as_ref() else {
+        return vec![];
+    };
+    let Some(query_vector) = embed_query(embedding_config, query) else {
+        return vec![];
+    };
+
+    let collection = gobby_core::qdrant::collection_name(
+        "gcode",
+        CollectionScope::Custom(&format!(
+            "{CODE_SYMBOL_COLLECTION_PREFIX}{}",
+            ctx.project_id
+        )),
+    );
+    let request = SearchRequest {
+        vector: query_vector,
+        limit,
+        filter: None,
+    };
+
+    let Ok((hits, _state)) =
+        gobby_core::qdrant::with_qdrant(ctx.qdrant.as_ref(), Vec::new(), |config| {
+            gobby_core::qdrant::search(config, &collection, request)
+        })
+    else {
+        return vec![];
+    };
+
+    hits.into_iter()
+        .map(|hit| (hit.id, f64::from(hit.score)))
+        .collect()
 }
 
 #[cfg(test)]
@@ -42,7 +73,6 @@ mod tests {
             qdrant: Some(QdrantConfig {
                 url: Some("http://localhost:6333".to_string()),
                 api_key: None,
-                collection_prefix: "code_symbols_".to_string(),
             }),
             ..make_ctx_no_qdrant()
         };

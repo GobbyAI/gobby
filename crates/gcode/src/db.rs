@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context as _, anyhow, bail};
-use postgres::{Client, NoTls};
+use postgres::Client;
 use serde::Deserialize;
 
 use crate::schema;
@@ -225,7 +225,9 @@ fn request_broker_database_url(daemon_url: &str, token: &str) -> anyhow::Result<
 /// keeping the intent explicit preserves a routing point for future pools,
 /// permissions, or replicas.
 pub fn connect_readwrite(database_url: &str) -> anyhow::Result<Client> {
-    connect(database_url)
+    let mut client = gobby_core::postgres::connect_readwrite(database_url)?;
+    schema::validate_runtime_schema(&mut client)?;
+    Ok(client)
 }
 
 /// Open a connection for command paths that only read from the hub.
@@ -234,7 +236,13 @@ pub fn connect_readwrite(database_url: &str) -> anyhow::Result<Client> {
 /// keeping the intent explicit preserves a routing point for future pools,
 /// permissions, or replicas.
 pub fn connect_readonly(database_url: &str) -> anyhow::Result<Client> {
-    connect(database_url)
+    let mut client = gobby_core::postgres::connect_readonly(database_url)?;
+    schema::validate_runtime_schema(&mut client)?;
+    Ok(client)
+}
+
+pub fn read_config_value(conn: &mut Client, key: &str) -> anyhow::Result<Option<String>> {
+    gobby_core::postgres::read_config_value(conn, key)
 }
 
 pub fn symbol_select_columns(alias: &str) -> String {
@@ -252,13 +260,6 @@ pub fn symbol_select_columns(alias: &str) -> String {
          {p}created_at::TEXT AS created_at, {p}updated_at::TEXT AS updated_at",
         p = prefix
     )
-}
-
-fn connect(database_url: &str) -> anyhow::Result<Client> {
-    let mut client = Client::connect(database_url, NoTls)
-        .context("failed to connect to the Gobby PostgreSQL hub")?;
-    schema::validate_runtime_schema(&mut client)?;
-    Ok(client)
 }
 
 #[cfg(test)]

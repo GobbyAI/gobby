@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::config::{Context, EmbeddingConfig, QdrantConfig};
+use crate::config::{CODE_SYMBOL_COLLECTION_PREFIX, Context, EmbeddingConfig, QdrantConfig};
 use crate::models::{ProjectionMetadata, ProjectionProvenance, Symbol};
+use gobby_core::qdrant::{CollectionScope, SearchRequest};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodeSymbolVectorSearchRequest {
@@ -90,7 +91,8 @@ pub struct CodeSymbolVectorLifecycleStatus {
 }
 
 pub fn collection_name(collection_prefix: &str, project_id: &str) -> String {
-    format!("{collection_prefix}{project_id}")
+    let collection = format!("{collection_prefix}{project_id}");
+    gobby_core::qdrant::collection_name("gcode", CollectionScope::Custom(&collection))
 }
 
 pub fn lifecycle_status(
@@ -153,50 +155,18 @@ pub fn vector_search(
     query_vector: &[f32],
     limit: usize,
 ) -> anyhow::Result<Vec<(String, f64)>> {
-    let url = match &config.url {
-        Some(u) => u,
-        None => return Ok(vec![]),
+    let request = SearchRequest {
+        vector: query_vector.to_vec(),
+        limit,
+        filter: None,
     };
-
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()?;
-
-    let body = serde_json::json!({
-        "vector": query_vector,
-        "limit": limit,
-        "with_payload": false,
-    });
-
-    let mut req = client
-        .post(format!("{url}/collections/{collection}/points/search"))
-        .json(&body);
-
-    if let Some(key) = &config.api_key {
-        req = req.header("api-key", key);
-    }
-
-    let resp = req.send()?;
-    if !resp.status().is_success() {
-        return Ok(vec![]);
-    }
-
-    let data: Value = resp.json()?;
-    let results = data
-        .get("result")
-        .and_then(|r| r.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|hit| {
-                    let id = hit.get("id")?.as_str()?.to_string();
-                    let score = hit.get("score")?.as_f64()?;
-                    Some((id, score))
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-
-    Ok(results)
+    let (hits, _) = gobby_core::qdrant::with_qdrant(Some(config), Vec::new(), |config| {
+        gobby_core::qdrant::search(config, collection, request)
+    })?;
+    Ok(hits
+        .into_iter()
+        .map(|hit| (hit.id, f64::from(hit.score)))
+        .collect())
 }
 
 pub fn search_code_symbols(
@@ -227,16 +197,15 @@ pub fn search_code_symbols(
 }
 
 pub fn semantic_search(ctx: &Context, query: &str, limit: usize) -> Vec<(String, f64)> {
-    let qdrant_config = match &ctx.qdrant {
-        Some(c) => c,
-        None => return vec![],
-    };
+    if ctx.qdrant.is_none() {
+        return vec![];
+    }
 
     let request = CodeSymbolVectorSearchRequest {
         project_id: ctx.project_id.clone(),
         query: query.to_string(),
         limit,
-        collection_prefix: qdrant_config.collection_prefix.clone(),
+        collection_prefix: CODE_SYMBOL_COLLECTION_PREFIX.to_string(),
     };
 
     search_code_symbols(ctx, &request)
