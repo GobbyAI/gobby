@@ -444,7 +444,7 @@ contract and [spec-writing.md](./spec-writing.md) for the authoring flow.
 | `list_sessions` | List sessions with filters (not for finding your own session). |
 | `session_stats` | Project-level session statistics. |
 | `get_session_messages` | Get messages for a session. |
-| `search_messages` | (DEPRECATED) Text-match over messages. |
+| `search_session_messages` | Search rendered transcript messages by substring. |
 | `get_session_commits` | Git commits made during a session timeframe. |
 | `get_usage_breakdown` | Token usage broken down by source and model over a period. |
 | `set_handoff_context` | Set handoff context (agent-authored or auto-fallback). Optional `to_session` peer delivery. |

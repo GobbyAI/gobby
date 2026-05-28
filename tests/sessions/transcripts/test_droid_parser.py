@@ -11,11 +11,10 @@ from unittest.mock import MagicMock
 import pytest
 
 from gobby.sessions.processor import SessionMessageProcessor
-from gobby.sessions.transcript_reader import (
+from gobby.sessions.transcript_parsing import _get_parser, _parse_lines
+from gobby.sessions.transcript_source import (
     _detect_source_from_jsonl_lines,
     _detect_source_from_path,
-    _get_parser,
-    _parse_lines,
 )
 from gobby.sessions.transcripts.base import ParsedMessage
 from gobby.sessions.transcripts.droid import DroidTranscriptParser

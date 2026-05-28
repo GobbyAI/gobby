@@ -196,7 +196,7 @@ with `get_tool_schema` before writing examples or automating calls.
 | `session_stats` | Count sessions by status and source. |
 | `get_usage_breakdown` | Aggregate token usage by source and model. |
 | `get_session_messages` | Read rendered transcript messages. |
-| `search_messages` | Deprecated; returns an unavailable error because DB message search was removed. |
+| `search_session_messages` | Search rendered transcript messages by substring. |
 | `set_handoff_context` | Set or generate handoff context for the current session. |
 | `get_handoff_context` | Retrieve handoff context directly or from the latest `handoff_ready` session. |
 | `register_session` | Register hookless clients such as SDK-driven agents. |

@@ -2,7 +2,7 @@
 
 This module contains MCP tools for:
 - Getting messages for a session (get_session_messages)
-- Searching messages using FTS (search_messages, DB-only)
+- Searching rendered transcript messages (search_session_messages)
 """
 
 from __future__ import annotations
@@ -13,6 +13,8 @@ if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
     from gobby.sessions.transcript_reader import TranscriptReader
     from gobby.storage.sessions import SessionManager
+
+MAX_SEARCH_SESSIONS = 100
 
 
 def register_message_tools(
@@ -31,6 +33,7 @@ def register_message_tools(
         transcript_reader: Optional TranscriptReader for JSONL + gzip fallback reads
     """
 
+    from gobby.sessions.transcript_search import search_rendered_messages
     from gobby.utils.session_context import resolve_session_ref
 
     def _resolve_session_id(session_id: str) -> str:
@@ -74,40 +77,9 @@ def register_message_tools(
                     "error": "Message retrieval not available (TranscriptReader not configured)",
                 }
 
-            # Truncate content if not full_content
             if not full_content:
                 for msg in messages:
-                    if "content" in msg and msg["content"] and isinstance(msg["content"], str):
-                        if len(msg["content"]) > 500:
-                            msg["content"] = msg["content"][:500] + "... (truncated)"
-
-                    if "tool_calls" in msg and msg["tool_calls"]:
-                        for tc in msg["tool_calls"]:
-                            if (
-                                "input" in tc
-                                and isinstance(tc["input"], str)
-                                and len(tc["input"]) > 200
-                            ):
-                                tc["input"] = tc["input"][:200] + "... (truncated)"
-
-                    if "tool_result" in msg and msg["tool_result"]:
-                        tr = msg["tool_result"]
-                        if (
-                            "content" in tr
-                            and isinstance(tr["content"], str)
-                            and len(tr["content"]) > 200
-                        ):
-                            tr["content"] = tr["content"][:200] + "... (truncated)"
-
-                    # Also truncate content_blocks if present (from renderer)
-                    if "content_blocks" in msg and msg["content_blocks"]:
-                        for block in msg["content_blocks"]:
-                            if block.get("type") in ["text", "thinking"]:
-                                if (
-                                    isinstance(block.get("content"), str)
-                                    and len(block["content"]) > 500
-                                ):
-                                    block["content"] = block["content"][:500] + "... (truncated)"
+                    _truncate_session_message(msg)
 
             return {
                 "success": True,
@@ -122,25 +94,150 @@ def register_message_tools(
             return {"success": False, "error": str(e)}
 
     @registry.tool(
-        name="search_messages",
-        description="[DEPRECATED] Search messages using text matching. This tool is deprecated and will be removed in a future release. Accepts #N, N, UUID, or prefix for session_id.",
+        name="search_session_messages",
+        description="Search rendered transcript messages by substring. Accepts #N, N, UUID, or prefix for session_id.",
     )
-    async def search_messages(
+    async def search_session_messages(
         query: str,
         session_id: str | None = None,
+        project_id: str | None = None,
+        status: str | None = None,
+        source: str | None = None,
         limit: int = 20,
         full_content: bool = False,
     ) -> dict[str, Any]:
         """
-        Search messages.
+        Search rendered transcript messages.
 
         Args:
             query: Search query
             session_id: Optional session filter - supports #N, N (seq_num), UUID, or prefix
+            project_id: Optional project filter for multi-session search
+            status: Optional session status filter for multi-session search
+            source: Optional CLI source filter for multi-session search
             limit: Max results
             full_content: If True, returns full content. If False (default), truncates large content.
         """
-        return {
-            "success": False,
-            "error": "search_messages is no longer available (session_messages table removed)",
-        }
+        if transcript_reader is None:
+            return {
+                "success": False,
+                "error": "Message search not available (TranscriptReader not configured)",
+            }
+
+        query = query.strip()
+        if not query:
+            return {"success": False, "error": "query must not be empty"}
+
+        result_limit = max(0, limit)
+        if result_limit == 0:
+            return _search_response(query, [], 0, result_limit, full_content)
+
+        try:
+            if session_id:
+                resolved_id = _resolve_session_id(session_id)
+                total = await transcript_reader.count_messages(resolved_id)
+                rendered_messages = await transcript_reader.get_rendered_messages(
+                    session_id=resolved_id,
+                    limit=max(total, result_limit),
+                    offset=0,
+                )
+                session_results = search_rendered_messages(
+                    session_id=resolved_id,
+                    messages=rendered_messages,
+                    query=query,
+                    limit=result_limit,
+                    full_content=full_content,
+                )
+                return _search_response(query, session_results, 1, result_limit, full_content)
+
+            if session_manager is None:
+                return {
+                    "success": False,
+                    "error": "Multi-session search requires SessionManager",
+                }
+
+            sessions = session_manager.list(
+                project_id=project_id,
+                status=status,
+                source=source,
+                limit=MAX_SEARCH_SESSIONS,
+            )
+
+            results: list[dict[str, Any]] = []
+            searched_sessions = 0
+            for session in sessions:
+                if len(results) >= result_limit:
+                    break
+                searched_sessions += 1
+                current_limit = result_limit - len(results)
+                total = await transcript_reader.count_messages(session.id)
+                rendered_messages = await transcript_reader.get_rendered_messages(
+                    session_id=session.id,
+                    limit=max(total, current_limit),
+                    offset=0,
+                )
+                results.extend(
+                    search_rendered_messages(
+                        session_id=session.id,
+                        messages=rendered_messages,
+                        query=query,
+                        limit=current_limit,
+                        full_content=full_content,
+                    )
+                )
+
+            return _search_response(query, results, searched_sessions, result_limit, full_content)
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+
+def _search_response(
+    query: str,
+    results: list[dict[str, Any]],
+    searched_sessions: int,
+    limit: int,
+    full_content: bool,
+) -> dict[str, Any]:
+    """Build the search tool response."""
+    return {
+        "success": True,
+        "query": query,
+        "results": results,
+        "returned_count": len(results),
+        "searched_sessions": searched_sessions,
+        "limit": limit,
+        "truncated": not full_content,
+    }
+
+
+def _truncate_session_message(msg: dict[str, Any]) -> None:
+    """Truncate verbose message fields for MCP responses."""
+    content = msg.get("content")
+    if isinstance(content, str) and len(content) > 500:
+        msg["content"] = content[:500] + "... (truncated)"
+
+    tool_calls = msg.get("tool_calls")
+    if isinstance(tool_calls, list):
+        for tool_call in tool_calls:
+            if not isinstance(tool_call, dict):
+                continue
+            tool_input = tool_call.get("input")
+            if isinstance(tool_input, str) and len(tool_input) > 200:
+                tool_call["input"] = tool_input[:200] + "... (truncated)"
+
+    tool_result = msg.get("tool_result")
+    if isinstance(tool_result, dict):
+        result_content = tool_result.get("content")
+        if isinstance(result_content, str) and len(result_content) > 200:
+            tool_result["content"] = result_content[:200] + "... (truncated)"
+
+    content_blocks = msg.get("content_blocks")
+    if isinstance(content_blocks, list):
+        for block in content_blocks:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") not in ["text", "thinking"]:
+                continue
+            block_content = block.get("content")
+            if isinstance(block_content, str) and len(block_content) > 500:
+                block["content"] = block_content[:500] + "... (truncated)"

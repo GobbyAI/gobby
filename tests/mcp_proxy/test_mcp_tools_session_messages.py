@@ -249,6 +249,7 @@ def test_registry_without_managers_has_no_message_tools():
     tools_list = registry.list_tools()
     tool_names = [t["name"] for t in tools_list]
     assert "get_session_messages" not in tool_names
+    assert "search_session_messages" not in tool_names
     assert "search_messages" not in tool_names
 
 
@@ -280,6 +281,8 @@ def test_registry_without_session_manager_lacks_crud_tools(renderer_registry) ->
 
     # Should have message tools (via transcript_reader)
     assert "get_session_messages" in tool_names
+    assert "search_session_messages" in tool_names
+    assert "search_messages" not in tool_names
 
     # Should NOT have session CRUD tools
     assert "get_session" not in tool_names

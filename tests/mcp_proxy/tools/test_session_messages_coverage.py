@@ -3,7 +3,7 @@ Comprehensive unit tests for session_messages.py MCP tools module.
 
 Tests cover:
 - Helper functions (_format_turns_for_llm)
-- Message tools (get_session_messages, search_messages)
+- Message tools (get_session_messages, search_session_messages)
 - Handoff tools (set_handoff_context, get_handoff_context)
 - Session CRUD tools (get_session, list_sessions, session_stats)
 - Session commits tools (get_session_commits, mark_loop_complete)
@@ -432,20 +432,139 @@ class TestGetSessionMessages:
         assert "Database error" in result["error"]
 
 
-class TestSearchMessages:
-    """Tests for search_messages tool — now deprecated, always returns error."""
+class TestSearchSessionMessages:
+    """Tests for search_session_messages tool."""
 
     @pytest.mark.asyncio
-    async def test_search_messages_returns_deprecation_error(self):
-        """Test that search_messages returns a deprecation error."""
+    async def test_search_session_messages_finds_match_in_session(self):
+        """Test searching a single rendered transcript."""
+        mock_msg = MagicMock()
+        mock_msg.to_dict.return_value = {
+            "id": "msg-1",
+            "content": "The exact needle is here",
+            "role": "assistant",
+            "content_blocks": [],
+        }
+        transcript_reader = AsyncMock()
+        transcript_reader.count_messages.return_value = 1
+        transcript_reader.get_rendered_messages.return_value = [mock_msg]
+
+        registry = create_test_registry(transcript_reader=transcript_reader)
+        search = registry.get_tool("search_session_messages")
+
+        result = await search(query="NEEDLE", session_id="sess-123")
+
+        assert result["success"] is True
+        assert result["returned_count"] == 1
+        assert result["searched_sessions"] == 1
+        assert result["results"][0]["session_id"] == "sess-123"
+        assert "needle" in result["results"][0]["snippet"]
+
+    @pytest.mark.asyncio
+    async def test_search_session_messages_no_match(self):
+        """Test search with no matching messages."""
+        mock_msg = MagicMock()
+        mock_msg.to_dict.return_value = {
+            "id": "msg-1",
+            "content": "No relevant text",
+            "role": "assistant",
+            "content_blocks": [],
+        }
+        transcript_reader = AsyncMock()
+        transcript_reader.count_messages.return_value = 1
+        transcript_reader.get_rendered_messages.return_value = [mock_msg]
+
+        registry = create_test_registry(transcript_reader=transcript_reader)
+        search = registry.get_tool("search_session_messages")
+
+        result = await search(query="missing", session_id="sess-123")
+
+        assert result["success"] is True
+        assert result["returned_count"] == 0
+        assert result["results"] == []
+
+    @pytest.mark.asyncio
+    async def test_search_session_messages_truncates_result(self):
+        """Test search result content truncation."""
+        long_content = "needle " + ("x" * 600)
+        mock_msg = MagicMock()
+        mock_msg.to_dict.return_value = {
+            "id": "msg-1",
+            "content": long_content,
+            "role": "assistant",
+            "content_blocks": [{"type": "text", "content": long_content}],
+        }
+        transcript_reader = AsyncMock()
+        transcript_reader.count_messages.return_value = 1
+        transcript_reader.get_rendered_messages.return_value = [mock_msg]
+
+        registry = create_test_registry(transcript_reader=transcript_reader)
+        search = registry.get_tool("search_session_messages")
+
+        result = await search(query="needle", session_id="sess-123", full_content=False)
+
+        message = result["results"][0]["message"]
+        assert result["truncated"] is True
+        assert "... (truncated)" in message["content"]
+        assert "... (truncated)" in message["content_blocks"][0]["content"]
+
+    @pytest.mark.asyncio
+    async def test_search_session_messages_requires_transcript_reader(self):
+        """Test search returns a clear error without TranscriptReader."""
         session_manager = MagicMock()
         registry = create_test_registry(session_manager=session_manager)
-        search = registry.get_tool("search_messages")
+        search = registry.get_tool("search_session_messages")
 
         result = await search(query="match")
 
         assert result["success"] is False
-        assert "no longer available" in result["error"]
+        assert "TranscriptReader not configured" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_search_session_messages_scans_filtered_sessions(self):
+        """Test multi-session search uses session filters."""
+        session_one = MagicMock()
+        session_one.id = "sess-1"
+        session_two = MagicMock()
+        session_two.id = "sess-2"
+        session_manager = MagicMock()
+        session_manager.list.return_value = [session_one, session_two]
+
+        first_msg = MagicMock()
+        first_msg.to_dict.return_value = {
+            "id": "msg-1",
+            "content": "No match",
+            "role": "assistant",
+            "content_blocks": [],
+        }
+        second_msg = MagicMock()
+        second_msg.to_dict.return_value = {
+            "id": "msg-2",
+            "content": "target match",
+            "role": "assistant",
+            "content_blocks": [],
+        }
+        transcript_reader = AsyncMock()
+        transcript_reader.count_messages.return_value = 1
+        transcript_reader.get_rendered_messages.side_effect = [[first_msg], [second_msg]]
+
+        registry = create_test_registry(
+            session_manager=session_manager,
+            transcript_reader=transcript_reader,
+        )
+        search = registry.get_tool("search_session_messages")
+
+        result = await search(query="target", project_id="proj-1", status="active", source="codex")
+
+        assert result["success"] is True
+        assert result["searched_sessions"] == 2
+        assert result["results"][0]["session_id"] == "sess-2"
+        session_manager.list.assert_called_once_with(
+            project_id="proj-1",
+            status="active",
+            source="codex",
+            limit=100,
+        )
 
 
 # ============================================================================
@@ -1036,7 +1155,8 @@ class TestRegistryCreation:
         tools = registry.list_tools()
         tool_names = [t["name"] for t in tools]
         assert "get_session_messages" in tool_names
-        assert "search_messages" in tool_names
+        assert "search_session_messages" in tool_names
+        assert "search_messages" not in tool_names
 
     def test_create_registry_with_session_manager(self) -> None:
         """Test creating registry with session manager only."""
@@ -1065,7 +1185,8 @@ class TestRegistryCreation:
 
         # Should have all tools
         assert "get_session_messages" in tool_names
-        assert "search_messages" in tool_names
+        assert "search_session_messages" in tool_names
+        assert "search_messages" not in tool_names
         assert "get_session" in tool_names
         assert "list_sessions" in tool_names
         assert "get_handoff_context" in tool_names
