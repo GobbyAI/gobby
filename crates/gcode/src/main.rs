@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use gobby_code::{commands, config, freshness, output};
+use gobby_code::{commands, config, freshness, output, setup};
 
 #[derive(Parser)]
 #[command(name = "gcode", version, about = "Fast code index CLI for Gobby")]
@@ -33,6 +33,18 @@ enum Command {
     // ── Project Setup ────────────────────────────────────────────────
     /// Initialize project context (.gobby/gcode.json)
     Init,
+    /// Explicitly create gcode-owned standalone database objects
+    Setup {
+        /// Required opt-in for setup writes in v1
+        #[arg(long, required = true)]
+        standalone: bool,
+        /// PostgreSQL database URL to set up
+        #[arg(long)]
+        database_url: Option<String>,
+        /// PostgreSQL schema namespace for gcode-owned objects
+        #[arg(long, default_value = "gcode")]
+        schema: String,
+    },
     /// Index a directory (full or incremental). Writes symbols, files, and chunks to PostgreSQL hub
     Index {
         /// Path to index (default: project root)
@@ -219,31 +231,58 @@ fn ensure_symbol_fresh(ctx: &config::Context, disabled: bool, id: &str) -> anyho
     Ok(())
 }
 
-fn main() -> anyhow::Result<()> {
-    let cli = Cli::parse();
-
-    // Commands that must run before Context::resolve() (work on uninitialized projects)
+fn dispatch_early_command<F>(cli: &Cli, setup_runner: F) -> anyhow::Result<bool>
+where
+    F: FnOnce(setup::StandaloneSetupRequest, output::Format, bool) -> anyhow::Result<()>,
+{
     match &cli.command {
         Command::Init => {
             let root = match &cli.project {
                 Some(p) => std::path::PathBuf::from(p).canonicalize()?,
                 None => config::detect_project_root()?,
             };
-            return commands::init::run(&root, cli.format, cli.quiet);
+            commands::init::run(&root, cli.format, cli.quiet)?;
+            Ok(true)
+        }
+        Command::Setup {
+            standalone,
+            database_url,
+            schema,
+        } => {
+            let request = setup::StandaloneSetupRequest::new(
+                *standalone,
+                database_url.clone(),
+                Some(schema.clone()),
+            );
+            setup_runner(request, cli.format, cli.quiet)?;
+            Ok(true)
         }
         Command::Projects => {
-            return commands::status::projects(cli.format);
+            commands::status::projects(cli.format)?;
+            Ok(true)
         }
         Command::Prune { force } => {
-            return commands::status::prune(*force);
+            commands::status::prune(*force)?;
+            Ok(true)
         }
-        _ => {}
+        _ => Ok(false),
+    }
+}
+
+fn main() -> anyhow::Result<()> {
+    let cli = Cli::parse();
+
+    // Commands that must run before Context::resolve() (work on uninitialized projects)
+    if dispatch_early_command(&cli, commands::setup::run)? {
+        return Ok(());
     }
 
     let ctx = config::Context::resolve(cli.project.as_deref(), cli.quiet)?;
 
     match cli.command {
-        Command::Init | Command::Projects | Command::Prune { .. } => unreachable!(),
+        Command::Init | Command::Setup { .. } | Command::Projects | Command::Prune { .. } => {
+            unreachable!()
+        }
         Command::Index {
             path,
             files,
@@ -683,5 +722,68 @@ mod tests {
 
         assert!(cli.no_freshness);
         assert!(matches!(cli.command, Command::Tree));
+    }
+
+    #[test]
+    fn parse_setup_standalone() {
+        let cli = Cli::try_parse_from([
+            "gcode",
+            "setup",
+            "--standalone",
+            "--database-url",
+            "postgresql://localhost/gcode",
+            "--schema",
+            "gcode_ci",
+        ])
+        .expect("setup parses");
+
+        match cli.command {
+            Command::Setup {
+                standalone,
+                database_url,
+                schema,
+            } => {
+                assert!(standalone);
+                assert_eq!(
+                    database_url.as_deref(),
+                    Some("postgresql://localhost/gcode")
+                );
+                assert_eq!(schema, "gcode_ci");
+            }
+            _ => panic!("expected setup command"),
+        }
+    }
+
+    #[test]
+    fn setup_runs_before_context_resolve() {
+        let project = tempfile::tempdir().expect("temp project");
+        let cli = Cli::try_parse_from([
+            "gcode",
+            "--project",
+            project.path().to_str().expect("utf8 temp path"),
+            "setup",
+            "--standalone",
+            "--database-url",
+            "postgresql://localhost/gcode",
+            "--schema",
+            "gcode_ci",
+        ])
+        .expect("setup parses");
+
+        let mut called = false;
+        let dispatched = dispatch_early_command(&cli, |request, _format, _quiet| {
+            called = true;
+            assert!(request.standalone);
+            assert_eq!(
+                request.database_url.as_deref(),
+                Some("postgresql://localhost/gcode")
+            );
+            assert_eq!(request.schema, "gcode_ci");
+            Ok(())
+        })
+        .expect("early dispatch succeeds without resolving project context");
+
+        assert!(dispatched);
+        assert!(called);
     }
 }
