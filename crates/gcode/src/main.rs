@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{ArgGroup, Parser, Subcommand};
 use gobby_code::{commands, config, freshness, output, setup};
 
 #[derive(Parser)]
@@ -67,7 +67,7 @@ enum Command {
         #[arg(long)]
         force: bool,
     },
-    /// Manage code-index graph lifecycle through the Gobby daemon; read graph queries remain top-level [requires Gobby]
+    /// Manage and inspect the code-index graph projection [requires FalkorDB]
     Graph {
         #[command(subcommand)]
         command: GraphCommand,
@@ -200,10 +200,50 @@ enum Command {
 
 #[derive(Subcommand)]
 enum GraphCommand {
-    /// Clear the current project's code-index graph projection via the Gobby daemon [requires Gobby]
+    /// Sync one indexed file into the code-index graph projection
+    SyncFile {
+        /// Indexed file path to sync
+        #[arg(long)]
+        file: String,
+    },
+    /// Clear the current project's code-index graph projection
     Clear,
-    /// Rebuild the current project's code-index graph projection via the Gobby daemon [requires Gobby]
+    /// Rebuild the current project's code-index graph projection from PostgreSQL facts
     Rebuild,
+    /// Show an overview graph for the current project
+    Overview,
+    /// Show graph nodes and links for one indexed file
+    File {
+        /// Indexed file path to inspect
+        #[arg(long)]
+        file: String,
+    },
+    /// Show graph neighbors for one symbol ID
+    Neighbors {
+        /// Symbol ID to inspect
+        #[arg(long)]
+        symbol_id: String,
+        #[arg(long, default_value = "100")]
+        limit: usize,
+    },
+    /// Show transitive graph impact for a symbol ID or file path
+    #[command(group(
+        ArgGroup::new("target")
+            .required(true)
+            .args(["symbol_id", "file"])
+    ))]
+    BlastRadius {
+        /// Symbol ID to inspect
+        #[arg(long)]
+        symbol_id: Option<String>,
+        /// Indexed file path to inspect
+        #[arg(long)]
+        file: Option<String>,
+        #[arg(long, default_value = "3")]
+        depth: usize,
+        #[arg(long, default_value = "100")]
+        limit: usize,
+    },
 }
 
 fn ensure_project_fresh(ctx: &config::Context, disabled: bool) -> anyhow::Result<()> {
@@ -295,11 +335,65 @@ fn main() -> anyhow::Result<()> {
         }
         Command::Invalidate { force } => commands::status::invalidate(&ctx, force),
         Command::Graph {
+            command: GraphCommand::SyncFile { file },
+        } => {
+            ensure_files_fresh(
+                &ctx,
+                cli.no_freshness,
+                vec![std::path::PathBuf::from(&file)],
+            )?;
+            commands::graph::sync_file(&ctx, &file, cli.format)
+        }
+        Command::Graph {
             command: GraphCommand::Clear,
         } => commands::graph::clear(&ctx, cli.format),
         Command::Graph {
             command: GraphCommand::Rebuild,
-        } => commands::graph::rebuild(&ctx, cli.format),
+        } => {
+            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            commands::graph::rebuild(&ctx, cli.format)
+        }
+        Command::Graph {
+            command: GraphCommand::Overview,
+        } => {
+            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            commands::graph::overview(&ctx, cli.format)
+        }
+        Command::Graph {
+            command: GraphCommand::File { file },
+        } => {
+            ensure_files_fresh(
+                &ctx,
+                cli.no_freshness,
+                vec![std::path::PathBuf::from(&file)],
+            )?;
+            commands::graph::file(&ctx, &file, cli.format)
+        }
+        Command::Graph {
+            command: GraphCommand::Neighbors { symbol_id, limit },
+        } => {
+            ensure_symbol_fresh(&ctx, cli.no_freshness, &symbol_id)?;
+            commands::graph::neighbors(&ctx, &symbol_id, limit, cli.format)
+        }
+        Command::Graph {
+            command:
+                GraphCommand::BlastRadius {
+                    symbol_id,
+                    file,
+                    depth,
+                    limit,
+                },
+        } => {
+            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            commands::graph::graph_blast_radius(
+                &ctx,
+                symbol_id.as_deref(),
+                file.as_deref(),
+                depth,
+                limit,
+                cli.format,
+            )
+        }
 
         Command::Search {
             query,
@@ -448,27 +542,138 @@ mod tests {
     use clap::Parser;
 
     #[test]
-    fn test_parse_graph_clear() {
-        let cli = Cli::try_parse_from(["gcode", "graph", "clear"]).expect("graph clear parses");
+    fn parse_graph_commands() {
+        let cli = Cli::try_parse_from([
+            "gcode",
+            "--format",
+            "text",
+            "graph",
+            "sync-file",
+            "--file",
+            "src/lib.rs",
+        ])
+        .expect("graph sync-file parses");
+        assert!(matches!(cli.format, output::Format::Text));
+        match cli.command {
+            Command::Graph {
+                command: GraphCommand::SyncFile { file },
+            } => assert_eq!(file, "src/lib.rs"),
+            _ => panic!("expected graph sync-file command"),
+        }
 
+        let cli = Cli::try_parse_from(["gcode", "graph", "clear"]).expect("graph clear parses");
         assert!(matches!(
             cli.command,
             Command::Graph {
                 command: GraphCommand::Clear
             }
         ));
-    }
 
-    #[test]
-    fn test_parse_graph_rebuild() {
         let cli = Cli::try_parse_from(["gcode", "graph", "rebuild"]).expect("graph rebuild parses");
-
         assert!(matches!(
             cli.command,
             Command::Graph {
                 command: GraphCommand::Rebuild
             }
         ));
+
+        let cli =
+            Cli::try_parse_from(["gcode", "graph", "overview"]).expect("graph overview parses");
+        assert!(matches!(
+            cli.command,
+            Command::Graph {
+                command: GraphCommand::Overview
+            }
+        ));
+
+        let cli = Cli::try_parse_from(["gcode", "graph", "file", "--file", "src/main.rs"])
+            .expect("graph file parses");
+        match cli.command {
+            Command::Graph {
+                command: GraphCommand::File { file },
+            } => assert_eq!(file, "src/main.rs"),
+            _ => panic!("expected graph file command"),
+        }
+
+        let cli = Cli::try_parse_from([
+            "gcode",
+            "graph",
+            "neighbors",
+            "--symbol-id",
+            "sym-1",
+            "--limit",
+            "7",
+        ])
+        .expect("graph neighbors parses");
+        match cli.command {
+            Command::Graph {
+                command: GraphCommand::Neighbors { symbol_id, limit },
+            } => {
+                assert_eq!(symbol_id, "sym-1");
+                assert_eq!(limit, 7);
+            }
+            _ => panic!("expected graph neighbors command"),
+        }
+
+        let cli = Cli::try_parse_from([
+            "gcode",
+            "graph",
+            "blast-radius",
+            "--symbol-id",
+            "sym-1",
+            "--depth",
+            "2",
+            "--limit",
+            "9",
+        ])
+        .expect("graph blast-radius symbol parses");
+        match cli.command {
+            Command::Graph {
+                command:
+                    GraphCommand::BlastRadius {
+                        symbol_id,
+                        file,
+                        depth,
+                        limit,
+                    },
+            } => {
+                assert_eq!(symbol_id.as_deref(), Some("sym-1"));
+                assert_eq!(file, None);
+                assert_eq!(depth, 2);
+                assert_eq!(limit, 9);
+            }
+            _ => panic!("expected graph blast-radius command"),
+        }
+
+        let cli = Cli::try_parse_from([
+            "gcode",
+            "graph",
+            "blast-radius",
+            "--file",
+            "src/lib.rs",
+            "--depth",
+            "2",
+            "--limit",
+            "9",
+        ])
+        .expect("graph blast-radius file parses");
+        match cli.command {
+            Command::Graph {
+                command:
+                    GraphCommand::BlastRadius {
+                        symbol_id,
+                        file,
+                        depth,
+                        limit,
+                    },
+            } => {
+                assert_eq!(symbol_id, None);
+                assert_eq!(file.as_deref(), Some("src/lib.rs"));
+                assert_eq!(depth, 2);
+                assert_eq!(limit, 9);
+            }
+            _ => panic!("expected graph blast-radius command"),
+        }
     }
 
     #[test]
