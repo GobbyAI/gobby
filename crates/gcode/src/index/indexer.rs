@@ -1,16 +1,19 @@
 //! Full and incremental indexing orchestrator.
 //!
-//! Writes symbols, files, and content chunks to the PostgreSQL hub. External sync
-//! (Qdrant vectors, FalkorDB graph) is handled by the Gobby daemon's sync worker,
-//! which polls for files with `vectors_synced=false` / `graph_synced=false`.
+//! Writes files, symbols, imports, calls, unresolved targets, and content chunks
+//! to the PostgreSQL hub. External sync (Qdrant vectors, FalkorDB graph) is
+//! delegated through projection sync status and handled outside this module.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use anyhow::Context;
-use postgres::Client;
+use anyhow::Context as _;
+use postgres::{Client, GenericClient};
+use serde::{Deserialize, Serialize};
 
+use crate::config::Context;
+use crate::db;
 use crate::index::api;
 use crate::index::chunker;
 use crate::index::hasher;
@@ -18,8 +21,13 @@ use crate::index::languages;
 use crate::index::parser;
 use crate::index::semantic::{self, SemanticCallResolver};
 use crate::index::walker;
-use crate::models::{IndexResult, IndexedFile, IndexedProject};
-use crate::progress::ProgressBar;
+use crate::models::{
+    CallRelation, CallTargetKind, ContentChunk, ImportRelation, IndexedFile, IndexedProject,
+    ParseResult, Symbol,
+};
+use crate::projection::sync::{
+    self, ProjectionSyncRequest, ProjectionSyncStatus, ProjectionTarget,
+};
 
 /// Default exclude patterns (matching Python CodeIndexConfig defaults).
 const DEFAULT_EXCLUDES: &[&str] = &[
@@ -41,61 +49,222 @@ const DEFAULT_EXCLUDES: &[&str] = &[
     ".cache",
 ];
 
-/// Index a directory (full or incremental).
-pub fn index_directory(
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IndexRequest {
+    pub project_root: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path_filter: Option<PathBuf>,
+    #[serde(default)]
+    pub explicit_files: Vec<PathBuf>,
+    pub full: bool,
+    pub require_cpp_semantics: bool,
+    pub sync_projections: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IndexDurations {
+    pub discovery_ms: u64,
+    pub indexing_ms: u64,
+    pub stats_ms: u64,
+    pub total_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum IndexDegradation {
+    FileIndexError { file_path: String, message: String },
+    ProjectionSyncSkipped { reason: String },
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IndexOutcome {
+    pub project_id: String,
+    pub scanned_files: usize,
+    pub indexed_files: usize,
+    pub skipped_files: usize,
+    pub symbols_indexed: usize,
+    pub imports_indexed: usize,
+    pub calls_indexed: usize,
+    pub unresolved_targets_indexed: usize,
+    pub chunks_indexed: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub indexed_file_paths: Vec<String>,
+    pub durations: IndexDurations,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub degraded: Vec<IndexDegradation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub projection_sync: Option<ProjectionSyncStatus>,
+}
+
+impl IndexOutcome {
+    fn new(project_id: &str) -> Self {
+        Self {
+            project_id: project_id.to_string(),
+            ..Self::default()
+        }
+    }
+
+    fn add_counts(&mut self, counts: FileIndexCounts) {
+        self.indexed_files += counts.indexed_files;
+        self.symbols_indexed += counts.symbols_indexed;
+        self.imports_indexed += counts.imports_indexed;
+        self.calls_indexed += counts.calls_indexed;
+        self.unresolved_targets_indexed += counts.unresolved_targets_indexed;
+        self.chunks_indexed += counts.chunks_indexed;
+        if counts.indexed_files > 0 {
+            self.indexed_file_paths.push(counts.file_path);
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct FileIndexCounts {
+    file_path: String,
+    indexed_files: usize,
+    symbols_indexed: usize,
+    imports_indexed: usize,
+    calls_indexed: usize,
+    unresolved_targets_indexed: usize,
+    chunks_indexed: usize,
+}
+
+trait CodeFactSink {
+    fn delete_file_facts(&mut self, project_id: &str, file_path: &str) -> anyhow::Result<()>;
+    fn upsert_symbols(&mut self, symbols: &[Symbol]) -> anyhow::Result<usize>;
+    fn upsert_file(&mut self, file: &IndexedFile) -> anyhow::Result<()>;
+    fn upsert_imports(
+        &mut self,
+        project_id: &str,
+        file_path: &str,
+        imports: &[ImportRelation],
+    ) -> anyhow::Result<usize>;
+    fn upsert_calls(
+        &mut self,
+        project_id: &str,
+        file_path: &str,
+        calls: &[CallRelation],
+    ) -> anyhow::Result<usize>;
+    fn upsert_content_chunks(&mut self, chunks: &[ContentChunk]) -> anyhow::Result<usize>;
+}
+
+struct PostgresCodeFactSink<'a, C> {
+    conn: &'a mut C,
+}
+
+impl<'a, C> PostgresCodeFactSink<'a, C> {
+    fn new(conn: &'a mut C) -> Self {
+        Self { conn }
+    }
+}
+
+impl<C> CodeFactSink for PostgresCodeFactSink<'_, C>
+where
+    C: GenericClient,
+{
+    fn delete_file_facts(&mut self, project_id: &str, file_path: &str) -> anyhow::Result<()> {
+        api::delete_file_facts(self.conn, project_id, file_path)
+    }
+
+    fn upsert_symbols(&mut self, symbols: &[Symbol]) -> anyhow::Result<usize> {
+        api::upsert_symbols(self.conn, symbols)
+    }
+
+    fn upsert_file(&mut self, file: &IndexedFile) -> anyhow::Result<()> {
+        api::upsert_file(self.conn, file)
+    }
+
+    fn upsert_imports(
+        &mut self,
+        project_id: &str,
+        file_path: &str,
+        imports: &[ImportRelation],
+    ) -> anyhow::Result<usize> {
+        api::upsert_imports(self.conn, project_id, file_path, imports)
+    }
+
+    fn upsert_calls(
+        &mut self,
+        project_id: &str,
+        file_path: &str,
+        calls: &[CallRelation],
+    ) -> anyhow::Result<usize> {
+        api::upsert_calls(self.conn, project_id, file_path, calls)
+    }
+
+    fn upsert_content_chunks(&mut self, chunks: &[ContentChunk]) -> anyhow::Result<usize> {
+        api::upsert_content_chunks(self.conn, chunks)
+    }
+}
+
+pub fn index_files(request: IndexRequest, ctx: &Context) -> anyhow::Result<IndexOutcome> {
+    let mut conn = db::connect_readwrite(&ctx.database_url)?;
+    index_files_with_connection(&mut conn, request, &ctx.project_id)
+}
+
+fn index_files_with_connection(
     conn: &mut Client,
-    root_path: &Path,
+    request: IndexRequest,
     project_id: &str,
-    incremental: bool,
-    quiet: bool,
-    require_cpp_semantics: bool,
-) -> anyhow::Result<IndexResult> {
+) -> anyhow::Result<IndexOutcome> {
+    if request.explicit_files.is_empty() {
+        index_discovered_files(conn, &request, project_id)
+    } else {
+        index_explicit_files_with_connection(conn, &request, project_id)
+    }
+}
+
+fn index_discovered_files(
+    conn: &mut Client,
+    request: &IndexRequest,
+    project_id: &str,
+) -> anyhow::Result<IndexOutcome> {
     let start = Instant::now();
-    let mut result = IndexResult {
-        project_id: project_id.to_string(),
-        files_indexed: 0,
-        files_skipped: 0,
-        symbols_found: 0,
-        errors: Vec::new(),
-        duration_ms: 0,
-    };
+    let discovery_start = Instant::now();
+    let root_path = &request.project_root;
+    let mut outcome = IndexOutcome::new(project_id);
 
     let excludes: Vec<String> = DEFAULT_EXCLUDES.iter().map(|s| s.to_string()).collect();
-    let (candidates, content_only) = walker::discover_files(root_path, &excludes);
+    let (mut candidates, mut content_only) = walker::discover_files(root_path, &excludes);
+    if let Some(filter) = request.path_filter.as_deref() {
+        candidates = filter_discovered_paths(root_path, filter, candidates);
+        content_only = filter_discovered_paths(root_path, filter, content_only);
+    }
     let import_context = parser::build_import_resolution_context(root_path, &candidates);
     let mut semantic_resolver =
-        create_semantic_resolver_if_needed(root_path, &candidates, require_cpp_semantics)?;
+        create_semantic_resolver_if_needed(root_path, &candidates, request.require_cpp_semantics)?;
 
     // Build current hash map for incremental detection and orphan cleanup.
     let current_hashes = current_file_hashes(root_path, &candidates, &content_only);
-    let stale: Option<HashMap<String, ()>> = if incremental {
+    let stale: Option<HashMap<String, ()>> = if !request.full {
         Some(get_stale_files(conn, project_id, &current_hashes))
     } else {
         None
     };
 
-    // Clean orphans from the hub; daemon handles FalkorDB/Qdrant cleanup.
-    let orphans = get_orphan_files(conn, project_id, &current_hashes);
-    for orphan in &orphans {
-        api::delete_file_facts(conn, project_id, orphan)?;
+    // Clean orphans only during whole-project scans. Filtered scans do not know
+    // about files outside the requested subtree.
+    if request.path_filter.is_none() {
+        let orphans = get_orphan_files(conn, project_id, &current_hashes);
+        for orphan in &orphans {
+            api::delete_file_facts(conn, project_id, orphan)?;
+        }
     }
 
-    // Index each candidate file
     let eligible_files = candidates.len() + content_only.len();
-    let mut progress = ProgressBar::new(eligible_files, quiet);
+    outcome.scanned_files = eligible_files;
+    outcome.durations.discovery_ms = discovery_start.elapsed().as_millis() as u64;
 
+    let indexing_start = Instant::now();
     for path in &candidates {
         let rel = match relative_path(path, root_path) {
             Ok(r) => r,
             Err(_) => continue,
         };
 
-        progress.tick(&rel);
-
         if let Some(ref stale_map) = stale
             && !stale_map.contains_key(&rel)
         {
-            result.files_skipped += 1;
+            outcome.skipped_files += 1;
             continue;
         }
 
@@ -108,66 +277,53 @@ pub fn index_directory(
             &import_context,
             semantic_resolver.as_deref_mut(),
         )? {
-            Some(count) => {
-                result.files_indexed += 1;
-                result.symbols_found += count;
-            }
+            Some(counts) => outcome.add_counts(counts),
             None => {
-                result.files_skipped += 1;
+                outcome.skipped_files += 1;
             }
         }
     }
 
-    // Index content-only files
     for path in &content_only {
         let rel = relative_path(path, root_path).unwrap_or_default();
-        progress.tick(&rel);
         if let Some(ref stale_map) = stale
             && !stale_map.contains_key(&rel)
         {
-            result.files_skipped += 1;
+            outcome.skipped_files += 1;
             continue;
         }
-        if index_content_only(conn, path, project_id, root_path, &excludes)? {
-            result.files_indexed += 1;
-        } else {
-            result.files_skipped += 1;
+        match index_content_only(conn, path, project_id, root_path, &excludes)? {
+            Some(counts) => outcome.add_counts(counts),
+            None => outcome.skipped_files += 1,
         }
     }
+    outcome.durations.indexing_ms = indexing_start.elapsed().as_millis() as u64;
 
-    progress.finish();
-
-    let elapsed_ms = start.elapsed().as_millis() as u64;
-    result.duration_ms = elapsed_ms;
-
+    let stats_start = Instant::now();
     refresh_project_stats(
         conn,
         root_path,
         project_id,
-        elapsed_ms,
+        start.elapsed().as_millis() as u64,
         Some(eligible_files),
     );
+    outcome.durations.stats_ms = stats_start.elapsed().as_millis() as u64;
+    outcome.durations.total_ms = start.elapsed().as_millis() as u64;
 
-    Ok(result)
+    attach_projection_sync(&mut outcome, request);
+    Ok(outcome)
 }
 
-/// Index specific changed files.
-pub fn index_files(
+fn index_explicit_files_with_connection(
     conn: &mut Client,
-    root_path: &Path,
+    request: &IndexRequest,
     project_id: &str,
-    file_paths: &[String],
-    require_cpp_semantics: bool,
-) -> anyhow::Result<IndexResult> {
+) -> anyhow::Result<IndexOutcome> {
     let start = Instant::now();
-    let mut result = IndexResult {
-        project_id: project_id.to_string(),
-        files_indexed: 0,
-        files_skipped: 0,
-        symbols_found: 0,
-        errors: Vec::new(),
-        duration_ms: 0,
-    };
+    let discovery_start = Instant::now();
+    let root_path = &request.project_root;
+    let mut outcome = IndexOutcome::new(project_id);
+    outcome.scanned_files = request.explicit_files.len();
 
     let excludes: Vec<String> = DEFAULT_EXCLUDES.iter().map(|s| s.to_string()).collect();
     let (candidates, content_only) = walker::discover_files(root_path, &excludes);
@@ -175,16 +331,17 @@ pub fn index_files(
     let mut routed_files = Vec::new();
     let mut ast_files = Vec::new();
 
-    for fp in file_paths {
-        let abs = if Path::new(fp).is_absolute() {
-            std::path::PathBuf::from(fp)
+    for fp in &request.explicit_files {
+        let abs = if fp.is_absolute() {
+            fp.clone()
         } else {
             root_path.join(fp)
         };
 
         if !abs.exists() {
             // File deleted — clean up hub rows (daemon handles external cleanup).
-            api::delete_file_facts(conn, project_id, fp)?;
+            let rel = requested_relative_path(root_path, fp);
+            api::delete_file_facts(conn, project_id, &rel)?;
             continue;
         }
 
@@ -197,14 +354,16 @@ pub fn index_files(
                 routed_files.push((abs, ExplicitFileRoute::ContentOnly));
             }
             ExplicitFileRoute::Skip => {
-                result.files_skipped += 1;
+                outcome.skipped_files += 1;
             }
         }
     }
 
     let mut semantic_resolver =
-        create_semantic_resolver_if_needed(root_path, &ast_files, require_cpp_semantics)?;
+        create_semantic_resolver_if_needed(root_path, &ast_files, request.require_cpp_semantics)?;
+    outcome.durations.discovery_ms = discovery_start.elapsed().as_millis() as u64;
 
+    let indexing_start = Instant::now();
     for (abs, route) in routed_files {
         match route {
             ExplicitFileRoute::Ast => {
@@ -217,32 +376,35 @@ pub fn index_files(
                     &import_context,
                     semantic_resolver.as_deref_mut(),
                 )? {
-                    result.files_indexed += 1;
-                    result.symbols_found += count;
+                    outcome.add_counts(count);
                 } else {
-                    result.files_skipped += 1;
+                    outcome.skipped_files += 1;
                 }
             }
             ExplicitFileRoute::ContentOnly => {
-                if index_content_only(conn, &abs, project_id, root_path, &excludes)? {
-                    result.files_indexed += 1;
-                } else {
-                    result.files_skipped += 1;
+                match index_content_only(conn, &abs, project_id, root_path, &excludes)? {
+                    Some(counts) => outcome.add_counts(counts),
+                    None => outcome.skipped_files += 1,
                 }
             }
             _ => unreachable!("skip routes are filtered before indexing"),
         }
     }
+    outcome.durations.indexing_ms = indexing_start.elapsed().as_millis() as u64;
 
-    result.duration_ms = start.elapsed().as_millis() as u64;
+    let stats_start = Instant::now();
     refresh_project_stats(
         conn,
         root_path,
         project_id,
-        result.duration_ms,
+        start.elapsed().as_millis() as u64,
         Some(candidates.len() + content_only.len()),
     );
-    Ok(result)
+    outcome.durations.stats_ms = stats_start.elapsed().as_millis() as u64;
+    outcome.durations.total_ms = start.elapsed().as_millis() as u64;
+
+    attach_projection_sync(&mut outcome, request);
+    Ok(outcome)
 }
 
 /// Index a single file. Returns symbol count or None if skipped.
@@ -254,7 +416,7 @@ fn index_file(
     exclude_patterns: &[String],
     import_context: &parser::ImportResolutionContext,
     semantic_resolver: Option<&mut (dyn SemanticCallResolver + '_)>,
-) -> anyhow::Result<Option<usize>> {
+) -> anyhow::Result<Option<FileIndexCounts>> {
     let rel = match relative_path(file_path, root_path) {
         Ok(rel) => rel,
         Err(_) => return Ok(None),
@@ -272,46 +434,28 @@ fn index_file(
         return Ok(None);
     };
 
-    let count = parse_result.symbols.len();
-
     // PostgreSQL hub writes (transactional).
     let mut tx = conn
         .transaction()
         .context("start indexed file transaction")?;
 
-    api::delete_file_facts(&mut tx, project_id, &rel)?;
-    api::upsert_symbols(&mut tx, &parse_result.symbols)?;
-
     let language = languages::detect_language(&file_path.to_string_lossy()).unwrap_or("unknown");
     let h = hasher::file_content_hash(file_path).unwrap_or_default();
     let size = file_path.metadata().map(|m| m.len()).unwrap_or(0);
-
-    api::upsert_file(
-        &mut tx,
-        &IndexedFile {
-            id: IndexedFile::make_id(project_id, &rel),
-            project_id: project_id.to_string(),
-            file_path: rel.clone(),
-            language: language.to_string(),
-            content_hash: h,
-            symbol_count: count,
-            byte_size: size as usize,
-            indexed_at: epoch_secs_str(),
-        },
+    let mut sink = PostgresCodeFactSink::new(&mut tx);
+    let counts = write_parsed_file_facts(
+        &mut sink,
+        project_id,
+        &rel,
+        language,
+        &h,
+        size as usize,
+        &parse_result,
     )?;
-
-    api::upsert_imports(&mut tx, project_id, &rel, &parse_result.imports)?;
-    api::upsert_calls(&mut tx, project_id, &rel, &parse_result.calls)?;
-
-    let chunks =
-        chunker::chunk_file_content(&parse_result.source, &rel, project_id, Some(language));
-    if !chunks.is_empty() {
-        api::upsert_content_chunks(&mut tx, &chunks)?;
-    }
 
     tx.commit().context("commit indexed file transaction")?;
 
-    Ok(Some(count))
+    Ok(Some(counts))
 }
 
 fn create_semantic_resolver_if_needed(
@@ -357,19 +501,19 @@ fn index_content_only(
     project_id: &str,
     root_path: &Path,
     exclude_patterns: &[String],
-) -> anyhow::Result<bool> {
+) -> anyhow::Result<Option<FileIndexCounts>> {
     if !walker::is_content_indexable(root_path, path, exclude_patterns) {
-        return Ok(false);
+        return Ok(None);
     }
 
     let rel = match relative_path(path, root_path) {
         Ok(r) => r,
-        Err(_) => return Ok(false),
+        Err(_) => return Ok(None),
     };
 
     let source = match std::fs::read(path) {
         Ok(s) => s,
-        Err(_) => return Ok(false),
+        Err(_) => return Ok(None),
     };
 
     let lang = walker::content_language(path);
@@ -378,30 +522,145 @@ fn index_content_only(
     let mut tx = conn
         .transaction()
         .context("start content-only file transaction")?;
-
-    api::delete_file_facts(&mut tx, project_id, &rel)?;
-    api::upsert_file(
-        &mut tx,
-        &IndexedFile {
-            id: IndexedFile::make_id(project_id, &rel),
-            project_id: project_id.to_string(),
-            file_path: rel.clone(),
-            language: lang.clone(),
-            content_hash,
-            symbol_count: 0,
-            byte_size: source.len(),
-            indexed_at: epoch_secs_str(),
-        },
+    let mut sink = PostgresCodeFactSink::new(&mut tx);
+    let counts = write_content_only_file_facts(
+        &mut sink,
+        project_id,
+        &rel,
+        &lang,
+        &content_hash,
+        source.len(),
+        &source,
     )?;
-
-    let chunks = chunker::chunk_file_content(&source, &rel, project_id, Some(&lang));
-    if !chunks.is_empty() {
-        api::upsert_content_chunks(&mut tx, &chunks)?;
-    }
 
     tx.commit()
         .context("commit content-only file transaction")?;
-    Ok(true)
+    Ok(Some(counts))
+}
+
+fn write_parsed_file_facts(
+    sink: &mut impl CodeFactSink,
+    project_id: &str,
+    rel: &str,
+    language: &str,
+    content_hash: &str,
+    byte_size: usize,
+    parse_result: &ParseResult,
+) -> anyhow::Result<FileIndexCounts> {
+    sink.delete_file_facts(project_id, rel)?;
+    let symbols_indexed = sink.upsert_symbols(&parse_result.symbols)?;
+    sink.upsert_file(&IndexedFile {
+        id: IndexedFile::make_id(project_id, rel),
+        project_id: project_id.to_string(),
+        file_path: rel.to_string(),
+        language: language.to_string(),
+        content_hash: content_hash.to_string(),
+        symbol_count: parse_result.symbols.len(),
+        byte_size,
+        indexed_at: epoch_secs_str(),
+    })?;
+    let imports_indexed = sink.upsert_imports(project_id, rel, &parse_result.imports)?;
+    let calls_indexed = sink.upsert_calls(project_id, rel, &parse_result.calls)?;
+    let unresolved_targets_indexed = parse_result
+        .calls
+        .iter()
+        .filter(|call| call.callee_target_kind == CallTargetKind::Unresolved)
+        .count();
+    let chunks = chunker::chunk_file_content(&parse_result.source, rel, project_id, Some(language));
+    let chunks_indexed = if chunks.is_empty() {
+        0
+    } else {
+        sink.upsert_content_chunks(&chunks)?
+    };
+
+    Ok(FileIndexCounts {
+        file_path: rel.to_string(),
+        indexed_files: 1,
+        symbols_indexed,
+        imports_indexed,
+        calls_indexed,
+        unresolved_targets_indexed,
+        chunks_indexed,
+    })
+}
+
+fn write_content_only_file_facts(
+    sink: &mut impl CodeFactSink,
+    project_id: &str,
+    rel: &str,
+    language: &str,
+    content_hash: &str,
+    byte_size: usize,
+    source: &[u8],
+) -> anyhow::Result<FileIndexCounts> {
+    sink.delete_file_facts(project_id, rel)?;
+    sink.upsert_file(&IndexedFile {
+        id: IndexedFile::make_id(project_id, rel),
+        project_id: project_id.to_string(),
+        file_path: rel.to_string(),
+        language: language.to_string(),
+        content_hash: content_hash.to_string(),
+        symbol_count: 0,
+        byte_size,
+        indexed_at: epoch_secs_str(),
+    })?;
+    let chunks = chunker::chunk_file_content(source, rel, project_id, Some(language));
+    let chunks_indexed = if chunks.is_empty() {
+        0
+    } else {
+        sink.upsert_content_chunks(&chunks)?
+    };
+
+    Ok(FileIndexCounts {
+        file_path: rel.to_string(),
+        indexed_files: 1,
+        chunks_indexed,
+        ..FileIndexCounts::default()
+    })
+}
+
+fn filter_discovered_paths(
+    root_path: &Path,
+    path_filter: &Path,
+    paths: Vec<PathBuf>,
+) -> Vec<PathBuf> {
+    let filter_abs = if path_filter.is_absolute() {
+        path_filter.to_path_buf()
+    } else {
+        root_path.join(path_filter)
+    };
+    let filter_abs = filter_abs.canonicalize().unwrap_or(filter_abs);
+
+    paths
+        .into_iter()
+        .filter(|path| {
+            let path_abs = path.canonicalize().unwrap_or_else(|_| path.clone());
+            path_abs == filter_abs || path_abs.starts_with(&filter_abs)
+        })
+        .collect()
+}
+
+fn requested_relative_path(root_path: &Path, requested_path: &Path) -> String {
+    if requested_path.is_absolute() {
+        return requested_path
+            .strip_prefix(root_path)
+            .unwrap_or(requested_path)
+            .to_string_lossy()
+            .to_string();
+    }
+    requested_path.to_string_lossy().to_string()
+}
+
+fn attach_projection_sync(outcome: &mut IndexOutcome, request: &IndexRequest) {
+    if !request.sync_projections {
+        return;
+    }
+
+    outcome.projection_sync = Some(sync::pending_after_code_fact_write(ProjectionSyncRequest {
+        project_id: outcome.project_id.clone(),
+        file_paths: outcome.indexed_file_paths.clone(),
+        targets: vec![ProjectionTarget::Graph, ProjectionTarget::Vectors],
+    }));
 }
 
 /// Invalidate all index data for a project.
@@ -591,8 +850,11 @@ fn epoch_secs_str() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{CallRelation, CallTargetKind};
+    use crate::models::{CallRelation, CallTargetKind, ImportRelation, ParseResult, Symbol};
+    use serde::Serialize;
+    use serde::de::DeserializeOwned;
     use std::path::Path;
+    use std::path::PathBuf;
 
     fn write_file(root: &Path, rel: &str, contents: &[u8]) {
         let path = root.join(rel);
@@ -600,6 +862,170 @@ mod tests {
             std::fs::create_dir_all(parent).expect("create parent");
         }
         std::fs::write(path, contents).expect("write file");
+    }
+
+    fn assert_cli_independent_contract<T>()
+    where
+        T: Serialize + DeserializeOwned,
+    {
+        let type_name = std::any::type_name::<T>();
+        assert!(!type_name.contains("commands::"), "{type_name}");
+        assert!(!type_name.contains("output::"), "{type_name}");
+        assert!(!type_name.contains("clap"), "{type_name}");
+    }
+
+    #[test]
+    fn library_api_is_cli_independent() {
+        assert_cli_independent_contract::<IndexRequest>();
+        assert_cli_independent_contract::<IndexOutcome>();
+        assert_cli_independent_contract::<IndexDurations>();
+        assert_cli_independent_contract::<IndexDegradation>();
+
+        let request = IndexRequest {
+            project_root: PathBuf::from("/tmp/project"),
+            path_filter: Some(PathBuf::from("src")),
+            explicit_files: vec![PathBuf::from("src/lib.rs")],
+            full: true,
+            require_cpp_semantics: false,
+            sync_projections: true,
+        };
+
+        let json = serde_json::to_value(&request).expect("request serializes");
+        assert_eq!(json["project_root"], "/tmp/project");
+        assert_eq!(json["path_filter"], "src");
+        assert_eq!(json["explicit_files"][0], "src/lib.rs");
+    }
+
+    #[derive(Default)]
+    struct RecordingCodeFactSink {
+        writes: Vec<&'static str>,
+        files: usize,
+        symbols: usize,
+        imports: usize,
+        calls: usize,
+        unresolved_targets: usize,
+        chunks: usize,
+    }
+
+    impl CodeFactSink for RecordingCodeFactSink {
+        fn delete_file_facts(&mut self, _project_id: &str, _file_path: &str) -> anyhow::Result<()> {
+            self.writes.push("delete");
+            Ok(())
+        }
+
+        fn upsert_symbols(&mut self, symbols: &[Symbol]) -> anyhow::Result<usize> {
+            self.writes.push("symbols");
+            self.symbols += symbols.len();
+            Ok(symbols.len())
+        }
+
+        fn upsert_file(&mut self, _file: &IndexedFile) -> anyhow::Result<()> {
+            self.writes.push("file");
+            self.files += 1;
+            Ok(())
+        }
+
+        fn upsert_imports(
+            &mut self,
+            _project_id: &str,
+            _file_path: &str,
+            imports: &[ImportRelation],
+        ) -> anyhow::Result<usize> {
+            self.writes.push("imports");
+            self.imports += imports.len();
+            Ok(imports.len())
+        }
+
+        fn upsert_calls(
+            &mut self,
+            _project_id: &str,
+            _file_path: &str,
+            calls: &[CallRelation],
+        ) -> anyhow::Result<usize> {
+            self.writes.push("calls");
+            self.calls += calls.len();
+            self.unresolved_targets += calls
+                .iter()
+                .filter(|call| call.callee_target_kind == CallTargetKind::Unresolved)
+                .count();
+            Ok(calls.len())
+        }
+
+        fn upsert_content_chunks(&mut self, chunks: &[ContentChunk]) -> anyhow::Result<usize> {
+            self.writes.push("chunks");
+            self.chunks += chunks.len();
+            Ok(chunks.len())
+        }
+    }
+
+    #[test]
+    fn library_writes_all_code_facts() {
+        let project_id = "project-1";
+        let rel = "src/lib.rs";
+        let source = b"use std::fmt;\nfn caller() {\n    missing();\n}\n";
+        let caller_id = Symbol::make_id(project_id, rel, "caller", "function", 14);
+        let parse_result = ParseResult {
+            symbols: vec![Symbol {
+                id: caller_id.clone(),
+                project_id: project_id.to_string(),
+                file_path: rel.to_string(),
+                name: "caller".to_string(),
+                qualified_name: "caller".to_string(),
+                kind: "function".to_string(),
+                language: "rust".to_string(),
+                byte_start: 14,
+                byte_end: 45,
+                line_start: 2,
+                line_end: 4,
+                signature: Some("fn caller()".to_string()),
+                docstring: None,
+                parent_symbol_id: None,
+                content_hash: "hash-1".to_string(),
+                summary: None,
+                created_at: String::new(),
+                updated_at: String::new(),
+            }],
+            imports: vec![ImportRelation {
+                file_path: rel.to_string(),
+                module_name: "std::fmt".to_string(),
+            }],
+            calls: vec![CallRelation::new(
+                caller_id,
+                "missing".to_string(),
+                rel.to_string(),
+                3,
+            )],
+            source: source.to_vec(),
+        };
+
+        let mut sink = RecordingCodeFactSink::default();
+        let counts = write_parsed_file_facts(
+            &mut sink,
+            project_id,
+            rel,
+            "rust",
+            "hash-1",
+            source.len(),
+            &parse_result,
+        )
+        .expect("write parsed file facts");
+
+        assert_eq!(
+            sink.writes,
+            vec!["delete", "symbols", "file", "imports", "calls", "chunks"]
+        );
+        assert_eq!(sink.files, 1);
+        assert_eq!(sink.symbols, 1);
+        assert_eq!(sink.imports, 1);
+        assert_eq!(sink.calls, 1);
+        assert_eq!(sink.unresolved_targets, 1);
+        assert_eq!(sink.chunks, 1);
+        assert_eq!(counts.indexed_files, 1);
+        assert_eq!(counts.symbols_indexed, 1);
+        assert_eq!(counts.imports_indexed, 1);
+        assert_eq!(counts.calls_indexed, 1);
+        assert_eq!(counts.unresolved_targets_indexed, 1);
+        assert_eq!(counts.chunks_indexed, 1);
     }
 
     #[test]

@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use crate::config::Context;
 use crate::db;
-use crate::index::{hasher, indexer};
+use crate::index::{api, hasher};
 use crate::models::Symbol;
 
 const INFLIGHT_ENV: &str = "GCODE_FRESHNESS_INFLIGHT";
@@ -18,25 +18,38 @@ pub fn ensure_fresh(ctx: &Context, scope: FreshnessScope) -> anyhow::Result<()> 
     }
 
     let _guard = FreshnessGuard::enter();
-    let mut conn = db::connect_readwrite(&ctx.database_url)?;
     match scope {
         FreshnessScope::Project => {
-            indexer::index_directory(
-                &mut conn,
-                &ctx.project_root,
-                &ctx.project_id,
-                true,
-                ctx.quiet,
-                false,
+            api::index_files(
+                api::IndexRequest {
+                    project_root: ctx.project_root.clone(),
+                    path_filter: None,
+                    explicit_files: Vec::new(),
+                    full: false,
+                    require_cpp_semantics: false,
+                    sync_projections: false,
+                },
+                ctx,
             )?;
         }
         FreshnessScope::Files(paths) => {
-            let files: Vec<String> = paths
+            let files: Vec<PathBuf> = paths
                 .iter()
                 .map(|path| normalize_file_path(&ctx.project_root, path))
+                .map(PathBuf::from)
                 .collect();
             if !files.is_empty() {
-                indexer::index_files(&mut conn, &ctx.project_root, &ctx.project_id, &files, false)?;
+                api::index_files(
+                    api::IndexRequest {
+                        project_root: ctx.project_root.clone(),
+                        path_filter: None,
+                        explicit_files: files,
+                        full: false,
+                        require_cpp_semantics: false,
+                        sync_projections: false,
+                    },
+                    ctx,
+                )?;
             }
         }
     }

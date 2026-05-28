@@ -20,6 +20,8 @@ pub mod skill;
 pub mod utils;
 pub mod vector;
 
+pub use index::api::{IndexDegradation, IndexDurations, IndexOutcome, IndexRequest, index_files};
+
 #[cfg(test)]
 mod tests {
     use serde::Serialize;
@@ -53,6 +55,10 @@ mod tests {
 
         assert_cli_independent_contract::<crate::index::api::CodeFactWriteRequest>();
         assert_cli_independent_contract::<crate::index::api::CodeFactWriteSummary>();
+        assert_cli_independent_contract::<crate::index::api::IndexRequest>();
+        assert_cli_independent_contract::<crate::index::api::IndexOutcome>();
+        assert_cli_independent_contract::<crate::index::api::IndexDurations>();
+        assert_cli_independent_contract::<crate::index::api::IndexDegradation>();
         assert_cli_independent_contract::<crate::graph::code_graph::GraphLifecycleRequest>();
         assert_cli_independent_contract::<crate::graph::code_graph::GraphLifecycleOutput>();
         assert_cli_independent_contract::<crate::graph::code_graph::GraphReadRequest>();
