@@ -78,6 +78,8 @@ Execute a tool on any connected MCP server.
 | `server_name` | string | Yes | Server name (e.g. `gobby-tasks`, `context7`) |
 | `tool_name` | string | Yes | Name of the tool to execute |
 | `arguments` | object | No | Tool-specific arguments |
+| `session_id` | string | No | Caller session ref for task claims, verification evidence, and other session-scoped operations. |
+| `project_id` | string | No | Project name or UUID for cross-project tool calls. Local `#N` refs stay scoped to the caller project; target cross-project sessions should use UUIDs. |
 
 Routing: `gobby-*` is handled locally by the matching internal registry;
 all others are proxied to the downstream MCP server.
@@ -383,9 +385,28 @@ point.
 exposed by its schema: `quick`, `skip_stages`, `isolation` (`none`, `worktree`,
 or `clone`), `workspace_backend` (`worktree` or `clone`), `clone`, `no_merge`,
 `pr`, `stage`, `target_branch`, `agent`, `reset_expansion_output`,
-`max_active_agents`, `max_retries`, and `project_id`. `workspace_backend` and
-`clone` remain compatibility shims; contradictory inputs are rejected. See
-[orchestration.md](./orchestration.md) for the dispatch model.
+`max_active_agents`, `max_retries`, `coordinator`, and `project_id`.
+`workspace_backend` and `clone` remain compatibility shims; contradictory
+inputs are rejected. See [orchestration.md](./orchestration.md) for the dispatch
+model.
+
+For cross-project builds, `project_id` is the target build project and
+`coordinator` should be the coordinator session's full UUID. CLI
+`--coordinator current` is the convenience path that resolves the caller
+process `GOBBY_SESSION_ID`; direct MCP calls should pass the resolved UUID when
+the coordinator belongs to another project.
+
+```python
+call_tool(
+    "gobby-tasks-ops",
+    "build_task",
+    {
+        "input_ref": "#14354",
+        "project_id": "target-project-uuid",
+        "coordinator": "484d3d51-980b-4bb5-8a93-b43c9cdccf7a",
+    },
+)
+```
 
 ---
 

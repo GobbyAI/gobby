@@ -51,10 +51,10 @@ its sibling guide tasks close.
 
 | Surface | Current role |
 | --- | --- |
-| `gobby build [INPUT\|ACTION] [REF]` | CLI entry point for starting or controlling build automation |
-| `gobby-tasks-ops:build_task` | MCP entry point for starting lifecycle automation; requires `input_ref` |
-| `POST /api/build` | HTTP entry point for the same shared build service |
-| `POST /api/build/{stop,resume,clean,restart}` | HTTP control actions for project-wide ticks or task-scoped automation |
+| `gobby build [INPUT\|ACTION] [REF]` | CLI entry point for starting or controlling build automation; `--project` routes target projects and `--coordinator current` routes completion wakes to the caller session |
+| `gobby-tasks-ops:build_task` | MCP entry point for starting lifecycle automation; requires `input_ref` and accepts `project_id` plus `coordinator` |
+| `POST /api/build` | HTTP entry point for the same shared build service; accepts `project_id` and `coordinator` |
+| `POST /api/build/{stop,resume,clean,restart}` | HTTP control actions for project-wide ticks or task-scoped automation; accepts `project_id` for routing |
 | `gobby profiles` / `gobby-profiles` / `/api/profiles` | Build profile registry editing for reusable build presets |
 | `gobby stages` / `gobby-tasks` stage tools / `/api/stages` | Stage registry metadata and task-type default manifest editing |
 | `src/gobby/dispatch/dispatcher.py` | Heartbeat scanner, mutex handling, and action executor |

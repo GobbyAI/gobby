@@ -28,6 +28,7 @@ sets `allow_automation=true`, and kicks a bounded dispatcher heartbeat.
 ```bash
 uv run gobby build '#14354' --quick --max-active-agents 1
 uv run gobby build '#14354' --isolation worktree --stage development:max_review_rounds=4
+uv run gobby build '#14354' --project gobby-cli --coordinator current
 uv run gobby build plan.md --isolation none
 ```
 
@@ -42,7 +43,9 @@ The same build service is exposed through MCP and HTTP:
     "quick": true,
     "isolation": "worktree",
     "stage": ["development:max_review_rounds=4"],
-    "max_active_agents": 1
+    "max_active_agents": 1,
+    "project_id": "target-project-uuid",
+    "coordinator": "484d3d51-980b-4bb5-8a93-b43c9cdccf7a"
   }
 }
 ```
@@ -57,15 +60,24 @@ Content-Type: application/json
   "quick": true,
   "isolation": "worktree",
   "stage": ["development:max_review_rounds=4"],
-  "max_active_agents": 1
+  "max_active_agents": 1,
+  "project_id": "target-project-uuid",
+  "coordinator": "484d3d51-980b-4bb5-8a93-b43c9cdccf7a"
 }
 ```
+
+CLI `--coordinator current` resolves the caller process `GOBBY_SESSION_ID` and,
+when paired with `--project`, canonicalizes it to the caller session UUID before
+dispatching the target project build. MCP and HTTP cross-project requests should
+pass the target project as `project_id` and the coordinator as a full session
+UUID; project-local `#N` refs resolve in the build project.
 
 `gobby build stop`, `gobby build resume`, `gobby build clean`, and
 `gobby build restart` map to `POST /api/build/stop`,
 `POST /api/build/resume`, `POST /api/build/clean`, and
 `POST /api/build/restart`. The task-scoped forms accept an `input_ref`; the
-project-wide stop and resume forms omit it.
+project-wide stop and resume forms omit it. Build control requests also accept
+`project_id` to route control actions to a specific project.
 
 Read-only build observability is exposed through `gobby-tasks` and HTTP:
 

@@ -192,16 +192,18 @@ Control actions are implemented as `build` subcommands through the same Click
 entry point.
 
 ```bash
-gobby build [INPUT_REF] [OPTIONS]
-gobby build stop [REF]
-gobby build resume [REF]
-gobby build clean REF [--dry-run] [--force] [--yes]
-gobby build restart REF [--dry-run] [--force] [--yes] [--no-resume]
+gobby build [INPUT_REF] [--project PROJECT] [--coordinator [current|SESSION_UUID]] [OPTIONS]
+gobby build stop [REF] [--project PROJECT]
+gobby build resume [REF] [--project PROJECT]
+gobby build clean REF [--project PROJECT] [--dry-run] [--force] [--yes]
+gobby build restart REF [--project PROJECT] [--dry-run] [--force] [--yes] [--no-resume]
 ```
 
 | Option | Purpose |
 | --- | --- |
 | `--quick` | Use quick build defaults. |
+| `--project PROJECT` | Build or control automation in a target project by name or UUID. |
+| `--coordinator [current\|SESSION_UUID]` | Wake a coordinator session when build-spawned agents complete. `current` resolves from `GOBBY_SESSION_ID`; with `--project`, use `current` or a full session UUID. |
 | `--skip-stage STAGE` | Skip one lifecycle stage; repeat for multiple stages. |
 | `--stage STAGE:KEY=VALUE` | Override stage settings such as review caps. |
 | `--isolation MODE` | Set build isolation to `none`, `worktree`, or `clone`. Omitted isolation defaults to `worktree`. |
@@ -221,6 +223,14 @@ gobby build restart REF [--dry-run] [--force] [--yes] [--no-resume]
 | `--no-resume` | For `restart`, reset state and leave automation paused. |
 
 Use `gobby build stop [REF]` to pause future dispatch work for a target.
+Explicit `--project` rejects project-local coordinator refs such as `#N` or
+bare numbers because they would resolve in the target project.
+
+Cross-project coordinator launch:
+
+```bash
+gobby build '#14354' --project gobby-cli --coordinator current
+```
 
 For `/gobby plan` handoff, use:
 

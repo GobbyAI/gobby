@@ -63,8 +63,21 @@ or pause the goal.
    otherwise.
 5. Check current build state and dispatch eligibility with supported MCP tools
    before launching.
-6. Launch `gobby build <target>` without `--quick` unless the user explicitly
-   requested a one-step smoke run.
+6. Launch `gobby build <target> --coordinator current` without `--quick`
+   unless the user explicitly requested a one-step smoke run. For target work in
+   another project, use
+   `gobby build <target> --project <target-project> --coordinator current`.
+
+## Coordinator Session Routing
+
+`--coordinator current` means the caller process `GOBBY_SESSION_ID`. For
+cross-project builds launched with explicit `--project`, the CLI canonicalizes
+that caller-project session ref to the caller session UUID before sending the
+build request to the target project.
+
+Explicit `--project` accepts `--coordinator current` or a full session UUID.
+Project-local refs such as `#N` and bare numeric refs are rejected because they
+would resolve in the target project instead of the caller project.
 
 ## During The Build
 
@@ -193,11 +206,14 @@ $gobby build-coordinator <target-ref>
 Create a separate coordination epic outside <target-ref>. Use it for coordinator
 work and every gobby build bug discovered during this run.
 
-Run gobby build for <target-ref> without --quick. Coordinate agents and
-worktrees, but treat coordinator intervention as evidence of unattended-build
-gaps. File every discovered build bug under the coordination epic. Fix blocking
-build bugs immediately, fix non-blocking build bugs when opportunity arises, and
-fix all discovered build bugs before closing <target-ref>.
+Run `gobby build <target-ref> --coordinator current` without `--quick`. If
+<target-ref> belongs to another project, run
+`gobby build <target-ref> --project <target-project> --coordinator current`.
+Coordinate agents and worktrees, but treat coordinator intervention as evidence
+of unattended-build gaps. File every discovered build bug under the coordination
+epic. Fix blocking build bugs immediately, fix non-blocking build bugs when
+opportunity arises, and fix all discovered build bugs before closing
+<target-ref>.
 
 Before dispatch, inspect the target task tree and normalize leaf task stages to
 the required stage. Default implementation leaves to development unless the user
