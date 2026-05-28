@@ -199,6 +199,30 @@ pub fn clear_project(ctx: &Context) -> anyhow::Result<()> {
     })
 }
 
+pub fn clear_all_code_index(config: &crate::config::FalkorConfig) -> anyhow::Result<()> {
+    let connection_config = config.connection_config();
+    match gobby_core::falkor::with_graph(
+        Some(&connection_config),
+        &config.graph_name,
+        None,
+        |client| execute_write_query(client, clear_all_code_index_query()?).map(Some),
+    ) {
+        Ok((Some(()), ServiceState::Available)) => Ok(()),
+        Ok((_, ServiceState::NotConfigured)) => Err(GraphReadError::NotConfigured.into()),
+        Ok((_, ServiceState::Unreachable { message })) => {
+            Err(GraphReadError::Unreachable { message }.into())
+        }
+        Ok((None, ServiceState::Available)) => Err(GraphReadError::QueryFailed {
+            message: "graph clear returned no value".to_string(),
+        }
+        .into()),
+        Err(error) => Err(GraphReadError::QueryFailed {
+            message: error.to_string(),
+        }
+        .into()),
+    }
+}
+
 fn execute_write_query(client: &mut GraphClient, query: TypedQuery) -> anyhow::Result<()> {
     let TypedQuery { cypher, params } = query;
     client.query(&cypher, Some(params))?;
@@ -560,6 +584,17 @@ pub(crate) fn clear_project_query(project_id: &str) -> anyhow::Result<TypedQuery
              DETACH DELETE n"
         ),
         [("project", TypedValue::String(project_id.to_string()))],
+    )
+}
+
+pub(crate) fn clear_all_code_index_query() -> anyhow::Result<TypedQuery> {
+    typed_query(
+        format!(
+            "MATCH (n)
+             WHERE {PROJECT_NODE_PREDICATE}
+             DETACH DELETE n"
+        ),
+        Vec::<(&str, TypedValue)>::new(),
     )
 }
 
@@ -1909,5 +1944,33 @@ mod tests {
             "{}",
             queries[2].cypher
         );
+    }
+
+    #[test]
+    fn clear_project_is_project_scoped() {
+        let query = clear_project_query("project-1").expect("query");
+
+        assert!(query.cypher.contains("MATCH (n {project: $project})"));
+        assert!(query.cypher.contains("n:CodeFile"));
+        assert!(query.cypher.contains("n:CodeSymbol"));
+        assert_eq!(
+            query.params.get("project").map(String::as_str),
+            Some("'project-1'")
+        );
+    }
+
+    #[test]
+    fn clear_all_code_index_targets_only_code_index_labels() {
+        let query = clear_all_code_index_query().expect("query");
+
+        assert!(query.cypher.contains("MATCH (n)"));
+        assert!(query.cypher.contains("n:CodeFile"));
+        assert!(query.cypher.contains("n:CodeSymbol"));
+        assert!(query.cypher.contains("n:CodeModule"));
+        assert!(query.cypher.contains("n:UnresolvedCallee"));
+        assert!(query.cypher.contains("n:ExternalSymbol"));
+        assert!(!query.cypher.contains("config_store"));
+        assert!(!query.cypher.contains("MATCH (n {project: $project})"));
+        assert!(query.params.is_empty());
     }
 }

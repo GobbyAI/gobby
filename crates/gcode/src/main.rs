@@ -44,6 +44,9 @@ enum Command {
         /// Skip Docker service provisioning
         #[arg(long)]
         no_services: bool,
+        /// Drop/recreate gcode-owned code-index state and clear code-index projections
+        #[arg(long)]
+        overwrite_code_index: bool,
         /// PostgreSQL schema namespace for gcode-owned objects
         #[arg(long, default_value = "public")]
         schema: String,
@@ -346,6 +349,7 @@ where
             standalone,
             database_url,
             no_services,
+            overwrite_code_index,
             schema,
             embedding_provider,
             embedding_api_base,
@@ -363,6 +367,7 @@ where
                 Some(schema.clone()),
             );
             request.no_services = *no_services;
+            request.overwrite_code_index = *overwrite_code_index;
             request.embedding_provider = embedding_provider.clone();
             request.embedding_api_base = embedding_api_base.clone();
             request.embedding_model = embedding_model.clone();
@@ -1127,6 +1132,7 @@ mod tests {
             "--database-url",
             "postgresql://localhost/gcode",
             "--no-services",
+            "--overwrite-code-index",
             "--embedding-provider",
             "ollama",
             "--embedding-vector-dim",
@@ -1141,6 +1147,7 @@ mod tests {
                 standalone,
                 database_url,
                 no_services,
+                overwrite_code_index,
                 schema,
                 embedding_provider,
                 embedding_vector_dim,
@@ -1153,6 +1160,7 @@ mod tests {
                     Some("postgresql://localhost/gcode")
                 );
                 assert!(no_services);
+                assert!(overwrite_code_index);
                 assert_eq!(schema, "public");
                 assert_eq!(embedding_provider.as_deref(), Some("ollama"));
                 assert_eq!(embedding_vector_dim, Some(768));
@@ -1173,6 +1181,7 @@ mod tests {
             "--standalone",
             "--database-url",
             "postgresql://localhost/gcode",
+            "--overwrite-code-index",
             "--embedding-api-base",
             "https://embeddings.example/v1",
         ])
@@ -1187,6 +1196,7 @@ mod tests {
                 Some("postgresql://localhost/gcode")
             );
             assert_eq!(request.schema, "public");
+            assert!(request.overwrite_code_index);
             assert_eq!(
                 request.embedding_api_base.as_deref(),
                 Some("https://embeddings.example/v1")

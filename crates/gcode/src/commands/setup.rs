@@ -8,11 +8,14 @@ use postgres::{Client, NoTls};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
+use crate::config::{self, QdrantConfig};
 use crate::db;
+use crate::graph::code_graph;
 use crate::output::{self, Format};
 use crate::setup::{
     self, StandaloneEmbeddingStatus, StandaloneServicesStatus, StandaloneSetupRequest,
 };
+use crate::vector::code_symbols;
 
 pub fn run(request: StandaloneSetupRequest, format: Format, quiet: bool) -> anyhow::Result<()> {
     setup::validate_standalone_request(&request)?;
@@ -24,6 +27,9 @@ pub fn run(request: StandaloneSetupRequest, format: Format, quiet: bool) -> anyh
     let embedding = resolve_embedding_bootstrap(&request)?;
     let (database_url, service_report) = resolve_or_provision_database(&request, &service_options)?;
     let mut client = connect_postgres_with_retry(&database_url, service_report.is_some())?;
+    if request.overwrite_code_index {
+        clear_overwrite_projections(&home, &request, &service_options, service_report.as_ref())?;
+    }
     let mut status = setup::run_standalone_setup(&request, &mut client)?;
 
     let config_file = write_gcore_config(
@@ -67,6 +73,77 @@ pub fn run(request: StandaloneSetupRequest, format: Format, quiet: bool) -> anyh
             Ok(())
         }
     }
+}
+
+struct OverwriteProjectionConfigs {
+    falkordb: Option<config::FalkorConfig>,
+    qdrant: Option<QdrantConfig>,
+}
+
+fn clear_overwrite_projections(
+    home: &std::path::Path,
+    request: &StandaloneSetupRequest,
+    service_options: &DockerServiceOptions,
+    service_report: Option<&DockerProvisioningReport>,
+) -> anyhow::Result<()> {
+    let configs = overwrite_projection_configs(home, request, service_options, service_report)?;
+    if let Some(falkordb) = configs.falkordb {
+        code_graph::clear_all_code_index(&falkordb)
+            .context("failed to clear FalkorDB code-index projection during overwrite setup")?;
+    }
+    if let Some(qdrant) = configs.qdrant {
+        code_symbols::delete_code_symbol_collections_with_prefix(&qdrant)
+            .context("failed to delete Qdrant code-symbol collections during overwrite setup")?;
+    }
+    Ok(())
+}
+
+fn overwrite_projection_configs(
+    home: &std::path::Path,
+    request: &StandaloneSetupRequest,
+    service_options: &DockerServiceOptions,
+    service_report: Option<&DockerProvisioningReport>,
+) -> anyhow::Result<OverwriteProjectionConfigs> {
+    let mut standalone = StandaloneConfig::read_at(&gcore_config_path(home))?
+        .unwrap_or_else(StandaloneConfig::empty);
+
+    if service_report.is_some() {
+        standalone.set("databases.falkordb.host", &service_options.falkordb_host);
+        standalone.set(
+            "databases.falkordb.port",
+            service_options.falkordb_port.to_string(),
+        );
+        standalone.set(
+            "databases.falkordb.password",
+            &service_options.falkordb_password,
+        );
+        standalone.set("databases.qdrant.url", service_options.qdrant_url());
+    }
+
+    if let Some(host) = request.falkordb_host.as_deref() {
+        standalone.set("databases.falkordb.host", host);
+    }
+    if let Some(port) = request.falkordb_port {
+        standalone.set("databases.falkordb.port", port.to_string());
+    }
+    if let Some(password) = request.falkordb_password.as_deref() {
+        standalone.set("databases.falkordb.password", password);
+    }
+    if let Some(qdrant_url) = request.qdrant_url.as_deref() {
+        standalone.set("databases.qdrant.url", qdrant_url);
+    }
+
+    let falkordb = gobby_core::config::resolve_falkordb_config(&mut standalone).map(|connection| {
+        config::FalkorConfig {
+            host: connection.host,
+            port: connection.port,
+            password: connection.password,
+            graph_name: config::FALKORDB_GRAPH_NAME.to_string(),
+        }
+    });
+    let qdrant = gobby_core::config::resolve_qdrant_config(&mut standalone);
+
+    Ok(OverwriteProjectionConfigs { falkordb, qdrant })
 }
 
 fn resolve_or_provision_database(

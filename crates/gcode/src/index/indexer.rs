@@ -896,6 +896,28 @@ mod tests {
         assert_eq!(json["explicit_files"][0], "src/lib.rs");
     }
 
+    #[test]
+    fn invalidate_postgres_deletes_are_project_scoped() {
+        let source = include_str!("indexer.rs");
+        for expected in [
+            "DELETE FROM code_symbols WHERE project_id = $1",
+            "DELETE FROM code_indexed_files WHERE project_id = $1",
+            "DELETE FROM code_content_chunks WHERE project_id = $1",
+            "DELETE FROM code_imports WHERE project_id = $1",
+            "DELETE FROM code_calls WHERE project_id = $1",
+            "DELETE FROM code_indexed_projects WHERE id = $1",
+        ] {
+            assert!(
+                source.contains(expected),
+                "missing scoped delete: {expected}"
+            );
+        }
+        let truncate_code = ["TRUNCATE", " code_"].concat();
+        let drop_table = ["DROP", " TABLE"].concat();
+        assert!(!source.contains(&truncate_code));
+        assert!(!source.contains(&drop_table));
+    }
+
     #[derive(Default)]
     struct RecordingCodeFactSink {
         writes: Vec<&'static str>,

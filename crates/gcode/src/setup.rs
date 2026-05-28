@@ -3,15 +3,233 @@ use gobby_core::setup::{
 };
 use postgres::Client;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 const DEFAULT_SCHEMA: &str = "public";
 const NAMESPACE: &str = "gcode";
+const OVERWRITE_GUIDANCE: &str = "Rerun with `gcode setup --standalone --overwrite-code-index` to replace only gcode-owned code-index relations.";
+
+const CODE_INDEX_TABLES: &[&str] = &[
+    "code_indexed_projects",
+    "code_indexed_files",
+    "code_symbols",
+    "code_content_chunks",
+    "code_imports",
+    "code_calls",
+];
+
+const CODE_INDEX_INDEXES: &[&str] = &[
+    "idx_cif_project",
+    "idx_cif_graph_synced",
+    "idx_cif_vectors_synced",
+    "idx_cs_project",
+    "idx_cs_file",
+    "idx_cs_name",
+    "idx_cs_qualified",
+    "idx_cs_kind",
+    "idx_cs_parent",
+    "idx_ccc_project",
+    "idx_ccc_file",
+    "idx_ci_file",
+    "idx_cc_file",
+    "idx_cc_caller",
+    "idx_cc_target",
+    "code_symbols_search_bm25",
+    "code_content_search_bm25",
+];
+
+struct TableContract {
+    name: &'static str,
+    required_columns: &'static [&'static str],
+}
+
+struct IndexContract {
+    name: &'static str,
+    table: &'static str,
+    method: &'static str,
+}
+
+const TABLE_CONTRACTS: &[TableContract] = &[
+    TableContract {
+        name: "code_indexed_projects",
+        required_columns: &[
+            "id",
+            "root_path",
+            "total_files",
+            "total_symbols",
+            "last_indexed_at",
+            "index_duration_ms",
+            "created_at",
+            "updated_at",
+        ],
+    },
+    TableContract {
+        name: "code_indexed_files",
+        required_columns: &[
+            "id",
+            "project_id",
+            "file_path",
+            "language",
+            "content_hash",
+            "symbol_count",
+            "byte_size",
+            "graph_synced",
+            "vectors_synced",
+            "graph_sync_attempted_at",
+            "indexed_at",
+        ],
+    },
+    TableContract {
+        name: "code_symbols",
+        required_columns: &[
+            "id",
+            "project_id",
+            "file_path",
+            "name",
+            "qualified_name",
+            "kind",
+            "language",
+            "byte_start",
+            "byte_end",
+            "line_start",
+            "line_end",
+            "signature",
+            "docstring",
+            "parent_symbol_id",
+            "content_hash",
+            "summary",
+            "created_at",
+            "updated_at",
+        ],
+    },
+    TableContract {
+        name: "code_content_chunks",
+        required_columns: &[
+            "id",
+            "project_id",
+            "file_path",
+            "chunk_index",
+            "line_start",
+            "line_end",
+            "content",
+            "language",
+            "created_at",
+        ],
+    },
+    TableContract {
+        name: "code_imports",
+        required_columns: &["id", "project_id", "source_file", "target_module"],
+    },
+    TableContract {
+        name: "code_calls",
+        required_columns: &[
+            "id",
+            "project_id",
+            "caller_symbol_id",
+            "callee_symbol_id",
+            "callee_name",
+            "callee_target_kind",
+            "callee_external_module",
+            "file_path",
+            "line",
+        ],
+    },
+];
+
+const INDEX_CONTRACTS: &[IndexContract] = &[
+    IndexContract {
+        name: "idx_cif_project",
+        table: "code_indexed_files",
+        method: "btree",
+    },
+    IndexContract {
+        name: "idx_cif_graph_synced",
+        table: "code_indexed_files",
+        method: "btree",
+    },
+    IndexContract {
+        name: "idx_cif_vectors_synced",
+        table: "code_indexed_files",
+        method: "btree",
+    },
+    IndexContract {
+        name: "idx_cs_project",
+        table: "code_symbols",
+        method: "btree",
+    },
+    IndexContract {
+        name: "idx_cs_file",
+        table: "code_symbols",
+        method: "btree",
+    },
+    IndexContract {
+        name: "idx_cs_name",
+        table: "code_symbols",
+        method: "btree",
+    },
+    IndexContract {
+        name: "idx_cs_qualified",
+        table: "code_symbols",
+        method: "btree",
+    },
+    IndexContract {
+        name: "idx_cs_kind",
+        table: "code_symbols",
+        method: "btree",
+    },
+    IndexContract {
+        name: "idx_cs_parent",
+        table: "code_symbols",
+        method: "btree",
+    },
+    IndexContract {
+        name: "idx_ccc_project",
+        table: "code_content_chunks",
+        method: "btree",
+    },
+    IndexContract {
+        name: "idx_ccc_file",
+        table: "code_content_chunks",
+        method: "btree",
+    },
+    IndexContract {
+        name: "idx_ci_file",
+        table: "code_imports",
+        method: "btree",
+    },
+    IndexContract {
+        name: "idx_cc_file",
+        table: "code_calls",
+        method: "btree",
+    },
+    IndexContract {
+        name: "idx_cc_caller",
+        table: "code_calls",
+        method: "btree",
+    },
+    IndexContract {
+        name: "idx_cc_target",
+        table: "code_calls",
+        method: "btree",
+    },
+    IndexContract {
+        name: "code_symbols_search_bm25",
+        table: "code_symbols",
+        method: "bm25",
+    },
+    IndexContract {
+        name: "code_content_search_bm25",
+        table: "code_content_chunks",
+        method: "bm25",
+    },
+];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StandaloneSetupRequest {
     pub standalone: bool,
     pub database_url: Option<String>,
     pub no_services: bool,
+    pub overwrite_code_index: bool,
     pub schema: String,
     pub embedding_provider: Option<String>,
     pub embedding_api_base: Option<String>,
@@ -30,6 +248,7 @@ impl StandaloneSetupRequest {
             standalone,
             database_url,
             no_services: false,
+            overwrite_code_index: false,
             schema: schema.unwrap_or_else(|| DEFAULT_SCHEMA.to_string()),
             embedding_provider: None,
             embedding_api_base: None,
@@ -389,6 +608,12 @@ pub fn run_standalone_setup(
     validate_standalone_request(request)?;
 
     let setup = GcodeStandaloneSetup::new(request.schema.clone());
+    if request.overwrite_code_index {
+        reset_postgres_code_index(client, setup.schema())?;
+    } else {
+        ensure_postgres_code_index_compatible(client, setup.schema())?;
+    }
+
     let mut ctx = SetupContext {
         pg: Some(client),
         falkor_config: None,
@@ -409,6 +634,215 @@ pub fn run_standalone_setup(
     })
 }
 
+pub(crate) fn ensure_postgres_code_index_compatible(
+    client: &mut Client,
+    schema: &str,
+) -> Result<(), SetupError> {
+    let issues = incompatible_postgres_code_index_relations(client, schema)?;
+    if issues.is_empty() {
+        return Ok(());
+    }
+
+    Err(SetupError::CreationFailed {
+        object: "code-index preflight".to_string(),
+        message: format!(
+            "existing code-index PostgreSQL state is incompatible: {}. {OVERWRITE_GUIDANCE}",
+            issues.join("; ")
+        ),
+    })
+}
+
+pub(crate) fn reset_postgres_code_index(
+    client: &mut Client,
+    schema: &str,
+) -> Result<(), SetupError> {
+    let sql = postgres_overwrite_reset_sql(schema)?;
+    client
+        .batch_execute(&sql)
+        .map_err(|err| SetupError::CreationFailed {
+            object: "code-index overwrite reset".to_string(),
+            message: err.to_string(),
+        })
+}
+
+pub(crate) fn postgres_overwrite_reset_sql(schema: &str) -> Result<String, SetupError> {
+    let mut statements = Vec::new();
+    for index in CODE_INDEX_INDEXES {
+        statements.push(format!(
+            "DROP INDEX IF EXISTS {};",
+            qualified_relation(schema, index, "index")?
+        ));
+    }
+    for table in CODE_INDEX_TABLES.iter().rev() {
+        statements.push(format!(
+            "DROP TABLE IF EXISTS {};",
+            qualified_relation(schema, table, "table")?
+        ));
+    }
+    Ok(statements.join("\n"))
+}
+
+fn incompatible_postgres_code_index_relations(
+    client: &mut Client,
+    schema: &str,
+) -> Result<Vec<String>, SetupError> {
+    let mut issues = Vec::new();
+    for contract in TABLE_CONTRACTS {
+        inspect_table_contract(client, schema, contract, &mut issues)?;
+    }
+    for contract in INDEX_CONTRACTS {
+        inspect_index_contract(client, schema, contract, &mut issues)?;
+    }
+    Ok(issues)
+}
+
+fn inspect_table_contract(
+    client: &mut Client,
+    schema: &str,
+    contract: &TableContract,
+    issues: &mut Vec<String>,
+) -> Result<(), SetupError> {
+    let Some(kind) = relation_kind(client, schema, contract.name)? else {
+        return Ok(());
+    };
+    if kind != "r" {
+        issues.push(format!(
+            "{} exists but is not an ordinary table",
+            contract.name
+        ));
+        return Ok(());
+    }
+
+    let existing = table_columns(client, schema, contract.name)?;
+    let missing = contract
+        .required_columns
+        .iter()
+        .filter(|column| !existing.contains::<str>(column))
+        .copied()
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        issues.push(format!(
+            "{} is missing column(s): {}",
+            contract.name,
+            missing.join(", ")
+        ));
+    }
+    Ok(())
+}
+
+fn inspect_index_contract(
+    client: &mut Client,
+    schema: &str,
+    contract: &IndexContract,
+    issues: &mut Vec<String>,
+) -> Result<(), SetupError> {
+    let Some(index) = index_info(client, schema, contract.name)? else {
+        return Ok(());
+    };
+
+    if index.relkind != "i" && index.relkind != "I" {
+        issues.push(format!("{} exists but is not an index", contract.name));
+        return Ok(());
+    }
+    if index.table_name.as_deref() != Some(contract.table) {
+        issues.push(format!(
+            "{} is attached to {}, expected {}",
+            contract.name,
+            index.table_name.as_deref().unwrap_or("<unknown>"),
+            contract.table
+        ));
+    }
+    if index.method.as_deref() != Some(contract.method) {
+        issues.push(format!(
+            "{} uses access method {}, expected {}",
+            contract.name,
+            index.method.as_deref().unwrap_or("<unknown>"),
+            contract.method
+        ));
+    }
+    Ok(())
+}
+
+fn relation_kind(
+    client: &mut Client,
+    schema: &str,
+    relation: &str,
+) -> Result<Option<String>, SetupError> {
+    let row = client
+        .query_opt(
+            "SELECT c.relkind::TEXT
+             FROM pg_class c
+             JOIN pg_namespace n ON n.oid = c.relnamespace
+             WHERE n.nspname = $1 AND c.relname = $2",
+            &[&schema, &relation],
+        )
+        .map_err(|err| SetupError::CreationFailed {
+            object: format!("{relation} preflight"),
+            message: err.to_string(),
+        })?;
+    Ok(row.map(|row| row.get(0)))
+}
+
+fn table_columns(
+    client: &mut Client,
+    schema: &str,
+    table: &str,
+) -> Result<HashSet<String>, SetupError> {
+    let rows = client
+        .query(
+            "SELECT a.attname
+             FROM pg_attribute a
+             JOIN pg_class c ON c.oid = a.attrelid
+             JOIN pg_namespace n ON n.oid = c.relnamespace
+             WHERE n.nspname = $1
+               AND c.relname = $2
+               AND a.attnum > 0
+               AND NOT a.attisdropped",
+            &[&schema, &table],
+        )
+        .map_err(|err| SetupError::CreationFailed {
+            object: format!("{table} preflight"),
+            message: err.to_string(),
+        })?;
+    Ok(rows.into_iter().map(|row| row.get(0)).collect())
+}
+
+struct ExistingIndexInfo {
+    relkind: String,
+    table_name: Option<String>,
+    method: Option<String>,
+}
+
+fn index_info(
+    client: &mut Client,
+    schema: &str,
+    index: &str,
+) -> Result<Option<ExistingIndexInfo>, SetupError> {
+    let row = client
+        .query_opt(
+            "SELECT c.relkind::TEXT,
+                    table_class.relname::TEXT AS table_name,
+                    am.amname::TEXT AS method
+             FROM pg_class c
+             JOIN pg_namespace n ON n.oid = c.relnamespace
+             LEFT JOIN pg_index idx ON idx.indexrelid = c.oid
+             LEFT JOIN pg_class table_class ON table_class.oid = idx.indrelid
+             LEFT JOIN pg_am am ON am.oid = c.relam
+             WHERE n.nspname = $1 AND c.relname = $2",
+            &[&schema, &index],
+        )
+        .map_err(|err| SetupError::CreationFailed {
+            object: format!("{index} preflight"),
+            message: err.to_string(),
+        })?;
+
+    Ok(row.map(|row| ExistingIndexInfo {
+        relkind: row.get(0),
+        table_name: row.get(1),
+        method: row.get(2),
+    }))
+}
+
 pub fn validate_standalone_request(request: &StandaloneSetupRequest) -> Result<(), SetupError> {
     if !request.standalone {
         return Err(SetupError::AttachedModeRefused);
@@ -421,6 +855,14 @@ pub fn validate_standalone_request(request: &StandaloneSetupRequest) -> Result<(
         });
     }
     Ok(())
+}
+
+fn qualified_relation(schema: &str, relation: &str, label: &str) -> Result<String, SetupError> {
+    Ok(format!(
+        "{}.{}",
+        quote_identifier(schema, "schema")?,
+        quote_identifier(relation, label)?
+    ))
 }
 
 fn execute_postgres_ddl(
@@ -478,6 +920,7 @@ fn quote_identifier(value: &str, label: &str) -> Result<String, SetupError> {
 mod tests {
     use super::*;
     use gobby_core::setup::{StandaloneSetup, StoreKind};
+    use postgres::NoTls;
 
     #[test]
     fn standalone_setup_declares_public_daemon_code_index_subset() {
@@ -562,5 +1005,117 @@ mod tests {
         );
         let err = validate_standalone_request(&request).expect_err("non-public schema fails");
         assert!(err.to_string().contains("public"));
+    }
+
+    #[test]
+    fn overwrite_reset_sql_is_allowlisted() {
+        let sql = postgres_overwrite_reset_sql("public").expect("reset SQL");
+
+        for table in CODE_INDEX_TABLES {
+            assert!(
+                sql.contains(&format!("DROP TABLE IF EXISTS \"public\".\"{table}\";")),
+                "{sql}"
+            );
+        }
+        for index in CODE_INDEX_INDEXES {
+            assert!(
+                sql.contains(&format!("DROP INDEX IF EXISTS \"public\".\"{index}\";")),
+                "{sql}"
+            );
+        }
+
+        for forbidden in [
+            "config_store",
+            "schema_migrations",
+            "secrets",
+            "tasks",
+            "sessions",
+            "memory",
+            ".gobby/project.json",
+        ] {
+            assert!(!sql.contains(forbidden), "{sql}");
+        }
+        assert!(!sql.contains("CASCADE"), "{sql}");
+        assert!(!sql.contains("DROP DATABASE"), "{sql}");
+        assert!(!sql.contains("DROP SCHEMA"), "{sql}");
+    }
+
+    #[test]
+    fn overwrite_guidance_names_flag() {
+        let request = StandaloneSetupRequest::new(true, None, None);
+        assert!(!request.overwrite_code_index);
+        assert!(OVERWRITE_GUIDANCE.contains("--overwrite-code-index"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn overwrite_recreates_incompatible_code_index_and_preserves_sentinel_table() {
+        let Ok(database_url) = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL") else {
+            return;
+        };
+        let mut client =
+            Client::connect(&database_url, NoTls).expect("connect test PostgreSQL hub");
+        cleanup_code_index_relations(&mut client);
+        client
+            .batch_execute(
+                "CREATE TABLE public.code_symbols (id TEXT PRIMARY KEY);
+                 CREATE TABLE IF NOT EXISTS public.gobby_owned_sentinel (
+                     key TEXT PRIMARY KEY,
+                     value TEXT NOT NULL
+                 );
+                 INSERT INTO public.gobby_owned_sentinel (key, value)
+                 VALUES ('gcode-overwrite-sentinel', 'keep-me')
+                 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;",
+            )
+            .expect("seed incompatible code index and sentinel");
+
+        let request = StandaloneSetupRequest::new(true, Some(database_url.clone()), None);
+        let err = run_standalone_setup(&request, &mut client)
+            .expect_err("incompatible setup fails without overwrite");
+        assert!(err.to_string().contains("--overwrite-code-index"));
+
+        let mut overwrite = StandaloneSetupRequest::new(true, Some(database_url), None);
+        overwrite.overwrite_code_index = true;
+        run_standalone_setup(&overwrite, &mut client).expect("overwrite setup succeeds");
+
+        let has_project_id: bool = client
+            .query_one(
+                "SELECT EXISTS(
+                    SELECT 1
+                    FROM pg_attribute
+                    WHERE attrelid = 'public.code_symbols'::regclass
+                      AND attname = 'project_id'
+                      AND attnum > 0
+                      AND NOT attisdropped
+                )",
+                &[],
+            )
+            .expect("check recreated code_symbols")
+            .get(0);
+        assert!(has_project_id);
+
+        let sentinel: String = client
+            .query_one(
+                "SELECT value FROM public.gobby_owned_sentinel WHERE key = 'gcode-overwrite-sentinel'",
+                &[],
+            )
+            .expect("read sentinel")
+            .get(0);
+        assert_eq!(sentinel, "keep-me");
+
+        cleanup_code_index_relations(&mut client);
+        client
+            .batch_execute(
+                "DELETE FROM public.gobby_owned_sentinel WHERE key = 'gcode-overwrite-sentinel';
+                 DROP TABLE IF EXISTS public.gobby_owned_sentinel;",
+            )
+            .expect("cleanup sentinel");
+    }
+
+    fn cleanup_code_index_relations(client: &mut Client) {
+        let sql = postgres_overwrite_reset_sql("public").expect("reset SQL");
+        client
+            .batch_execute(&sql)
+            .expect("cleanup code index objects");
     }
 }

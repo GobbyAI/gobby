@@ -224,6 +224,44 @@ pub fn collection_name(collection_prefix: &str, project_id: &str) -> String {
     gobby_core::qdrant::collection_name("gcode", CollectionScope::Custom(&collection))
 }
 
+pub fn delete_project_collection(
+    qdrant: &QdrantConfig,
+    project_id: &str,
+) -> Result<bool, VectorLifecycleError> {
+    let client = qdrant_http_client()?;
+    let collection = collection_name(CODE_SYMBOL_COLLECTION_PREFIX, project_id);
+    delete_qdrant_collection(&client, qdrant, &collection)
+}
+
+pub fn delete_code_symbol_collections_with_prefix(
+    qdrant: &QdrantConfig,
+) -> Result<Vec<String>, VectorLifecycleError> {
+    let client = qdrant_http_client()?;
+    let resp = qdrant_request_for_config(&client, qdrant, reqwest::Method::GET, "/collections")?
+        .send()
+        .map_err(|err| VectorLifecycleError::QdrantOperation(err.to_string()))?;
+    let status = resp.status();
+    if !status.is_success() {
+        return Err(qdrant_http_error("list collections", status, resp));
+    }
+
+    let data: Value = resp
+        .json()
+        .map_err(|err| VectorLifecycleError::QdrantOperation(err.to_string()))?;
+    let collections = parse_collection_names(&data)
+        .into_iter()
+        .filter(|name| name.starts_with(CODE_SYMBOL_COLLECTION_PREFIX))
+        .collect::<Vec<_>>();
+
+    let mut deleted = Vec::new();
+    for collection in collections {
+        if delete_qdrant_collection(&client, qdrant, &collection)? {
+            deleted.push(collection);
+        }
+    }
+    Ok(deleted)
+}
+
 pub fn resolve_lifecycle_qdrant_config(
     source: &mut impl gobby_core::config::ConfigSource,
 ) -> Option<QdrantConfig> {
@@ -657,18 +695,7 @@ impl CodeSymbolVectorLifecycle {
         method: reqwest::Method,
         path: &str,
     ) -> Result<reqwest::blocking::RequestBuilder, VectorLifecycleError> {
-        let base = self
-            .qdrant
-            .url
-            .as_deref()
-            .ok_or(VectorLifecycleError::MissingQdrantConfig)?
-            .trim_end_matches('/');
-        let url = format!("{base}{path}");
-        let mut req = self.client.request(method, url);
-        if let Some(key) = &self.qdrant.api_key {
-            req = req.header("api-key", key);
-        }
-        Ok(req)
+        qdrant_request_for_config(&self.client, &self.qdrant, method, path)
     }
 }
 
@@ -733,6 +760,72 @@ fn parse_collection_schema(data: &Value) -> Option<ExistingVectorCollectionSchem
         .and_then(Value::as_str)
         .map(str::to_string);
     Some(ExistingVectorCollectionSchema { size, distance })
+}
+
+fn parse_collection_names(data: &Value) -> Vec<String> {
+    data.pointer("/result/collections")
+        .and_then(Value::as_array)
+        .map(|collections| {
+            collections
+                .iter()
+                .filter_map(|collection| {
+                    collection
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn qdrant_http_client() -> Result<reqwest::blocking::Client, VectorLifecycleError> {
+    reqwest::blocking::Client::builder()
+        .timeout(HTTP_TIMEOUT)
+        .build()
+        .map_err(|err| VectorLifecycleError::QdrantOperation(err.to_string()))
+}
+
+fn qdrant_request_for_config(
+    client: &reqwest::blocking::Client,
+    qdrant: &QdrantConfig,
+    method: reqwest::Method,
+    path: &str,
+) -> Result<reqwest::blocking::RequestBuilder, VectorLifecycleError> {
+    let base = qdrant
+        .url
+        .as_deref()
+        .ok_or(VectorLifecycleError::MissingQdrantConfig)?
+        .trim_end_matches('/');
+    let url = format!("{base}{path}");
+    let mut req = client.request(method, url);
+    if let Some(key) = &qdrant.api_key {
+        req = req.header("api-key", key);
+    }
+    Ok(req)
+}
+
+fn delete_qdrant_collection(
+    client: &reqwest::blocking::Client,
+    qdrant: &QdrantConfig,
+    collection: &str,
+) -> Result<bool, VectorLifecycleError> {
+    let resp = qdrant_request_for_config(
+        client,
+        qdrant,
+        reqwest::Method::DELETE,
+        &format!("/collections/{collection}"),
+    )?
+    .send()
+    .map_err(|err| VectorLifecycleError::QdrantOperation(err.to_string()))?;
+    let status = resp.status();
+    if status == StatusCode::NOT_FOUND {
+        return Ok(false);
+    }
+    if !status.is_success() {
+        return Err(qdrant_http_error("delete collection", status, resp));
+    }
+    Ok(true)
 }
 
 fn qdrant_http_error(
@@ -872,6 +965,69 @@ mod tests {
         assert_eq!(
             collection_name(CODE_SYMBOL_COLLECTION_PREFIX, "project-1"),
             "code_symbols_project-1"
+        );
+    }
+
+    #[test]
+    fn delete_project_collection_targets_only_project_collection() {
+        let (qdrant_url, handle) = spawn_http_responses(vec![(200, json!({"result": true}))]);
+        let deleted = delete_project_collection(
+            &QdrantConfig {
+                url: Some(qdrant_url),
+                api_key: Some("qdrant-key".to_string()),
+            },
+            "project-1",
+        )
+        .expect("delete collection");
+        let requests = handle.join().expect("qdrant requests");
+
+        assert!(deleted);
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].contains("DELETE /collections/code_symbols_project-1 HTTP/1.1"));
+        assert!(requests[0].contains("api-key: qdrant-key"));
+        assert!(!requests[0].contains("project-2"));
+    }
+
+    #[test]
+    fn delete_prefixed_collections_deletes_only_code_symbol_collections() {
+        let (qdrant_url, handle) = spawn_http_responses(vec![
+            (
+                200,
+                json!({
+                    "result": {
+                        "collections": [
+                            {"name": "code_symbols_project-1"},
+                            {"name": "memory_vectors"},
+                            {"name": "code_symbols_project-2"}
+                        ]
+                    }
+                }),
+            ),
+            (200, json!({"result": true})),
+            (200, json!({"result": true})),
+        ]);
+        let deleted = delete_code_symbol_collections_with_prefix(&QdrantConfig {
+            url: Some(qdrant_url),
+            api_key: None,
+        })
+        .expect("delete prefixed collections");
+        let requests = handle.join().expect("qdrant requests");
+
+        assert_eq!(
+            deleted,
+            vec![
+                "code_symbols_project-1".to_string(),
+                "code_symbols_project-2".to_string()
+            ]
+        );
+        assert_eq!(requests.len(), 3);
+        assert!(requests[0].contains("GET /collections HTTP/1.1"));
+        assert!(requests[1].contains("DELETE /collections/code_symbols_project-1 HTTP/1.1"));
+        assert!(requests[2].contains("DELETE /collections/code_symbols_project-2 HTTP/1.1"));
+        assert!(
+            requests
+                .iter()
+                .all(|request| !request.contains("DELETE /collections/memory_vectors"))
         );
     }
 

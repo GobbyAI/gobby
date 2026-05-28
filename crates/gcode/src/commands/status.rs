@@ -4,10 +4,12 @@ use std::path::{Path, PathBuf};
 use crate::config;
 use crate::config::Context;
 use crate::db;
+use crate::graph::code_graph;
 use crate::index::indexer;
 use crate::models::IndexedProject;
 use crate::output::{self, Format};
 use crate::utils::short_id;
+use crate::vector::code_symbols;
 
 /// Format a `last_indexed_at` value for display.
 /// Handles both epoch seconds ("1774970556") and ISO 8601 ("2026-03-29T18:52:25.750230+00:00").
@@ -125,7 +127,20 @@ pub fn invalidate(ctx: &Context, force: bool) -> anyhow::Result<()> {
     }
 
     let mut conn = db::connect_readwrite(&ctx.database_url)?;
-    indexer::invalidate(&mut conn, &ctx.project_id, ctx.daemon_url.as_deref())
+    indexer::invalidate(&mut conn, &ctx.project_id, ctx.daemon_url.as_deref())?;
+    cleanup_project_projections(ctx)
+}
+
+fn cleanup_project_projections(ctx: &Context) -> anyhow::Result<()> {
+    if ctx.falkordb.is_some() {
+        code_graph::clear_project(ctx)
+            .map_err(|err| anyhow::anyhow!("failed to clear FalkorDB projection: {err}"))?;
+    }
+    if let Some(qdrant) = &ctx.qdrant {
+        code_symbols::delete_project_collection(qdrant, &ctx.project_id)
+            .map_err(|err| anyhow::anyhow!("failed to delete Qdrant projection: {err}"))?;
+    }
+    Ok(())
 }
 
 /// Collect indexed projects from the PostgreSQL hub.
