@@ -13,11 +13,18 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Literal
 
+from gobby.tasks import task_types as _task_types
 from gobby.tasks.categories import IMPLEMENTATION_DOMAINS
 from gobby.tasks.state_semantics import serialize_task_state
 
 # Priority name to numeric value mapping
 PRIORITY_MAP = {"backlog": 4, "low": 3, "medium": 2, "high": 1, "critical": 0}
+
+TASK_TYPE_CHOICES = _task_types.TASK_TYPE_CHOICES
+VALID_TASK_TYPES = _task_types.VALID_TASK_TYPES
+TASK_TYPE_ALIASES = _task_types.TASK_TYPE_ALIASES
+validate_task_type = _task_types.validate_task_type
+task_type_filter_values = _task_types.task_type_filter_values
 
 # Valid task categories (enum-like constraint)
 VALID_CATEGORIES: frozenset[str] = frozenset(
@@ -32,51 +39,6 @@ VALID_CATEGORIES: frozenset[str] = frozenset(
         "manual",  # Manual functional testing (observe output)
     }
 )
-
-# Valid task types exposed across storage, CLI, HTTP, and MCP creation surfaces.
-TASK_TYPE_CHOICES: tuple[str, ...] = (
-    "task",
-    "bug",
-    "feature",
-    "epic",
-    "chore",
-    "refactor",
-    "simple_fix",
-    "research_spike",
-    "architecture_doc",
-    "prd_doc",
-    "review_anchor",
-)
-VALID_TASK_TYPES: frozenset[str] = frozenset(TASK_TYPE_CHOICES)
-TASK_TYPE_ALIASES: dict[str, str] = {
-    "docs": "chore",
-    "fix": "simple_fix",
-    "nit": "simple_fix",
-    "performance": "task",
-    "research": "research_spike",
-    "test": "task",
-}
-
-
-def validate_task_type(task_type: str | None) -> str:
-    """Validate and normalize a task type value."""
-    if task_type is None:
-        raise ValueError("task_type is required")
-    if not isinstance(task_type, str):
-        raise ValueError("task_type must be a string")
-    raw = task_type.lower().strip()
-    normalized = TASK_TYPE_ALIASES.get(raw, raw)
-    if normalized not in VALID_TASK_TYPES:
-        allowed = ", ".join(TASK_TYPE_CHOICES)
-        raise ValueError(f"Invalid task_type '{task_type}'. Expected one of: {allowed}.")
-    return normalized
-
-
-def task_type_filter_values(task_type: str) -> tuple[str, ...]:
-    """Return canonical and legacy storage values for a task type filter."""
-    canonical = validate_task_type(task_type)
-    aliases = tuple(alias for alias, target in TASK_TYPE_ALIASES.items() if target == canonical)
-    return (canonical, *aliases)
 
 
 class Isolation(StrEnum):

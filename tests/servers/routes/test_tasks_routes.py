@@ -154,6 +154,7 @@ class TestListTasks:
     @pytest.mark.parametrize(
         ("legacy_type", "canonical_type"),
         [
+            ("documentation", "chore"),
             ("docs", "chore"),
             ("fix", "simple_fix"),
             ("nit", "simple_fix"),

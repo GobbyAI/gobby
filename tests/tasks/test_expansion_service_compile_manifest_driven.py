@@ -62,6 +62,35 @@ def test_manifest_entry_rejects_unknown_implementation_domain(tmp_path: Path) ->
         _assigned_agent_for_entry(entry)
 
 
+def test_manifest_documentation_task_type_normalizes_to_chore(
+    service: ExpansionService,
+    sample_project,
+    tmp_path: Path,
+) -> None:
+    parent = _parent(service, sample_project)
+    plan_doc = parse_plan(
+        _write_plan(
+            tmp_path,
+            _MANIFEST_PLAN.replace(
+                'title: "Docs from manifest"\n  category: docs\n  task_type: task',
+                'title: "Docs from manifest"\n  category: docs\n  task_type: documentation',
+            ),
+            name="documentation-task-type.md",
+        ),
+        parse_mode="expansion",
+    )
+
+    manifest_entry = next(
+        entry for entry in plan_doc.manifest_entries if entry.source_section == "2.1"
+    )
+    assert manifest_entry.task_type == "chore"
+
+    spec = service.compile_plan_to_spec(plan_doc, parent)
+
+    docs_task = next(task for task in spec["tasks"] if task["source_section_id"] == "2.1")
+    assert docs_task["task_type"] == "chore"
+
+
 _MANIFEST_PLAN = """
 > **Plan ID:** manifest-driven
 

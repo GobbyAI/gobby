@@ -129,6 +129,47 @@ Verify the live behavior.
     return path
 
 
+def _write_plan_with_unknown_manifest_task_type(path: Path) -> Path:
+    """Write a plan whose manifest uses an unsupported task_type value."""
+    path.write_text(
+        """> **Plan ID:** unknown-task-type-manifest
+
+# Unknown Task Type Manifest
+
+## P1: Documentation
+`kind: framing`
+
+### 1.1 Document behavior [category: docs]
+`kind: deliverable`
+
+Target: `docs/behavior.md`
+
+Document the behavior.
+
+**Acceptance:**
+- 1.1.1 - Behavior is documented. file: `docs/behavior.md`
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: "Document behavior"
+  category: docs
+  task_type: guide
+  depends_on: []
+  validation_criteria: "`docs/behavior.md` exists"
+  labels:
+    - "covers:unknown-task-type-manifest:1.1:1.1.1"
+  assigned_agent: backend-developer
+  tdd: false
+  source_section: "1.1"
+```
+""",
+        encoding="utf-8",
+    )
+    return path
+
+
 def test_validate_plan_file_rejects_deliverables_without_phases(
     service: ExpansionService, tmp_path: Path
 ) -> None:
@@ -186,3 +227,15 @@ def test_validate_plan_file_rejects_manual_manifest_category(
     assert result["valid"] is False
     assert any("unsupported category 'manual'" in error for error in result["errors"])
     assert any("development-forward categories" in error for error in result["errors"])
+
+
+def test_validate_plan_file_rejects_unknown_manifest_task_type(
+    service: ExpansionService, tmp_path: Path
+) -> None:
+    """Reject manifest task_type values that are neither canonical nor aliases."""
+    plan_path = _write_plan_with_unknown_manifest_task_type(tmp_path / "unknown-task-type.md")
+
+    result = service.validate_plan_file(plan_path)
+
+    assert result["valid"] is False
+    assert any("Invalid task_type 'guide'" in error for error in result["errors"])

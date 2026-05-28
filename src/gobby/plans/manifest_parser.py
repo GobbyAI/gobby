@@ -12,6 +12,7 @@ from gobby.tasks.categories import (
     IMPLEMENTATION_DOMAINS,
     TDD_ELIGIBLE_CATEGORIES,
 )
+from gobby.tasks.task_types import validate_task_type
 
 FindYamlFence = Callable[[list[str], int, int], tuple[int, str] | None]
 
@@ -132,6 +133,12 @@ def _build_manifest_entry(
         return None
 
     category = str(raw["category"])
+    try:
+        task_type = validate_task_type(str(raw["task_type"]))
+    except ValueError as exc:
+        errors.append((source_line, f"manifest entry {index} has {exc}"))
+        return None
+
     if category not in DEVELOPMENT_FORWARD_LEAF_CATEGORIES:
         allowed = ", ".join(sorted(DEVELOPMENT_FORWARD_LEAF_CATEGORIES))
         errors.append(
@@ -211,7 +218,7 @@ def _build_manifest_entry(
     return ManifestEntry(
         title=str(raw["title"]),
         category=category,
-        task_type=str(raw["task_type"]),
+        task_type=task_type,
         depends_on=tuple(depends_on_raw),
         validation_criteria=str(raw["validation_criteria"]),
         labels=tuple(labels_raw),
