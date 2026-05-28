@@ -115,3 +115,19 @@ def test_loads_required_skills_before_review() -> None:
     assert success["server"] == "gobby-skills"
     assert success["tool"] == "get_skill"
     assert success["variable"] == "required_skills_loaded"
+
+
+def test_tdd_audit_evidence_is_language_aware() -> None:
+    agent = _agent()
+    instructions = agent["instructions"]
+    review_text = next(step for step in agent["steps"] if step["name"] == "review")[
+        "status_message"
+    ]
+
+    for text in (instructions, review_text):
+        assert "supported-language" in text
+        assert "test-quality audit" in text
+        assert "missing baseline" in text.lower()
+        assert "not a skip reason" in text
+        assert "unsupported-language warning" in text
+        assert "repo-native validation" in text

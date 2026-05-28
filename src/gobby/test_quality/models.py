@@ -93,6 +93,24 @@ class AuditIssue:
 
 
 @dataclass(frozen=True, slots=True)
+class AuditWarning:
+    """A non-blocking audit warning."""
+
+    code: str
+    message: str
+    path: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "code": self.code,
+            "message": self.message,
+        }
+        if self.path is not None:
+            payload["path"] = self.path
+        return payload
+
+
+@dataclass(frozen=True, slots=True)
 class RankedTest:
     """Aggregate issue score for one test function."""
 
@@ -124,6 +142,7 @@ class AuditReport:
     issues: tuple[AuditIssue, ...]
     files_scanned: int
     tests_scanned: int
+    warnings: tuple[AuditWarning, ...] = ()
 
     @property
     def sorted_issues(self) -> tuple[AuditIssue, ...]:
@@ -166,10 +185,12 @@ class AuditReport:
             "files_scanned": self.files_scanned,
             "tests_scanned": self.tests_scanned,
             "issue_count": len(self.issues),
+            "warning_count": len(self.warnings),
             "issue_count_by_severity": self.issue_count_by_severity,
             "issue_count_by_code": self.issue_count_by_code,
             "ranked_tests": [item.to_dict() for item in self.ranked_tests],
             "issues": [issue.to_dict() for issue in self.sorted_issues],
+            "warnings": [warning.to_dict() for warning in self.warnings],
         }
 
 

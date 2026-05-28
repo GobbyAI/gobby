@@ -223,3 +223,149 @@ it("handles \\"quoted\\" names", () => {
 
     assert report.tests_scanned == 1
     assert report.issues == ()
+
+
+def test_supported_test_suffixes_are_analyzed_without_unsupported_warnings(
+    tmp_path: Path,
+) -> None:
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    files = {
+        "test_sample.py": "def test_python():\n    assert 1 == 1\n",
+        "sample_test.rs": "#[test]\nfn test_rust() {\n    assert_eq!(1, 1);\n}\n",
+        "sample.test.cjs": 'test("cjs", () => {\n  expect(true).toBe(true);\n});\n',
+        "sample.test.js": 'test("js", () => {\n  expect(true).toBe(true);\n});\n',
+        "sample.test.mjs": 'test("mjs", () => {\n  expect(true).toBe(true);\n});\n',
+        "sample.test.ts": 'test("ts", () => {\n  expect(true).toBe(true);\n});\n',
+        "sample.test.cts": 'test("cts", () => {\n  expect(true).toBe(true);\n});\n',
+        "sample.test.mts": 'test("mts", () => {\n  expect(true).toBe(true);\n});\n',
+        "sample.test.tsx": 'test("tsx", () => {\n  expect(true).toBe(true);\n});\n',
+    }
+    for file_name, source in files.items():
+        (tests_dir / file_name).write_text(source, encoding="utf-8")
+
+    report = audit_paths([tests_dir], root=tmp_path)
+
+    assert report.files_scanned == 9
+    assert report.tests_scanned == 9
+    assert report.warnings == ()
+
+
+def test_rust_assertion_like_checks_are_supported(tmp_path: Path) -> None:
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    path = tests_dir / "sample_test.rs"
+    path.write_text(
+        """
+#[test]
+fn test_assert_eq() {
+    assert_eq!(1, 1);
+}
+
+#[tokio::test]
+async fn test_result_path() -> Result<(), anyhow::Error> {
+    load().await?;
+    Ok(())
+}
+
+#[rstest]
+#[case(1)]
+fn test_rstest_case(#[case] value: i32) {
+    assert!(matches!(value, 1));
+}
+
+#[test_case(1)]
+fn test_case_macro(value: i32) {
+    insta::assert_debug_snapshot!(value);
+}
+
+#[test]
+#[should_panic(expected = "boom")]
+fn test_expected_panic() {
+    panic!("boom");
+}
+
+#[quickcheck]
+fn quickcheck_accepts_property(value: bool) -> bool {
+    value || !value
+}
+
+proptest! {
+    #[test]
+    fn prop_never_crashes(value in 0u8..) {
+        prop_assert!(value <= 255);
+    }
+}
+""",
+        encoding="utf-8",
+    )
+
+    report = audit_paths([path], root=tmp_path)
+
+    assert report.tests_scanned == 7
+    assert report.issues == ()
+
+
+def test_rust_problem_patterns_are_reported(tmp_path: Path) -> None:
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    path = tests_dir / "sample_test.rs"
+    path.write_text(
+        """
+#[test]
+fn test_no_assertion() {
+    build_value();
+}
+
+#[ignore]
+#[test]
+fn test_ignored() {
+    assert_eq!(1, 1);
+}
+
+#[test]
+fn test_trivial() {
+    assert!(true);
+}
+
+#[test]
+fn test_sleep() {
+    std::thread::sleep(Duration::from_millis(1));
+    assert_eq!(1, 1);
+}
+""",
+        encoding="utf-8",
+    )
+
+    report = audit_paths([path], root=tmp_path)
+
+    assert {issue.issue_code for issue in report.issues} == {
+        "ASSERT_TRUE",
+        "NO_ASSERTION",
+        "SLEEP_IN_TEST",
+        "UNCONDITIONAL_SKIP",
+    }
+
+
+def test_unsupported_test_file_warns_without_issues(tmp_path: Path) -> None:
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    path = tests_dir / "user_test.go"
+    path.write_text(
+        """
+package tests
+
+func TestUser(t *testing.T) {
+    t.Fatal("native validation owns this language")
+}
+""",
+        encoding="utf-8",
+    )
+
+    report = audit_paths([tests_dir], root=tmp_path)
+
+    assert report.files_scanned == 0
+    assert report.tests_scanned == 0
+    assert report.issues == ()
+    assert [warning.code for warning in report.warnings] == ["UNSUPPORTED_LANGUAGE"]
+    assert "audit attempted but unsupported" in report.warnings[0].message

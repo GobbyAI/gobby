@@ -272,6 +272,11 @@ def test_tdd_discipline_skills_are_bundled() -> None:
     assert "minimal green" in tdd.lower()
     assert "refactor/final-green" in tdd.lower()
     assert "test-quality audit" in tdd.lower()
+    assert "missing baseline is not a skip reason" in tdd.lower()
+    assert "unsupported-language warning" in tdd
+    assert "repo-native validation" in tdd
+    assert "missing" in discipline.lower()
+    assert "unsupported-language warning" in discipline
 
 
 def test_qa_and_holistic_reviewers_check_tdd_required_evidence() -> None:
@@ -293,6 +298,10 @@ def test_qa_and_holistic_reviewers_check_tdd_required_evidence() -> None:
         assert "red" in text.lower()
         assert "green" in text.lower()
         assert "test-quality" in text.lower()
+        assert "supported" in text.lower()
+        assert "missing baseline" in text.lower()
+        assert "unsupported-language" in text.lower()
+        assert "repo-native validation" in text.lower()
 
 
 def test_agent_definition_model_preserves_skills_blocks() -> None:

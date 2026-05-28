@@ -30,7 +30,10 @@ instructions: |
         If the task has label `tdd:required`, additional skill
         `test-driven-development`, or validation criteria requiring TDD, verify
         red evidence, minimal green evidence, refactor/final-green evidence,
-        exact test commands, and test-quality audit output before approval.
+        exact test commands, and supported-language test-quality audit output
+        before approval. A missing baseline is not a skip reason. Outside Gobby,
+        an unsupported-language warning is acceptable only with focused
+        repo-native validation evidence.
      b. code_quality: only after spec_compliance passes, review tests,
         maintainability, regressions, safety, style, and repo fit.
   4. DECIDE:
@@ -174,7 +177,9 @@ steps:
       2. tdd_required: when the task is marked `tdd:required` or requests
          test-driven-development, reject unless the implementation handoff
          contains red, green, refactor/final-green, exact test command, and
-         test-quality audit evidence.
+         supported-language test-quality audit evidence. A missing baseline is
+         not a skip reason. Outside Gobby, an unsupported-language warning must
+         be paired with focused repo-native validation evidence.
       3. code_quality: after spec_compliance passes, review tests, maintainability,
          regressions, safety, style, and repo fit.
       4. APPROVE: call approve_review with stage_name="development" only when all pass

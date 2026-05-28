@@ -10,7 +10,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from gobby.test_quality.models import ISSUE_DEFINITIONS, AuditIssue, AuditReport
+from gobby.test_quality.models import ISSUE_DEFINITIONS, AuditIssue, AuditReport, AuditWarning
 
 _SUPPRESSION_RE = re.compile(r"test-quality:\s*allow\s+(.+?)\s+--\s*(\S.*)")
 _TODO_RE = re.compile(r"\b(TODO|FIXME|XXX)\b", re.IGNORECASE)
@@ -42,10 +42,42 @@ _MOCK_FACTORY_NAMES = {
     "patch",
 }
 _PYTHON_SUFFIX = ".py"
-_SCRIPT_TEST_SUFFIXES = {".js", ".jsx", ".ts", ".tsx"}
+_SCRIPT_TEST_SUFFIXES = {".cjs", ".cts", ".js", ".jsx", ".mjs", ".mts", ".ts", ".tsx"}
 _SCRIPT_TEST_CALL_RE = re.compile(r"\b(?P<name>it|test)(?P<modifier>\.\w+)?\s*\(")
 _SCRIPT_ASSERTION_RE = re.compile(r"\b(?:expect|assert(?:\.\w+)?)\s*\(")
 _SCRIPT_SLEEP_RE = re.compile(r"\b(?:setTimeout|setInterval)\s*\(")
+_RUST_SUFFIX = ".rs"
+_RUST_FN_RE = re.compile(
+    r"\b(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\b"
+)
+_RUST_ASSERTION_RE = re.compile(
+    r"\b(?:assert|assert_eq|assert_ne|matches|panic|prop_assert|prop_assert_eq|"
+    r"prop_assert_ne|proptest|quickcheck|quickcheck_macros::quickcheck)!\s*\("
+    r"|\b(?:insta::)?assert_[A-Za-z0-9_]+!\s*\("
+    r"|\bQuickCheck::new\s*\("
+)
+_RUST_ASSERT_TRUE_RE = re.compile(r"\bassert!\s*\(\s*true\s*(?:,|\))")
+_RUST_SLEEP_RE = re.compile(r"\b(?:(?:std::)?thread::|tokio::time::|async_std::task::)?sleep\s*\(")
+_UNSUPPORTED_TEST_LANGUAGE_SUFFIXES = {
+    ".c",
+    ".cc",
+    ".clj",
+    ".cpp",
+    ".cs",
+    ".cxx",
+    ".ex",
+    ".exs",
+    ".fs",
+    ".fsx",
+    ".go",
+    ".java",
+    ".kt",
+    ".kts",
+    ".php",
+    ".rb",
+    ".scala",
+    ".swift",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,17 +95,34 @@ class _TestNode:
     end_line: int
 
 
+@dataclass(frozen=True, slots=True)
+class _DiscoveryResult:
+    files: tuple[Path, ...]
+    warnings: tuple[AuditWarning, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _RustTest:
+    name: str
+    source: str
+    attrs: tuple[str, ...]
+    signature: str
+    body: str
+    start_line: int
+    line: int
+
+
 def audit_paths(paths: Sequence[str | Path], *, root: str | Path | None = None) -> AuditReport:
     """Audit pytest-style tests under paths."""
 
     root_path = Path.cwd() if root is None else Path(root)
     root_path = root_path.resolve()
     requested_paths = tuple(str(path) for path in paths)
-    files = _discover_files(paths, root=root_path)
+    discovery = _discover_files(paths, root=root_path)
 
     issues: list[AuditIssue] = []
     tests_scanned = 0
-    for file_path in files:
+    for file_path in discovery.files:
         file_issues, file_test_count = analyze_file(file_path, root=root_path)
         issues.extend(file_issues)
         tests_scanned += file_test_count
@@ -82,8 +131,9 @@ def audit_paths(paths: Sequence[str | Path], *, root: str | Path | None = None) 
         root=str(root_path),
         paths=requested_paths,
         issues=tuple(_deduplicate_issues(issues)),
-        files_scanned=len(files),
+        files_scanned=len(discovery.files),
         tests_scanned=tests_scanned,
+        warnings=discovery.warnings,
     )
 
 
@@ -99,6 +149,8 @@ def analyze_file(
 
     if file_path.suffix in _SCRIPT_TEST_SUFFIXES:
         return _analyze_script_file(source, relative_path)
+    if file_path.suffix == _RUST_SUFFIX:
+        return _analyze_rust_file(source, relative_path)
 
     tree = ast.parse(source, filename=str(file_path))
     comments = _collect_comments(source)
@@ -111,8 +163,9 @@ def analyze_file(
     return issues, len(test_nodes)
 
 
-def _discover_files(paths: Sequence[str | Path], *, root: Path) -> tuple[Path, ...]:
+def _discover_files(paths: Sequence[str | Path], *, root: Path) -> _DiscoveryResult:
     files: set[Path] = set()
+    warnings: dict[str, AuditWarning] = {}
     for raw_path in paths:
         path = Path(raw_path)
         if not path.is_absolute():
@@ -120,11 +173,21 @@ def _discover_files(paths: Sequence[str | Path], *, root: Path) -> tuple[Path, .
         if path.is_file() and _is_analyzable_file(path):
             files.add(path.resolve())
             continue
+        if path.is_file() and _is_unsupported_test_file(path):
+            warning = _unsupported_language_warning(path.resolve(), root)
+            warnings[warning.path or str(path)] = warning
+            continue
         if path.is_dir():
             for candidate in path.rglob("*"):
                 if _is_analyzable_file(candidate):
                     files.add(candidate.resolve())
-    return tuple(sorted(files))
+                elif _is_unsupported_test_file(candidate):
+                    warning = _unsupported_language_warning(candidate.resolve(), root)
+                    warnings[warning.path or str(candidate)] = warning
+    return _DiscoveryResult(
+        files=tuple(sorted(files)),
+        warnings=tuple(warnings[key] for key in sorted(warnings)),
+    )
 
 
 def _is_analyzable_file(path: Path) -> bool:
@@ -135,7 +198,34 @@ def _is_analyzable_file(path: Path) -> bool:
         return True
     if path.suffix in _SCRIPT_TEST_SUFFIXES:
         return ".test." in path.name or ".spec." in path.name or "__tests__" in parts
+    if path.suffix == _RUST_SUFFIX:
+        return True
     return False
+
+
+def _is_unsupported_test_file(path: Path) -> bool:
+    if not path.is_file() or path.suffix not in _UNSUPPORTED_TEST_LANGUAGE_SUFFIXES:
+        return False
+    parts = set(path.parts)
+    name = path.name.lower()
+    stem = path.stem.lower()
+    return (
+        "tests" in parts
+        or "__tests__" in parts
+        or "test" in stem
+        or "spec" in stem
+        or name.endswith("_test.go")
+        or name.endswith("test.java")
+    )
+
+
+def _unsupported_language_warning(path: Path, root: Path) -> AuditWarning:
+    relative_path = _relative_path(path, root)
+    return AuditWarning(
+        code="UNSUPPORTED_LANGUAGE",
+        path=relative_path,
+        message=f"Unsupported test language for {relative_path}; audit attempted but unsupported",
+    )
 
 
 def _iter_test_nodes(tree: ast.Module) -> Iterable[_TestNode]:
@@ -410,6 +500,176 @@ def _deduplicate_issues(issues: Iterable[AuditIssue]) -> list[AuditIssue]:
     ):
         by_fingerprint.setdefault(issue.fingerprint, issue)
     return list(by_fingerprint.values())
+
+
+def _analyze_rust_file(source: str, relative_path: str) -> tuple[list[AuditIssue], int]:
+    issues: list[AuditIssue] = []
+    test_nodes = list(_iter_rust_tests(source))
+
+    for test in test_nodes:
+        suppressions = _script_suppressed_codes(test.source)
+
+        for match in _RUST_ASSERT_TRUE_RE.finditer(test.source):
+            _append_issue(
+                issues,
+                relative_path,
+                test.name,
+                "ASSERT_TRUE",
+                _line_for_offset(test.source, match.start(), test.start_line),
+                suppressions,
+            )
+
+        for match in _RUST_SLEEP_RE.finditer(test.source):
+            _append_issue(
+                issues,
+                relative_path,
+                test.name,
+                "SLEEP_IN_TEST",
+                _line_for_offset(test.source, match.start(), test.start_line),
+                suppressions,
+            )
+
+        for line in _rust_todo_lines(test.source, test.start_line):
+            _append_issue(issues, relative_path, test.name, "TODO_IN_TEST", line, suppressions)
+
+        if _rust_has_unconditional_ignore(test.attrs):
+            _append_issue(
+                issues,
+                relative_path,
+                test.name,
+                "UNCONDITIONAL_SKIP",
+                test.start_line,
+                suppressions,
+            )
+
+        if not _rust_has_assertion_like_check(test):
+            _append_issue(
+                issues,
+                relative_path,
+                test.name,
+                "NO_ASSERTION",
+                test.line,
+                suppressions,
+            )
+
+    return issues, len(test_nodes)
+
+
+def _iter_rust_tests(source: str) -> Iterable[_RustTest]:
+    pending_attrs: list[tuple[str, int, int]] = []
+    line_offset = 0
+
+    for line_number, line in enumerate(source.splitlines(keepends=True), start=1):
+        stripped = line.strip()
+        attr = _rust_attr_text(stripped)
+        if attr is not None:
+            pending_attrs.append((attr, line_number, line_offset + line.index("#[")))
+            line_offset += len(line)
+            continue
+
+        if not stripped or stripped.startswith("//"):
+            line_offset += len(line)
+            continue
+
+        fn_match = _RUST_FN_RE.search(line)
+        if fn_match is not None and _rust_attrs_mark_test(tuple(item[0] for item in pending_attrs)):
+            fn_offset = line_offset + fn_match.start()
+            open_brace = source.find("{", line_offset + fn_match.end())
+            close_brace = (
+                _find_matching_delimiter(source, open_brace, "{", "}") if open_brace != -1 else None
+            )
+            if close_brace is not None:
+                start_offset = pending_attrs[0][2] if pending_attrs else fn_offset
+                start_line = pending_attrs[0][1] if pending_attrs else line_number
+                yield _RustTest(
+                    name=fn_match.group("name"),
+                    source=source[start_offset : close_brace + 1],
+                    attrs=tuple(item[0] for item in pending_attrs),
+                    signature=source[fn_offset:open_brace],
+                    body=source[open_brace + 1 : close_brace],
+                    start_line=start_line,
+                    line=line_number,
+                )
+
+        pending_attrs = []
+        line_offset += len(line)
+
+
+def _rust_attr_text(stripped_line: str) -> str | None:
+    if not stripped_line.startswith("#["):
+        return None
+    end = stripped_line.rfind("]")
+    if end == -1:
+        return None
+    return stripped_line[2:end].strip()
+
+
+def _rust_attr_name(attr: str) -> str:
+    return attr.split("(", 1)[0].split("=", 1)[0].strip()
+
+
+def _rust_attrs_mark_test(attrs: Sequence[str]) -> bool:
+    names = {_rust_attr_name(attr) for attr in attrs}
+    return bool(
+        names
+        & {
+            "test",
+            "tokio::test",
+            "rstest",
+            "test_case",
+            "quickcheck",
+            "quickcheck_macros::quickcheck",
+        }
+    )
+
+
+def _rust_has_unconditional_ignore(attrs: Sequence[str]) -> bool:
+    return any(_rust_attr_name(attr) == "ignore" for attr in attrs)
+
+
+def _rust_has_should_panic(attrs: Sequence[str]) -> bool:
+    return any(_rust_attr_name(attr) == "should_panic" for attr in attrs)
+
+
+def _rust_has_assertion_like_check(test: _RustTest) -> bool:
+    if _rust_has_should_panic(test.attrs):
+        return True
+    property_attrs = {"quickcheck", "quickcheck_macros::quickcheck"}
+    if any(_rust_attr_name(attr) in property_attrs for attr in test.attrs):
+        return True
+    if _RUST_ASSERTION_RE.search(test.body):
+        return True
+    return _rust_returns_result(test.signature) and _rust_uses_question_mark(test.body)
+
+
+def _rust_returns_result(signature: str) -> bool:
+    return "->" in signature and bool(
+        re.search(r"\bResult\s*(?:<|$)|::Result\s*(?:<|$)", signature)
+    )
+
+
+def _rust_uses_question_mark(body: str) -> bool:
+    return "?" in body
+
+
+def _rust_todo_lines(source: str, start_line: int) -> list[int]:
+    lines: list[int] = []
+    for offset, line in _iter_source_lines(source):
+        if "test-quality:" in line or not _TODO_RE.search(line):
+            continue
+        lines.append(_line_for_offset(source, offset, start_line))
+    return lines
+
+
+def _iter_source_lines(source: str) -> Iterable[tuple[int, str]]:
+    offset = 0
+    for line in source.splitlines(keepends=True):
+        yield offset, line
+        offset += len(line)
+
+
+def _line_for_offset(source: str, offset: int, start_line: int) -> int:
+    return start_line + source.count("\n", 0, offset)
 
 
 def _analyze_script_file(source: str, relative_path: str) -> tuple[list[AuditIssue], int]:

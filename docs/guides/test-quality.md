@@ -6,18 +6,22 @@ replacement for pytest.
 
 ## Mental Model
 
-The analyzer walks test files, reports issues with severity and stable
+The analyzer walks supported test files, reports issues with severity and stable
 fingerprints, and can compare the current report to a baseline. The baseline lets
-Gobby tolerate known debt while failing on new issues at a chosen severity.
+Gobby tolerate known debt while failing on new issues at a chosen severity. If
+the requested baseline is missing, the audit still runs and treats current
+supported-language issues at or above `--min-severity` as new.
 
 Use the audit before adding or expanding tests in an area with known quality
 concerns. Use focused mutation testing when static checks pass but the risk is in
 behavioral coverage.
 
-For TDD-required Gobby tasks, developer agents run the audit on touched test
-paths after adding or heavily editing tests. QA and holistic QA treat missing
-test-quality evidence as a blocker when `tdd:required` or
-`test-driven-development` applies.
+For TDD-required Gobby tasks, developer agents run the audit on supported
+touched test paths after adding or heavily editing tests. QA and holistic QA
+treat missing supported-language test-quality evidence as a blocker when
+`tdd:required` or `test-driven-development` applies. Outside Gobby,
+unsupported-language warnings are evidence that the audit was attempted only
+when paired with focused repo-native validation.
 
 ## Quick Start
 
@@ -72,6 +76,10 @@ that meet the configured severity threshold.
 
 Use baselines to keep existing debt visible without blocking unrelated cleanup.
 Do not use them to hide new test weaknesses.
+
+Missing baseline files are not a skip reason. With `--baseline <path>
+--fail-on-new`, a missing file emits `Baseline missing; treating current issues
+as new` and applies the same severity gate to current supported-language issues.
 
 ## Suppressions
 
@@ -143,4 +151,4 @@ or pytest run exposes a failure, fix it before closing the task.
 - [tasks.md](tasks.md)
 - [observability.md](observability.md)
 
-_Last verified: 2026-05-08_
+_Last verified: 2026-05-28_

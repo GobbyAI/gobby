@@ -1,4 +1,7 @@
-"""Plan-Coverage Contract compilation: turns a parsed plan document into a compiled expansion spec."""
+"""Plan-Coverage Contract compilation.
+
+Turns a parsed plan document into a compiled expansion spec.
+"""
 
 from __future__ import annotations
 
@@ -263,7 +266,9 @@ def _contract_validation_criteria(entry: ManifestEntry, section: PlanSection) ->
                 "- Green evidence: minimal implementation made the new test pass.",
                 "- Refactor/final-green evidence: final validation after cleanup.",
                 "- Exact test command used for red and green/final checks.",
-                "- Test-quality audit output for touched test paths, or a documented reason it was not applicable.",
+                "- Test-quality audit output for supported touched test paths; "
+                "outside Gobby, unsupported-language warnings must be paired "
+                "with focused repo-native validation.",
             ]
         )
     return "\n".join(line for line in lines if line)

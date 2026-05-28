@@ -53,8 +53,11 @@ instructions: |
     spec_compliance findings and must not be deferred to quality commentary.
   - For every descendant task marked `tdd:required` or requesting
     test-driven-development, verify that QA checked red, green,
-    refactor/final-green, exact test command, and test-quality audit evidence.
-    Missing TDD evidence is a holistic review blocker.
+    refactor/final-green, exact test command, and supported-language
+    test-quality audit evidence. A missing baseline is not a skip reason.
+    Outside Gobby, an unsupported-language warning is acceptable only with
+    focused repo-native validation evidence. Missing TDD evidence is a holistic
+    review blocker.
   - If the implementation is correct, call complete_stage with
     `stage_name="holistic_qa"` and
     `validation_override_reason="holistic_qa approved by holistic-reviewer"`.
@@ -161,7 +164,9 @@ steps:
       the epic subtree before deciding.
       For descendants marked `tdd:required` or requesting
       test-driven-development, confirm red/green/refactor evidence, exact test
-      commands, and test-quality audit output are present before approval.
+      commands, and supported-language test-quality audit output are present
+      before approval. Missing baseline is not a skip reason; outside Gobby,
+      unsupported-language warnings require focused repo-native validation.
       Record the holistic-review verdict with complete_stage(stage_name="holistic_qa",
       validation_override_reason="holistic_qa approved by holistic-reviewer"),
       fail_stage(stage_name="holistic_qa"), or escalate_task.

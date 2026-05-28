@@ -8,6 +8,8 @@ import click
 
 from gobby.test_quality.analyzer import audit_paths
 from gobby.test_quality.baseline import (
+    BASELINE_MISSING_MESSAGE,
+    AuditBaseline,
     diff_report,
     load_baseline,
 )
@@ -34,7 +36,7 @@ def test_quality() -> None:
 )
 @click.option("--output", type=click.Path(dir_okay=False, path_type=Path))
 @click.option("--write-baseline", type=click.Path(dir_okay=False, path_type=Path))
-@click.option("--baseline", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("--baseline", type=click.Path(dir_okay=False, path_type=Path))
 @click.option("--fail-on-new", is_flag=True)
 @click.option(
     "--min-severity",
@@ -61,14 +63,24 @@ def audit(
 
     diff = None
     if baseline is not None:
-        try:
+        if baseline.exists():
+            try:
+                diff = diff_report(
+                    report,
+                    load_baseline(baseline),
+                    min_severity=min_severity,
+                )
+            except ValueError as exc:
+                raise click.ClickException(str(exc)) from exc
+        else:
             diff = diff_report(
                 report,
-                load_baseline(baseline),
+                AuditBaseline(path=str(baseline), fingerprints=frozenset()),
                 min_severity=min_severity,
+                baseline_status="missing",
+                baseline_mode="current-issues-as-new",
+                warning_message=BASELINE_MISSING_MESSAGE,
             )
-        except ValueError as exc:
-            raise click.ClickException(str(exc)) from exc
 
     if write_baseline is not None:
         write_baseline_file(report, write_baseline)

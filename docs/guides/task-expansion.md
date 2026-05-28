@@ -425,7 +425,8 @@ Rules worth knowing:
 - Each manifest entry emits one leaf.
 - `tdd: true` adds `additional_skills: ["test-driven-development"]`, label
   `tdd:required`, and validation criteria for red, green,
-  refactor/final-green, exact command, and test-quality audit evidence.
+  refactor/final-green, exact command, and supported test-quality audit or
+  unsupported-language fallback evidence.
 - Code leaves require `implementation_domain`, which routes to
   `backend-developer`, `frontend-developer`, or `fullstack-developer`.
 - Non-TDD categories such as `docs`, `refactor`, `test`, `research`, and
@@ -531,4 +532,4 @@ Use:
 - [Pipelines](./pipelines.md) — Pipeline system reference
 - [Agents](./agents.md) — Agent definitions and step workflows
 
-_Last verified: 2026-05-07_
+_Last verified: 2026-05-28_

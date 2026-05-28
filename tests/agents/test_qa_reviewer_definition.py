@@ -187,3 +187,17 @@ def test_leaf_review_is_ordered_by_spec_then_quality() -> None:
     assert "Reject immediately" in instructions
     assert "Reject before code_quality" in status_message
     assert "only when both" in instructions
+
+
+def test_tdd_audit_evidence_is_language_aware() -> None:
+    agent = _agent()
+    instructions = agent["instructions"]
+    review_step = next(step for step in agent["steps"] if step["name"] == "review")
+    status_message = review_step["status_message"]
+
+    for text in (instructions, status_message):
+        assert "supported-language test-quality audit" in text
+        assert "missing baseline" in text.lower()
+        assert "not a skip reason" in text
+        assert "unsupported-language warning" in text
+        assert "repo-native validation" in text

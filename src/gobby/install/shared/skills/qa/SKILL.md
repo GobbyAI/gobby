@@ -45,7 +45,9 @@ validation, and emits exactly one verdict:
 
 For tasks marked `tdd:required` or requesting `test-driven-development`, the
 reviewer must reject unless red, green, refactor/final-green, exact test command,
-and test-quality audit evidence are present.
+and test-quality audit evidence are present for supported touched tests. A
+missing baseline is not a skip reason. Outside Gobby, an unsupported-language
+warning is acceptable only with focused repo-native validation evidence.
 
 Use the explicit user-facing summary `approve / reject / escalate` when
 describing possible outcomes.

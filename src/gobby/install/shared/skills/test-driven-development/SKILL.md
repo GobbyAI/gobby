@@ -30,13 +30,17 @@ The task handoff must include:
 - Red evidence: exact command and failure output summary from before implementation.
 - Green evidence: exact command and pass output summary after minimal implementation.
 - Refactor/final-green evidence: exact final command and pass output summary.
-- Test-quality audit evidence for touched test paths, or a specific reason it was not applicable.
+- Test-quality audit evidence for supported touched test paths, or an
+  unsupported-language warning plus focused repo-native validation outside Gobby.
 
 When tests were added or heavily edited, run:
 
 ```bash
 uv run gobby test-quality audit <paths> --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity high
 ```
+
+A missing baseline is not a skip reason; the CLI falls back to treating current
+supported-language issues at or above `--min-severity` as new.
 
 TDD is not satisfied by writing tests after implementation, by only running a broad
 suite, or by omitting the expected red failure.

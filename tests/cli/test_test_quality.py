@@ -29,6 +29,14 @@ def _write_ts_test(root: Path, source: str) -> Path:
     return path
 
 
+def _write_go_test(root: Path, source: str) -> Path:
+    tests_dir = root / "tests"
+    tests_dir.mkdir(exist_ok=True)
+    path = tests_dir / "user_test.go"
+    path.write_text(source, encoding="utf-8")
+    return path
+
+
 def test_audit_text_output() -> None:
     runner = CliRunner()
     with runner.isolated_filesystem() as cwd:
@@ -141,6 +149,145 @@ def test_no_assertion():
     assert result.exit_code == 1
     assert "NO_ASSERTION" in result.output
     assert "Failing new issues >= high: 1" in result.output
+
+
+def test_fail_on_new_missing_baseline_treats_current_issues_as_new() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem() as cwd:
+        root = Path(cwd)
+        _write_test(
+            root,
+            """
+def test_no_assertion():
+    cleanup()
+""",
+        )
+        baseline_path = root / ".gobby" / "missing-baseline.json"
+
+        result = runner.invoke(
+            quality_command,
+            [
+                "audit",
+                "tests",
+                "--baseline",
+                str(baseline_path),
+                "--fail-on-new",
+                "--min-severity",
+                "high",
+            ],
+        )
+
+    assert result.exit_code == 1
+    assert "Baseline missing; treating current issues as new" in result.output
+    assert "Baseline mode: current-issues-as-new" in result.output
+    assert "Failing new issues >= high: 1" in result.output
+
+
+def test_fail_on_new_missing_baseline_passes_when_no_failing_issues() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem() as cwd:
+        root = Path(cwd)
+        _write_test(
+            root,
+            """
+def test_asserts_behavior():
+    assert 1 == 1
+""",
+        )
+        baseline_path = root / ".gobby" / "missing-baseline.json"
+
+        result = runner.invoke(
+            quality_command,
+            [
+                "audit",
+                "tests",
+                "--baseline",
+                str(baseline_path),
+                "--fail-on-new",
+                "--min-severity",
+                "high",
+            ],
+        )
+
+    assert result.exit_code == 0
+    assert "Baseline missing; treating current issues as new" in result.output
+    assert "Failing new issues >= high: 0" in result.output
+
+
+def test_missing_baseline_json_reports_status_and_warning() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem() as cwd:
+        root = Path(cwd)
+        _write_test(
+            root,
+            """
+def test_no_assertion():
+    cleanup()
+""",
+        )
+        baseline_path = root / ".gobby" / "missing-baseline.json"
+
+        result = runner.invoke(
+            quality_command,
+            [
+                "audit",
+                "tests",
+                "--baseline",
+                str(baseline_path),
+                "--fail-on-new",
+                "--format",
+                "json",
+            ],
+        )
+        payload = json.loads(result.output)
+
+    assert result.exit_code == 1
+    assert payload["diff"]["baseline"]["status"] == "missing"
+    assert payload["diff"]["baseline"]["mode"] == "current-issues-as-new"
+    assert payload["diff"]["baseline"]["message"] == (
+        "Baseline missing; treating current issues as new"
+    )
+    assert payload["warnings"] == [
+        {
+            "code": "BASELINE_MISSING",
+            "message": "Baseline missing; treating current issues as new",
+            "path": str(baseline_path),
+        }
+    ]
+
+
+def test_unsupported_language_warning_does_not_fail_on_new() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem() as cwd:
+        root = Path(cwd)
+        _write_go_test(
+            root,
+            """
+package tests
+
+func TestUser(t *testing.T) {
+    t.Fatal("native validation owns this language")
+}
+""",
+        )
+        baseline_path = root / ".gobby" / "missing-baseline.json"
+
+        result = runner.invoke(
+            quality_command,
+            [
+                "audit",
+                "tests/user_test.go",
+                "--baseline",
+                str(baseline_path),
+                "--fail-on-new",
+                "--min-severity",
+                "high",
+            ],
+        )
+
+    assert result.exit_code == 0
+    assert "UNSUPPORTED_LANGUAGE" in result.output
+    assert "Failing new issues >= high: 0" in result.output
 
 
 def test_audit_counts_vitest_tests_with_expect_assertions() -> None:

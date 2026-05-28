@@ -10,6 +10,7 @@ from typing import Any
 from gobby.test_quality.models import AuditIssue, AuditReport, Severity, severity_meets_minimum
 
 BASELINE_SCHEMA_VERSION = 1
+BASELINE_MISSING_MESSAGE = "Baseline missing; treating current issues as new"
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,6 +27,10 @@ class AuditDiff:
 
     new_issues: tuple[AuditIssue, ...]
     min_severity: Severity
+    baseline_path: str | None = None
+    baseline_status: str = "loaded"
+    baseline_mode: str = "diff"
+    warning_message: str | None = None
 
     @property
     def failing_issues(self) -> tuple[AuditIssue, ...]:
@@ -37,6 +42,12 @@ class AuditDiff:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "baseline": {
+                "mode": self.baseline_mode,
+                "path": self.baseline_path,
+                "status": self.baseline_status,
+                "message": self.warning_message,
+            },
             "min_severity": self.min_severity,
             "new_issue_count": len(self.new_issues),
             "failing_issue_count": len(self.failing_issues),
@@ -75,8 +86,18 @@ def diff_report(
     baseline: AuditBaseline,
     *,
     min_severity: Severity,
+    baseline_status: str = "loaded",
+    baseline_mode: str = "diff",
+    warning_message: str | None = None,
 ) -> AuditDiff:
     new_issues = tuple(
         issue for issue in report.sorted_issues if issue.fingerprint not in baseline.fingerprints
     )
-    return AuditDiff(new_issues=new_issues, min_severity=min_severity)
+    return AuditDiff(
+        new_issues=new_issues,
+        min_severity=min_severity,
+        baseline_path=baseline.path,
+        baseline_status=baseline_status,
+        baseline_mode=baseline_mode,
+        warning_message=warning_message,
+    )

@@ -12,7 +12,9 @@ For each TDD-required `code` or eligible `config` deliverable:
 - add `additional_skills: ["test-driven-development"]`;
 - add label `tdd:required` when the output shape supports labels;
 - require validation evidence for red failure, minimal green pass,
-  refactor/final-green pass, exact test command, and test-quality audit output.
+  refactor/final-green pass, exact test command, and test-quality audit output
+  for supported touched tests. Outside Gobby, unsupported-language warnings
+  must be paired with focused repo-native validation.
 
 Code tasks must include `implementation_domain`:
 

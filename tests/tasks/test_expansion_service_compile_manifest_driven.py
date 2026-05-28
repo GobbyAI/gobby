@@ -297,6 +297,9 @@ def test_entry_fields_preserved(
     assert [task["category"] for task in core_tasks] == ["code"]
     assert "Core validation from manifest" in core_tasks[0]["validation"]
     assert "TDD evidence required:" in core_tasks[0]["validation"]
+    assert "supported touched test paths" in core_tasks[0]["validation"]
+    assert "unsupported-language warnings" in core_tasks[0]["validation"]
+    assert "focused repo-native validation" in core_tasks[0]["validation"]
     assert {tuple(task["labels"]) for task in core_tasks} == {
         ("covers:manifest-driven:1.2:1.2.1", "manifest:core", "tdd:required")
     }

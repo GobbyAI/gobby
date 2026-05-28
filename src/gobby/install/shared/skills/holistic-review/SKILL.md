@@ -70,8 +70,10 @@ For descendant tasks marked `tdd:required`, requesting
 `test-driven-development`, or carrying validation criteria that require TDD,
 verify that QA and completion evidence include the expected red failure,
 minimal green pass, refactor/final-green pass, exact test command, and
-test-quality audit output for touched tests. Missing TDD evidence is a testing
-gap and blocks approval.
+test-quality audit output for supported touched tests. A missing baseline is
+not a skip reason. Outside Gobby, an unsupported-language warning is acceptable
+only with focused repo-native validation evidence. Missing TDD evidence is a
+testing gap and blocks approval.
 
 ### yagni
 

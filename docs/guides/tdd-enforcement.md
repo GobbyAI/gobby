@@ -14,7 +14,8 @@ For a manifest entry with `tdd: true`, the compiler adds:
 - label `tdd:required`
 - validation criteria requiring red evidence, minimal green evidence,
   refactor/final-green evidence, the exact test command, and test-quality audit
-  output for touched test paths
+  output for supported touched test paths or unsupported-language fallback
+  evidence outside Gobby
 
 Only `code` and eligible `config` entries may set `tdd: true`. Use it for
 `config` only when the plan identifies executable behavior that can be pinned
@@ -34,8 +35,8 @@ The `test-driven-development` skill requires:
 3. Implement the smallest change that makes the test pass.
 4. Run the focused command and verify green.
 5. Refactor only after green, then run final green validation.
-6. Run `gobby test-quality audit` on touched test paths after adding or heavily
-   editing tests.
+6. Run `gobby test-quality audit` on supported touched test paths after adding
+   or heavily editing tests.
 
 For noisy test areas, use baseline mode:
 
@@ -46,11 +47,18 @@ uv run gobby test-quality audit <paths> \
   --min-severity high
 ```
 
+A missing baseline is not a skip reason; the CLI treats current
+supported-language issues at or above `--min-severity` as new. Outside Gobby,
+an unsupported-language warning must be paired with focused repo-native
+validation.
+
 ## Review Gates
 
 `qa-reviewer` checks TDD-required leaves before approval. Missing red evidence,
 green evidence, refactor/final-green evidence, exact test command, or
-test-quality audit output is a rejection.
+supported-language test-quality audit output is a rejection. Outside Gobby, an
+unsupported-language warning plus focused repo-native validation satisfies the
+audit-attempt evidence.
 
 `holistic-reviewer` checks the aggregate subtree. If a descendant task was
 TDD-required, holistic QA verifies that QA and completion evidence covered the
@@ -94,7 +102,8 @@ When auditing this guide, verify:
 - TDD leaves include `additional_skills: ["test-driven-development"]`.
 - TDD leaves include label `tdd:required`.
 - TDD validation criteria require red, green, refactor/final-green, exact
-  command, and test-quality audit evidence.
+  command, and supported test-quality audit or unsupported-language fallback
+  evidence.
 - Developer agents load `development-discipline`.
 - QA and holistic QA agent definitions mention TDD evidence and test-quality
   audit requirements.
@@ -109,4 +118,4 @@ When auditing this guide, verify:
 - [Variables](./variables.md)
 - [Orchestration](./orchestration.md)
 
-_Last verified: 2026-05-22_
+_Last verified: 2026-05-28_
