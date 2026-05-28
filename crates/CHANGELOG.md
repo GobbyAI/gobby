@@ -9,6 +9,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] — gcode
+
+### Added
+
+#### gcode
+
+- **Standalone setup reset boundary** — `gcode setup --standalone` now fails
+  safely when it detects incompatible existing code-index PostgreSQL state and
+  prints guidance to rerun with `--overwrite-code-index` only when a full
+  code-index reset is intended.
+- **Advanced full code-index overwrite** —
+  `gcode setup --standalone --overwrite-code-index` drops/recreates only
+  allowlisted gcode code-index PostgreSQL relations and BM25 indexes, clears
+  code-index graph nodes in FalkorDB, and deletes Qdrant collections with the
+  `code_symbols_` prefix. Gobby project files, config, secrets, tasks,
+  sessions, memory, and daemon-owned data stay untouched.
+- **Rust graph/vector projection lifecycle** — graph reads, graph reports,
+  vector projection sync, and graph/vector lifecycle operations now route
+  through the Rust `gobby-code` library boundary for daemon adoption.
+
+### Changed
+
+#### gcode
+
+- **Project-scoped invalidation** — `gcode invalidate` remains the normal
+  project reset. PostgreSQL deletes stay filtered to the current project, and
+  configured standalone FalkorDB/Qdrant projections are cleaned only for that
+  project.
+- **Shared foundation dependency** — `gobby-code` now consumes
+  `gobby-core 0.2`.
+
+## [0.2.0] — gobby-core
+
+### Added
+
+#### gobby-core
+
+- **Expanded shared foundation** — added reusable context/config contracts,
+  attached/standalone setup contracts, PostgreSQL hub helpers, FalkorDB and
+  Qdrant adapters, standalone service provisioning helpers, indexing
+  primitives, search-fusion primitives, and degradation vocabulary for Rust
+  Gobby CLI consumers.
+
+### Changed
+
+#### gobby-core
+
+- **Consumer dependency line** — workspace consumers now target the
+  `gobby-core 0.2` minor line.
+
 ## [0.8.7] — gcode
 
 ### Fixed

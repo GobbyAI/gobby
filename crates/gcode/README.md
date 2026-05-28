@@ -148,6 +148,7 @@ gcode graph rebuild                       # Rebuild current project's graph proj
 # Project management
 gcode status                              # Index stats
 gcode projects                            # List all indexed projects
+gcode setup --standalone                  # Provision daemon-independent services
 gcode index                               # Re-index (incremental)
 gcode invalidate                          # Clear index, force full re-index
 
