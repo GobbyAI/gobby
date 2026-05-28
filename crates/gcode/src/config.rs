@@ -5,6 +5,7 @@
 //!
 //! Source: src/gobby/config/bootstrap.py, src/gobby/config/persistence.py
 
+use std::fmt;
 use std::path::{Path, PathBuf};
 
 use gobby_core::config::ConfigSource;
@@ -33,6 +34,8 @@ pub type EmbeddingConfig = gobby_core::config::EmbeddingConfig;
 
 pub const FALKORDB_GRAPH_NAME: &str = "gobby_code";
 pub const CODE_SYMBOL_COLLECTION_PREFIX: &str = "code_symbols_";
+pub const GOBBY_EMBEDDING_VECTOR_DIM_ENV: &str = "GOBBY_EMBEDDING_VECTOR_DIM";
+pub const EMBEDDING_VECTOR_DIM_CONFIG_KEY: &str = "embeddings.vector_dim";
 
 pub const GOBBY_FALKORDB_HOST_ENV: &str = "GOBBY_FALKORDB_HOST";
 pub const GOBBY_FALKORDB_PORT_ENV: &str = "GOBBY_FALKORDB_PORT";
@@ -41,6 +44,29 @@ pub const GOBBY_FALKORDB_PASSWORD_ENV: &str = "GOBBY_FALKORDB_PASSWORD";
 pub const FALKORDB_HOST_CONFIG_KEY: &str = "databases.falkordb.host";
 pub const FALKORDB_PORT_CONFIG_KEY: &str = "databases.falkordb.port";
 pub const FALKORDB_PASSWORD_CONFIG_KEY: &str = "databases.falkordb.requirepass";
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CodeVectorSettings {
+    pub vector_dim: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CodeVectorConfigError {
+    InvalidVectorDim { source: &'static str, value: String },
+}
+
+impl fmt::Display for CodeVectorConfigError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidVectorDim { source, value } => write!(
+                f,
+                "invalid code vector dimension from {source}: `{value}` must be a positive integer"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for CodeVectorConfigError {}
 
 impl FalkorConfig {
     pub fn connection_config(&self) -> gobby_core::config::FalkorConfig {
@@ -68,6 +94,8 @@ pub struct Context {
     pub qdrant: Option<QdrantConfig>,
     /// Embedding API config (None if unavailable → no semantic search)
     pub embedding: Option<EmbeddingConfig>,
+    /// Code-symbol vector projection settings owned by gcode.
+    pub code_vectors: CodeVectorSettings,
     /// Gobby daemon base URL (e.g. http://localhost:60887)
     pub daemon_url: Option<String>,
 }
@@ -122,6 +150,7 @@ impl Context {
         let falkordb = resolve_falkordb_config(&mut conn, quiet);
         let qdrant = resolve_qdrant_config(&mut conn, quiet);
         let embedding = resolve_embedding_config(&mut conn, quiet);
+        let code_vectors = resolve_code_vector_settings(&mut conn)?;
 
         let daemon_url = resolve_daemon_url();
 
@@ -133,6 +162,7 @@ impl Context {
             falkordb,
             qdrant,
             embedding,
+            code_vectors,
             daemon_url,
         })
     }
@@ -469,6 +499,20 @@ where
     gobby_core::config::resolve_embedding_config(&mut source)
 }
 
+#[cfg(test)]
+fn resolve_code_vector_settings_from_values<R>(
+    read_config_value: R,
+) -> Result<CodeVectorSettings, CodeVectorConfigError>
+where
+    R: FnMut(&str) -> Option<String>,
+{
+    let mut source = ClosureConfigSource {
+        read_config_value,
+        resolve_value: |value: &str| Ok(value.to_string()),
+    };
+    resolve_code_vector_settings_from_source(&mut source)
+}
+
 /// Resolve FalkorDB configuration from config_store + env vars.
 fn resolve_falkordb_config(conn: &mut Client, _quiet: bool) -> Option<FalkorConfig> {
     let mut source = PostgresConfigSource { conn };
@@ -498,6 +542,44 @@ fn resolve_qdrant_config(conn: &mut Client, _quiet: bool) -> Option<QdrantConfig
 fn resolve_embedding_config(conn: &mut Client, _quiet: bool) -> Option<EmbeddingConfig> {
     let mut source = PostgresConfigSource { conn };
     gobby_core::config::resolve_embedding_config(&mut source)
+}
+
+pub(crate) fn resolve_code_vector_settings(
+    conn: &mut Client,
+) -> Result<CodeVectorSettings, CodeVectorConfigError> {
+    let mut source = PostgresConfigSource { conn };
+    resolve_code_vector_settings_from_source(&mut source)
+}
+
+pub(crate) fn resolve_code_vector_settings_from_source(
+    source: &mut impl ConfigSource,
+) -> Result<CodeVectorSettings, CodeVectorConfigError> {
+    let vector_dim = match std::env::var(GOBBY_EMBEDDING_VECTOR_DIM_ENV)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+    {
+        Some(value) => Some(parse_vector_dim(
+            GOBBY_EMBEDDING_VECTOR_DIM_ENV,
+            value.trim(),
+        )?),
+        None => source
+            .config_value(EMBEDDING_VECTOR_DIM_CONFIG_KEY)
+            .map(|value| parse_vector_dim(EMBEDDING_VECTOR_DIM_CONFIG_KEY, value.trim()))
+            .transpose()?,
+    };
+
+    Ok(CodeVectorSettings { vector_dim })
+}
+
+fn parse_vector_dim(source: &'static str, value: &str) -> Result<usize, CodeVectorConfigError> {
+    value
+        .parse::<usize>()
+        .ok()
+        .filter(|size| *size > 0)
+        .ok_or_else(|| CodeVectorConfigError::InvalidVectorDim {
+            source,
+            value: value.to_string(),
+        })
 }
 
 #[cfg(test)]
@@ -567,6 +649,7 @@ mod tests {
             "GOBBY_EMBEDDING_URL",
             "GOBBY_EMBEDDING_MODEL",
             "GOBBY_EMBEDDING_API_KEY",
+            "GOBBY_EMBEDDING_VECTOR_DIM",
         ] {
             unsafe { std::env::remove_var(key) };
         }
@@ -656,6 +739,38 @@ mod tests {
         assert_eq!(falkor.password.as_deref(), Some("resolved-falkor"));
         assert_eq!(qdrant.api_key.as_deref(), Some("resolved-qdrant"));
         assert_eq!(embedding.api_key.as_deref(), Some("resolved-embedding"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn vector_dim_setting_resolves_env_and_config_store() {
+        clear_service_env();
+        let values = std::collections::HashMap::from([("embeddings.vector_dim", "1536")]);
+
+        let settings = resolve_code_vector_settings_from_values(config_value_for(&values))
+            .expect("config-store vector settings");
+        assert_eq!(settings.vector_dim, Some(1536));
+
+        unsafe { std::env::set_var("GOBBY_EMBEDDING_VECTOR_DIM", "3072") };
+        let settings = resolve_code_vector_settings_from_values(config_value_for(&values))
+            .expect("env vector settings");
+        assert_eq!(settings.vector_dim, Some(3072));
+
+        unsafe { std::env::remove_var("GOBBY_EMBEDDING_VECTOR_DIM") };
+        let null_values = std::collections::HashMap::from([("embeddings.vector_dim", "null")]);
+        let settings = resolve_code_vector_settings_from_values(config_value_for(&null_values))
+            .expect("null config-store vector settings");
+        assert_eq!(settings.vector_dim, None);
+
+        let invalid_values =
+            std::collections::HashMap::from([("embeddings.vector_dim", r#""wide""#)]);
+        let err = resolve_code_vector_settings_from_values(config_value_for(&invalid_values))
+            .expect_err("invalid vector dim must error");
+        assert!(matches!(
+            err,
+            CodeVectorConfigError::InvalidVectorDim { .. }
+        ));
+        clear_service_env();
     }
 
     #[test]
