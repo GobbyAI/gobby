@@ -72,6 +72,28 @@ pub struct Chunk {
     pub metadata: Value,
 }
 
+/// Stable identity for a content chunk, independent of domain metadata.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ChunkIdentity {
+    /// Path to the source file for the chunk.
+    pub file_path: PathBuf,
+    /// Inclusive byte offset where the chunk starts.
+    pub byte_start: usize,
+    /// Exclusive byte offset where the chunk ends.
+    pub byte_end: usize,
+}
+
+impl Chunk {
+    /// Return the domain-independent identity for this chunk.
+    pub fn identity(&self) -> ChunkIdentity {
+        ChunkIdentity {
+            file_path: self.file_path.clone(),
+            byte_start: self.byte_start,
+            byte_end: self.byte_end,
+        }
+    }
+}
+
 /// Index lifecycle events for incremental indexing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IndexEvent {
@@ -166,6 +188,31 @@ mod tests {
         };
 
         assert_eq!(chunk.metadata, metadata);
+    }
+
+    #[test]
+    fn chunk_identity_uses_path_and_byte_range_only() {
+        let base = Chunk {
+            file_path: PathBuf::from("docs/indexing.md"),
+            byte_start: 12,
+            byte_end: 48,
+            heading: Some("Indexing".to_string()),
+            metadata: json!({ "consumer": "docs" }),
+        };
+        let same_identity = Chunk {
+            file_path: PathBuf::from("docs/indexing.md"),
+            byte_start: 12,
+            byte_end: 48,
+            heading: Some("Different heading".to_string()),
+            metadata: json!({ "consumer": "wiki" }),
+        };
+        let different_range = Chunk {
+            byte_end: 49,
+            ..base.clone()
+        };
+
+        assert_eq!(base.identity(), same_identity.identity());
+        assert_ne!(base.identity(), different_range.identity());
     }
 
     #[test]
