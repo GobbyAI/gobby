@@ -182,6 +182,86 @@ class TestSearchGraphForMemories:
             entity_key(None, "Python"),
             entity_key(None, "FastAPI"),
         ]
+        assert manager._kg_service.find_related_memory_ids.await_args.kwargs["max_hops"] == 1
+
+    async def test_caps_expansion_entity_seeds_but_keeps_direct_ids(self) -> None:
+        """_search_graph_for_memories caps expansion seeds without dropping direct hits."""
+        llm_service = MagicMock()
+        llm_service.get_provider_for_feature = MagicMock(return_value=(AsyncMock(), "haiku", None))
+
+        manager = _make_manager(
+            falkordb_host="127.0.0.1",
+            llm_service=llm_service,
+            vector_store=AsyncMock(),
+            embed_fn=AsyncMock(return_value=[0.1]),
+        )
+
+        entity_results = [
+            {
+                "entity_key": entity_key(None, f"Entity{i}"),
+                "name": f"Entity{i}",
+                "entity_type": "entity",
+                "labels": [],
+                "score": 0.9,
+                "memory_ids": [f"mem-{i}"],
+            }
+            for i in range(10)
+        ]
+        manager._kg_service.search_entities_by_vector = AsyncMock(return_value=entity_results)
+        manager._kg_service.find_related_memory_ids = AsyncMock(return_value=["mem-related"])
+
+        result = await manager._search_graph_for_memories(
+            query_embedding=[0.1],
+            limit=20,
+        )
+
+        assert result == [*(f"mem-{i}" for i in range(10)), "mem-related"]
+        assert manager._kg_service.find_related_memory_ids.await_args.kwargs["entity_keys"] == [
+            entity_key(None, f"Entity{i}") for i in range(8)
+        ]
+
+    @pytest.mark.parametrize("error", [TimeoutError("slow traversal"), RuntimeError("boom")])
+    async def test_returns_direct_ids_when_related_expansion_fails(
+        self,
+        error: Exception,
+    ) -> None:
+        """_search_graph_for_memories keeps direct IDs when traversal fails."""
+        llm_service = MagicMock()
+        llm_service.get_provider_for_feature = MagicMock(return_value=(AsyncMock(), "haiku", None))
+
+        manager = _make_manager(
+            falkordb_host="127.0.0.1",
+            llm_service=llm_service,
+            vector_store=AsyncMock(),
+            embed_fn=AsyncMock(return_value=[0.1]),
+        )
+
+        manager._kg_service.search_entities_by_vector = AsyncMock(
+            return_value=[
+                {
+                    "entity_key": entity_key(None, "Python"),
+                    "name": "Python",
+                    "entity_type": "tool",
+                    "labels": [],
+                    "score": 0.9,
+                    "memory_ids": ["mem-1", "mem-2"],
+                }
+            ]
+        )
+        manager._kg_service.find_related_memory_ids = AsyncMock(side_effect=error)
+
+        result = await manager._search_graph_for_memories(
+            query_embedding=[0.1],
+            limit=10,
+        )
+
+        assert result == ["mem-1", "mem-2"]
+        manager._kg_service.search_entities_by_vector.assert_awaited_once()
+        manager._kg_service.find_related_memory_ids.assert_awaited_once()
+        assert manager._kg_service.find_related_memory_ids.await_args.kwargs["entity_keys"] == [
+            entity_key(None, "Python")
+        ]
+        assert manager._kg_service.find_related_memory_ids.await_args.kwargs["max_hops"] == 1
 
     async def test_deduplicates_traversed_ids(self) -> None:
         """_search_graph_for_memories deduplicates IDs from traversal."""
@@ -459,6 +539,7 @@ class TestGraphSearchProjectIdScoping:
         manager._kg_service.find_related_memory_ids.assert_called_once()
         call_kwargs = manager._kg_service.find_related_memory_ids.call_args.kwargs
         assert call_kwargs["project_id"] == "proj-A"
+        assert call_kwargs["max_hops"] == 1
 
     async def test_defense_in_depth_skips_cross_project_memories(self) -> None:
         """search_memories skips memories whose project_id doesn't match."""

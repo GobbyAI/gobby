@@ -21,6 +21,8 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_SEARCH_LIMIT = 10
 _USER_SOURCE_BOOST = 1.2
+_GRAPH_EXPANSION_ENTITY_SEED_LIMIT = 8
+_GRAPH_RELATED_EXPANSION_TIMEOUT_SECONDS = 2.0
 
 
 class SearchService:
@@ -472,18 +474,40 @@ class SearchService:
 
         direct_memory_ids: list[str] = []
         entity_keys: list[str] = []
+        seen_entity_keys: set[str] = set()
         for result in entity_results:
-            entity_keys.append(result["entity_key"])
+            entity_key = result.get("entity_key")
+            if (
+                entity_key
+                and entity_key not in seen_entity_keys
+                and len(entity_keys) < _GRAPH_EXPANSION_ENTITY_SEED_LIMIT
+            ):
+                seen_entity_keys.add(entity_key)
+                entity_keys.append(entity_key)
             for mid in result.get("memory_ids", []):
                 if mid not in direct_memory_ids:
                     direct_memory_ids.append(mid)
 
-        traversed_memory_ids = await kg_service.find_related_memory_ids(
-            entity_keys=entity_keys,
-            max_hops=2,
-            limit=limit,
-            project_id=project_id,
-        )
+        traversed_memory_ids: list[str] = []
+        if entity_keys:
+            try:
+                traversed_memory_ids = await asyncio.wait_for(
+                    kg_service.find_related_memory_ids(
+                        entity_keys=entity_keys,
+                        max_hops=1,
+                        limit=limit,
+                        project_id=project_id,
+                    ),
+                    timeout=_GRAPH_RELATED_EXPANSION_TIMEOUT_SECONDS,
+                )
+            except TimeoutError:
+                logger.warning(
+                    "Graph related-memory expansion timed out after %.1fs; "
+                    "returning direct graph hits",
+                    _GRAPH_RELATED_EXPANSION_TIMEOUT_SECONDS,
+                )
+            except Exception as e:
+                logger.warning("Graph related-memory expansion failed: %s", e)
 
         seen = set(direct_memory_ids)
         merged = list(direct_memory_ids)

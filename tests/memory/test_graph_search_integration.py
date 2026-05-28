@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -178,6 +178,10 @@ class TestSearchEntitiesByVector:
         assert results[0]["score"] == 0.9
         assert "mem-001" in results[0]["memory_ids"]
         assert "mem-002" in results[0]["memory_ids"]
+        cypher = mock_falkor.query.call_args.args[0]
+        params = mock_falkor.query.call_args.args[1]
+        assert "ORDER BY m.updated_at DESC LIMIT $memory_link_limit" in cypher
+        assert params["memory_link_limit"] == 20
 
     async def test_returns_empty_when_no_matches(
         self,
@@ -232,28 +236,153 @@ class TestFindRelatedMemoryIds:
     ) -> None:
         """find_related_memory_ids returns memory IDs via graph traversal."""
         mock_falkor.query = AsyncMock(
-            return_value=[
-                {"memory_id": "mem-100"},
-                {"memory_id": "mem-200"},
-                {"memory_id": "mem-300"},
+            side_effect=[
+                [{"related_entity_key": entity_key(None, "Django")}],
+                [{"related_entity_key": entity_key(None, "Starlette")}],
+                [
+                    {"memory_id": "mem-100"},
+                    {"memory_id": "mem-200"},
+                    {"memory_id": "mem-300"},
+                ],
             ]
         )
 
         result = await service.find_related_memory_ids(
             entity_keys=[entity_key(None, "Python"), entity_key(None, "FastAPI")],
-            max_hops=2,
+            max_hops=1,
             limit=20,
         )
 
         assert result == ["mem-100", "mem-200", "mem-300"]
 
-    async def test_returns_empty_for_empty_names(
+    async def test_traversal_query_is_bounded_entity_to_entity(
         self,
         service: KnowledgeGraphService,
+        mock_falkor: AsyncMock,
     ) -> None:
-        """find_related_memory_ids returns empty for empty entity names."""
-        result = await service.find_related_memory_ids(entity_keys=[])
-        assert result == []
+        """Traversal uses bounded _Entity-to-_Entity neighbor expansion."""
+        mock_falkor.query = AsyncMock(return_value=[])
+
+        await service.find_related_memory_ids(
+            entity_keys=[entity_key(None, "Python")],
+            max_hops=2,
+        )
+
+        cypher = mock_falkor.query.call_args.args[0]
+        params = mock_falkor.query.call_args.args[1]
+        assert "[*1.." not in cypher
+        assert "(start:_Entity {entity_key: $entity_key})-[r]-(neighbor:_Entity)" in cypher
+        assert "NOT (type(r) IN $excluded_relationship_types)" in cypher
+        assert params["excluded_relationship_types"] == ["MENTIONED_IN", "RELATES_TO_CODE"]
+        assert params["neighbor_limit"] == 8
+
+    async def test_caps_seed_entities(
+        self,
+        service: KnowledgeGraphService,
+        mock_falkor: AsyncMock,
+    ) -> None:
+        """find_related_memory_ids caps traversal seed entities."""
+        mock_falkor.query = AsyncMock(return_value=[])
+        keys = [entity_key(None, f"Entity{i}") for i in range(10)]
+
+        await service.find_related_memory_ids(entity_keys=keys, max_hops=1)
+
+        assert mock_falkor.query.await_count == 8
+        queried_keys = [call.args[1]["entity_key"] for call in mock_falkor.query.call_args_list]
+        assert queried_keys == keys[:8]
+
+    async def test_caps_neighbors_before_memory_lookup(
+        self,
+        service: KnowledgeGraphService,
+        mock_falkor: AsyncMock,
+    ) -> None:
+        """Neighbor rows are capped before related memory lookup."""
+        neighbor_rows = [
+            {"related_entity_key": entity_key(None, f"Neighbor{i}")} for i in range(12)
+        ]
+        mock_falkor.query = AsyncMock(side_effect=[neighbor_rows, []])
+
+        await service.find_related_memory_ids(
+            entity_keys=[entity_key(None, "Python")],
+            max_hops=1,
+            limit=20,
+        )
+
+        neighbor_params = mock_falkor.query.call_args_list[0].args[1]
+        memory_params = mock_falkor.query.call_args_list[1].args[1]
+        assert neighbor_params["neighbor_limit"] == 8
+        assert len(memory_params["entity_keys"]) == 8
+
+    async def test_project_filters_apply_to_traversal_and_memory_lookup(
+        self,
+        service: KnowledgeGraphService,
+        mock_falkor: AsyncMock,
+    ) -> None:
+        """Project filters apply to start entity, related entity, and memory nodes."""
+        mock_falkor.query = AsyncMock(
+            side_effect=[
+                [{"related_entity_key": entity_key("proj-A", "AuthService")}],
+                [{"memory_id": "mem-100"}],
+            ]
+        )
+
+        await service.find_related_memory_ids(
+            entity_keys=[entity_key("proj-A", "Auth")],
+            max_hops=1,
+            project_id="proj-A",
+        )
+
+        neighbor_cypher = mock_falkor.query.call_args_list[0].args[0]
+        neighbor_params = mock_falkor.query.call_args_list[0].args[1]
+        memory_cypher = mock_falkor.query.call_args_list[1].args[0]
+        memory_params = mock_falkor.query.call_args_list[1].args[1]
+        assert "start.project_id = $project_id" in neighbor_cypher
+        assert "neighbor.project_id = $project_id" in neighbor_cypher
+        assert "e.project_id = $project_id" in memory_cypher
+        assert "m.project_id = $project_id" in memory_cypher
+        assert neighbor_params["project_id"] == "proj-A"
+        assert memory_params["project_id"] == "proj-A"
+
+    async def test_circuit_breaker_skips_after_repeated_query_timeouts(
+        self,
+        service: KnowledgeGraphService,
+        mock_falkor: AsyncMock,
+    ) -> None:
+        """Repeated Falkor query timeouts temporarily skip related expansion."""
+        clock = [0.0]
+        mock_falkor.query = AsyncMock(side_effect=Exception("Query timed out"))
+
+        with patch(
+            "gobby.memory.services.knowledge_graph.reader.time.monotonic",
+            side_effect=lambda: clock[0],
+        ):
+            for _ in range(3):
+                result = await service.find_related_memory_ids(
+                    entity_keys=[entity_key(None, "Python")]
+                )
+                assert result == []
+
+            assert mock_falkor.query.await_count == 3
+            mock_falkor.query.reset_mock()
+
+            result = await service.find_related_memory_ids(entity_keys=[entity_key(None, "Python")])
+            assert result == []
+            mock_falkor.query.assert_not_awaited()
+
+            clock[0] = 61.0
+            mock_falkor.query = AsyncMock(
+                side_effect=[
+                    [{"related_entity_key": entity_key(None, "Django")}],
+                    [{"memory_id": "mem-100"}],
+                ]
+            )
+
+            result = await service.find_related_memory_ids(
+                entity_keys=[entity_key(None, "Python")],
+                max_hops=1,
+            )
+
+        assert result == ["mem-100"]
 
     async def test_clamps_max_hops(
         self,
@@ -261,18 +390,27 @@ class TestFindRelatedMemoryIds:
         mock_falkor: AsyncMock,
     ) -> None:
         """find_related_memory_ids clamps max_hops to 1-3."""
-        mock_falkor.query = AsyncMock(return_value=[])
+        mock_falkor.query = AsyncMock(
+            side_effect=[
+                [{"related_entity_key": entity_key(None, "B")}],
+                [{"related_entity_key": entity_key(None, "C")}],
+                [{"related_entity_key": entity_key(None, "D")}],
+                [],
+            ]
+        )
 
-        # Upper bound: 10 → 3
         await service.find_related_memory_ids(entity_keys=[entity_key(None, "A")], max_hops=10)
-        call_args = mock_falkor.query.call_args
-        assert "*1..3" in call_args[0][0]
+        neighbor_queries = mock_falkor.query.call_args_list[:3]
+        assert len(neighbor_queries) == 3
+        assert all("[*1.." not in call.args[0] for call in neighbor_queries)
 
-        # Lower bound: 0 → 1
-        mock_falkor.query.reset_mock()
+        mock_falkor.query = AsyncMock(
+            side_effect=[[{"related_entity_key": entity_key(None, "B")}], []]
+        )
         await service.find_related_memory_ids(entity_keys=[entity_key(None, "A")], max_hops=0)
-        call_args = mock_falkor.query.call_args
-        assert "*1..1" in call_args[0][0]
+        neighbor_queries = mock_falkor.query.call_args_list[:1]
+        assert len(neighbor_queries) == 1
+        assert "[*1.." not in neighbor_queries[0].args[0]
 
     async def test_graceful_degradation_on_connection_error(
         self,
@@ -284,6 +422,14 @@ class TestFindRelatedMemoryIds:
 
         result = await service.find_related_memory_ids(entity_keys=[entity_key(None, "Python")])
 
+        assert result == []
+
+    async def test_returns_empty_for_empty_names(
+        self,
+        service: KnowledgeGraphService,
+    ) -> None:
+        """find_related_memory_ids returns empty for empty entity names."""
+        result = await service.find_related_memory_ids(entity_keys=[])
         assert result == []
 
 

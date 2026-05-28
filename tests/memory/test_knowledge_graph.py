@@ -1099,18 +1099,31 @@ class TestMemoryNodeProjectIdScoping:
         mock_falkor: AsyncMock,
     ) -> None:
         """find_related_memory_ids passes project_id filter to traversal query."""
-        mock_falkor.query = AsyncMock(return_value=[{"memory_id": "mem-1"}])
+        mock_falkor.query = AsyncMock(
+            side_effect=[
+                [{"related_entity_key": entity_key("proj-A", "AuthService")}],
+                [{"memory_id": "mem-1"}],
+            ]
+        )
 
         await service.find_related_memory_ids(
             entity_keys=[entity_key("proj-A", "Auth")],
             project_id="proj-A",
+            max_hops=1,
         )
 
-        call = mock_falkor.query.call_args_list[0]
-        cypher = call.args[0]
-        params = call.args[1]
-        assert "m.project_id = $project_id" in cypher
-        assert params["project_id"] == "proj-A"
+        neighbor_call = mock_falkor.query.call_args_list[0]
+        neighbor_cypher = neighbor_call.args[0]
+        neighbor_params = neighbor_call.args[1]
+        assert "start.project_id = $project_id" in neighbor_cypher
+        assert "neighbor.project_id = $project_id" in neighbor_cypher
+        assert neighbor_params["project_id"] == "proj-A"
+
+        memory_call = mock_falkor.query.call_args_list[1]
+        memory_cypher = memory_call.args[0]
+        memory_params = memory_call.args[1]
+        assert "m.project_id = $project_id" in memory_cypher
+        assert memory_params["project_id"] == "proj-A"
 
 
 class TestRemoveMemoryFromGraph:
