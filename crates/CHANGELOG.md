@@ -9,6 +9,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.4] — gcode
+
+### Changed
+
+#### gcode
+
+- **Shared foundation floor** — `gobby-code` now requires `gobby-core 0.2.2`
+  so published installs pick up the FalkorDB and Qdrant adapter behavior used
+  by this release.
+- **FalkorDB client boundary** — graph query execution now routes through
+  `gobby-core::falkor::GraphClient`, keeping direct FalkorDB connection and
+  result parsing logic inside the shared foundation crate while preserving the
+  existing `gcode` graph facade.
+
+### Fixed
+
+#### gcode
+
+- **Graph empty-result fallback** — callers, usages, and blast-radius share the
+  same unresolved-symbol empty response path after graph-read availability
+  checks, avoiding duplicated fallback behavior across graph commands.
+
+## [0.2.2] — gobby-core
+
+### Added
+
+#### gobby-core
+
+- **FalkorDB graph escape hatch** — `GraphClient::with_sync_graph` exposes the
+  underlying synchronous FalkorDB graph to consumers that need operations not
+  yet covered by the shared adapter API, while keeping graph selection and
+  connection setup centralized.
+
+### Fixed
+
+#### gobby-core
+
+- **Qdrant HTTP classification** — Qdrant server errors now degrade as
+  `ServiceState::Unreachable`, while client-side HTTP errors remain typed hard
+  failures with response bodies preserved for diagnostics.
+
+## [0.4.3] — gobby-hooks
+
+### Changed
+
+#### gobby-hooks
+
+- **Planned-shutdown Stop documentation** — ghook docs now spell out Stop
+  preflight behavior, post-enqueue suppression, marker lookup, and the
+  `GOBBY_DAEMON_URL` / `GOBBY_SHUTDOWN_HOOK_ALLOW_SECONDS` controls used during
+  intentional daemon stop and restart windows.
+- **Stop preflight naming** — the internal planned-shutdown preflight helper now
+  uses explicit skip-dispatch naming, matching the behavior that returns
+  `{"continue":true}` before stdin reads or enqueue side effects.
+
 ## [0.4.2] — gobby-hooks
 
 ### Added
