@@ -120,6 +120,15 @@ class CronScheduler:
 
     async def _check_due_jobs(self) -> None:
         """Check for due jobs and dispatch them."""
+        try:
+            from gobby.system_automation import remove_legacy_automation_cron_rows
+
+            removed_legacy_jobs = remove_legacy_automation_cron_rows(self.storage.db)
+            if removed_legacy_jobs:
+                logger.info("Removed %s legacy automation cron row(s)", removed_legacy_jobs)
+        except Exception as exc:
+            logger.warning("Failed to remove legacy automation cron rows: %s", exc)
+
         due_jobs = self.storage.get_due_jobs()
         if not due_jobs:
             return

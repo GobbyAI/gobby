@@ -11,6 +11,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.worktrees import LocalWorktreeManager
+from gobby.utils.git import git_subprocess_env
 
 
 def delete_orphan_build_branches(
@@ -36,6 +37,8 @@ def delete_orphan_build_branches(
         result = git(repo_path, ["branch", "-D", branch], timeout=30)
         if result.returncode != 0:
             detail = result.stderr.strip() or result.stdout.strip()
+            if is_missing_branch_delete(branch, detail):
+                continue
             errors.append(f"failed to delete build branch {branch}: {detail}")
             continue
         deleted += 1
@@ -123,6 +126,17 @@ def current_branch(repo_path: Path) -> str | None:
     return branch or None
 
 
+def is_missing_branch_delete(branch: str, detail: str) -> bool:
+    """Return whether git failed because the branch was already absent."""
+    normalized = detail.lower()
+    quoted = branch.lower()
+    return (
+        "not found" in normalized
+        and ("branch" in normalized or "ref" in normalized)
+        and (quoted in normalized or f"'{quoted}'" in normalized)
+    )
+
+
 def project_path(db: HubDatabase, project_id: str) -> Path:
     project = LocalProjectManager(db).get(project_id)
     if project is not None and project.repo_path:
@@ -131,6 +145,8 @@ def project_path(db: HubDatabase, project_id: str) -> Path:
 
 
 def git(repo_path: Path, args: list[str], *, timeout: int) -> subprocess.CompletedProcess[str]:
+    env = git_subprocess_env()
+    subprocess_kwargs = {"env": env} if env is not None else {}
     return subprocess.run(  # nosec B603 # git args are fixed by callers.
         ["git", *args],
         cwd=repo_path,
@@ -138,4 +154,5 @@ def git(repo_path: Path, args: list[str], *, timeout: int) -> subprocess.Complet
         text=True,
         timeout=timeout,
         check=False,
+        **subprocess_kwargs,
     )

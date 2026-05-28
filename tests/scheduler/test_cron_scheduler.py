@@ -301,12 +301,12 @@ async def test_skips_job_with_active_run_but_dispatches_other_due_job(
 
 
 @pytest.mark.asyncio
-async def test_due_jobs_run_heartbeat_then_dispatcher_then_others(
+async def test_due_jobs_remove_legacy_automation_rows_before_dispatch(
     cron_storage: CronJobStorage,
     mock_executor: CronExecutor,
     config: CronConfig,
 ) -> None:
-    """Lifecycle cron jobs get deterministic priority when due together."""
+    """Removed dispatcher cron rows are deleted instead of dispatched."""
     scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
     past = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
     names = ["other-job", "gobby:dispatcher", "gobby:pipeline-heartbeat"]
@@ -323,12 +323,14 @@ async def test_due_jobs_run_heartbeat_then_dispatcher_then_others(
 
     await scheduler._check_due_jobs()
     await wait_for_async_condition(
-        lambda: mock_executor.execute.await_count >= 3,
-        description="priority cron dispatch",
+        lambda: mock_executor.execute.await_count >= 1,
+        description="non-legacy cron dispatch",
     )
 
     dispatched = [call.args[0].name for call in mock_executor.execute.await_args_list]
-    assert dispatched == ["gobby:pipeline-heartbeat", "gobby:dispatcher", "other-job"]
+    assert dispatched == ["other-job"]
+    assert cron_storage.get_job_by_name("gobby:dispatcher") is None
+    assert cron_storage.get_job_by_name("gobby:pipeline-heartbeat") is None
 
 
 @pytest.mark.asyncio

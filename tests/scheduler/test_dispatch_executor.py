@@ -196,3 +196,24 @@ async def test_disabled_dispatcher_tick_reports_hard_stop(temp_db) -> None:
     assert summary.ticks == 0
     assert summary.reason == "automation_disabled"
     assert storage.get_job_by_name("gobby:dispatcher") is None
+
+
+@pytest.mark.asyncio
+async def test_legacy_dispatch_tick_handler_is_skipped_when_row_survives(temp_db) -> None:
+    _seed_project(temp_db)
+    storage = CronJobStorage(temp_db)
+    job = storage.create_job(
+        project_id="project-1",
+        name="gobby:dispatcher",
+        schedule_type="interval",
+        action_type="handler",
+        action_config={"handler": "dispatch.tick"},
+        interval_seconds=60,
+        is_system=True,
+    )
+    run = storage.create_run(job.id)
+
+    result = await CronExecutor(storage).execute(job, run)
+
+    assert result.status == "completed"
+    assert "Skipped removed legacy automation cron job" in (result.output or "")

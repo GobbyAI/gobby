@@ -19,6 +19,7 @@ from gobby.utils.git import (
     get_git_branch,
     get_git_metadata,
     get_github_url,
+    git_subprocess_env,
     is_valid_sha_format,
     normalize_commit_sha,
     run_git_command,
@@ -93,6 +94,29 @@ class TestRunGitCommand:
             result = run_git_command(["git", "status"], temp_dir)
 
             assert result is None
+
+    def test_missing_git_resolution_adds_fallback_path(
+        self,
+        temp_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A sparse daemon PATH still gets standard git install locations."""
+        monkeypatch.setenv("PATH", "")
+        with (
+            patch("gobby.utils.git.shutil.which", return_value=None),
+            patch("subprocess.run") as mock_run,
+        ):
+            mock_result = MagicMock()
+            mock_result.returncode = 0
+            mock_result.stdout = "ok\n"
+            mock_run.return_value = mock_result
+
+            result = run_git_command(["git", "status"], temp_dir)
+
+        assert result == "ok"
+        env = mock_run.call_args.kwargs["env"]
+        assert "/usr/bin" in env["PATH"]
+        assert git_subprocess_env() is not None
 
     def test_generic_exception_returns_none(self, temp_dir: Path) -> None:
         """Test generic Exception returns None and is logged."""

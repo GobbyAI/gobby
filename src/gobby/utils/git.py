@@ -9,11 +9,15 @@ Handles git worktrees, detached HEAD, and missing remotes gracefully.
 """
 
 import logging
+import os
+import shutil
 import subprocess  # nosec B404 # subprocess needed for git commands
 from pathlib import Path
 from typing import TypedDict
 
 logger = logging.getLogger(__name__)
+
+GIT_FALLBACK_PATHS = ("/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin")
 
 
 class GitMetadata(TypedDict, total=False):
@@ -21,6 +25,20 @@ class GitMetadata(TypedDict, total=False):
 
     github_url: str | None
     git_branch: str | None
+
+
+def git_subprocess_env() -> dict[str, str] | None:
+    """Return a PATH-augmented environment only when git is not currently resolvable."""
+    if shutil.which("git") is not None:
+        return None
+
+    env = os.environ.copy()
+    path_parts = [part for part in env.get("PATH", "").split(os.pathsep) if part]
+    for part in GIT_FALLBACK_PATHS:
+        if part not in path_parts:
+            path_parts.append(part)
+    env["PATH"] = os.pathsep.join(path_parts)
+    return env
 
 
 def run_git_command(command: list[str], cwd: str | Path, timeout: int = 5) -> str | None:
@@ -36,6 +54,8 @@ def run_git_command(command: list[str], cwd: str | Path, timeout: int = 5) -> st
         Command output as string (stripped), or None if command fails
     """
     try:
+        env = git_subprocess_env()
+        subprocess_kwargs = {"env": env} if env is not None else {}
         result = subprocess.run(  # nosec B603 # command passed from internal callers with hardcoded git commands
             command,
             cwd=cwd,
@@ -43,6 +63,7 @@ def run_git_command(command: list[str], cwd: str | Path, timeout: int = 5) -> st
             text=True,
             timeout=timeout,
             check=False,  # Don't raise on non-zero exit
+            **subprocess_kwargs,
         )
 
         if result.returncode == 0:

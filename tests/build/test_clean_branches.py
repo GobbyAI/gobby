@@ -35,6 +35,48 @@ def _branches(path: Path) -> set[str]:
     return {line.strip() for line in output.splitlines() if line.strip()}
 
 
+def test_branch_cleanup_ignores_branch_already_deleted(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    from gobby.build import branch_cleanup
+    from gobby.storage.projects import LocalProjectManager
+    from gobby.storage.tasks import LocalTaskManager
+
+    project = LocalProjectManager(temp_db).create("branch-race", repo_path=str(tmp_path))
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=project.id,
+        title="already cleaned branch",
+        task_type="task",
+        category="code",
+    )
+    branch = branch_cleanup.default_task_branch_name(task)
+
+    monkeypatch.setattr(branch_cleanup, "local_branches", lambda _repo_path: {branch})
+    monkeypatch.setattr(branch_cleanup, "current_branch", lambda _repo_path: "main")
+
+    def branch_deleted_by_peer(
+        _repo_path: Path,
+        _args: list[str],
+        *,
+        timeout: int,
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            ["git", "branch", "-D", branch],
+            returncode=1,
+            stdout="",
+            stderr=f"error: branch '{branch}' not found",
+        )
+
+    monkeypatch.setattr(branch_cleanup, "git", branch_deleted_by_peer)
+
+    deleted, errors = branch_cleanup.delete_orphan_build_branches(temp_db, project.id, [task])
+
+    assert deleted == 0
+    assert errors == []
+
+
 @pytest.mark.asyncio
 async def test_clean_deletes_stale_task_branch(temp_db, tmp_path: Path) -> None:
     from gobby.build.branch_cleanup import default_task_branch_name

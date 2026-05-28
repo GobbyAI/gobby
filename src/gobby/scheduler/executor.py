@@ -302,6 +302,10 @@ class CronExecutor:
             raise ValueError("handler action requires 'handler' in action_config")
         handler = self._handlers.get(name)
         if not handler:
+            from gobby.system_automation import is_legacy_automation_cron_name
+
+            if is_legacy_automation_cron_name(job.name):
+                return f"Skipped removed legacy automation cron job: {job.name}"
             available = list(self._handlers.keys())
             raise ValueError(f"No handler registered: '{name}'. Available: {available}")
         return await handler(job)
