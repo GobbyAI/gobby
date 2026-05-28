@@ -3,6 +3,7 @@ use crate::db;
 use crate::graph::code_graph::{
     self, GraphBlastRadiusTarget, GraphLifecycleAction, GraphLifecycleOutput, GraphPayload,
 };
+use crate::graph::report::{ProjectGraphReport, ProjectGraphReportOptions};
 use crate::models::PagedResponse;
 use crate::output::{self, Format};
 use crate::projection::sync::ProjectionSyncReport;
@@ -252,6 +253,21 @@ fn print_graph_payload(payload: &GraphPayload, format: Format) -> anyhow::Result
     match format {
         Format::Json => output::print_json(payload),
         Format::Text => output::print_text(&format_graph_payload_text(payload)),
+    }
+}
+
+fn format_report_text(report: &ProjectGraphReport) -> anyhow::Result<String> {
+    Ok(serde_json::to_string_pretty(report)?)
+}
+
+pub fn report(ctx: &Context, top_n: usize, format: Format) -> anyhow::Result<()> {
+    let report = crate::graph::report::generate_report_with_options(
+        ctx,
+        ProjectGraphReportOptions { top_n },
+    )?;
+    match format {
+        Format::Json => output::print_json(&report),
+        Format::Text => output::print_text(&format_report_text(&report)?),
     }
 }
 
@@ -544,6 +560,41 @@ mod tests {
         ));
         assert!(
             err.to_string().contains("FalkorDB is not configured"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn report_text_structured_output() {
+        let report = crate::graph::report::empty_report("project-123");
+
+        let text = format_report_text(&report).expect("format report text");
+        let value: serde_json::Value = serde_json::from_str(&text).expect("structured JSON text");
+
+        assert_eq!(value["project_id"], "project-123");
+        assert_eq!(value["summary"]["node_count"], 0);
+        assert!(
+            value["markdown"]
+                .as_str()
+                .expect("markdown field")
+                .contains("# Project Graph Report")
+        );
+        assert!(!text.trim_start().starts_with('#'));
+    }
+
+    #[test]
+    fn report_requires_graph_service() {
+        let ctx = make_ctx_no_falkordb();
+
+        let err = report(&ctx, 10, Format::Json).expect_err("report must fail");
+
+        assert!(matches!(
+            err.downcast_ref::<crate::graph::report::ProjectGraphReportError>(),
+            Some(crate::graph::report::ProjectGraphReportError::GraphServiceNotConfigured)
+        ));
+        assert!(
+            err.to_string()
+                .contains("project graph report requires FalkorDB"),
             "unexpected error: {err}"
         );
     }

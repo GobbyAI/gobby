@@ -218,6 +218,12 @@ enum GraphCommand {
     Clear,
     /// Rebuild the current project's code-index graph projection from PostgreSQL facts
     Rebuild,
+    /// Generate a project graph report
+    Report {
+        /// Number of top hotspot and target rows to include
+        #[arg(long, default_value = "10")]
+        top_n: usize,
+    },
     /// Show an overview graph for the current project
     Overview,
     /// Show graph nodes and links for one indexed file
@@ -383,6 +389,12 @@ fn main() -> anyhow::Result<()> {
         } => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
             commands::graph::rebuild(&ctx, cli.format)
+        }
+        Command::Graph {
+            command: GraphCommand::Report { top_n },
+        } => {
+            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            commands::graph::report(&ctx, top_n, cli.format)
         }
         Command::Vector {
             command: VectorCommand::SyncFile { file },
@@ -645,6 +657,14 @@ mod tests {
             }
         ));
 
+        let cli = Cli::try_parse_from(["gcode", "graph", "report"]).expect("graph report parses");
+        assert!(matches!(
+            cli.command,
+            Command::Graph {
+                command: GraphCommand::Report { top_n: 10 }
+            }
+        ));
+
         let cli =
             Cli::try_parse_from(["gcode", "graph", "overview"]).expect("graph overview parses");
         assert!(matches!(
@@ -768,6 +788,27 @@ mod tests {
             } => assert!(sync_projections),
             _ => panic!("expected index command"),
         }
+    }
+
+    #[test]
+    fn parse_graph_report_global_format() {
+        let cli = Cli::try_parse_from([
+            "gcode", "graph", "report", "--top-n", "5", "--format", "text",
+        ])
+        .expect("graph report parses");
+        assert!(matches!(cli.format, output::Format::Text));
+        match cli.command {
+            Command::Graph {
+                command: GraphCommand::Report { top_n },
+            } => assert_eq!(top_n, 5),
+            _ => panic!("expected graph report command"),
+        }
+
+        let err = match Cli::try_parse_from(["gcode", "graph", "report", "--limit", "5"]) {
+            Ok(_) => panic!("report keeps minimal args"),
+            Err(err) => err,
+        };
+        assert_eq!(err.kind(), clap::error::ErrorKind::UnknownArgument);
     }
 
     #[test]
