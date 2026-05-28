@@ -1,7 +1,8 @@
 //! Generic indexing primitives shared by indexing consumers.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::io::{self, Read};
+use std::path::{Path, PathBuf};
 
 use ignore::{WalkBuilder, overrides::OverrideBuilder};
 use serde_json::Value;
@@ -56,6 +57,23 @@ pub fn content_hash(data: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(data);
     format!("{:x}", hasher.finalize())
+}
+
+/// SHA-256 content hash for a file, read incrementally.
+pub fn file_content_hash(path: impl AsRef<Path>) -> io::Result<String> {
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 65_536];
+
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
 /// A content chunk with byte range and opaque domain metadata.
@@ -193,6 +211,19 @@ mod tests {
             content_hash(b"hello"),
             "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
         );
+    }
+
+    #[test]
+    fn file_content_hash_returns_sha256_hex() -> std::io::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let path = tmp.path().join("content.txt");
+        std::fs::write(&path, b"hello")?;
+
+        assert_eq!(
+            file_content_hash(&path)?,
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+        );
+        Ok(())
     }
 
     #[test]
