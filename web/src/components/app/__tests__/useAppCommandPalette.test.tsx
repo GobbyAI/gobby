@@ -25,6 +25,7 @@ function makeHookArgs(addSystemMessage = vi.fn()) {
     setSettingsOpen: vi.fn(),
     setResumeModalOpen: vi.fn(),
     showPlanRef: { current: vi.fn() },
+    openActivityTab: vi.fn(),
   }
 }
 
@@ -76,5 +77,29 @@ describe('useAppCommandPalette', () => {
     expect(addSystemMessage).toHaveBeenCalledWith('Requesting daemon restart...')
     expect(addSystemMessage).toHaveBeenCalledWith('Daemon restart requested; reconnecting...')
     expect(addSystemMessage).not.toHaveBeenCalledWith('Failed to restart daemon')
+  })
+
+  it('routes legacy MCP browse commands to the MCP activity tab', () => {
+    const args = makeHookArgs()
+    const { result } = renderHook(() => useAppCommandPalette(args))
+
+    act(() => {
+      result.current.handlePaletteSelect({
+        kind: 'command',
+        name: 'mcp',
+        description: 'Open MCP activity',
+        action: 'open_mcp',
+      })
+    })
+
+    expect(args.openActivityTab).toHaveBeenCalledWith('mcp')
+    expect(args.setActiveModal).not.toHaveBeenCalledWith('mcp')
+  })
+
+  it('does not include MCP as an app navigation action', () => {
+    const { result } = renderHook(() => useAppCommandPalette(makeHookArgs()))
+
+    expect(result.current.commandPaletteActions.map((action) => action.id))
+      .not.toContain('nav-mcp')
   })
 })

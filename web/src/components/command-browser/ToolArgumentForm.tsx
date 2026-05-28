@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useId } from 'react'
 import { Input } from '../chat/ui/Input'
 import { cn } from '../../lib/utils'
 
@@ -60,13 +60,14 @@ function FieldRow({
   disabled?: boolean
   onChange: (val: unknown) => void
 }) {
+  const inputId = useId()
   const handleChange = useCallback(
     (val: unknown) => onChange(val),
     [onChange],
   )
 
   const label = (
-    <label className="block text-sm font-medium text-foreground mb-1">
+    <label htmlFor={inputId} className="block text-sm font-medium text-foreground mb-1">
       {name}
       {isRequired && <span className="text-destructive-foreground ml-0.5">*</span>}
     </label>
@@ -82,6 +83,7 @@ function FieldRow({
       <div>
         {label}
         <select
+          id={inputId}
           className={cn(
             'flex h-9 w-full rounded-md border border-border bg-transparent px-3 py-1 text-sm',
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
@@ -127,6 +129,7 @@ function FieldRow({
       <div>
         {label}
         <Input
+          id={inputId}
           type="number"
           value={value !== undefined && value !== null ? String(value) : ''}
           onChange={(e) => {
@@ -152,6 +155,7 @@ function FieldRow({
       <div>
         {label}
         <textarea
+          id={inputId}
           className={cn(
             'flex w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm font-mono',
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
@@ -180,6 +184,7 @@ function FieldRow({
     <div>
       {label}
       <Input
+        id={inputId}
         type="text"
         value={(value as string) ?? ''}
         onChange={(e) => handleChange(e.target.value || undefined)}

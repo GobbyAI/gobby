@@ -485,3 +485,278 @@
   background: var(--accent);
   color: var(--accent-foreground);
 }
+
+/* --- MCP activity tab --- */
+.activity-mcp-tab {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.activity-mcp-filter-menu {
+  position: absolute;
+  top: calc(100% - 0.25rem);
+  right: 0.75rem;
+  z-index: 20;
+  min-width: 11rem;
+  padding: 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 0.375rem;
+  background: var(--bg-secondary);
+  box-shadow: var(--shadow-md);
+}
+
+.activity-mcp-filter-check {
+  width: 1.75rem;
+  flex-shrink: 0;
+  color: currentColor;
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-xs);
+}
+
+.activity-mcp-error {
+  width: 100%;
+  padding: 0.4rem 0.75rem;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+  color: var(--color-error);
+  text-align: left;
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.activity-mcp-tree {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--bg-primary);
+}
+
+.activity-mcp-server-group {
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
+}
+
+.activity-mcp-row {
+  display: flex;
+  align-items: center;
+  min-height: 2.25rem;
+  color: var(--text-primary);
+  transition:
+    background 0.15s,
+    box-shadow 0.15s;
+}
+
+.activity-mcp-row:hover {
+  background: var(--bg-tertiary);
+}
+
+.activity-mcp-row--selected {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.activity-mcp-row-main {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+  flex: 1 1 auto;
+  min-height: 2.25rem;
+  padding: 0.35rem 0.25rem 0.35rem 0.75rem;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.activity-mcp-tool-row .activity-mcp-row-main {
+  padding-left: 2.55rem;
+}
+
+.activity-mcp-row-chevron {
+  display: inline-flex;
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transition: transform 0.15s ease;
+}
+
+.activity-mcp-row-chevron--open {
+  transform: rotate(90deg);
+}
+
+.activity-mcp-health-dot {
+  width: 0.45rem;
+  height: 0.45rem;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: var(--text-muted);
+}
+
+.activity-mcp-health-dot--healthy {
+  background: var(--color-success-foreground);
+}
+
+.activity-mcp-health-dot--degraded {
+  background: var(--color-warning-foreground);
+}
+
+.activity-mcp-health-dot--unhealthy,
+.activity-mcp-health-dot--failed {
+  background: var(--color-error);
+}
+
+.activity-mcp-server-name,
+.activity-mcp-tool-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-base);
+  font-weight: var(--font-weight-medium);
+}
+
+.activity-mcp-server-name {
+  flex: 1 1 auto;
+}
+
+.activity-mcp-tool-name {
+  flex: 0 0 auto;
+  max-width: min(13rem, 48%);
+}
+
+.activity-mcp-tool-brief {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+.activity-mcp-badge,
+.activity-mcp-state {
+  display: inline-flex;
+  align-items: center;
+  height: 1.15rem;
+  flex: 0 0 auto;
+  padding: 0 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 0.35rem;
+  background: color-mix(in srgb, var(--bg-secondary) 84%, transparent);
+  color: var(--text-secondary);
+  font-size: var(--text-2xs);
+  font-weight: 500;
+  line-height: 1;
+}
+
+.activity-mcp-count {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.activity-mcp-empty-row {
+  padding: 0.45rem 0.75rem 0.45rem 2.55rem;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+.activity-mcp-detail {
+  flex: 0 0 min(42%, 20rem);
+  min-height: 11rem;
+  max-height: 42%;
+  border-top: 1px solid var(--border);
+  background: var(--bg-primary);
+  overflow: hidden;
+}
+
+.activity-mcp-detail-body {
+  height: calc(100% - var(--activity-panel-bar-height));
+  overflow: auto;
+  padding: 0.75rem;
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+}
+
+.activity-mcp-detail-body--empty,
+.activity-mcp-detail-muted {
+  color: var(--text-secondary);
+}
+
+.activity-mcp-kv {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0;
+}
+
+.activity-mcp-kv > div {
+  display: grid;
+  grid-template-columns: minmax(5.5rem, 30%) minmax(0, 1fr);
+  gap: 0.75rem;
+}
+
+.activity-mcp-kv dt {
+  color: var(--text-secondary);
+}
+
+.activity-mcp-kv dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.activity-mcp-description {
+  margin: 0 0 0.75rem;
+  color: var(--text-secondary);
+}
+
+.activity-mcp-section + .activity-mcp-section {
+  margin-top: 0.9rem;
+}
+
+.activity-mcp-section-title {
+  margin: 0 0 0.4rem;
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium);
+}
+
+.activity-mcp-json {
+  max-height: 12rem;
+  margin: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 0.375rem;
+  background: var(--bg-secondary);
+  padding: 0.6rem;
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.activity-mcp-execute-btn {
+  margin-top: 0.75rem;
+}
+
+.activity-mcp-result {
+  margin-top: 0.75rem;
+}
+
+.activity-mcp-result--error {
+  border-color: color-mix(in srgb, var(--color-error) 40%, transparent);
+  color: var(--color-error);
+}
+
+.session-ctx-item:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}

@@ -6,6 +6,7 @@ import { useChat } from "../hooks/useChat";
 import { useSessionCatalog } from "../hooks/useSessionCatalog";
 
 const chatPagePropsSpy = vi.hoisted(() => vi.fn());
+const sidebarPropsSpy = vi.hoisted(() => vi.fn());
 
 vi.mock("../hooks/useAuth", () => ({
   useAuth: vi.fn(() => ({
@@ -249,7 +250,10 @@ vi.mock("../hooks/useAgentDefinitions", () => ({
 }));
 
 vi.mock("../components/Sidebar", () => ({
-  Sidebar: () => null,
+  Sidebar: (props: unknown) => {
+    sidebarPropsSpy(props);
+    return null;
+  },
 }));
 
 vi.mock("../components/ProjectSelector", () => ({
@@ -643,6 +647,48 @@ describe("App wiring", () => {
     await waitFor(() => {
       expect(window.location.hash).toBe("#chat");
     });
+  });
+
+  it("routes the legacy #mcp hash to Chat with the MCP activity tab requested", async () => {
+    window.location.hash = "#mcp";
+
+    await act(async () => {
+      render(<App />);
+    });
+
+    await waitFor(() => {
+      expect(chatPagePropsSpy).toHaveBeenCalled();
+    });
+    const props = chatPagePropsSpy.mock.calls[
+      chatPagePropsSpy.mock.calls.length - 1
+    ]?.[0] as {
+      requestedActivityTab?: string | null;
+      mcp?: unknown;
+    };
+
+    expect(props.requestedActivityTab).toBe("mcp");
+    expect(props.mcp).toBeTruthy();
+    await waitFor(() => {
+      expect(window.location.hash).toBe("#chat");
+    });
+  });
+
+  it("omits MCP from sidebar navigation", async () => {
+    await act(async () => {
+      render(<App />);
+    });
+
+    await waitFor(() => {
+      expect(sidebarPropsSpy).toHaveBeenCalled();
+    });
+    const props = sidebarPropsSpy.mock.calls[
+      sidebarPropsSpy.mock.calls.length - 1
+    ]?.[0] as {
+      items: Array<{ id: string; label: string }>;
+    };
+
+    expect(props.items.map((item) => item.id)).not.toContain("mcp");
+    expect(props.items.map((item) => item.label)).not.toContain("MCP");
   });
 
   it("keeps parked web chat session catalog entries wired while viewing a terminal", async () => {

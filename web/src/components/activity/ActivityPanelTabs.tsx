@@ -5,6 +5,7 @@ export type ActivityTab =
   | "pipelines"
   | "cron"
   | "traces"
+  | "mcp"
   | "tasks"
   | "files"
   | "plans"
@@ -48,6 +49,19 @@ export const ACTIVITY_PANEL_TABS: ActivityPanelTab[] = [
       <svg {...iconProps}>
         <path d="M9 11l3 3L22 4" />
         <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+      </svg>
+    ),
+  },
+  {
+    id: "mcp",
+    label: "MCP",
+    icon: (
+      <svg {...iconProps}>
+        <rect x="4" y="4" width="6" height="6" rx="1" />
+        <rect x="14" y="4" width="6" height="6" rx="1" />
+        <rect x="9" y="14" width="6" height="6" rx="1" />
+        <path d="M10 7h4" />
+        <path d="M12 10v4" />
       </svg>
     ),
   },

@@ -12,7 +12,7 @@ export const COMMANDS: CommandInfo[] = [
   { name: 'clear', description: 'Clear chat history', action: 'clear_history' },
   { name: 'compact', description: 'Compact conversation history', action: 'compact_chat' },
   { name: 'gobby', description: 'Browse internal Gobby tools', action: 'open_gobby' },
-  { name: 'mcp', description: 'Browse external MCP tools', action: 'open_mcp' },
+  { name: 'mcp', description: 'Open MCP activity', action: 'open_mcp' },
   { name: 'panel', description: 'Show or hide the activity panel', action: 'toggle_panel' },
   { name: 'plan', description: 'Enter plan mode or show plan', action: 'show_plan' },
   { name: 'restart', description: 'Restart the Gobby daemon', action: 'restart_daemon' },

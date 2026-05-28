@@ -282,6 +282,14 @@ describe('useActivityPanel — tab persistence', () => {
     expect(result.current.activeTab).toBe('artifacts')
   })
 
+  it('keeps the MCP tab as a persisted activity tab', () => {
+    localStorage.setItem(TAB_KEY, 'mcp')
+
+    const { result } = renderHook(() => useActivityPanel(false))
+
+    expect(result.current.activeTab).toBe('mcp')
+  })
+
   it('persists the selected tab under the versioned storage key', () => {
     const { result } = renderHook(() => useActivityPanel(false))
 

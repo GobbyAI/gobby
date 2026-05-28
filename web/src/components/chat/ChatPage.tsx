@@ -42,6 +42,9 @@ export function ChatPage({
   activitySessionsLoading,
   sessionsFilters,
   onSessionsFiltersChange,
+  mcp,
+  requestedActivityTab,
+  onActivityTabRequestHandled,
   onSttEnabledChange,
   onTtsEnabledChange,
   onVoiceInputModeChange,
@@ -113,6 +116,12 @@ export function ChatPage({
       closeCanvas();
     }
   }, [chat.canvasPanel, closeCanvas, openCanvas, showTab]);
+
+  useEffect(() => {
+    if (!requestedActivityTab) return;
+    showTab(requestedActivityTab);
+    onActivityTabRequestHandled?.();
+  }, [onActivityTabRequestHandled, requestedActivityTab, showTab]);
 
   useEffect(() => {
     if (chat.isLoadingMessages || chat.messages.length === 0) {
@@ -204,6 +213,7 @@ export function ChatPage({
         sessionsLoading={activitySessionsLoading ?? allProjectSessionsLoading}
         sessionsFilters={sessionsFilters}
         onSessionsFiltersChange={onSessionsFiltersChange}
+        mcp={mcp}
         onKillAgent={conversations.onKillAgent}
         onExpireSession={conversations.onExpireSession}
         chatSessionId={routing.activityPanelChatSessionId}

@@ -3,7 +3,7 @@ import { SkillBrowserModal } from './SkillBrowserModal'
 import { ToolBrowserModal } from './ToolBrowserModal'
 
 interface SlashCommandModalProps {
-  modal: 'skills' | 'gobby' | 'mcp' | null
+  modal: 'skills' | 'gobby' | null
   onClose: () => void
   onSendMessage: (content: string, injectContext: string) => void
 }
@@ -19,9 +19,6 @@ export function SlashCommandModal({ modal, onClose, onSendMessage }: SlashComman
         )}
         {modal === 'gobby' && (
           <ToolBrowserModal filter="internal" onSendMessage={onSendMessage} onClose={onClose} />
-        )}
-        {modal === 'mcp' && (
-          <ToolBrowserModal filter="external" onSendMessage={onSendMessage} onClose={onClose} />
         )}
       </DialogContent>
     </Dialog>

@@ -6,6 +6,8 @@ import type { VoiceInputMode } from "../../hooks/useSettings";
 import type { ChatState, ConversationState, VoiceProps } from "../../types/chat";
 import type { GobbySession } from "../../types/sessions";
 import type { SessionsFilters } from "../activity/sessionsFilters";
+import type { ActivityMcpTabProps } from "../activity/ActivityMcpTab";
+import type { ActivityTab } from "../activity/ActivityPanelTabs";
 import type { CommandPaletteAction } from "./CommandPalette";
 
 export interface AgentProps {
@@ -50,6 +52,9 @@ export interface ChatPageProps
     reasoningEffort: string,
   ) => void;
   paletteActions?: CommandPaletteAction[];
+  mcp?: ActivityMcpTabProps;
+  requestedActivityTab?: ActivityTab | null;
+  onActivityTabRequestHandled?: () => void;
 }
 
 export type ChatPagePaletteSelect = (item: PaletteItem) => void;

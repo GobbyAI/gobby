@@ -19,6 +19,7 @@ import { useSessionCatalog } from "./hooks/useSessionCatalog";
 import { normalizeChatMode } from "./types/chat";
 import type { QueuedFile } from "./types/chat";
 import type { GobbySession } from "./types/sessions";
+import type { ActivityTab } from "./components/activity/ActivityPanelTabs";
 import {
   defaultSessionsFilters,
   deserializeFromStorage,
@@ -46,7 +47,6 @@ import {
   CronJobsPage,
   DashboardPage,
   IntegrationsPage,
-  McpPage,
   MemoryPage,
   ProjectsPage,
   ReportsPage,
@@ -199,13 +199,18 @@ export default function App() {
     mcp.toolsByServer,
     mcp.fetchToolSchema,
   );
-  const [activeModal, setActiveModal] = useState<
-    "skills" | "gobby" | "mcp" | null
-  >(null);
+  const [activeModal, setActiveModal] = useState<"skills" | "gobby" | null>(
+    null,
+  );
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const initialHash = window.location.hash.slice(1);
+  const initialActivityTab: ActivityTab | null =
+    initialHash === "mcp" ? "mcp" : null;
+  const [activityTabRequest, setActivityTabRequest] =
+    useState<ActivityTab | null>(initialActivityTab);
   const [activeTab, setActiveTab] = useState<string>(() => {
-    const hash = window.location.hash.slice(1);
-    return APP_VALID_TABS.has(hash) ? hash : "chat";
+    if (initialActivityTab) return "chat";
+    return APP_VALID_TABS.has(initialHash) ? initialHash : "chat";
   });
 
   useEffect(() => {
@@ -238,6 +243,11 @@ export default function App() {
     },
     [],
   );
+
+  const handleOpenActivityTab = useCallback((tab: ActivityTab) => {
+    setActivityTabRequest(tab);
+    setActiveTab("chat");
+  }, []);
 
   useAppKeyboardShortcuts({ activeTab, setQuickCaptureOpen });
 
@@ -668,6 +678,7 @@ export default function App() {
     setSettingsOpen,
     setResumeModalOpen,
     showPlanRef,
+    openActivityTab: handleOpenActivityTab,
   });
 
   // Auth guard — shown after all hooks (React rules)
@@ -832,6 +843,9 @@ export default function App() {
                 activitySessionsLoading={activitySessionCatalog.isLoading}
                 sessionsFilters={sessionsFilters}
                 onSessionsFiltersChange={setSessionsFilters}
+                mcp={mcp}
+                requestedActivityTab={activityTabRequest}
+                onActivityTabRequestHandled={() => setActivityTabRequest(null)}
                 conversations={{
                   sessions: webChatSessions,
                   activeSessionId: dbSessionId,
@@ -897,8 +911,6 @@ export default function App() {
               <SkillsPage />
             ) : activeTab === "workflows" ? (
               <WorkflowsPage projectId={effectiveProjectId} />
-            ) : activeTab === "mcp" ? (
-              <McpPage />
             ) : activeTab === "integrations" ? (
               <IntegrationsPage />
             ) : activeTab === "reports" ? (

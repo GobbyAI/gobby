@@ -71,6 +71,10 @@ vi.mock('../TracesTab', () => ({
   TracesTab: () => <div>Traces Tab</div>,
 }))
 
+vi.mock('../ActivityMcpTab', () => ({
+  ActivityMcpTab: () => <div>MCP Tab</div>,
+}))
+
 describe('ActivityPanel', () => {
   it('returns null in chat-only mode', () => {
     const { container } = render(
@@ -349,5 +353,29 @@ describe('ActivityPanel', () => {
     )
 
     expect(screen.getByText('Changes Tab')).toBeInTheDocument()
+  })
+
+  it('renders MCP under the MCP tab', () => {
+    render(
+      <ActivityPanel
+        mode={"split"}
+        onToggleChat={vi.fn()}
+        panelWidth={320}
+        onWidthChange={vi.fn()}
+        activeTab="mcp"
+        onTabChange={vi.fn()}
+        artifacts={new Map()}
+        activeArtifact={null}
+        onOpenArtifact={vi.fn()}
+        onCloseArtifact={vi.fn()}
+        onSetArtifactVersion={vi.fn()}
+        canvasState={null}
+        onCloseCanvas={vi.fn()}
+        mcp={{} as never}
+        isMobile={false}
+      />,
+    )
+
+    expect(screen.getByText('MCP Tab')).toBeInTheDocument()
   })
 })

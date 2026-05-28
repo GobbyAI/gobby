@@ -4,7 +4,6 @@ import {
   ConfigurationIcon,
   CronIcon,
   IntegrationsIcon,
-  McpIcon,
   MemoryIcon,
   ProjectsIcon,
   ReportsIcon,
@@ -27,7 +26,6 @@ export const APP_NAV_PAGES: Array<{ id: string; label: string }> = [
   { id: "traces", label: "Traces" },
   { id: "memory", label: "Memory" },
   { id: "skills", label: "Skills" },
-  { id: "mcp", label: "MCP" },
   { id: "configuration", label: "Configuration" },
 ];
 
@@ -41,7 +39,6 @@ export const APP_VALID_TABS = new Set([
   "traces",
   "memory",
   "skills",
-  "mcp",
   "configuration",
 ]);
 
@@ -60,7 +57,6 @@ export function createAppNavItems(): AppNavItem[] {
     { id: "traces", label: "Traces", icon: <TracesIcon /> },
     { id: "memory", label: "Memory", icon: <MemoryIcon /> },
     { id: "skills", label: "Skills", icon: <SkillsIcon /> },
-    { id: "mcp", label: "MCP", icon: <McpIcon /> },
     { id: "integrations", label: "Integrations", icon: <IntegrationsIcon /> },
     {
       id: "configuration",

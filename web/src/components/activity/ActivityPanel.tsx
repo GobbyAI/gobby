@@ -15,6 +15,7 @@ import { TasksTab } from "./TasksTab";
 import { FilesTab } from "./FilesTab";
 import { CronTab } from "./CronTab";
 import { TracesTab } from "./TracesTab";
+import { ActivityMcpTab, type ActivityMcpTabProps } from "./ActivityMcpTab";
 import type { Artifact } from "../../types/artifacts";
 import type { GobbySession } from "../../types/sessions";
 import type { CanvasPanelState } from "../canvas/hooks/useCanvasPanel";
@@ -79,6 +80,8 @@ interface ActivityPanelProps {
   onSessionsFiltersChange?: (filters: SessionsFilters) => void;
   // Files tab
   onAddFileToChat?: (filePath: string) => void;
+  // MCP tab
+  mcp?: ActivityMcpTabProps;
   // Sessions tab
   onKillAgent?: (runId: string) => Promise<boolean | void> | boolean | void;
   onExpireSession?: (sessionId: string) => Promise<boolean | void> | boolean | void;
@@ -187,6 +190,7 @@ export function ActivityPanel({
   sessionsFilters,
   onSessionsFiltersChange,
   onAddFileToChat,
+  mcp,
   onKillAgent,
   onExpireSession,
   chatSessionId,
@@ -289,6 +293,8 @@ export function ActivityPanel({
         return <CronTab projectId={projectId} />;
       case "traces":
         return <TracesTab projectId={projectId} />;
+      case "mcp":
+        return mcp ? <ActivityMcpTab {...mcp} /> : null;
       case "tasks":
         return <TasksTab projectId={projectId} chatSessionId={chatSessionId} />;
       case "files":

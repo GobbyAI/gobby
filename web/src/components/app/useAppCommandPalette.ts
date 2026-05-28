@@ -9,10 +9,11 @@ import type { PaletteItem } from "../../hooks/useColonAutocomplete";
 import type { Settings } from "../../hooks/useSettings";
 import type { CommandPaletteAction } from "../chat/CommandPalette";
 import type { ChatMode, QueuedFile } from "../../types/chat";
+import type { ActivityTab } from "../activity/ActivityPanelTabs";
 import { requestDaemonRestart } from "../../lib/api";
 import { APP_NAV_PAGES } from "./appNavigation";
 
-type ActiveModal = "skills" | "gobby" | "mcp" | null;
+type ActiveModal = "skills" | "gobby" | null;
 
 type SendMessage = (
   content: string,
@@ -42,6 +43,7 @@ interface UseAppCommandPaletteArgs {
   setSettingsOpen: Dispatch<SetStateAction<boolean>>;
   setResumeModalOpen: Dispatch<SetStateAction<boolean>>;
   showPlanRef: RefObject<(() => void) | null>;
+  openActivityTab: (tab: ActivityTab) => void;
 }
 
 export function useAppCommandPalette({
@@ -59,6 +61,7 @@ export function useAppCommandPalette({
   setSettingsOpen,
   setResumeModalOpen,
   showPlanRef,
+  openActivityTab,
 }: UseAppCommandPaletteArgs) {
   const compactConversation = useCallback(() => {
     sendMessage(
@@ -113,7 +116,7 @@ export function useAppCommandPalette({
         return;
       }
       if (item.action === "open_mcp") {
-        setActiveModal("mcp");
+        openActivityTab("mcp");
         return;
       }
       if (item.action === "open_settings") {
@@ -156,6 +159,7 @@ export function useAppCommandPalette({
       compactConversation,
       restartDaemon,
       sendMode,
+      openActivityTab,
       setActiveModal,
       setResumeModalOpen,
       setSettingsOpen,
