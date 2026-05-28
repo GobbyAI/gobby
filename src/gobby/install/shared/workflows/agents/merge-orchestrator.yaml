@@ -438,6 +438,18 @@ steps:
         action: set_variable
         variable: execution_complete
         value: true
+      - server: gobby-merge
+        tool: verify_in_worktree
+        when: "tool_input.final is True and tool_output.get('success') is True and int(tool_output.get('exit_code', 1)) == 0"
+        action: set_variable
+        variable: verification_evidence
+        value: "(vars.get('verification_evidence') or []) + [{'evidence_type': 'validation_command', 'success': True, 'command': tool_input.get('command'), 'summary': 'merge-orchestrator final verify_in_worktree passed', 'tool_name': 'gobby-merge:verify_in_worktree'}]"
+      - server: gobby-merge
+        tool: verify_in_worktree
+        when: "tool_input.final is True and tool_output.get('success') is True and int(tool_output.get('exit_code', 1)) == 0"
+        action: set_variable
+        variable: verification_evidence_recorded
+        value: true
       - server: gobby-tasks-ops
         tool: record_merge_result
         action: set_variable
@@ -503,6 +515,9 @@ steps:
     status_message: |
       Call gobby-tasks-ops:record_merge_result with report_ref and either
       merge_sha for clean success or failure_reason for unresolved failures.
+      If completion-readiness blocks the report because verification happened
+      through merge tooling, call gobby-sessions:record_verification_evidence
+      with the final verification command summary, then retry record_merge_result.
       Use escalate_task only when human intervention is required.
     allowed_tools:
       - mcp__gobby__call_tool
@@ -515,10 +530,10 @@ steps:
       - "gobby-tasks:close_task"
       - "gobby-tasks:escalate_task"
       - "gobby-tasks-ops:append_description_section"
+      - "gobby-sessions:record_verification_evidence"
     on_mcp_success:
       - server: gobby-tasks-ops
         tool: record_merge_result
-        when: "tool_input.failure_reason"
         action: set_variable
         variable: report_complete
         value: true

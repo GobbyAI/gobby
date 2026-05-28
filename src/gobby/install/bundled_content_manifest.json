@@ -169,7 +169,7 @@
     "workflows/agents/gemini-image-gen.yaml": "2acf0ab723a7e7010a54eb2c5b5467c2e5f6b3bd9ca55f19d3f69bb919f68ebc",
     "workflows/agents/holistic-reviewer.yaml": "fb4fefbcb3e5c74274c8b4a48c3f4378e28a8b7ab06d94c5239c1a5bbd13880d",
     "workflows/agents/memory-recall-helper.yaml": "550889ec79f99a3605cb1df4a9b0671ecaf0edbc5ff11fd87be0be8486aff095",
-    "workflows/agents/merge-orchestrator.yaml": "baee6bd640f82de782b45d5c4549b34f38f89b25eda04daa6f23dc5a0d7e2791",
+    "workflows/agents/merge-orchestrator.yaml": "33b47f0e2a00480264f40d373abefecef5c9ec66136a77fe9959c8ffe20374fd",
     "workflows/agents/merge-worker.yaml": "412c974448297b6dec2d88b074b744868ab1659a2c2fd95a3c673ef8b523a6d2",
     "workflows/agents/nightly-linter.yaml": "9095a0de856350d2f2464950979cbf1338300cfc1ef7b0aa7576a18455ad1a52",
     "workflows/agents/nightly-test-fixer.yaml": "8fc375a902c334109667315839900d41fb582672dc6033f7da04acbf0366ffac",
@@ -289,7 +289,7 @@
     "workflows/rules/worker-safety/no-push-for-workers.yaml": "0f2a1c8e014b2cb20ad102d434e53e03e0c26af7c8cc05aa354c25f66b628292",
     "workflows/rules/worker-safety/no-push.yaml": "d1eb1d46a70ec0557c7f99a7ce17eca07ffca503cd7bfe2531f029bb163c0c59",
     "workflows/rules/worker-safety/no-remote-exec.yaml": "d1cf30a69804add69ee11394f376c4d33e68fe0c5d3eabb6d955595adc0cc7e5",
-    "workflows/variables/gobby-default-variables.yaml": "55b8409b2843a999d64f6d92f162866f7c495f8a706e2debd5d15813bdda29fc"
+    "workflows/variables/gobby-default-variables.yaml": "76737a37fb5f7e79be88fdc91d59284a8718e8b0233fe30be6dd7e29fac86d24"
   },
   "hash_algorithm": "sha256",
   "root": "shared",

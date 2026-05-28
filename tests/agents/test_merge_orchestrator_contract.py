@@ -13,6 +13,7 @@ import yaml
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.workflows.condition_helpers import completion_evidence_ready
 from gobby.workflows.definitions import WorkflowInstance
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.state_manager import WorkflowInstanceManager
@@ -374,6 +375,7 @@ def test_merge_orchestrator_allows_already_implemented_close_path() -> None:
     assert "gobby-tasks:close_task" in survey["allowed_mcp_tools"]
     assert "gobby-tasks:close_task" in plan["allowed_mcp_tools"]
     assert "gobby-tasks:close_task" in report["allowed_mcp_tools"]
+    assert "gobby-sessions:record_verification_evidence" in report["allowed_mcp_tools"]
     assert "gobby-tasks:close_task" not in _step(agent, "execute")["blocked_mcp_tools"]
     assert any(
         transition["to"] == "terminate" and transition["when"] == "vars.report_complete"
@@ -619,13 +621,55 @@ async def test_merge_orchestrator_survey_plan_execute_report_path(db: HubDatabas
         assert response.decision == "allow", mcp_key
 
     await engine.evaluate(
-        _after_mcp_tool("gobby-merge:verify_in_worktree", arguments={"final": True}),
+        _after_mcp_tool(
+            "gobby-merge:verify_in_worktree",
+            arguments={"final": True, "command": "cargo test -p gobby-core search::tests"},
+            tool_output={"success": True, "exit_code": 0, "stdout": "", "stderr": ""},
+        ),
         session_id="agent-session",
         variables=variables,
     )
     instance = manager.get_instance("agent-session", "merge-orchestrator")
     assert instance is not None
     assert instance.current_step == "report"
+    assert instance.variables["verification_evidence_recorded"] is True
+    assert completion_evidence_ready(instance.variables)
+
+
+@pytest.mark.asyncio
+async def test_report_success_record_merge_result_can_terminate(db: HubDatabase) -> None:
+    manager = _install_workflow(db, current_step="report")
+    engine = RuleEngine(db)
+    variables: dict[str, Any] = {
+        "verification_evidence": [
+            {
+                "evidence_type": "validation_command",
+                "success": True,
+                "command": "cargo test -p gobby-core search::tests",
+            }
+        ],
+        "session_edited_files": ["crates/gcore/src/search.rs"],
+    }
+
+    response = await engine.evaluate(
+        _before_mcp_tool("gobby-tasks-ops:record_merge_result"),
+        session_id="agent-session",
+        variables=variables,
+    )
+    assert response.decision == "allow"
+
+    await engine.evaluate(
+        _after_mcp_tool(
+            "gobby-tasks-ops:record_merge_result",
+            arguments={"task_id": "#225", "merge_sha": "abc123", "report_ref": "clean"},
+        ),
+        session_id="agent-session",
+        variables=variables,
+    )
+    instance = manager.get_instance("agent-session", "merge-orchestrator")
+    assert instance is not None
+    assert instance.current_step == "terminate"
+    assert instance.variables["report_complete"] is True
 
 
 @pytest.mark.asyncio
