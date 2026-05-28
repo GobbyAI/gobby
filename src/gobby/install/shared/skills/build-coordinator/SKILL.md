@@ -1,7 +1,7 @@
 ---
 name: build-coordinator
 description: "Use when coordinating a full gobby build run for an epic or task, especially when the user assigns the current session as coordinator, asks for a coordination epic, wants build agents/worktrees monitored, or wants gobby build bugs fixed so future runs work unattended."
-version: "1.0.3"
+version: "1.0.4"
 category: core
 triggers: gobby build coordinator, epic coordinator, coordination epic, unattended build, build bugs
 metadata:
@@ -79,7 +79,7 @@ Use supported MCP surfaces first:
   failure.
 
 Monitor dispatch directly with the supported MCP surfaces above. The coordinator
-loop is:
+loop order is:
 
 1. Check target build state, dispatch eligibility, stage state, active agents,
    build history, and workspace health.
@@ -89,12 +89,14 @@ loop is:
    the owning session when a child bug is already claimed.
 4. Resume or launch build automation only after known blocking bugs for the
    immediate dispatch path are fixed or explicitly documented as non-blocking.
-5. When agents are running and there are no actionable coordination bugs, check
-   context health. Use `gobby-sessions:compact_self` when context pressure or
-   handoff risk is high. Use `gobby-agents:wait_for_agent` as a bounded
-   five-minute wait (`timeout_seconds=300`) for a specific run result, then run
-   another full status and health sweep. Shorter waits are for diagnostics or
-   recovery only.
+5. Use `gobby-sessions:compact_self` when context pressure or handoff risk is
+   high, when you have not compacted recently, or after completing a
+   coordination bug task.
+6. Use `gobby-agents:wait_for_agent` as the last idle action only when agents
+   are running and no actionable work remains. Wait for a specific run result
+   with a bounded five-minute wait (`timeout_seconds=300`), then run another
+   full status and health sweep. Shorter waits are for diagnostics or recovery
+   only.
 
 Do not keep the build moving by repeatedly manual-ticking the dispatcher. A
 normal build is daemon-owned automation. Use resume or explicit ticks only after
@@ -203,10 +205,12 @@ specified another stage.
 
 Monitor dispatch and the coordination epic every loop: build status, stage
 state, active agents, build history, workspace health, and open child bugs. Work
-actionable build bugs under the coordination epic before waiting. When agents are
-running and no actionable coordinator work remains, check context health, then
-use gobby-sessions:compact_self for context pressure or a bounded five-minute
-gobby-agents:wait_for_agent (`timeout_seconds=300`) for a specific run result.
+actionable build bugs under the coordination epic before waiting. Use
+gobby-sessions:compact_self when context is stale or high, when you have not
+compacted recently, or after completing a coordination bug task. Use
+gobby-agents:wait_for_agent as the last idle action only when agents are running
+and no actionable coordinator work remains; use a bounded five-minute wait
+(`timeout_seconds=300`) for a specific run result.
 Resolve escalations yourself unless a genuine user decision is required.
 
 Completion requires the target work complete, all discovered build bugs fixed and

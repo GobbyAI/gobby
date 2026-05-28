@@ -60,10 +60,25 @@ def test_build_coordinator_documents_unattended_build_discipline() -> None:
     assert "Check target build state, dispatch eligibility, stage state" in body
     assert "Check the coordination epic's child tasks" in body
     assert "Work the highest-priority actionable coordination bug" in body
-    assert "When agents are running and there are no actionable coordination bugs" in body
+    assert "when you have not compacted recently" in body
+    assert "after completing a coordination bug task" in body
     assert "gobby-agents:wait_for_agent" in body
+    assert "the last idle action only when agents are running and no actionable work remains" in normalized
     assert "five-minute wait (`timeout_seconds=300`)" in body
     assert "Shorter waits are for diagnostics or recovery only" in normalized
+
+
+def test_build_coordinator_orders_compaction_before_agent_waits() -> None:
+    normalized = _normalized_body()
+
+    monitor_idx = normalized.index("Check target build state, dispatch eligibility")
+    bugs_idx = normalized.index("Work the highest-priority actionable coordination bug")
+    compact_idx = normalized.index("Use `gobby-sessions:compact_self` when context pressure")
+    wait_idx = normalized.index("Use `gobby-agents:wait_for_agent` as the last idle action")
+
+    assert monitor_idx < bugs_idx < compact_idx < wait_idx
+    assert "wait_for_agent as the last idle action only when agents are running" in normalized
+    assert "no actionable coordinator work remains" in normalized
 
 
 def test_build_coordinator_documents_compact_self_tool_path() -> None:
