@@ -528,13 +528,13 @@ instead of silently choosing one value.
 
 | Method | Route | Purpose |
 | --- | --- | --- |
-| `GET` | `/api/code-index/graph` | Code graph overview. |
-| `GET` | `/api/code-index/graph/file/{file_path:path}` | File graph data. |
-| `GET` | `/api/code-index/graph/symbol/{symbol_id}/neighbors` | Symbol neighbors. |
-| `GET` | `/api/code-index/graph/blast-radius` | Blast-radius query. |
-| `GET` | `/api/code-index/graph/search` | Search code graph. |
-| `POST` | `/api/code-index/graph/clear` | Clear graph projection. |
-| `POST` | `/api/code-index/graph/rebuild` | Rebuild graph projection. |
+| `GET` | `/api/code-index/graph` | `gcode graph overview` shim. |
+| `GET` | `/api/code-index/graph/file/{file_path:path}` | `gcode graph file` shim. |
+| `GET` | `/api/code-index/graph/symbol/{symbol_id}/neighbors` | `gcode graph neighbors` shim. |
+| `GET` | `/api/code-index/graph/blast-radius` | `gcode graph blast-radius` shim. |
+| `GET` | `/api/code-index/graph/search` | Daemon PostgreSQL symbol autocomplete. |
+| `POST` | `/api/code-index/graph/clear` | `gcode graph clear --project-id` shim. |
+| `POST` | `/api/code-index/graph/rebuild` | `gcode graph rebuild --project` shim. |
 | `POST` | `/api/code-index/invalidate` | Invalidate code index data. |
 | `GET` | `/api/metrics/current` | Current metrics snapshot. |
 | `GET` | `/api/metrics/snapshots` | Historical metric snapshots. |

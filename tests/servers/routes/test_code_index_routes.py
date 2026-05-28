@@ -8,6 +8,8 @@ import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
+from gobby.code_index.context import CodeIndexGraphUnavailable, CodeIndexProjectNotFound
+from gobby.code_index.gcode_gateway import GcodeCommandError, GcodeUnavailableError
 from gobby.code_index.models import Symbol
 from gobby.servers.routes.code_index import create_code_index_router
 
@@ -36,12 +38,10 @@ def mock_server() -> MagicMock:
     server = MagicMock()
     server.services = MagicMock()
     code_indexer = MagicMock()
-    code_indexer.graph = MagicMock()
-    code_indexer.graph.available = True
-    code_indexer.graph.get_file_graph = AsyncMock(return_value={"nodes": [], "links": []})
-    code_indexer.graph.get_file_symbols = AsyncMock(return_value={"nodes": [], "links": []})
-    code_indexer.graph.get_symbol_neighbors = AsyncMock(return_value={"nodes": [], "links": []})
-    code_indexer.graph.get_blast_radius_graph = AsyncMock(
+    code_indexer.graph_overview = AsyncMock(return_value={"nodes": [], "links": []})
+    code_indexer.graph_file = AsyncMock(return_value={"nodes": [], "links": []})
+    code_indexer.graph_symbol_neighbors = AsyncMock(return_value={"nodes": [], "links": []})
+    code_indexer.graph_blast_radius = AsyncMock(
         return_value={"nodes": [], "links": [], "center": "sym-1"}
     )
     code_indexer.clear_graph = AsyncMock(return_value={"success": True, "project_id": "proj-1"})
@@ -72,9 +72,49 @@ def test_graph_overview_requires_project_id(client: TestClient) -> None:
 def test_graph_overview_returns_data(client: TestClient, mock_server: MagicMock) -> None:
     response = client.get("/api/code-index/graph", params={"project_id": "proj-1", "limit": 25})
     assert response.status_code == 200
-    mock_server.services.code_indexer.graph.get_file_graph.assert_awaited_once_with(
+    mock_server.services.code_indexer.graph_overview.assert_awaited_once_with(
         "proj-1",
         limit=25,
+    )
+
+
+def test_graph_file_delegates(client: TestClient, mock_server: MagicMock) -> None:
+    response = client.get(
+        "/api/code-index/graph/file/src/app.py",
+        params={"project_id": "proj-1"},
+    )
+    assert response.status_code == 200
+    mock_server.services.code_indexer.graph_file.assert_awaited_once_with(
+        "proj-1",
+        "src/app.py",
+    )
+
+
+def test_graph_symbol_neighbors_delegates(client: TestClient, mock_server: MagicMock) -> None:
+    response = client.get(
+        "/api/code-index/graph/symbol/sym-1/neighbors",
+        params={"project_id": "proj-1", "limit": 10},
+    )
+    assert response.status_code == 200
+    mock_server.services.code_indexer.graph_symbol_neighbors.assert_awaited_once_with(
+        "proj-1",
+        "sym-1",
+        limit=10,
+    )
+
+
+def test_blast_radius_delegates(client: TestClient, mock_server: MagicMock) -> None:
+    response = client.get(
+        "/api/code-index/graph/blast-radius",
+        params={"project_id": "proj-1", "symbol_id": "sym-1", "depth": 2, "limit": 20},
+    )
+    assert response.status_code == 200
+    mock_server.services.code_indexer.graph_blast_radius.assert_awaited_once_with(
+        "proj-1",
+        symbol_id="sym-1",
+        file_path=None,
+        depth=2,
+        limit=20,
     )
 
 
@@ -166,3 +206,68 @@ def test_rebuild_graph_preserves_http_exception(client: TestClient, mock_server:
 
     assert response.status_code == 422
     assert response.json()["detail"] == "bad rebuild request"
+
+
+def test_graph_route_returns_503_when_gateway_unavailable(
+    client: TestClient,
+    mock_server: MagicMock,
+) -> None:
+    mock_server.services.code_indexer.graph_overview = AsyncMock(
+        side_effect=GcodeUnavailableError("gcode is not installed")
+    )
+
+    response = client.get("/api/code-index/graph", params={"project_id": "proj-1"})
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Code graph not available"
+
+
+def test_graph_route_returns_503_when_graph_disabled(
+    client: TestClient,
+    mock_server: MagicMock,
+) -> None:
+    mock_server.services.code_indexer.graph_file = AsyncMock(
+        side_effect=CodeIndexGraphUnavailable("Code graph not available")
+    )
+
+    response = client.get(
+        "/api/code-index/graph/file/src/app.py",
+        params={"project_id": "proj-1"},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Code graph not available"
+
+
+def test_graph_route_returns_404_when_project_root_missing(
+    client: TestClient,
+    mock_server: MagicMock,
+) -> None:
+    mock_server.services.code_indexer.graph_symbol_neighbors = AsyncMock(
+        side_effect=CodeIndexProjectNotFound("Code index project not found: proj-1")
+    )
+
+    response = client.get(
+        "/api/code-index/graph/symbol/sym-1/neighbors",
+        params={"project_id": "proj-1"},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Code index project not found: proj-1"
+
+
+def test_graph_route_returns_500_when_gcode_command_fails(
+    client: TestClient,
+    mock_server: MagicMock,
+) -> None:
+    mock_server.services.code_indexer.graph_blast_radius = AsyncMock(
+        side_effect=GcodeCommandError(["gcode", "graph", "blast-radius"], 2, "boom")
+    )
+
+    response = client.get(
+        "/api/code-index/graph/blast-radius",
+        params={"project_id": "proj-1", "file_path": "src/app.py"},
+    )
+
+    assert response.status_code == 500
+    assert "gcode exited 2: boom" in response.json()["detail"]

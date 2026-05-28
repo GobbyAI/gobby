@@ -129,13 +129,19 @@ async def _run_maintenance(
 
 async def _purge_missing_project(context: CodeIndexContext, project: Any) -> None:
     """Remove index data for a project whose root directory is gone."""
-    counts = await context.run_db(context.storage.delete_project_index, project.id)
-
-    if context.graph is not None:
+    if getattr(context.config, "graph_enabled", True):
         try:
-            await context.graph.clear_project(project.id)
+            result = await context.clear_graph(project.id)
+            if not result.get("success", False):
+                logger.warning(
+                    "Graph cleanup reported failure for missing code index project %s: %s",
+                    project.id,
+                    result.get("error", "unknown error"),
+                )
         except Exception as e:
             logger.warning(f"Graph cleanup failed for missing code index project {project.id}: {e}")
+
+    counts = await context.run_db(context.storage.delete_project_index, project.id)
 
     if context.vector_store is not None:
         collection = f"{context.config.qdrant_collection_prefix}{project.id}"

@@ -766,8 +766,8 @@ class TestGobbyRunnerShutdownExtended:
             assert runner.database.close.call_count == 1
 
     @pytest.mark.asyncio
-    async def test_run_closes_code_graph_before_database(self, mock_config):
-        """CodeIndexContext closes its FalkorDB graph client before hub DB shutdown."""
+    async def test_run_does_not_close_code_index_graph_client(self, mock_config):
+        """Code index graph projection is owned by gcode, not runner shutdown."""
         mock_mcp_manager = AsyncMock()
         mock_mcp_manager.connect_all = AsyncMock()
         mock_mcp_manager.disconnect_all = AsyncMock()
@@ -796,6 +796,6 @@ class TestGobbyRunnerShutdownExtended:
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
                     await runner.run()
 
-            assert events.index("code_graph") < events.index("database")
-            runner.code_indexer.close_graph_client.assert_awaited_once()
+            assert events == ["database"]
+            runner.code_indexer.close_graph_client.assert_not_awaited()
             assert runner.database.close.call_count == 1

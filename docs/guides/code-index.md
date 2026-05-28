@@ -1,7 +1,7 @@
 # Code Index
 
-Gobby's code index is a native `gcode` CLI plus daemon-side storage and graph
-services. Use it to search symbols, inspect outlines, retrieve exact symbol
+Gobby's code index is a native `gcode` CLI plus daemon-side HTTP and storage
+surfaces. Use it to search symbols, inspect outlines, retrieve exact symbol
 source, and trace graph relationships without reading whole source files.
 
 The current user-facing surface is `gcode`. Older Gobby CLI and MCP examples
@@ -29,13 +29,14 @@ gcode symbol <symbol-id>
 ```
 
 Graph commands require the Gobby daemon. `callers`, `usages`, `imports`, and
-`blast-radius` read graph data through top-level commands; `gcode graph` is only
-for graph lifecycle operations:
+`blast-radius` read graph data through top-level commands. `gcode graph` owns
+projection sync, lifecycle commands, and the read API used by the daemon shim:
 
 ```bash
 gcode callers validate_task
 gcode imports src/gobby/tasks/validation.py
 gcode blast-radius validate_task --depth 3
+gcode graph sync-file --file src/gobby/runner.py
 gcode graph rebuild
 ```
 
@@ -55,13 +56,16 @@ flowchart TB
     E --> G[FalkorDB graph]
     E --> H[Symbol summaries]
     G --> I[gcode callers, imports, blast-radius]
-    G --> J[/api/code-index/graph routes]
+    G --> J[gcode graph read commands]
+    J --> K[/api/code-index/graph HTTP shim]
 ```
 
 `gcode index` owns parsing and writes symbols, indexed files, content chunks,
-imports, and call relationships through the PostgreSQL hub. The daemon owns
-integrations around those rows: background maintenance, optional vector and
-graph sync, optional symbol summaries, HTTP graph routes, and session variables.
+imports, and call relationships through the PostgreSQL hub. `gcode graph` owns
+the code graph projection in FalkorDB, including `sync-file`, `clear`,
+`rebuild`, and graph read operations. The daemon owns integrations around those
+rows: background maintenance, optional vector sync, symbol autocomplete, HTTP
+graph shim routes, optional symbol summaries, and session variables.
 
 Files are indexed incrementally by content hash. Changed files are re-parsed;
 unchanged files are skipped. The post-edit trigger ignores `.gobby/` internal
@@ -76,8 +80,8 @@ The maintenance loop runs every `code_index.maintenance_interval_seconds`
 seconds. It replays `gcode index --project <root> --quiet` for each indexed
 project, purges projects whose root no longer exists, and fills missing symbol
 summaries when a summarizer is configured. A separate sync worker polls pending
-files and copies symbols to Qdrant vectors and FalkorDB graph edges when those
-backends are enabled and available.
+files, copies symbols to Qdrant vectors, and calls `gcode graph sync-file --file
+<file> --project <root>` for graph projection sync.
 
 ## CLI Reference
 
@@ -132,12 +136,13 @@ These commands require the Gobby daemon and graph support:
 | `gcode usages <SYMBOL_NAME>` | Find incoming call usages for the resolved symbol |
 | `gcode imports <FILE>` | Show import graph for one file |
 | `gcode blast-radius <TARGET>` | Trace transitive impact from a symbol query |
+| `gcode graph sync-file --file <FILE>` | Sync one indexed file into the graph projection |
 | `gcode graph clear` | Clear the current project's graph projection |
+| `gcode graph clear --project-id <ID>` | Clear a graph projection without resolving a project root |
 | `gcode graph rebuild` | Rebuild the graph projection from indexed hub rows |
 
 `gcode callers` and `gcode usages` support `--limit` and `--offset`. `gcode
-blast-radius` supports `--depth`; the HTTP blast-radius route has a `limit`
-query parameter, but the CLI command does not expose `--limit`.
+blast-radius` supports `--depth` and `--limit`.
 
 ## Indexed Data
 
@@ -264,9 +269,10 @@ logs a warning and skips the incremental update.
 
 The maintenance loop checks indexed projects on the configured interval and
 uses `gcode index --project <root> --quiet` for refresh. The sync worker can
-then update Qdrant vectors and FalkorDB graph edges in batches. Summary generation
-runs from maintenance when `code_index.summary_enabled` is true and the daemon
-has an LLM service.
+then update Qdrant vectors and call `gcode graph sync-file --file <file>
+--project <root>` for graph projection sync. Summary generation runs from
+maintenance when `code_index.summary_enabled` is true and the daemon has an LLM
+service.
 
 ## HTTP Endpoints
 
@@ -279,18 +285,18 @@ The daemon exposes graph and invalidation routes under `/api/code-index`:
 | `GET` | `/api/code-index/graph/symbol/{symbol_id}/neighbors` | Symbol neighbors; query `project_id`, `limit` |
 | `GET` | `/api/code-index/graph/blast-radius` | Impact graph; query `project_id` and exactly one of `symbol_id` or `file_path`, plus `depth`, `limit` |
 | `GET` | `/api/code-index/graph/search` | Symbol search for graph UI; query `project_id`, `q`, `limit` |
-| `POST` | `/api/code-index/graph/clear` | Clear one project's graph projection and mark files pending graph sync; query `project_id` |
-| `POST` | `/api/code-index/graph/rebuild` | Rebuild one project's graph projection from indexed files; query `project_id`, `limit` |
+| `POST` | `/api/code-index/graph/clear` | Clear one project's graph projection through `gcode graph clear --project-id`; query `project_id` |
+| `POST` | `/api/code-index/graph/rebuild` | Rebuild one project's graph projection through `gcode graph rebuild --project <root>`; query `project_id`, legacy `limit` accepted but ignored |
 | `POST` | `/api/code-index/invalidate` | Clear all index data for a project; JSON body `{"project_id": "..."}` |
 
 All graph routes require `project_id`; missing values return `400`. The graph
-overview, file, symbol-neighbors, and blast-radius routes return `503` when the
-code graph is unavailable. Graph search, clear, rebuild, and invalidate return
-`503` when the daemon has no code indexer. Graph clear and rebuild return `400`
-when the indexer exists but the graph operation reports a failure. Blast-radius
-requests return `400` unless exactly one of `symbol_id` or `file_path` is
-provided. Invalidation returns `{"status": "ok", "note": "not indexed"}` when
-the project has no index record.
+overview, file, symbol-neighbors, and blast-radius routes resolve the project
+root from daemon storage, then call `gcode graph` with `--project <root>`.
+Missing or stale `gcode` returns `503`. Graph command, timeout, and JSON errors
+return `500`. Graph search stays daemon-owned because the UI uses PostgreSQL
+symbol autocomplete. Blast-radius requests return `400` unless exactly one of
+`symbol_id` or `file_path` is provided. Invalidation returns `{"status": "ok",
+"note": "not indexed"}` when the project has no index record.
 
 ## Rules
 

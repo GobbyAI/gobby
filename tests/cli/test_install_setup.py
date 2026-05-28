@@ -451,8 +451,8 @@ class TestGcodeHelpers:
 
     @patch("gobby.cli.install_setup.sys.platform", "darwin")
     @patch("gobby.cli.install_setup.platform.machine", return_value="arm64")
-    @patch("gobby.cli.install_setup._get_latest_gcode_version", return_value="0.8.4")
-    @patch("gobby.cli.install_setup._get_installed_gcode_version", return_value="0.8.4")
+    @patch("gobby.cli.install_setup._get_latest_gcode_version", return_value="0.9.2")
+    @patch("gobby.cli.install_setup._get_installed_gcode_version", return_value="0.9.2")
     @patch("gobby.cli.install_setup._install_gcode_from_submodule")
     def test_install_gcode_skips_when_installed_version_satisfies_pin(
         self, mock_submodule, mock_installed, mock_latest, mock_machine, tmp_path
@@ -464,7 +464,7 @@ class TestGcodeHelpers:
 
             res = _install_gcode()
 
-        assert res == {"installed": False, "skipped": True, "version": "0.8.4"}
+        assert res == {"installed": False, "skipped": True, "version": "0.9.2"}
         assert (bin_dir / "gcode").exists()
         mock_submodule.assert_not_called()
 
@@ -489,8 +489,8 @@ class TestGcodeHelpers:
 
     @patch("gobby.cli.install_setup.sys.platform", "darwin")
     @patch("gobby.cli.install_setup.platform.machine", return_value="arm64")
-    @patch("gobby.cli.install_setup._get_latest_gcode_version", return_value="0.8.4")
-    @patch("gobby.cli.install_setup._get_installed_gcode_version", return_value="0.8.4")
+    @patch("gobby.cli.install_setup._get_latest_gcode_version", return_value="0.9.2")
+    @patch("gobby.cli.install_setup._get_installed_gcode_version", return_value="0.9.2")
     @patch("gobby.cli.install_setup._install_gcode_from_submodule", return_value=True)
     @patch("gobby.cli.install_setup._ensure_gobby_bin_on_path", return_value={})
     def test_install_gcode_force_bypasses_pin_skip(

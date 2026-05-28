@@ -27,11 +27,12 @@ class _MaintenanceConfig(Protocol):
 
 class _MaintenanceContext(Protocol):
     storage: Any
-    graph: Any
     vector_store: Any | None
     config: _MaintenanceConfig
 
     async def run_db(self, func: Callable[..., T], *args: Any, **kwargs: Any) -> T: ...
+
+    async def clear_graph(self, project_id: str) -> dict[str, Any]: ...
 
 
 @pytest.mark.asyncio
@@ -54,7 +55,7 @@ async def test_maintenance_purges_indexed_project_when_root_is_missing(tmp_path:
         "content_chunks": 0,
         "projects": 1,
     }
-    graph = SimpleNamespace(clear_project=AsyncMock())
+    clear_graph = AsyncMock(return_value={"success": True})
     vector_store = SimpleNamespace(delete_collection=AsyncMock())
     run_db_calls: list[str] = []
 
@@ -68,7 +69,7 @@ async def test_maintenance_purges_indexed_project_when_root_is_missing(tmp_path:
 
     context: _MaintenanceContext = SimpleNamespace(
         storage=storage,
-        graph=graph,
+        clear_graph=clear_graph,
         vector_store=vector_store,
         config=SimpleNamespace(qdrant_collection_prefix="code_symbols_"),
         run_db=run_db,
@@ -81,7 +82,7 @@ async def test_maintenance_purges_indexed_project_when_root_is_missing(tmp_path:
         await _run_maintenance(context)
 
     storage.delete_project_index.assert_called_once_with("proj-missing")
-    graph.clear_project.assert_awaited_once_with("proj-missing")
+    clear_graph.assert_awaited_once_with("proj-missing")
     vector_store.delete_collection.assert_awaited_once_with("code_symbols_proj-missing")
     create_proc.assert_not_called()
     assert not missing_root.exists()
@@ -113,7 +114,7 @@ async def test_summary_updates_are_concurrency_limited() -> None:
 
     context: _MaintenanceContext = SimpleNamespace(
         storage=SimpleNamespace(update_symbol_summary=update_symbol_summary),
-        graph=None,
+        clear_graph=AsyncMock(return_value={"success": True}),
         vector_store=None,
         config=SimpleNamespace(qdrant_collection_prefix="code_symbols_"),
         run_db=asyncio.to_thread,
@@ -144,7 +145,7 @@ async def test_summary_update_logs_per_symbol_failures(caplog: pytest.LogCapture
 
     context: _MaintenanceContext = SimpleNamespace(
         storage=SimpleNamespace(update_symbol_summary=update_symbol_summary),
-        graph=None,
+        clear_graph=AsyncMock(return_value={"success": True}),
         vector_store=None,
         config=SimpleNamespace(qdrant_collection_prefix="code_symbols_"),
         run_db=run_db,

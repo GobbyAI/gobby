@@ -71,6 +71,18 @@ class RecordingRunDb:
         return func(*args, **kwargs)
 
 
+class RecordingGcodeGateway:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.synced_files: list[tuple[Path, str]] = []
+
+    async def graph_sync_file(self, project_root: Path, file_path: str) -> dict[str, Any]:
+        self.synced_files.append((project_root, file_path))
+        if self.fail:
+            raise RuntimeError("boom")
+        return {"success": True}
+
+
 def _indexed_project(root: Path) -> IndexedProject:
     return IndexedProject(id="proj-1", root_path=str(root), total_files=1, total_symbols=1)
 
@@ -99,11 +111,11 @@ def _write_source(root: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_sync_worker_keeps_vectors_live_when_graph_client_is_cleared(
+async def test_sync_worker_keeps_vectors_live_when_graph_gateway_fails(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """A cleared FalkorDB client must not starve vector syncing."""
+    """A failing gcode graph sync must not starve vector syncing."""
 
     async def fake_generate_embeddings(
         texts: list[str],
@@ -114,8 +126,8 @@ async def test_sync_worker_keeps_vectors_live_when_graph_client_is_cleared(
     monkeypatch.setattr("gobby.search.embeddings.generate_embeddings", fake_generate_embeddings)
     _write_source(tmp_path)
     pending_file = _indexed_file(vectors_synced=False, graph_synced=False)
-    old_graph = SimpleNamespace(available=True, sync_file=AsyncMock())
-    context = SimpleNamespace(graph=None)
+    gcode_gateway = RecordingGcodeGateway(fail=True)
+    context = SimpleNamespace(gcode_gateway=gcode_gateway)
     shutdown_flag = asyncio.Event()
 
     storage = MagicMock()
@@ -159,22 +171,24 @@ async def test_sync_worker_keeps_vectors_live_when_graph_client_is_cleared(
         run_db=RecordingRunDb(),
     )
 
-    old_graph.sync_file.assert_not_awaited()
+    assert gcode_gateway.synced_files == [(tmp_path, pending_file.file_path)]
     assert [call[0] for call in vector_store.calls] == [
         "ensure_collection",
         "delete",
         "batch_upsert",
     ]
     storage.mark_vectors_synced.assert_called_once_with(pending_file.id)
+    storage.mark_graph_sync_attempted.assert_not_called()
+    storage.mark_graph_synced.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_sync_worker_uses_restored_graph_client_on_next_iteration(tmp_path: Path) -> None:
-    """The loop re-reads CodeIndexContext.graph and resumes graph writes."""
+async def test_sync_worker_delegates_graph_sync_to_gcode_gateway(tmp_path: Path) -> None:
+    """The loop delegates graph projection sync to gcode."""
     _write_source(tmp_path)
     pending_file = _indexed_file(vectors_synced=True, graph_synced=False)
-    new_graph = SimpleNamespace(available=True, sync_file=AsyncMock())
-    context = SimpleNamespace(graph=None)
+    gcode_gateway = RecordingGcodeGateway()
+    context = SimpleNamespace(gcode_gateway=gcode_gateway)
     shutdown_flag = asyncio.Event()
 
     storage = MagicMock()
@@ -183,18 +197,12 @@ async def test_sync_worker_uses_restored_graph_client_on_next_iteration(tmp_path
     storage.get_imports_for_file.return_value = []
     storage.get_calls_for_file.return_value = []
     storage.get_symbols_for_file.return_value = []
-    calls = 0
 
-    def pending_across_recovery(*_args: Any, **_kwargs: Any) -> list[IndexedFile]:
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            context.graph = new_graph
-            return []
+    def pending_once(*_args: Any, **_kwargs: Any) -> list[IndexedFile]:
         shutdown_flag.set()
         return [pending_file]
 
-    storage.get_pending_sync_files.side_effect = pending_across_recovery
+    storage.get_pending_sync_files.side_effect = pending_once
 
     await sync_worker_loop(
         storage=storage,
@@ -215,9 +223,9 @@ async def test_sync_worker_uses_restored_graph_client_on_next_iteration(tmp_path
         run_db=RecordingRunDb(),
     )
 
-    assert calls == 2
-    new_graph.sync_file.assert_awaited_once()
-    storage.mark_graph_synced.assert_called_once_with(pending_file.id)
+    assert gcode_gateway.synced_files == [(tmp_path, pending_file.file_path)]
+    storage.mark_graph_sync_attempted.assert_not_called()
+    storage.mark_graph_synced.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -260,7 +268,7 @@ async def test_sync_file_ensures_missing_vector_collection_before_upsert(
     did_sync = await _sync_file(
         storage=code_storage,
         vector_store=vector_store,
-        graph=None,
+        gcode_gateway=None,
         config=CodeIndexConfig(embedding_enabled=True, graph_enabled=False),
         embed_model=FakeEmbedModel(),
         project_id=project_id,
@@ -296,7 +304,7 @@ async def test_sync_pass_polls_projects_and_files_through_run_db(tmp_path: Path)
     await _sync_pass(
         storage=storage,
         vector_store=None,
-        graph=None,
+        gcode_gateway=SimpleNamespace(graph_sync_file=AsyncMock()),
         config=CodeIndexConfig(embedding_enabled=True, graph_enabled=True),
         embed_model=None,
         batch_size=10,
@@ -345,7 +353,7 @@ async def test_sync_file_routes_vector_storage_calls_through_run_db(
     did_sync = await _sync_file(
         storage=code_storage,
         vector_store=RecoveringVectorStore(),
-        graph=None,
+        gcode_gateway=None,
         config=CodeIndexConfig(embedding_enabled=True, graph_enabled=False),
         embed_model=FakeEmbedModel(),
         project_id=project_id,
@@ -394,13 +402,13 @@ async def test_sync_file_uses_current_row_for_sync_state_and_marker_id(tmp_path:
     storage.get_calls_for_file.return_value = []
     storage.get_symbols_for_file.return_value = []
     vector_store = RecoveringVectorStore()
-    graph = SimpleNamespace(available=True, sync_file=AsyncMock())
+    gcode_gateway = RecordingGcodeGateway()
     run_db = RecordingRunDb()
 
     did_sync = await _sync_file(
         storage=storage,
         vector_store=vector_store,
-        graph=graph,
+        gcode_gateway=gcode_gateway,
         config=CodeIndexConfig(embedding_enabled=True, graph_enabled=True),
         embed_model=FakeEmbedModel(),
         project_id=project_id,
@@ -413,20 +421,15 @@ async def test_sync_file_uses_current_row_for_sync_state_and_marker_id(tmp_path:
     assert did_sync is True
     assert vector_store.calls == []
     storage.mark_vectors_synced.assert_not_called()
-    storage.mark_graph_sync_attempted.assert_called_once_with("current-file-id")
-    storage.mark_graph_synced.assert_called_once_with("current-file-id")
+    storage.mark_graph_sync_attempted.assert_not_called()
+    storage.mark_graph_synced.assert_not_called()
+    assert gcode_gateway.synced_files == [(tmp_path, file_path)]
 
 
 @pytest.mark.asyncio
-async def test_sync_graph_routes_relation_reads_through_run_db() -> None:
-    """Graph relation reads use the injected DB runner before FalkorDB writes."""
-    storage = MagicMock()
-    storage.get_imports_for_file.return_value = [{"source_file": "a.py", "target_module": "b"}]
-    storage.get_calls_for_file.return_value = []
-    storage.get_symbols_for_file.return_value = [
-        SimpleNamespace(id="sym-1", name="main", kind="function", line_start=1)
-    ]
-    graph = SimpleNamespace(sync_file=AsyncMock())
+async def test_sync_graph_delegates_to_gcode_without_python_relation_reads(tmp_path: Path) -> None:
+    """Graph sync delegates to gcode instead of reading relation rows in Python."""
+    gcode_gateway = RecordingGcodeGateway()
     file = IndexedFile(
         id="file-1",
         project_id="proj-1",
@@ -434,13 +437,7 @@ async def test_sync_graph_routes_relation_reads_through_run_db() -> None:
         language="python",
         content_hash="hash",
     )
-    run_db = RecordingRunDb()
 
-    await _sync_graph(storage, graph, "proj-1", file, run_db=run_db)
+    await _sync_graph(gcode_gateway, tmp_path, file)
 
-    assert run_db.calls == [
-        "get_imports_for_file",
-        "get_calls_for_file",
-        "get_symbols_for_file",
-    ]
-    graph.sync_file.assert_awaited_once()
+    assert gcode_gateway.synced_files == [(tmp_path, "a.py")]

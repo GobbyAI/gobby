@@ -711,22 +711,6 @@ class FalkorClient:
         ]
         return filtered[:limit]
 
-    async def execute_read(
-        self,
-        cypher: str,
-        params: dict[str, Any] | None = None,
-    ) -> list[dict[str, Any]]:
-        """Adapter for CodeGraph compatibility. Delegates to query()."""
-        return await self.query(cypher, params)
-
-    async def execute_write(
-        self,
-        cypher: str,
-        params: dict[str, Any] | None = None,
-    ) -> list[dict[str, Any]]:
-        """Adapter for CodeGraph compatibility. Delegates to query()."""
-        return await self.query(cypher, params)
-
     async def ping(self) -> bool:
         """Check if FalkorDB is reachable."""
         try:

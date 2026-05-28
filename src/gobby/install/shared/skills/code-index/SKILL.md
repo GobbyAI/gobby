@@ -45,11 +45,14 @@ Use these **before making changes** to understand what you'll affect:
 - `gcode usages <name>` — all usages (calls + imports)
 - `gcode imports <file>` — what does this file import?
 
-## Graph Lifecycle (Gobby daemon required)
+## Graph Lifecycle
 
-These commands operate on the code-index graph projection via the Gobby daemon.
+`gcode` owns the code-index graph projection. The daemon exposes HTTP shim routes
+for the UI, but graph sync/read/lifecycle behavior lives in `gcode`.
 
+- `gcode graph sync-file --file <file>` — sync one indexed file into the graph projection
 - `gcode graph clear` — clear the current project's graph projection
+- `gcode graph clear --project-id <id>` — clear a projection without resolving a project root
 - `gcode graph rebuild` — rebuild it (cheaper than `gcode invalidate` + reindex; doesn't touch PostgreSQL symbol/content rows)
 
 ## When to use which

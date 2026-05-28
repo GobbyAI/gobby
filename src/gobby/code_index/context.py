@@ -1,8 +1,8 @@
 """Thin context object for code index daemon integration.
 
-Holds storage, graph, and vector_store references for the daemon's
-background tasks (maintenance, sync worker, HTTP routes). All actual
-indexing is handled by gcode (Rust CLI).
+Holds storage, gcode graph gateway, and vector_store references for the
+daemon's background tasks (maintenance, sync worker, HTTP routes). All actual
+indexing and graph projection work is handled by gcode (Rust CLI).
 """
 
 from __future__ import annotations
@@ -10,13 +10,22 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Any
 
-from gobby.code_index.graph import CodeGraph
+from gobby.code_index.gcode_gateway import GcodeGateway, GcodeGatewayError
 from gobby.code_index.storage import CodeIndexStorage
 from gobby.config.code_index import CodeIndexConfig
 
 logger = logging.getLogger(__name__)
+
+
+class CodeIndexGraphUnavailable(RuntimeError):
+    """Raised when code graph operations are disabled for this context."""
+
+
+class CodeIndexProjectNotFound(RuntimeError):
+    """Raised when a project id cannot be resolved to an indexed project root."""
 
 
 class CodeIndexContext:
@@ -32,13 +41,13 @@ class CodeIndexContext:
         self,
         storage: CodeIndexStorage,
         vector_store: Any | None = None,
-        graph: CodeGraph | None = None,
+        gcode_gateway: GcodeGateway | None = None,
         config: CodeIndexConfig | None = None,
         run_db: Callable[..., Awaitable[Any]] | None = None,
     ) -> None:
         self._storage = storage
         self._vector_store = vector_store
-        self._graph = graph
+        self._gcode_gateway = gcode_gateway or GcodeGateway()
         self._config = config or CodeIndexConfig()
         self._run_db = run_db
 
@@ -51,8 +60,8 @@ class CodeIndexContext:
         return self._vector_store
 
     @property
-    def graph(self) -> CodeGraph | None:
-        return self._graph
+    def gcode_gateway(self) -> GcodeGateway:
+        return self._gcode_gateway
 
     @property
     def config(self) -> CodeIndexConfig:
@@ -68,8 +77,21 @@ class CodeIndexContext:
         """Clear all index data for a project."""
         await self.run_db(self._storage.delete_project_index, project_id)
 
-        if self._graph is not None:
-            await self._graph.clear_project(project_id)
+        if self._config.graph_enabled:
+            try:
+                result = await self._gcode_gateway.graph_clear(project_id)
+                if not result.get("success", False):
+                    logger.warning(
+                        "Code graph clear during invalidate reported failure for %s: %s",
+                        project_id,
+                        result.get("error", "unknown error"),
+                    )
+            except GcodeGatewayError as e:
+                logger.warning(
+                    "Code graph clear during invalidate failed for %s: %s",
+                    project_id,
+                    e,
+                )
 
         if self._vector_store is not None:
             collection = f"{self._config.qdrant_collection_prefix}{project_id}"
@@ -80,76 +102,64 @@ class CodeIndexContext:
 
         logger.info(f"Invalidated code index for project {project_id}")
 
-    async def close_graph_client(self) -> None:
-        """Close and clear the code graph client."""
-        graph = self._graph
-        if graph is None:
-            return
-        try:
-            await graph.close()
-        finally:
-            self._graph = None
+    async def graph_overview(self, project_id: str, *, limit: int = 200) -> dict[str, Any]:
+        """Return a gcode-owned overview graph for an indexed project."""
+        root = await self._graph_project_root(project_id)
+        return await self._gcode_gateway.graph_overview(root, limit=limit)
 
-    def clear_graph_client(self) -> None:
-        """Clear the code graph client reference without awaiting close."""
-        self._graph = None
+    async def graph_file(self, project_id: str, file_path: str) -> dict[str, Any]:
+        """Return gcode-owned graph context for one indexed file."""
+        root = await self._graph_project_root(project_id)
+        return await self._gcode_gateway.graph_file(root, file_path)
+
+    async def graph_symbol_neighbors(
+        self,
+        project_id: str,
+        symbol_id: str,
+        *,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        """Return gcode-owned neighbors for one symbol."""
+        root = await self._graph_project_root(project_id)
+        return await self._gcode_gateway.graph_neighbors(root, symbol_id, limit=limit)
+
+    async def graph_blast_radius(
+        self,
+        project_id: str,
+        *,
+        symbol_id: str | None = None,
+        file_path: str | None = None,
+        depth: int = 3,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        """Return gcode-owned transitive impact graph."""
+        root = await self._graph_project_root(project_id)
+        return await self._gcode_gateway.graph_blast_radius(
+            root,
+            symbol_id=symbol_id,
+            file_path=file_path,
+            depth=depth,
+            limit=limit,
+        )
 
     async def clear_graph(self, project_id: str) -> dict[str, Any]:
-        """Clear only the FalkorDB code-graph projection for one project."""
-        if self._graph is None or not self._graph.available:
-            return {"success": False, "error": "Code graph not available", "project_id": project_id}
-
-        try:
-            files_marked = await self.run_db(
-                self._storage.reset_graph_sync_for_project,
-                project_id,
-            )
-            await self._graph.clear_project(project_id)
-            return {
-                "success": True,
-                "project_id": project_id,
-                "files_marked_pending": files_marked,
-            }
-        except Exception as e:
-            logger.warning(f"Failed to clear code graph for {project_id}: {e}")
-            return {"success": False, "error": str(e), "project_id": project_id}
+        """Clear only the gcode-owned code graph projection for one project id."""
+        self._require_graph_enabled()
+        return await self._gcode_gateway.graph_clear(project_id)
 
     async def rebuild_graph(self, project_id: str, limit: int = 10_000) -> dict[str, Any]:
-        """Rebuild the FalkorDB code graph for a project from indexed hub rows."""
-        if self._graph is None or not self._graph.available:
-            return {"success": False, "error": "Code graph not available", "project_id": project_id}
+        """Rebuild the gcode-owned code graph projection for one indexed project."""
+        del limit
+        root = await self._graph_project_root(project_id)
+        return await self._gcode_gateway.graph_rebuild(root)
 
-        from gobby.code_index.sync_worker import _sync_graph
+    async def _graph_project_root(self, project_id: str) -> Path:
+        self._require_graph_enabled()
+        project = await self.run_db(self._storage.get_project_stats, project_id)
+        if project is None or not project.root_path:
+            raise CodeIndexProjectNotFound(f"Code index project not found: {project_id}")
+        return Path(project.root_path).expanduser()
 
-        files = await self.run_db(self._storage.list_files, project_id)
-        if limit > 0:
-            files = files[:limit]
-
-        try:
-            await self._graph.clear_project(project_id)
-            await self.run_db(self._storage.reset_graph_sync_for_project, project_id)
-        except Exception as e:
-            logger.warning(f"Failed to prepare code graph rebuild for {project_id}: {e}")
-            return {"success": False, "error": str(e), "project_id": project_id}
-
-        synced = 0
-        errors: list[str] = []
-
-        for file in files:
-            await self.run_db(self._storage.mark_graph_sync_attempted, file.id)
-            try:
-                await _sync_graph(self._storage, self._graph, project_id, file, run_db=self.run_db)
-                await self.run_db(self._storage.mark_graph_synced, file.id)
-                synced += 1
-            except Exception as e:
-                logger.warning(f"Code graph rebuild failed for {file.file_path}: {e}")
-                errors.append(f"{file.file_path}: {e}")
-
-        return {
-            "success": True,
-            "project_id": project_id,
-            "files_processed": len(files),
-            "files_synced": synced,
-            "files_failed": len(errors),
-            "errors": errors,
-        }
+    def _require_graph_enabled(self) -> None:
+        if not self._config.graph_enabled:
+            raise CodeIndexGraphUnavailable("Code graph not available")

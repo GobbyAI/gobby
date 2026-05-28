@@ -91,13 +91,10 @@ async def _check_external_services(runner: GobbyRunner, tracker: StartupTracker 
         endpoint = f"{falkor_cfg.host}:{falkor_cfg.port}"
         if not is_healthy:
             logger.warning(
-                "FalkorDB configured but unreachable at %s — graph features disabled",
+                "FalkorDB configured but unreachable at %s — memory graph features disabled",
                 endpoint,
             )
             runner.memory_manager.clear_graph_clients()
-            code_indexer = getattr(runner, "code_indexer", None)
-            if code_indexer:
-                code_indexer.clear_graph_client()
             if tracker:
                 tracker.error("FalkorDB", f"unreachable at {endpoint}")
         elif tracker:

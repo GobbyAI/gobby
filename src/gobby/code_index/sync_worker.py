@@ -1,8 +1,7 @@
 """Background sync worker for code index external stores.
 
 Polls hub-indexed files with unsynced vector or graph flags and syncs them
-to Qdrant (embeddings) and FalkorDB (graph edges) in-process. Replaces the old
-subprocess-based retry mechanism in maintenance.py.
+to Qdrant (embeddings) and the gcode-owned graph projection.
 """
 
 from __future__ import annotations
@@ -15,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from gobby.code_index.context import CodeIndexContext
-    from gobby.code_index.graph import CodeGraph
+    from gobby.code_index.gcode_gateway import GcodeGateway
     from gobby.code_index.models import IndexedFile
     from gobby.code_index.storage import CodeIndexStorage
     from gobby.config.code_index import CodeIndexConfig
@@ -44,7 +43,7 @@ async def sync_worker_loop(
     shutdown_flag: asyncio.Event,
     run_db: Callable[..., Awaitable[Any]] | None = None,
 ) -> None:
-    """Continuous worker that syncs pending files to Qdrant and FalkorDB.
+    """Continuous worker that syncs pending files to Qdrant and gcode graph.
 
     Polls every config.sync_worker_interval_seconds (default 5s).
     Processes up to config.sync_worker_batch_size files per poll (default 50).
@@ -79,12 +78,12 @@ async def sync_worker_loop(
             logger.warning(f"Sync worker: embedding unavailable: {e}")
 
     while not shutdown_flag.is_set():
-        graph = context.graph
+        gcode_gateway = context.gcode_gateway
         try:
             await _sync_pass(
                 storage=storage,
                 vector_store=vector_store,
-                graph=graph,
+                gcode_gateway=gcode_gateway,
                 config=config,
                 embed_model=embed_model,
                 batch_size=batch_size,
@@ -106,7 +105,7 @@ async def sync_worker_loop(
 async def _sync_pass(
     storage: CodeIndexStorage,
     vector_store: Any | None,
-    graph: CodeGraph | None,
+    gcode_gateway: GcodeGateway,
     config: CodeIndexConfig,
     embed_model: Any | None,
     batch_size: int,
@@ -139,7 +138,7 @@ async def _sync_pass(
                 did_sync = await _sync_file(
                     storage=storage,
                     vector_store=vector_store,
-                    graph=graph,
+                    gcode_gateway=gcode_gateway,
                     config=config,
                     embed_model=embed_model,
                     project_id=project.id,
@@ -167,7 +166,7 @@ async def _sync_pass(
 async def _sync_file(
     storage: CodeIndexStorage,
     vector_store: Any | None,
-    graph: CodeGraph | None,
+    gcode_gateway: GcodeGateway | None,
     config: CodeIndexConfig,
     embed_model: Any | None,
     project_id: str,
@@ -215,17 +214,13 @@ async def _sync_file(
 
     # Graph sync
     if not current.graph_synced and config.graph_enabled:
-        if graph is not None and graph.available:
+        if gcode_gateway is not None:
             try:
-                await _run_db(run_db, storage.mark_graph_sync_attempted, current.id)
                 await _sync_graph(
-                    storage=storage,
-                    graph=graph,
-                    project_id=project_id,
+                    gcode_gateway=gcode_gateway,
+                    project_root=root,
                     file=current,
-                    run_db=run_db,
                 )
-                await _run_db(run_db, storage.mark_graph_synced, current.id)
                 did_work = True
             except Exception as e:
                 logger.error(
@@ -302,30 +297,9 @@ async def _sync_vectors(
 
 
 async def _sync_graph(
-    storage: CodeIndexStorage,
-    graph: CodeGraph,
-    project_id: str,
+    gcode_gateway: GcodeGateway,
+    project_root: Path,
     file: IndexedFile,
-    *,
-    run_db: Callable[..., Awaitable[Any]] | None = None,
 ) -> None:
-    """Write FalkorDB edges for a file from indexed import/call/symbol data."""
-    # Read relations from the runtime hub.
-    imports = await _run_db(run_db, storage.get_imports_for_file, project_id, file.file_path)
-    calls = await _run_db(run_db, storage.get_calls_for_file, project_id, file.file_path)
-    symbols = await _run_db(run_db, storage.get_symbols_for_file, project_id, file.file_path)
-
-    # Build contains list (for DEFINES edges)
-    contains = [
-        {"id": sym.id, "name": sym.name, "kind": sym.kind, "line_start": sym.line_start}
-        for sym in symbols
-    ]
-
-    # Write to FalkorDB
-    await graph.sync_file(
-        project_id=project_id,
-        file_path=file.file_path,
-        imports=imports,
-        calls=calls,
-        contains=contains,
-    )
+    """Ask gcode to sync one indexed file into the code graph projection."""
+    await gcode_gateway.graph_sync_file(project_root, file.file_path)

@@ -115,8 +115,6 @@ def test_public_surface_matches_neo4j_client_contract() -> None:
         "get_entity_graph",
         "get_entity_neighbors",
         "vector_search",
-        "execute_read",
-        "execute_write",
         "ping",
     }
     missing = {name for name in expected_methods if not hasattr(FalkorClient, name)}

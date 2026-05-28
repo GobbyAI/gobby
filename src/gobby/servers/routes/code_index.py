@@ -12,6 +12,13 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from gobby.code_index.context import CodeIndexGraphUnavailable, CodeIndexProjectNotFound
+from gobby.code_index.gcode_gateway import (
+    GcodeGatewayError,
+    GcodeUnavailableError,
+    GcodeVersionError,
+)
+
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
 
@@ -28,6 +35,16 @@ def _require_project_id(project_id: str | None) -> str:
     if not project_id:
         raise HTTPException(status_code=400, detail="project_id is required")
     return project_id
+
+
+def _graph_http_exception(error: Exception) -> HTTPException:
+    if isinstance(error, (CodeIndexGraphUnavailable, GcodeUnavailableError, GcodeVersionError)):
+        return HTTPException(status_code=503, detail="Code graph not available")
+    if isinstance(error, CodeIndexProjectNotFound):
+        return HTTPException(status_code=404, detail=str(error))
+    if isinstance(error, GcodeGatewayError):
+        return HTTPException(status_code=500, detail=str(error))
+    return HTTPException(status_code=500, detail=str(error))
 
 
 async def _run_db(server: HTTPServer, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
@@ -62,16 +79,22 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
         limit: int = Query(200, description="Maximum files to include"),
     ) -> dict[str, Any]:
         code_indexer = getattr(server.services, "code_indexer", None)
-        if code_indexer is None or code_indexer.graph is None or not code_indexer.graph.available:
+        if code_indexer is None:
             raise HTTPException(status_code=503, detail="Code graph not available")
         try:
-            result = await code_indexer.graph.get_file_graph(
+            result = await code_indexer.graph_overview(
                 _require_project_id(project_id),
                 limit=limit,
             )
             return cast(dict[str, Any], result)
         except HTTPException:
             raise
+        except (
+            CodeIndexGraphUnavailable,
+            CodeIndexProjectNotFound,
+            GcodeGatewayError,
+        ) as e:
+            raise _graph_http_exception(e) from e
         except Exception as e:
             logger.exception(
                 "Failed to load code graph overview",
@@ -88,16 +111,22 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
         project_id: str | None = Query(None, description="Project ID"),
     ) -> dict[str, Any]:
         code_indexer = getattr(server.services, "code_indexer", None)
-        if code_indexer is None or code_indexer.graph is None or not code_indexer.graph.available:
+        if code_indexer is None:
             raise HTTPException(status_code=503, detail="Code graph not available")
         try:
-            result = await code_indexer.graph.get_file_symbols(
-                file_path,
+            result = await code_indexer.graph_file(
                 _require_project_id(project_id),
+                file_path,
             )
             return cast(dict[str, Any], result)
         except HTTPException:
             raise
+        except (
+            CodeIndexGraphUnavailable,
+            CodeIndexProjectNotFound,
+            GcodeGatewayError,
+        ) as e:
+            raise _graph_http_exception(e) from e
         except Exception as e:
             logger.exception(
                 "Failed to expand code graph file",
@@ -119,17 +148,23 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
         limit: int = Query(50, description="Maximum neighbors to include"),
     ) -> dict[str, Any]:
         code_indexer = getattr(server.services, "code_indexer", None)
-        if code_indexer is None or code_indexer.graph is None or not code_indexer.graph.available:
+        if code_indexer is None:
             raise HTTPException(status_code=503, detail="Code graph not available")
         try:
-            result = await code_indexer.graph.get_symbol_neighbors(
-                symbol_id,
+            result = await code_indexer.graph_symbol_neighbors(
                 _require_project_id(project_id),
+                symbol_id,
                 limit=limit,
             )
             return cast(dict[str, Any], result)
         except HTTPException:
             raise
+        except (
+            CodeIndexGraphUnavailable,
+            CodeIndexProjectNotFound,
+            GcodeGatewayError,
+        ) as e:
+            raise _graph_http_exception(e) from e
         except Exception as e:
             logger.exception(
                 "Failed to expand code graph symbol",
@@ -153,23 +188,29 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
         limit: int = Query(100, description="Maximum affected nodes"),
     ) -> dict[str, Any]:
         code_indexer = getattr(server.services, "code_indexer", None)
-        if code_indexer is None or code_indexer.graph is None or not code_indexer.graph.available:
+        if code_indexer is None:
             raise HTTPException(status_code=503, detail="Code graph not available")
         if bool(symbol_id) == bool(file_path):
             raise HTTPException(
                 status_code=400, detail="Provide exactly one of symbol_id or file_path"
             )
         try:
-            result = await code_indexer.graph.get_blast_radius_graph(
+            result = await code_indexer.graph_blast_radius(
+                _require_project_id(project_id),
                 symbol_id=symbol_id,
                 file_path=file_path,
-                project_id=_require_project_id(project_id),
                 depth=depth,
                 limit=limit,
             )
             return cast(dict[str, Any], result)
         except HTTPException:
             raise
+        except (
+            CodeIndexGraphUnavailable,
+            CodeIndexProjectNotFound,
+            GcodeGatewayError,
+        ) as e:
+            raise _graph_http_exception(e) from e
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:
@@ -251,6 +292,12 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
             result = await code_indexer.clear_graph(scoped_project)
         except HTTPException:
             raise
+        except (
+            CodeIndexGraphUnavailable,
+            CodeIndexProjectNotFound,
+            GcodeGatewayError,
+        ) as e:
+            raise _graph_http_exception(e) from e
         except Exception as e:
             logger.exception(f"Failed to clear code graph for {scoped_project}")
             raise HTTPException(status_code=500, detail=str(e)) from e
@@ -271,6 +318,12 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
             result = await code_indexer.rebuild_graph(scoped_project, limit=limit)
         except HTTPException:
             raise
+        except (
+            CodeIndexGraphUnavailable,
+            CodeIndexProjectNotFound,
+            GcodeGatewayError,
+        ) as e:
+            raise _graph_http_exception(e) from e
         except Exception as e:
             logger.exception(f"Failed to rebuild code graph for {scoped_project}")
             raise HTTPException(status_code=500, detail=str(e)) from e

@@ -330,7 +330,7 @@ class TestInitSubsystems:
         vector_store.initialize.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_falkordb_health_failure_clears_all_graph_refs(self) -> None:
+    async def test_falkordb_health_failure_clears_memory_graph_refs(self) -> None:
         from gobby.config.persistence import MemoryConfig
         from gobby.memory.manager import MemoryManager
         from gobby.runner_lifecycle_subsystems import _check_external_services
@@ -341,8 +341,6 @@ class TestInitSubsystems:
         manager._kg_service = kg_service
         manager._search_service._kg_service = kg_service
         manager._indexing_service._kg_service = kg_service
-        code_indexer = SimpleNamespace(graph=object(), clear_graph_client=MagicMock())
-        code_indexer.clear_graph_client.side_effect = lambda: setattr(code_indexer, "graph", None)
         runner = SimpleNamespace(
             config=SimpleNamespace(
                 databases=SimpleNamespace(
@@ -355,7 +353,7 @@ class TestInitSubsystems:
                 )
             ),
             memory_manager=manager,
-            code_indexer=code_indexer,
+            code_indexer=SimpleNamespace(),
         )
 
         await _check_external_services(runner, tracker=None)
@@ -364,8 +362,6 @@ class TestInitSubsystems:
         assert manager._kg_service is None
         assert manager._search_service._kg_service is None
         assert manager._indexing_service._kg_service is None
-        assert code_indexer.graph is None
-        code_indexer.clear_graph_client.assert_called_once_with()
 
     @pytest.mark.asyncio
     async def test_provider_model_discovery_runs_in_background_without_startup_warning(
