@@ -20,8 +20,14 @@ import { cn } from "../../lib/utils";
 import { ToolArgumentForm } from "../command-browser/ToolArgumentForm";
 import { McpAddServerModal } from "../mcp/McpServerForm";
 import { Heading } from "../shared/Heading";
+import { ResizeHandle } from "../chat/artifacts/ResizeHandle";
 import { ActivityPanelEmpty } from "./ActivityPanelEmpty";
 import { ActivityPanelSearch } from "./ActivityPanelSearch";
+import {
+  ActivityRowStatusDot,
+  type StatusKind,
+} from "./ActivityRowStatusDot";
+import { DEFAULT_TOP_PANEL_PERCENT } from "./constants";
 
 type McpServerType = "internal" | "external";
 type ToolDetailMode = "schema" | "execute";
@@ -88,21 +94,31 @@ function formatJson(value: unknown): string {
 function MoreIcon() {
   return (
     <svg
-      width="16"
-      height="16"
+      width="12"
+      height="12"
       viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
+      fill="currentColor"
       aria-hidden="true"
     >
-      <circle cx="12" cy="12" r="1" />
-      <circle cx="19" cy="12" r="1" />
-      <circle cx="5" cy="12" r="1" />
+      <circle cx="12" cy="5" r="2" />
+      <circle cx="12" cy="12" r="2" />
+      <circle cx="12" cy="19" r="2" />
     </svg>
   );
+}
+
+function healthToStatusKind(health: string): StatusKind {
+  switch (health) {
+    case "healthy":
+      return "success";
+    case "degraded":
+      return "warning";
+    case "unhealthy":
+    case "failed":
+      return "error";
+    default:
+      return "info";
+  }
 }
 
 function ChevronIcon({ open }: { open: boolean }) {
@@ -164,6 +180,7 @@ export function ActivityMcpTab({
   } | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [topHeight, setTopHeight] = useState(DEFAULT_TOP_PANEL_PERCENT);
   const schemaRequestIdRef = useRef(0);
 
   const normalizedSearch = searchText.trim().toLowerCase();
@@ -349,7 +366,7 @@ export function ActivityMcpTab({
           </button>
           <button
             type="button"
-            className="btn btn-primary btn-sm activity-panel-action-btn"
+            className="btn btn-accent btn-sm activity-panel-action-btn"
             onClick={() => setShowAddServer(true)}
             title="Add server"
             aria-label="Add MCP server"
@@ -372,9 +389,6 @@ export function ActivityMcpTab({
                 )}
                 onClick={() => toggleFilter(filter)}
               >
-                <span className="activity-mcp-filter-check" aria-hidden="true">
-                  {serverTypes.has(filter) ? "[x]" : "[ ]"}
-                </span>
                 {filter === "internal" ? "Internal" : "External"}
               </button>
             ))}
@@ -393,6 +407,13 @@ export function ActivityMcpTab({
         </button>
       )}
 
+      <div
+        className={cn(
+          "activity-mcp-tree-shell",
+          selection && "activity-mcp-tree-shell--split",
+        )}
+        style={selection ? { height: `${topHeight}%` } : undefined}
+      >
       <div className="activity-mcp-tree" role="tree" aria-label="MCP servers and tools">
         {filteredServers.length === 0 ? (
           <ActivityPanelEmpty
@@ -441,19 +462,21 @@ export function ActivityMcpTab({
                     }}
                   >
                     <ChevronIcon open={expanded} />
-                    <span
-                      className={cn(
-                        "activity-mcp-health-dot",
-                        `activity-mcp-health-dot--${health}`,
-                      )}
+                    <ActivityRowStatusDot
+                      kind={healthToStatusKind(health)}
                       title={`Health: ${health}`}
                     />
-                    <span className="activity-mcp-server-name">{server.name}</span>
-                    <span className="activity-mcp-badge">
+                    <span className="activity-row-title">{server.name}</span>
+                    <span
+                      className={cn(
+                        "chip",
+                        serverType === "internal" ? "chip--auto" : "chip--web",
+                      )}
+                    >
                       {serverType === "internal" ? "Internal" : "External"}
                     </span>
-                    <span className="activity-mcp-state">{server.state}</span>
-                    <span className="activity-mcp-count">
+                    <span className="chip chip--local">{server.state}</span>
+                    <span className="activity-row-meta">
                       {allTools.length} tool{allTools.length === 1 ? "" : "s"}
                     </span>
                   </button>
@@ -502,9 +525,11 @@ export function ActivityMcpTab({
                               void loadToolSchema(server.name, tool.name, "schema")
                             }
                           >
-                            <span className="activity-mcp-tool-name">{tool.name}</span>
+                            <span className="activity-row-title activity-mcp-tool-title">
+                              {tool.name}
+                            </span>
                             {tool.brief && (
-                              <span className="activity-mcp-tool-brief">
+                              <span className="activity-row-meta activity-mcp-tool-brief">
                                 {tool.brief}
                               </span>
                             )}
@@ -533,26 +558,38 @@ export function ActivityMcpTab({
           })
         )}
       </div>
+      </div>
 
-      <McpDetailPanel
-        selection={selection}
-        server={selectedServer}
-        tool={selectedTool}
-        schema={toolSchema}
-        schemaLoading={schemaLoading}
-        argumentValues={argumentValues}
-        onArgumentValuesChange={setArgumentValues}
-        executing={executing}
-        executionResult={executionResult}
-        onExecute={handleExecute}
-        onSwitchToExecute={() => {
-          if (selection?.kind === "tool") {
-            setSelection({ ...selection, mode: "execute" });
-          }
-        }}
-        status={status}
-        toolsByServer={toolsByServer}
-      />
+      {selection && (
+        <>
+          <ResizeHandle
+            direction="vertical"
+            onResize={setTopHeight}
+            panelHeight={topHeight}
+            minHeight={15}
+            maxHeight={80}
+          />
+          <McpDetailPanel
+            selection={selection}
+            server={selectedServer}
+            tool={selectedTool}
+            schema={toolSchema}
+            schemaLoading={schemaLoading}
+            argumentValues={argumentValues}
+            onArgumentValuesChange={setArgumentValues}
+            executing={executing}
+            executionResult={executionResult}
+            onExecute={handleExecute}
+            onSwitchToExecute={() => {
+              if (selection?.kind === "tool") {
+                setSelection({ ...selection, mode: "execute" });
+              }
+            }}
+            status={status}
+            toolsByServer={toolsByServer}
+          />
+        </>
+      )}
 
       {menu && (
         <McpQuickMenu

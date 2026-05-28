@@ -507,14 +507,6 @@
   box-shadow: var(--shadow-md);
 }
 
-.activity-mcp-filter-check {
-  width: 1.75rem;
-  flex-shrink: 0;
-  color: currentColor;
-  font-family: var(--font-mono, monospace);
-  font-size: var(--text-xs);
-}
-
 .activity-mcp-error {
   width: 100%;
   padding: 0.4rem 0.75rem;
@@ -527,6 +519,17 @@
   cursor: pointer;
 }
 
+.activity-mcp-tree-shell {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.activity-mcp-tree-shell--split {
+  flex: 0 0 auto;
+}
+
 .activity-mcp-tree {
   flex: 1 1 auto;
   min-height: 0;
@@ -535,7 +538,7 @@
 }
 
 .activity-mcp-server-group {
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
+  border-bottom: 1px solid var(--border);
 }
 
 .activity-mcp-row {
@@ -554,7 +557,6 @@
 
 .activity-mcp-row--selected {
   background: color-mix(in srgb, var(--accent) 8%, transparent);
-  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .activity-mcp-row-main {
@@ -590,77 +592,18 @@
   transform: rotate(90deg);
 }
 
-.activity-mcp-health-dot {
-  width: 0.45rem;
-  height: 0.45rem;
-  flex-shrink: 0;
-  border-radius: 999px;
-  background: var(--text-muted);
-}
-
-.activity-mcp-health-dot--healthy {
-  background: var(--color-success-foreground);
-}
-
-.activity-mcp-health-dot--degraded {
-  background: var(--color-warning-foreground);
-}
-
-.activity-mcp-health-dot--unhealthy,
-.activity-mcp-health-dot--failed {
-  background: var(--color-error);
-}
-
-.activity-mcp-server-name,
-.activity-mcp-tool-name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--text-base);
-  font-weight: var(--font-weight-medium);
-}
-
-.activity-mcp-server-name {
-  flex: 1 1 auto;
-}
-
-.activity-mcp-tool-name {
+/* Tool rows compose typography from .activity-row-title / .activity-row-meta
+   (the shared activity-panel ladder) and use these modifier classes only for
+   the two-column flex split: capped tool name on the left, expanding brief
+   on the right. */
+.activity-mcp-tool-title {
   flex: 0 0 auto;
   max-width: min(13rem, 48%);
 }
 
 .activity-mcp-tool-brief {
-  min-width: 0;
   flex: 1 1 auto;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-secondary);
-  font-size: var(--text-sm);
-}
-
-.activity-mcp-badge,
-.activity-mcp-state {
-  display: inline-flex;
-  align-items: center;
-  height: 1.15rem;
-  flex: 0 0 auto;
-  padding: 0 0.4rem;
-  border: 1px solid var(--border);
-  border-radius: 0.35rem;
-  background: color-mix(in srgb, var(--bg-secondary) 84%, transparent);
-  color: var(--text-secondary);
-  font-size: var(--text-2xs);
-  font-weight: 500;
-  line-height: 1;
-}
-
-.activity-mcp-count {
-  flex: 0 0 auto;
-  color: var(--text-muted);
-  font-size: var(--text-sm);
-  font-variant-numeric: tabular-nums;
+  min-width: 0;
 }
 
 .activity-mcp-empty-row {
@@ -670,16 +613,17 @@
 }
 
 .activity-mcp-detail {
-  flex: 0 0 min(42%, 20rem);
-  min-height: 11rem;
-  max-height: 42%;
-  border-top: 1px solid var(--border);
+  flex: 1 1 auto;
+  min-height: 0;
   background: var(--bg-primary);
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .activity-mcp-detail-body {
-  height: calc(100% - var(--activity-panel-bar-height));
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: auto;
   padding: 0.75rem;
   color: var(--text-primary);
