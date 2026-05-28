@@ -1,3 +1,4 @@
+pub mod api;
 pub mod chunker;
 pub mod hasher;
 pub mod import_resolution;

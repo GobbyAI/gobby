@@ -12,6 +12,10 @@ readme = "README.md"
 keywords = ["code-search", "ast", "code-index", "developer-tools", "gobby"]
 categories = ["command-line-utilities", "development-tools"]
 
+[lib]
+name = "gobby_code"
+path = "src/lib.rs"
+
 [[bin]]
 name = "gcode"
 path = "src/main.rs"

@@ -1,8 +1,8 @@
-//! FalkorDB read client for graph queries.
+//! Compatibility facade for FalkorDB graph queries.
 //!
-//! Read helpers degrade gracefully through `with_falkor`: missing config,
-//! connection construction failure, and query failures return caller-provided
-//! defaults so search and graph commands remain usable without FalkorDB.
+//! The reusable projection/query implementation lives under
+//! `crate::graph::code_graph`; this module keeps the Phase 7 public surface
+//! available for downstream callers that still import `crate::falkor`.
 
 use std::collections::HashMap;
 
@@ -13,10 +13,6 @@ use serde_json::{Map, Number, Value};
 
 use crate::config::{Context, FalkorConfig};
 use crate::models::GraphResult;
-
-const CALL_TARGET_PREDICATE: &str =
-    "target:CodeSymbol OR target:UnresolvedCallee OR target:ExternalSymbol";
-const MAX_GRAPH_LIMIT: usize = 100;
 
 /// Row from a FalkorDB query response.
 pub type Row = HashMap<String, Value>;
@@ -64,8 +60,7 @@ impl FalkorClient {
 }
 
 pub fn cypher_string_literal(s: &str) -> String {
-    let escaped = s.replace('\\', "\\\\").replace('\'', "\\'");
-    format!("'{escaped}'")
+    crate::graph::typed_query::cypher_string_literal(s)
 }
 
 fn parse_falkor_result(result: QueryResult<LazyResultSet<'_>>) -> Vec<Row> {
@@ -144,224 +139,14 @@ pub fn with_falkor<T>(
     }
 }
 
-fn row_to_graph_result(row: &Row) -> GraphResult {
-    GraphResult {
-        id: row
-            .get("caller_id")
-            .or_else(|| row.get("callee_id"))
-            .or_else(|| row.get("source_id"))
-            .or_else(|| row.get("node_id"))
-            .or_else(|| row.get("symbol_id"))
-            .or_else(|| row.get("id"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
-        name: row
-            .get("caller_name")
-            .or_else(|| row.get("callee_name"))
-            .or_else(|| row.get("source_name"))
-            .or_else(|| row.get("node_name"))
-            .or_else(|| row.get("symbol_name"))
-            .or_else(|| row.get("name"))
-            .or_else(|| row.get("module_name"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
-        file_path: row
-            .get("file")
-            .or_else(|| row.get("file_path"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
-        line: row.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
-        relation: row
-            .get("relation")
-            .or_else(|| row.get("rel_type"))
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        distance: row
-            .get("distance")
-            .and_then(|v| v.as_u64())
-            .map(|d| d as usize),
-    }
-}
-
-fn string_params(values: &[(&str, &str)]) -> HashMap<String, String> {
-    values
-        .iter()
-        .map(|(key, value)| ((*key).to_string(), cypher_string_literal(value)))
-        .collect()
-}
-
-fn clamp_limit(limit: usize) -> usize {
-    limit.clamp(1, MAX_GRAPH_LIMIT)
-}
-
-fn clamp_offset(offset: usize) -> usize {
-    offset.min(MAX_GRAPH_LIMIT)
-}
-
-fn id_list_literal(ids: &[String]) -> String {
-    ids.iter()
-        .map(|id| cypher_string_literal(id))
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-fn count_callers_query(project_id: &str, symbol_id: &str) -> (String, HashMap<String, String>) {
-    (
-        format!(
-            "MATCH (caller:CodeSymbol {{project: $project}})-[:CALLS]->(target {{id: $id, project: $project}}) \
-             WHERE {CALL_TARGET_PREDICATE} \
-             RETURN count(caller) AS cnt"
-        ),
-        string_params(&[("project", project_id), ("id", symbol_id)]),
-    )
-}
-
-fn count_usages_query(project_id: &str, symbol_id: &str) -> (String, HashMap<String, String>) {
-    (
-        format!(
-            "MATCH (source:CodeSymbol {{project: $project}})-[r:CALLS]->(target {{id: $id, project: $project}}) \
-             WHERE {CALL_TARGET_PREDICATE} \
-             RETURN count(source) AS cnt"
-        ),
-        string_params(&[("project", project_id), ("id", symbol_id)]),
-    )
-}
-
-fn find_callers_query(
-    project_id: &str,
-    symbol_id: &str,
-    offset: usize,
-    limit: usize,
-) -> (String, HashMap<String, String>) {
-    let offset = clamp_offset(offset);
-    let limit = clamp_limit(limit);
-    (
-        format!(
-            "MATCH (caller:CodeSymbol {{project: $project}})-[r:CALLS]->(target {{id: $id, project: $project}}) \
-             WHERE {CALL_TARGET_PREDICATE} \
-             RETURN caller.id AS caller_id, caller.name AS caller_name, \
-                    r.file AS file, r.line AS line \
-             SKIP {offset} LIMIT {limit}"
-        ),
-        string_params(&[("project", project_id), ("id", symbol_id)]),
-    )
-}
-
-fn find_usages_query(
-    project_id: &str,
-    symbol_id: &str,
-    offset: usize,
-    limit: usize,
-) -> (String, HashMap<String, String>) {
-    let offset = clamp_offset(offset);
-    let limit = clamp_limit(limit);
-    (
-        format!(
-            "MATCH (source:CodeSymbol {{project: $project}})-[r:CALLS]->(target {{id: $id, project: $project}}) \
-             WHERE {CALL_TARGET_PREDICATE} \
-             RETURN source.id AS source_id, source.name AS source_name, \
-                    'CALLS' AS rel_type, r.file AS file, r.line AS line \
-             SKIP {offset} LIMIT {limit}"
-        ),
-        string_params(&[("project", project_id), ("id", symbol_id)]),
-    )
-}
-
-fn find_callers_batch_query(
-    project_id: &str,
-    symbol_ids: &[String],
-    limit: usize,
-) -> (String, HashMap<String, String>) {
-    let limit = clamp_limit(limit);
-    let ids = id_list_literal(symbol_ids);
-    (
-        format!(
-            "MATCH (caller:CodeSymbol {{project: $project}})-[r:CALLS]->(target {{project: $project}}) \
-             WHERE ({CALL_TARGET_PREDICATE}) AND target.id IN [{ids}] \
-             RETURN caller.id AS caller_id, caller.name AS caller_name, \
-                    r.file AS file, r.line AS line \
-             LIMIT {limit}"
-        ),
-        string_params(&[("project", project_id)]),
-    )
-}
-
-fn find_callees_batch_query(
-    project_id: &str,
-    symbol_ids: &[String],
-    limit: usize,
-) -> (String, HashMap<String, String>) {
-    let limit = clamp_limit(limit);
-    let ids = id_list_literal(symbol_ids);
-    (
-        format!(
-            "MATCH (src:CodeSymbol {{project: $project}})-[r:CALLS]->(target {{project: $project}}) \
-             WHERE src.id IN [{ids}] AND ({CALL_TARGET_PREDICATE}) \
-             RETURN target.id AS callee_id, target.name AS callee_name, \
-                    r.file AS file, r.line AS line \
-             LIMIT {limit}"
-        ),
-        string_params(&[("project", project_id)]),
-    )
-}
-
-fn get_imports_query(project_id: &str, file_path: &str) -> (String, HashMap<String, String>) {
-    (
-        "MATCH (f:CodeFile {path: $path, project: $project})-[:IMPORTS]->(m:CodeModule) \
-         RETURN m.name AS module_name"
-            .to_string(),
-        string_params(&[("project", project_id), ("path", file_path)]),
-    )
-}
-
-fn blast_radius_query(depth: usize, limit: usize) -> String {
-    let depth = depth.clamp(1, 5);
-    let limit = clamp_limit(limit);
-    format!(
-        "MATCH (target {{id: $id, project: $project}}) \
-         WHERE {CALL_TARGET_PREDICATE} \
-         MATCH path = (affected:CodeSymbol {{project: $project}})-[:CALLS*1..{depth}]->(target) \
-         WITH affected, min(length(path)) AS distance \
-         OPTIONAL MATCH (file:CodeFile {{project: $project}})-[:DEFINES]->(affected) \
-         RETURN DISTINCT affected.id AS node_id, \
-                affected.name AS node_name, \
-                affected.kind AS kind, file.path AS file_path, \
-                affected.line_start AS line, \
-                distance, 'call' AS rel_type \
-         ORDER BY distance ASC, affected.name ASC \
-         LIMIT {limit}"
-    )
-}
-
-fn count_from_rows(rows: &[Row]) -> usize {
-    rows.first()
-        .and_then(|r| r.get("cnt"))
-        .and_then(|v| {
-            v.as_u64()
-                .or_else(|| v.as_i64().and_then(|value| value.try_into().ok()))
-        })
-        .unwrap_or(0) as usize
-}
-
 /// Count callers of a symbol.
 pub fn count_callers(ctx: &Context, symbol_id: &str) -> anyhow::Result<usize> {
-    with_falkor(ctx, 0, |client| {
-        let (query, params) = count_callers_query(&ctx.project_id, symbol_id);
-        let rows = client.query(&query, Some(params))?;
-        Ok(count_from_rows(&rows))
-    })
+    crate::graph::code_graph::count_callers(ctx, symbol_id)
 }
 
 /// Count incoming call usages of a symbol.
 pub fn count_usages(ctx: &Context, symbol_id: &str) -> anyhow::Result<usize> {
-    with_falkor(ctx, 0, |client| {
-        let (query, params) = count_usages_query(&ctx.project_id, symbol_id);
-        let rows = client.query(&query, Some(params))?;
-        Ok(count_from_rows(&rows))
-    })
+    crate::graph::code_graph::count_usages(ctx, symbol_id)
 }
 
 /// Find symbols that call the given symbol id.
@@ -371,11 +156,7 @@ pub fn find_callers(
     offset: usize,
     limit: usize,
 ) -> anyhow::Result<Vec<GraphResult>> {
-    with_falkor(ctx, vec![], |client| {
-        let (query, params) = find_callers_query(&ctx.project_id, symbol_id, offset, limit);
-        let rows = client.query(&query, Some(params))?;
-        Ok(rows.iter().map(row_to_graph_result).collect())
-    })
+    crate::graph::code_graph::find_callers(ctx, symbol_id, offset, limit)
 }
 
 /// Find incoming CALLS usages for a canonical, unresolved, or external target.
@@ -385,11 +166,7 @@ pub fn find_usages(
     offset: usize,
     limit: usize,
 ) -> anyhow::Result<Vec<GraphResult>> {
-    with_falkor(ctx, vec![], |client| {
-        let (query, params) = find_usages_query(&ctx.project_id, symbol_id, offset, limit);
-        let rows = client.query(&query, Some(params))?;
-        Ok(rows.iter().map(row_to_graph_result).collect())
-    })
+    crate::graph::code_graph::find_usages(ctx, symbol_id, offset, limit)
 }
 
 /// Find symbols that call any of the given target ids.
@@ -398,14 +175,7 @@ pub fn find_callers_batch(
     symbol_ids: &[String],
     limit: usize,
 ) -> anyhow::Result<Vec<GraphResult>> {
-    if symbol_ids.is_empty() {
-        return Ok(vec![]);
-    }
-    with_falkor(ctx, vec![], |client| {
-        let (query, params) = find_callers_batch_query(&ctx.project_id, symbol_ids, limit);
-        let rows = client.query(&query, Some(params))?;
-        Ok(rows.iter().map(row_to_graph_result).collect())
-    })
+    crate::graph::code_graph::find_callers_batch(ctx, symbol_ids, limit)
 }
 
 /// Find call targets reached by any of the given source ids.
@@ -414,23 +184,12 @@ pub fn find_callees_batch(
     symbol_ids: &[String],
     limit: usize,
 ) -> anyhow::Result<Vec<GraphResult>> {
-    if symbol_ids.is_empty() {
-        return Ok(vec![]);
-    }
-    with_falkor(ctx, vec![], |client| {
-        let (query, params) = find_callees_batch_query(&ctx.project_id, symbol_ids, limit);
-        let rows = client.query(&query, Some(params))?;
-        Ok(rows.iter().map(row_to_graph_result).collect())
-    })
+    crate::graph::code_graph::find_callees_batch(ctx, symbol_ids, limit)
 }
 
 /// Get import graph for a file.
 pub fn get_imports(ctx: &Context, file_path: &str) -> anyhow::Result<Vec<GraphResult>> {
-    with_falkor(ctx, vec![], |client| {
-        let (query, params) = get_imports_query(&ctx.project_id, file_path);
-        let rows = client.query(&query, Some(params))?;
-        Ok(rows.iter().map(row_to_graph_result).collect())
-    })
+    crate::graph::code_graph::get_imports(ctx, file_path)
 }
 
 /// Find transitive blast radius of changing a symbol.
@@ -439,12 +198,50 @@ pub fn blast_radius(
     symbol_id: &str,
     depth: usize,
 ) -> anyhow::Result<Vec<GraphResult>> {
-    with_falkor(ctx, vec![], |client| {
-        let query = blast_radius_query(depth, MAX_GRAPH_LIMIT);
-        let params = string_params(&[("project", &ctx.project_id), ("id", symbol_id)]);
-        let rows = client.query(&query, Some(params))?;
-        Ok(rows.iter().map(row_to_graph_result).collect())
-    })
+    crate::graph::code_graph::blast_radius(ctx, symbol_id, depth)
+}
+
+#[cfg(test)]
+const CALL_TARGET_PREDICATE: &str =
+    "target:CodeSymbol OR target:UnresolvedCallee OR target:ExternalSymbol";
+
+#[cfg(test)]
+fn find_callers_query(
+    project_id: &str,
+    symbol_id: &str,
+    offset: usize,
+    limit: usize,
+) -> (String, HashMap<String, String>) {
+    crate::graph::code_graph::find_callers_query(project_id, symbol_id, offset, limit)
+}
+
+#[cfg(test)]
+fn find_usages_query(
+    project_id: &str,
+    symbol_id: &str,
+    offset: usize,
+    limit: usize,
+) -> (String, HashMap<String, String>) {
+    crate::graph::code_graph::find_usages_query(project_id, symbol_id, offset, limit)
+}
+
+#[cfg(test)]
+fn find_callers_batch_query(
+    project_id: &str,
+    symbol_ids: &[String],
+    limit: usize,
+) -> (String, HashMap<String, String>) {
+    crate::graph::code_graph::find_callers_batch_query(project_id, symbol_ids, limit)
+}
+
+#[cfg(test)]
+fn blast_radius_query(depth: usize, limit: usize) -> String {
+    crate::graph::code_graph::blast_radius_query(depth, limit)
+}
+
+#[cfg(test)]
+fn row_to_graph_result(row: &Row) -> GraphResult {
+    crate::graph::code_graph::row_to_graph_result(row)
 }
 
 #[cfg(test)]
