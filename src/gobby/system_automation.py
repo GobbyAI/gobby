@@ -6,7 +6,7 @@ import asyncio
 import logging
 import time
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import Any, Protocol
 
 from gobby.build.claim_recovery import recover_safe_build_claims
 from gobby.build.dispatch_tick import DispatcherTickSummary
@@ -74,6 +74,18 @@ class _PendingProjectDispatch:
     max_active_agents: int | None
 
 
+class PipelineHeartbeatService(Protocol):
+    """Pipeline heartbeat methods used by the automation loop."""
+
+    async def check_stalled_executions(self) -> int: ...
+
+    async def check_stale_tasks(self) -> int: ...
+
+    async def count_running_executions(self) -> int: ...
+
+    async def count_stale_task_candidates(self) -> int: ...
+
+
 def is_legacy_automation_cron_name(name: str) -> bool:
     """Return whether a cron row belongs to the removed automation mechanism."""
     return name in LEGACY_AUTOMATION_CRON_JOB_NAMES
@@ -113,7 +125,7 @@ class SystemAutomationLoop:
         config: DaemonConfig,
         services: object | None = None,
         config_store: ConfigStore | None = None,
-        pipeline_heartbeat: object | None = None,
+        pipeline_heartbeat: PipelineHeartbeatService | None = None,
         run_db: Any | None = None,
     ) -> None:
         self.db = db
@@ -310,9 +322,8 @@ class SystemAutomationLoop:
                 interval_seconds=settings.interval_seconds,
             )
         if interval is not None:
-            try:
-                interval_seconds = max(1, int(interval))
-            except (TypeError, ValueError):
+            interval_seconds = _coerce_positive_int(interval)
+            if interval_seconds is None:
                 logger.warning("Ignoring invalid automation loop interval: %r", interval)
             else:
                 settings = AutomationLoopSettings(
@@ -513,8 +524,12 @@ class SystemAutomationLoop:
         )
 
     async def _read_config_store_value(self, key: str) -> object | None:
+        config_store = self.config_store
+        if config_store is None:
+            return None
         try:
-            return await self._run_db_call(self.config_store.get, key)
+            value: object = await self._run_db_call(config_store.get, key)
+            return value
         except Exception:
             logger.warning("Failed to read automation config key %s", key, exc_info=True)
             return None
@@ -538,6 +553,21 @@ class SystemAutomationLoop:
         self._tick_count += 1
         self._last_tick = summary
         self._last_tick_at = datetime.now(UTC).isoformat()
+
+
+def _coerce_positive_int(value: object) -> int | None:
+    if isinstance(value, bool):
+        return max(1, int(value))
+    if isinstance(value, int):
+        return max(1, value)
+    if isinstance(value, float):
+        return max(1, int(value))
+    if isinstance(value, (str, bytes, bytearray)):
+        try:
+            return max(1, int(value))
+        except ValueError:
+            return None
+    return None
 
 
 def _tick_payload(summary: AutomationTickSummary) -> dict[str, Any]:

@@ -189,7 +189,7 @@ class StageStateTransitions:
             verb == "fail_stage"
             and stage_name == "holistic_qa"
             and bool(cited_subtasks)
-            and bool(reason)
+            and reason is not None
             and reason.startswith("dispatch_spawn_failed:")
         )
 

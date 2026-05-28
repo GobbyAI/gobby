@@ -55,16 +55,25 @@ def run_git_command(command: list[str], cwd: str | Path, timeout: int = 5) -> st
     """
     try:
         env = git_subprocess_env()
-        subprocess_kwargs = {"env": env} if env is not None else {}
-        result = subprocess.run(  # nosec B603 # command passed from internal callers with hardcoded git commands
-            command,
-            cwd=cwd,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,  # Don't raise on non-zero exit
-            **subprocess_kwargs,
-        )
+        if env is None:
+            result = subprocess.run(  # nosec B603 # internal git command
+                command,
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,  # Don't raise on non-zero exit
+            )
+        else:
+            result = subprocess.run(  # nosec B603 # internal git command
+                command,
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,  # Don't raise on non-zero exit
+                env=env,
+            )
 
         if result.returncode == 0:
             return result.stdout.strip()

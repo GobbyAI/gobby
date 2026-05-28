@@ -146,7 +146,15 @@ def project_path(db: HubDatabase, project_id: str) -> Path:
 
 def git(repo_path: Path, args: list[str], *, timeout: int) -> subprocess.CompletedProcess[str]:
     env = git_subprocess_env()
-    subprocess_kwargs = {"env": env} if env is not None else {}
+    if env is None:
+        return subprocess.run(  # nosec B603 # git args are fixed by callers.
+            ["git", *args],
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
     return subprocess.run(  # nosec B603 # git args are fixed by callers.
         ["git", *args],
         cwd=repo_path,
@@ -154,5 +162,5 @@ def git(repo_path: Path, args: list[str], *, timeout: int) -> subprocess.Complet
         text=True,
         timeout=timeout,
         check=False,
-        **subprocess_kwargs,
+        env=env,
     )
