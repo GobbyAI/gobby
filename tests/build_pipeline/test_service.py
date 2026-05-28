@@ -472,6 +472,47 @@ async def test_build_plan_file_creates_planning_epic_artifacts_manifest_and_kick
 
 
 @pytest.mark.asyncio
+async def test_build_plan_file_rerun_resumes_open_root_for_same_plan_file(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    _disable_dispatcher_tick(monkeypatch)
+    project_id, _repo_path = _project(temp_db, tmp_path)
+    plan_file = tmp_path / "plan.md"
+    plan_file.write_text("# Plan\n")
+
+    first = await _build(
+        str(plan_file),
+        _options(isolation="none"),
+        db=temp_db,
+        project_id=project_id,
+    )
+    second = await _build(
+        str(plan_file),
+        _options(isolation="none"),
+        db=temp_db,
+        project_id=project_id,
+    )
+
+    root_count = temp_db.fetchone(
+        """
+        SELECT COUNT(*) AS count
+          FROM tasks
+         WHERE project_id = %s
+           AND parent_task_id IS NULL
+           AND title = %s
+        """,
+        (project_id, f"Build {plan_file.name}"),
+    )["count"]
+
+    assert first.created is True
+    assert second.created is False
+    assert second.task_id == first.task_id
+    assert root_count == 1
+
+
+@pytest.mark.asyncio
 async def test_build_plan_file_planning_spawn_uses_main_context_for_worktree_build(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,

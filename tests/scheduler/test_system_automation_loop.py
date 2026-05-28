@@ -17,6 +17,7 @@ from gobby.storage.config_store import ConfigStore
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.system_automation import SystemAutomationLoop
+from tests._timing import wait_for_async_condition
 
 pytestmark = pytest.mark.unit
 
@@ -212,6 +213,44 @@ async def test_direct_wake_after_agent_cleanup_runs_project_heartbeat_without_cr
     assert calls == [sample_project["id"]]
     assert temp_db.fetchone("SELECT COUNT(*) AS count FROM cron_runs")["count"] == 0
     assert CronJobStorage(temp_db).get_job_by_name("gobby:dispatcher") is None
+
+
+@pytest.mark.asyncio
+async def test_direct_project_dispatch_wake_queues_followup_when_dispatch_active(
+    temp_db: HubDatabase,
+) -> None:
+    """A state-change wake during a running dispatch must not be dropped."""
+    started = asyncio.Event()
+    release_first = asyncio.Event()
+    calls: list[str] = []
+
+    loop = SystemAutomationLoop(
+        db=temp_db,
+        config=DaemonConfig(),
+        services=SimpleNamespace(startup_ready=True, shutdown_in_progress=False),
+        run_db=_run_inline,
+    )
+
+    async def dispatch_project_once(**kwargs: Any) -> object:
+        reason = str(kwargs["reason"])
+        calls.append(reason)
+        if reason == "first":
+            started.set()
+            await release_first.wait()
+        return object()
+
+    loop.dispatch_project_once = dispatch_project_once  # type: ignore[method-assign]
+
+    assert loop.schedule_project_dispatch(project_id="project-1", reason="first") is True
+    await asyncio.wait_for(started.wait(), timeout=1)
+
+    assert loop.schedule_project_dispatch(project_id="project-1", reason="second") is True
+    release_first.set()
+
+    await wait_for_async_condition(
+        lambda: calls == ["first", "second"],
+        description="follow-up dispatch",
+    )
 
 
 @pytest.mark.asyncio

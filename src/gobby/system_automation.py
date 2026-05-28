@@ -64,6 +64,16 @@ class AutomationTickSummary:
     error: str | None = None
 
 
+@dataclass(frozen=True)
+class _PendingProjectDispatch:
+    """Coalesced direct wake that arrived while a project dispatch was running."""
+
+    reason: str
+    max_ticks: int | None
+    max_actions: int | None
+    max_active_agents: int | None
+
+
 def is_legacy_automation_cron_name(name: str) -> bool:
     """Return whether a cron row belongs to the removed automation mechanism."""
     return name in LEGACY_AUTOMATION_CRON_JOB_NAMES
@@ -116,6 +126,7 @@ class SystemAutomationLoop:
         self._loop_task: asyncio.Task[None] | None = None
         self._event_loop: asyncio.AbstractEventLoop | None = None
         self._project_tasks: dict[str, asyncio.Task[None]] = {}
+        self._pending_project_dispatches: dict[str, _PendingProjectDispatch] = {}
         self._tick_lock = asyncio.Lock()
         self._tick_count = 0
         self._dispatch_count = 0
@@ -151,6 +162,7 @@ class SystemAutomationLoop:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         if self._project_tasks:
+            self._pending_project_dispatches.clear()
             for task in list(self._project_tasks.values()):
                 task.cancel()
             await asyncio.gather(*self._project_tasks.values(), return_exceptions=True)
@@ -346,7 +358,30 @@ class SystemAutomationLoop:
     ) -> None:
         existing = self._project_tasks.get(project_id)
         if existing is not None and not existing.done():
+            self._pending_project_dispatches[project_id] = _PendingProjectDispatch(
+                reason=reason,
+                max_ticks=max_ticks,
+                max_actions=max_actions,
+                max_active_agents=max_active_agents,
+            )
             return
+        self._start_project_dispatch_task(
+            project_id=project_id,
+            reason=reason,
+            max_ticks=max_ticks,
+            max_actions=max_actions,
+            max_active_agents=max_active_agents,
+        )
+
+    def _start_project_dispatch_task(
+        self,
+        *,
+        project_id: str,
+        reason: str,
+        max_ticks: int | None,
+        max_actions: int | None,
+        max_active_agents: int | None,
+    ) -> None:
         task = asyncio.create_task(
             self._run_scheduled_project_dispatch(
                 project_id=project_id,
@@ -358,7 +393,24 @@ class SystemAutomationLoop:
             name=f"system-automation-dispatch-{project_id}",
         )
         self._project_tasks[project_id] = task
-        task.add_done_callback(lambda _task: self._project_tasks.pop(project_id, None))
+        task.add_done_callback(
+            lambda done_task: self._on_project_dispatch_done(project_id, done_task)
+        )
+
+    def _on_project_dispatch_done(self, project_id: str, task: asyncio.Task[None]) -> None:
+        if self._project_tasks.get(project_id) is not task:
+            return
+        self._project_tasks.pop(project_id, None)
+        pending = self._pending_project_dispatches.pop(project_id, None)
+        if pending is None:
+            return
+        self._schedule_project_dispatch_on_loop(
+            project_id,
+            pending.reason,
+            pending.max_ticks,
+            pending.max_actions,
+            pending.max_active_agents,
+        )
 
     async def _run_scheduled_project_dispatch(
         self,

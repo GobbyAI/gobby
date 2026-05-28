@@ -62,6 +62,7 @@ from gobby.storage.tasks import (
     Task,
 )
 from gobby.storage.tasks._lifecycle_events import BUILD_EVENT_REASON
+from gobby.utils.sql import sql_placeholders
 
 _EXPANDED_EPIC_LEGACY_ROOT_STAGES = frozenset(
     {"ideation", "research", "architecture", "prd", "planning", "expansion", "pr"}
@@ -562,7 +563,48 @@ def _resolve_input(
     plan_file = _resolve_plan_file_path(input_ref, task_manager, project_id, opts)
     if not plan_file.exists() or not plan_file.is_file():
         raise ValueError(f"plan file not found: {input_ref}")
+    existing = _open_plan_file_build(task_manager, plan_file, project_id)
+    if existing is not None:
+        return "epic", existing
     return "plan_file", plan_file
+
+
+def _open_plan_file_build(
+    task_manager: LocalTaskManager,
+    plan_file: Path,
+    project_id: str,
+) -> Task | None:
+    candidates = _plan_file_path_candidates(plan_file)
+    if not candidates:
+        return None
+    placeholders = sql_placeholders(len(candidates))
+    row = task_manager.db.fetchone(
+        f"""
+        SELECT t.id
+          FROM tasks t
+          JOIN task_artifacts a ON a.task_id = t.id
+         WHERE t.project_id = %s
+           AND t.parent_task_id IS NULL
+           AND t.task_type = 'epic'
+           AND t.closed_at IS NULL
+           AND a.plan_file_path IN ({placeholders})
+         ORDER BY t.created_at ASC
+         LIMIT 1
+        """,  # nosec B608 # placeholder count is derived from normalized candidate paths.
+        (project_id, *candidates),
+    )
+    if row is None:
+        return None
+    return task_manager.get_task(str(row["id"]), project_id=project_id)
+
+
+def _plan_file_path_candidates(plan_file: Path) -> tuple[str, ...]:
+    candidates = [str(plan_file)]
+    try:
+        candidates.append(str(plan_file.resolve()))
+    except OSError:
+        pass
+    return tuple(dict.fromkeys(candidates))
 
 
 def _resolve_plan_file_path(
