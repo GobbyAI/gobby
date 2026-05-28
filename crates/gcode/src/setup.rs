@@ -4,14 +4,24 @@ use gobby_core::setup::{
 use postgres::Client;
 use serde::{Deserialize, Serialize};
 
-const DEFAULT_SCHEMA: &str = "gcode";
+const DEFAULT_SCHEMA: &str = "public";
 const NAMESPACE: &str = "gcode";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StandaloneSetupRequest {
     pub standalone: bool,
     pub database_url: Option<String>,
+    pub no_services: bool,
     pub schema: String,
+    pub embedding_provider: Option<String>,
+    pub embedding_api_base: Option<String>,
+    pub embedding_model: Option<String>,
+    pub embedding_vector_dim: Option<usize>,
+    pub embedding_api_key_env: Option<String>,
+    pub falkordb_host: Option<String>,
+    pub falkordb_port: Option<u16>,
+    pub falkordb_password: Option<String>,
+    pub qdrant_url: Option<String>,
 }
 
 impl StandaloneSetupRequest {
@@ -19,9 +29,35 @@ impl StandaloneSetupRequest {
         Self {
             standalone,
             database_url,
+            no_services: false,
             schema: schema.unwrap_or_else(|| DEFAULT_SCHEMA.to_string()),
+            embedding_provider: None,
+            embedding_api_base: None,
+            embedding_model: None,
+            embedding_vector_dim: None,
+            embedding_api_key_env: None,
+            falkordb_host: None,
+            falkordb_port: None,
+            falkordb_password: None,
+            qdrant_url: None,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StandaloneServicesStatus {
+    pub provisioned: bool,
+    pub compose_file: Option<String>,
+    pub health_checks: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StandaloneEmbeddingStatus {
+    pub provider: String,
+    pub api_base: String,
+    pub model: String,
+    pub vector_dim: usize,
+    pub api_key_env: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -31,6 +67,9 @@ pub struct StandaloneSetupStatus {
     pub created: Vec<String>,
     pub skipped: Vec<String>,
     pub failed: Vec<(String, String)>,
+    pub config_file: Option<String>,
+    pub services: Option<StandaloneServicesStatus>,
+    pub embedding: Option<StandaloneEmbeddingStatus>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,10 +112,6 @@ impl StandaloneSetup for GcodeStandaloneSetup {
     }
 
     fn owned_objects(&self) -> Vec<OwnedObject> {
-        let schema = match quote_identifier(&self.schema, "schema") {
-            Ok(schema) => schema,
-            Err(err) => return vec![invalid_object("schema validation", err)],
-        };
         let code_indexed_projects = match self.qualified("code_indexed_projects") {
             Ok(name) => name,
             Err(err) => return vec![invalid_object("code_indexed_projects table", err)],
@@ -101,19 +136,11 @@ impl StandaloneSetup for GcodeStandaloneSetup {
             Ok(name) => name,
             Err(err) => return vec![invalid_object("code_calls table", err)],
         };
-        let code_graph_sync_state = match self.qualified("code_graph_sync_state") {
-            Ok(name) => name,
-            Err(err) => return vec![invalid_object("code_graph_sync_state table", err)],
-        };
-        let code_vector_sync_state = match self.qualified("code_vector_sync_state") {
-            Ok(name) => name,
-            Err(err) => return vec![invalid_object("code_vector_sync_state table", err)],
-        };
 
         vec![
             self.object(
-                "gcode schema",
-                format!("CREATE SCHEMA IF NOT EXISTS {schema};"),
+                "pg_search extension",
+                "CREATE EXTENSION IF NOT EXISTS pg_search;".to_string(),
             ),
             self.object(
                 "code_indexed_projects table",
@@ -123,8 +150,9 @@ impl StandaloneSetup for GcodeStandaloneSetup {
                         root_path TEXT NOT NULL,
                         total_files INTEGER NOT NULL DEFAULT 0,
                         total_symbols INTEGER NOT NULL DEFAULT 0,
-                        last_indexed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                        index_duration_ms INTEGER NOT NULL DEFAULT 0,
+                        last_indexed_at TIMESTAMPTZ,
+                        index_duration_ms INTEGER,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                     );"
                 ),
@@ -149,6 +177,27 @@ impl StandaloneSetup for GcodeStandaloneSetup {
                 ),
             ),
             self.object(
+                "idx_cif_project index",
+                format!(
+                    "CREATE INDEX IF NOT EXISTS idx_cif_project
+                     ON {code_indexed_files}(project_id);"
+                ),
+            ),
+            self.object(
+                "idx_cif_graph_synced index",
+                format!(
+                    "CREATE INDEX IF NOT EXISTS idx_cif_graph_synced
+                     ON {code_indexed_files}(project_id, graph_synced);"
+                ),
+            ),
+            self.object(
+                "idx_cif_vectors_synced index",
+                format!(
+                    "CREATE INDEX IF NOT EXISTS idx_cif_vectors_synced
+                     ON {code_indexed_files}(project_id, vectors_synced);"
+                ),
+            ),
+            self.object(
                 "code_symbols table",
                 format!(
                     "CREATE TABLE IF NOT EXISTS {code_symbols} (
@@ -166,11 +215,44 @@ impl StandaloneSetup for GcodeStandaloneSetup {
                         signature TEXT,
                         docstring TEXT,
                         parent_symbol_id TEXT,
-                        content_hash TEXT NOT NULL DEFAULT '',
+                        content_hash TEXT NOT NULL,
                         summary TEXT,
                         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                     );"
+                ),
+            ),
+            self.object(
+                "idx_cs_project index",
+                format!("CREATE INDEX IF NOT EXISTS idx_cs_project ON {code_symbols}(project_id);"),
+            ),
+            self.object(
+                "idx_cs_file index",
+                format!(
+                    "CREATE INDEX IF NOT EXISTS idx_cs_file
+                     ON {code_symbols}(project_id, file_path);"
+                ),
+            ),
+            self.object(
+                "idx_cs_name index",
+                format!("CREATE INDEX IF NOT EXISTS idx_cs_name ON {code_symbols}(name);"),
+            ),
+            self.object(
+                "idx_cs_qualified index",
+                format!(
+                    "CREATE INDEX IF NOT EXISTS idx_cs_qualified
+                     ON {code_symbols}(qualified_name);"
+                ),
+            ),
+            self.object(
+                "idx_cs_kind index",
+                format!("CREATE INDEX IF NOT EXISTS idx_cs_kind ON {code_symbols}(kind);"),
+            ),
+            self.object(
+                "idx_cs_parent index",
+                format!(
+                    "CREATE INDEX IF NOT EXISTS idx_cs_parent
+                     ON {code_symbols}(parent_symbol_id);"
                 ),
             ),
             self.object(
@@ -184,37 +266,59 @@ impl StandaloneSetup for GcodeStandaloneSetup {
                         line_start INTEGER NOT NULL,
                         line_end INTEGER NOT NULL,
                         content TEXT NOT NULL,
-                        language TEXT NOT NULL,
-                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        language TEXT,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        UNIQUE (project_id, file_path, chunk_index)
                     );"
+                ),
+            ),
+            self.object(
+                "idx_ccc_project index",
+                format!(
+                    "CREATE INDEX IF NOT EXISTS idx_ccc_project
+                     ON {code_content_chunks}(project_id);"
+                ),
+            ),
+            self.object(
+                "idx_ccc_file index",
+                format!(
+                    "CREATE INDEX IF NOT EXISTS idx_ccc_file
+                     ON {code_content_chunks}(project_id, file_path);"
                 ),
             ),
             self.object(
                 "code_imports table",
                 format!(
                     "CREATE TABLE IF NOT EXISTS {code_imports} (
+                        id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                         project_id TEXT NOT NULL,
                         source_file TEXT NOT NULL,
                         target_module TEXT NOT NULL,
-                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                        PRIMARY KEY (project_id, source_file, target_module)
+                        UNIQUE (project_id, source_file, target_module)
                     );"
+                ),
+            ),
+            self.object(
+                "idx_ci_file index",
+                format!(
+                    "CREATE INDEX IF NOT EXISTS idx_ci_file
+                     ON {code_imports}(project_id, source_file);"
                 ),
             ),
             self.object(
                 "code_calls table",
                 format!(
                     "CREATE TABLE IF NOT EXISTS {code_calls} (
+                        id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                         project_id TEXT NOT NULL,
                         caller_symbol_id TEXT NOT NULL,
-                        callee_symbol_id TEXT NOT NULL,
+                        callee_symbol_id TEXT NOT NULL DEFAULT '',
                         callee_name TEXT NOT NULL,
-                        callee_target_kind TEXT NOT NULL,
-                        callee_external_module TEXT NOT NULL,
+                        callee_target_kind TEXT NOT NULL DEFAULT 'unresolved',
+                        callee_external_module TEXT NOT NULL DEFAULT '',
                         file_path TEXT NOT NULL,
-                        line INTEGER NOT NULL,
-                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                        PRIMARY KEY (
+                        line INTEGER NOT NULL DEFAULT 0,
+                        UNIQUE (
                             project_id, caller_symbol_id, callee_symbol_id, callee_name,
                             callee_target_kind, callee_external_module, file_path, line
                         )
@@ -222,29 +326,24 @@ impl StandaloneSetup for GcodeStandaloneSetup {
                 ),
             ),
             self.object(
-                "code_graph_sync_state table",
+                "idx_cc_file index",
                 format!(
-                    "CREATE TABLE IF NOT EXISTS {code_graph_sync_state} (
-                        project_id TEXT NOT NULL,
-                        file_path TEXT NOT NULL,
-                        synced BOOLEAN NOT NULL DEFAULT FALSE,
-                        attempted_at TIMESTAMPTZ,
-                        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                        PRIMARY KEY (project_id, file_path)
-                    );"
+                    "CREATE INDEX IF NOT EXISTS idx_cc_file
+                     ON {code_calls}(project_id, file_path);"
                 ),
             ),
             self.object(
-                "code_vector_sync_state table",
+                "idx_cc_caller index",
                 format!(
-                    "CREATE TABLE IF NOT EXISTS {code_vector_sync_state} (
-                        project_id TEXT NOT NULL,
-                        file_path TEXT NOT NULL,
-                        synced BOOLEAN NOT NULL DEFAULT FALSE,
-                        attempted_at TIMESTAMPTZ,
-                        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                        PRIMARY KEY (project_id, file_path)
-                    );"
+                    "CREATE INDEX IF NOT EXISTS idx_cc_caller
+                     ON {code_calls}(project_id, caller_symbol_id);"
+                ),
+            ),
+            self.object(
+                "idx_cc_target index",
+                format!(
+                    "CREATE INDEX IF NOT EXISTS idx_cc_target
+                     ON {code_calls}(project_id, callee_target_kind, callee_symbol_id, callee_name);"
                 ),
             ),
             self.object(
@@ -252,7 +351,7 @@ impl StandaloneSetup for GcodeStandaloneSetup {
                 format!(
                     "CREATE INDEX IF NOT EXISTS code_symbols_search_bm25
                      ON {code_symbols}
-                     USING bm25 (id, name, qualified_name, kind, language, signature, docstring, summary)
+                     USING bm25 (id, name, qualified_name, signature, docstring, summary)
                      WITH (key_field = 'id');"
                 ),
             ),
@@ -261,7 +360,7 @@ impl StandaloneSetup for GcodeStandaloneSetup {
                 format!(
                     "CREATE INDEX IF NOT EXISTS code_content_search_bm25
                      ON {code_content_chunks}
-                     USING bm25 (id, content, language)
+                     USING bm25 (id, content)
                      WITH (key_field = 'id');"
                 ),
             ),
@@ -287,9 +386,7 @@ pub fn run_standalone_setup(
     request: &StandaloneSetupRequest,
     client: &mut Client,
 ) -> Result<StandaloneSetupStatus, SetupError> {
-    if !request.standalone {
-        return Err(SetupError::AttachedModeRefused);
-    }
+    validate_standalone_request(request)?;
 
     let setup = GcodeStandaloneSetup::new(request.schema.clone());
     let mut ctx = SetupContext {
@@ -306,7 +403,24 @@ pub fn run_standalone_setup(
         created: report.created,
         skipped: report.skipped,
         failed: report.failed,
+        config_file: None,
+        services: None,
+        embedding: None,
     })
+}
+
+pub fn validate_standalone_request(request: &StandaloneSetupRequest) -> Result<(), SetupError> {
+    if !request.standalone {
+        return Err(SetupError::AttachedModeRefused);
+    }
+    if request.schema != DEFAULT_SCHEMA {
+        return Err(SetupError::CreationFailed {
+            object: "schema".to_string(),
+            message: "standalone code-index schema must be `public` for daemon adoption"
+                .to_string(),
+        });
+    }
+    Ok(())
 }
 
 fn execute_postgres_ddl(
@@ -366,10 +480,10 @@ mod tests {
     use gobby_core::setup::{StandaloneSetup, StoreKind};
 
     #[test]
-    fn standalone_setup_is_scoped() {
-        let setup = GcodeStandaloneSetup::new("gcode_ci");
+    fn standalone_setup_declares_public_daemon_code_index_subset() {
+        let setup = GcodeStandaloneSetup::new("public");
         assert_eq!(setup.namespace(), "gcode");
-        assert_eq!(setup.schema(), "gcode_ci");
+        assert_eq!(setup.schema(), "public");
 
         let object_names: Vec<String> = setup
             .owned_objects()
@@ -388,10 +502,18 @@ mod tests {
                 .iter()
                 .any(|name| name.contains("content_chunks"))
         );
-        assert!(object_names.iter().any(|name| name.contains("sync_state")));
+        assert!(object_names.iter().any(|name| name.contains("idx_cif")));
         assert!(object_names.iter().any(|name| name.contains("bm25")));
 
-        let forbidden = ["config_store", ".gobby/project.json", "project_json"];
+        let forbidden = [
+            "config_store",
+            "schema_migrations",
+            "secrets",
+            ".gobby/project.json",
+            "project_json",
+            "code_graph_sync_state",
+            "code_vector_sync_state",
+        ];
         for name in object_names {
             for forbidden_name in forbidden {
                 assert!(
@@ -407,7 +529,7 @@ mod tests {
         fn assert_standalone_setup<T: StandaloneSetup>() {}
         assert_standalone_setup::<GcodeStandaloneSetup>();
 
-        let setup = GcodeStandaloneSetup::new("gcode_contract");
+        let setup = GcodeStandaloneSetup::new("public");
         let objects = setup.owned_objects();
         assert!(
             objects
@@ -424,5 +546,21 @@ mod tests {
                 .iter()
                 .any(|object| object.name == "code_symbols_search_bm25 index")
         );
+        assert!(
+            objects
+                .iter()
+                .any(|object| object.name == "pg_search extension")
+        );
+    }
+
+    #[test]
+    fn standalone_setup_rejects_non_public_schema() {
+        let request = StandaloneSetupRequest::new(
+            true,
+            Some("postgresql://localhost/gcode".to_string()),
+            Some("gcode_ci".to_string()),
+        );
+        let err = validate_standalone_request(&request).expect_err("non-public schema fails");
+        assert!(err.to_string().contains("public"));
     }
 }

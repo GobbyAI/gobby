@@ -41,9 +41,39 @@ enum Command {
         /// PostgreSQL database URL to set up
         #[arg(long)]
         database_url: Option<String>,
+        /// Skip Docker service provisioning
+        #[arg(long)]
+        no_services: bool,
         /// PostgreSQL schema namespace for gcode-owned objects
-        #[arg(long, default_value = "gcode")]
+        #[arg(long, default_value = "public")]
         schema: String,
+        /// Embedding provider to store in gcore.yaml
+        #[arg(long)]
+        embedding_provider: Option<String>,
+        /// OpenAI-compatible embedding API base URL
+        #[arg(long)]
+        embedding_api_base: Option<String>,
+        /// Embedding model name
+        #[arg(long)]
+        embedding_model: Option<String>,
+        /// Embedding vector dimension
+        #[arg(long)]
+        embedding_vector_dim: Option<usize>,
+        /// Environment variable name containing the embedding API key
+        #[arg(long)]
+        embedding_api_key_env: Option<String>,
+        /// FalkorDB host to store in gcore.yaml
+        #[arg(long)]
+        falkordb_host: Option<String>,
+        /// FalkorDB port to store in gcore.yaml
+        #[arg(long)]
+        falkordb_port: Option<u16>,
+        /// FalkorDB password for Docker provisioning or external config
+        #[arg(long)]
+        falkordb_password: Option<String>,
+        /// Qdrant URL to store in gcore.yaml when services are not provisioned
+        #[arg(long)]
+        qdrant_url: Option<String>,
     },
     /// Index a directory (full or incremental). Writes symbols, files, and chunks to PostgreSQL hub
     Index {
@@ -315,13 +345,33 @@ where
         Command::Setup {
             standalone,
             database_url,
+            no_services,
             schema,
+            embedding_provider,
+            embedding_api_base,
+            embedding_model,
+            embedding_vector_dim,
+            embedding_api_key_env,
+            falkordb_host,
+            falkordb_port,
+            falkordb_password,
+            qdrant_url,
         } => {
-            let request = setup::StandaloneSetupRequest::new(
+            let mut request = setup::StandaloneSetupRequest::new(
                 *standalone,
                 database_url.clone(),
                 Some(schema.clone()),
             );
+            request.no_services = *no_services;
+            request.embedding_provider = embedding_provider.clone();
+            request.embedding_api_base = embedding_api_base.clone();
+            request.embedding_model = embedding_model.clone();
+            request.embedding_vector_dim = *embedding_vector_dim;
+            request.embedding_api_key_env = embedding_api_key_env.clone();
+            request.falkordb_host = falkordb_host.clone();
+            request.falkordb_port = *falkordb_port;
+            request.falkordb_password = falkordb_password.clone();
+            request.qdrant_url = qdrant_url.clone();
             setup_runner(request, cli.format, cli.quiet)?;
             Ok(true)
         }
@@ -1076,8 +1126,13 @@ mod tests {
             "--standalone",
             "--database-url",
             "postgresql://localhost/gcode",
-            "--schema",
-            "gcode_ci",
+            "--no-services",
+            "--embedding-provider",
+            "ollama",
+            "--embedding-vector-dim",
+            "768",
+            "--falkordb-password",
+            "secret-pass",
         ])
         .expect("setup parses");
 
@@ -1085,14 +1140,23 @@ mod tests {
             Command::Setup {
                 standalone,
                 database_url,
+                no_services,
                 schema,
+                embedding_provider,
+                embedding_vector_dim,
+                falkordb_password,
+                ..
             } => {
                 assert!(standalone);
                 assert_eq!(
                     database_url.as_deref(),
                     Some("postgresql://localhost/gcode")
                 );
-                assert_eq!(schema, "gcode_ci");
+                assert!(no_services);
+                assert_eq!(schema, "public");
+                assert_eq!(embedding_provider.as_deref(), Some("ollama"));
+                assert_eq!(embedding_vector_dim, Some(768));
+                assert_eq!(falkordb_password.as_deref(), Some("secret-pass"));
             }
             _ => panic!("expected setup command"),
         }
@@ -1109,8 +1173,8 @@ mod tests {
             "--standalone",
             "--database-url",
             "postgresql://localhost/gcode",
-            "--schema",
-            "gcode_ci",
+            "--embedding-api-base",
+            "https://embeddings.example/v1",
         ])
         .expect("setup parses");
 
@@ -1122,7 +1186,11 @@ mod tests {
                 request.database_url.as_deref(),
                 Some("postgresql://localhost/gcode")
             );
-            assert_eq!(request.schema, "gcode_ci");
+            assert_eq!(request.schema, "public");
+            assert_eq!(
+                request.embedding_api_base.as_deref(),
+                Some("https://embeddings.example/v1")
+            );
             Ok(())
         })
         .expect("early dispatch succeeds without resolving project context");

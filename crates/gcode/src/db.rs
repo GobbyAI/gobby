@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context as _, anyhow, bail};
+use gobby_core::provisioning::{GCORE_CONFIG_FILENAME, StandaloneConfig};
 use postgres::{Client, GenericClient};
 use serde::Deserialize;
 
@@ -59,11 +60,19 @@ fn resolve_database_url_from_sources(
 ) -> anyhow::Result<String> {
     let path = home.join("bootstrap.yaml");
 
+    if let Some(database_url) = resolve_database_url_from_env(get_var) {
+        return Ok(database_url);
+    }
+
     if let Ok(database_url) = broker_resolver(&path) {
         return Ok(database_url);
     }
 
-    if let Some(database_url) = resolve_database_url_from_env(get_var) {
+    if let Some(database_url) = resolve_database_url_from_bootstrap_file(&path)? {
+        return Ok(database_url);
+    }
+
+    if let Some(database_url) = resolve_database_url_from_gcore_config(home)? {
         return Ok(database_url);
     }
 
@@ -73,14 +82,28 @@ fn resolve_database_url_from_sources(
         return Ok(database_url);
     }
 
-    let contents = std::fs::read_to_string(&path).with_context(|| {
-        format!(
-            "missing Gobby bootstrap at {}. Configure the Gobby PostgreSQL hub before running gcode.",
-            path.display()
-        )
-    })?;
+    bail!(
+        "missing Gobby PostgreSQL configuration. Run `gcode setup --standalone`, set {GCODE_DATABASE_URL_ENV}, or configure the Gobby daemon bootstrap."
+    )
+}
+
+fn resolve_database_url_from_bootstrap_file(path: &Path) -> anyhow::Result<Option<String>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let contents = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read Gobby bootstrap at {}", path.display()))?;
     let bootstrap = parse_bootstrap_database(&contents)?;
-    resolve_database_url_from_bootstrap(&bootstrap)
+    resolve_database_url_from_bootstrap(&bootstrap).map(Some)
+}
+
+fn resolve_database_url_from_gcore_config(home: &Path) -> anyhow::Result<Option<String>> {
+    let Some(config) = StandaloneConfig::read_at(&home.join(GCORE_CONFIG_FILENAME))? else {
+        return Ok(None);
+    };
+    Ok(config
+        .get("databases.postgres.dsn")
+        .and_then(|value| non_empty_trimmed(Some(value.to_string()))))
 }
 
 fn resolve_database_url_from_env(
@@ -527,7 +550,7 @@ mod tests {
     }
 
     #[test]
-    fn database_url_sources_prefer_daemon_broker() {
+    fn database_url_sources_prefer_env_over_daemon_broker() {
         let home = tempfile::tempdir().expect("temp home");
 
         let resolved = resolve_database_url_from_sources(
@@ -540,24 +563,21 @@ mod tests {
         )
         .expect("resolve database url");
 
-        assert_eq!(resolved, "postgresql://broker/db");
+        assert_eq!(resolved, "postgresql://env/db");
     }
 
     #[test]
-    fn database_url_sources_fall_back_to_env_when_daemon_is_unavailable() {
+    fn database_url_sources_use_daemon_broker_after_env() {
         let home = tempfile::tempdir().expect("temp home");
 
         let resolved = resolve_database_url_from_sources(
             home.path(),
-            |_| bail!("daemon unavailable"),
-            |name| match name {
-                GOBBY_POSTGRES_DSN_ENV => Some("postgresql://env/db".to_string()),
-                _ => None,
-            },
+            |_| Ok("postgresql://broker/db".to_string()),
+            |_| None,
         )
         .expect("resolve database url");
 
-        assert_eq!(resolved, "postgresql://env/db");
+        assert_eq!(resolved, "postgresql://broker/db");
     }
 
     #[test]
@@ -577,6 +597,30 @@ mod tests {
         .expect("resolve database url");
 
         assert_eq!(resolved, "postgresql://inline/db");
+    }
+
+    #[test]
+    fn database_url_sources_fall_back_to_gcore_before_legacy_gcode_config() {
+        let home = tempfile::tempdir().expect("temp home");
+        std::fs::write(
+            home.path().join(GCORE_CONFIG_FILENAME),
+            "databases.postgres.dsn: postgresql://gcore/db\n",
+        )
+        .expect("write gcore config");
+        std::fs::write(
+            home.path().join(GCODE_CONFIG_FILENAME),
+            "database_url: postgresql://legacy/db\n",
+        )
+        .expect("write legacy config");
+
+        let resolved = resolve_database_url_from_sources(
+            home.path(),
+            |_| bail!("daemon unavailable"),
+            |_| None,
+        )
+        .expect("resolve database url");
+
+        assert_eq!(resolved, "postgresql://gcore/db");
     }
 
     #[test]

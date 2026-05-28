@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 use gobby_core::config::ConfigSource;
 use gobby_core::project::{find_project_root, read_project_id};
+use gobby_core::provisioning::{GCORE_CONFIG_FILENAME, StandaloneConfig};
 use postgres::Client;
 
 use crate::db;
@@ -146,11 +147,12 @@ impl Context {
         let project_id = identity.project_id;
 
         // Resolve service configs from config_store (best-effort).
+        let standalone_config = read_standalone_config();
         let mut conn = db::connect_readonly(&database_url)?;
-        let falkordb = resolve_falkordb_config(&mut conn, quiet);
-        let qdrant = resolve_qdrant_config(&mut conn, quiet);
-        let embedding = resolve_embedding_config(&mut conn, quiet);
-        let code_vectors = resolve_code_vector_settings(&mut conn)?;
+        let falkordb = resolve_falkordb_config(&mut conn, standalone_config.clone(), quiet);
+        let qdrant = resolve_qdrant_config(&mut conn, standalone_config.clone(), quiet);
+        let embedding = resolve_embedding_config(&mut conn, standalone_config.clone(), quiet);
+        let code_vectors = resolve_code_vector_settings(&mut conn, standalone_config)?;
 
         let daemon_url = resolve_daemon_url();
 
@@ -421,6 +423,32 @@ impl gobby_core::config::ConfigSource for PostgresConfigSource<'_> {
     }
 }
 
+struct FallbackConfigSource<'a> {
+    postgres: PostgresConfigSource<'a>,
+    standalone: Option<StandaloneConfig>,
+}
+
+impl ConfigSource for FallbackConfigSource<'_> {
+    fn config_value(&mut self, key: &str) -> Option<String> {
+        self.postgres.config_value(key).or_else(|| {
+            self.standalone
+                .as_mut()
+                .and_then(|standalone| standalone.config_value(key))
+        })
+    }
+
+    fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
+        self.postgres.resolve_value(value)
+    }
+}
+
+fn read_standalone_config() -> Option<StandaloneConfig> {
+    let home = db::gobby_home().ok()?;
+    StandaloneConfig::read_at(&home.join(GCORE_CONFIG_FILENAME))
+        .ok()
+        .flatten()
+}
+
 #[cfg(test)]
 struct ClosureConfigSource<R, S> {
     read_config_value: R,
@@ -514,8 +542,15 @@ where
 }
 
 /// Resolve FalkorDB configuration from config_store + env vars.
-fn resolve_falkordb_config(conn: &mut Client, _quiet: bool) -> Option<FalkorConfig> {
-    let mut source = PostgresConfigSource { conn };
+fn resolve_falkordb_config(
+    conn: &mut Client,
+    standalone: Option<StandaloneConfig>,
+    _quiet: bool,
+) -> Option<FalkorConfig> {
+    let mut source = FallbackConfigSource {
+        postgres: PostgresConfigSource { conn },
+        standalone,
+    };
     resolve_falkordb_config_from_source(&mut source)
 }
 
@@ -531,23 +566,41 @@ fn resolve_falkordb_config_from_source(source: &mut impl ConfigSource) -> Option
 }
 
 /// Resolve Qdrant configuration from config_store + env vars.
-fn resolve_qdrant_config(conn: &mut Client, _quiet: bool) -> Option<QdrantConfig> {
-    let mut source = PostgresConfigSource { conn };
+fn resolve_qdrant_config(
+    conn: &mut Client,
+    standalone: Option<StandaloneConfig>,
+    _quiet: bool,
+) -> Option<QdrantConfig> {
+    let mut source = FallbackConfigSource {
+        postgres: PostgresConfigSource { conn },
+        standalone,
+    };
     gobby_core::config::resolve_qdrant_config(&mut source)
 }
 
 /// Resolve embedding API configuration from config_store + env vars.
 ///
 /// Returns None if no api_base is found (→ no semantic search, BM25 only).
-fn resolve_embedding_config(conn: &mut Client, _quiet: bool) -> Option<EmbeddingConfig> {
-    let mut source = PostgresConfigSource { conn };
+fn resolve_embedding_config(
+    conn: &mut Client,
+    standalone: Option<StandaloneConfig>,
+    _quiet: bool,
+) -> Option<EmbeddingConfig> {
+    let mut source = FallbackConfigSource {
+        postgres: PostgresConfigSource { conn },
+        standalone,
+    };
     gobby_core::config::resolve_embedding_config(&mut source)
 }
 
 pub(crate) fn resolve_code_vector_settings(
     conn: &mut Client,
+    standalone: Option<StandaloneConfig>,
 ) -> Result<CodeVectorSettings, CodeVectorConfigError> {
-    let mut source = PostgresConfigSource { conn };
+    let mut source = FallbackConfigSource {
+        postgres: PostgresConfigSource { conn },
+        standalone,
+    };
     resolve_code_vector_settings_from_source(&mut source)
 }
 

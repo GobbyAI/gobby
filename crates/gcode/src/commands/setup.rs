@@ -1,20 +1,59 @@
 use anyhow::Context as _;
+use gobby_core::provisioning::{
+    DEFAULT_EMBEDDING_VECTOR_DIM, DEFAULT_LM_STUDIO_API_BASE, DEFAULT_OLLAMA_API_BASE,
+    DEFAULT_OLLAMA_MODEL, DockerProvisioningReport, DockerServiceOptions, EmbeddingBootstrap,
+    StandaloneConfig, compose_file_path, gcore_config_path, provision_docker_services,
+};
 use postgres::{Client, NoTls};
+use std::net::{TcpStream, ToSocketAddrs};
+use std::time::Duration;
 
 use crate::db;
 use crate::output::{self, Format};
-use crate::setup::{self, StandaloneSetupRequest};
+use crate::setup::{
+    self, StandaloneEmbeddingStatus, StandaloneServicesStatus, StandaloneSetupRequest,
+};
 
 pub fn run(request: StandaloneSetupRequest, format: Format, quiet: bool) -> anyhow::Result<()> {
-    let database_url = request
-        .database_url
-        .as_deref()
-        .map(str::to_string)
-        .map(Ok)
-        .unwrap_or_else(db::resolve_database_url)?;
-    let mut client = Client::connect(&database_url, NoTls)
-        .context("failed to connect to the standalone PostgreSQL database")?;
-    let status = setup::run_standalone_setup(&request, &mut client)?;
+    setup::validate_standalone_request(&request)?;
+
+    let home = db::gobby_home()?;
+    let mut service_options = DockerServiceOptions::new(home.clone());
+    apply_service_overrides(&request, &mut service_options);
+
+    let embedding = resolve_embedding_bootstrap(&request)?;
+    let (database_url, service_report) = resolve_or_provision_database(&request, &service_options)?;
+    let mut client = connect_postgres_with_retry(&database_url, service_report.is_some())?;
+    let mut status = setup::run_standalone_setup(&request, &mut client)?;
+
+    let config_file = write_gcore_config(
+        &home,
+        &request,
+        &service_options,
+        &database_url,
+        service_report.as_ref(),
+        embedding.as_ref(),
+    )?;
+    status.config_file = Some(config_file.display().to_string());
+    status.services = Some(match service_report {
+        Some(report) => StandaloneServicesStatus {
+            provisioned: true,
+            compose_file: Some(report.compose_file.display().to_string()),
+            health_checks: report.health_checks,
+        },
+        None => StandaloneServicesStatus {
+            provisioned: false,
+            compose_file: service_configured_compose_file(&home),
+            health_checks: Vec::new(),
+        },
+    });
+    status.embedding = embedding.map(|embedding| StandaloneEmbeddingStatus {
+        provider: embedding.provider,
+        api_base: embedding.api_base,
+        model: embedding.model,
+        vector_dim: embedding.vector_dim,
+        api_key_env: embedding.api_key_env,
+    });
 
     match format {
         Format::Json => output::print_json(&status),
@@ -30,42 +69,253 @@ pub fn run(request: StandaloneSetupRequest, format: Format, quiet: bool) -> anyh
     }
 }
 
+fn resolve_or_provision_database(
+    request: &StandaloneSetupRequest,
+    service_options: &DockerServiceOptions,
+) -> anyhow::Result<(String, Option<DockerProvisioningReport>)> {
+    if let Some(database_url) = request.database_url.as_deref() {
+        return Ok((database_url.to_string(), None));
+    }
+
+    if request.no_services {
+        return db::resolve_database_url().map(|url| (url, None));
+    }
+
+    match db::resolve_database_url() {
+        Ok(database_url) => Ok((database_url, None)),
+        Err(_) => {
+            let report = provision_docker_services(service_options)
+                .context("failed to provision standalone Docker services")?;
+            Ok((service_options.database_url(), Some(report)))
+        }
+    }
+}
+
+fn apply_service_overrides(
+    request: &StandaloneSetupRequest,
+    service_options: &mut DockerServiceOptions,
+) {
+    if let Some(host) = request.falkordb_host.as_deref() {
+        service_options.falkordb_host = host.to_string();
+    }
+    if let Some(port) = request.falkordb_port {
+        service_options.falkordb_port = port;
+    }
+    if let Some(password) = request.falkordb_password.as_deref() {
+        service_options.falkordb_password = password.to_string();
+    }
+}
+
+fn connect_postgres_with_retry(database_url: &str, retry: bool) -> anyhow::Result<Client> {
+    let attempts = if retry { 30 } else { 1 };
+    let mut last_error = None;
+    for attempt in 0..attempts {
+        match Client::connect(database_url, NoTls) {
+            Ok(client) => return Ok(client),
+            Err(err) => last_error = Some(err),
+        }
+        if attempt + 1 < attempts {
+            std::thread::sleep(Duration::from_secs(2));
+        }
+    }
+    match last_error {
+        Some(err) => Err(anyhow::Error::new(err)
+            .context("failed to connect to the standalone PostgreSQL database")),
+        None => anyhow::bail!("failed to connect to the standalone PostgreSQL database"),
+    }
+}
+
+fn write_gcore_config(
+    home: &std::path::Path,
+    request: &StandaloneSetupRequest,
+    service_options: &DockerServiceOptions,
+    database_url: &str,
+    service_report: Option<&DockerProvisioningReport>,
+    embedding: Option<&EmbeddingBootstrap>,
+) -> anyhow::Result<std::path::PathBuf> {
+    let path = gcore_config_path(home);
+    let mut config = StandaloneConfig::read_at(&path)?.unwrap_or_else(StandaloneConfig::empty);
+
+    config.set("databases.postgres.dsn", database_url);
+
+    if let Some(report) = service_report {
+        config.set("databases.falkordb.host", &service_options.falkordb_host);
+        config.set(
+            "databases.falkordb.port",
+            service_options.falkordb_port.to_string(),
+        );
+        config.set(
+            "databases.falkordb.password",
+            &service_options.falkordb_password,
+        );
+        config.remove("databases.falkordb.requirepass");
+        config.set("databases.qdrant.url", service_options.qdrant_url());
+        config.set(
+            "services.compose_file",
+            report.compose_file.display().to_string(),
+        );
+    } else {
+        if let Some(host) = request.falkordb_host.as_deref() {
+            config.set("databases.falkordb.host", host);
+        }
+        if let Some(port) = request.falkordb_port {
+            config.set("databases.falkordb.port", port.to_string());
+        }
+        if let Some(password) = request.falkordb_password.as_deref() {
+            config.set("databases.falkordb.password", password);
+            config.remove("databases.falkordb.requirepass");
+        }
+        if let Some(qdrant_url) = request.qdrant_url.as_deref() {
+            config.set("databases.qdrant.url", qdrant_url);
+        }
+    }
+
+    if let Some(embedding) = embedding {
+        config.set("embeddings.provider", &embedding.provider);
+        config.set("embeddings.api_base", &embedding.api_base);
+        config.set("embeddings.model", &embedding.model);
+        config.set("embeddings.vector_dim", embedding.vector_dim.to_string());
+        match embedding.api_key_env.as_deref() {
+            Some(api_key_env) => config.set("embeddings.api_key_env", api_key_env),
+            None => config.remove("embeddings.api_key_env"),
+        }
+    }
+
+    config.write_at(&path)?;
+    Ok(path)
+}
+
+fn service_configured_compose_file(home: &std::path::Path) -> Option<String> {
+    let compose = compose_file_path(home);
+    compose.exists().then(|| compose.display().to_string())
+}
+
+fn resolve_embedding_bootstrap(
+    request: &StandaloneSetupRequest,
+) -> anyhow::Result<Option<EmbeddingBootstrap>> {
+    let provider = request
+        .embedding_provider
+        .as_deref()
+        .map(|provider| provider.trim().to_ascii_lowercase());
+
+    let mut embedding = match provider.as_deref() {
+        Some("none") => return Ok(None),
+        Some("lm-studio") | Some("lmstudio") => EmbeddingBootstrap::lm_studio(),
+        Some("ollama") => EmbeddingBootstrap::ollama(),
+        Some("openai-compatible") | Some("openai") | Some("remote") => {
+            explicit_embedding_bootstrap(request)?
+        }
+        Some(other) => anyhow::bail!(
+            "unsupported embedding provider `{other}`; expected lm-studio, ollama, openai-compatible, or none"
+        ),
+        None if request.embedding_api_base.is_some() || request.embedding_model.is_some() => {
+            explicit_embedding_bootstrap(request)?
+        }
+        None if endpoint_reachable(DEFAULT_LM_STUDIO_API_BASE) => EmbeddingBootstrap::lm_studio(),
+        None if endpoint_reachable(DEFAULT_OLLAMA_API_BASE) => EmbeddingBootstrap::ollama(),
+        None => EmbeddingBootstrap::lm_studio(),
+    };
+
+    if let Some(api_base) = request.embedding_api_base.as_deref() {
+        embedding.api_base = api_base.to_string();
+    }
+    if let Some(model) = request.embedding_model.as_deref() {
+        embedding.model = model.to_string();
+    }
+    if let Some(vector_dim) = request.embedding_vector_dim {
+        if vector_dim == 0 {
+            anyhow::bail!("--embedding-vector-dim must be positive");
+        }
+        embedding.vector_dim = vector_dim;
+    }
+    if let Some(api_key_env) = request.embedding_api_key_env.as_deref() {
+        embedding.api_key_env = Some(api_key_env.to_string());
+    }
+
+    Ok(Some(embedding))
+}
+
+fn explicit_embedding_bootstrap(
+    request: &StandaloneSetupRequest,
+) -> anyhow::Result<EmbeddingBootstrap> {
+    let Some(api_base) = request.embedding_api_base.as_deref() else {
+        anyhow::bail!("--embedding-api-base is required for openai-compatible embeddings");
+    };
+    Ok(EmbeddingBootstrap {
+        provider: "openai-compatible".to_string(),
+        api_base: api_base.to_string(),
+        model: request
+            .embedding_model
+            .clone()
+            .unwrap_or_else(|| DEFAULT_OLLAMA_MODEL.to_string()),
+        vector_dim: request
+            .embedding_vector_dim
+            .unwrap_or(DEFAULT_EMBEDDING_VECTOR_DIM),
+        api_key_env: request.embedding_api_key_env.clone(),
+    })
+}
+
+fn endpoint_reachable(api_base: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(api_base) else {
+        return false;
+    };
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    let Some(port) = url.port_or_known_default() else {
+        return false;
+    };
+    let Ok(addrs) = (host, port).to_socket_addrs() else {
+        return false;
+    };
+    addrs
+        .into_iter()
+        .any(|addr| TcpStream::connect_timeout(&addr, Duration::from_millis(150)).is_ok())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn standalone_command_is_scoped() {
+    #[serial_test::serial]
+    fn standalone_command_installs_public_code_index_subset() {
         let Ok(database_url) = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL") else {
             return;
         };
-        let schema = format!("gcode_setup_test_{}", std::process::id());
-        let request = StandaloneSetupRequest {
-            standalone: true,
-            database_url: Some(database_url.clone()),
-            schema: schema.clone(),
-        };
+        let home = tempfile::tempdir().expect("temp home");
+        unsafe { std::env::set_var("GOBBY_HOME", home.path()) };
+        let request = StandaloneSetupRequest::new(true, Some(database_url.clone()), None);
 
         run(request, Format::Json, true).expect("standalone setup runs");
 
         let mut client =
             postgres::Client::connect(&database_url, postgres::NoTls).expect("connect test db");
-        let table_name = format!("{schema}.code_symbols");
         let exists: bool = client
-            .query_one("SELECT to_regclass($1) IS NOT NULL", &[&table_name])
+            .query_one("SELECT to_regclass('public.code_symbols') IS NOT NULL", &[])
             .expect("check code_symbols")
             .get(0);
         assert!(exists);
 
-        let forbidden = format!("{schema}.config_store");
         let forbidden_exists: bool = client
-            .query_one("SELECT to_regclass($1) IS NOT NULL", &[&forbidden])
+            .query_one("SELECT to_regclass('public.config_store') IS NOT NULL", &[])
             .expect("check config_store")
             .get(0);
         assert!(!forbidden_exists);
+        assert!(home.path().join("gcore.yaml").exists());
 
         client
-            .batch_execute(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE"))
-            .expect("drop test schema");
+            .batch_execute(
+                "DROP INDEX IF EXISTS public.code_symbols_search_bm25;
+                 DROP INDEX IF EXISTS public.code_content_search_bm25;
+                 DROP TABLE IF EXISTS public.code_calls;
+                 DROP TABLE IF EXISTS public.code_imports;
+                 DROP TABLE IF EXISTS public.code_content_chunks;
+                 DROP TABLE IF EXISTS public.code_symbols;
+                 DROP TABLE IF EXISTS public.code_indexed_files;
+                 DROP TABLE IF EXISTS public.code_indexed_projects;",
+            )
+            .expect("drop code-index test objects");
+        unsafe { std::env::remove_var("GOBBY_HOME") };
     }
 }

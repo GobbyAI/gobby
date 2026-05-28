@@ -12,7 +12,7 @@ const REQUIRED_TABLES: &[&str] = &[
 
 const REQUIRED_BM25_INDEXES: &[&str] = &["code_symbols_search_bm25", "code_content_search_bm25"];
 
-const MIGRATION_HINT: &str = "Configure the Gobby PostgreSQL hub with the required code-index schema, `pg_search` extension, and BM25 indexes. For standalone databases, run `gcode setup --standalone --database-url <dsn> --schema <name>`.";
+const MIGRATION_HINT: &str = "Configure the Gobby PostgreSQL hub with the required code-index schema, `pg_search` extension, and BM25 indexes. For standalone databases, run `gcode setup --standalone --database-url <dsn>`.";
 
 /// Validate that the Gobby-owned PostgreSQL hub schema exists.
 ///

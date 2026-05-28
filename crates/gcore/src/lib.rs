@@ -9,6 +9,7 @@
 pub mod bootstrap;
 pub mod daemon_url;
 pub mod project;
+pub mod provisioning;
 
 // Always available - lightweight foundation modules.
 pub mod config;
