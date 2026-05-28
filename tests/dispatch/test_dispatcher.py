@@ -2594,6 +2594,48 @@ async def test_startup_sweep_clears_expired_leases(temp_db, sample_project) -> N
 
 
 @pytest.mark.asyncio
+async def test_startup_sweep_preserves_expired_leases_for_active_runs(
+    temp_db,
+    sample_project,
+) -> None:
+    """Startup sweep preserves expired mutexes that still belong to active runs."""
+    from gobby.dispatch import dispatcher
+    from gobby.storage.agents import LocalAgentRunManager
+    from gobby.storage.sessions import SYSTEM_SESSION_ID
+
+    active_task = _task(temp_db, sample_project, "Active", allow_automation=False)
+    orphan_task = _task(temp_db, sample_project, "Orphan", allow_automation=False)
+    run = LocalAgentRunManager(temp_db).create(
+        parent_session_id=SYSTEM_SESSION_ID,
+        provider="codex",
+        prompt="work",
+        task_id=active_task.id,
+    )
+    storage = _mutex_storage(temp_db)
+    past = datetime.now(UTC) - timedelta(seconds=60)
+    storage.acquire_mutex(
+        active_task.id,
+        holder="old",
+        kind="test",
+        ttl_seconds=1,
+        run_id=run.id,
+        now=past,
+    )
+    storage.acquire_mutex(
+        orphan_task.id,
+        holder="old",
+        kind="test",
+        ttl_seconds=1,
+        now=past,
+    )
+
+    await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"], startup=True)
+
+    assert storage.get_mutex(active_task.id) is not None
+    assert storage.get_mutex(orphan_task.id) is None
+
+
+@pytest.mark.asyncio
 async def test_heartbeat_preserves_no_run_mutex_with_live_lease(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,

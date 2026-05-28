@@ -46,6 +46,7 @@ from gobby.mcp_proxy.tools.workflows._pipeline_execution import (
     _execute_pipeline_background,
     _register_background_task,
 )
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._ancestor_gate import find_child_development_ancestor_gate
 from gobby.storage.tasks._artifacts import TaskArtifacts
@@ -846,7 +847,23 @@ def allocate_expansion_run_id() -> str:
 
 
 def sweep_expired_leases(storage: TaskDispatchMutexManager) -> int:
-    return storage.sweep_expired()
+    active_run_ids = {run.id for run in LocalAgentRunManager(storage.db).list_active(limit=1000)}
+    rows = storage.db.fetchall(
+        """
+        SELECT task_id, run_id
+          FROM task_dispatch_mutex
+         WHERE lease_until IS NOT NULL
+           AND lease_until < %s
+        """,
+        (datetime.now(UTC).isoformat(),),
+    )
+    cleared = 0
+    for row in rows:
+        if row["run_id"] in active_run_ids:
+            continue
+        if storage.force_release(row["task_id"]):
+            cleared += 1
+    return cleared
 
 
 def create_isolation(
