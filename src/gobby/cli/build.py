@@ -6,8 +6,9 @@ import asyncio
 import logging
 import os
 import re
+import uuid
 from collections.abc import Mapping
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -31,7 +32,7 @@ from gobby.build.profiles import BuildProfileError
 from gobby.config.build import Isolation, StageCapOverride
 from gobby.storage.hub.protocol import HubDatabase
 
-from .utils import resolve_project_ref
+from .utils import resolve_project_ref, resolve_session_id
 
 logger = logging.getLogger(__name__)
 BuildPlanningSeedState = Literal["drafted", "needs_review", "approved"]
@@ -58,12 +59,52 @@ class BuildProfileClickException(click.ClickException):
     exit_code = 4
 
 
-def resolve_project_id() -> str:
-    """Resolve the current project id for build requests."""
-    project_id = resolve_project_ref(None, exit_on_not_found=False)
+@dataclass(frozen=True)
+class _BuildProjectContext:
+    project_id: str
+    cwd: Path
+    explicit: bool
+    caller_project_id: str | None = None
+
+
+def resolve_project_id(project_ref: str | None = None) -> str:
+    """Resolve the current or explicit project id for build requests."""
+    project_id = resolve_project_ref(project_ref, exit_on_not_found=project_ref is not None)
     if project_id is None:
         raise click.ClickException("No project context found")
     return project_id
+
+
+def _resolve_build_project_context(
+    project_ref: str | None, caller_cwd: Path
+) -> _BuildProjectContext:
+    explicit = bool(project_ref)
+    caller_project_id = resolve_project_ref(None, exit_on_not_found=False) if explicit else None
+    project_id = resolve_project_id(project_ref)
+    if not explicit:
+        return _BuildProjectContext(project_id=project_id, cwd=caller_cwd, explicit=False)
+    return _BuildProjectContext(
+        project_id=project_id,
+        cwd=_project_repo_path(project_id),
+        explicit=True,
+        caller_project_id=caller_project_id,
+    )
+
+
+def _project_repo_path(project_id: str) -> Path:
+    from gobby.storage.hub.runtime import open_runtime_hub_database
+    from gobby.storage.projects import LocalProjectManager
+
+    db = open_runtime_hub_database(apply_migrations=False)
+    try:
+        project = LocalProjectManager(db).get(project_id)
+    finally:
+        db.close()
+    if project is None:
+        raise click.ClickException(f"Project not found: {project_id}")
+    if not project.repo_path:
+        raise click.ClickException(f"Project {project_id} has no repo_path")
+    return Path(project.repo_path).expanduser()
 
 
 def invoke_build_skill() -> None:
@@ -167,6 +208,7 @@ def _build_payload(
         "input_ref": input_ref,
         "project_id": project_id,
         "cwd": cwd,
+        "project_explicit": opts.project_explicit,
         "quick": opts.quick,
         "skip_stages": opts.skip_stages,
         "no_merge": opts.no_merge,
@@ -195,6 +237,7 @@ def _restart_options_payload(opts: BuildOptions) -> dict[str, object]:
         "stage": _stage_cap_options(opts.stage_caps),
         "planning_seed_state": opts.planning_seed_state,
         "completed_plan_review_rounds": opts.completed_plan_review_rounds,
+        "project_explicit": opts.project_explicit,
     }
     if opts.pr is not None:
         payload["pr"] = opts.pr
@@ -509,6 +552,8 @@ def _make_build_options(
     dry_run: bool,
     coordinator: str | None,
     cwd: Path,
+    project_explicit: bool = False,
+    caller_project_id: str | None = None,
 ) -> BuildOptions:
     resolved_isolation: Isolation = isolation or ("clone" if use_clone else "worktree")
     return BuildOptions(
@@ -529,7 +574,12 @@ def _make_build_options(
         planning_seed_state=cast(BuildPlanningSeedState, planning_seed_state),
         completed_plan_review_rounds=completed_plan_review_rounds,
         dry_run=dry_run,
-        coordinator_session_ref=_coordinator_session_ref(coordinator),
+        coordinator_session_ref=_coordinator_session_ref(
+            coordinator,
+            project_explicit=project_explicit,
+            caller_project_id=caller_project_id,
+        ),
+        project_explicit=project_explicit,
     )
 
 
@@ -614,6 +664,7 @@ def _restart_options_were_supplied(opts: BuildOptions) -> bool:
     flag_value=CURRENT_COORDINATOR,
     help="Session to wake for build-spawned agent completions.",
 )
+@click.option("--project", "project_ref", help="Project name or UUID to build.")
 @click.option("--force", is_flag=True, default=False, help="Force destructive cleanup.")
 @click.option("--yes", is_flag=True, default=False, help="Confirm destructive clean/restart.")
 @click.option(
@@ -641,19 +692,20 @@ def build_command(
     completed_plan_review_rounds: int,
     dry_run: bool,
     coordinator: str | None,
+    project_ref: str | None,
     force: bool,
     yes: bool,
     no_resume: bool,
 ) -> None:
     """Start lifecycle automation from a plan file or task reference."""
     if input_ref == "stop":
-        _run_build_stop(target_ref)
+        _run_build_stop(target_ref, project_ref=project_ref)
         return
     if input_ref == "resume":
-        _run_build_resume(target_ref)
+        _run_build_resume(target_ref, project_ref=project_ref)
         return
     if input_ref == "clean":
-        _run_build_clean(target_ref, dry_run=dry_run, force=force, yes=yes)
+        _run_build_clean(target_ref, dry_run=dry_run, force=force, yes=yes, project_ref=project_ref)
         return
     if input_ref is None:
         invoke_build_skill()
@@ -662,7 +714,7 @@ def build_command(
         raise click.ClickException(f"Unexpected build argument: {target_ref}")
     if use_clone and isolation in {"none", "worktree"}:
         raise click.ClickException(f"--clone conflicts with --isolation {isolation}")
-    cwd_path = Path.cwd()
+    project_context = _resolve_build_project_context(project_ref, Path.cwd())
     opts = _make_build_options(
         quick=quick,
         skip_stage=skip_stage,
@@ -680,7 +732,9 @@ def build_command(
         completed_plan_review_rounds=completed_plan_review_rounds,
         dry_run=dry_run,
         coordinator=coordinator,
-        cwd=cwd_path,
+        cwd=project_context.cwd,
+        project_explicit=project_context.explicit,
+        caller_project_id=project_context.caller_project_id,
     )
     if input_ref == "restart":
         _run_build_restart(
@@ -690,10 +744,11 @@ def build_command(
             yes=yes,
             no_resume=no_resume,
             opts=opts if _restart_options_were_supplied(opts) else None,
+            project_ref=project_ref,
         )
         return
-    project_id = resolve_project_id()
-    cwd = str(cwd_path)
+    project_id = project_context.project_id
+    cwd = str(project_context.cwd)
     result = _try_daemon_build(input_ref, opts, project_id=project_id, cwd=cwd)
     if result is None:
         db = _open_database()
@@ -709,36 +764,63 @@ def build_command(
     _echo_build_result(result)
 
 
-def _coordinator_session_ref(coordinator: str | None) -> str | None:
+def _coordinator_session_ref(
+    coordinator: str | None,
+    *,
+    project_explicit: bool = False,
+    caller_project_id: str | None = None,
+) -> str | None:
     if coordinator is None:
         return None
-    if coordinator != CURRENT_COORDINATOR and coordinator.strip():
-        return coordinator.strip()
+    ref = coordinator.strip()
+    is_current = coordinator == CURRENT_COORDINATOR or ref == "current"
+    if not is_current and ref:
+        if project_explicit and not _is_full_uuid(ref):
+            raise click.ClickException(
+                "--coordinator with --project must be `current` or a full session UUID"
+            )
+        return ref
     current_session = (os.environ.get("GOBBY_SESSION_ID") or "").strip()
-    if current_session:
+    if current_session and not project_explicit:
         return current_session
+    if current_session:
+        try:
+            return resolve_session_id(current_session, project_id=caller_project_id)
+        except click.ClickException as exc:
+            raise click.ClickException(f"Could not resolve current coordinator: {exc}") from exc
     raise click.ClickException(
         "--coordinator needs an active Gobby session; pass --coordinator SESSION explicitly"
     )
 
 
+def _is_full_uuid(value: str) -> bool:
+    try:
+        uuid.UUID(value)
+    except ValueError:
+        return False
+    return True
+
+
 @click.command("stop")
 @click.argument("input_ref", required=False, metavar="[REF]")
-def build_stop_command(input_ref: str | None) -> None:
+@click.option("--project", "project_ref", help="Project name or UUID to stop.")
+def build_stop_command(input_ref: str | None, project_ref: str | None) -> None:
     """Stop future dispatcher build ticks."""
-    _run_build_stop(input_ref)
+    _run_build_stop(input_ref, project_ref=project_ref)
 
 
 @click.command("resume")
 @click.argument("input_ref", required=False, metavar="[REF]")
-def build_resume_command(input_ref: str | None) -> None:
+@click.option("--project", "project_ref", help="Project name or UUID to resume.")
+def build_resume_command(input_ref: str | None, project_ref: str | None) -> None:
     """Resume dispatcher build ticks."""
-    _run_build_resume(input_ref)
+    _run_build_resume(input_ref, project_ref=project_ref)
 
 
-def _run_build_stop(input_ref: str | None = None) -> None:
-    project_id = resolve_project_id()
-    cwd = str(Path.cwd())
+def _run_build_stop(input_ref: str | None = None, *, project_ref: str | None = None) -> None:
+    project_context = _resolve_build_project_context(project_ref, Path.cwd())
+    project_id = project_context.project_id
+    cwd = str(project_context.cwd)
     if input_ref is not None:
         daemon_payload = _try_daemon_build_control(
             "stop", input_ref=input_ref, project_id=project_id, cwd=cwd
@@ -766,9 +848,10 @@ def _run_build_stop(input_ref: str | None = None) -> None:
         _echo_build_control_result(result)
 
 
-def _run_build_resume(input_ref: str | None = None) -> None:
-    project_id = resolve_project_id()
-    cwd = str(Path.cwd())
+def _run_build_resume(input_ref: str | None = None, *, project_ref: str | None = None) -> None:
+    project_context = _resolve_build_project_context(project_ref, Path.cwd())
+    project_id = project_context.project_id
+    cwd = str(project_context.cwd)
     if input_ref is not None:
         daemon_payload = _try_daemon_build_control(
             "resume", input_ref=input_ref, project_id=project_id, cwd=cwd
@@ -811,13 +894,15 @@ def _run_build_clean(
     dry_run: bool,
     force: bool,
     yes: bool,
+    project_ref: str | None = None,
 ) -> None:
     if input_ref is None:
         raise click.ClickException("gobby build clean requires a task ref")
     if not _confirm_destructive("clean", input_ref, yes, dry_run):
         return
-    project_id = resolve_project_id()
-    cwd = str(Path.cwd())
+    project_context = _resolve_build_project_context(project_ref, Path.cwd())
+    project_id = project_context.project_id
+    cwd = str(project_context.cwd)
     daemon_payload = _try_daemon_build_control(
         "clean",
         input_ref=input_ref,
@@ -857,13 +942,15 @@ def _run_build_restart(
     yes: bool,
     no_resume: bool = False,
     opts: BuildOptions | None = None,
+    project_ref: str | None = None,
 ) -> None:
     if input_ref is None:
         raise click.ClickException("gobby build restart requires a task ref")
     if not _confirm_destructive("restart", input_ref, yes, dry_run):
         return
-    project_id = resolve_project_id()
-    cwd = str(Path.cwd())
+    project_context = _resolve_build_project_context(project_ref, Path.cwd())
+    project_id = project_context.project_id
+    cwd = str(project_context.cwd)
     daemon_payload = _try_daemon_build_control(
         "restart",
         input_ref=input_ref,

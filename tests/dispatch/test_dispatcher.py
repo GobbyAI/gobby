@@ -1023,6 +1023,62 @@ def test_spawn_action_skips_cross_project_build_coordinator_completion(
     assert subscribers == []
 
 
+def test_spawn_action_allows_explicit_cross_project_build_coordinator_completion(
+    temp_db,
+    sample_project,
+) -> None:
+    """Spawn action subscribes a cross-project coordinator when build metadata authorizes it."""
+    from gobby.dispatch.spawn import _subscribe_build_coordinator_completion
+    from gobby.storage.build_history import BuildHistoryStorage
+    from gobby.storage.pipelines import LocalPipelineExecutionManager
+    from gobby.storage.projects import LocalProjectManager
+    from gobby.storage.sessions import SessionManager
+
+    other_project = LocalProjectManager(temp_db).create(name="other-explicit-project")
+    session_manager = SessionManager(temp_db)
+    coordinator = session_manager.register(
+        external_id="coord-ext-explicit",
+        machine_id="machine-1",
+        source="codex",
+        project_id=other_project.id,
+        title="Coordinator",
+    )
+    task = _task(temp_db, sample_project, stage_state="in_progress")
+    BuildHistoryStorage(temp_db).record_run(
+        project_id=sample_project["id"],
+        root_task_id=task.id,
+        input_ref=f"#{task.seq_num}",
+        action="build",
+        summary={
+            "build_project_id": sample_project["id"],
+            "coordinator_project_id": other_project.id,
+            "coordinator_session_id": coordinator.id,
+        },
+    )
+    completion_registry = MagicMock()
+    services = SimpleNamespace(
+        session_manager=session_manager,
+        completion_registry=completion_registry,
+    )
+
+    _subscribe_build_coordinator_completion(
+        db=temp_db,
+        project_id=sample_project["id"],
+        task_id=task.id,
+        run_id="run-cross-project-explicit",
+        services=services,
+    )
+
+    completion_registry.register.assert_called_once_with(
+        "run-cross-project-explicit",
+        subscribers=[coordinator.id],
+    )
+    subscribers = LocalPipelineExecutionManager(temp_db, project_id="").get_completion_subscribers(
+        "run-cross-project-explicit"
+    )
+    assert subscribers == [coordinator.id]
+
+
 @pytest.mark.asyncio
 async def test_spawn_action_without_coordinator_does_not_subscribe_launcher(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
@@ -1890,6 +1946,65 @@ async def test_spawn_prefers_project_scoped_git_manager(
     clone_manager = captured["clone_manager"]
     assert str(clone_manager.repo_path) == project_git.repo_path
     assert captured["base_branch"] == "dev"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_spawn_uses_task_project_context_for_cross_project_build(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    tmp_path,
+) -> None:
+    """Dispatcher-spawned agents use the target task project, not the caller project."""
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.dispatch.spawn import spawn_agent
+    from gobby.storage.projects import LocalProjectManager
+    from gobby.storage.sessions import SessionManager
+
+    sync_bundled_agents(temp_db)
+    projects = LocalProjectManager(temp_db)
+    caller_project = projects.create("caller-project", repo_path=str(tmp_path / "caller"))
+    target_repo = tmp_path / "target"
+    target_repo.mkdir()
+    target_project = projects.create("target-project", repo_path=str(target_repo))
+    task_manager = LocalTaskManager(temp_db)
+    task = task_manager.create_task(
+        project_id=target_project.id,
+        title="Target project task",
+        task_type="task",
+        category="code",
+        allow_automation=True,
+        isolation="none",
+    )
+    captured: dict[str, object] = {}
+
+    async def fake_spawn_agent_impl(**kwargs):
+        captured.update(kwargs)
+        return {"success": True, "run_id": "run-target-project"}
+
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+        fake_spawn_agent_impl,
+    )
+    sessions = SessionManager(temp_db)
+    services = SimpleNamespace(
+        database=temp_db,
+        task_manager=task_manager,
+        session_manager=sessions,
+        agent_runner=SimpleNamespace(),
+    )
+
+    run_id = await spawn_agent(
+        SpawnAgentAction(task.id, f"#{task.seq_num}", "backend-developer", "go"),
+        db=temp_db,
+        context=SimpleNamespace(project_id=caller_project.id),
+        services=services,
+    )
+    launcher = sessions.get(str(captured["parent_session_id"]))
+
+    assert run_id == "run-target-project"
+    assert captured["project_path"] == str(target_repo)
+    assert launcher is not None
+    assert launcher.project_id == target_project.id
 
 
 @pytest.mark.asyncio

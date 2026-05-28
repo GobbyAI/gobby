@@ -60,6 +60,7 @@ def test_build_command_is_registered_with_phase_3_flags() -> None:
     assert "Preview build, clean, or restart without" in result.output
     assert "persisting changes." in result.output
     assert "--coordinator" in result.output
+    assert "--project" in result.output
 
 
 def test_build_cli_parses_flags_and_calls_shared_service(tmp_path: Path) -> None:
@@ -401,6 +402,150 @@ def test_build_payload_includes_project_context() -> None:
 
     assert payload["project_id"] == "project-2"
     assert payload["cwd"] == "/tmp/project-2"
+    assert payload["project_explicit"] is False
+
+
+@pytest.mark.parametrize(
+    "project_ref",
+    ["gobby-cli", "3bf57fe7-2a0c-4074-8912-a83d9cd4df01"],
+)
+def test_build_cli_explicit_project_uses_target_repo_context(
+    tmp_path: Path,
+    project_ref: str,
+) -> None:
+    from gobby.build.service import BuildResult, DispatcherTickSummary
+    from gobby.cli import cli
+
+    target_repo = tmp_path / "target-repo"
+    target_repo.mkdir()
+    build_result = BuildResult(
+        task_id="task-1",
+        created=True,
+        initial_lifecycle="planning",
+        applied_stages_skipped=[],
+        tick_dispatched=0,
+        dispatcher_tick=DispatcherTickSummary(),
+    )
+
+    with (
+        patch("gobby.cli.build.resolve_project_ref", return_value="caller-project"),
+        patch("gobby.cli.build.resolve_project_id", return_value="target-project") as resolve_id,
+        patch("gobby.cli.build._project_repo_path", return_value=target_repo),
+        patch("gobby.cli.build._try_daemon_build", return_value=build_result) as daemon,
+        patch("gobby.cli.build._open_database") as open_db,
+    ):
+        result = CliRunner().invoke(cli, ["build", "plan.md", "--project", project_ref])
+
+    assert result.exit_code == 0
+    resolve_id.assert_called_once_with(project_ref)
+    call = daemon.call_args
+    assert call.args[0] == "plan.md"
+    opts = call.args[1]
+    assert opts.cwd == target_repo
+    assert opts.project_explicit is True
+    assert call.kwargs == {"project_id": "target-project", "cwd": str(target_repo)}
+    open_db.assert_not_called()
+
+
+@pytest.mark.parametrize("coordinator_args", [["--coordinator"], ["--coordinator", "current"]])
+def test_build_cli_project_coordinator_current_resolves_from_caller_project(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    coordinator_args: list[str],
+) -> None:
+    from gobby.build.service import BuildResult, DispatcherTickSummary
+    from gobby.cli import cli
+
+    target_repo = tmp_path / "target-repo"
+    target_repo.mkdir()
+    monkeypatch.setenv("GOBBY_SESSION_ID", "#6283")
+    build_result = BuildResult(
+        task_id="task-1",
+        created=True,
+        initial_lifecycle="planning",
+        applied_stages_skipped=[],
+        tick_dispatched=0,
+        dispatcher_tick=DispatcherTickSummary(),
+    )
+
+    with (
+        patch("gobby.cli.build.resolve_project_ref", return_value="caller-project"),
+        patch("gobby.cli.build.resolve_project_id", return_value="target-project"),
+        patch("gobby.cli.build._project_repo_path", return_value=target_repo),
+        patch(
+            "gobby.cli.build.resolve_session_id",
+            return_value="484d3d51-980b-4bb5-8a93-b43c9cdccf7a",
+        ) as resolve_session,
+        patch("gobby.cli.build._try_daemon_build", return_value=build_result) as daemon,
+    ):
+        result = CliRunner().invoke(
+            cli,
+            ["build", "plan.md", "--project", "gobby-cli", *coordinator_args],
+        )
+
+    assert result.exit_code == 0
+    opts = daemon.call_args.args[1]
+    assert opts.coordinator_session_ref == "484d3d51-980b-4bb5-8a93-b43c9cdccf7a"
+    resolve_session.assert_called_once_with("#6283", project_id="caller-project")
+
+
+def test_build_cli_project_rejects_numeric_coordinator(tmp_path: Path) -> None:
+    from gobby.cli import cli
+
+    target_repo = tmp_path / "target-repo"
+    target_repo.mkdir()
+    with (
+        patch("gobby.cli.build.resolve_project_ref", return_value="caller-project"),
+        patch("gobby.cli.build.resolve_project_id", return_value="target-project"),
+        patch("gobby.cli.build._project_repo_path", return_value=target_repo),
+    ):
+        result = CliRunner().invoke(
+            cli,
+            ["build", "plan.md", "--project", "gobby-cli", "--coordinator", "#123"],
+        )
+
+    assert result.exit_code != 0
+    assert "must be `current` or a full session UUID" in result.output
+
+
+def test_build_cli_project_accepts_full_uuid_coordinator(tmp_path: Path) -> None:
+    from gobby.build.service import BuildResult, DispatcherTickSummary
+    from gobby.cli import cli
+
+    target_repo = tmp_path / "target-repo"
+    target_repo.mkdir()
+    coordinator_id = "484d3d51-980b-4bb5-8a93-b43c9cdccf7a"
+    build_result = BuildResult(
+        task_id="task-1",
+        created=True,
+        initial_lifecycle="planning",
+        applied_stages_skipped=[],
+        tick_dispatched=0,
+        dispatcher_tick=DispatcherTickSummary(),
+    )
+
+    with (
+        patch("gobby.cli.build.resolve_project_ref", return_value="caller-project"),
+        patch("gobby.cli.build.resolve_project_id", return_value="target-project"),
+        patch("gobby.cli.build._project_repo_path", return_value=target_repo),
+        patch("gobby.cli.build.resolve_session_id") as resolve_session,
+        patch("gobby.cli.build._try_daemon_build", return_value=build_result) as daemon,
+    ):
+        result = CliRunner().invoke(
+            cli,
+            [
+                "build",
+                "plan.md",
+                "--project",
+                "gobby-cli",
+                "--coordinator",
+                coordinator_id,
+            ],
+        )
+
+    assert result.exit_code == 0
+    assert daemon.call_args.args[1].coordinator_session_ref == coordinator_id
+    resolve_session.assert_not_called()
 
 
 def test_daemon_profile_error_detection_prefers_structured_type() -> None:
@@ -606,6 +751,102 @@ def test_build_resume_task_ref_prefers_daemon_control_endpoint() -> None:
     ) in result.output
     open_db.assert_not_called()
     resume_target.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("action", "extra_args"),
+    [
+        ("stop", []),
+        ("resume", []),
+        ("clean", ["--yes"]),
+        ("restart", ["--yes"]),
+    ],
+)
+def test_build_task_control_honors_explicit_project(
+    tmp_path: Path,
+    action: str,
+    extra_args: list[str],
+) -> None:
+    from gobby.cli import cli
+
+    target_repo = tmp_path / "target-repo"
+    target_repo.mkdir()
+    payload = {
+        "action": action,
+        "project_id": "target-project",
+        "root_task_id": "task-1",
+        "affected_tasks": [],
+        "agents": [],
+        "stages_reset": 0,
+    }
+    with (
+        patch("gobby.cli.build.resolve_project_ref", return_value="caller-project"),
+        patch("gobby.cli.build.resolve_project_id", return_value="target-project"),
+        patch("gobby.cli.build._project_repo_path", return_value=target_repo),
+        patch("gobby.cli.build._try_daemon_build_control", return_value=payload) as daemon,
+        patch("gobby.cli.build._open_database") as open_db,
+    ):
+        result = CliRunner().invoke(
+            cli,
+            ["build", action, "#1", "--project", "gobby-cli", *extra_args],
+        )
+
+    assert result.exit_code == 0
+    assert daemon.call_args.kwargs["project_id"] == "target-project"
+    assert daemon.call_args.kwargs["cwd"] == str(target_repo)
+    open_db.assert_not_called()
+
+
+@pytest.mark.parametrize("action", ["stop", "resume"])
+def test_build_project_control_honors_explicit_project(
+    tmp_path: Path,
+    action: str,
+) -> None:
+    from gobby.build.service import BuildControlResult, BuildLifecycleEvent
+    from gobby.cli import cli
+
+    target_repo = tmp_path / "target-repo"
+    target_repo.mkdir()
+    control_result = BuildControlResult(
+        project_id="target-project",
+        enabled=action == "resume",
+        lifecycle_event=BuildLifecycleEvent(
+            id=1,
+            project_id="target-project",
+            event=f"build_{action}",
+            reason=f"gobby build {action}",
+            by_actor="build",
+            created_at="2026-01-01T00:00:00+00:00",
+        ),
+    )
+    control_patch = (
+        patch("gobby.cli.build.build_stop", return_value=control_result)
+        if action == "stop"
+        else patch("gobby.cli.build.build_resume", return_value=control_result)
+    )
+    with (
+        patch("gobby.cli.build.resolve_project_ref", return_value="caller-project"),
+        patch("gobby.cli.build.resolve_project_id", return_value="target-project"),
+        patch("gobby.cli.build._project_repo_path", return_value=target_repo),
+        patch("gobby.cli.build._open_database") as open_db,
+        patch("gobby.cli.build.asyncio.run", return_value=None) as run,
+        patch("gobby.cli.build._kick_dispatcher_tick", new=AsyncMock()) as tick,
+        control_patch as control,
+    ):
+        result = CliRunner().invoke(cli, ["build", action, "--project", "gobby-cli"])
+
+    assert result.exit_code == 0
+    assert f"Build automation: {'enabled' if action == 'resume' else 'disabled'}" in result.output
+    assert "Project: target-project" in result.output
+    assert f"Event: gobby build {action}" in result.output
+    control.assert_called_once_with(db=open_db.return_value, project_id="target-project")
+    open_db.return_value.close.assert_called_once_with()
+    if action == "resume":
+        tick.assert_called_once_with(open_db.return_value, "target-project")
+        run.assert_called_once()
+    else:
+        tick.assert_not_called()
+        run.assert_not_called()
 
 
 def test_unbuild_cli_is_not_registered() -> None:

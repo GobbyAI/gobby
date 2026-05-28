@@ -46,6 +46,7 @@ def resolve_build_profile_options(
         target_branch=opts.target_branch,
         assigned_agent=opts.assigned_agent,
         clones_dir=opts.clones_dir,
+        cwd=opts.cwd,
         reset_expansion_output=opts.reset_expansion_output,
         max_active_agents=opts.max_active_agents,
         max_retries=opts.max_retries,
@@ -53,6 +54,7 @@ def resolve_build_profile_options(
         completed_plan_review_rounds=opts.completed_plan_review_rounds,
         dry_run=opts.dry_run,
         coordinator_session_ref=opts.coordinator_session_ref,
+        project_explicit=opts.project_explicit,
     )
 
 

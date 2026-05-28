@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Literal, cast
 import psycopg
 
 from gobby.agents.completion_subscribers import subscribe_agent_completion
+from gobby.build.coordinator import summary_allows_cross_project_coordinator
 from gobby.build.workspaces import BuildWorkspaceError, ensure_epic_integration_workspaces
 from gobby.dispatch.actions import SpawnAgentAction
 from gobby.storage.build_history import BuildHistoryStorage
@@ -255,6 +256,7 @@ def _subscribe_build_coordinator_completion(
         session_manager,
         coordinator_session_id,
         project_id,
+        run.summary,
     ):
         return
     subscribe_agent_completion(
@@ -270,8 +272,9 @@ def _coordinator_session_matches_project(
     session_manager: SessionManager | None,
     coordinator_session_id: str,
     project_id: str,
+    run_summary: dict[str, object],
 ) -> bool:
-    """Return whether a coordinator session exists and belongs to the build project."""
+    """Return whether a coordinator session exists and is authorized for this build."""
     if session_manager is None:
         logger.debug(
             "Skipping build coordinator completion subscription; no session_manager",
@@ -285,12 +288,17 @@ def _coordinator_session_matches_project(
             extra={"coordinator_session_id": coordinator_session_id, "project_id": project_id},
         )
         return False
-    if getattr(session, "project_id", None) != project_id:
+    coordinator_project_id = getattr(session, "project_id", None)
+    if coordinator_project_id != project_id and not summary_allows_cross_project_coordinator(
+        run_summary,
+        coordinator_project_id=coordinator_project_id,
+        build_project_id=project_id,
+    ):
         logger.warning(
             "Skipping build coordinator completion subscription for cross-project session",
             extra={
                 "coordinator_session_id": coordinator_session_id,
-                "coordinator_project_id": getattr(session, "project_id", None),
+                "coordinator_project_id": coordinator_project_id,
                 "project_id": project_id,
             },
         )

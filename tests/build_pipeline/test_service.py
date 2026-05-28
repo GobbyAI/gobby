@@ -119,12 +119,16 @@ async def test_build_coordinator_summary_survives_and_root_attaches_before_tick(
 
     assert seen["root_task_id"] == task.id
     assert seen["summary"] == {
+        "build_project_id": project_id,
+        "coordinator_project_id": project_id,
         "coordinator_session_id": coordinator.id,
         "isolation": "none",
         "quick": False,
     }
     assert run is not None
     assert run.root_task_id == task.id
+    assert run.summary["build_project_id"] == project_id
+    assert run.summary["coordinator_project_id"] == project_id
     assert run.summary["coordinator_session_id"] == coordinator.id
 
 
@@ -163,6 +167,53 @@ async def test_build_rejects_coordinator_from_another_project(
             db=temp_db,
             project_id=project_id,
         )
+
+
+@pytest.mark.asyncio
+async def test_build_accepts_cross_project_uuid_coordinator_with_explicit_project(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    """Explicit project builds may use a primary-key UUID coordinator from another project."""
+    from gobby.storage.build_history import BuildHistoryStorage
+    from gobby.storage.sessions import SessionManager
+
+    project_id, _repo_path = _project(temp_db, tmp_path)
+    other_repo = tmp_path / "other"
+    other_repo.mkdir()
+    other_project = LocalProjectManager(temp_db).create(
+        name="other-explicit-coordinator-project",
+        repo_path=str(other_repo),
+    )
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=project_id,
+        title="Cross project coordinated build",
+        task_type="epic",
+    )
+    coordinator = SessionManager(temp_db).register(
+        external_id="other-explicit-coord-ext",
+        machine_id="machine-1",
+        source="codex",
+        project_id=other_project.id,
+        title="Other Coordinator",
+    )
+
+    await _build(
+        f"#{task.seq_num}",
+        _options(
+            isolation="none",
+            coordinator_session_ref=coordinator.id,
+            project_explicit=True,
+        ),
+        db=temp_db,
+        project_id=project_id,
+    )
+    run = BuildHistoryStorage(temp_db).latest_run_for_input(project_id, f"#{task.seq_num}")
+
+    assert run is not None
+    assert run.summary["build_project_id"] == project_id
+    assert run.summary["coordinator_project_id"] == other_project.id
+    assert run.summary["coordinator_session_id"] == coordinator.id
 
 
 @pytest.mark.asyncio
@@ -227,6 +278,29 @@ async def test_plan_file_basename_resolves_from_project_plans_dir(
     result = await _build(
         plan_file.name,
         _options(quick=True, isolation="none"),
+        db=temp_db,
+        project_id=project_id,
+    )
+
+    artifacts = LocalTaskManager(temp_db).artifacts.get_artifacts(result.task_id)
+    assert artifacts.plan_file_path == str(plan_file)
+    assert result.initial_lifecycle == "planning"
+
+
+@pytest.mark.asyncio
+async def test_plan_file_relative_path_resolves_from_request_cwd(
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    project_id, _repo_path = _project(temp_db, tmp_path)
+    target_repo = tmp_path / "target-repo"
+    target_repo.mkdir()
+    plan_file = target_repo / "relative-plan.md"
+    plan_file.write_text("# Plan\n", encoding="utf-8")
+
+    result = await _build(
+        plan_file.name,
+        _options(quick=True, isolation="none", cwd=target_repo, project_explicit=True),
         db=temp_db,
         project_id=project_id,
     )

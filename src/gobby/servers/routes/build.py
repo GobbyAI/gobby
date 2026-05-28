@@ -46,6 +46,7 @@ class BuildRequest(BaseModel):
     input_ref: str
     project_id: str | None = None
     cwd: str | None = None
+    project_explicit: bool = False
     profile: str | None = None
     quick: bool = False
     skip_stages: list[str] = Field(default_factory=list)
@@ -74,6 +75,7 @@ class BuildControlRequest(BaseModel):
     input_ref: str | None = None
     project_id: str | None = None
     cwd: str | None = None
+    project_explicit: bool = False
     dry_run: bool = False
     force: bool = False
     yes: bool = False
@@ -158,6 +160,7 @@ def _build_options(request_data: BuildRequest) -> BuildOptions:
         completed_plan_review_rounds=request_data.completed_plan_review_rounds,
         dry_run=request_data.dry_run,
         coordinator_session_ref=request_data.coordinator,
+        project_explicit=_project_was_explicit(request_data),
     )
 
 
@@ -184,6 +187,7 @@ def _restart_options(request_data: BuildControlRequest) -> BuildOptions:
         completed_plan_review_rounds=request_data.completed_plan_review_rounds,
         dry_run=request_data.dry_run,
         coordinator_session_ref=request_data.coordinator,
+        project_explicit=_project_was_explicit(request_data),
     )
 
 
@@ -192,6 +196,12 @@ def _restart_options_were_supplied(request_data: BuildControlRequest) -> bool:
         _restart_option_field_was_supplied(request_data, field_name)
         for field_name in _RESTART_OPTION_FIELDS
     )
+
+
+def _project_was_explicit(request_data: BuildRequest | BuildControlRequest) -> bool:
+    if "project_explicit" in request_data.model_fields_set:
+        return request_data.project_explicit
+    return "project_id" in request_data.model_fields_set and request_data.project_id is not None
 
 
 def _parse_stage_options(values: list[str]) -> list[BuildStageCapOverride]:

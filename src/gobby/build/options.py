@@ -39,6 +39,7 @@ class BuildOptions:
     completed_plan_review_rounds: int = 0
     dry_run: bool = False
     coordinator_session_ref: str | None = None
+    project_explicit: bool = False
 
     @property
     def workspace_backend(self) -> WorkspaceBackend:

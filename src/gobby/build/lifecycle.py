@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
+from gobby.build.coordinator import build_run_summary, resolve_build_coordinator
 from gobby.build.delivery import record_build_delivery_campaign
 from gobby.build.dispatch_tick import (
     DispatcherTickSummary,
@@ -53,7 +54,6 @@ from gobby.storage.build_history import (
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
-from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import (
     LocalTaskManager,
     ManifestAlreadyInitializedError,
@@ -89,7 +89,7 @@ async def build(
     services: object | None = None,
 ) -> BuildResult:
     """Start lifecycle automation for a plan file, epic, or automated leaf task."""
-    coordinator_session_id = _resolve_coordinator_session_id(
+    coordinator = resolve_build_coordinator(
         opts,
         db=db,
         project_id=project_id,
@@ -110,9 +110,10 @@ async def build(
         input_ref=input_ref,
         action="build",
         actor="build",
-        summary=_build_run_summary(
+        summary=build_run_summary(
             {"quick": opts.quick, "isolation": opts.isolation},
-            coordinator_session_id,
+            coordinator=coordinator,
+            build_project_id=project_id,
         ),
     )
     try:
@@ -146,7 +147,11 @@ async def build(
         run.id if run is not None else None,
         status="completed",
         root_task_id=result.task_id,
-        summary=_build_run_summary(asdict(result), coordinator_session_id),
+        summary=build_run_summary(
+            asdict(result),
+            coordinator=coordinator,
+            build_project_id=project_id,
+        ),
     )
     best_effort_record_event(
         db,
@@ -187,38 +192,6 @@ async def _build_dry_run(
         if result.created:
             result = replace(result, task_id=_DRY_RUN_PLAN_TASK_ID)
         return replace(result, dry_run=True)
-
-
-def _build_run_summary(
-    payload: dict[str, object],
-    coordinator_session_id: str | None,
-) -> dict[str, object]:
-    if coordinator_session_id is None:
-        return payload
-    return {**payload, "coordinator_session_id": coordinator_session_id}
-
-
-def _resolve_coordinator_session_id(
-    opts: BuildOptions,
-    *,
-    db: HubDatabase,
-    project_id: str,
-    services: object | None,
-) -> str | None:
-    ref = opts.coordinator_session_ref
-    if not ref:
-        return None
-    manager = getattr(services, "session_manager", None) or SessionManager(db)
-    try:
-        resolved_id = str(manager.resolve_session_reference(ref, project_id))
-    except ValueError as exc:
-        raise ValueError(f"build coordinator session could not be resolved: {exc}") from exc
-    session = manager.get(resolved_id)
-    if session is None:
-        raise ValueError(f"build coordinator session not found: {ref}")
-    if session.project_id != project_id:
-        raise ValueError("build coordinator session must belong to the build project")
-    return resolved_id
 
 
 def _attach_build_run_root(

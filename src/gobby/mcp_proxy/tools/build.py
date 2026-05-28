@@ -74,6 +74,7 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
             max_active_agents=max_active_agents,
             max_retries=max_retries,
             coordinator_session_ref=coordinator,
+            project_explicit=project_id is not None,
         )
         result = await build(
             input_ref,
