@@ -8,7 +8,7 @@ use serde_json::Value;
 use crate::config::Context;
 use crate::falkor::{self, Row};
 use crate::graph::typed_query;
-use crate::models::GraphResult;
+use crate::models::{GraphResult, ProjectionMetadata, ProjectionProvenance};
 
 const CALL_TARGET_PREDICATE: &str =
     "target:CodeSymbol OR target:UnresolvedCallee OR target:ExternalSymbol";
@@ -244,7 +244,55 @@ pub(crate) fn row_to_graph_result(row: &Row) -> GraphResult {
             .get("distance")
             .and_then(|v| v.as_u64())
             .map(|d| d as usize),
+        metadata: row_to_projection_metadata(row),
     }
+}
+
+pub fn extracted_code_edge_metadata(
+    file_path: impl Into<String>,
+    line: usize,
+    source_symbol_id: Option<&str>,
+) -> ProjectionMetadata {
+    let mut metadata = ProjectionMetadata::gcode_extracted()
+        .with_source_file_path(file_path)
+        .with_source_line(line);
+    if let Some(source_symbol_id) = source_symbol_id {
+        metadata = metadata.with_source_symbol_id(source_symbol_id);
+    }
+    metadata
+}
+
+fn row_to_projection_metadata(row: &Row) -> Option<ProjectionMetadata> {
+    let provenance = row
+        .get("provenance")
+        .and_then(|v| v.as_str())
+        .and_then(ProjectionProvenance::from_wire_value)?;
+    let source_system = row.get("source_system").and_then(|v| v.as_str())?;
+
+    let mut metadata = ProjectionMetadata::new(provenance, source_system);
+    metadata.confidence = row.get("confidence").and_then(|v| v.as_f64());
+    metadata.source_file_path = row
+        .get("source_file_path")
+        .or_else(|| row.get("file"))
+        .or_else(|| row.get("file_path"))
+        .and_then(|v| v.as_str())
+        .map(ToOwned::to_owned);
+    metadata.source_line = row
+        .get("source_line")
+        .or_else(|| row.get("line"))
+        .and_then(|v| v.as_u64())
+        .map(|line| line as usize);
+    metadata.source_symbol_id = row
+        .get("source_symbol_id")
+        .or_else(|| row.get("caller_id"))
+        .or_else(|| row.get("source_id"))
+        .and_then(|v| v.as_str())
+        .map(ToOwned::to_owned);
+    metadata.matching_method = row
+        .get("matching_method")
+        .and_then(|v| v.as_str())
+        .map(ToOwned::to_owned);
+    Some(metadata)
 }
 
 fn clamp_limit(limit: usize) -> usize {
@@ -493,4 +541,22 @@ pub fn blast_radius(
         let rows = client.query(&query, Some(params))?;
         Ok(rows.iter().map(row_to_graph_result).collect())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{ProjectionProvenance, SOURCE_SYSTEM_GCODE};
+
+    #[test]
+    fn code_edges_carry_provenance() {
+        let metadata = extracted_code_edge_metadata("src/lib.rs", 42, Some("caller-1"));
+
+        assert_eq!(metadata.provenance, ProjectionProvenance::Extracted);
+        assert_eq!(metadata.confidence, Some(1.0));
+        assert_eq!(metadata.source_system, SOURCE_SYSTEM_GCODE);
+        assert_eq!(metadata.source_file_path.as_deref(), Some("src/lib.rs"));
+        assert_eq!(metadata.source_line, Some(42));
+        assert_eq!(metadata.source_symbol_id.as_deref(), Some("caller-1"));
+    }
 }

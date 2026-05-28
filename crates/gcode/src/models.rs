@@ -9,6 +9,103 @@ pub const CODE_INDEX_UUID_NAMESPACE: Uuid = Uuid::from_bytes([
     0xc0, 0xde, 0x1d, 0xe0, 0x00, 0x00, 0x40, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ]);
 
+pub const SOURCE_SYSTEM_GCODE: &str = "gcode";
+
+/// Producer confidence classification for graph and vector projection facts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ProjectionProvenance {
+    Extracted,
+    Inferred,
+    Ambiguous,
+}
+
+impl ProjectionProvenance {
+    pub fn from_wire_value(value: &str) -> Option<Self> {
+        match value {
+            "EXTRACTED" | "extracted" => Some(Self::Extracted),
+            "INFERRED" | "inferred" => Some(Self::Inferred),
+            "AMBIGUOUS" | "ambiguous" => Some(Self::Ambiguous),
+            _ => None,
+        }
+    }
+}
+
+/// Optional provenance attached to graph results and projection payloads.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProjectionMetadata {
+    pub provenance: ProjectionProvenance,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f64>,
+    pub source_system: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_file_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_line: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_symbol_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub matching_method: Option<String>,
+}
+
+impl ProjectionMetadata {
+    pub fn new(provenance: ProjectionProvenance, source_system: impl Into<String>) -> Self {
+        Self {
+            provenance,
+            confidence: None,
+            source_system: source_system.into(),
+            source_file_path: None,
+            source_line: None,
+            source_symbol_id: None,
+            matching_method: None,
+        }
+    }
+
+    pub fn gcode_extracted() -> Self {
+        Self::new(ProjectionProvenance::Extracted, SOURCE_SYSTEM_GCODE).with_confidence(Some(1.0))
+    }
+
+    pub fn inferred(source_system: impl Into<String>, confidence: Option<f64>) -> Self {
+        Self::new(ProjectionProvenance::Inferred, source_system).with_confidence(confidence)
+    }
+
+    pub fn ambiguous(source_system: impl Into<String>, confidence: Option<f64>) -> Self {
+        Self::new(ProjectionProvenance::Ambiguous, source_system).with_confidence(confidence)
+    }
+
+    pub fn with_confidence(mut self, confidence: Option<f64>) -> Self {
+        self.confidence = confidence;
+        self
+    }
+
+    pub fn with_source_file_path(mut self, file_path: impl Into<String>) -> Self {
+        self.source_file_path = Some(file_path.into());
+        self
+    }
+
+    pub fn with_source_line(mut self, line: usize) -> Self {
+        self.source_line = Some(line);
+        self
+    }
+
+    pub fn with_source_symbol_id(mut self, symbol_id: impl Into<String>) -> Self {
+        self.source_symbol_id = Some(symbol_id.into());
+        self
+    }
+
+    pub fn with_matching_method(mut self, matching_method: impl Into<String>) -> Self {
+        self.matching_method = Some(matching_method.into());
+        self
+    }
+
+    pub fn is_hypothesis(&self) -> bool {
+        matches!(
+            self.provenance,
+            ProjectionProvenance::Inferred | ProjectionProvenance::Ambiguous
+        )
+    }
+}
+
 /// A code symbol extracted from AST parsing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Symbol {
@@ -284,6 +381,8 @@ pub struct GraphResult {
     pub relation: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub distance: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<ProjectionMetadata>,
 }
 
 /// Result of parsing a single file.
@@ -374,5 +473,22 @@ mod tests {
 
         assert_eq!(call.callee_symbol_id.as_deref(), Some("callee-id"));
         assert_eq!(call.callee_target_kind, CallTargetKind::Symbol);
+    }
+
+    #[test]
+    fn graph_result_metadata_is_optional_for_json_compatibility() {
+        let old_json = serde_json::json!({
+            "id": "sym-1",
+            "name": "foo",
+            "file_path": "src/main.rs",
+            "line": 10
+        });
+
+        let parsed: GraphResult =
+            serde_json::from_value(old_json).expect("old graph result JSON still parses");
+        assert!(parsed.metadata.is_none());
+
+        let serialized = serde_json::to_value(&parsed).expect("graph result serializes");
+        assert!(serialized.get("metadata").is_none());
     }
 }
