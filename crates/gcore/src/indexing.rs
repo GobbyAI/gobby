@@ -22,6 +22,16 @@ pub struct WalkerSettings {
 }
 
 impl WalkerSettings {
+    /// Create walker settings with generic defaults consumers can extend.
+    pub fn new(root: impl Into<PathBuf>) -> Self {
+        Self {
+            root: root.into(),
+            respect_gitignore: true,
+            max_filesize: None,
+            extra_ignores: Vec::new(),
+        }
+    }
+
     /// Build an `ignore::WalkBuilder` from these settings.
     ///
     /// Panics when `extra_ignores` contains an invalid glob. Use
@@ -182,6 +192,18 @@ mod tests {
             .collect();
         files.sort();
         files
+    }
+
+    #[test]
+    fn walker_settings_new_has_consumer_extendable_defaults() {
+        let root = PathBuf::from("workspace");
+
+        let settings = WalkerSettings::new(&root);
+
+        assert_eq!(settings.root, root);
+        assert!(settings.respect_gitignore);
+        assert_eq!(settings.max_filesize, None);
+        assert!(settings.extra_ignores.is_empty());
     }
 
     #[test]
