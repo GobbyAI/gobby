@@ -6,6 +6,8 @@
 
 pub mod bootstrap;
 pub mod daemon_url;
+#[cfg(feature = "indexing")]
+pub mod indexing;
 pub mod project;
 
 #[cfg(feature = "search")]
