@@ -470,8 +470,10 @@ class TmuxSessionManager:
         """Rename the tmux window containing *target*.
 
         Also enables ``set-titles`` so the name propagates to the outer
-        terminal emulator, and disables ``automatic-rename`` to prevent
-        tmux from overwriting it.
+        terminal emulator, disables ``automatic-rename`` to prevent tmux
+        from overwriting it, and disables ``allow-rename`` so a program
+        running inside the pane (e.g. Claude Code's version/status OSC
+        title escapes) cannot overwrite the window name either.
 
         Args:
             target: A tmux target (session name, pane ID like ``%42``, etc.).
@@ -507,6 +509,13 @@ class TmuxSessionManager:
             "-t",
             target,
             "automatic-rename",
+            "off",
+            ";",
+            "set-option",
+            "-w",
+            "-t",
+            target,
+            "allow-rename",
             "off",
         )
         if rc != 0:

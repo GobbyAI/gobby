@@ -483,6 +483,13 @@ class TestTmuxSessionManager:
                 "%42",
                 "automatic-rename",
                 "off",
+                ";",
+                "set-option",
+                "-w",
+                "-t",
+                "%42",
+                "allow-rename",
+                "off",
             )
 
     @pytest.mark.asyncio
