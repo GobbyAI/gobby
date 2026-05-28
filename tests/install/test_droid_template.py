@@ -39,11 +39,7 @@ def test_droid_template_matches_contract_and_rewrites_commands() -> None:
 
         command = hook_config["hooks"][0]["command"]
         base = f"/Users/test/.gobby/bin/ghook --gobby-owned --cli=droid --type={hook_type}"
-        if hook_type == "Stop":
-            # Stop hooks run through ghook_guard.py for stable shutdown.
-            assert command == f"/tmp/hooks/ghook_guard.py -- {base}"
-        else:
-            assert command == base
+        assert command == base
 
 
 def test_default_agent_template_lists_droid_as_supported_source() -> None:

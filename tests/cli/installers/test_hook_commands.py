@@ -45,17 +45,15 @@ def test_build_hook_command_falls_back_to_bare_ghook(temp_dir: Path, tmp_path: P
     assert command == "ghook --gobby-owned --cli=gemini --type=SessionStart"
 
 
-def test_build_stop_hook_command_uses_shutdown_guard() -> None:
+def test_build_stop_hook_command_uses_raw_ghook() -> None:
     command = build_hook_command(
         "codex",
         "Stop",
         Path("/tmp/gobby-hooks"),
-        ghook_bin="/tmp/ghook",
+        ghook_bin="ghook",
     )
 
-    assert command == (
-        "/tmp/gobby-hooks/ghook_guard.py -- /tmp/ghook --gobby-owned --cli=codex --type=Stop"
-    )
+    assert command == "ghook --gobby-owned --cli=codex --type=Stop"
 
 
 def test_rewrite_hook_template_commands_updates_nested_entries() -> None:

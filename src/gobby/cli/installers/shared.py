@@ -9,6 +9,7 @@ they are synced from bundled YAML to the database during ``gobby install``
 via :func:`sync_bundled_content_to_db`, NOT copied to ``.gobby/`` on disk.
 """
 
+import hashlib
 import json
 import logging
 import os
@@ -25,6 +26,9 @@ if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
+
+_LEGACY_GHOOK_GUARD_FILENAME = "ghook_guard.py"
+_LEGACY_GHOOK_GUARD_SHA256 = "aaaf6c2d7a8b961e73a6d9d4d2ae5b2d21fa982a8343ca8491244851eb2b6554"
 
 
 def _install_file(source: Path, target: Path, executable: bool = False) -> None:
@@ -52,7 +56,8 @@ def install_global_hooks() -> list[str]:
     """Install shared hook helper files to ~/.gobby/hooks/ for global hook dispatch.
 
     Always copies files (never symlinks) since global hooks must work
-    regardless of whether the source repo is available.
+    regardless of whether the source repo is available. Also removes the
+    legacy installed ghook guard when it matches Gobby-owned bundled content.
 
     Returns:
         List of installed filenames
@@ -63,9 +68,9 @@ def install_global_hooks() -> list[str]:
     )
     global_hooks_dir.mkdir(parents=True, exist_ok=True)
     installed: list[str] = []
+    _remove_legacy_ghook_guard(global_hooks_dir)
 
     hook_files = {
-        "ghook_guard.py": True,
         "validate_settings.py": True,  # Make executable
     }
 
@@ -81,6 +86,44 @@ def install_global_hooks() -> list[str]:
         installed.append(filename)
 
     return installed
+
+
+def _remove_legacy_ghook_guard(global_hooks_dir: Path) -> None:
+    """Remove the previously bundled ghook guard if it is the old Gobby copy."""
+    target_file = global_hooks_dir / _LEGACY_GHOOK_GUARD_FILENAME
+    if not target_file.exists() and not target_file.is_symlink():
+        return
+
+    if target_file.is_symlink() and not target_file.exists():
+        try:
+            target_file.unlink()
+        except OSError as e:
+            logger.warning(
+                "Failed to remove legacy Gobby hook guard symlink %s: %s", target_file, e
+            )
+            return
+        logger.info("Removed broken legacy Gobby hook guard symlink: %s", target_file)
+        return
+
+    if not target_file.is_file():
+        return
+
+    try:
+        digest = hashlib.sha256(target_file.read_bytes()).hexdigest()
+    except OSError as e:
+        logger.warning("Failed to inspect legacy Gobby hook guard %s: %s", target_file, e)
+        return
+
+    if digest != _LEGACY_GHOOK_GUARD_SHA256:
+        return
+
+    try:
+        target_file.unlink()
+    except OSError as e:
+        logger.warning("Failed to remove legacy Gobby hook guard %s: %s", target_file, e)
+        return
+
+    logger.info("Removed legacy Gobby hook guard: %s", target_file)
 
 
 def clean_project_hooks(settings_file: Path) -> list[str]:

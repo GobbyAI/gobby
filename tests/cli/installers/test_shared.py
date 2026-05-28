@@ -9,6 +9,7 @@ Tests cover:
 - remove_mcp_server_toml: Removing MCP server from TOML config
 """
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -37,11 +38,10 @@ from gobby.cli.installers.shared import (
 pytestmark = pytest.mark.unit
 
 
-def test_install_global_hooks_installs_shutdown_guard(temp_dir: Path) -> None:
+def test_install_global_hooks_installs_validate_settings_only(temp_dir: Path) -> None:
     install_dir = temp_dir / "install"
     shared_hooks = install_dir / "shared" / "hooks"
     shared_hooks.mkdir(parents=True)
-    (shared_hooks / "ghook_guard.py").write_text("#!/usr/bin/env python3\n")
     (shared_hooks / "validate_settings.py").write_text("#!/usr/bin/env python3\n")
 
     hooks_dir = temp_dir / ".gobby" / "hooks"
@@ -51,9 +51,54 @@ def test_install_global_hooks_installs_shutdown_guard(temp_dir: Path) -> None:
     ):
         installed = install_global_hooks()
 
-    assert installed == ["ghook_guard.py", "validate_settings.py"]
-    assert (hooks_dir / "ghook_guard.py").exists()
-    assert os.access(hooks_dir / "ghook_guard.py", os.X_OK)
+    assert installed == ["validate_settings.py"]
+    assert not (hooks_dir / "ghook_guard.py").exists()
+    assert (hooks_dir / "validate_settings.py").exists()
+    assert os.access(hooks_dir / "validate_settings.py", os.X_OK)
+
+
+def test_install_global_hooks_removes_legacy_ghook_guard(temp_dir: Path) -> None:
+    install_dir = temp_dir / "install"
+    shared_hooks = install_dir / "shared" / "hooks"
+    shared_hooks.mkdir(parents=True)
+    (shared_hooks / "validate_settings.py").write_text("#!/usr/bin/env python3\n")
+
+    hooks_dir = temp_dir / ".gobby" / "hooks"
+    hooks_dir.mkdir(parents=True)
+    legacy_content = b"#!/usr/bin/env python3\n# old guard\n"
+    (hooks_dir / "ghook_guard.py").write_bytes(legacy_content)
+    legacy_hash = hashlib.sha256(legacy_content).hexdigest()
+
+    with (
+        patch("gobby.cli.installers.shared.get_install_dir", return_value=install_dir),
+        patch("gobby.cli.installers.shared._LEGACY_GHOOK_GUARD_SHA256", legacy_hash),
+        patch.dict(os.environ, {"GOBBY_HOOKS_DIR": str(hooks_dir)}),
+    ):
+        installed = install_global_hooks()
+
+    assert installed == ["validate_settings.py"]
+    assert not (hooks_dir / "ghook_guard.py").exists()
+
+
+def test_install_global_hooks_preserves_custom_ghook_guard(temp_dir: Path) -> None:
+    install_dir = temp_dir / "install"
+    shared_hooks = install_dir / "shared" / "hooks"
+    shared_hooks.mkdir(parents=True)
+    (shared_hooks / "validate_settings.py").write_text("#!/usr/bin/env python3\n")
+
+    hooks_dir = temp_dir / ".gobby" / "hooks"
+    hooks_dir.mkdir(parents=True)
+    custom_guard = hooks_dir / "ghook_guard.py"
+    custom_guard.write_text("# custom guard\n")
+
+    with (
+        patch("gobby.cli.installers.shared.get_install_dir", return_value=install_dir),
+        patch.dict(os.environ, {"GOBBY_HOOKS_DIR": str(hooks_dir)}),
+    ):
+        installed = install_global_hooks()
+
+    assert installed == ["validate_settings.py"]
+    assert custom_guard.read_text() == "# custom guard\n"
 
 
 class TestInstallSharedContent:

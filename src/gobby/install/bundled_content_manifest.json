@@ -5,7 +5,6 @@
     "config/bootstrap.yaml": "86b7fd24a84a5e5f14fc6911d122b3ca0bd22ec3e82e87eafe06ea1db25eb1c3",
     "config/config.yaml": "784d8aa1c2c99c9380894b49c721e0810c4428db3d7830d0fd43db6d8177dc74",
     "config/tty_config.yaml": "3b70d450cc4cd2788308827cd2485b53d023009ff4e66b5ec4e65076f05a7fdb",
-    "hooks/ghook_guard.py": "aaaf6c2d7a8b961e73a6d9d4d2ae5b2d21fa982a8343ca8491244851eb2b6554",
     "hooks/validate_settings.py": "4e044540dc27387a0665353cf640a48b83ac326d201bb9d63d367fdd5967caa3",
     "prompts/agent/help-content.md": "79db2d2e74504abccab059d4ef17134a4d5b470341871a6347895fbcc37e971d",
     "prompts/agent/skill-hint.md": "79975a3a40e92f8f9bd9dabc4216756df828c9f8cab6bf9579777e23b3146e72",
