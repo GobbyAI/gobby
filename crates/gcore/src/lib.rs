@@ -8,8 +8,6 @@
 // Always available - existing modules.
 pub mod bootstrap;
 pub mod daemon_url;
-#[cfg(feature = "postgres")]
-pub mod postgres;
 pub mod project;
 
 // Always available - lightweight foundation modules.
