@@ -58,6 +58,9 @@ enum Command {
         /// Fail C/C++ indexing when clangd or compile_commands.json semantics are unavailable
         #[arg(long)]
         require_cpp_semantics: bool,
+        /// Synchronously update graph and vector projections after PostgreSQL indexing
+        #[arg(long)]
+        sync_projections: bool,
     },
     /// Show project index status
     Status,
@@ -71,6 +74,11 @@ enum Command {
     Graph {
         #[command(subcommand)]
         command: GraphCommand,
+    },
+    /// Manage the code-symbol vector projection [requires Qdrant and embeddings]
+    Vector {
+        #[command(subcommand)]
+        command: VectorCommand,
     },
 
     // ── Search (works in all modes) ──────────────────────────────────
@@ -246,6 +254,20 @@ enum GraphCommand {
     },
 }
 
+#[derive(Subcommand)]
+enum VectorCommand {
+    /// Sync one indexed file into the code-symbol vector projection
+    SyncFile {
+        /// Indexed file path to sync
+        #[arg(long)]
+        file: String,
+    },
+    /// Clear the current project's code-symbol vector projection
+    Clear,
+    /// Rebuild the current project's code-symbol vector projection from PostgreSQL facts
+    Rebuild,
+}
+
 fn ensure_project_fresh(ctx: &config::Context, disabled: bool) -> anyhow::Result<()> {
     if !disabled {
         freshness::ensure_fresh(ctx, freshness::FreshnessScope::Project)?;
@@ -328,7 +350,16 @@ fn main() -> anyhow::Result<()> {
             files,
             full,
             require_cpp_semantics,
-        } => commands::index::run(&ctx, path, files, full, require_cpp_semantics, cli.format),
+            sync_projections,
+        } => commands::index::run(
+            &ctx,
+            path,
+            files,
+            full,
+            require_cpp_semantics,
+            sync_projections,
+            cli.format,
+        ),
         Command::Status => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
             commands::status::run(&ctx, cli.format)
@@ -352,6 +383,25 @@ fn main() -> anyhow::Result<()> {
         } => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
             commands::graph::rebuild(&ctx, cli.format)
+        }
+        Command::Vector {
+            command: VectorCommand::SyncFile { file },
+        } => {
+            ensure_files_fresh(
+                &ctx,
+                cli.no_freshness,
+                vec![std::path::PathBuf::from(&file)],
+            )?;
+            commands::vector::sync_file(&ctx, &file, cli.format)
+        }
+        Command::Vector {
+            command: VectorCommand::Clear,
+        } => commands::vector::clear(&ctx, cli.format),
+        Command::Vector {
+            command: VectorCommand::Rebuild,
+        } => {
+            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            commands::vector::rebuild(&ctx, cli.format)
         }
         Command::Graph {
             command: GraphCommand::Overview,
@@ -542,7 +592,7 @@ mod tests {
     use clap::Parser;
 
     #[test]
-    fn parse_graph_commands() {
+    fn parse_projection_lifecycle_commands() {
         let cli = Cli::try_parse_from([
             "gcode",
             "--format",
@@ -559,6 +609,24 @@ mod tests {
                 command: GraphCommand::SyncFile { file },
             } => assert_eq!(file, "src/lib.rs"),
             _ => panic!("expected graph sync-file command"),
+        }
+
+        let cli = Cli::try_parse_from([
+            "gcode",
+            "--format",
+            "text",
+            "vector",
+            "sync-file",
+            "--file",
+            "src/lib.rs",
+        ])
+        .expect("vector sync-file parses");
+        assert!(matches!(cli.format, output::Format::Text));
+        match cli.command {
+            Command::Vector {
+                command: VectorCommand::SyncFile { file },
+            } => assert_eq!(file, "src/lib.rs"),
+            _ => panic!("expected vector sync-file command"),
         }
 
         let cli = Cli::try_parse_from(["gcode", "graph", "clear"]).expect("graph clear parses");
@@ -674,6 +742,32 @@ mod tests {
             }
             _ => panic!("expected graph blast-radius command"),
         }
+
+        let cli = Cli::try_parse_from(["gcode", "vector", "clear"]).expect("vector clear parses");
+        assert!(matches!(
+            cli.command,
+            Command::Vector {
+                command: VectorCommand::Clear
+            }
+        ));
+
+        let cli =
+            Cli::try_parse_from(["gcode", "vector", "rebuild"]).expect("vector rebuild parses");
+        assert!(matches!(
+            cli.command,
+            Command::Vector {
+                command: VectorCommand::Rebuild
+            }
+        ));
+
+        let cli =
+            Cli::try_parse_from(["gcode", "index", "--sync-projections"]).expect("index parses");
+        match cli.command {
+            Command::Index {
+                sync_projections, ..
+            } => assert!(sync_projections),
+            _ => panic!("expected index command"),
+        }
     }
 
     #[test]
@@ -684,8 +778,12 @@ mod tests {
         match cli.command {
             Command::Index {
                 require_cpp_semantics,
+                sync_projections,
                 ..
-            } => assert!(require_cpp_semantics),
+            } => {
+                assert!(require_cpp_semantics);
+                assert!(!sync_projections);
+            }
             _ => panic!("expected index command"),
         }
     }

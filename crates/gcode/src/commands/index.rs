@@ -1,8 +1,10 @@
 use crate::config;
 use crate::config::Context;
-use crate::index::api::{self, IndexRequest};
+use crate::index::api::{self, IndexOutcome, IndexRequest};
 use crate::output::{self, Format};
+use crate::projection::sync::{self, ProjectionSyncReports};
 use crate::utils::short_id;
+use serde::Serialize;
 
 pub fn run(
     ctx: &Context,
@@ -10,6 +12,7 @@ pub fn run(
     files: Option<Vec<String>>,
     full: bool,
     require_cpp_semantics: bool,
+    sync_projections: bool,
     format: Format,
 ) -> anyhow::Result<()> {
     let (target_ctx, path_filter) = resolve_index_context(ctx, path.as_deref())?;
@@ -28,10 +31,19 @@ pub fn run(
         explicit_files,
         full,
         require_cpp_semantics,
-        sync_projections: false,
+        sync_projections,
     };
 
     let outcome = api::index_files(request, &target_ctx)?;
+    if sync_projections {
+        let projections = sync::sync_after_index(&target_ctx, &outcome.indexed_file_paths)?;
+        let payload = sync_projections_payload(&outcome, projections);
+        return match format {
+            Format::Json => output::print_json(&payload),
+            Format::Text => output::print_text(&sync_projections_text(&payload)?),
+        };
+    }
+
     match format {
         Format::Json => output::print_json(&outcome),
         Format::Text => output::print_text(&format!(
@@ -43,6 +55,34 @@ pub fn run(
             outcome.durations.total_ms
         )),
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct IndexSyncProjectionsOutput {
+    pub indexed_files: usize,
+    pub skipped_files: usize,
+    pub symbols_indexed: usize,
+    pub chunks_indexed: usize,
+    pub projections: ProjectionSyncReports,
+}
+
+pub(crate) fn sync_projections_payload(
+    outcome: &IndexOutcome,
+    projections: ProjectionSyncReports,
+) -> IndexSyncProjectionsOutput {
+    IndexSyncProjectionsOutput {
+        indexed_files: outcome.indexed_files,
+        skipped_files: outcome.skipped_files,
+        symbols_indexed: outcome.symbols_indexed,
+        chunks_indexed: outcome.chunks_indexed,
+        projections,
+    }
+}
+
+pub(crate) fn sync_projections_text(
+    payload: &IndexSyncProjectionsOutput,
+) -> anyhow::Result<String> {
+    Ok(serde_json::to_string(payload)?)
 }
 
 fn resolve_index_context(
@@ -125,5 +165,90 @@ fn path_filter_for(
         None
     } else {
         Some(target_abs)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::index::api::IndexOutcome;
+    use crate::projection::sync::{
+        ProjectionStatus, ProjectionSyncError, ProjectionSyncReport, ProjectionSyncReports,
+    };
+    use serde_json::{Value, json};
+
+    fn sample_outcome() -> IndexOutcome {
+        IndexOutcome {
+            indexed_files: 12,
+            skipped_files: 0,
+            symbols_indexed: 348,
+            chunks_indexed: 921,
+            ..IndexOutcome::default()
+        }
+    }
+
+    fn sample_reports() -> ProjectionSyncReports {
+        ProjectionSyncReports {
+            graph: ProjectionSyncReport {
+                status: ProjectionStatus::Ok,
+                synced_files: 12,
+                synced_symbols: 348,
+                degraded: false,
+                error: None,
+            },
+            vector: ProjectionSyncReport {
+                status: ProjectionStatus::Degraded,
+                synced_files: 0,
+                synced_symbols: 0,
+                degraded: true,
+                error: Some(ProjectionSyncError {
+                    kind: "missing_qdrant_config".to_string(),
+                    message: "Qdrant config is required".to_string(),
+                }),
+            },
+        }
+    }
+
+    #[test]
+    fn sync_projections_json_contract() {
+        let payload = sync_projections_payload(&sample_outcome(), sample_reports());
+        assert_eq!(
+            serde_json::to_value(&payload).expect("payload serializes"),
+            json!({
+                "indexed_files": 12,
+                "skipped_files": 0,
+                "symbols_indexed": 348,
+                "chunks_indexed": 921,
+                "projections": {
+                    "graph": {
+                        "status": "ok",
+                        "synced_files": 12,
+                        "synced_symbols": 348,
+                        "degraded": false,
+                        "error": null
+                    },
+                    "vector": {
+                        "status": "degraded",
+                        "synced_files": 0,
+                        "synced_symbols": 0,
+                        "degraded": true,
+                        "error": {
+                            "kind": "missing_qdrant_config",
+                            "message": "Qdrant config is required"
+                        }
+                    }
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn sync_projections_text_contract() {
+        let payload = sync_projections_payload(&sample_outcome(), sample_reports());
+        let text = sync_projections_text(&payload).expect("text payload");
+        let parsed: Value = serde_json::from_str(&text).expect("text mode is structured JSON");
+        assert_eq!(parsed["indexed_files"], 12);
+        assert_eq!(parsed["projections"]["graph"]["status"], "ok");
+        assert_eq!(parsed["projections"]["vector"]["status"], "degraded");
     }
 }

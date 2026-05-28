@@ -5,6 +5,7 @@ use crate::graph::code_graph::{
 };
 use crate::models::PagedResponse;
 use crate::output::{self, Format};
+use crate::projection::sync::ProjectionSyncReport;
 use crate::search::fts::{self, ResolvedGraphSymbol};
 use serde_json::{Value, json};
 
@@ -53,7 +54,13 @@ fn lifecycle_output(
     }
 }
 
-fn sync_file_graph(ctx: &Context, file_path: &str) -> anyhow::Result<usize> {
+struct GraphFileSyncOutcome {
+    relationships_written: usize,
+    symbols_synced: usize,
+}
+
+fn sync_file_graph(ctx: &Context, file_path: &str) -> anyhow::Result<GraphFileSyncOutcome> {
+    code_graph::require_graph_reads(ctx)?;
     let mut conn = db::connect_readwrite(&ctx.database_url)?;
     let facts = db::read_graph_file_facts(&mut conn, &ctx.project_id, file_path)?;
     if !db::mark_graph_sync_attempted(&mut conn, &ctx.project_id, file_path)? {
@@ -70,19 +77,29 @@ fn sync_file_graph(ctx: &Context, file_path: &str) -> anyhow::Result<usize> {
         &facts.calls,
     )?;
     db::mark_graph_synced(&mut conn, &ctx.project_id, file_path)?;
-    Ok(relationships_written)
+    Ok(GraphFileSyncOutcome {
+        relationships_written,
+        symbols_synced: facts.definitions.len(),
+    })
 }
 
 fn clear_project_graph(ctx: &Context) -> anyhow::Result<GraphLifecycleOutput> {
+    code_graph::require_graph_reads(ctx)?;
     let mut conn = db::connect_readwrite(&ctx.database_url)?;
     let files_marked_pending = db::reset_graph_sync_for_project(&mut conn, &ctx.project_id)?;
     code_graph::clear_project(ctx)?;
+    let report = ProjectionSyncReport::ok(0, 0);
     Ok(lifecycle_output(
         GraphLifecycleAction::Clear,
         ctx,
         json!({
             "success": true,
             "project_id": ctx.project_id,
+            "status": report.status,
+            "synced_files": report.synced_files,
+            "synced_symbols": report.synced_symbols,
+            "degraded": report.degraded,
+            "error": report.error,
             "files_marked_pending": files_marked_pending,
             "summary": format!("marked {files_marked_pending} files pending and cleared graph projection"),
         }),
@@ -90,47 +107,68 @@ fn clear_project_graph(ctx: &Context) -> anyhow::Result<GraphLifecycleOutput> {
 }
 
 fn rebuild_project_graph(ctx: &Context) -> anyhow::Result<GraphLifecycleOutput> {
+    code_graph::require_graph_reads(ctx)?;
     let mut conn = db::connect_readwrite(&ctx.database_url)?;
     let file_paths = db::list_indexed_file_paths(&mut conn, &ctx.project_id)?;
     code_graph::clear_project(ctx)?;
     db::reset_graph_sync_for_project(&mut conn, &ctx.project_id)?;
 
     let mut files_synced = 0usize;
+    let mut symbols_synced = 0usize;
     let mut errors = Vec::new();
     for file_path in &file_paths {
-        if let Err(err) = db::mark_graph_sync_attempted(&mut conn, &ctx.project_id, file_path)
-            .and_then(|updated| {
-                if updated {
-                    Ok(())
-                } else {
-                    anyhow::bail!("indexed file no longer exists")
+        let synced_symbols =
+            match db::mark_graph_sync_attempted(&mut conn, &ctx.project_id, file_path)
+                .and_then(|updated| {
+                    if updated {
+                        Ok(())
+                    } else {
+                        anyhow::bail!("indexed file no longer exists")
+                    }
+                })
+                .and_then(|_| {
+                    let facts = db::read_graph_file_facts(&mut conn, &ctx.project_id, file_path)?;
+                    code_graph::sync_file_graph(
+                        ctx,
+                        &facts.file_path,
+                        &facts.imports,
+                        &facts.definitions,
+                        &facts.calls,
+                    )?;
+                    db::mark_graph_synced(&mut conn, &ctx.project_id, file_path)?;
+                    Ok(facts.definitions.len())
+                }) {
+                Ok(symbols) => symbols,
+                Err(err) => {
+                    errors.push(format!("{file_path}: {err}"));
+                    continue;
                 }
-            })
-            .and_then(|_| {
-                let facts = db::read_graph_file_facts(&mut conn, &ctx.project_id, file_path)?;
-                code_graph::sync_file_graph(
-                    ctx,
-                    &facts.file_path,
-                    &facts.imports,
-                    &facts.definitions,
-                    &facts.calls,
-                )?;
-                db::mark_graph_synced(&mut conn, &ctx.project_id, file_path)?;
-                Ok(())
-            })
-        {
-            errors.push(format!("{file_path}: {err}"));
-            continue;
-        }
+            };
         files_synced += 1;
+        symbols_synced += synced_symbols;
     }
 
+    let report = if errors.is_empty() {
+        ProjectionSyncReport::ok(files_synced, symbols_synced)
+    } else {
+        ProjectionSyncReport::degraded(
+            "sync_failed",
+            errors.join("; "),
+            files_synced,
+            symbols_synced,
+        )
+    };
     Ok(lifecycle_output(
         GraphLifecycleAction::Rebuild,
         ctx,
         json!({
             "success": true,
             "project_id": ctx.project_id,
+            "status": report.status,
+            "synced_files": report.synced_files,
+            "synced_symbols": report.synced_symbols,
+            "degraded": report.degraded,
+            "error": report.error,
             "files_processed": file_paths.len(),
             "files_synced": files_synced,
             "files_failed": errors.len(),
@@ -149,12 +187,19 @@ pub fn rebuild(ctx: &Context, format: Format) -> anyhow::Result<()> {
 }
 
 pub fn sync_file(ctx: &Context, file_path: &str, format: Format) -> anyhow::Result<()> {
-    let relationships_written = sync_file_graph(ctx, file_path)?;
+    let sync = sync_file_graph(ctx, file_path)?;
+    let relationships_written = sync.relationships_written;
+    let report = ProjectionSyncReport::ok(1, sync.symbols_synced);
     let summary = format!("synced {relationships_written} graph relationships for {file_path}");
     let payload = json!({
         "success": true,
         "project_id": ctx.project_id,
         "file_path": file_path,
+        "status": report.status,
+        "synced_files": report.synced_files,
+        "synced_symbols": report.synced_symbols,
+        "degraded": report.degraded,
+        "error": report.error,
         "relationships_written": relationships_written,
         "summary": summary,
     });
