@@ -1557,6 +1557,8 @@ async def test_epic_holistic_workspace_conflict_rolls_back_without_heartbeat_err
         assigned_agent="backend-developer",
         status="closed",
     )
+    set_stage_state(temp_db, task.id, "holistic_qa", "in_progress", work_attempt_count=3)
+    set_stage_state(temp_db, child.id, "development", "done", work_attempt_count=3)
     TaskArtifactManager(temp_db).set_artifacts_atomic(
         task.id,
         target_branch="main",
@@ -1605,8 +1607,14 @@ async def test_epic_holistic_workspace_conflict_rolls_back_without_heartbeat_err
     reopened_child = get_task(temp_db, child.id)
     assert result.executed == 1
     assert storage.get_mutex(task.id) is None
-    assert task_manager.stage_states.get(task.id, "holistic_qa").state == "ready"
-    assert task_manager.stage_states.get(child.id, "development").state == "ready"
+    parent_stage = task_manager.stage_states.get(task.id, "holistic_qa")
+    child_stage = task_manager.stage_states.get(child.id, "development")
+    assert parent_stage is not None
+    assert child_stage is not None
+    assert parent_stage.state == "ready"
+    assert parent_stage.work_attempt_count == 2
+    assert child_stage.state == "ready"
+    assert child_stage.work_attempt_count == 0
     assert reopened_child.closed_at is None
     assert updated.dispatch_failure_count == 0
     assert updated.is_escalated is False

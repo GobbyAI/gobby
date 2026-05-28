@@ -68,6 +68,12 @@ class StageStateTransitions:
                 validation_override_reason=validation_override_reason,
             )
             self.ensure_not_skipping(row, current, verb)
+            retry_neutral_cited_failure = self._is_retry_neutral_cited_holistic_failure(
+                stage_name,
+                verb,
+                reason=reason,
+                cited_subtasks=cited_subtasks,
+            )
 
             now = _now()
             artifact_json = (
@@ -134,7 +140,10 @@ class StageStateTransitions:
                         reason=reason,
                         now=now,
                         holder=holder,
+                        reset_cited_work_attempts=retry_neutral_cited_failure,
                     )
+                    if retry_neutral_cited_failure:
+                        self.decrement_work_attempt(conn, task_id, stage_name, now=now)
                 if to_state == "done" and terminal_after_done(conn, task_id, stage_name):
                     _close_task_in_txn(
                         conn,
@@ -154,8 +163,10 @@ class StageStateTransitions:
                 updated, "review"
             ):
                 self.escalate_stage_failure(task_id, f"{stage_name}_review_failed:max")
-            if verb == "fail_stage" and updated.work_attempt_count >= self.effective_cap(
-                updated, "work"
+            if (
+                verb == "fail_stage"
+                and not retry_neutral_cited_failure
+                and updated.work_attempt_count >= self.effective_cap(updated, "work")
             ):
                 self.escalate_stage_failure(task_id, f"{stage_name}_work_failed:max")
             if verb == "fail_stage" and needs_human:
@@ -165,6 +176,22 @@ class StageStateTransitions:
                 )
             self._wake_dispatcher(task_id, stage_name, verb)
             return updated
+
+    @staticmethod
+    def _is_retry_neutral_cited_holistic_failure(
+        stage_name: str,
+        verb: str,
+        *,
+        reason: str | None,
+        cited_subtasks: Sequence[str] | None,
+    ) -> bool:
+        return (
+            verb == "fail_stage"
+            and stage_name == "holistic_qa"
+            and bool(cited_subtasks)
+            and bool(reason)
+            and reason.startswith("dispatch_spawn_failed:")
+        )
 
     def _wake_dispatcher(self, task_id: str, stage_name: str, verb: str) -> None:
         try:
@@ -185,6 +212,7 @@ class StageStateTransitions:
         reason: str | None,
         now: str,
         holder: str,
+        reset_cited_work_attempts: bool = False,
     ) -> None:
         cited_ids = tuple(dict.fromkeys(cited_subtasks))
         if not cited_ids:
@@ -221,8 +249,36 @@ class StageStateTransitions:
         )
         self.reset_task_from_stage(conn, task_id, "development", now=now, holder=holder)
         for cited_id in cited_ids:
-            self.reset_task_from_stage(conn, cited_id, "development", now=now, holder=holder)
+            self.reset_task_from_stage(
+                conn,
+                cited_id,
+                "development",
+                now=now,
+                holder=holder,
+                reset_work_attempts=reset_cited_work_attempts,
+            )
         self.reactivate_cited_worktrees(conn, cited_ids, now=now)
+
+    def decrement_work_attempt(
+        self,
+        conn: Transaction,
+        task_id: str,
+        stage_name: str,
+        *,
+        now: str,
+    ) -> None:
+        conn.execute(
+            """
+            UPDATE task_stage_states
+               SET work_attempt_count = CASE
+                       WHEN work_attempt_count > 0 THEN work_attempt_count - 1
+                       ELSE 0
+                   END,
+                   updated_at = %s
+             WHERE task_id = %s AND stage_name = %s
+            """,
+            (now, task_id, stage_name),
+        )
 
     def reactivate_cited_worktrees(
         self,
@@ -307,6 +363,7 @@ class StageStateTransitions:
         *,
         now: str,
         holder: str,
+        reset_work_attempts: bool = False,
     ) -> None:
         stages = conn.execute(
             """
@@ -354,10 +411,11 @@ class StageStateTransitions:
                    completed_commit_sha = NULL,
                    artifact_refs = NULL,
                    notes = NULL,
+                   work_attempt_count = CASE WHEN %s THEN 0 ELSE work_attempt_count END,
                    updated_at = %s
              WHERE task_id = %s AND position >= %s
             """,
-            (now, task_id, reset_position),
+            (reset_work_attempts, now, task_id, reset_position),
         )
         for row in stages:
             if int(row["position"]) < reset_position or row["state"] == "ready":

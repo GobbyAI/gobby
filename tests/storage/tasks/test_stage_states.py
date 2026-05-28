@@ -417,6 +417,48 @@ def test_holistic_failure_reopens_single_cited_child_to_development(
     assert child_comment["body"].startswith("## Holistic QA Follow-Up")
     assert "needs changes" in parent_comment["body"]
     assert "needs changes" in child_comment["body"]
+    assert stage_row(temp_db, parent.id, "holistic_qa")["work_attempt_count"] == 1
+    assert stage_row(temp_db, leaf.id, "development")["work_attempt_count"] == 1
+
+
+def test_retry_neutral_holistic_spawn_failure_resets_cited_child_attempts(
+    temp_db,
+    sample_project,
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    parent = manager.create_task(
+        project_id=sample_project["id"],
+        title="Docs epic",
+        task_type="epic",
+        category="docs",
+    )
+    manager.stage_states.initialize_manifest(
+        parent.id,
+        [spec("development", 0), spec("holistic_qa", 1), spec("merge", 2)],
+        by_session_id="test",
+    )
+    set_stage_state(temp_db, parent.id, "development", "done", work_attempt_count=2)
+    set_stage_state(temp_db, parent.id, "holistic_qa", "in_progress", work_attempt_count=3)
+    leaf = _closed_leaf_for_holistic_failure(temp_db, sample_project, parent.id, "Leaf")
+    set_stage_state(temp_db, leaf.id, "development", "done", work_attempt_count=3)
+
+    updated = manager.stage_states.fail_stage(
+        parent.id,
+        "holistic_qa",
+        reason="dispatch_spawn_failed:failed to refresh integration workspace",
+        by_session_id="dispatcher",
+        cited_subtasks=[leaf.id],
+    )
+
+    reopened = task_row(temp_db, leaf.id)
+    parent_row = task_row(temp_db, parent.id)
+    assert updated.state == "ready"
+    assert stage_row(temp_db, parent.id, "holistic_qa")["work_attempt_count"] == 2
+    assert stage_row(temp_db, leaf.id, "development")["state"] == "ready"
+    assert stage_row(temp_db, leaf.id, "development")["work_attempt_count"] == 0
+    assert reopened["closed_at"] is None
+    assert parent_row["is_escalated"] is False
+    assert reopened["is_escalated"] is False
 
 
 def test_holistic_failure_reactivates_merged_cited_child_worktree(
