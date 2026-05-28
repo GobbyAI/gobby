@@ -76,6 +76,7 @@ mod tests {
             falkordb: None,
             qdrant: None,
             embedding: None,
+            code_vectors: crate::config::CodeVectorSettings::default(),
             daemon_url: None,
         };
 

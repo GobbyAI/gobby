@@ -1,0 +1,282 @@
+use gobby_code::config::{CodeVectorSettings, EmbeddingConfig, QdrantConfig};
+use gobby_code::models::Symbol;
+use gobby_code::vector::code_symbols::{
+    CodeSymbolVectorLifecycle, VECTOR_DISTANCE_COSINE, VectorLifecycleError,
+};
+use serde_json::{Value, json};
+use std::io::{Read, Write};
+use std::net::TcpListener;
+use std::thread;
+
+fn symbol(id: &str, file_path: &str, summary: Option<&str>) -> Symbol {
+    Symbol {
+        id: id.to_string(),
+        project_id: "project-1".to_string(),
+        file_path: file_path.to_string(),
+        name: "run".to_string(),
+        qualified_name: "crate::run".to_string(),
+        kind: "function".to_string(),
+        language: "rust".to_string(),
+        byte_start: 10,
+        byte_end: 40,
+        line_start: 3,
+        line_end: 5,
+        signature: Some("fn run()".to_string()),
+        docstring: None,
+        parent_symbol_id: None,
+        content_hash: "hash".to_string(),
+        summary: summary.map(str::to_string),
+        created_at: String::new(),
+        updated_at: String::new(),
+    }
+}
+
+#[test]
+fn ensure_creates_missing_and_reuses_compatible() {
+    let (embedding_url, embedding_handle) = spawn_http_responses(vec![
+        (200, json!({"data": [{"embedding": [0.1, 0.2, 0.3]}]})),
+        (200, json!({"data": [{"embedding": [0.4, 0.5, 0.6]}]})),
+    ]);
+    let (qdrant_url, qdrant_handle) = spawn_http_responses(vec![
+        (404, json!({"status": "not found"})),
+        (200, json!({"result": true})),
+        (200, json!({"result": {"operation_id": 1}})),
+        (200, json!({"result": {"operation_id": 2}})),
+        (
+            200,
+            json!({"result": {"config": {"params": {"vectors": {"size": 3, "distance": VECTOR_DISTANCE_COSINE}}}}}),
+        ),
+        (200, json!({"result": {"operation_id": 3}})),
+        (200, json!({"result": {"operation_id": 4}})),
+    ]);
+    let mut lifecycle = CodeSymbolVectorLifecycle::new(
+        "project-1".to_string(),
+        QdrantConfig {
+            url: Some(qdrant_url),
+            api_key: Some("qdrant-key".to_string()),
+        },
+        EmbeddingConfig {
+            api_base: format!("{embedding_url}/v1"),
+            model: "embed-small".to_string(),
+            api_key: None,
+        },
+        CodeVectorSettings {
+            vector_dim: Some(3),
+        },
+    )
+    .expect("lifecycle");
+
+    let first = lifecycle
+        .sync_file_symbols("src/lib.rs", &[symbol("sym-1", "src/lib.rs", None)])
+        .expect("first sync");
+    let second = lifecycle
+        .sync_file_symbols(
+            "src/lib.rs",
+            &[symbol("sym-1", "src/lib.rs", Some("summary"))],
+        )
+        .expect("second sync");
+    let embedding_requests = embedding_handle.join().expect("embedding requests");
+    let qdrant_requests = qdrant_handle.join().expect("qdrant requests");
+
+    assert_eq!(first.vectors_upserted, 1);
+    assert_eq!(second.vectors_upserted, 1);
+    assert_eq!(embedding_requests.len(), 2);
+    assert!(qdrant_requests[0].contains("GET /collections/code_symbols_project-1 HTTP/1.1"));
+    assert!(qdrant_requests[1].contains("PUT /collections/code_symbols_project-1 HTTP/1.1"));
+    assert!(qdrant_requests[1].contains(r#""size":3"#));
+    assert!(qdrant_requests[1].contains(r#""distance":"Cosine""#));
+    assert!(
+        qdrant_requests[2]
+            .contains("POST /collections/code_symbols_project-1/points/delete HTTP/1.1")
+    );
+    assert!(qdrant_requests[2].contains(r#""key":"project_id""#));
+    assert!(qdrant_requests[2].contains(r#""value":"project-1""#));
+    assert!(qdrant_requests[2].contains(r#""key":"file_path""#));
+    assert!(qdrant_requests[2].contains(r#""value":"src/lib.rs""#));
+    assert!(qdrant_requests[3].contains("PUT /collections/code_symbols_project-1/points HTTP/1.1"));
+    assert!(qdrant_requests[3].contains(r#""provenance":"EXTRACTED""#));
+    assert!(qdrant_requests[3].contains(r#""source_system":"gcode""#));
+    assert!(qdrant_requests[3].contains(r#""source_line_start":3"#));
+    assert!(qdrant_requests[3].contains(r#""source_byte_end":40"#));
+    assert!(qdrant_requests[4].contains("GET /collections/code_symbols_project-1 HTTP/1.1"));
+    assert!(!qdrant_requests[4].contains("DELETE"));
+}
+
+#[test]
+fn clear_and_rebuild_delete_project_and_upsert_current_symbols() {
+    let (embedding_url, embedding_handle) = spawn_http_responses(vec![(
+        200,
+        json!({"data": [{"embedding": [0.7, 0.8, 0.9]}]}),
+    )]);
+    let (qdrant_url, qdrant_handle) = spawn_http_responses(vec![
+        (
+            200,
+            json!({"result": {"config": {"params": {"vectors": {"size": 3, "distance": VECTOR_DISTANCE_COSINE}}}}}),
+        ),
+        (200, json!({"result": {"operation_id": 1}})),
+        (
+            200,
+            json!({"result": {"config": {"params": {"vectors": {"size": 3, "distance": VECTOR_DISTANCE_COSINE}}}}}),
+        ),
+        (200, json!({"result": {"operation_id": 2}})),
+        (200, json!({"result": {"operation_id": 3}})),
+    ]);
+    let mut lifecycle = CodeSymbolVectorLifecycle::new(
+        "project-1".to_string(),
+        QdrantConfig {
+            url: Some(qdrant_url),
+            api_key: None,
+        },
+        EmbeddingConfig {
+            api_base: format!("{embedding_url}/v1"),
+            model: "embed-small".to_string(),
+            api_key: None,
+        },
+        CodeVectorSettings {
+            vector_dim: Some(3),
+        },
+    )
+    .expect("lifecycle");
+
+    let cleared = lifecycle.clear_project_vectors().expect("clear");
+    let rebuilt = lifecycle
+        .rebuild_symbols(&[symbol("sym-1", "src/lib.rs", None)])
+        .expect("rebuild");
+    let embedding_requests = embedding_handle.join().expect("embedding requests");
+    let qdrant_requests = qdrant_handle.join().expect("qdrant requests");
+
+    assert_eq!(cleared.vectors_deleted, 1);
+    assert_eq!(rebuilt.vectors_upserted, 1);
+    assert_eq!(embedding_requests.len(), 1);
+    assert!(
+        qdrant_requests[1]
+            .contains("POST /collections/code_symbols_project-1/points/delete HTTP/1.1")
+    );
+    assert!(qdrant_requests[1].contains(r#""key":"project_id""#));
+    assert!(!qdrant_requests[1].contains(r#""key":"file_path""#));
+    assert!(
+        qdrant_requests[3]
+            .contains("POST /collections/code_symbols_project-1/points/delete HTTP/1.1")
+    );
+    assert!(qdrant_requests[4].contains("PUT /collections/code_symbols_project-1/points HTTP/1.1"));
+}
+
+#[test]
+fn incompatible_existing_collection_errors_without_migration() {
+    let (qdrant_url, qdrant_handle) = spawn_http_responses(vec![
+        (
+            200,
+            json!({"result": {"config": {"params": {"vectors": {"size": 4, "distance": "Dot"}}}}}),
+        ),
+        (
+            200,
+            json!({"result": {"config": {"params": {"vectors": {"size": 4, "distance": "Dot"}}}}}),
+        ),
+    ]);
+    let mut lifecycle = CodeSymbolVectorLifecycle::new(
+        "project-1".to_string(),
+        QdrantConfig {
+            url: Some(qdrant_url),
+            api_key: None,
+        },
+        EmbeddingConfig {
+            api_base: "http://127.0.0.1:9/v1".to_string(),
+            model: "unused".to_string(),
+            api_key: None,
+        },
+        CodeVectorSettings {
+            vector_dim: Some(3),
+        },
+    )
+    .expect("lifecycle");
+
+    let err = lifecycle
+        .ensure_collection()
+        .expect_err("incompatible ensure must fail");
+    assert!(matches!(
+        err,
+        VectorLifecycleError::DimensionMismatch {
+            expected_size: 3,
+            found_size: Some(4),
+            expected_distance: VECTOR_DISTANCE_COSINE,
+            found_distance: Some(ref distance),
+            ..
+        } if distance == "Dot"
+    ));
+
+    let err = lifecycle
+        .clear_project_vectors()
+        .expect_err("incompatible clear must fail before delete");
+    assert!(matches!(
+        err,
+        VectorLifecycleError::DimensionMismatch { .. }
+    ));
+    let qdrant_requests = qdrant_handle.join().expect("qdrant requests");
+
+    assert_eq!(qdrant_requests.len(), 2);
+    assert!(qdrant_requests.iter().all(|request| {
+        request.contains("GET /collections/code_symbols_project-1 HTTP/1.1")
+            && !request.contains("/points/delete")
+            && !request.contains("/points HTTP/1.1")
+    }));
+}
+
+fn spawn_http_responses(responses: Vec<(u16, Value)>) -> (String, thread::JoinHandle<Vec<String>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+    let addr = listener.local_addr().expect("local addr");
+    let handle = thread::spawn(move || {
+        let mut requests = Vec::new();
+        for (status, body) in responses {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            requests.push(read_http_request(&mut stream));
+
+            let body = body.to_string();
+            write!(
+                stream,
+                "HTTP/1.1 {status} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .expect("write response");
+        }
+        requests
+    });
+
+    (format!("http://{addr}"), handle)
+}
+
+fn read_http_request(stream: &mut impl Read) -> String {
+    let mut request = Vec::new();
+    let mut buffer = [0; 4096];
+    let mut expected_len = None;
+
+    loop {
+        let n = stream.read(&mut buffer).expect("read request");
+        if n == 0 {
+            break;
+        }
+        request.extend_from_slice(&buffer[..n]);
+
+        if expected_len.is_none()
+            && let Some(header_end) = request.windows(4).position(|window| window == b"\r\n\r\n")
+        {
+            let headers = String::from_utf8_lossy(&request[..header_end]);
+            let content_len = headers
+                .lines()
+                .find_map(|line| {
+                    line.to_ascii_lowercase()
+                        .strip_prefix("content-length: ")
+                        .and_then(|value| value.parse::<usize>().ok())
+                })
+                .unwrap_or(0);
+            expected_len = Some(header_end + 4 + content_len);
+        }
+
+        if let Some(expected_len) = expected_len
+            && request.len() >= expected_len
+        {
+            break;
+        }
+    }
+
+    String::from_utf8_lossy(&request).into_owned()
+}
