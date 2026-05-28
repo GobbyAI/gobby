@@ -165,7 +165,10 @@ fn reject_control_characters(value: &str, context: ValueContext) -> Result<(), T
 }
 
 fn escape_string_contents(value: &str) -> String {
-    value.replace('\\', "\\\\").replace('\'', "\\'")
+    value
+        .replace('\\', "\\\\")
+        .replace('\'', "\\'")
+        .replace('"', "\\\"")
 }
 
 fn render_float(value: f64) -> Result<String, TypedQueryError> {
@@ -287,9 +290,17 @@ mod tests {
         assert_eq!(
             query.params.get("props").map(String::as_str),
             Some(
-                "{enabled: true, label: 'caf\u{00e9} \"quote\" and \\'single\\' \\\\ slash', nested: [1, 2.25, false]}"
+                "{enabled: true, label: 'caf\u{00e9} \\\"quote\\\" and \\'single\\' \\\\ slash', nested: [1, 2.25, false]}"
             )
         );
+    }
+
+    #[test]
+    fn string_literals_escape_both_quote_delimiters() {
+        let rendered = render_cypher_value(&TypedValue::String("a 'single' and \"double\"".into()))
+            .expect("valid string should render");
+
+        assert_eq!(rendered, "'a \\'single\\' and \\\"double\\\"'");
     }
 
     #[test]
