@@ -7,6 +7,7 @@
 
 use std::path::{Path, PathBuf};
 
+use gobby_core::config::ConfigSource;
 use gobby_core::project::{find_project_root, read_project_id};
 use postgres::Client;
 
@@ -16,7 +17,7 @@ use crate::secrets;
 use crate::utils::short_id;
 
 /// FalkorDB connection configuration.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FalkorConfig {
     pub host: String,
     pub port: u16,
@@ -25,19 +26,30 @@ pub struct FalkorConfig {
 }
 
 /// Qdrant connection configuration.
-#[derive(Debug, Clone)]
-pub struct QdrantConfig {
-    pub url: Option<String>,
-    pub api_key: Option<String>,
-    pub collection_prefix: String,
-}
+pub type QdrantConfig = gobby_core::config::QdrantConfig;
 
 /// Embedding API configuration (OpenAI-compatible endpoint).
-#[derive(Debug, Clone)]
-pub struct EmbeddingConfig {
-    pub api_base: String,
-    pub model: String,
-    pub api_key: Option<String>,
+pub type EmbeddingConfig = gobby_core::config::EmbeddingConfig;
+
+pub const FALKORDB_GRAPH_NAME: &str = "gobby_code";
+pub const CODE_SYMBOL_COLLECTION_PREFIX: &str = "code_symbols_";
+
+pub const GOBBY_FALKORDB_HOST_ENV: &str = "GOBBY_FALKORDB_HOST";
+pub const GOBBY_FALKORDB_PORT_ENV: &str = "GOBBY_FALKORDB_PORT";
+pub const GOBBY_FALKORDB_PASSWORD_ENV: &str = "GOBBY_FALKORDB_PASSWORD";
+
+pub const FALKORDB_HOST_CONFIG_KEY: &str = "databases.falkordb.host";
+pub const FALKORDB_PORT_CONFIG_KEY: &str = "databases.falkordb.port";
+pub const FALKORDB_PASSWORD_CONFIG_KEY: &str = "databases.falkordb.requirepass";
+
+impl FalkorConfig {
+    pub fn connection_config(&self) -> gobby_core::config::FalkorConfig {
+        gobby_core::config::FalkorConfig {
+            host: self.host.clone(),
+            port: self.port,
+            password: self.password.clone(),
+        }
+    }
 }
 
 /// Resolved runtime context for gcode commands.
@@ -359,45 +371,19 @@ fn absolute_fallback(path: &Path) -> PathBuf {
     }
 }
 
-// ── Config store helpers ─────────────────────────────────────────────
+// ── Config store adapter ─────────────────────────────────────────────
 
-/// Read a value from the config_store table, returning None if missing.
-/// Values are stored as JSON — decode string values while preserving legacy text.
-fn read_config_value(conn: &mut Client, key: &str) -> Option<String> {
-    let raw: String = conn
-        .query_opt("SELECT value FROM config_store WHERE key = $1", &[&key])
-        .ok()??
-        .try_get("value")
-        .ok()?;
-    decode_config_value(&raw)
-}
-
-fn decode_config_value(raw: &str) -> Option<String> {
-    match serde_json::from_str::<serde_json::Value>(raw) {
-        Ok(serde_json::Value::String(text)) => Some(text),
-        Ok(value @ (serde_json::Value::Array(_) | serde_json::Value::Object(_))) => {
-            Some(serde_json::to_string(&value).unwrap_or_else(|_| raw.to_string()))
-        }
-        Ok(value) => Some(value.to_string()),
-        Err(_) => Some(raw.to_string()),
-    }
-}
-
-const FALKORDB_DEFAULT_PORT: u16 = 16379;
-const FALKORDB_GRAPH_NAME: &str = "gobby_code";
-
-trait FalkorConfigSource {
-    fn config_value(&mut self, key: &str) -> Option<String>;
-    fn resolve_value(&mut self, value: &str) -> anyhow::Result<String>;
-}
-
-struct PostgresFalkorConfigSource<'a> {
+pub(crate) struct PostgresConfigSource<'a> {
     conn: &'a mut Client,
 }
 
-impl FalkorConfigSource for PostgresFalkorConfigSource<'_> {
+impl gobby_core::config::ConfigSource for PostgresConfigSource<'_> {
     fn config_value(&mut self, key: &str) -> Option<String> {
-        read_config_value(self.conn, key)
+        let key = canonical_config_key(key);
+        gobby_core::postgres::read_config_value(self.conn, key)
+            .ok()
+            .flatten()
+            .and_then(|raw| gobby_core::config::decode_config_value(&raw))
     }
 
     fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
@@ -406,19 +392,19 @@ impl FalkorConfigSource for PostgresFalkorConfigSource<'_> {
 }
 
 #[cfg(test)]
-struct ClosureFalkorConfigSource<R, S> {
+struct ClosureConfigSource<R, S> {
     read_config_value: R,
     resolve_value: S,
 }
 
 #[cfg(test)]
-impl<R, S> FalkorConfigSource for ClosureFalkorConfigSource<R, S>
+impl<R, S> ConfigSource for ClosureConfigSource<R, S>
 where
     R: FnMut(&str) -> Option<String>,
     S: FnMut(&str) -> anyhow::Result<String>,
 {
     fn config_value(&mut self, key: &str) -> Option<String> {
-        (self.read_config_value)(key)
+        (self.read_config_value)(key).and_then(|raw| gobby_core::config::decode_config_value(&raw))
     }
 
     fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
@@ -426,156 +412,92 @@ where
     }
 }
 
+fn canonical_config_key(key: &str) -> &str {
+    match key {
+        FALKORDB_HOST_CONFIG_KEY => FALKORDB_HOST_CONFIG_KEY,
+        FALKORDB_PORT_CONFIG_KEY => FALKORDB_PORT_CONFIG_KEY,
+        FALKORDB_PASSWORD_CONFIG_KEY => FALKORDB_PASSWORD_CONFIG_KEY,
+        _ => key,
+    }
+}
+
 #[cfg(test)]
 fn resolve_falkordb_config_from_values<R, S>(
     read_config_value: R,
-    quiet: bool,
     resolve_value: S,
 ) -> Option<FalkorConfig>
 where
     R: FnMut(&str) -> Option<String>,
     S: FnMut(&str) -> anyhow::Result<String>,
 {
-    let mut source = ClosureFalkorConfigSource {
+    let mut source = ClosureConfigSource {
         read_config_value,
         resolve_value,
     };
-    resolve_falkordb_config_from_source(&mut source, quiet)
+    resolve_falkordb_config_from_source(&mut source)
+}
+
+#[cfg(test)]
+fn resolve_qdrant_config_from_values<R, S>(
+    read_config_value: R,
+    resolve_value: S,
+) -> Option<QdrantConfig>
+where
+    R: FnMut(&str) -> Option<String>,
+    S: FnMut(&str) -> anyhow::Result<String>,
+{
+    let mut source = ClosureConfigSource {
+        read_config_value,
+        resolve_value,
+    };
+    gobby_core::config::resolve_qdrant_config(&mut source)
+}
+
+#[cfg(test)]
+fn resolve_embedding_config_from_values<R, S>(
+    read_config_value: R,
+    resolve_value: S,
+) -> Option<EmbeddingConfig>
+where
+    R: FnMut(&str) -> Option<String>,
+    S: FnMut(&str) -> anyhow::Result<String>,
+{
+    let mut source = ClosureConfigSource {
+        read_config_value,
+        resolve_value,
+    };
+    gobby_core::config::resolve_embedding_config(&mut source)
 }
 
 /// Resolve FalkorDB configuration from config_store + env vars.
-fn resolve_falkordb_config(conn: &mut Client, quiet: bool) -> Option<FalkorConfig> {
-    let mut source = PostgresFalkorConfigSource { conn };
-    resolve_falkordb_config_from_source(&mut source, quiet)
+fn resolve_falkordb_config(conn: &mut Client, _quiet: bool) -> Option<FalkorConfig> {
+    let mut source = PostgresConfigSource { conn };
+    resolve_falkordb_config_from_source(&mut source)
 }
 
-fn resolve_falkordb_config_from_source(
-    source: &mut impl FalkorConfigSource,
-    quiet: bool,
-) -> Option<FalkorConfig> {
-    let host = std::env::var("GOBBY_FALKORDB_HOST")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .or_else(|| {
-            source
-                .config_value("databases.falkordb.host")
-                .filter(|value| !value.trim().is_empty())
-        })?;
-
-    let raw_port = std::env::var("GOBBY_FALKORDB_PORT")
-        .ok()
-        .or_else(|| source.config_value("databases.falkordb.port"));
-    let port = parse_falkordb_port(raw_port.as_deref(), quiet);
-
-    let raw_password = std::env::var("GOBBY_FALKORDB_PASSWORD")
-        .ok()
-        .or_else(|| source.config_value("databases.falkordb.requirepass"))
-        .filter(|value| !value.trim().is_empty());
-    let password = match raw_password {
-        Some(value) => match source.resolve_value(&value) {
-            Ok(resolved) => Some(resolved),
-            Err(e) => {
-                if !quiet {
-                    eprintln!("Warning: failed to resolve FalkorDB password: {e}");
-                }
-                None
-            }
-        },
-        None => None,
-    };
+fn resolve_falkordb_config_from_source(source: &mut impl ConfigSource) -> Option<FalkorConfig> {
+    let connection = gobby_core::config::resolve_falkordb_config(source)?;
 
     Some(FalkorConfig {
-        host,
-        port,
-        password,
+        host: connection.host,
+        port: connection.port,
+        password: connection.password,
         graph_name: FALKORDB_GRAPH_NAME.to_string(),
     })
 }
 
-fn parse_falkordb_port(raw_port: Option<&str>, quiet: bool) -> u16 {
-    match raw_port {
-        Some(raw) => match raw.parse::<u16>() {
-            Ok(port) => port,
-            Err(e) => {
-                if !quiet {
-                    eprintln!(
-                        "Warning: invalid FalkorDB port `{raw}` ({e}); using {FALKORDB_DEFAULT_PORT}"
-                    );
-                }
-                FALKORDB_DEFAULT_PORT
-            }
-        },
-        None => FALKORDB_DEFAULT_PORT,
-    }
-}
-
 /// Resolve Qdrant configuration from config_store + env vars.
-fn resolve_qdrant_config(conn: &mut Client, quiet: bool) -> Option<QdrantConfig> {
-    let url = std::env::var("GOBBY_QDRANT_URL")
-        .ok()
-        .or_else(|| read_config_value(conn, "databases.qdrant.url"));
-
-    let raw_api_key = read_config_value(conn, "databases.qdrant.api_key");
-    let api_key = match raw_api_key {
-        Some(v) => match secrets::resolve_config_value(&v, conn) {
-            Ok(resolved) => Some(resolved),
-            Err(e) => {
-                if !quiet {
-                    eprintln!("Warning: failed to resolve Qdrant API key: {e}");
-                }
-                None
-            }
-        },
-        None => None,
-    };
-
-    let collection_prefix = read_config_value(conn, "databases.qdrant.collection_prefix")
-        .unwrap_or_else(|| "code_symbols_".to_string());
-
-    // Only return Some if there's a URL (qdrant_path = embedded mode, not accessible from CLI)
-    url.as_ref()?;
-
-    Some(QdrantConfig {
-        url,
-        api_key,
-        collection_prefix,
-    })
+fn resolve_qdrant_config(conn: &mut Client, _quiet: bool) -> Option<QdrantConfig> {
+    let mut source = PostgresConfigSource { conn };
+    gobby_core::config::resolve_qdrant_config(&mut source)
 }
 
 /// Resolve embedding API configuration from config_store + env vars.
 ///
 /// Returns None if no api_base is found (→ no semantic search, BM25 only).
-fn resolve_embedding_config(conn: &mut Client, quiet: bool) -> Option<EmbeddingConfig> {
-    // Env var overrides
-    let api_base = std::env::var("GOBBY_EMBEDDING_URL").ok();
-
-    let api_base = api_base.or_else(|| read_config_value(conn, "embeddings.api_base"))?;
-
-    // Model (env override → config_store → default)
-    let model = std::env::var("GOBBY_EMBEDDING_MODEL")
-        .ok()
-        .or_else(|| read_config_value(conn, "embeddings.model"))
-        .unwrap_or_else(|| "nomic-embed-text".to_string());
-
-    // API key (env override → config_store with secret resolution)
-    let api_key = std::env::var("GOBBY_EMBEDDING_API_KEY").ok().or_else(|| {
-        let raw = read_config_value(conn, "embeddings.api_key")?;
-        match secrets::resolve_config_value(&raw, conn) {
-            Ok(resolved) => Some(resolved),
-            Err(e) => {
-                if !quiet {
-                    eprintln!("Warning: failed to resolve embedding API key: {e}");
-                }
-                None
-            }
-        }
-    });
-
-    Some(EmbeddingConfig {
-        api_base,
-        model,
-        api_key,
-    })
+fn resolve_embedding_config(conn: &mut Client, _quiet: bool) -> Option<EmbeddingConfig> {
+    let mut source = PostgresConfigSource { conn };
+    gobby_core::config::resolve_embedding_config(&mut source)
 }
 
 #[cfg(test)]
@@ -635,30 +557,19 @@ mod tests {
         (repo, linked)
     }
 
-    #[test]
-    fn test_decode_config_store_values() {
-        assert_eq!(
-            decode_config_value("\"http://test:7474\""),
-            Some("http://test:7474".to_string())
-        );
-        assert_eq!(
-            decode_config_value("http://legacy:7474"),
-            Some("http://legacy:7474".to_string())
-        );
-        assert_eq!(
-            decode_config_value(r#"["alpha",1,true]"#),
-            Some(r#"["alpha",1,true]"#.to_string())
-        );
-        assert_eq!(
-            decode_config_value(r#"{"host":"falkor.local","port":16379}"#),
-            Some(r#"{"host":"falkor.local","port":16379}"#.to_string())
-        );
-    }
-
-    fn clear_falkordb_env() {
-        unsafe { std::env::remove_var("GOBBY_FALKORDB_HOST") };
-        unsafe { std::env::remove_var("GOBBY_FALKORDB_PORT") };
-        unsafe { std::env::remove_var("GOBBY_FALKORDB_PASSWORD") };
+    fn clear_service_env() {
+        for key in [
+            "GOBBY_FALKORDB_HOST",
+            "GOBBY_FALKORDB_PORT",
+            "GOBBY_FALKORDB_PASSWORD",
+            "GOBBY_QDRANT_URL",
+            "GOBBY_QDRANT_API_KEY",
+            "GOBBY_EMBEDDING_URL",
+            "GOBBY_EMBEDDING_MODEL",
+            "GOBBY_EMBEDDING_API_KEY",
+        ] {
+            unsafe { std::env::remove_var(key) };
+        }
     }
 
     fn config_value_for<'a>(
@@ -669,102 +580,126 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn falkordb_config_store_only_resolves_host_port_password() {
-        clear_falkordb_env();
-        let values = std::collections::HashMap::from([
-            ("databases.falkordb.host", "falkor.local"),
-            ("databases.falkordb.port", "16380"),
-            ("databases.falkordb.requirepass", "stored-pass"),
-        ]);
-
-        let config =
-            resolve_falkordb_config_from_values(config_value_for(&values), true, |value| {
-                Ok(value.to_string())
-            })
-            .expect("falkordb config");
-
-        assert_eq!(config.host, "falkor.local");
-        assert_eq!(config.port, 16380);
-        assert_eq!(config.password.as_deref(), Some("stored-pass"));
-        assert_eq!(config.graph_name, "gobby_code");
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn falkordb_env_only_resolves_host_port_password() {
-        clear_falkordb_env();
+    fn adapter_env_precedence_and_json_decode() {
+        clear_service_env();
         unsafe { std::env::set_var("GOBBY_FALKORDB_HOST", "env-falkor.local") };
-        unsafe { std::env::set_var("GOBBY_FALKORDB_PORT", "16381") };
-        unsafe { std::env::set_var("GOBBY_FALKORDB_PASSWORD", "env-pass") };
-
-        let values = std::collections::HashMap::new();
-        let config =
-            resolve_falkordb_config_from_values(config_value_for(&values), true, |value| {
-                Ok(value.to_string())
-            })
-            .expect("falkordb config");
-
-        assert_eq!(config.host, "env-falkor.local");
-        assert_eq!(config.port, 16381);
-        assert_eq!(config.password.as_deref(), Some("env-pass"));
-        clear_falkordb_env();
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn falkordb_env_host_overrides_config_store_host() {
-        clear_falkordb_env();
-        unsafe { std::env::set_var("GOBBY_FALKORDB_HOST", "env-host.local") };
         let values = std::collections::HashMap::from([
-            ("databases.falkordb.host", "stored-host.local"),
-            ("databases.falkordb.port", "16382"),
+            ("databases.falkordb.host", r#""stored-falkor.local""#),
+            ("databases.falkordb.port", r#""16380""#),
+            ("databases.falkordb.requirepass", r#""stored-pass""#),
+            ("databases.qdrant.url", r#""http://qdrant.local:6333""#),
+            ("databases.qdrant.api_key", r#""qdrant-key""#),
+            ("embeddings.api_base", r#""http://embeddings.local:11434""#),
+            ("embeddings.model", r#""embed-model""#),
+            ("embeddings.api_key", "null"),
         ]);
 
-        let config =
-            resolve_falkordb_config_from_values(config_value_for(&values), true, |value| {
-                Ok(value.to_string())
-            })
-            .expect("falkordb config");
+        let falkor = resolve_falkordb_config_from_values(config_value_for(&values), |value| {
+            Ok(value.to_string())
+        })
+        .expect("falkordb config");
+        let qdrant = resolve_qdrant_config_from_values(config_value_for(&values), |value| {
+            Ok(value.to_string())
+        })
+        .expect("qdrant config");
+        let embedding = resolve_embedding_config_from_values(config_value_for(&values), |value| {
+            Ok(value.to_string())
+        })
+        .expect("embedding config");
 
-        assert_eq!(config.host, "env-host.local");
-        assert_eq!(config.port, 16382);
-        clear_falkordb_env();
+        assert_eq!(falkor.host, "env-falkor.local");
+        assert_eq!(falkor.port, 16380);
+        assert_eq!(falkor.password.as_deref(), Some("stored-pass"));
+        assert_eq!(qdrant.url.as_deref(), Some("http://qdrant.local:6333"));
+        assert_eq!(qdrant.api_key.as_deref(), Some("qdrant-key"));
+        assert_eq!(embedding.api_base, "http://embeddings.local:11434");
+        assert_eq!(embedding.model, "embed-model");
+        assert_eq!(embedding.api_key, None);
+        clear_service_env();
     }
 
     #[test]
     #[serial_test::serial]
-    fn falkordb_secret_password_resolves_through_secret_resolver() {
-        clear_falkordb_env();
+    fn adapter_resolves_config_store_secrets() {
+        clear_service_env();
         let values = std::collections::HashMap::from([
             ("databases.falkordb.host", "falkor.local"),
-            ("databases.falkordb.requirepass", "$secret:requirepass"),
+            (
+                "databases.falkordb.requirepass",
+                "$secret:falkordb_password",
+            ),
+            ("databases.qdrant.url", "http://qdrant.local:6333"),
+            ("databases.qdrant.api_key", "$secret:qdrant_api_key"),
+            ("embeddings.api_base", "http://embeddings.local:11434"),
+            ("embeddings.api_key", "$secret:embedding_api_key"),
         ]);
 
-        let config =
-            resolve_falkordb_config_from_values(config_value_for(&values), true, |value| {
-                assert_eq!(value, "$secret:requirepass");
-                Ok("resolved-pass".to_string())
-            })
-            .expect("falkordb config");
+        fn resolve_secret_stub(value: &str) -> anyhow::Result<String> {
+            match value {
+                "$secret:falkordb_password" => Ok("resolved-falkor".to_string()),
+                "$secret:qdrant_api_key" => Ok("resolved-qdrant".to_string()),
+                "$secret:embedding_api_key" => Ok("resolved-embedding".to_string()),
+                value => Ok(value.to_string()),
+            }
+        }
 
-        assert_eq!(config.password.as_deref(), Some("resolved-pass"));
+        let falkor =
+            resolve_falkordb_config_from_values(config_value_for(&values), resolve_secret_stub)
+                .expect("falkordb config");
+        let qdrant =
+            resolve_qdrant_config_from_values(config_value_for(&values), resolve_secret_stub)
+                .expect("qdrant config");
+        let embedding =
+            resolve_embedding_config_from_values(config_value_for(&values), resolve_secret_stub)
+                .expect("embedding config");
+
+        assert_eq!(falkor.password.as_deref(), Some("resolved-falkor"));
+        assert_eq!(qdrant.api_key.as_deref(), Some("resolved-qdrant"));
+        assert_eq!(embedding.api_key.as_deref(), Some("resolved-embedding"));
     }
 
     #[test]
-    #[serial_test::serial]
-    fn falkordb_config_missing_host_returns_none() {
-        clear_falkordb_env();
-        let values = std::collections::HashMap::from([
-            ("databases.falkordb.port", "16379"),
-            ("databases.falkordb.requirepass", "stored-pass"),
-        ]);
+    fn falkor_config_wrapper_shape() {
+        let source = include_str!("config.rs");
+        assert!(source.contains("pub struct FalkorConfig"));
+        assert!(source.contains("pub graph_name: String"));
+        assert!(source.contains("gobby_core::config::resolve_falkordb_config"));
+        assert!(source.contains("graph_name: FALKORDB_GRAPH_NAME.to_string()"));
+    }
 
-        let config =
-            resolve_falkordb_config_from_values(config_value_for(&values), true, |value| {
-                Ok(value.to_string())
-            });
+    #[test]
+    fn phase7_context_and_falkor_resolver_visible() {
+        let source = include_str!("config.rs");
+        assert!(source.contains("pub falkordb: Option<FalkorConfig>"));
+        assert!(source.contains("let falkordb = resolve_falkordb_config("));
+        assert!(source.contains("pub const FALKORDB_GRAPH_NAME: &str = \"gobby_code\";"));
+        assert!(source.contains("graph_name: FALKORDB_GRAPH_NAME.to_string()"));
+    }
 
-        assert!(config.is_none());
+    #[test]
+    fn phase7_falkordb_config_store_keys_visible() {
+        let source = include_str!("config.rs");
+        for key in [
+            FALKORDB_HOST_CONFIG_KEY,
+            FALKORDB_PORT_CONFIG_KEY,
+            FALKORDB_PASSWORD_CONFIG_KEY,
+            GOBBY_FALKORDB_HOST_ENV,
+            GOBBY_FALKORDB_PORT_ENV,
+            GOBBY_FALKORDB_PASSWORD_ENV,
+        ] {
+            assert!(source.contains(key), "missing {key}");
+        }
+    }
+
+    #[test]
+    fn phase7_neo4j_transition_state_absent() {
+        let source = include_str!("config.rs");
+        let config_type = ["pub struct Neo", "4jConfig"].concat();
+        let resolver = ["resolve_neo", "4j_config"].concat();
+        let context_field = ["pub neo", "4j: Option<Neo", "4jConfig>"].concat();
+        assert!(!source.contains(&config_type));
+        assert!(!source.contains(&resolver));
+        assert!(!source.contains(&context_field));
     }
 
     #[test]
