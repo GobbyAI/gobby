@@ -12,8 +12,6 @@ use serde_json::{Value, json};
 
 const GOBBY_HINT: &str =
     "Graph commands require FalkorDB, available with Gobby. See: https://github.com/GobbyAI/gobby";
-const DEFAULT_OVERVIEW_LIMIT: usize = 100;
-
 fn format_success_text(output: &GraphLifecycleOutput) -> String {
     format!(
         "{} for project {}: {}",
@@ -271,8 +269,8 @@ pub fn report(ctx: &Context, top_n: usize, format: Format) -> anyhow::Result<()>
     }
 }
 
-pub fn overview(ctx: &Context, format: Format) -> anyhow::Result<()> {
-    let payload = code_graph::project_overview_graph(ctx, DEFAULT_OVERVIEW_LIMIT)?;
+pub fn overview(ctx: &Context, limit: usize, format: Format) -> anyhow::Result<()> {
+    let payload = code_graph::project_overview_graph(ctx, limit)?;
     print_graph_payload(&payload, format)
 }
 

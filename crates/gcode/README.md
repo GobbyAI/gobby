@@ -136,6 +136,7 @@ gcode symbols <id1> <id2> ...             # Batch retrieve
 gcode tree                                # File tree with symbol counts
 
 # Dependency graph reads (requires FalkorDB)
+gcode graph overview --limit 100          # Project overview graph
 gcode callers "handleAuth"                # Who calls this?
 gcode usages "handleAuth"                 # Incoming call sites
 gcode imports src/auth.ts                 # Import graph for a file

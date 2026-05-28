@@ -41,7 +41,7 @@ const NODE_TYPE_CASE: &str = "CASE \
 const LINK_METADATA_RETURN: &str = "r.provenance AS provenance, \
      r.confidence AS confidence, \
      r.source_system AS source_system, \
-     r.source_file_path AS source_file_path, \
+     r.source_file_path AS metadata_source_file_path, \
      r.source_line AS source_line, \
      r.source_symbol_id AS source_symbol_id, \
      r.matching_method AS matching_method";
@@ -1041,12 +1041,7 @@ fn row_to_projection_metadata(row: &Row) -> Option<ProjectionMetadata> {
 
     let mut metadata = ProjectionMetadata::new(provenance, source_system);
     metadata.confidence = row.get("confidence").and_then(|v| v.as_f64());
-    metadata.source_file_path = row
-        .get("source_file_path")
-        .or_else(|| row.get("file"))
-        .or_else(|| row.get("file_path"))
-        .and_then(|v| v.as_str())
-        .map(ToOwned::to_owned);
+    metadata.source_file_path = row_string(row, &["metadata_source_file_path"]);
     metadata.source_line = row
         .get("source_line")
         .or_else(|| row.get("line"))
@@ -1858,6 +1853,45 @@ mod tests {
         assert_eq!(encoded["links"][0]["type"], "DEFINES");
         assert_eq!(encoded["links"][0]["metadata"]["provenance"], "EXTRACTED");
         assert_eq!(encoded["links"][0]["metadata"]["source_system"], "gcode");
+    }
+
+    #[test]
+    fn file_calls_query_keeps_node_and_metadata_source_paths_distinct() {
+        let (query, _) = file_calls_query("project-1", "src/lib.rs");
+
+        assert!(query.contains("source.file_path AS source_file_path"));
+        assert!(query.contains("r.source_file_path AS metadata_source_file_path"));
+        assert!(!query.contains("r.source_file_path AS source_file_path"));
+    }
+
+    #[test]
+    fn projection_metadata_uses_only_metadata_source_file_path() {
+        let row = Row::from([
+            ("provenance".to_string(), json!("EXTRACTED")),
+            ("source_system".to_string(), json!("gcode")),
+            ("source_file_path".to_string(), json!("src/node.rs")),
+            (
+                "metadata_source_file_path".to_string(),
+                json!("src/edge.rs"),
+            ),
+        ]);
+
+        let metadata = row_to_projection_metadata(&row).expect("metadata");
+
+        assert_eq!(metadata.source_file_path.as_deref(), Some("src/edge.rs"));
+    }
+
+    #[test]
+    fn projection_metadata_does_not_fallback_to_node_source_file_path() {
+        let row = Row::from([
+            ("provenance".to_string(), json!("EXTRACTED")),
+            ("source_system".to_string(), json!("gcode")),
+            ("source_file_path".to_string(), json!("src/node.rs")),
+        ]);
+
+        let metadata = row_to_projection_metadata(&row).expect("metadata");
+
+        assert_eq!(metadata.source_file_path, None);
     }
 
     #[test]

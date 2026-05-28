@@ -258,7 +258,11 @@ enum GraphCommand {
         top_n: usize,
     },
     /// Show an overview graph for the current project
-    Overview,
+    Overview {
+        /// Maximum files to include
+        #[arg(long, default_value = "100")]
+        limit: usize,
+    },
     /// Show graph nodes and links for one indexed file
     File {
         /// Indexed file path to inspect
@@ -471,10 +475,10 @@ fn main() -> anyhow::Result<()> {
             commands::vector::rebuild(&ctx, cli.format)
         }
         Command::Graph {
-            command: GraphCommand::Overview,
+            command: GraphCommand::Overview { limit },
         } => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
-            commands::graph::overview(&ctx, cli.format)
+            commands::graph::overview(&ctx, limit, cli.format)
         }
         Command::Graph {
             command: GraphCommand::File { file },
@@ -725,7 +729,16 @@ mod tests {
         assert!(matches!(
             cli.command,
             Command::Graph {
-                command: GraphCommand::Overview
+                command: GraphCommand::Overview { limit: 100 }
+            }
+        ));
+
+        let cli = Cli::try_parse_from(["gcode", "graph", "overview", "--limit", "25"])
+            .expect("graph overview limit parses");
+        assert!(matches!(
+            cli.command,
+            Command::Graph {
+                command: GraphCommand::Overview { limit: 25 }
             }
         ));
 

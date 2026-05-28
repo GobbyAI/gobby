@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] — gcode
+
+### Added
+
+#### gcode
+
+- **Overview graph limit** — `gcode graph overview` now accepts `--limit N`
+  to cap the number of files included in the overview graph, matching the
+  daemon's graph overview limit contract.
+
+### Fixed
+
+#### gcode
+
+- **File graph read aliases** — `gcode graph file` now keeps node file paths
+  and edge metadata file paths under distinct FalkorDB result aliases, fixing
+  duplicate-column failures when returning JSON graph payloads.
+
 ## [0.9.0] — gcode
 
 ### Added
