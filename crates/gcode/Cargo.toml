@@ -36,8 +36,7 @@ toml = "1"
 # Database
 postgres = "0.19"
 
-# Graph backends
-falkordb = "0.2"
+# Graph/vector backends
 urlencoding = "2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "blocking", "rustls-tls"] }
 base64 = "0.22"

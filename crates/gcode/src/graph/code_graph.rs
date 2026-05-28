@@ -1884,8 +1884,23 @@ pub fn blast_radius(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::CodeVectorSettings;
     use crate::models::{ProjectionProvenance, SOURCE_SYSTEM_GCODE};
     use serde_json::json;
+
+    fn test_context(falkordb: Option<crate::config::FalkorConfig>) -> Context {
+        Context {
+            database_url: "postgresql://localhost/nonexistent".to_string(),
+            project_root: std::path::PathBuf::from("/tmp/project"),
+            project_id: "project-1".to_string(),
+            quiet: true,
+            falkordb,
+            qdrant: None,
+            embedding: None,
+            code_vectors: CodeVectorSettings::default(),
+            daemon_url: None,
+        }
+    }
 
     #[test]
     fn code_edges_carry_provenance() {
@@ -1927,6 +1942,24 @@ mod tests {
         assert_eq!(encoded["links"][0]["type"], "DEFINES");
         assert_eq!(encoded["links"][0]["metadata"]["provenance"], "EXTRACTED");
         assert_eq!(encoded["links"][0]["metadata"]["source_system"], "gcode");
+    }
+
+    #[test]
+    fn phase7_graph_read_apis_surface_typed_unavailable_service() {
+        let ctx = test_context(None);
+
+        let guard_error = require_graph_reads(&ctx).expect_err("missing FalkorDB must fail");
+        assert!(matches!(
+            guard_error.downcast_ref::<GraphReadError>(),
+            Some(GraphReadError::NotConfigured)
+        ));
+
+        let read_error =
+            project_overview_graph(&ctx, 10).expect_err("graph read must require FalkorDB");
+        assert!(matches!(
+            read_error.downcast_ref::<GraphReadError>(),
+            Some(GraphReadError::NotConfigured)
+        ));
     }
 
     #[test]

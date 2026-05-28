@@ -6,43 +6,27 @@
 
 use std::collections::HashMap;
 
-use falkordb::{
-    FalkorClientBuilder, FalkorConnectionInfo, FalkorValue, LazyResultSet, QueryResult, SyncGraph,
-};
-use serde_json::{Map, Number, Value};
+use gobby_core::falkor::GraphClient;
 
 use crate::config::{Context, FalkorConfig};
 use crate::graph::typed_query;
 use crate::models::GraphResult;
 
-const CALL_TARGET_PREDICATE: &str =
-    "target:CodeSymbol OR target:UnresolvedCallee OR target:ExternalSymbol";
 const MAX_GRAPH_LIMIT: usize = 100;
 
 /// Row from a FalkorDB query response.
-pub type Row = HashMap<String, Value>;
+pub type Row = gobby_core::falkor::Row;
 
 /// Blocking FalkorDB graph client.
 pub struct FalkorClient {
-    graph: SyncGraph,
+    client: GraphClient,
 }
 
 impl FalkorClient {
     pub fn from_config(config: &FalkorConfig) -> anyhow::Result<Self> {
-        let password = config.password.as_deref().unwrap_or_default();
-        let url = format!(
-            "falkor://:{}@{}:{}",
-            urlencoding::encode(password),
-            config.host,
-            config.port
-        );
-        let conn_info: FalkorConnectionInfo = url.as_str().try_into()?;
-        let client = FalkorClientBuilder::new()
-            .with_connection_info(conn_info)
-            .build()?;
-        Ok(Self {
-            graph: client.select_graph(&config.graph_name),
-        })
+        let connection_config = config.connection_config();
+        let client = GraphClient::from_config(&connection_config, &config.graph_name)?;
+        Ok(Self { client })
     }
 
     /// Execute a Cypher query and return parsed rows.
@@ -51,22 +35,20 @@ impl FalkorClient {
         cypher: &str,
         params: Option<HashMap<String, String>>,
     ) -> anyhow::Result<Vec<Row>> {
-        match params {
-            Some(params) => {
-                let result = self.graph.query(cypher).with_params(&params).execute()?;
-                Ok(parse_falkor_result(result))
-            }
-            None => {
-                let result = self.graph.query(cypher).execute()?;
-                Ok(parse_falkor_result(result))
-            }
-        }
+        self.client.query(cypher, params)
     }
 
     /// Execute a typed query after its parameters have been rendered safely.
     pub fn query_typed(&mut self, query: typed_query::TypedQuery) -> anyhow::Result<Vec<Row>> {
         let typed_query::TypedQuery { cypher, params } = query;
         self.query(&cypher, Some(params))
+    }
+
+    pub fn with_core_client<T>(
+        &mut self,
+        f: impl FnOnce(&mut GraphClient) -> anyhow::Result<T>,
+    ) -> anyhow::Result<T> {
+        f(&mut self.client)
     }
 }
 
@@ -78,34 +60,16 @@ pub fn id_list_literal(ids: &[String]) -> String {
     typed_query::id_list_literal(ids)
 }
 
-fn clamp_limit(limit: usize) -> usize {
-    limit.clamp(1, MAX_GRAPH_LIMIT)
-}
-
 pub fn clamp_offset(offset: usize) -> usize {
     offset.min(MAX_GRAPH_LIMIT)
 }
 
 pub fn count_callers_query(project_id: &str, symbol_id: &str) -> (String, HashMap<String, String>) {
-    (
-        format!(
-            "MATCH (caller:CodeSymbol {{project: $project}})-[:CALLS]->(target {{id: $id, project: $project}}) \
-             WHERE {CALL_TARGET_PREDICATE} \
-             RETURN count(caller) AS cnt"
-        ),
-        typed_query::string_params(&[("project", project_id), ("id", symbol_id)]),
-    )
+    crate::graph::code_graph::count_callers_query(project_id, symbol_id)
 }
 
 pub fn count_usages_query(project_id: &str, symbol_id: &str) -> (String, HashMap<String, String>) {
-    (
-        format!(
-            "MATCH (source:CodeSymbol {{project: $project}})-[r:CALLS]->(target {{id: $id, project: $project}}) \
-             WHERE {CALL_TARGET_PREDICATE} \
-             RETURN count(source) AS cnt"
-        ),
-        typed_query::string_params(&[("project", project_id), ("id", symbol_id)]),
-    )
+    crate::graph::code_graph::count_usages_query(project_id, symbol_id)
 }
 
 pub fn find_callers_query(
@@ -114,18 +78,7 @@ pub fn find_callers_query(
     offset: usize,
     limit: usize,
 ) -> (String, HashMap<String, String>) {
-    let offset = clamp_offset(offset);
-    let limit = clamp_limit(limit);
-    (
-        format!(
-            "MATCH (caller:CodeSymbol {{project: $project}})-[r:CALLS]->(target {{id: $id, project: $project}}) \
-             WHERE {CALL_TARGET_PREDICATE} \
-             RETURN caller.id AS caller_id, caller.name AS caller_name, \
-                    r.file AS file, r.line AS line \
-             SKIP {offset} LIMIT {limit}"
-        ),
-        typed_query::string_params(&[("project", project_id), ("id", symbol_id)]),
-    )
+    crate::graph::code_graph::find_callers_query(project_id, symbol_id, offset, limit)
 }
 
 pub fn find_usages_query(
@@ -134,18 +87,7 @@ pub fn find_usages_query(
     offset: usize,
     limit: usize,
 ) -> (String, HashMap<String, String>) {
-    let offset = clamp_offset(offset);
-    let limit = clamp_limit(limit);
-    (
-        format!(
-            "MATCH (source:CodeSymbol {{project: $project}})-[r:CALLS]->(target {{id: $id, project: $project}}) \
-             WHERE {CALL_TARGET_PREDICATE} \
-             RETURN source.id AS source_id, source.name AS source_name, \
-                    'CALLS' AS rel_type, r.file AS file, r.line AS line \
-             SKIP {offset} LIMIT {limit}"
-        ),
-        typed_query::string_params(&[("project", project_id), ("id", symbol_id)]),
-    )
+    crate::graph::code_graph::find_usages_query(project_id, symbol_id, offset, limit)
 }
 
 pub fn find_callers_batch_query(
@@ -153,18 +95,7 @@ pub fn find_callers_batch_query(
     symbol_ids: &[String],
     limit: usize,
 ) -> (String, HashMap<String, String>) {
-    let limit = clamp_limit(limit);
-    let ids = id_list_literal(symbol_ids);
-    (
-        format!(
-            "MATCH (caller:CodeSymbol {{project: $project}})-[r:CALLS]->(target {{project: $project}}) \
-             WHERE ({CALL_TARGET_PREDICATE}) AND target.id IN [{ids}] \
-             RETURN caller.id AS caller_id, caller.name AS caller_name, \
-                    r.file AS file, r.line AS line \
-             LIMIT {limit}"
-        ),
-        typed_query::string_params(&[("project", project_id)]),
-    )
+    crate::graph::code_graph::find_callers_batch_query(project_id, symbol_ids, limit)
 }
 
 pub fn find_callees_batch_query(
@@ -172,95 +103,15 @@ pub fn find_callees_batch_query(
     symbol_ids: &[String],
     limit: usize,
 ) -> (String, HashMap<String, String>) {
-    let limit = clamp_limit(limit);
-    let ids = id_list_literal(symbol_ids);
-    (
-        format!(
-            "MATCH (src:CodeSymbol {{project: $project}})-[r:CALLS]->(target {{project: $project}}) \
-             WHERE src.id IN [{ids}] AND ({CALL_TARGET_PREDICATE}) \
-             RETURN target.id AS callee_id, target.name AS callee_name, \
-                    r.file AS file, r.line AS line \
-             LIMIT {limit}"
-        ),
-        typed_query::string_params(&[("project", project_id)]),
-    )
+    crate::graph::code_graph::find_callees_batch_query(project_id, symbol_ids, limit)
 }
 
 pub fn get_imports_query(project_id: &str, file_path: &str) -> (String, HashMap<String, String>) {
-    let limit = clamp_limit(MAX_GRAPH_LIMIT);
-    (
-        format!(
-            "MATCH (f:CodeFile {{path: $path, project: $project}})-[:IMPORTS]->(m:CodeModule) \
-             RETURN m.name AS module_name \
-             LIMIT {limit}"
-        ),
-        typed_query::string_params(&[("project", project_id), ("path", file_path)]),
-    )
+    crate::graph::code_graph::get_imports_query(project_id, file_path)
 }
 
 pub fn blast_radius_query(depth: usize, limit: usize) -> String {
-    let depth = depth.clamp(1, 5);
-    let limit = limit.clamp(1, MAX_GRAPH_LIMIT);
-    format!(
-        "MATCH (target {{id: $id, project: $project}}) \
-         WHERE {CALL_TARGET_PREDICATE} \
-         MATCH path = (affected:CodeSymbol {{project: $project}})-[:CALLS*1..{depth}]->(target) \
-         WITH affected, min(length(path)) AS distance \
-         OPTIONAL MATCH (file:CodeFile {{project: $project}})-[:DEFINES]->(affected) \
-         RETURN DISTINCT affected.id AS node_id, \
-                affected.name AS node_name, \
-                affected.kind AS kind, file.path AS file_path, \
-                affected.line_start AS line, \
-                distance, 'call' AS rel_type \
-         ORDER BY distance ASC, affected.name ASC \
-         LIMIT {limit}"
-    )
-}
-
-fn parse_falkor_result(result: QueryResult<LazyResultSet<'_>>) -> Vec<Row> {
-    parse_falkor_records(result.header, result.data)
-}
-
-fn parse_falkor_records<I>(headers: Vec<String>, records: I) -> Vec<Row>
-where
-    I: IntoIterator<Item = Vec<FalkorValue>>,
-{
-    records
-        .into_iter()
-        .map(|record| {
-            let mut row = HashMap::new();
-            for (i, field) in headers.iter().enumerate() {
-                let value = record.get(i).cloned().unwrap_or(FalkorValue::None);
-                row.insert(field.clone(), falkor_value_to_json(value));
-            }
-            row
-        })
-        .collect()
-}
-
-fn falkor_value_to_json(value: FalkorValue) -> Value {
-    match value {
-        FalkorValue::String(value) => Value::String(value),
-        FalkorValue::Bool(value) => Value::Bool(value),
-        FalkorValue::I64(value) => Value::Number(Number::from(value)),
-        FalkorValue::F64(value) => Number::from_f64(value)
-            .map(Value::Number)
-            .unwrap_or(Value::Null),
-        FalkorValue::Array(values) => Value::Array(
-            values
-                .into_iter()
-                .map(falkor_value_to_json)
-                .collect::<Vec<_>>(),
-        ),
-        FalkorValue::Map(values) => Value::Object(
-            values
-                .into_iter()
-                .map(|(key, value)| (key, falkor_value_to_json(value)))
-                .collect::<Map<_, _>>(),
-        ),
-        FalkorValue::None => Value::Null,
-        value => Value::String(format!("{value:?}")),
-    }
+    crate::graph::code_graph::blast_radius_query(depth, limit)
 }
 
 pub fn with_falkor<T>(
@@ -381,8 +232,10 @@ fn row_to_graph_result(row: &Row) -> GraphResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use falkordb::FalkorValue;
     use serde_json::json;
+
+    const CALL_TARGET_FRAGMENT: &str =
+        "target:CodeSymbol OR target:UnresolvedCallee OR target:ExternalSymbol";
 
     fn assert_no_numeric_or_list_placeholders(query: &str) {
         assert!(!query.contains("$offset"), "{query}");
@@ -443,27 +296,10 @@ mod tests {
     fn blast_radius_query_clamps_depth_and_interpolates_limit() {
         let query = blast_radius_query(99, 250);
 
-        assert!(query.contains(CALL_TARGET_PREDICATE), "{query}");
+        assert!(query.contains(CALL_TARGET_FRAGMENT), "{query}");
         assert!(query.contains("[:CALLS*1..5]"), "{query}");
         assert!(query.contains("LIMIT 100"), "{query}");
         assert_no_numeric_or_list_placeholders(&query);
-    }
-
-    #[test]
-    fn convert_falkor_records_maps_headers_and_row_values() {
-        let headers = vec!["name".to_string(), "age".to_string(), "empty".to_string()];
-        let rows = vec![vec![
-            FalkorValue::String("Alice".to_string()),
-            FalkorValue::I64(30),
-            FalkorValue::None,
-        ]];
-
-        let parsed = parse_falkor_records(headers, rows);
-
-        assert_eq!(parsed.len(), 1);
-        assert_eq!(parsed[0].get("name"), Some(&json!("Alice")));
-        assert_eq!(parsed[0].get("age"), Some(&json!(30)));
-        assert_eq!(parsed[0].get("empty"), Some(&json!(null)));
     }
 
     #[test]
@@ -488,149 +324,41 @@ mod tests {
     }
 
     #[test]
-    fn falkor_client_wrapper_shape() {
-        let source = include_str!("falkor.rs");
-        assert!(source.contains("pub struct FalkorClient"));
-        assert!(source.contains("graph: SyncGraph"));
+    fn phase7_query_helpers_preserve_safe_literals_clamping_and_project_scope() {
+        let project_id = "project\n'one";
+        let symbol_id = "symbol\"\\'two";
+        let expected_project = cypher_string_literal(project_id);
+        let expected_symbol = cypher_string_literal(symbol_id);
+
+        let (callers, caller_params) = find_callers_query(project_id, symbol_id, 250, 0);
+        assert!(callers.contains(CALL_TARGET_FRAGMENT), "{callers}");
+        assert!(callers.contains("SKIP 100 LIMIT 1"), "{callers}");
+        assert_no_numeric_or_list_placeholders(&callers);
+        assert_eq!(caller_params.get("project"), Some(&expected_project));
+        assert_eq!(caller_params.get("id"), Some(&expected_symbol));
+
+        let (usages, usage_params) = find_usages_query(project_id, symbol_id, 250, 250);
+        assert!(usages.contains(CALL_TARGET_FRAGMENT), "{usages}");
+        assert!(usages.contains("SKIP 100 LIMIT 100"), "{usages}");
+        assert_no_numeric_or_list_placeholders(&usages);
+        assert_eq!(usage_params.get("project"), Some(&expected_project));
+        assert_eq!(usage_params.get("id"), Some(&expected_symbol));
+
+        let ids = ["a".to_string(), "b\n\"'\\c".to_string()];
+        let expected_ids = id_list_literal(&ids);
+        let (batch, batch_params) = find_callers_batch_query(project_id, &ids, 250);
         assert!(
-            source.contains("pub fn from_config(config: &FalkorConfig) -> anyhow::Result<Self>")
+            batch.contains(&format!("target.id IN [{expected_ids}]")),
+            "{batch}"
         );
-        assert!(source.contains("pub fn with_falkor<T>"));
-        assert!(source.contains("FalkorClientBuilder, FalkorConnectionInfo, FalkorValue, LazyResultSet, QueryResult, SyncGraph"));
-        assert!(source.contains("client.select_graph(&config.graph_name)"));
-    }
+        assert!(batch.contains("LIMIT 100"), "{batch}");
+        assert_no_numeric_or_list_placeholders(&batch);
+        assert_eq!(batch_params.get("project"), Some(&expected_project));
 
-    #[test]
-    fn phase7_read_helpers_visible() {
-        let source = include_str!("falkor.rs");
-        for symbol in [
-            "pub fn count_callers(",
-            "pub fn count_usages(",
-            "pub fn find_callers(",
-            "pub fn find_usages(",
-            "pub fn find_callers_batch(",
-            "pub fn find_callees_batch(",
-            "pub fn get_imports(",
-            "pub fn blast_radius(",
-            "pub fn count_callers_query(",
-            "pub fn count_usages_query(",
-            "pub fn find_callers_query(",
-            "pub fn find_usages_query(",
-            "pub fn find_callers_batch_query(",
-            "pub fn find_callees_batch_query(",
-            "pub fn get_imports_query(",
-            "fn blast_radius_query(depth: usize, limit: usize)",
-        ] {
-            assert!(source.contains(symbol), "missing {symbol}");
-        }
-    }
-
-    #[test]
-    fn phase7_source_fragments_visible() {
-        let source = include_str!("falkor.rs");
-        for fragment in [
-            "urlencoding::encode(password)",
-            "falkor://:{}@{}:{}",
-            ".with_connection_info(conn_info)",
-            ".with_params(&",
-            "result.header",
-            "FalkorValue::None",
-            "let mut client =",
-            "ctx.falkordb",
-        ] {
-            assert!(source.contains(fragment), "missing {fragment}");
-        }
-    }
-
-    #[test]
-    fn phase7_query_surface_visible() {
-        let source = include_str!("falkor.rs");
-        assert!(source.contains("pub type Row = HashMap<String, Value>"));
-        assert!(source.contains("pub fn query("));
-        assert!(source.contains("cypher: &str"));
-        assert!(source.contains("params: Option<HashMap<String, String>>"));
-        assert!(source.contains("anyhow::Result<Vec<Row>>"));
-        assert!(source.contains("fn parse_falkor_result("));
-    }
-
-    #[test]
-    fn phase7_query_helpers_and_literal_fragments_visible() {
-        let source = include_str!("falkor.rs");
-        for fragment in [
-            "pub fn cypher_string_literal",
-            "pub fn id_list_literal",
-            "pub fn clamp_offset",
-            "target:CodeSymbol OR target:UnresolvedCallee OR target:ExternalSymbol",
-            "SKIP {offset} LIMIT {limit}",
-            "target.id IN [{ids}]",
-        ] {
-            assert!(source.contains(fragment), "missing {fragment}");
-        }
-
-        let queries = [
-            find_callers_query("project-1", "symbol-1", 5, 10).0,
-            find_usages_query("project-1", "symbol-1", 5, 10).0,
-            find_callers_batch_query("project-1", &["a".to_string()], 10).0,
-            find_callees_batch_query("project-1", &["a".to_string()], 10).0,
-        ];
-        for query in queries {
-            assert_no_numeric_or_list_placeholders(&query);
-        }
-    }
-
-    #[test]
-    fn phase7_cargo_and_lockfile_state() {
-        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let cargo = std::fs::read_to_string(manifest_dir.join("Cargo.toml"))
-            .expect("read gobby-code Cargo.toml");
-        assert!(cargo.contains("name = \"gobby-code\""));
-        assert!(cargo.contains("name = \"gcode\""));
-        assert!(cargo.contains("path = \"src/main.rs\""));
-        assert!(cargo.contains("falkordb = \"0.2\""));
-        assert!(cargo.contains("urlencoding = \"2\""));
-        assert!(cargo.contains("base64"));
-        assert!(cargo.contains("reqwest"));
-
-        let lock = std::fs::read_to_string(manifest_dir.join("../../Cargo.lock"))
-            .expect("read workspace Cargo.lock");
-        assert!(lock.contains("name = \"falkordb\""));
-        assert!(lock.contains("name = \"urlencoding\""));
-        assert!(!lock.contains("name = \"neo4j\""));
-        assert!(!lock.contains("name = \"neo4rs\""));
-    }
-
-    #[test]
-    fn phase7_additional_query_fragments_visible() {
-        let source = include_str!("falkor.rs");
-        for fragment in [
-            "depth.clamp(1, 5)",
-            "limit.clamp(1, MAX_GRAPH_LIMIT)",
-            "offset.min(MAX_GRAPH_LIMIT)",
-            "src.id IN [{ids}]",
-            "LIMIT {limit}",
-            "fn blast_radius_query(depth: usize, limit: usize)",
-        ] {
-            assert!(source.contains(fragment), "missing {fragment}");
-        }
-    }
-
-    #[test]
-    fn read_helpers_delegate_to_code_graph() {
-        let source = include_str!("falkor.rs");
-        for fragment in [
-            "crate::graph::code_graph::count_callers(ctx, symbol_id)",
-            "crate::graph::code_graph::count_usages(ctx, symbol_id)",
-            "crate::graph::code_graph::find_callers(ctx, symbol_id, offset, limit)",
-            "crate::graph::code_graph::find_usages(ctx, symbol_id, offset, limit)",
-            "crate::graph::code_graph::find_callers(",
-            "crate::graph::code_graph::find_callees_batch(",
-            "crate::graph::code_graph::get_imports(ctx, file_path)",
-            "crate::graph::code_graph::blast_radius(ctx, symbol_id, depth)",
-        ] {
-            assert!(
-                source.contains(fragment),
-                "missing delegation fragment {fragment}"
-            );
-        }
+        let blast = blast_radius_query(99, 250);
+        assert!(blast.contains(CALL_TARGET_FRAGMENT), "{blast}");
+        assert!(blast.contains("[:CALLS*1..5]"), "{blast}");
+        assert!(blast.contains("LIMIT 100"), "{blast}");
+        assert_no_numeric_or_list_placeholders(&blast);
     }
 }

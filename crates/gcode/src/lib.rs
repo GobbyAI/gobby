@@ -122,6 +122,20 @@ mod tests {
         assert!(graph.contains("gobby_core::falkor::with_graph"));
         assert!(!graph.contains("falkor::with_falkor"));
 
+        let falkor =
+            std::fs::read_to_string(manifest_dir.join("src/falkor.rs")).expect("read falkor.rs");
+        assert!(falkor.contains("gobby_core::falkor::GraphClient"));
+        for token in [
+            ["Falkor", "Client", "Builder"].concat(),
+            ["Falkor", "Connection", "Info"].concat(),
+            ["Sync", "Graph"].concat(),
+            ["Falkor", "Value"].concat(),
+            ["Lazy", "Result", "Set"].concat(),
+            ["Query", "Result"].concat(),
+        ] {
+            assert!(!falkor.contains(&token), "{token} leaked into falkor.rs");
+        }
+
         let semantic = std::fs::read_to_string(manifest_dir.join("src/search/semantic.rs"))
             .expect("read search/semantic.rs");
         assert!(semantic.contains("gobby_core::qdrant::with_qdrant"));
@@ -160,7 +174,7 @@ mod tests {
     }
 
     #[test]
-    fn falkor_facade_exception_scoped_to_falkor_rs() {
+    fn falkor_facade_uses_core_graph_client_only() {
         let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let src_dir = manifest_dir.join("src");
         let mut offenders = Vec::new();
@@ -178,7 +192,7 @@ mod tests {
                 }
                 let source = std::fs::read_to_string(&path).expect("read source file");
                 let builder = ["Falkor", "Client", "Builder"].concat();
-                if source.contains(&builder) && !path.ends_with("falkor.rs") {
+                if source.contains(&builder) {
                     offenders.push(path);
                 }
             }
@@ -187,7 +201,7 @@ mod tests {
         visit(&src_dir, &mut offenders);
         assert!(
             offenders.is_empty(),
-            "Falkor client builder must remain scoped to falkor.rs: {offenders:?}"
+            "gobby-code must use gobby_core::falkor::GraphClient instead of direct FalkorDB builders: {offenders:?}"
         );
     }
 }

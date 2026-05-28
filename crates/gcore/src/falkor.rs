@@ -44,6 +44,19 @@ impl GraphClient {
         })
     }
 
+    /// Run a closure with the underlying synchronous FalkorDB graph.
+    ///
+    /// This is an escape hatch for consumers that need a FalkorDB operation the
+    /// shared `GraphClient` API does not expose yet. Keep domain-specific query
+    /// construction in consumer crates and prefer `GraphClient::query` when it
+    /// is sufficient.
+    pub fn with_sync_graph<T>(
+        &mut self,
+        f: impl FnOnce(&mut SyncGraph) -> anyhow::Result<T>,
+    ) -> anyhow::Result<T> {
+        f(&mut self.graph)
+    }
+
     /// Execute a Cypher query and return parsed rows.
     pub fn query(
         &mut self,
@@ -324,5 +337,15 @@ mod tests {
             !source.contains(&code_graph_name),
             "adapter must not hardcode a consumer graph name"
         );
+    }
+
+    #[test]
+    fn sync_graph_hook_accepts_mutating_closure() {
+        fn use_hook(client: &mut GraphClient) -> anyhow::Result<()> {
+            client.with_sync_graph(|_graph| Ok(()))
+        }
+
+        let signature: fn(&mut GraphClient) -> anyhow::Result<()> = use_hook;
+        assert!(std::mem::size_of_val(&signature) > 0);
     }
 }

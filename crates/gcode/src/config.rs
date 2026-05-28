@@ -778,6 +778,7 @@ mod tests {
         assert_eq!(falkor.host, "env-falkor.local");
         assert_eq!(falkor.port, 16380);
         assert_eq!(falkor.password.as_deref(), Some("stored-pass"));
+        assert_eq!(falkor.graph_name, FALKORDB_GRAPH_NAME);
         assert_eq!(qdrant.url.as_deref(), Some("http://qdrant.local:6333"));
         assert_eq!(qdrant.api_key.as_deref(), Some("qdrant-key"));
         assert_eq!(embedding.api_base, "http://embeddings.local:11434");
@@ -859,47 +860,30 @@ mod tests {
     }
 
     #[test]
-    fn falkor_config_wrapper_shape() {
-        let source = include_str!("config.rs");
-        assert!(source.contains("pub struct FalkorConfig"));
-        assert!(source.contains("pub graph_name: String"));
-        assert!(source.contains("gobby_core::config::resolve_falkordb_config"));
-        assert!(source.contains("graph_name: FALKORDB_GRAPH_NAME.to_string()"));
-    }
+    #[serial_test::serial]
+    fn phase7_config_resolution_returns_gcode_falkor_config_with_core_fields_and_graph_name() {
+        clear_service_env();
+        let values = std::collections::HashMap::from([
+            ("databases.falkordb.host", r#""stored-falkor.local""#),
+            ("databases.falkordb.port", r#""16380""#),
+            ("databases.falkordb.requirepass", r#""stored-pass""#),
+        ]);
 
-    #[test]
-    fn phase7_context_and_falkor_resolver_visible() {
-        let source = include_str!("config.rs");
-        assert!(source.contains("pub falkordb: Option<FalkorConfig>"));
-        assert!(source.contains("let falkordb = resolve_falkordb_config("));
-        assert!(source.contains("pub const FALKORDB_GRAPH_NAME: &str = \"gobby_code\";"));
-        assert!(source.contains("graph_name: FALKORDB_GRAPH_NAME.to_string()"));
-    }
+        let falkor = resolve_falkordb_config_from_values(config_value_for(&values), |value| {
+            Ok(value.to_string())
+        })
+        .expect("falkordb config");
 
-    #[test]
-    fn phase7_falkordb_config_store_keys_visible() {
-        let source = include_str!("config.rs");
-        for key in [
-            FALKORDB_HOST_CONFIG_KEY,
-            FALKORDB_PORT_CONFIG_KEY,
-            FALKORDB_PASSWORD_CONFIG_KEY,
-            GOBBY_FALKORDB_HOST_ENV,
-            GOBBY_FALKORDB_PORT_ENV,
-            GOBBY_FALKORDB_PASSWORD_ENV,
-        ] {
-            assert!(source.contains(key), "missing {key}");
-        }
-    }
+        assert_eq!(falkor.host, "stored-falkor.local");
+        assert_eq!(falkor.port, 16380);
+        assert_eq!(falkor.password.as_deref(), Some("stored-pass"));
+        assert_eq!(falkor.graph_name, "gobby_code");
 
-    #[test]
-    fn phase7_neo4j_transition_state_absent() {
-        let source = include_str!("config.rs");
-        let config_type = ["pub struct Neo", "4jConfig"].concat();
-        let resolver = ["resolve_neo", "4j_config"].concat();
-        let context_field = ["pub neo", "4j: Option<Neo", "4jConfig>"].concat();
-        assert!(!source.contains(&config_type));
-        assert!(!source.contains(&resolver));
-        assert!(!source.contains(&context_field));
+        let connection = falkor.connection_config();
+        assert_eq!(connection.host, falkor.host);
+        assert_eq!(connection.port, falkor.port);
+        assert_eq!(connection.password, falkor.password);
+        clear_service_env();
     }
 
     #[test]
