@@ -99,6 +99,7 @@ fn clone_context(ctx: &Context, project_root: std::path::PathBuf, project_id: St
         falkordb: ctx.falkordb.clone(),
         qdrant: ctx.qdrant.clone(),
         embedding: ctx.embedding.clone(),
+        code_vectors: ctx.code_vectors.clone(),
         daemon_url: ctx.daemon_url.clone(),
     }
 }

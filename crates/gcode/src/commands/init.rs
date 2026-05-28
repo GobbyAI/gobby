@@ -61,6 +61,7 @@ pub fn run(project_root: &Path, format: Format, quiet: bool) -> anyhow::Result<(
         falkordb: None,
         qdrant: None,
         embedding: None,
+        code_vectors: config::CodeVectorSettings::default(),
         daemon_url: None,
     };
     let index_result = api::index_files(
