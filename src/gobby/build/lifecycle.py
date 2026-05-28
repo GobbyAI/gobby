@@ -574,7 +574,14 @@ def _resolve_plan_file_path(
     path = Path(input_ref).expanduser()
     if path.is_absolute():
         return path
-    return _plan_file_base_dir(task_manager, project_id, opts) / path
+    base_dir = _plan_file_base_dir(task_manager, project_id, opts)
+    direct_path = base_dir / path
+    if direct_path.exists() or path.parent != Path("."):
+        return direct_path
+    plans_path = base_dir / ".gobby" / "plans" / path.name
+    if plans_path.exists():
+        return plans_path
+    return direct_path
 
 
 def _plan_file_base_dir(

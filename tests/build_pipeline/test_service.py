@@ -214,6 +214,29 @@ async def test_build_rejects_retired_test_arch_stage(
 
 
 @pytest.mark.asyncio
+async def test_plan_file_basename_resolves_from_project_plans_dir(
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    project_id, repo_path = _project(temp_db, tmp_path)
+    plans_dir = repo_path / ".gobby" / "plans"
+    plans_dir.mkdir(parents=True)
+    plan_file = plans_dir / "basename-plan.md"
+    plan_file.write_text("# Plan\n", encoding="utf-8")
+
+    result = await _build(
+        plan_file.name,
+        _options(quick=True, isolation="none"),
+        db=temp_db,
+        project_id=project_id,
+    )
+
+    artifacts = LocalTaskManager(temp_db).artifacts.get_artifacts(result.task_id)
+    assert artifacts.plan_file_path == str(plan_file)
+    assert result.initial_lifecycle == "planning"
+
+
+@pytest.mark.asyncio
 async def test_plan_file_quick_initializes_planning_pulse(
     temp_db,
     tmp_path: Path,
