@@ -3,8 +3,6 @@
 
 use std::path::{Path, PathBuf};
 
-use ignore::WalkBuilder;
-
 use crate::index::languages;
 use crate::index::security;
 
@@ -24,12 +22,11 @@ pub fn discover_files(root: &Path, exclude_patterns: &[String]) -> (Vec<PathBuf>
     let mut candidates = Vec::new();
     let mut content_only = Vec::new();
 
-    let walker = WalkBuilder::new(root)
-        .hidden(true)
-        .git_ignore(true)
-        .git_global(true)
-        .git_exclude(true)
-        .build();
+    let mut settings = gobby_core::indexing::WalkerSettings::new(root);
+    settings.max_filesize = Some(MAX_FILE_SIZE);
+    let mut builder = settings.into_walker();
+    builder.hidden(true);
+    let walker = builder.build();
 
     for entry in walker.flatten() {
         let path = entry.path();
@@ -215,5 +212,15 @@ mod tests {
             classify_file(root, &root.join("build/generated.py"), &excludes),
             None
         );
+    }
+
+    #[test]
+    fn walker_consumes_gobby_core_walker_settings() {
+        let source = include_str!("walker.rs");
+        let settings = ["gobby_core", "::indexing::WalkerSettings"].concat();
+        let direct_builder = ["WalkBuilder", "::new(root)"].concat();
+
+        assert!(source.contains(&settings));
+        assert!(!source.contains(&direct_builder));
     }
 }
