@@ -12,7 +12,7 @@ use crate::graph::typed_query;
 use crate::models::{ProjectionMetadata, ProjectionProvenance};
 
 const RELATES_TO_CODE: &str = "RELATES_TO_CODE";
-const TOP_LIMIT: usize = 10;
+const DEFAULT_TOP_LIMIT: usize = 10;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BridgeEdgeHypothesis {
@@ -73,6 +73,27 @@ pub struct ProjectGraphReport {
     pub degradation_details: Vec<ReportDegradation>,
     pub suggested_investigation_questions: Vec<String>,
     pub markdown: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProjectGraphReportOptions {
+    pub top_n: usize,
+}
+
+impl Default for ProjectGraphReportOptions {
+    fn default() -> Self {
+        Self {
+            top_n: DEFAULT_TOP_LIMIT,
+        }
+    }
+}
+
+impl ProjectGraphReportOptions {
+    fn normalized(self) -> Self {
+        Self {
+            top_n: self.top_n.max(1),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -249,6 +270,13 @@ struct DegreeStats {
 }
 
 pub fn generate_report(ctx: &Context) -> Result<ProjectGraphReport, ProjectGraphReportError> {
+    generate_report_with_options(ctx, ProjectGraphReportOptions::default())
+}
+
+pub fn generate_report_with_options(
+    ctx: &Context,
+    options: ProjectGraphReportOptions,
+) -> Result<ProjectGraphReport, ProjectGraphReportError> {
     let Some(config) = ctx.falkordb.as_ref() else {
         return Err(ProjectGraphReportError::GraphServiceNotConfigured);
     };
@@ -262,10 +290,11 @@ pub fn generate_report(ctx: &Context) -> Result<ProjectGraphReport, ProjectGraph
     );
 
     match result {
-        Ok((snapshot, ServiceState::Available)) => Ok(generate_report_from_snapshot(
+        Ok((snapshot, ServiceState::Available)) => Ok(generate_report_from_snapshot_with_options(
             &ctx.project_id,
             now_iso8601(),
             snapshot,
+            options,
         )),
         Ok((_, ServiceState::NotConfigured)) => {
             Err(ProjectGraphReportError::GraphServiceNotConfigured)
@@ -288,6 +317,21 @@ fn generate_report_from_snapshot(
     generated_at: impl Into<String>,
     snapshot: ReportGraphSnapshot,
 ) -> ProjectGraphReport {
+    generate_report_from_snapshot_with_options(
+        project_id,
+        generated_at,
+        snapshot,
+        ProjectGraphReportOptions::default(),
+    )
+}
+
+fn generate_report_from_snapshot_with_options(
+    project_id: impl Into<String>,
+    generated_at: impl Into<String>,
+    snapshot: ReportGraphSnapshot,
+    options: ProjectGraphReportOptions,
+) -> ProjectGraphReport {
+    let options = options.normalized();
     let project_id = project_id.into();
     let generated_at = generated_at.into();
     let node_by_id = snapshot
@@ -297,9 +341,15 @@ fn generate_report_from_snapshot(
         .collect::<HashMap<_, _>>();
 
     let summary = summarize_graph(&snapshot.nodes, &snapshot.code_edges);
-    let hotspots = summarize_hotspots(&snapshot.nodes, &snapshot.code_edges);
-    let unresolved_targets = target_frequencies(&snapshot.code_edges, &node_by_id, "unresolved");
-    let external_targets = target_frequencies(&snapshot.code_edges, &node_by_id, "external");
+    let hotspots = summarize_hotspots(&snapshot.nodes, &snapshot.code_edges, options.top_n);
+    let unresolved_targets = target_frequencies(
+        &snapshot.code_edges,
+        &node_by_id,
+        "unresolved",
+        options.top_n,
+    );
+    let external_targets =
+        target_frequencies(&snapshot.code_edges, &node_by_id, "external", options.top_n);
 
     let (bridge_edges, mut degradation_details) = match snapshot.bridge_edges {
         BridgeEdgeInput::Available(edges) => (normalize_bridge_edges(edges), vec![]),
@@ -329,6 +379,7 @@ fn generate_report_from_snapshot(
         external_targets: &external_targets,
         bridge_summary: bridge_summary.as_ref(),
         degradation_details: &degradation_details,
+        top_n: options.top_n,
     });
 
     degradation_details.sort_by(|left, right| left.input.cmp(&right.input));
@@ -497,7 +548,11 @@ fn summarize_graph(nodes: &[ReportNode], edges: &[ReportCodeEdge]) -> GraphRepor
     }
 }
 
-fn summarize_hotspots(nodes: &[ReportNode], edges: &[ReportCodeEdge]) -> GraphReportHotspots {
+fn summarize_hotspots(
+    nodes: &[ReportNode],
+    edges: &[ReportCodeEdge],
+    top_n: usize,
+) -> GraphReportHotspots {
     let mut degree = HashMap::<&str, DegreeStats>::new();
     let mut incoming_calls = HashMap::<&str, usize>::new();
     for edge in edges {
@@ -509,16 +564,19 @@ fn summarize_hotspots(nodes: &[ReportNode], edges: &[ReportCodeEdge]) -> GraphRe
     }
 
     GraphReportHotspots {
-        high_degree_files: top_hotspots(nodes, &degree, |node| node.node_type == "file"),
-        high_degree_symbols: top_hotspots(nodes, &degree, |node| is_symbol_node(&node.node_type)),
-        high_degree_modules: top_hotspots(nodes, &degree, |node| node.node_type == "module"),
-        incoming_call_hotspots: top_incoming_call_hotspots(nodes, &incoming_calls),
+        high_degree_files: top_hotspots(nodes, &degree, top_n, |node| node.node_type == "file"),
+        high_degree_symbols: top_hotspots(nodes, &degree, top_n, |node| {
+            is_symbol_node(&node.node_type)
+        }),
+        high_degree_modules: top_hotspots(nodes, &degree, top_n, |node| node.node_type == "module"),
+        incoming_call_hotspots: top_incoming_call_hotspots(nodes, &incoming_calls, top_n),
     }
 }
 
 fn top_hotspots(
     nodes: &[ReportNode],
     degree: &HashMap<&str, DegreeStats>,
+    top_n: usize,
     include: impl Fn(&ReportNode) -> bool,
 ) -> Vec<GraphHotspot> {
     let mut hotspots = nodes
@@ -539,13 +597,14 @@ fn top_hotspots(
         })
         .collect::<Vec<_>>();
     sort_hotspots(&mut hotspots);
-    hotspots.truncate(TOP_LIMIT);
+    hotspots.truncate(top_n);
     hotspots
 }
 
 fn top_incoming_call_hotspots(
     nodes: &[ReportNode],
     incoming_calls: &HashMap<&str, usize>,
+    top_n: usize,
 ) -> Vec<GraphHotspot> {
     let mut hotspots = nodes
         .iter()
@@ -564,7 +623,7 @@ fn top_incoming_call_hotspots(
         })
         .collect::<Vec<_>>();
     sort_hotspots(&mut hotspots);
-    hotspots.truncate(TOP_LIMIT);
+    hotspots.truncate(top_n);
     hotspots
 }
 
@@ -572,6 +631,7 @@ fn target_frequencies(
     edges: &[ReportCodeEdge],
     node_by_id: &HashMap<&str, &ReportNode>,
     target_type: &str,
+    top_n: usize,
 ) -> Vec<TargetFrequency> {
     let mut counts = BTreeMap::<String, TargetFrequency>::new();
     for edge in edges.iter().filter(|edge| edge.edge_type == "CALLS") {
@@ -599,7 +659,7 @@ fn target_frequencies(
             .then_with(|| left.name.cmp(&right.name))
             .then_with(|| left.id.cmp(&right.id))
     });
-    frequencies.truncate(TOP_LIMIT);
+    frequencies.truncate(top_n);
     frequencies
 }
 
@@ -697,6 +757,7 @@ struct RenderMarkdownInput<'a> {
     external_targets: &'a [TargetFrequency],
     bridge_summary: Option<&'a BridgeReportSummary>,
     degradation_details: &'a [ReportDegradation],
+    top_n: usize,
 }
 
 fn render_markdown(input: RenderMarkdownInput<'_>) -> String {
@@ -720,23 +781,32 @@ fn render_markdown(input: RenderMarkdownInput<'_>) -> String {
         &mut lines,
         "High-degree files",
         &input.hotspots.high_degree_files,
+        input.top_n,
     );
     append_hotspot_section(
         &mut lines,
         "High-degree symbols",
         &input.hotspots.high_degree_symbols,
+        input.top_n,
     );
     append_hotspot_section(
         &mut lines,
         "Incoming-call hotspots",
         &input.hotspots.incoming_call_hotspots,
+        input.top_n,
     );
     append_target_section(
         &mut lines,
         "Unresolved call targets",
         input.unresolved_targets,
+        input.top_n,
     );
-    append_target_section(&mut lines, "External call targets", input.external_targets);
+    append_target_section(
+        &mut lines,
+        "External call targets",
+        input.external_targets,
+        input.top_n,
+    );
 
     if let Some(summary) = input.bridge_summary {
         lines.push(String::new());
@@ -761,13 +831,18 @@ fn render_markdown(input: RenderMarkdownInput<'_>) -> String {
     lines.join("\n")
 }
 
-fn append_hotspot_section(lines: &mut Vec<String>, title: &str, hotspots: &[GraphHotspot]) {
+fn append_hotspot_section(
+    lines: &mut Vec<String>,
+    title: &str,
+    hotspots: &[GraphHotspot],
+    top_n: usize,
+) {
     if hotspots.is_empty() {
         return;
     }
     lines.push(String::new());
     lines.push(title.to_string());
-    for hotspot in hotspots.iter().take(3) {
+    for hotspot in hotspots.iter().take(top_n) {
         lines.push(format!(
             "- {} ({}, degree {})",
             hotspot.name, hotspot.node_type, hotspot.degree
@@ -775,13 +850,18 @@ fn append_hotspot_section(lines: &mut Vec<String>, title: &str, hotspots: &[Grap
     }
 }
 
-fn append_target_section(lines: &mut Vec<String>, title: &str, targets: &[TargetFrequency]) {
+fn append_target_section(
+    lines: &mut Vec<String>,
+    title: &str,
+    targets: &[TargetFrequency],
+    top_n: usize,
+) {
     if targets.is_empty() {
         return;
     }
     lines.push(String::new());
     lines.push(title.to_string());
-    for target in targets.iter().take(3) {
+    for target in targets.iter().take(top_n) {
         lines.push(format!("- {} ({})", target.name, target.count));
     }
 }
