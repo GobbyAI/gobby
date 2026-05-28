@@ -1,22 +1,5 @@
-mod commands;
-mod config;
-mod db;
-mod falkor;
-mod freshness;
-mod git;
-mod index;
-mod models;
-mod output;
-mod progress;
-mod project;
-mod savings;
-mod schema;
-mod search;
-mod secrets;
-mod skill;
-mod utils;
-
 use clap::{Parser, Subcommand};
+use gobby_code::{commands, config, freshness, output};
 
 #[derive(Parser)]
 #[command(name = "gcode", version, about = "Fast code index CLI for Gobby")]

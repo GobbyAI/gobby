@@ -1,10 +1,6 @@
-use anyhow::Context as _;
-use reqwest::StatusCode;
-use serde_json::Value;
-
 use crate::config::Context;
 use crate::db;
-use crate::falkor;
+use crate::graph::code_graph::{self, GraphLifecycleAction, GraphLifecycleOutput};
 use crate::models::PagedResponse;
 use crate::output::{self, Format};
 use crate::search::fts::{self, ResolvedGraphSymbol};
@@ -12,142 +8,13 @@ use crate::search::fts::{self, ResolvedGraphSymbol};
 const GOBBY_HINT: &str =
     "Graph commands require FalkorDB, available with Gobby. See: https://github.com/GobbyAI/gobby";
 
-#[derive(Clone, Copy, Debug)]
-enum GraphLifecycleAction {
-    Clear,
-    Rebuild,
-}
-
-impl GraphLifecycleAction {
-    fn cli_command(self) -> &'static str {
-        match self {
-            Self::Clear => "gcode graph clear",
-            Self::Rebuild => "gcode graph rebuild",
-        }
-    }
-
-    fn endpoint_path(self) -> &'static str {
-        match self {
-            Self::Clear => "/api/code-index/graph/clear",
-            Self::Rebuild => "/api/code-index/graph/rebuild",
-        }
-    }
-
-    fn success_prefix(self) -> &'static str {
-        match self {
-            Self::Clear => "Cleared code-index graph",
-            Self::Rebuild => "Rebuilt code-index graph",
-        }
-    }
-}
-
-fn require_daemon_url(
-    daemon_url: Option<&str>,
-    action: GraphLifecycleAction,
-) -> anyhow::Result<&str> {
-    daemon_url.ok_or_else(|| {
-        anyhow::anyhow!(
-            "Gobby daemon URL is not configured. `{}` requires the Gobby daemon.",
-            action.cli_command()
-        )
-    })
-}
-
-fn build_lifecycle_url(
-    base_url: &str,
-    action: GraphLifecycleAction,
-    project_id: &str,
-) -> anyhow::Result<reqwest::Url> {
-    let base = base_url.trim_end_matches('/');
-    let mut url = reqwest::Url::parse(&format!("{base}{}", action.endpoint_path()))
-        .with_context(|| format!("invalid Gobby daemon URL: {base_url}"))?;
-    url.query_pairs_mut().append_pair("project_id", project_id);
-    Ok(url)
-}
-
-fn compact_detail(body: &str) -> String {
-    let detail = body.split_whitespace().collect::<Vec<_>>().join(" ");
-    let detail = detail.trim();
-    if detail.len() > 240 {
-        format!("{}...", &detail[..237])
-    } else {
-        detail.to_string()
-    }
-}
-
-fn format_http_error(
-    action: GraphLifecycleAction,
-    url: &reqwest::Url,
-    status: StatusCode,
-    body: &str,
-) -> String {
-    let detail = compact_detail(body);
-    if detail.is_empty() {
-        format!(
-            "`{}` failed: daemon returned HTTP {status} from {url}",
-            action.cli_command()
-        )
-    } else {
-        format!(
-            "`{}` failed: daemon returned HTTP {status} from {url}: {detail}",
-            action.cli_command()
-        )
-    }
-}
-
-fn parse_success_payload(
-    action: GraphLifecycleAction,
-    status: StatusCode,
-    body: &str,
-) -> anyhow::Result<Value> {
-    serde_json::from_str(body).map_err(|err| {
-        let detail = compact_detail(body);
-        if detail.is_empty() {
-            anyhow::anyhow!(
-                "`{}` failed: daemon returned HTTP {status} with invalid JSON: {err}",
-                action.cli_command()
-            )
-        } else {
-            anyhow::anyhow!(
-                "`{}` failed: daemon returned HTTP {status} with invalid JSON: {err}. Response: {detail}",
-                action.cli_command()
-            )
-        }
-    })
-}
-
-fn extract_summary_text(payload: &Value) -> Option<String> {
-    match payload {
-        Value::String(text) => {
-            let text = text.trim();
-            (!text.is_empty()).then(|| text.to_string())
-        }
-        Value::Object(map) => ["summary", "message", "detail", "status"]
-            .iter()
-            .find_map(|key| map.get(*key).and_then(Value::as_str))
-            .map(str::trim)
-            .filter(|text| !text.is_empty())
-            .map(ToOwned::to_owned),
-        _ => None,
-    }
-}
-
-fn format_success_text(
-    action: GraphLifecycleAction,
-    project_id: &str,
-    payload: &Value,
-) -> anyhow::Result<String> {
-    let detail = match extract_summary_text(payload) {
-        Some(summary) => summary,
-        None => serde_json::to_string(payload)?,
-    };
-
-    Ok(format!(
+fn format_success_text(output: &GraphLifecycleOutput) -> String {
+    format!(
         "{} for project {}: {}",
-        action.success_prefix(),
-        project_id,
-        detail
-    ))
+        output.action.success_prefix(),
+        output.project_id,
+        output.summary
+    )
 }
 
 fn run_lifecycle_action(
@@ -155,39 +22,13 @@ fn run_lifecycle_action(
     action: GraphLifecycleAction,
     format: Format,
 ) -> anyhow::Result<()> {
-    let daemon_url = require_daemon_url(ctx.daemon_url.as_deref(), action)?;
-    let url = build_lifecycle_url(daemon_url, action, &ctx.project_id)?;
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .context("failed to build HTTP client")?;
-
-    let response = client
-        .post(url.clone())
-        .header("Accept", "application/json")
-        .send()
-        .with_context(|| {
-            format!(
-                "Failed to reach Gobby daemon at {daemon_url} for `{}`",
-                action.cli_command()
-            )
-        })?;
-
-    let status = response.status();
-    let body = response.text().unwrap_or_default();
-    if !status.is_success() {
-        anyhow::bail!("{}", format_http_error(action, &url, status, &body));
-    }
-
-    let payload = parse_success_payload(action, status, &body)?;
+    let request = code_graph::GraphLifecycleRequest::from_context(ctx);
+    let output = code_graph::run_lifecycle_action(&request, action)?;
     match format {
-        Format::Json => output::print_json(&payload),
+        Format::Json => output::print_json(&output.payload),
         Format::Text => {
-            eprintln!(
-                "{}",
-                format_success_text(action, &ctx.project_id, &payload)?
-            );
-            output::print_json_compact(&payload)
+            eprintln!("{}", format_success_text(&output));
+            output::print_json_compact(&output.payload)
         }
     }
 }
@@ -263,8 +104,8 @@ pub fn callers(
         Some(symbol) => symbol,
         None => return empty_response_for_unresolved(ctx, format),
     };
-    let total = falkor::count_callers(ctx, &symbol.id)?;
-    let results = falkor::find_callers(ctx, &symbol.id, offset, limit)?;
+    let total = code_graph::count_callers(ctx, &symbol.id)?;
+    let results = code_graph::find_callers(ctx, &symbol.id, offset, limit)?;
 
     match format {
         Format::Json => output::print_json(&PagedResponse {
@@ -313,8 +154,8 @@ pub fn usages(
         Some(symbol) => symbol,
         None => return empty_response_for_unresolved(ctx, format),
     };
-    let total = falkor::count_usages(ctx, &symbol.id)?;
-    let results = falkor::find_usages(ctx, &symbol.id, offset, limit)?;
+    let total = code_graph::count_usages(ctx, &symbol.id)?;
+    let results = code_graph::find_usages(ctx, &symbol.id, offset, limit)?;
 
     match format {
         Format::Json => output::print_json(&PagedResponse {
@@ -354,7 +195,7 @@ pub fn usages(
 }
 
 pub fn imports(ctx: &Context, file: &str, format: Format) -> anyhow::Result<()> {
-    let results = falkor::get_imports(ctx, file)?;
+    let results = code_graph::get_imports(ctx, file)?;
     let total = results.len();
     match format {
         Format::Json => output::print_json(&PagedResponse {
@@ -389,7 +230,7 @@ pub fn blast_radius(
         Some(symbol) => symbol,
         None => return empty_response_for_unresolved(ctx, format),
     };
-    let results = falkor::blast_radius(ctx, &symbol.id, depth)?;
+    let results = code_graph::blast_radius(ctx, &symbol.id, depth)?;
     let total = results.len();
     match format {
         Format::Json => output::print_json(&PagedResponse {
@@ -422,7 +263,7 @@ mod tests {
 
     #[test]
     fn test_build_lifecycle_url_clear_uses_project_id_query() {
-        let url = build_lifecycle_url(
+        let url = code_graph::build_lifecycle_url(
             "http://localhost:60887/",
             GraphLifecycleAction::Clear,
             "project-123",
@@ -437,7 +278,7 @@ mod tests {
 
     #[test]
     fn test_build_lifecycle_url_rebuild_uses_project_id_query() {
-        let url = build_lifecycle_url(
+        let url = code_graph::build_lifecycle_url(
             "http://localhost:60887",
             GraphLifecycleAction::Rebuild,
             "project-123",
@@ -452,7 +293,8 @@ mod tests {
 
     #[test]
     fn test_require_daemon_url_errors_when_missing() {
-        let err = require_daemon_url(None, GraphLifecycleAction::Clear).expect_err("must fail");
+        let err = code_graph::require_daemon_url(None, GraphLifecycleAction::Clear)
+            .expect_err("must fail");
 
         assert!(
             err.to_string()
@@ -469,10 +311,10 @@ mod tests {
     fn test_format_http_error_includes_status_and_body() {
         let url = reqwest::Url::parse("http://localhost:60887/api/code-index/graph/clear")
             .expect("valid url");
-        let message = format_http_error(
+        let message = code_graph::format_http_error(
             GraphLifecycleAction::Clear,
             &url,
-            StatusCode::BAD_GATEWAY,
+            reqwest::StatusCode::BAD_GATEWAY,
             "daemon upstream unavailable",
         );
 
@@ -485,8 +327,12 @@ mod tests {
 
     #[test]
     fn test_parse_success_payload_fails_on_invalid_json() {
-        let err = parse_success_payload(GraphLifecycleAction::Rebuild, StatusCode::OK, "not json")
-            .expect_err("invalid json must fail");
+        let err = code_graph::parse_success_payload(
+            GraphLifecycleAction::Rebuild,
+            reqwest::StatusCode::OK,
+            "not json",
+        )
+        .expect_err("invalid json must fail");
 
         assert!(
             err.to_string().contains("invalid JSON"),
@@ -504,9 +350,13 @@ mod tests {
             "message": "cleared 12 graph nodes",
             "removed_nodes": 12
         });
-
-        let text = format_success_text(GraphLifecycleAction::Clear, "project-123", &payload)
-            .expect("text formats");
+        let output = GraphLifecycleOutput {
+            project_id: "project-123".to_string(),
+            action: GraphLifecycleAction::Clear,
+            summary: "cleared 12 graph nodes".to_string(),
+            payload,
+        };
+        let text = format_success_text(&output);
 
         assert_eq!(
             text,
@@ -520,9 +370,13 @@ mod tests {
             "replayed": 18,
             "synced": 18
         });
-
-        let text = format_success_text(GraphLifecycleAction::Rebuild, "project-123", &payload)
-            .expect("text formats");
+        let output = GraphLifecycleOutput {
+            project_id: "project-123".to_string(),
+            action: GraphLifecycleAction::Rebuild,
+            summary: payload.to_string(),
+            payload,
+        };
+        let text = format_success_text(&output);
 
         assert_eq!(
             text,

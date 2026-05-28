@@ -5,3 +5,4 @@ pub(crate) mod scope;
 pub mod search;
 pub mod status;
 pub mod symbols;
+pub mod vector;
