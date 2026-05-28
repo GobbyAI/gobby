@@ -49,6 +49,20 @@ class _ClassifyConnection:
         ({"schema_migrations"}, set(), "fresh"),
         ({"tasks"}, set(), "corrupt_partial"),
         ({"gobby_install_ownership", "tasks"}, set(), "corrupt_partial"),
+        (
+            {
+                "_pgaudit_probe",
+                "code_indexed_projects",
+                "code_indexed_files",
+                "code_symbols",
+                "code_imports",
+                "code_calls",
+                "code_content_chunks",
+            },
+            set(),
+            "gcore_code_index",
+        ),
+        ({"code_symbols"}, set(), "corrupt_partial"),
     ],
 )
 def test_classify_baseline_state_distinguishes_fresh_infra_and_corruption(
@@ -118,6 +132,19 @@ class _Resources:
     def read_text(self) -> str:
         self.read_count += 1
         return "CREATE TABLE tasks(id INTEGER);"
+
+
+class _GcoreAdoptionResources(_Resources):
+    def read_text(self) -> str:
+        self.read_count += 1
+        return """
+CREATE TABLE code_symbols(id TEXT PRIMARY KEY);
+CREATE INDEX idx_cs_project ON code_symbols(project_id);
+CREATE INDEX code_symbols_search_bm25 ON code_symbols
+USING bm25 (id, name)
+WITH (key_field='id');
+CREATE TABLE tasks(id INTEGER);
+"""
 
 
 def _new_db(module, pool: _Pool):
@@ -211,6 +238,27 @@ def test_apply_postgres_baseline_rejects_partial_baseline_state(monkeypatch) -> 
         db._apply_postgres_baseline()
 
     assert "CREATE TABLE tasks(id INTEGER)" not in locked.statements
+
+
+def test_apply_postgres_baseline_adopts_gcore_code_index_state(monkeypatch) -> None:
+    module = _postgres_module()
+    fast = _ApplyConnection("gcore_code_index")
+    locked = _ApplyConnection("gcore_code_index")
+    resources = _GcoreAdoptionResources()
+
+    monkeypatch.setattr(module, "_classify_baseline_state", lambda conn: conn.state)
+    monkeypatch.setattr(module.importlib, "resources", resources)
+    db = _new_db(module, _Pool(fast, locked))
+
+    db._apply_postgres_baseline()
+
+    stripped = [statement.strip() for statement in locked.statements]
+    assert "CREATE TABLE tasks(id INTEGER)" in stripped
+    assert "CREATE TABLE code_symbols(id TEXT PRIMARY KEY)" not in stripped
+    assert "CREATE INDEX idx_cs_project ON code_symbols(project_id)" not in stripped
+    assert not any("code_symbols_search_bm25" in statement for statement in locked.statements)
+    assert any("INSERT INTO schema_migrations" in statement for statement in locked.statements)
+    assert resources.read_count == 1
 
 
 def test_apply_postgres_baseline_rejects_missing_pg_search_without_extension_ddl(

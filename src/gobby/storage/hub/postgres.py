@@ -53,6 +53,16 @@ _BASELINE_BOOKKEEPING_TABLES: frozenset[str] = frozenset(
         "schema_migrations",
     }
 )
+_GCORE_CODE_INDEX_TABLES: frozenset[str] = frozenset(
+    {
+        "code_indexed_projects",
+        "code_indexed_files",
+        "code_symbols",
+        "code_imports",
+        "code_calls",
+        "code_content_chunks",
+    }
+)
 _PG_SEARCH_MISSING_MESSAGE = (
     "pg_search extension is not present on this database. Docker mode: rebuild the image. "
     "Native mode: rerun 'gobby postgres install --mode native'. External mode: install "
@@ -61,6 +71,7 @@ _PG_SEARCH_MISSING_MESSAGE = (
 _BaselineState = Literal[
     "fresh",
     "fresh_with_install_infra",
+    "gcore_code_index",
     "already_baselined",
     "corrupt_partial",
 ]
@@ -237,7 +248,7 @@ class PostgresHubDatabase:
                 .joinpath("postgres_baseline_schema.sql")
                 .read_text()
             )
-            for statement in _split_statements_respecting_dollar_quotes(sql):
+            for statement in _baseline_statements_for_state(sql, state):
                 if statement.strip():
                     conn.execute(statement)
             conn.execute(
@@ -397,7 +408,46 @@ def _classify_baseline_state(conn: Any) -> _BaselineState:
         if tables & _PRE_BASELINE_INFRA_TABLES:
             return "fresh_with_install_infra"
         return "fresh"
+    if (
+        not has_bookkeeping
+        and _GCORE_CODE_INDEX_TABLES.issubset(application_tables)
+        and application_tables.issubset(_GCORE_CODE_INDEX_TABLES)
+    ):
+        return "gcore_code_index"
     return "corrupt_partial"
+
+
+def _baseline_statements_for_state(sql: str, state: _BaselineState) -> Iterator[str]:
+    statements = _split_statements_respecting_dollar_quotes(sql)
+    if state != "gcore_code_index":
+        yield from statements
+        return
+
+    for statement in statements:
+        if not _is_code_index_create_statement(statement):
+            yield statement
+
+
+def _is_code_index_create_statement(statement: str) -> bool:
+    text = statement.strip()
+    table_match = re.match(
+        r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?\"?([A-Za-z_][A-Za-z0-9_]*)\"?",
+        text,
+        re.IGNORECASE,
+    )
+    if table_match:
+        return table_match.group(1) in _GCORE_CODE_INDEX_TABLES
+
+    index_match = re.match(
+        r"CREATE\s+INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?\"?[A-Za-z_][A-Za-z0-9_]*\"?"
+        r"\s+ON\s+\"?([A-Za-z_][A-Za-z0-9_]*)\"?",
+        text,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if index_match:
+        return index_match.group(1) in _GCORE_CODE_INDEX_TABLES
+
+    return False
 
 
 def _has_baseline_version(conn: Any, version: int) -> bool:
