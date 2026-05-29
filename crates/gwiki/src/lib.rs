@@ -1,6 +1,8 @@
 use std::fmt;
 use std::path::PathBuf;
 
+pub mod daemon;
+
 /// Parsed gwiki command passed in from the binary.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
