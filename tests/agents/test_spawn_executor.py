@@ -7,12 +7,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gobby.agents.constants import UV_CACHE_DIR
+from gobby.agents.constants import CARGO_HOME, UV_CACHE_DIR
 from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.spawn_executor import (
     SpawnRequest,
     SpawnResult,
     _apply_extra_env,
+    _sandbox_config_for_spawn,
     execute_spawn,
 )
 
@@ -891,11 +892,41 @@ class TestExecuteSpawnSandbox:
             assert "env" in call_kwargs
             assert "SEATBELT_PROFILE" in call_kwargs["env"]
             assert call_kwargs["env"][UV_CACHE_DIR] == "/tmp/gobby/uv-cache/child-session-id"
+            assert call_kwargs["env"][CARGO_HOME]
+            assert Path(call_kwargs["env"][CARGO_HOME]).parts[-3:] == (
+                "gobby",
+                "cargo-home",
+                "child-session-id",
+            )
+            assert call_kwargs["env"][CARGO_HOME] in resolved_config.extra_write_paths
             # Command should include sandbox args
             command = call_kwargs.get("command")
             assert "--dangerously-skip-permissions" in command
             assert "--settings" in command
             assert result.success is True
+
+    def test_sandbox_config_for_spawn_adds_cargo_home_write_path(self) -> None:
+        """Sandboxed Rust validation gets a writable Cargo home without disabling sandboxing."""
+        env_vars = {
+            "GOBBY_SESSION_ID": "child/session:one",
+            UV_CACHE_DIR: "/tmp/gobby/uv-cache/child-session-one",
+        }
+        config = SandboxConfig(enabled=True, extra_write_paths=["/already-allowed"])
+
+        resolved = _sandbox_config_for_spawn(config, env_vars)
+
+        assert resolved is not None
+        assert resolved.enabled is True
+        assert env_vars[CARGO_HOME]
+        assert Path(env_vars[CARGO_HOME]).parts[-3:] == (
+            "gobby",
+            "cargo-home",
+            "child-session-one",
+        )
+        assert "/already-allowed" in resolved.extra_write_paths
+        assert "/tmp/gobby/uv-cache/child-session-one" in resolved.extra_write_paths
+        assert env_vars[CARGO_HOME] in resolved.extra_write_paths
+        assert config.extra_write_paths == ["/already-allowed"]
 
     @pytest.mark.asyncio
     async def test_terminal_spawn_without_sandbox_passes_none(self) -> None:
@@ -1293,16 +1324,19 @@ class TestApplyExtraEnv:
             extra_env={
                 "GOBBY_SESSION_ID": "attacker-session",
                 UV_CACHE_DIR: "/bad/cache",
+                CARGO_HOME: "/bad/cargo-home",
                 "CUSTOM_FLAG": "1",
             },
         )
         env = {
             "GOBBY_SESSION_ID": "gobby-sess-123",
             UV_CACHE_DIR: "/tmp/gobby/uv-cache/gobby-sess-123",
+            CARGO_HOME: "/tmp/gobby/cargo-home/gobby-sess-123",
         }
 
         _apply_extra_env(env, request)
 
         assert env["GOBBY_SESSION_ID"] == "gobby-sess-123"
         assert env[UV_CACHE_DIR] == "/tmp/gobby/uv-cache/gobby-sess-123"
+        assert env[CARGO_HOME] == "/tmp/gobby/cargo-home/gobby-sess-123"
         assert env["CUSTOM_FLAG"] == "1"

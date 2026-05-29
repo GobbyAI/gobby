@@ -11,7 +11,13 @@ import shutil
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
-from gobby.agents.constants import ALL_TERMINAL_ENV_VARS, UV_CACHE_DIR
+from gobby.agents.constants import (
+    ALL_TERMINAL_ENV_VARS,
+    CARGO_HOME,
+    GOBBY_SESSION_ID,
+    UV_CACHE_DIR,
+    ensure_agent_cargo_home_dir,
+)
 from gobby.agents.sandbox import (
     CodexSandboxResolver,
     GeminiSandboxResolver,
@@ -33,7 +39,7 @@ from gobby.agents.tmux.spawner import TmuxSpawner
 from gobby.config.tmux import TmuxConfig
 
 logger = logging.getLogger(__name__)
-_RESERVED_EXTRA_ENV_KEYS = frozenset((*ALL_TERMINAL_ENV_VARS, "GOBBY_MACHINE_ID"))
+_RESERVED_EXTRA_ENV_KEYS = frozenset((*ALL_TERMINAL_ENV_VARS, CARGO_HOME, "GOBBY_MACHINE_ID"))
 
 
 @dataclass
@@ -101,15 +107,27 @@ def _sandbox_config_for_spawn(
     sandbox_config: SandboxConfig | None,
     env_vars: dict[str, str],
 ) -> SandboxConfig | None:
-    """Include the spawned agent's uv cache in sandbox writable paths."""
+    """Include spawned validation caches in sandbox writable paths."""
     if sandbox_config is None:
         return None
-
-    uv_cache_dir = env_vars.get(UV_CACHE_DIR)
-    if not uv_cache_dir or uv_cache_dir in sandbox_config.extra_write_paths:
+    if not sandbox_config.enabled:
         return sandbox_config
 
-    extra_write_paths = [*sandbox_config.extra_write_paths, uv_cache_dir]
+    extra_write_paths = list(sandbox_config.extra_write_paths)
+
+    uv_cache_dir = env_vars.get(UV_CACHE_DIR)
+    if uv_cache_dir and uv_cache_dir not in extra_write_paths:
+        extra_write_paths.append(uv_cache_dir)
+
+    cargo_home = env_vars.get(CARGO_HOME)
+    if not cargo_home:
+        session_id = env_vars.get(GOBBY_SESSION_ID)
+        if session_id:
+            cargo_home = ensure_agent_cargo_home_dir(session_id)
+            env_vars[CARGO_HOME] = cargo_home
+    if cargo_home and cargo_home not in extra_write_paths:
+        extra_write_paths.append(cargo_home)
+
     return sandbox_config.model_copy(update={"extra_write_paths": extra_write_paths})
 
 

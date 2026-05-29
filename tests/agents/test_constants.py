@@ -6,6 +6,7 @@ import pytest
 
 from gobby.agents.constants import (
     ALL_TERMINAL_ENV_VARS,
+    CARGO_HOME,
     GOBBY_AGENT_DEPTH,
     GOBBY_AGENT_RUN_ID,
     GOBBY_MAX_AGENT_DEPTH,
@@ -16,6 +17,7 @@ from gobby.agents.constants import (
     GOBBY_SESSION_ID,
     GOBBY_WORKFLOW_NAME,
     UV_CACHE_DIR,
+    get_agent_cargo_home_dir,
     get_agent_uv_cache_dir,
     get_terminal_env_vars,
 )
@@ -38,6 +40,7 @@ class TestEnvironmentVariableConstants:
         assert isinstance(GOBBY_PROMPT, str)
         assert isinstance(GOBBY_PROMPT_FILE, str)
         assert isinstance(UV_CACHE_DIR, str)
+        assert isinstance(CARGO_HOME, str)
 
     def test_constants_are_uppercase(self) -> None:
         """All constants follow ENV_VAR naming convention."""
@@ -93,6 +96,14 @@ class TestGetTerminalEnvVars:
         result = get_agent_uv_cache_dir("sess/child:one")
 
         assert Path(result) == Path("/tmp/test-tmp") / "gobby" / "uv-cache" / "sess-child-one"
+
+    def test_cargo_home_sanitizes_session_id(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Cargo home paths are writable temp paths scoped to safe session IDs."""
+        monkeypatch.setattr("gobby.agents.constants.tempfile.gettempdir", lambda: "/tmp/test-tmp")
+
+        result = get_agent_cargo_home_dir("sess/child:one")
+
+        assert Path(result) == Path("/tmp/test-tmp") / "gobby" / "cargo-home" / "sess-child-one"
 
     def test_includes_workflow_when_provided(self) -> None:
         """Function includes workflow name when provided."""

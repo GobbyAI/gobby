@@ -56,6 +56,9 @@ GOBBY_PROMPT_FILE = "GOBBY_PROMPT_FILE"
 # uv cache path for validation commands run by spawned agents.
 UV_CACHE_DIR = "UV_CACHE_DIR"
 
+# Cargo home path for Rust validation commands run by sandboxed spawned agents.
+CARGO_HOME = "CARGO_HOME"
+
 
 def get_agent_uv_cache_dir(session_id: str) -> str:
     """Return a writable, per-session uv cache directory for spawned agents."""
@@ -70,6 +73,21 @@ def ensure_agent_uv_cache_dir(session_id: str) -> str:
     cache_dir = Path(get_agent_uv_cache_dir(session_id))
     cache_dir.mkdir(parents=True, exist_ok=True)
     return str(cache_dir)
+
+
+def get_agent_cargo_home_dir(session_id: str) -> str:
+    """Return a writable, per-session Cargo home directory for sandboxed agents."""
+    safe_session_id = re.sub(r"[^a-zA-Z0-9_-]", "-", session_id).strip("-")
+    if not safe_session_id:
+        safe_session_id = "unknown-session"
+    return str(Path(tempfile.gettempdir()) / "gobby" / "cargo-home" / safe_session_id)
+
+
+def ensure_agent_cargo_home_dir(session_id: str) -> str:
+    """Create and return the spawned agent's Cargo home directory."""
+    cargo_home = Path(get_agent_cargo_home_dir(session_id))
+    cargo_home.mkdir(parents=True, exist_ok=True)
+    return str(cargo_home)
 
 
 def get_terminal_env_vars(
