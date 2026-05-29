@@ -1,5 +1,6 @@
 """Tests for HookEventBroadcaster."""
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -63,6 +64,21 @@ def _make_after_tool_event(data) -> HookEvent:
     return HookEvent(
         event_type=HookEventType.AFTER_TOOL,
         session_id="test-session",
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data=data,
+    )
+
+
+def _make_notification_event(data: dict[str, Any], session_id: str = "test-session") -> HookEvent:
+    """Create a unified notification HookEvent for broadcaster tests."""
+    from datetime import UTC, datetime
+
+    from gobby.hooks.events import HookEventType, SessionSource
+
+    return HookEvent(
+        event_type=HookEventType.NOTIFICATION,
+        session_id=session_id,
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         data=data,
@@ -244,6 +260,131 @@ async def test_broadcast_event_permission_request_allow_uses_decision_payload(
     call_args = mock_websocket_server.broadcast.call_args[0][0]
     assert call_args["event_type"] == "permission-request"
     assert call_args["result"]["decision"] == {"behavior": "allow"}
+    assert not any("Failed to broadcast event" in record.message for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_broadcast_event_notification_backfills_required_fields(
+    mock_websocket_server, default_config, caplog
+):
+    """Notification broadcasts should tolerate CLI payloads without notification fields."""
+    caplog.set_level("WARNING", logger="gobby.hooks.broadcaster")
+    default_config.hook_extensions.websocket.broadcast_events.append("notification")
+
+    broadcaster = HookEventBroadcaster(mock_websocket_server, default_config)
+    event = _make_notification_event(
+        {
+            "external_id": "cli-session",
+            "cwd": "/repo",
+            "transcript_path": "/tmp/session.jsonl",
+        }
+    )
+
+    await broadcaster.broadcast_event(event)
+
+    mock_websocket_server.broadcast.assert_called_once()
+    call_args = mock_websocket_server.broadcast.call_args[0][0]
+    assert call_args["event_type"] == "notification"
+    assert call_args["session_id"] == "cli-session"
+    assert call_args["data"]["notification_type"] == "general"
+    assert call_args["data"]["message"] == "Notification event received"
+    assert call_args["data"]["cwd"] == "/repo"
+    assert call_args["data"]["transcript_path"] == "/tmp/session.jsonl"
+    assert not any("Failed to broadcast event" in record.message for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_broadcast_event_notification_uses_camel_case_type(
+    mock_websocket_server, default_config, caplog
+):
+    """notificationType aliases should populate notification_type without dropping extras."""
+    caplog.set_level("WARNING", logger="gobby.hooks.broadcaster")
+    default_config.hook_extensions.websocket.broadcast_events.append("notification")
+
+    broadcaster = HookEventBroadcaster(mock_websocket_server, default_config)
+    event = _make_notification_event(
+        {
+            "external_id": "cli-session",
+            "notificationType": "build_complete",
+            "message": "Build finished",
+        }
+    )
+
+    await broadcaster.broadcast_event(event)
+
+    mock_websocket_server.broadcast.assert_called_once()
+    data = mock_websocket_server.broadcast.call_args[0][0]["data"]
+    assert data["notification_type"] == "build_complete"
+    assert data["notificationType"] == "build_complete"
+    assert data["message"] == "Build finished"
+    assert not any("Failed to broadcast event" in record.message for record in caplog.records)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field_name", "field_value", "expected_severity"),
+    [
+        ("level", "warning", "warning"),
+        ("severity", "error", "error"),
+    ],
+)
+async def test_broadcast_event_notification_maps_provider_level_or_severity(
+    mock_websocket_server,
+    default_config,
+    caplog,
+    field_name: str,
+    field_value: str,
+    expected_severity: str,
+):
+    """Provider level/severity should feed notification_type and severity when valid."""
+    caplog.set_level("WARNING", logger="gobby.hooks.broadcaster")
+    default_config.hook_extensions.websocket.broadcast_events.append("notification")
+
+    broadcaster = HookEventBroadcaster(mock_websocket_server, default_config)
+    event = _make_notification_event(
+        {
+            "external_id": "cli-session",
+            field_name: field_value,
+            "message": "Waiting for input",
+        }
+    )
+
+    await broadcaster.broadcast_event(event)
+
+    mock_websocket_server.broadcast.assert_called_once()
+    data = mock_websocket_server.broadcast.call_args[0][0]["data"]
+    assert data["notification_type"] == field_value
+    assert data["severity"] == expected_severity
+    assert data[field_name] == field_value
+    assert data["message"] == "Waiting for input"
+    assert not any("Failed to broadcast event" in record.message for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_broadcast_event_notification_empty_message_falls_back(
+    mock_websocket_server, default_config, caplog
+):
+    """Empty message fields should fall through to reason before validation."""
+    caplog.set_level("WARNING", logger="gobby.hooks.broadcaster")
+    default_config.hook_extensions.websocket.broadcast_events.append("notification")
+
+    broadcaster = HookEventBroadcaster(mock_websocket_server, default_config)
+    event = _make_notification_event(
+        {
+            "external_id": "cli-session",
+            "notification_type": "waiting",
+            "message": "   ",
+            "reason": "Permission prompt opened",
+        }
+    )
+
+    await broadcaster.broadcast_event(event)
+
+    mock_websocket_server.broadcast.assert_called_once()
+    data = mock_websocket_server.broadcast.call_args[0][0]["data"]
+    assert data["notification_type"] == "waiting"
+    assert data["message"] == "Permission prompt opened"
+    assert data["reason"] == "Permission prompt opened"
     assert not any("Failed to broadcast event" in record.message for record in caplog.records)
 
 

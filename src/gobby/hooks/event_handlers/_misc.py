@@ -6,6 +6,7 @@ from pathlib import Path
 from gobby.app_context import get_app_context
 from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.events import HookEvent, HookResponse
+from gobby.hooks.normalization import notification_type_from_payload
 from gobby.mcp_proxy.tools.worktrees._helpers import (
     copy_project_json_to_worktree,
     generate_worktree_path,
@@ -31,12 +32,7 @@ class MiscEventHandlerMixin(EventHandlersBase):
     def handle_notification(self, event: HookEvent) -> HookResponse:
         """Handle NOTIFICATION event."""
         input_data = event.data
-        notification_type = (
-            input_data.get("notification_type")
-            or input_data.get("notificationType")
-            or input_data.get("type")
-            or "general"
-        )
+        notification_type = notification_type_from_payload(input_data)
         session_id = event.metadata.get("_platform_session_id")
 
         if session_id:

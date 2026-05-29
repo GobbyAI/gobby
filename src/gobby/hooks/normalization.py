@@ -1,18 +1,20 @@
-"""Shared tool field normalization for hook events.
+"""Shared field normalization for hook events.
 
-Provides two-phase normalization so every CLI adapter produces consistent
+Provides normalization so every CLI adapter produces consistent
 canonical fields (``tool_name``, ``tool_input``, ``tool_output``,
-``mcp_server``, ``mcp_tool``, ``is_error``) and rules match uniformly.
+``mcp_server``, ``mcp_tool``, ``is_error``) and broadcast payloads satisfy
+strict hook schemas without dropping provider-specific fields.
 
-Phase 1 (``normalize_tool_fields``): flatten CLI-specific field aliases
-Phase 2 (``normalize_mcp_fields``):  MCP prefix/inner extraction + output aliases
+Tool normalization is split into two phases:
 
-Used by all adapters and the web-chat path.
+- ``normalize_tool_fields``: flatten CLI-specific field aliases
+- ``normalize_mcp_fields``: MCP prefix/inner extraction + output aliases
 """
 
 import json as _json
 import re as _re
 import shlex as _shlex
+from collections.abc import Mapping
 from typing import Any
 
 # Tools that run shell commands. ``Bash`` is the canonical runtime name, but
@@ -30,6 +32,12 @@ _SHELL_TOOLS = frozenset(
         "exec_command",
     }
 )
+
+_NOTIFICATION_TYPE_FIELDS = ("notification_type", "notificationType", "type", "level", "severity")
+_NOTIFICATION_MESSAGE_FIELDS = ("message", "title", "reason")
+_NOTIFICATION_SEVERITY_VALUES = frozenset({"info", "warning", "error"})
+_DEFAULT_NOTIFICATION_TYPE = "general"
+_DEFAULT_NOTIFICATION_MESSAGE = "Notification event received"
 
 # Pattern to detect non-zero exit codes in tool output text.
 # Matches: "Exit code: 1", "exit code 127", "Error: Exit code 2", etc.
@@ -69,6 +77,60 @@ def canonicalize_shell_tool_name(tool_name: Any) -> Any:
     if is_shell_tool(tool_name):
         return "Bash"
     return tool_name
+
+
+def _non_empty_string(value: Any) -> str | None:
+    """Return stripped string values that still contain text."""
+    if not isinstance(value, str):
+        return None
+
+    normalized = value.strip()
+    if normalized:
+        return normalized
+    return None
+
+
+def notification_type_from_payload(data: Mapping[str, Any]) -> str:
+    """Select the canonical notification type from provider-specific aliases."""
+    for field_name in _NOTIFICATION_TYPE_FIELDS:
+        value = _non_empty_string(data.get(field_name))
+        if value:
+            return value
+    return _DEFAULT_NOTIFICATION_TYPE
+
+
+def notification_message_from_payload(data: Mapping[str, Any]) -> str:
+    """Select the canonical notification message from provider-specific aliases."""
+    for field_name in _NOTIFICATION_MESSAGE_FIELDS:
+        value = _non_empty_string(data.get(field_name))
+        if value:
+            return value
+    return _DEFAULT_NOTIFICATION_MESSAGE
+
+
+def _notification_severity_from_payload(data: Mapping[str, Any]) -> str | None:
+    """Return a valid notification severity from level/severity aliases."""
+    for field_name in ("severity", "level"):
+        value = _non_empty_string(data.get(field_name))
+        if not value:
+            continue
+
+        normalized = value.lower()
+        if normalized in _NOTIFICATION_SEVERITY_VALUES:
+            return normalized
+    return None
+
+
+def normalize_notification_input(data: dict[str, Any]) -> dict[str, Any]:
+    """Backfill strict NotificationInput fields while preserving extra payload keys."""
+    data["notification_type"] = notification_type_from_payload(data)
+    data["message"] = notification_message_from_payload(data)
+
+    severity = _notification_severity_from_payload(data)
+    if severity:
+        data["severity"] = severity
+
+    return data
 
 
 def _append_unique_path(paths: list[str], path: Any) -> None:

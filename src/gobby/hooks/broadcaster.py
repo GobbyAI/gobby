@@ -19,6 +19,7 @@ from gobby.hooks.hook_types import (
     HookOutput,
     HookType,
 )
+from gobby.hooks.normalization import normalize_notification_input
 
 logger = logging.getLogger(__name__)
 
@@ -219,6 +220,9 @@ class HookEventBroadcaster:
 
             if enum_hook_type == HookType.POST_TOOL_USE_FAILURE:
                 self._normalize_post_tool_use_failure_input(raw_input)
+
+            if enum_hook_type == HookType.NOTIFICATION:
+                normalize_notification_input(raw_input)
 
             # Validate input data structure matches Pydantic model
             # Use construct/model_validate to avoid strict validation errors if possible,

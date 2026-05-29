@@ -214,33 +214,36 @@ class TestNotificationHandlerEdgeCases:
         # Should still allow despite error
         assert response.decision == "allow"
 
-    def test_notification_type_variants(self, mock_dependencies: dict) -> None:
+    @pytest.mark.parametrize(
+        ("data", "expected_type"),
+        [
+            ({"notificationType": "warning"}, "warning"),
+            ({"type": "error"}, "error"),
+            ({"level": "warning"}, "warning"),
+            ({"severity": "error"}, "error"),
+            ({}, "general"),
+        ],
+    )
+    def test_notification_type_variants(
+        self,
+        mock_dependencies: dict,
+        caplog: pytest.LogCaptureFixture,
+        data: dict,
+        expected_type: str,
+    ) -> None:
         """Test NOTIFICATION handles different type field names."""
         handlers = EventHandlers(**mock_dependencies)
 
-        # Test notificationType field
-        event1 = make_event(
+        event = make_event(
             HookEventType.NOTIFICATION,
-            data={"notificationType": "warning"},
+            data=data,
         )
-        response1 = handlers.handle_notification(event1)
-        assert response1.decision == "allow"
 
-        # Test type field
-        event2 = make_event(
-            HookEventType.NOTIFICATION,
-            data={"type": "error"},
-        )
-        response2 = handlers.handle_notification(event2)
-        assert response2.decision == "allow"
+        with caplog.at_level("DEBUG", logger="test"):
+            response = handlers.handle_notification(event)
 
-        # Test no type field (defaults to general)
-        event3 = make_event(
-            HookEventType.NOTIFICATION,
-            data={},
-        )
-        response3 = handlers.handle_notification(event3)
-        assert response3.decision == "allow"
+        assert response.decision == "allow"
+        assert f"NOTIFICATION ({expected_type})" in caplog.text
 
     def test_notification_no_session_id(self, mock_dependencies: dict) -> None:
         """Test NOTIFICATION handles missing session_id."""
