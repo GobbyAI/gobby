@@ -1,6 +1,7 @@
 use std::fmt;
 use std::path::PathBuf;
 
+pub mod graph;
 pub mod indexer;
 pub mod search;
 pub mod store;

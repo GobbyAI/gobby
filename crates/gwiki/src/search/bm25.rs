@@ -243,6 +243,7 @@ fn row_to_result(row: postgres::Row, scope: &SearchScope) -> Result<WikiSearchRe
             .try_get::<_, f64>("score")
             .map_err(|error| SearchError::Backend(error.to_string()))?,
         sources: vec![SearchSource::Bm25],
+        explanations: Vec::new(),
         chunk,
         provenance: SearchProvenance {
             document_path: path,
@@ -352,6 +353,7 @@ mod tests {
             snippet: "ownership borrowing lifetimes".to_string(),
             score: 1.0,
             sources: vec![crate::search::SearchSource::Bm25],
+            explanations: Vec::new(),
             chunk: Some(crate::search::ChunkProvenance {
                 chunk_index: 0,
                 byte_start: 0,
