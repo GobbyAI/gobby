@@ -2238,6 +2238,29 @@ async def test_build_resume_cascades_skipped_pr_before_workspace_refresh(
         """,
         (child.id,),
     )
+    temp_db.execute(
+        """
+        UPDATE task_stage_states
+           SET state = 'done',
+               entered_at = '2026-05-22T19:00:00+00:00',
+               completed_at = '2026-05-22T19:01:00+00:00',
+               updated_at = '2026-05-22T19:01:00+00:00'
+         WHERE task_id = %s AND stage_name = 'development'
+        """,
+        (parent.id,),
+    )
+    temp_db.execute(
+        """
+        UPDATE task_stage_states
+           SET state = 'in_progress',
+               entered_at = '2026-05-22T19:02:00+00:00',
+               entered_by_session_id = 'dispatcher',
+               work_attempt_count = 1,
+               updated_at = '2026-05-22T19:02:00+00:00'
+         WHERE task_id = %s AND stage_name = 'holistic_qa'
+        """,
+        (parent.id,),
+    )
     task_manager.artifacts.set_artifacts_atomic(parent.id, target_branch="main")
     run = LocalExpansionRunManager(temp_db).create(
         parent_task_id=parent.id,
@@ -2270,6 +2293,69 @@ async def test_build_resume_cascades_skipped_pr_before_workspace_refresh(
     child_rows = task_manager.stage_states.list_for_task(child.id)
     assert [row.stage_name for row in child_rows] == ["development", "holistic_qa", "merge"]
     assert task_manager.stage_states.current_stage(child.id).stage_name == "merge"
+
+
+@pytest.mark.asyncio
+async def test_build_resume_development_epic_defers_workspace_refresh(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
+    from gobby.storage.tasks import StageManifestSpec
+
+    _disable_dispatcher_tick(monkeypatch)
+    task_manager = LocalTaskManager(temp_db)
+    parent = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Expanded epic",
+        category="planning",
+        task_type="epic",
+    )
+    child = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Generated child epic",
+        parent_task_id=parent.id,
+        category="planning",
+        task_type="epic",
+    )
+    manifest = [
+        StageManifestSpec(stage_name="development", position=0),
+        StageManifestSpec(stage_name="holistic_qa", position=1),
+        StageManifestSpec(stage_name="merge", position=2),
+    ]
+    task_manager.stage_states.initialize_manifest(parent.id, manifest, by_session_id=None)
+    task_manager.stage_states.initialize_manifest(child.id, manifest, by_session_id=None)
+    temp_db.execute(
+        """
+        UPDATE task_stage_states
+           SET state = 'in_progress',
+               entered_at = '2026-05-22T19:02:00+00:00',
+               entered_by_session_id = 'dispatcher',
+               work_attempt_count = 1,
+               updated_at = '2026-05-22T19:02:00+00:00'
+         WHERE task_id = %s AND stage_name = 'development'
+        """,
+        (parent.id,),
+    )
+    task_manager.artifacts.set_artifacts_atomic(parent.id, target_branch="main")
+
+    def fail_workspace_refresh(**_kwargs: object) -> None:
+        raise RuntimeError("workspace refresh should be deferred during development")
+
+    monkeypatch.setattr(
+        "gobby.build.lifecycle.ensure_epic_integration_workspaces",
+        fail_workspace_refresh,
+    )
+
+    result = await _build(
+        f"#{parent.seq_num}",
+        _options(isolation="worktree", skip_stages=["pr"], skip_stages_explicit=True),
+        db=temp_db,
+        project_id=sample_project["id"],
+    )
+
+    assert result.initial_lifecycle == "development"
+    assert task_manager.stage_states.current_stage(parent.id).stage_name == "development"
 
 
 @pytest.mark.asyncio

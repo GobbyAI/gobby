@@ -33,6 +33,8 @@ _STAGE_CAP_UPDATE_ASSIGNMENTS = {
     "max_review_rounds": "max_review_rounds = %s",
 }
 
+_EPIC_WORKSPACE_REFRESH_STAGES = frozenset({"holistic_qa", "pr", "merge"})
+
 
 async def resume_existing_lifecycle(
     task_manager: LocalTaskManager,
@@ -85,6 +87,8 @@ async def resume_existing_lifecycle(
             opts.assigned_agent if opts.assigned_agent is not None else task.assigned_agent
         ),
     )
+    specs = stage_state_specs(task_manager, task.id)
+    initial_lifecycle = current_stage_name(task_manager, task.id, specs)
     if task.task_type == "epic":
         artifacts = task_manager.artifacts.get_artifacts(task.id)
         integration_target = target_branch or artifacts.target_branch
@@ -97,10 +101,14 @@ async def resume_existing_lifecycle(
                 include_merge_stage=resume_opts.isolation in {"worktree", "clone"}
                 and not opts.no_merge,
             )
+            specs = stage_state_specs(task_manager, task.id)
+        initial_lifecycle = current_stage_name(task_manager, task.id, specs)
         if resume_opts.isolation in {"worktree", "clone"}:
             if integration_target is None:
                 raise ValueError("target_branch is required for epic integration workspaces")
-            if not resume_opts.dry_run:
+            if not resume_opts.dry_run and _resume_epic_workspace_refresh_required(
+                initial_lifecycle
+            ):
                 await asyncio.to_thread(
                     runtime.ensure_epic_integration_workspaces,
                     task_manager=task_manager,
@@ -120,8 +128,6 @@ async def resume_existing_lifecycle(
             services=services,
             base_branch_override=target_branch,
         )
-    specs = stage_state_specs(task_manager, task.id)
-    initial_lifecycle = current_stage_name(task_manager, task.id, specs)
     record_build_event(task_manager, task.id, initial_lifecycle)
     runtime.attach_build_run_root(db, build_run_id, task.id)
     tick = await runtime.build_dispatcher_tick(
@@ -150,6 +156,11 @@ async def resume_existing_lifecycle(
         warnings=warnings,
         dry_run=opts.dry_run,
     )
+
+
+def _resume_epic_workspace_refresh_required(stage_name: str | None) -> bool:
+    """Existing development-stage epics only need a dispatcher tick."""
+    return stage_name in _EPIC_WORKSPACE_REFRESH_STAGES
 
 
 def skip_stages_can_shape_expanded_epic_resume(
