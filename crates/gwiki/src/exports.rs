@@ -1,6 +1,6 @@
 use std::path::{Component, Path, PathBuf};
 
-use crate::WikiError;
+use crate::{ScopeIdentity, WikiError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -21,6 +21,34 @@ pub struct ExportArtifact {
     pub path: PathBuf,
     pub kind: ExportKind,
     pub bytes_written: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExportCommand {
+    WorkflowAssets {
+        filename: String,
+    },
+    ReportFile {
+        filename: String,
+        source_path: PathBuf,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct ExportOutput {
+    pub command: &'static str,
+    pub scope: ScopeIdentity,
+    pub artifacts: Vec<ExportArtifact>,
+}
+
+impl ExportOutput {
+    pub fn new(scope: ScopeIdentity, artifacts: Vec<ExportArtifact>) -> Self {
+        Self {
+            command: "export",
+            scope,
+            artifacts,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,6 +83,53 @@ const WORKFLOW_ASSETS: &[WorkflowAsset] = &[
 
 pub fn bundled_workflow_assets() -> &'static [WorkflowAsset] {
     WORKFLOW_ASSETS
+}
+
+pub fn run(root: &Path, command: ExportCommand) -> Result<Vec<ExportArtifact>, WikiError> {
+    match command {
+        ExportCommand::WorkflowAssets { filename } => {
+            export_workflow_assets(root, filename).map(|artifact| vec![artifact])
+        }
+        ExportCommand::ReportFile {
+            filename,
+            source_path,
+        } => export_report_file(root, filename, source_path).map(|artifact| vec![artifact]),
+    }
+}
+
+pub fn export_workflow_assets(
+    root: &Path,
+    filename: impl Into<String>,
+) -> Result<ExportArtifact, WikiError> {
+    write_export(
+        root,
+        ExportRequest {
+            filename: filename.into(),
+            kind: ExportKind::Bundle,
+            contents: workflow_assets_bundle(),
+        },
+    )
+}
+
+pub fn export_report_file(
+    root: &Path,
+    filename: impl Into<String>,
+    source_path: impl AsRef<Path>,
+) -> Result<ExportArtifact, WikiError> {
+    let source_path = source_path.as_ref();
+    let contents = std::fs::read_to_string(source_path).map_err(|error| WikiError::Io {
+        action: "read export report",
+        path: Some(source_path.to_path_buf()),
+        source: error.to_string(),
+    })?;
+    write_export(
+        root,
+        ExportRequest {
+            filename: filename.into(),
+            kind: ExportKind::Report,
+            contents,
+        },
+    )
 }
 
 pub fn write_export(root: &Path, request: ExportRequest) -> Result<ExportArtifact, WikiError> {
@@ -112,6 +187,21 @@ fn invalid_export_filename(filename: &str) -> WikiError {
     }
 }
 
+fn workflow_assets_bundle() -> String {
+    let mut contents = String::from("# GWiki Workflow Assets\n\n");
+    for asset in bundled_workflow_assets() {
+        contents.push_str("## ");
+        contents.push_str(asset.name);
+        contents.push_str("\n\n");
+        contents.push_str("Source asset: `");
+        contents.push_str(asset.filename);
+        contents.push_str("`\n\n");
+        contents.push_str(asset.contents.trim_end());
+        contents.push_str("\n\n");
+    }
+    contents
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -151,5 +241,27 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["research", "compile", "query", "audit"]
         );
+
+        let bundle_artifact =
+            export_workflow_assets(root, "workflow-assets.md").expect("workflow assets export");
+        assert_eq!(
+            bundle_artifact.path,
+            root.join("outputs/workflow-assets.md")
+        );
+        let bundle = fs::read_to_string(root.join("outputs/workflow-assets.md")).expect("bundle");
+        assert!(bundle.contains("# GWiki Workflow Assets"));
+        assert!(bundle.contains("## research"));
+
+        let report = root.join("meta/health/latest.md");
+        fs::create_dir_all(report.parent().expect("report parent")).expect("report dir");
+        fs::write(&report, "# Health\n\nGenerated report.\n").expect("report");
+        let report_artifact =
+            export_report_file(root, "reports/health.md", &report).expect("report export");
+        assert_eq!(report_artifact.path, root.join("outputs/reports/health.md"));
+        assert_eq!(
+            fs::read_to_string(root.join("outputs/reports/health.md")).expect("report export"),
+            "# Health\n\nGenerated report.\n"
+        );
+        assert_eq!(fs::read_to_string(&wiki_page).expect("read final"), before);
     }
 }

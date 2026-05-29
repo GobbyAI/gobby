@@ -47,6 +47,8 @@ enum CliCommand {
     Research(ResearchArgs),
     /// Compile accepted research notes into wiki articles.
     Compile(CompileArgs),
+    /// Export generated bundles and reports under outputs/.
+    Export(ExportArgs),
     /// Report claims that lack source support.
     Audit,
     /// Detect broken links and vault hygiene issues.
@@ -123,6 +125,29 @@ struct CompileArgs {
 
     #[arg(long = "write-intent")]
     write_intent: bool,
+}
+
+#[derive(Debug, Args)]
+struct ExportArgs {
+    #[command(subcommand)]
+    command: ExportSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum ExportSubcommand {
+    /// Export bundled workflow prompts and skill assets.
+    WorkflowAssets {
+        #[arg(long, default_value = "workflow-assets.md", value_name = "FILE")]
+        output: String,
+    },
+    /// Export an existing generated report file.
+    Report {
+        #[arg(long, value_name = "FILE")]
+        output: String,
+
+        #[arg(long = "from", value_name = "PATH")]
+        source: PathBuf,
+    },
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -214,6 +239,10 @@ fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Comman
             write_intent: args.write_intent,
             scope,
         }),
+        CliCommand::Export(args) => Ok(Command::Export {
+            scope,
+            command: args.into(),
+        }),
         CliCommand::Audit => Ok(Command::Audit { scope }),
         CliCommand::Lint => Ok(Command::Lint { scope }),
         CliCommand::Health => Ok(Command::Health { scope }),
@@ -227,6 +256,20 @@ impl From<CompileKind> for gobby_wiki::synthesis::ArticleKind {
             CompileKind::Source => Self::Source,
             CompileKind::Concept => Self::Concept,
             CompileKind::Topic => Self::Topic,
+        }
+    }
+}
+
+impl From<ExportArgs> for gobby_wiki::exports::ExportCommand {
+    fn from(args: ExportArgs) -> Self {
+        match args.command {
+            ExportSubcommand::WorkflowAssets { output } => {
+                Self::WorkflowAssets { filename: output }
+            }
+            ExportSubcommand::Report { output, source } => Self::ReportFile {
+                filename: output,
+                source_path: source,
+            },
         }
     }
 }
