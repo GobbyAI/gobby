@@ -125,7 +125,7 @@ fn sanitize_extension(extension: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     use gobby_core::indexing::content_hash;
 
@@ -175,7 +175,7 @@ mod tests {
                 .contains_key(&PathBuf::from("wiki/topics/existing.md"))
         );
         assert!(store.ingestions.iter().any(|ingestion| {
-            ingestion.path == PathBuf::from("raw/INDEX.md")
+            ingestion.path == Path::new("raw/INDEX.md")
                 && ingestion.event == WikiIngestionEvent::Added
         }));
     }
