@@ -2,11 +2,20 @@ use std::fmt;
 use std::path::PathBuf;
 
 pub mod commands;
+pub mod frontmatter;
 pub mod graph;
 pub mod indexer;
+pub mod links;
+pub mod markdown;
+pub mod models;
 pub mod output;
+pub mod registry;
+pub mod schema;
+pub mod scope;
 pub mod search;
+pub mod setup;
 pub mod store;
+pub mod vault;
 
 /// Parsed gwiki command passed in from the binary.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -119,12 +128,28 @@ pub enum WikiError {
         command: &'static str,
         detail: &'static str,
     },
+    InvalidScope {
+        detail: String,
+    },
+    Config {
+        detail: String,
+    },
+    Io {
+        detail: String,
+    },
+    Registry {
+        detail: String,
+    },
 }
 
 impl WikiError {
     pub fn code(&self) -> &'static str {
         match self {
             Self::NotImplemented { .. } => "not_implemented",
+            Self::InvalidScope { .. } => "invalid_scope",
+            Self::Config { .. } => "config_error",
+            Self::Io { .. } => "io_error",
+            Self::Registry { .. } => "registry_error",
         }
     }
 }
@@ -135,6 +160,10 @@ impl fmt::Display for WikiError {
             Self::NotImplemented { command, detail } => {
                 write!(f, "{command}: {detail} ({})", self.code())
             }
+            Self::InvalidScope { detail }
+            | Self::Config { detail }
+            | Self::Io { detail }
+            | Self::Registry { detail } => write!(f, "{detail} ({})", self.code()),
         }
     }
 }
@@ -143,7 +172,7 @@ impl std::error::Error for WikiError {}
 
 pub fn run(command: Command) -> Result<CommandOutcome, WikiError> {
     match command {
-        Command::Init { scope } => Ok(commands::init::run(scope.identity())),
+        Command::Init { scope } => init(scope),
         Command::Setup { scope } => Ok(commands::setup::run(scope.identity())),
         Command::Index { scope } => Ok(commands::index::run(scope.identity())),
         Command::IngestFile { path, scope } => {
@@ -160,6 +189,51 @@ pub fn run(command: Command) -> Result<CommandOutcome, WikiError> {
         }
         Command::Status { scope } => Ok(commands::status::run(scope.identity())),
     }
+}
+
+fn init(selection: ScopeSelection) -> Result<CommandOutcome, WikiError> {
+    let cwd = std::env::current_dir().map_err(|error| WikiError::Io {
+        detail: format!("failed to read current directory: {error}"),
+    })?;
+    let scope = scope::resolve(&selection, &cwd)?;
+
+    vault::initialize(&scope)?;
+    registry::register_scope(scope.registry_path(), &scope)?;
+
+    let output_scope = resolved_scope_identity(&scope);
+    let required_paths = vault::required_paths();
+    let payload = serde_json::json!({
+        "command": "init",
+        "scope": output_scope,
+        "status": "ready",
+        "root": scope.root(),
+        "created": {
+            "directories": required_paths.directories,
+            "files": required_paths.files,
+        },
+    });
+    let text = format!(
+        "Initialized wiki\nScope: {output_scope}\nRoot: {}",
+        scope.root().display()
+    );
+    Ok(commands::scoped_outcome(
+        "init",
+        &output_scope,
+        payload,
+        text,
+    ))
+}
+
+fn resolved_scope_identity(scope: &scope::ResolvedScope) -> ScopeIdentity {
+    if let Some(topic) = scope.topic_name() {
+        return ScopeIdentity::topic(topic);
+    }
+
+    if let Some(project_id) = scope.project_id() {
+        return ScopeIdentity::project(project_id);
+    }
+
+    ScopeIdentity::project("current")
 }
 
 #[cfg(test)]

@@ -1,0 +1,250 @@
+use std::collections::BTreeSet;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkKind {
+    Wikilink,
+    Markdown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WikiLink {
+    pub kind: LinkKind,
+    pub target: String,
+    pub normalized_target: String,
+    pub anchor: Option<String>,
+    pub alias: Option<String>,
+    pub byte_start: usize,
+    pub byte_end: usize,
+    pub resolved: bool,
+}
+
+pub fn normalize_wiki_path(target: &str) -> String {
+    normalized_target_parts(target).0
+}
+
+pub fn extract_links<I, S>(markdown: &str, known_targets: I) -> Vec<WikiLink>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let known_targets = normalized_targets(known_targets);
+    let mut links = Vec::new();
+    let mut offset = 0;
+
+    while offset < markdown.len() {
+        let rest = &markdown[offset..];
+        if rest.starts_with("[[") {
+            if let Some((link, next_offset)) = parse_wikilink(markdown, offset, &known_targets) {
+                links.push(link);
+                offset = next_offset;
+                continue;
+            }
+        } else if rest.starts_with('[')
+            && !rest.starts_with("[[")
+            && !is_image_marker(markdown, offset)
+            && let Some((link, next_offset)) = parse_markdown_link(markdown, offset, &known_targets)
+        {
+            links.push(link);
+            offset = next_offset;
+            continue;
+        }
+
+        offset += next_char_len(markdown, offset);
+    }
+
+    links
+}
+
+pub fn normalized_targets<I, S>(targets: I) -> BTreeSet<String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    targets
+        .into_iter()
+        .map(|target| normalize_wiki_path(target.as_ref()))
+        .collect()
+}
+
+fn parse_wikilink(
+    markdown: &str,
+    byte_start: usize,
+    known_targets: &BTreeSet<String>,
+) -> Option<(WikiLink, usize)> {
+    let inner_start = byte_start + 2;
+    let close_start = markdown[inner_start..].find("]]")? + inner_start;
+    let byte_end = close_start + 2;
+    let inner = &markdown[inner_start..close_start];
+    let (target, alias) = split_alias(inner, '|');
+    let target = target.trim();
+    if target.is_empty() {
+        return None;
+    }
+
+    let (normalized_target, anchor) = normalized_target_parts(target);
+    let resolved = known_targets.contains(&normalized_target);
+    Some((
+        WikiLink {
+            kind: LinkKind::Wikilink,
+            target: target.to_string(),
+            normalized_target,
+            anchor,
+            alias,
+            byte_start,
+            byte_end,
+            resolved,
+        },
+        byte_end,
+    ))
+}
+
+fn parse_markdown_link(
+    markdown: &str,
+    byte_start: usize,
+    known_targets: &BTreeSet<String>,
+) -> Option<(WikiLink, usize)> {
+    let label_start = byte_start + 1;
+    let label_end = markdown[label_start..].find(']')? + label_start;
+    let open_paren = label_end + 1;
+    if markdown.as_bytes().get(open_paren).copied() != Some(b'(') {
+        return None;
+    }
+
+    let destination_start = open_paren + 1;
+    let destination_end = markdown[destination_start..].find(')')? + destination_start;
+    let byte_end = destination_end + 1;
+    let target = markdown_destination(&markdown[destination_start..destination_end])?;
+    if target.is_empty() {
+        return None;
+    }
+
+    let (normalized_target, anchor) = normalized_target_parts(&target);
+    let resolved = known_targets.contains(&normalized_target);
+    Some((
+        WikiLink {
+            kind: LinkKind::Markdown,
+            target,
+            normalized_target,
+            anchor,
+            alias: non_empty(markdown[label_start..label_end].trim()),
+            byte_start,
+            byte_end,
+            resolved,
+        },
+        byte_end,
+    ))
+}
+
+fn split_alias(value: &str, delimiter: char) -> (&str, Option<String>) {
+    value
+        .split_once(delimiter)
+        .map_or((value, None), |(target, alias)| {
+            (target, non_empty(alias.trim()))
+        })
+}
+
+fn markdown_destination(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+
+    if let Some(rest) = value.strip_prefix('<') {
+        let end = rest.find('>')?;
+        return non_empty(rest[..end].trim());
+    }
+
+    value
+        .split_whitespace()
+        .next()
+        .and_then(|target| non_empty(target.trim()))
+}
+
+fn normalized_target_parts(target: &str) -> (String, Option<String>) {
+    let target = target.trim();
+    let (path, anchor) = target
+        .split_once('#')
+        .map_or((target, None), |(path, anchor)| {
+            (path, non_empty(anchor.trim()))
+        });
+
+    let mut normalized = path.trim().replace('\\', "/");
+    if !normalized.contains("://") {
+        while let Some(rest) = normalized.strip_prefix("./") {
+            normalized = rest.to_string();
+        }
+        while normalized.contains("//") {
+            normalized = normalized.replace("//", "/");
+        }
+        normalized = normalized.trim_matches('/').to_string();
+    }
+
+    let lower = normalized.to_ascii_lowercase();
+    if lower.ends_with(".markdown") {
+        normalized.truncate(normalized.len() - ".markdown".len());
+    } else if lower.ends_with(".md") {
+        normalized.truncate(normalized.len() - ".md".len());
+    }
+
+    (normalized, anchor)
+}
+
+fn non_empty(value: &str) -> Option<String> {
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_string())
+    }
+}
+
+fn is_image_marker(markdown: &str, offset: usize) -> bool {
+    markdown[..offset].ends_with('!')
+}
+
+fn next_char_len(markdown: &str, offset: usize) -> usize {
+    markdown[offset..].chars().next().map_or(1, char::len_utf8)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extracts_all_link_shapes() {
+        let markdown = concat!(
+            "See [[wiki/concepts/Existing Note|existing note]], ",
+            "[guide](docs/Guide.md), ",
+            "[[Missing Note]], and ",
+            "[gone](missing/page.md).\n",
+        );
+        let links = extract_links(markdown, ["wiki/concepts/Existing Note", "docs/Guide"]);
+
+        assert_eq!(links.len(), 4);
+        assert_eq!(links[0].kind, LinkKind::Wikilink);
+        assert_eq!(links[0].target, "wiki/concepts/Existing Note");
+        assert_eq!(links[0].normalized_target, "wiki/concepts/Existing Note");
+        assert_eq!(links[0].alias.as_deref(), Some("existing note"));
+        assert!(links[0].resolved);
+        assert_eq!(
+            &markdown[links[0].byte_start..links[0].byte_end],
+            "[[wiki/concepts/Existing Note|existing note]]"
+        );
+
+        assert_eq!(links[1].kind, LinkKind::Markdown);
+        assert_eq!(links[1].target, "docs/Guide.md");
+        assert_eq!(links[1].normalized_target, "docs/Guide");
+        assert_eq!(links[1].alias.as_deref(), Some("guide"));
+        assert!(links[1].resolved);
+
+        assert_eq!(links[2].kind, LinkKind::Wikilink);
+        assert_eq!(links[2].target, "Missing Note");
+        assert_eq!(links[2].normalized_target, "Missing Note");
+        assert!(!links[2].resolved);
+
+        assert_eq!(links[3].kind, LinkKind::Markdown);
+        assert_eq!(links[3].target, "missing/page.md");
+        assert_eq!(links[3].normalized_target, "missing/page");
+        assert_eq!(links[3].alias.as_deref(), Some("gone"));
+        assert!(!links[3].resolved);
+    }
+}
