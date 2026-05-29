@@ -1,5 +1,9 @@
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+use gobby_core::degradation::{DegradationKind, ServiceState};
+use gobby_core::setup::{SetupContext, SetupError, StandaloneSetup};
+use serde_json::json;
 
 pub mod audit;
 pub mod citations;
@@ -259,21 +263,17 @@ impl std::error::Error for WikiError {}
 pub fn run(command: Command) -> Result<CommandOutcome, WikiError> {
     match command {
         Command::Init { scope } => init(scope),
-        Command::Setup { scope } => Ok(commands::setup::run(scope.identity())),
-        Command::Index { scope } => Ok(commands::index::run(scope.identity())),
+        Command::Setup { scope } => run_setup(scope),
+        Command::Index { scope } => run_index(scope),
         Command::Collect { scope } => collect(scope),
-        Command::IngestFile { path, scope } => {
-            Ok(commands::index::ingest_file(path, scope.identity()))
-        }
+        Command::IngestFile { path, scope } => run_ingest_file(path, scope),
         Command::Search {
             query,
             scope,
             limit,
-        } => Ok(commands::search::run(query, scope.identity(), limit)),
-        Command::Backlinks { page, scope } => Ok(commands::backlinks::run(page, scope.identity())),
-        Command::LinkSuggest { scope, limit } => {
-            Ok(commands::backlinks::link_suggest(scope.identity(), limit))
-        }
+        } => run_search(query, scope, limit),
+        Command::Backlinks { page, scope } => run_backlinks(page, scope),
+        Command::LinkSuggest { scope, limit } => run_link_suggest(scope, limit),
         Command::Research(options) => run_research(options),
         Command::Compile {
             topic,
@@ -296,6 +296,260 @@ pub fn run(command: Command) -> Result<CommandOutcome, WikiError> {
         Command::Health { scope } => run_health(scope),
         Command::Status { scope } => Ok(commands::status::run(scope.identity())),
     }
+}
+
+fn run_setup(selection: ScopeSelection) -> Result<CommandOutcome, WikiError> {
+    let scope = resolve_command_scope(&selection)?;
+    let output_scope = resolved_scope_identity(&scope);
+    let setup = setup::default_setup();
+    let objects = setup
+        .postgres_objects()
+        .map_err(setup_error_to_wiki_error)?;
+    let object_payloads = objects
+        .iter()
+        .map(|object| {
+            json!({
+                "name": object.name,
+                "kind": postgres_object_kind(object.kind),
+                "store": "postgres",
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let (status, created, skipped, failed) = if let Some(database_url) = database_url_from_env() {
+        let mut client =
+            gobby_core::postgres::connect_readwrite(&database_url).map_err(|error| {
+                WikiError::Config {
+                    detail: format!("failed to connect to PostgreSQL for gwiki setup: {error}"),
+                }
+            })?;
+        let mut ctx = SetupContext {
+            pg: Some(&mut client),
+            falkor_config: None,
+            qdrant_config: None,
+            non_interactive: true,
+        };
+        let report = setup.create(&mut ctx).map_err(setup_error_to_wiki_error)?;
+        let status = if report.failed.is_empty() {
+            "created"
+        } else {
+            "failed"
+        };
+        (status, report.created, report.skipped, report.failed)
+    } else {
+        ("ready", Vec::new(), Vec::new(), Vec::new())
+    };
+
+    let payload = json!({
+        "command": "setup",
+        "scope": &output_scope,
+        "status": status,
+        "objects": object_payloads,
+        "created": created,
+        "skipped": skipped,
+        "failed": failed,
+        "ownership": setup::SETUP_OWNERSHIP_NOTE,
+    });
+    let text = format!(
+        "Setup {status}\nScope: {output_scope}\nObjects: {}",
+        objects.len()
+    );
+
+    Ok(commands::scoped_outcome(
+        "setup",
+        &output_scope,
+        payload,
+        text,
+    ))
+}
+
+fn run_index(selection: ScopeSelection) -> Result<CommandOutcome, WikiError> {
+    let (scope, output_scope, _, store) = indexed_store_for_selection(&selection)?;
+    let counts = index_counts(&store);
+    let payload = json!({
+        "command": "index",
+        "scope": &output_scope,
+        "status": "indexed",
+        "root": scope.root(),
+        "indexed": {
+            "documents": counts.documents,
+            "chunks": counts.chunks,
+            "links": counts.links,
+            "sources": counts.sources,
+            "ingestions": counts.ingestions,
+        },
+    });
+    let text = format!(
+        "Index complete\nScope: {output_scope}\nDocuments: {}\nChunks: {}\nLinks: {}",
+        counts.documents, counts.chunks, counts.links
+    );
+
+    Ok(commands::scoped_outcome(
+        "index",
+        &output_scope,
+        payload,
+        text,
+    ))
+}
+
+fn run_ingest_file(path: PathBuf, selection: ScopeSelection) -> Result<CommandOutcome, WikiError> {
+    let scope = resolve_command_scope(&selection)?;
+    vault::initialize(&scope)?;
+    let output_scope = resolved_scope_identity(&scope);
+    let mut store = store::MemoryWikiStore::default();
+    let result = ingest::file::ingest_path(scope.root(), &mut store, &path, &collect_timestamp())?;
+    let counts = index_counts(&store);
+    let payload = json!({
+        "command": "ingest-file",
+        "scope": &output_scope,
+        "status": "ingested",
+        "path": &path,
+        "raw_path": &result.raw_path,
+        "asset_path": &result.asset_path,
+        "source": {
+            "id": &result.record.id,
+            "kind": &result.record.kind,
+            "content_hash": &result.record.content_hash,
+            "location": &result.record.location,
+        },
+        "indexed": {
+            "documents": counts.documents,
+            "chunks": counts.chunks,
+            "links": counts.links,
+            "sources": counts.sources,
+            "ingestions": counts.ingestions,
+        },
+    });
+    let text = format!(
+        "Ingested file\nScope: {output_scope}\nRaw: {}",
+        result.raw_path.display()
+    );
+
+    Ok(commands::scoped_outcome(
+        "ingest-file",
+        &output_scope,
+        payload,
+        text,
+    ))
+}
+
+fn run_search(
+    query: String,
+    selection: ScopeSelection,
+    limit: usize,
+) -> Result<CommandOutcome, WikiError> {
+    let (_, output_scope, search_scope, store) = indexed_store_for_selection(&selection)?;
+    let mut bm25_backend = StoreBm25Backend {
+        hits: store_search_hits(&store, &search_scope, &query),
+    };
+    let mut semantic_backend = UnavailableSemanticBackend;
+    let response = search::search(
+        &mut bm25_backend,
+        &mut semantic_backend,
+        search::SearchRequest {
+            query: query.clone(),
+            scope: search_scope,
+            limit,
+            include_semantic: true,
+        },
+    )
+    .map_err(search_error_to_wiki_error)?;
+    let results = response
+        .results
+        .into_iter()
+        .map(|result| output::SearchResultOutput {
+            title: result.title,
+            wiki_page: result.path,
+            source_path: result.source_path,
+            snippet: result.snippet,
+            score: result.score,
+        })
+        .collect::<Vec<_>>();
+    let degradations = response
+        .degradations
+        .iter()
+        .map(degradation_label)
+        .collect::<Vec<_>>();
+    let output = output::SearchOutput::new(
+        output_scope.clone(),
+        query.clone(),
+        limit,
+        results,
+        degradations,
+    );
+    let payload = serde_json::to_value(&output).map_err(|error| WikiError::Json {
+        action: "serialize search output",
+        path: None,
+        source: error.to_string(),
+    })?;
+    let text = render_search_text(&query, &output_scope, &output.results);
+
+    Ok(commands::scoped_outcome(
+        "search",
+        &output_scope,
+        payload,
+        text,
+    ))
+}
+
+fn run_backlinks(page: String, selection: ScopeSelection) -> Result<CommandOutcome, WikiError> {
+    let (_, output_scope, search_scope, store) = indexed_store_for_selection(&selection)?;
+    let graph = memory_graph_from_store(&store, &search_scope);
+    let backlinks = graph.backlinks(&search_scope, PathBuf::from(&page));
+    let backlink_payloads = backlinks
+        .iter()
+        .map(|backlink| {
+            json!({
+                "source_path": &backlink.source_path,
+                "target_path": &backlink.target_path,
+                "raw_target": &backlink.raw_target,
+            })
+        })
+        .collect::<Vec<_>>();
+    let payload = json!({
+        "command": "backlinks",
+        "scope": &output_scope,
+        "page": &page,
+        "backlinks": backlink_payloads,
+    });
+    let text = render_backlinks_text(&page, &output_scope, &backlinks);
+
+    Ok(commands::scoped_outcome(
+        "backlinks",
+        &output_scope,
+        payload,
+        text,
+    ))
+}
+
+fn run_link_suggest(selection: ScopeSelection, limit: usize) -> Result<CommandOutcome, WikiError> {
+    let (_, output_scope, search_scope, store) = indexed_store_for_selection(&selection)?;
+    let graph = memory_graph_from_store(&store, &search_scope);
+    let suggestions = graph.link_suggestions(&search_scope, limit);
+    let suggestion_payloads = suggestions
+        .iter()
+        .map(|suggestion| {
+            json!({
+                "target": &suggestion.target,
+                "mention_count": suggestion.mention_count,
+                "source_paths": &suggestion.source_paths,
+            })
+        })
+        .collect::<Vec<_>>();
+    let payload = json!({
+        "command": "link-suggest",
+        "scope": &output_scope,
+        "limit": limit,
+        "suggestions": suggestion_payloads,
+    });
+    let text = render_link_suggest_text(&output_scope, &suggestions);
+
+    Ok(commands::scoped_outcome(
+        "link-suggest",
+        &output_scope,
+        payload,
+        text,
+    ))
 }
 
 fn collect(selection: ScopeSelection) -> Result<CommandOutcome, WikiError> {
@@ -472,6 +726,465 @@ fn run_health(selection: ScopeSelection) -> Result<CommandOutcome, WikiError> {
         payload,
         health::render_text(&report),
     ))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct IndexCounts {
+    documents: usize,
+    chunks: usize,
+    links: usize,
+    sources: usize,
+    ingestions: usize,
+}
+
+struct StoreBm25Backend {
+    hits: Vec<search::WikiSearchResult>,
+}
+
+impl search::bm25::Bm25SearchBackend for StoreBm25Backend {
+    fn search_bm25(
+        &mut self,
+        _request: &search::bm25::Bm25SearchRequest,
+    ) -> Result<Vec<search::WikiSearchResult>, search::SearchError> {
+        Ok(self.hits.clone())
+    }
+}
+
+struct UnavailableSemanticBackend;
+
+impl search::semantic::SemanticSearchBackend for UnavailableSemanticBackend {
+    fn search_semantic(
+        &mut self,
+        _request: search::semantic::SemanticSearchRequest,
+    ) -> Result<search::semantic::SemanticSearchOutcome, search::SearchError> {
+        Ok(search::semantic::SemanticSearchOutcome {
+            hits: Vec::new(),
+            degradation: Some(DegradationKind::ServiceUnavailable {
+                service: "qdrant".to_string(),
+                state: ServiceState::NotConfigured,
+            }),
+        })
+    }
+}
+
+fn indexed_store_for_selection(
+    selection: &ScopeSelection,
+) -> Result<
+    (
+        scope::ResolvedScope,
+        ScopeIdentity,
+        search::SearchScope,
+        store::MemoryWikiStore,
+    ),
+    WikiError,
+> {
+    let scope = resolve_command_scope(selection)?;
+    let output_scope = resolved_scope_identity(&scope);
+    let search_scope = search_scope_for_resolved(&scope);
+    let mut store = store::MemoryWikiStore::default();
+    if scope.root().is_dir() {
+        indexer::index_vault(scope.root(), &mut store).map_err(index_error_to_wiki_error)?;
+    }
+
+    Ok((scope, output_scope, search_scope, store))
+}
+
+fn search_scope_for_resolved(scope: &scope::ResolvedScope) -> search::SearchScope {
+    if let Some(topic) = scope.topic_name() {
+        return search::SearchScope::topic(topic);
+    }
+    if let Some(project_id) = scope.project_id() {
+        return search::SearchScope::project(project_id);
+    }
+    search::SearchScope::project("current")
+}
+
+fn index_counts(store: &store::MemoryWikiStore) -> IndexCounts {
+    IndexCounts {
+        documents: store.documents.len(),
+        chunks: store.chunks.values().map(Vec::len).sum(),
+        links: store.links.values().map(Vec::len).sum(),
+        sources: store.sources.len(),
+        ingestions: store.ingestions.len(),
+    }
+}
+
+fn store_search_hits(
+    store: &store::MemoryWikiStore,
+    scope: &search::SearchScope,
+    query: &str,
+) -> Vec<search::WikiSearchResult> {
+    let tokens = query_tokens(query);
+    if tokens.is_empty() {
+        return Vec::new();
+    }
+
+    let mut ranked = Vec::new();
+    for document in store.documents.values() {
+        if !search::bm25::is_keyword_searchable_path(&document.path.to_string_lossy()) {
+            continue;
+        }
+
+        let document_score = keyword_score(
+            &format!(
+                "{}\n{}",
+                document.title.as_deref().unwrap_or_default(),
+                document.body
+            ),
+            &tokens,
+        );
+        if document_score > 0 {
+            ranked.push((
+                document_score,
+                search::WikiSearchResult {
+                    id: format!("document:{}", display_path(&document.path)),
+                    title: document.title.clone(),
+                    scope: scope.clone(),
+                    path: document.path.clone(),
+                    source_path: document.path.clone(),
+                    hit_kind: search::SearchHitKind::Document,
+                    snippet: snippet_from_text(&document.body),
+                    score: document_score as f64,
+                    sources: vec![search::SearchSource::Bm25],
+                    explanations: Vec::new(),
+                    chunk: None,
+                    provenance: search::SearchProvenance {
+                        document_path: document.path.clone(),
+                        source_path: document.path.clone(),
+                        source_kind: document_kind_name(document.kind).to_string(),
+                        content_hash: Some(document.content_hash.clone()),
+                    },
+                },
+            ));
+        }
+
+        if let Some(chunks) = store.chunks.get(&document.path) {
+            for chunk in chunks {
+                let chunk_score = keyword_score(
+                    &format!(
+                        "{}\n{}",
+                        chunk.heading.as_deref().unwrap_or_default(),
+                        chunk.content
+                    ),
+                    &tokens,
+                );
+                if chunk_score == 0 {
+                    continue;
+                }
+                ranked.push((
+                    chunk_score,
+                    search::WikiSearchResult {
+                        id: format!("chunk:{}:{}", display_path(&chunk.path), chunk.chunk_index),
+                        title: document.title.clone(),
+                        scope: scope.clone(),
+                        path: chunk.path.clone(),
+                        source_path: document.path.clone(),
+                        hit_kind: search::SearchHitKind::Chunk,
+                        snippet: snippet_from_text(&chunk.content),
+                        score: chunk_score as f64,
+                        sources: vec![search::SearchSource::Bm25],
+                        explanations: Vec::new(),
+                        chunk: Some(search::ChunkProvenance {
+                            chunk_index: chunk.chunk_index,
+                            byte_start: chunk.byte_start,
+                            byte_end: chunk.byte_end,
+                            heading: chunk.heading.clone(),
+                        }),
+                        provenance: search::SearchProvenance {
+                            document_path: document.path.clone(),
+                            source_path: document.path.clone(),
+                            source_kind: document_kind_name(document.kind).to_string(),
+                            content_hash: Some(document.content_hash.clone()),
+                        },
+                    },
+                ));
+            }
+        }
+    }
+
+    ranked.sort_by(|(left_score, left), (right_score, right)| {
+        right_score
+            .cmp(left_score)
+            .then_with(|| left.path.cmp(&right.path))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    ranked
+        .into_iter()
+        .map(|(rank, mut result)| {
+            result.score = rank as f64;
+            result
+        })
+        .collect()
+}
+
+fn memory_graph_from_store(
+    store: &store::MemoryWikiStore,
+    scope: &search::SearchScope,
+) -> graph::MemoryWikiGraph {
+    let documents = store
+        .documents
+        .values()
+        .map(|document| graph::WikiGraphDocument {
+            scope: scope.clone(),
+            path: document.path.clone(),
+            title: document.title.clone(),
+        })
+        .collect::<Vec<_>>();
+    let links = store
+        .links
+        .values()
+        .flat_map(|links| links.iter())
+        .filter_map(|link| {
+            resolve_graph_target(&link.target, store).map(|target| graph::WikiGraphLink {
+                scope: scope.clone(),
+                source_path: link.path.clone(),
+                raw_target: link.target.clone(),
+                target,
+            })
+        })
+        .collect::<Vec<_>>();
+    let sources = store
+        .sources
+        .values()
+        .map(|source| graph::WikiGraphSource {
+            scope: scope.clone(),
+            source_path: source.path.clone(),
+            document_path: source.path.clone(),
+        })
+        .collect::<Vec<_>>();
+
+    let mut graph = graph::MemoryWikiGraph::default();
+    graph.replace_facts(graph::WikiGraphFacts {
+        documents,
+        links,
+        sources,
+    });
+    graph
+}
+
+fn resolve_graph_target(
+    raw_target: &str,
+    store: &store::MemoryWikiStore,
+) -> Option<graph::WikiGraphLinkTarget> {
+    let trimmed = raw_target.trim();
+    if trimmed.is_empty()
+        || trimmed.starts_with("http://")
+        || trimmed.starts_with("https://")
+        || trimmed.starts_with("mailto:")
+    {
+        return None;
+    }
+
+    let normalized = trimmed
+        .split('#')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .trim_start_matches('/')
+        .replace('\\', "/");
+    if normalized.is_empty() {
+        return None;
+    }
+
+    let direct = PathBuf::from(&normalized);
+    if store.documents.contains_key(&direct) {
+        return Some(graph::WikiGraphLinkTarget::Resolved(direct));
+    }
+
+    let target_slug = slugify(normalized.trim_end_matches(".md"));
+    for document in store.documents.values() {
+        let file_slug = document
+            .path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .map(slugify);
+        let title_slug = document.title.as_deref().map(slugify);
+        if file_slug.as_deref() == Some(target_slug.as_str())
+            || title_slug.as_deref() == Some(target_slug.as_str())
+        {
+            return Some(graph::WikiGraphLinkTarget::Resolved(document.path.clone()));
+        }
+    }
+
+    Some(graph::WikiGraphLinkTarget::Unresolved(trimmed.to_string()))
+}
+
+fn query_tokens(query: &str) -> Vec<String> {
+    query
+        .split(|ch: char| !ch.is_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .map(str::to_ascii_lowercase)
+        .collect()
+}
+
+fn keyword_score(text: &str, tokens: &[String]) -> usize {
+    let haystack = text.to_ascii_lowercase();
+    tokens
+        .iter()
+        .map(|token| haystack.matches(token).count())
+        .sum()
+}
+
+fn snippet_from_text(text: &str) -> String {
+    let snippet = text
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or_default()
+        .trim();
+    if snippet.len() <= 240 {
+        return snippet.to_string();
+    }
+
+    format!("{}...", &snippet[..240])
+}
+
+fn render_search_text(
+    query: &str,
+    scope: &ScopeIdentity,
+    results: &[output::SearchResultOutput],
+) -> String {
+    let mut text = format!("Search results for \"{query}\"\nScope: {scope}\n");
+    if results.is_empty() {
+        text.push_str("No results");
+        return text;
+    }
+
+    for result in results {
+        text.push_str("- ");
+        text.push_str(&result.wiki_page.display().to_string());
+        if let Some(title) = &result.title {
+            text.push_str(" | ");
+            text.push_str(title);
+        }
+        text.push_str(" | ");
+        text.push_str(&result.snippet);
+        text.push('\n');
+    }
+    text
+}
+
+fn render_backlinks_text(
+    page: &str,
+    scope: &ScopeIdentity,
+    backlinks: &[graph::WikiBacklink],
+) -> String {
+    let mut text = format!("Backlinks for {page}\nScope: {scope}\n");
+    if backlinks.is_empty() {
+        text.push_str("No backlinks");
+        return text;
+    }
+
+    for backlink in backlinks {
+        text.push_str("- ");
+        text.push_str(&backlink.source_path.display().to_string());
+        text.push_str(" via ");
+        text.push_str(&backlink.raw_target);
+        text.push('\n');
+    }
+    text
+}
+
+fn render_link_suggest_text(
+    scope: &ScopeIdentity,
+    suggestions: &[graph::LinkSuggestion],
+) -> String {
+    let mut text = format!("Link suggestions\nScope: {scope}\n");
+    if suggestions.is_empty() {
+        text.push_str("No suggestions");
+        return text;
+    }
+
+    for suggestion in suggestions {
+        text.push_str("- ");
+        text.push_str(&suggestion.target);
+        text.push_str(" (");
+        text.push_str(&suggestion.mention_count.to_string());
+        text.push_str(" mentions)\n");
+    }
+    text
+}
+
+fn degradation_label(degradation: &DegradationKind) -> String {
+    match degradation {
+        DegradationKind::ServiceUnavailable { service, state } => match state {
+            ServiceState::Available => format!("{service}_available"),
+            ServiceState::NotConfigured => format!("{service}_not_configured"),
+            ServiceState::Unreachable { .. } => format!("{service}_unreachable"),
+        },
+        DegradationKind::PartialSearch { .. } => "partial_search".to_string(),
+        DegradationKind::StaleIndex { .. } => "stale_index".to_string(),
+        DegradationKind::SkippedArtifacts { .. } => "skipped_artifacts".to_string(),
+    }
+}
+
+fn document_kind_name(kind: store::WikiDocumentKind) -> &'static str {
+    match kind {
+        store::WikiDocumentKind::SourceCatalog => "source_catalog",
+        store::WikiDocumentKind::SourceNote => "source_note",
+        store::WikiDocumentKind::Concept => "concept",
+        store::WikiDocumentKind::Topic => "topic",
+    }
+}
+
+fn postgres_object_kind(kind: setup::GwikiPostgresObjectKind) -> &'static str {
+    match kind {
+        setup::GwikiPostgresObjectKind::Table => "table",
+        setup::GwikiPostgresObjectKind::Index => "index",
+    }
+}
+
+fn setup_error_to_wiki_error(error: SetupError) -> WikiError {
+    WikiError::Config {
+        detail: format!("gwiki setup failed: {error}"),
+    }
+}
+
+fn index_error_to_wiki_error(error: indexer::IndexError) -> WikiError {
+    WikiError::InvalidInput {
+        field: "vault_root",
+        message: error.to_string(),
+    }
+}
+
+fn search_error_to_wiki_error(error: search::SearchError) -> WikiError {
+    WikiError::InvalidInput {
+        field: "query",
+        message: error.to_string(),
+    }
+}
+
+fn database_url_from_env() -> Option<String> {
+    [
+        "GWIKI_DATABASE_URL",
+        "GOBBY_POSTGRES_DSN",
+        "GCODE_DATABASE_URL",
+    ]
+    .into_iter()
+    .find_map(|name| {
+        std::env::var(name)
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    })
+}
+
+fn display_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+fn slugify(value: &str) -> String {
+    let mut slug = String::new();
+    let mut last_was_dash = false;
+    for ch in value.chars().flat_map(char::to_lowercase) {
+        if ch.is_ascii_alphanumeric() {
+            slug.push(ch);
+            last_was_dash = false;
+        } else if !last_was_dash && !slug.is_empty() {
+            slug.push('-');
+            last_was_dash = true;
+        }
+    }
+    slug.trim_matches('-').to_string()
 }
 
 fn resolve_command_scope(selection: &ScopeSelection) -> Result<scope::ResolvedScope, WikiError> {

@@ -16,10 +16,14 @@ fn gwiki(args: &[&str]) -> Output {
 "#,
     )
     .expect("write project json");
+    fs::write(project.join("README.md"), "# Parse fixture\n").expect("write ingest fixture");
 
     Command::new(env!("CARGO_BIN_EXE_gwiki"))
         .args(args)
         .env("GOBBY_WIKI_HUB", &hub)
+        .env_remove("GWIKI_DATABASE_URL")
+        .env_remove("GOBBY_POSTGRES_DSN")
+        .env_remove("GCODE_DATABASE_URL")
         .current_dir(&project)
         .output()
         .expect("gwiki binary runs")
