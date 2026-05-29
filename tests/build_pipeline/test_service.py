@@ -1391,6 +1391,48 @@ async def test_build_task_ref_dry_run_rolls_back_existing_lifecycle_mutations(
 
 
 @pytest.mark.asyncio
+async def test_build_epic_dry_run_resume_skips_subtree_cascade_locking(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
+    task_manager = LocalTaskManager(temp_db)
+    epic = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Existing epic preview",
+        category="planning",
+        task_type="epic",
+    )
+    child = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Child without manifest",
+        parent_task_id=epic.id,
+        category="code",
+        task_type="task",
+    )
+    task_manager.initialize_task_manifest(epic.id, stage_names=["development", "merge"])
+
+    before_child_rows = task_manager.stage_states.list_for_task(child.id)
+
+    async def fail_tick(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("dry-run must not call dispatcher tick")
+
+    monkeypatch.setattr("gobby.build.lifecycle._kick_dispatcher_tick", fail_tick)
+
+    result = await _build(
+        f"#{epic.seq_num}",
+        _options(dry_run=True, isolation="worktree", target_branch="main"),
+        db=temp_db,
+        project_id=sample_project["id"],
+    )
+
+    assert result.dry_run is True
+    assert result.created is False
+    assert result.dispatcher_tick.reason == "dry_run"
+    assert task_manager.stage_states.list_for_task(child.id) == before_child_rows
+
+
+@pytest.mark.asyncio
 async def test_build_epic_cascade_initializes_child_from_resolved_scope(
     temp_db,
     sample_project,

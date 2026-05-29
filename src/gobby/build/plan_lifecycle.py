@@ -67,7 +67,7 @@ async def build_plan_file(
         services=services,
         runtime=runtime,
     )
-    if opts.quick:
+    if opts.quick and not opts.dry_run:
         set_automation_for_task_tree(task_manager, task, False, isolation=opts.isolation)
     return BuildResult(
         task_id=task.id,

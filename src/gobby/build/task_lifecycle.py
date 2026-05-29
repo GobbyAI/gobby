@@ -73,7 +73,7 @@ async def build_leaf(
         services=services,
         runtime=runtime,
     )
-    if opts.quick:
+    if opts.quick and not opts.dry_run:
         set_automation_for_task_tree(task_manager, task, False, isolation=opts.isolation)
     return BuildResult(
         task_id=task.id,
@@ -143,15 +143,16 @@ async def build_epic(
         if opts.no_merge
         else specs
     )
-    task_manager.cascade_build_state_to_subtree(
-        task.id,
-        isolation=opts.isolation,
-        unattended=opts.unattended,
-        skip_stages=skip_stages,
-        allow_automation=True,
-        parent_manifest_specs=cascade_specs,
-        include_merge_stage=opts.isolation in {"worktree", "clone"} and not opts.no_merge,
-    )
+    if not opts.dry_run:
+        task_manager.cascade_build_state_to_subtree(
+            task.id,
+            isolation=opts.isolation,
+            unattended=opts.unattended,
+            skip_stages=skip_stages,
+            allow_automation=True,
+            parent_manifest_specs=cascade_specs,
+            include_merge_stage=opts.isolation in {"worktree", "clone"} and not opts.no_merge,
+        )
     if opts.isolation == "none":
         _cascade_target_branch_to_subtree(task_manager, task.id, target_branch)
     initial_lifecycle = current_stage_name(task_manager, task.id, specs)
@@ -165,7 +166,7 @@ async def build_epic(
         services=services,
         runtime=runtime,
     )
-    if opts.quick:
+    if opts.quick and not opts.dry_run:
         set_automation_for_task_tree(task_manager, task, False, isolation=opts.isolation)
     return BuildResult(
         task_id=task.id,
