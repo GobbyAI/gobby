@@ -23,7 +23,7 @@ Use indexed navigation before opening large files:
 ```bash
 gcode search "task validation"
 gcode search-symbol "TaskValidator" --kind class
-gcode search-content "code_index_available" --path "src/**/*.py"
+gcode search-content "code_index_available" "src/**/*.py"
 gcode outline src/gobby/tasks/validation.py
 gcode symbol <symbol-id>
 ```
@@ -37,6 +37,7 @@ gcode callers validate_task
 gcode imports src/gobby/tasks/validation.py
 gcode blast-radius validate_task --depth 3
 gcode graph sync-file --file src/gobby/runner.py
+gcode vector sync-file --file src/gobby/runner.py
 gcode graph rebuild
 ```
 
@@ -52,8 +53,8 @@ flowchart TB
     B --> C[PostgreSQL hub symbols, files, chunks]
     C --> D[gcode search and outline commands]
     C --> E[Daemon sync worker]
-    E --> F[Qdrant vectors]
-    E --> G[FalkorDB graph]
+    E --> F[gcode vector projection in Qdrant]
+    E --> G[gcode graph projection in FalkorDB]
     E --> H[Symbol summaries]
     G --> I[gcode callers, imports, blast-radius]
     G --> J[gcode graph read commands]
@@ -62,10 +63,11 @@ flowchart TB
 
 `gcode index` owns parsing and writes symbols, indexed files, content chunks,
 imports, and call relationships through the PostgreSQL hub. `gcode graph` owns
-the code graph projection in FalkorDB, including `sync-file`, `clear`,
-`rebuild`, and graph read operations. The daemon owns integrations around those
-rows: background maintenance, optional vector sync, symbol autocomplete, HTTP
-graph shim routes, optional symbol summaries, and session variables.
+the code graph projection in FalkorDB, and `gcode vector` owns the code-symbol
+vector projection in Qdrant. The daemon owns integrations around those rows:
+background maintenance, symbol autocomplete, HTTP graph shim routes, optional
+symbol summaries, session variables, and the sync worker that asks `gcode` to
+refresh projections.
 
 Files are indexed incrementally by content hash. Changed files are re-parsed;
 unchanged files are skipped. The post-edit trigger ignores `.gobby/` internal
@@ -80,8 +82,8 @@ The maintenance loop runs every `code_index.maintenance_interval_seconds`
 seconds. It replays `gcode index --project <root> --quiet` for each indexed
 project, purges projects whose root no longer exists, and fills missing symbol
 summaries when a summarizer is configured. A separate sync worker polls pending
-files, copies symbols to Qdrant vectors, and calls `gcode graph sync-file --file
-<file> --project <root>` for graph projection sync.
+files, updates Qdrant vectors, and calls `gcode graph sync-file --file <file>
+--project <root>` for graph projection sync.
 
 ## CLI Reference
 
@@ -100,9 +102,12 @@ All commands accept these global options unless noted:
 | Command | Purpose |
 | :--- | :--- |
 | `gcode init` | Initialize `.gobby/gcode.json` project context |
+| `gcode setup` | Explicitly create standalone `gcode` database objects |
 | `gcode index [PATH]` | Index a directory; defaults to the project root |
 | `gcode index --files <FILES>...` | Index only specific files |
 | `gcode index --full` | Force a full re-index |
+| `gcode index --sync-projections` | Update graph and vector projections synchronously after PostgreSQL indexing |
+| `gcode index --require-cpp-semantics` | Fail C/C++ indexing when semantic metadata is unavailable |
 | `gcode status` | Show indexed file, symbol, and timing stats |
 | `gcode invalidate --force` | Clear index data so the next index is fresh |
 | `gcode projects` | List indexed projects |
@@ -123,8 +128,10 @@ All commands accept these global options unless noted:
 | `gcode tree` | File tree with symbol counts |
 | `gcode repo-outline` | Directory-grouped project stats |
 
-Search commands support `--limit`, `--offset`, `--language`, and `--path`.
-Symbol searches also support `--kind`.
+Search commands support `--limit`, `--offset`, `--language`, and optional
+positional file paths or globs after the query. Symbol searches also support
+`--kind`; `gcode search-symbol` can include graph neighbors with
+`--with-graph`.
 
 ### Graph Queries
 
@@ -140,9 +147,24 @@ These commands require the Gobby daemon and graph support:
 | `gcode graph clear` | Clear the current project's graph projection |
 | `gcode graph clear --project-id <ID>` | Clear a graph projection without resolving a project root |
 | `gcode graph rebuild` | Rebuild the graph projection from indexed hub rows |
+| `gcode graph report` | Generate a project graph report |
+| `gcode graph overview` | Read the file-level overview graph |
+| `gcode graph file --file <FILE>` | Read graph nodes and links for one indexed file |
+| `gcode graph neighbors --symbol-id <ID>` | Read graph neighbors for one symbol |
+| `gcode graph blast-radius` | Read symbol or file impact from the graph projection |
 
 `gcode callers` and `gcode usages` support `--limit` and `--offset`. `gcode
 blast-radius` supports `--depth` and `--limit`.
+
+### Vector Projection
+
+These commands require Qdrant and configured embeddings:
+
+| Command | Purpose |
+| :--- | :--- |
+| `gcode vector sync-file --file <FILE>` | Sync one indexed file into the vector projection |
+| `gcode vector clear` | Clear the current project's vector projection |
+| `gcode vector rebuild` | Rebuild the vector projection from indexed hub rows |
 
 ## Indexed Data
 
@@ -332,4 +354,4 @@ the rules engine before claiming a rule is disabled.
 - [configuration.md](configuration.md) - Full configuration reference
 - [http-endpoints.md](http-endpoints.md) - HTTP API reference
 
-_Last verified: 2026-05-23_
+_Last verified: 2026-05-29_

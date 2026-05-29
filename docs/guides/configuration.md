@@ -371,10 +371,53 @@ code_index:
   summary_enabled: true
   summary_provider: claude
   summary_model: haiku
+  summary_batch_size: 20
+  sync_worker_interval_seconds: 5.0
+  sync_worker_batch_size: 50
+  languages:
+    - python
+    - javascript
+    - typescript
+    - go
+    - rust
+    - java
+    - php
+    - dart
+    - csharp
+    - c
+    - cpp
+    - elixir
+    - ruby
+    - markdown
+    - yaml
+    - json
+  content_extensions:
+    - .html
+    - .css
+    - .scss
+    - .less
+    - .toml
+    - .cfg
+    - .ini
+    - .sh
+    - .bash
+    - .zsh
+    - .fish
+    - .sql
+    - .graphql
+    - .proto
+    - .txt
+    - .rst
+    - .csv
+    - .gitignore
+    - .editorconfig
 ```
 
 `databases.qdrant.collection_prefix` must match
 `code_index.qdrant_collection_prefix`; `DaemonConfig` rejects mismatches.
+`gcode index` owns parsing and PostgreSQL writes. The daemon maintenance loop
+refreshes indexed projects, and the sync worker updates Qdrant vectors plus the
+`gcode`-owned FalkorDB graph projection when those features are enabled.
 
 ### Hooks And Webhooks
 
@@ -579,4 +622,4 @@ after changing server definitions.
 - [search.md](./search.md) - Search and embedding behavior
 - [webhooks-and-plugins.md](./webhooks-and-plugins.md) - Extension development
 
-_Last verified: 2026-05-23_
+_Last verified: 2026-05-29_

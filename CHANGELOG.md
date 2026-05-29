@@ -10,6 +10,87 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.11] - 2026-05-29
+
+0.4.11 publishes the work accumulated after 0.4.9. The 0.4.10 branch
+checkpoint was not released separately; its changes are included here, followed
+by the additional 0.4.10-to-0.4.11 delta.
+
+### 0.4.10 Checkpoint (Unreleased)
+
+#### Added
+
+- Add a solo-maintainer merge gate and task-skill write gate so task lifecycle
+  writes are protected by claimed-task workflow skills.
+- Replace the cron dispatcher with the automation loop, add cross-project build
+  coordination, and persist runtime cron cleanup.
+- Move MCP activity into the chat activity panel and align activity-tab styling
+  with the Sessions and Tasks surfaces.
+- Support GCore code-index database state for baseline migration.
+
+#### Changed
+
+- Harden build lifecycle recovery, expansion review ordering, merge planning,
+  coordinator waits, and branch-local integration refresh guidance.
+- Compact agent wait responses, report active expired mutex leases, preserve
+  active dispatch mutexes, and keep build agents off full cargo test runs.
+- Use psycopg placeholders directly and refresh bundled-content manifest hashes.
+
+#### Fixed
+
+- Recover stale integration worktrees, preserve build restart lifecycle shape,
+  repair plan-file build lifecycle construction, and normalize task-type aliases.
+- Preserve project context in worktree lists, required project IDs in tool
+  calls, idle agent progress stats, and closed commits in task diffs.
+- Repair review and validation handoffs, including expansion QA verdict gating,
+  final worker review coverage, retry-neutral conflict recovery, and merge
+  report completion evidence.
+- Quiet retired cron and cleanup warnings, suppress startup persona on live
+  session starts, bind Codex web chat usage to durable sessions, and hydrate
+  Codex backfill context usage.
+
+#### Release
+
+- The branch-local 0.4.10 package version bump and strict type-check fix are
+  superseded by this 0.4.11 release.
+
+### 0.4.11 Delta
+
+#### Added
+
+- Delegate code graph projection and graph lifecycle operations to managed
+  `gcode`, keeping daemon HTTP routes as shims over the native CLI.
+- Add transcript-backed session search and a language-aware test-quality audit.
+- Redesign the MCP activity panel to match Sessions/Tasks and tune MCP type
+  selector sizing and Internal/External chips.
+
+#### Changed
+
+- Decompose build lifecycle orchestration and configuration routes into smaller
+  modules.
+- Update managed binary pins, remove the retired `ghook` guard wrapper, and
+  disable tmux `allow-rename` so CLI titles persist.
+- Run planning agents unsandboxed where required, allow loopback in the Claude
+  sandbox, and give sandboxed agents an isolated Cargo home.
+
+#### Fixed
+
+- Harden code-scanning alert paths, direct MCP session reconciliation, spawned
+  agent reconciliation before tool gates, and spawned Codex MCP preapproval.
+- Fix dry-run build cascades, epic workspace refresh during development resume,
+  MCP enable permission errors, notification broadcasts, shutdown cancellation
+  noise, and stale missing-`gcode` project cleanup.
+- Derive spawned-agent project paths from the parent session and resolve the
+  reported focused pytest failures.
+- Address CodeRabbit route/review findings and document the workflow refactor
+  and `gwiki` integration plans.
+
+#### Release
+
+- Bump the package, `src/gobby/__init__.py`, and lockfile entry to 0.4.11.
+- Refresh the bundled-content manifest so the packaged `code-index` skill hash
+  matches the release tree.
+
 ## [0.4.9] - 2026-05-26
 
 0.4.9 focuses on PostgreSQL-only runtime hardening, build/review completion

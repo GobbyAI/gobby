@@ -592,4 +592,8 @@ Hook execution is the exception: adapter-compatible hook failures are usually
 acknowledged with a response that lets the caller continue, because CLI hooks
 must not crash the calling agent runtime.
 
-_Last verified: 2026-05-07_
+Code-index graph routes require `project_id`; graph search remains daemon-owned
+PostgreSQL symbol autocomplete, while the other graph routes call the managed
+`gcode graph` projection commands.
+
+_Last verified: 2026-05-29_

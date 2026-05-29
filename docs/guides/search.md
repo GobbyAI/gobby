@@ -62,6 +62,13 @@ call_tool(server_name="gobby-tasks", tool_name="search_tasks", arguments={
 | MCP tools | `search_tools`, `recommend_tools` | Registered MCP tools | Tool discovery during agent work |
 | Code | `gcode search` | Indexed repository symbols and content | Source navigation |
 
+`gcode search`, `gcode search-symbol`, and `gcode search-content` accept
+optional path or glob filters as positional arguments after the query:
+
+```bash
+gcode search-content "validation evidence" docs/guides "src/**/*.py"
+```
+
 ## Unified Search Modes
 
 The shared `UnifiedSearcher` supports four modes:
@@ -326,4 +333,4 @@ and `ranking_mode`.
 - [code-index.md](./code-index.md) - Source code search
 - [configuration.md](./configuration.md) - Full config reference
 
-_Last verified: 2026-05-23_
+_Last verified: 2026-05-29_
