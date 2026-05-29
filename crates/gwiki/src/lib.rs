@@ -1,10 +1,13 @@
 use std::fmt;
 use std::path::PathBuf;
 
+pub mod credibility;
 pub mod daemon;
 pub mod events;
+pub mod provenance;
 pub mod research;
 pub mod session;
+pub mod sources;
 
 /// Parsed gwiki command passed in from the binary.
 #[derive(Debug, Clone, PartialEq, Eq)]
