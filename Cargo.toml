@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/gcode", "crates/gcore", "crates/ghook", "crates/gsqz", "crates/gloc"]
+members = ["crates/gcode", "crates/gcore", "crates/ghook", "crates/gsqz", "crates/gloc", "crates/gwiki"]
 resolver = "3"
 
 [profile.release]

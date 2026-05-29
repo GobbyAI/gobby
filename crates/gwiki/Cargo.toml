@@ -1,0 +1,30 @@
+[package]
+name = "gobby-wiki"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+authors = ["Josh Wilhelmi <hello@gobby.ai>"]
+description = "Gobby wiki CLI shell"
+license = "Apache-2.0"
+repository = "https://github.com/GobbyAI/gobby-cli"
+homepage = "https://gobby.ai"
+keywords = ["gobby", "wiki", "cli"]
+categories = ["command-line-utilities", "development-tools"]
+
+[features]
+default = []
+
+[lib]
+name = "gobby_wiki"
+path = "src/lib.rs"
+
+[[bin]]
+name = "gwiki"
+path = "src/main.rs"
+
+[dependencies]
+gobby-core = { path = "../gcore", version = "0.2.2", features = ["postgres", "falkor", "qdrant", "indexing", "search"] }
+clap = { version = "4", features = ["derive"] }
+
+[dev-dependencies]
+toml = "1"
