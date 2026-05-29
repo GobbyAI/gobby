@@ -1,6 +1,9 @@
 use std::fmt;
 use std::path::PathBuf;
 
+pub mod frontmatter;
+pub mod links;
+pub mod markdown;
 pub mod models;
 pub mod registry;
 pub mod schema;
