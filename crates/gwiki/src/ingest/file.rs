@@ -113,6 +113,7 @@ fn detect_source_kind(path: &Path) -> SourceKind {
         .as_deref()
     {
         Some("pdf") => SourceKind::Pdf,
+        Some("mp4" | "mov" | "m4v" | "webm" | "mkv") => SourceKind::Video,
         Some("md" | "markdown") => SourceKind::Markdown,
         Some("txt" | "text") => SourceKind::Text,
         _ => SourceKind::File,
@@ -120,7 +121,7 @@ fn detect_source_kind(path: &Path) -> SourceKind {
 }
 
 fn should_store_asset(kind: &SourceKind) -> bool {
-    matches!(kind, SourceKind::Pdf | SourceKind::File)
+    matches!(kind, SourceKind::Pdf | SourceKind::Video | SourceKind::File)
 }
 
 fn render_file_markdown(

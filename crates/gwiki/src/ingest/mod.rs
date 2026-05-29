@@ -1,11 +1,13 @@
 //! Ingestion helpers for immutable raw wiki sources.
 
+pub mod audio;
 pub mod file;
 pub mod git;
 pub mod image;
 pub mod mediawiki;
 pub mod pdf;
 pub mod url;
+pub mod video;
 pub mod wayback;
 
 use std::path::{Path, PathBuf};

@@ -14,7 +14,9 @@ const SOURCE_MARKER: &str = "<!-- gwiki-source:";
 #[serde(rename_all = "snake_case")]
 pub enum SourceKind {
     Url,
+    Audio,
     Image,
+    Video,
     Pdf,
     Markdown,
     Text,
@@ -31,7 +33,9 @@ impl fmt::Display for SourceKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::Url => "url",
+            Self::Audio => "audio",
             Self::Image => "image",
+            Self::Video => "video",
             Self::Pdf => "pdf",
             Self::Markdown => "markdown",
             Self::Text => "text",

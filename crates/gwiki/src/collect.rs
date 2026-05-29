@@ -128,6 +128,7 @@ fn classify_inbox_item(path: &Path, bytes: &[u8]) -> Result<InboxKind, &'static 
             .map(InboxKind::Url)
             .ok_or("url drop did not contain an http(s) URL"),
         Some("pdf") => Ok(InboxKind::File(SourceKind::Pdf)),
+        Some("mp4" | "mov" | "m4v" | "webm" | "mkv") => Ok(InboxKind::File(SourceKind::Video)),
         Some("md" | "markdown") => Ok(InboxKind::File(SourceKind::Markdown)),
         Some("txt" | "text") => Ok(InboxKind::File(SourceKind::Text)),
         Some(_) => Ok(InboxKind::File(SourceKind::File)),
@@ -397,7 +398,7 @@ fn is_http_url(value: &str) -> bool {
 }
 
 fn should_store_asset(kind: &SourceKind) -> bool {
-    matches!(kind, SourceKind::Pdf | SourceKind::File)
+    matches!(kind, SourceKind::Pdf | SourceKind::Video | SourceKind::File)
 }
 
 fn is_status_sidecar(path: &Path) -> bool {
