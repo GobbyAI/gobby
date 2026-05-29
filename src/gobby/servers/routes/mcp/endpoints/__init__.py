@@ -37,6 +37,7 @@ from gobby.servers.routes.mcp.endpoints.server import (
     import_mcp_server,
     list_mcp_servers,
     remove_mcp_server,
+    set_mcp_server_enabled,
 )
 
 __all__ = [
@@ -58,4 +59,5 @@ __all__ = [
     "import_mcp_server",
     "list_mcp_servers",
     "remove_mcp_server",
+    "set_mcp_server_enabled",
 ]

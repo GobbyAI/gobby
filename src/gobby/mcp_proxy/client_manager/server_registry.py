@@ -209,6 +209,59 @@ async def remove_server(
     return {"success": True, "name": name}
 
 
+async def set_server_enabled(
+    manager: Any,
+    name: str,
+    enabled: bool,
+    project_id: str | None = None,
+) -> dict[str, Any]:
+    """Enable or disable an external server, persist it, and (dis)connect.
+
+    Enabling connects the server and discovers its tools (mirroring
+    ``add_server``); disabling tears down any live connection. Internal
+    registries are not tracked here, so callers should only target external
+    servers.
+    """
+    if name not in manager._configs:
+        raise ValueError(f"MCP server '{name}' not found")
+
+    config = manager._configs[name]
+    effective_project_id = project_id or config.project_id
+
+    if config.enabled == enabled:
+        return {"success": True, "name": name, "enabled": enabled}
+
+    config.enabled = enabled
+
+    if manager.mcp_db_manager and effective_project_id:
+        manager.mcp_db_manager.update_server(name, effective_project_id, enabled=enabled)
+
+    if enabled:
+        session = await manager._connect_server(config)
+        if session:
+            try:
+                tools_result = await session.list_tools()
+                tool_schemas = [
+                    {
+                        "name": tool.name,
+                        "description": getattr(tool, "description", "") or "",
+                        "inputSchema": getattr(tool, "inputSchema", {}) or {},
+                    }
+                    for tool in tools_result.tools
+                ]
+                if tool_schemas:
+                    manager.cache_discovered_tools(name, tool_schemas)
+            except Exception as exc:
+                LOGGER.warning("Failed to list tools for %s: %s", name, exc)
+    else:
+        if name in manager._connections:
+            await manager._connections[name].disconnect()
+            del manager._connections[name]
+        manager.health.pop(name, None)
+
+    return {"success": True, "name": name, "enabled": enabled}
+
+
 def server_configs(manager: Any) -> list[MCPServerConfig]:
     """Return all configured MCP servers."""
     return list(manager._configs.values())

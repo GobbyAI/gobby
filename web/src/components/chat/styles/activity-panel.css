@@ -297,6 +297,18 @@
   flex-shrink: 0;
 }
 
+/* Shared context-aware Add/Refresh buttons, between the view dropdown and the
+   Hide Chat slot. The dropdown wrapper's flex-grow pushes this and the
+   close-slot together to the right; the .activity-panel-tabs gap spaces them.
+   No margin-left:auto here so the two slots stay adjacent. */
+.activity-panel-actions-slot {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.activity-panel-actions-slot .btn-sm,
 .activity-panel-close-slot .btn-sm,
 .activity-panel-status-bar__actions .btn-sm {
   min-height: var(--status-bar-control-height);
@@ -494,19 +506,6 @@
   height: 100%;
 }
 
-.activity-mcp-filter-menu {
-  position: absolute;
-  top: calc(100% - 0.25rem);
-  right: 0.75rem;
-  z-index: 20;
-  min-width: 11rem;
-  padding: 0.35rem;
-  border: 1px solid var(--border);
-  border-radius: 0.375rem;
-  background: var(--bg-secondary);
-  box-shadow: var(--shadow-md);
-}
-
 .activity-mcp-error {
   width: 100%;
   padding: 0.4rem 0.75rem;
@@ -559,6 +558,12 @@
   background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
+/* Disabled servers stay visible but recede — mirrors .session-entry--paused.
+   Enabled/disabled is communicated inline (dimming) rather than as a filter. */
+.activity-mcp-server-row--disabled {
+  opacity: 0.55;
+}
+
 .activity-mcp-row-main {
   display: flex;
   align-items: center;
@@ -594,16 +599,18 @@
 
 /* Tool rows compose typography from .activity-row-title / .activity-row-meta
    (the shared activity-panel ladder) and use these modifier classes only for
-   the two-column flex split: capped tool name on the left, expanding brief
-   on the right. */
+   the two-column flex split: tool name on the left, single-line truncating
+   brief on the right (full text via title= tooltip + the detail panel). */
 .activity-mcp-tool-title {
-  flex: 0 0 auto;
-  max-width: min(13rem, 48%);
+  flex: 0 1 auto;
 }
 
 .activity-mcp-tool-brief {
   flex: 1 1 auto;
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .activity-mcp-empty-row {
@@ -672,32 +679,17 @@
   font-weight: var(--font-weight-medium);
 }
 
-.activity-mcp-json {
-  max-height: 12rem;
-  margin: 0;
-  overflow: auto;
+/* Syntax-highlighted input schema (JsonBlock) on the deep code surface —
+   replaces the old flat gray <pre> slab. JsonBlock paints transparently, so
+   the container supplies the bordered code well. */
+.activity-mcp-json-block {
+  max-height: 14rem;
   border: 1px solid var(--border);
   border-radius: 0.375rem;
-  background: var(--bg-secondary);
-  padding: 0.6rem;
-  color: var(--text-primary);
+  background: var(--bg-deep);
+  padding: 0.5rem 0.6rem;
   font-size: var(--text-xs);
   line-height: 1.45;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.activity-mcp-execute-btn {
-  margin-top: 0.75rem;
-}
-
-.activity-mcp-result {
-  margin-top: 0.75rem;
-}
-
-.activity-mcp-result--error {
-  border-color: color-mix(in srgb, var(--color-error) 40%, transparent);
-  color: var(--color-error);
 }
 
 .session-ctx-item:disabled {

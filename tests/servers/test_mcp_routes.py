@@ -220,6 +220,15 @@ class FakeMCPManager:
         del self._configs[name]
         self.server_configs = [c for c in self.server_configs if c.name != name]
 
+    async def set_server_enabled(
+        self, name: str, enabled: bool, project_id: str | None = None
+    ) -> dict[str, Any]:
+        """Toggle a server's enabled flag, mirroring the real manager."""
+        if name not in self._configs:
+            raise ValueError(f"Server not found: {name}")
+        self._configs[name].enabled = enabled
+        return {"success": True, "name": name, "enabled": enabled}
+
 
 class FakeInternalRegistry:
     """Fake internal tool registry for testing."""
@@ -1403,6 +1412,82 @@ class TestRemoveMCPServer:
         data = response.json()
         assert data["success"] is False
         assert "Server not found" in data["error"]
+
+
+# ============================================================================
+# set_mcp_server_enabled Endpoint Tests
+# ============================================================================
+
+
+class TestSetMCPServerEnabled:
+    """Tests for PATCH /mcp/servers/{name} endpoint."""
+
+    def test_set_enabled_no_manager(self, client: TestClient) -> None:
+        """Test toggling when MCP manager not available."""
+        response = client.patch("/api/mcp/servers/test-server", json={"enabled": False})
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is False
+        assert "MCP manager not available" in data["error"]
+
+    def test_set_enabled_requires_boolean(self, session_storage: SessionManager) -> None:
+        """Test that a missing/non-boolean enabled field is rejected."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        server.mcp_manager = FakeMCPManager()
+
+        with TestClient(server.app) as client:
+            response = client.patch("/api/mcp/servers/test-server", json={})
+
+        assert response.status_code == 400
+
+    def test_disable_then_enable_round_trip(self, session_storage: SessionManager) -> None:
+        """Disabling then re-enabling persists through the manager."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        mcp_manager = FakeMCPManager()
+        config = FakeServerConfig(name="github", transport="http", enabled=True)
+        mcp_manager._configs["github"] = config
+        server.mcp_manager = mcp_manager
+
+        with TestClient(server.app) as client:
+            disable = client.patch("/api/mcp/servers/github", json={"enabled": False})
+            assert disable.status_code == 200
+            assert disable.json()["success"] is True
+            assert disable.json()["enabled"] is False
+            assert config.enabled is False
+
+            enable = client.patch("/api/mcp/servers/github", json={"enabled": True})
+            assert enable.status_code == 200
+            assert enable.json()["enabled"] is True
+            assert config.enabled is True
+
+    def test_set_enabled_not_found(self, session_storage: SessionManager) -> None:
+        """Test toggling a server that is not configured."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        mcp_manager = FakeMCPManager()
+        mcp_manager.set_server_enabled = AsyncMock(  # type: ignore[method-assign]
+            side_effect=ValueError("MCP server 'nope' not found")
+        )
+        server.mcp_manager = mcp_manager
+
+        with TestClient(server.app) as client:
+            response = client.patch("/api/mcp/servers/nope", json={"enabled": True})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is False
+        assert "not found" in data["error"]
 
 
 # ============================================================================

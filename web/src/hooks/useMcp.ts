@@ -168,6 +168,30 @@ export function useMcp() {
     return false
   }, [fetchServers])
 
+  const setServerEnabled = useCallback(async (
+    name: string,
+    enabled: boolean,
+  ): Promise<boolean> => {
+    try {
+      const baseUrl = getBaseUrl()
+      const response = await fetch(`${baseUrl}/api/mcp/servers/${encodeURIComponent(name)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      })
+      if (response.ok) {
+        const data = await response.json()
+        if (data.success) {
+          await fetchServers()
+          return true
+        }
+      }
+    } catch (e) {
+      console.error('Failed to update MCP server:', e)
+    }
+    return false
+  }, [fetchServers])
+
   const refreshToolCache = useCallback(async (): Promise<boolean> => {
     try {
       const baseUrl = getBaseUrl()
@@ -283,6 +307,7 @@ export function useMcp() {
     addServer,
     importServer,
     removeServer,
+    setServerEnabled,
     refreshToolCache,
     fetchToolSchema,
     callTool,

@@ -334,9 +334,75 @@ async def remove_mcp_server(
         return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
 
 
+async def set_mcp_server_enabled(
+    name: str,
+    request: Request,
+    server: "HTTPServer" = Depends(get_server),
+) -> dict[str, Any]:
+    """
+    Enable or disable an external MCP server.
+
+    Args:
+        name: Server name to update
+
+    Request body:
+        {"enabled": true}
+
+    Returns:
+        Success status with the resolved enabled state
+    """
+    start_time = time.perf_counter()
+
+    try:
+        body = await request.json()
+        enabled = body.get("enabled")
+        if not isinstance(enabled, bool):
+            raise HTTPException(
+                status_code=400,
+                detail={"success": False, "error": "Required field: enabled (boolean)"},
+            )
+
+        if server.mcp_manager is None:
+            response_time_ms = (time.perf_counter() - start_time) * 1000
+            return {
+                "success": False,
+                "error": "MCP manager not available",
+                "response_time_ms": response_time_ms,
+            }
+
+        result = await server.mcp_manager.set_server_enabled(name, enabled)
+
+        # Broadcast MCP server updated event
+        ws = server.services.websocket_server
+        if ws:
+            try:
+                await ws.broadcast_mcp_event("server_updated", name)
+            except Exception as e:
+                logger.debug(f"Failed to broadcast mcp event server_updated: {e}")
+
+        response_time_ms = (time.perf_counter() - start_time) * 1000
+        return {
+            "success": True,
+            "name": name,
+            "enabled": result.get("enabled", enabled),
+            "response_time_ms": response_time_ms,
+        }
+
+    except HTTPException:
+        raise
+    except ValueError as e:
+        response_time_ms = (time.perf_counter() - start_time) * 1000
+        return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
+    except Exception as e:
+        logger.error(f"Set MCP server enabled error: {e}", exc_info=True)
+        response_time_ms = (time.perf_counter() - start_time) * 1000
+        return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
+
+
 __all__ = [
     "list_mcp_servers",
     "add_mcp_server",
     "import_mcp_server",
     "remove_mcp_server",
+    "set_mcp_server_enabled",
 ]

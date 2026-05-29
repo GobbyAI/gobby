@@ -28,6 +28,10 @@ import {
   ACTIVITY_PANEL_TABS,
   type ActivityTab,
 } from "./ActivityPanelTabs";
+import {
+  ActivityActionButtons,
+  ActivityActionsProvider,
+} from "./ActivityActionsContext";
 
 const noopFetchDiff = async (): Promise<string> => "";
 
@@ -352,45 +356,48 @@ export function ActivityPanel({
       <div className="activity-panel-mobile-overlay">
         <aside className="activity-panel" aria-labelledby="activity-panel-title">
           <Heading level={1} id="activity-panel-title" className="sr-only">{`Activity: ${activeTabConfig.label}`}</Heading>
-          <div className="activity-panel-tabs">
-            <ActivityDropdown
-              tabs={ACTIVITY_PANEL_DROPDOWN_TABS}
-              activeTab={activeTab}
-              activeTabConfig={activeTabConfig}
-              isOpen={showMobileTabMenu}
-              onToggle={() => setShowMobileTabMenu((open) => !open)}
-              onSelect={handleTabSelect}
-              wrapperRef={mobileTabMenuRef}
-            />
-            <span className="activity-panel-close-slot">
-              <button
-                type="button"
-                className="btn btn-accent btn-sm activity-panel-action-btn"
-                onClick={handleToggleChat}
-                aria-label="Close panel"
-                title="Close panel"
-              >
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
+          <ActivityActionsProvider>
+            <div className="activity-panel-tabs">
+              <ActivityDropdown
+                tabs={ACTIVITY_PANEL_DROPDOWN_TABS}
+                activeTab={activeTab}
+                activeTabConfig={activeTabConfig}
+                isOpen={showMobileTabMenu}
+                onToggle={() => setShowMobileTabMenu((open) => !open)}
+                onSelect={handleTabSelect}
+                wrapperRef={mobileTabMenuRef}
+              />
+              <ActivityActionButtons />
+              <span className="activity-panel-close-slot">
+                <button
+                  type="button"
+                  className="btn btn-accent btn-sm activity-panel-action-btn"
+                  onClick={handleToggleChat}
+                  aria-label="Close panel"
+                  title="Close panel"
                 >
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                  <line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
-                <span className="activity-panel-action-btn__label">Close</span>
-              </button>
-            </span>
-          </div>
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                  <span className="activity-panel-action-btn__label">Close</span>
+                </button>
+              </span>
+            </div>
 
-          {/* Tab content */}
-          <div className="activity-panel-content">{tabContent()}</div>
+            {/* Tab content */}
+            <div className="activity-panel-content">{tabContent()}</div>
+          </ActivityActionsProvider>
         </aside>
       </div>
     );
@@ -424,34 +431,37 @@ export function ActivityPanel({
         style={asideStyle}
       >
         <Heading level={1} id="activity-panel-title" className="sr-only">{`Activity: ${activeTabConfig.label}`}</Heading>
-        <div className="activity-panel-tabs">
-          <ActivityDropdown
-            tabs={ACTIVITY_PANEL_DROPDOWN_TABS}
-            activeTab={activeTab}
-            activeTabConfig={activeTabConfig}
-            isOpen={showMobileTabMenu}
-            onToggle={() => setShowMobileTabMenu((open) => !open)}
-            onSelect={handleTabSelect}
-            wrapperRef={mobileTabMenuRef}
-          />
-          <span className="activity-panel-close-slot">
-            <button
-              type="button"
-              className="btn btn-accent btn-sm activity-panel-action-btn"
-              onClick={handleToggleChat}
-              aria-label={chatHidden ? "Show chat" : "Hide chat"}
-              title={chatHidden ? "Show chat" : "Hide chat"}
-            >
-              <PanelIcon visible={!chatHidden} />
-              <span className="activity-panel-action-btn__label">
-                {chatHidden ? "Show Chat" : "Hide Chat"}
-              </span>
-            </button>
-          </span>
-        </div>
+        <ActivityActionsProvider>
+          <div className="activity-panel-tabs">
+            <ActivityDropdown
+              tabs={ACTIVITY_PANEL_DROPDOWN_TABS}
+              activeTab={activeTab}
+              activeTabConfig={activeTabConfig}
+              isOpen={showMobileTabMenu}
+              onToggle={() => setShowMobileTabMenu((open) => !open)}
+              onSelect={handleTabSelect}
+              wrapperRef={mobileTabMenuRef}
+            />
+            <ActivityActionButtons />
+            <span className="activity-panel-close-slot">
+              <button
+                type="button"
+                className="btn btn-accent btn-sm activity-panel-action-btn"
+                onClick={handleToggleChat}
+                aria-label={chatHidden ? "Show chat" : "Hide chat"}
+                title={chatHidden ? "Show chat" : "Hide chat"}
+              >
+                <PanelIcon visible={!chatHidden} />
+                <span className="activity-panel-action-btn__label">
+                  {chatHidden ? "Show Chat" : "Hide Chat"}
+                </span>
+              </button>
+            </span>
+          </div>
 
-        {/* Tab content */}
-        <div className="activity-panel-content">{tabContent()}</div>
+          {/* Tab content */}
+          <div className="activity-panel-content">{tabContent()}</div>
+        </ActivityActionsProvider>
       </aside>
     </>
   );

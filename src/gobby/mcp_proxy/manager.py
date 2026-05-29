@@ -149,6 +149,11 @@ class MCPClientManager:
     async def remove_server(self, name: str, project_id: str | None = None) -> dict[str, Any]:
         return await server_registry.remove_server(self, name, project_id)
 
+    async def set_server_enabled(
+        self, name: str, enabled: bool, project_id: str | None = None
+    ) -> dict[str, Any]:
+        return await server_registry.set_server_enabled(self, name, enabled, project_id)
+
     async def disconnect_server(self, name: str) -> None:
         await connections.disconnect_server(self, name, logger)
 

@@ -1,9 +1,13 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ActivityMcpTab, type ActivityMcpTabProps } from "../ActivityMcpTab";
+import {
+  ActivityActionButtons,
+  ActivityActionsProvider,
+} from "../ActivityActionsContext";
 
 const servers = [
   {
@@ -27,9 +31,7 @@ const toolsByServer = {
     { name: "list_tasks", brief: "List project tasks" },
     { name: "create_task", brief: "Create a task" },
   ],
-  github: [
-    { name: "create_issue", brief: "Open a GitHub issue" },
-  ],
+  github: [{ name: "create_issue", brief: "Open a GitHub issue" }],
 };
 
 const status = {
@@ -54,6 +56,7 @@ function makeProps(
     setSearchText: vi.fn(),
     addServer: vi.fn(async () => true),
     removeServer: vi.fn(async () => true),
+    setServerEnabled: vi.fn(async () => true),
     refreshToolCache: vi.fn(async () => true),
     fetchToolSchema: vi.fn(async (_serverName, toolName) => ({
       name: toolName,
@@ -74,19 +77,30 @@ function makeProps(
   };
 }
 
-function renderMcp(props = makeProps()) {
-  function Harness() {
-    const [searchText, setSearchText] = useState(props.searchText);
-    return (
+function Harness({
+  props,
+  children,
+}: {
+  props: ActivityMcpTabProps;
+  children?: ReactNode;
+}) {
+  const [searchText, setSearchText] = useState(props.searchText);
+  return (
+    <ActivityActionsProvider>
+      {children}
       <ActivityMcpTab
         {...props}
         searchText={searchText}
         setSearchText={setSearchText}
       />
-    );
-  }
+    </ActivityActionsProvider>
+  );
+}
 
-  return render(<Harness />);
+function renderMcp(props = makeProps()) {
+  // The shared header buttons live above the tab in the real layout; render
+  // them here so Add/Refresh are reachable in tests.
+  return render(<Harness props={props}>{<ActivityActionButtons />}</Harness>);
 }
 
 function treeItemFor(text: string) {
@@ -126,25 +140,26 @@ describe("ActivityMcpTab", () => {
     expect(screen.queryByText("gobby-tasks")).toBeNull();
   });
 
-  it("filters Internal and External servers from the toolbar dropdown", async () => {
+  it("filters by server type with the All | Internal | External selector", async () => {
     const user = userEvent.setup();
     renderMcp();
 
-    await user.click(screen.getByRole("button", { name: "Filter MCP server types" }));
+    const group = screen.getByRole("radiogroup", { name: "MCP server type" });
+    expect(within(group).getByRole("radio", { name: "All" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
 
-    const menu = screen.getByRole("menu");
-    expect(within(menu).getByRole("menuitemcheckbox", { name: /Internal/ }))
-      .toHaveAttribute("aria-checked", "true");
-    expect(within(menu).getByRole("menuitemcheckbox", { name: /External/ }))
-      .toHaveAttribute("aria-checked", "true");
-
-    await user.click(within(menu).getByRole("menuitemcheckbox", { name: /External/ }));
-
+    await user.click(within(group).getByRole("radio", { name: "Internal" }));
     expect(screen.getByText("gobby-tasks")).toBeInTheDocument();
     expect(screen.queryByText("github")).toBeNull();
+
+    await user.click(within(group).getByRole("radio", { name: "External" }));
+    expect(screen.getByText("github")).toBeInTheDocument();
+    expect(screen.queryByText("gobby-tasks")).toBeNull();
   });
 
-  it("opens the add-server modal from the toolbar", async () => {
+  it("opens the add-server modal from the shared header", async () => {
     const user = userEvent.setup();
     renderMcp();
 
@@ -167,6 +182,33 @@ describe("ActivityMcpTab", () => {
     });
   });
 
+  it("toggles an external server's enabled state from the menu", async () => {
+    const user = userEvent.setup();
+    const setServerEnabled = vi.fn(async () => true);
+    renderMcp(makeProps({ setServerEnabled }));
+
+    await user.click(screen.getByRole("button", { name: "Open actions for github server" }));
+    await user.click(screen.getByRole("menuitem", { name: "Disable server" }));
+
+    await waitFor(() => {
+      expect(setServerEnabled).toHaveBeenCalledWith("github", false);
+    });
+  });
+
+  it("does not offer enable/disable or remove for internal servers", async () => {
+    const user = userEvent.setup();
+    renderMcp();
+
+    await user.click(
+      screen.getByRole("button", { name: "Open actions for gobby-tasks server" }),
+    );
+
+    expect(screen.getByRole("menuitem", { name: "View details" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Refresh tools" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: /Disable server|Enable server/ })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Remove server..." })).toBeNull();
+  });
+
   it("loads and displays tool schema details", async () => {
     const user = userEvent.setup();
     const fetchToolSchema = vi.fn(makeProps().fetchToolSchema);
@@ -180,10 +222,12 @@ describe("ActivityMcpTab", () => {
     });
     expect(screen.getByText("Input Schema")).toBeInTheDocument();
     expect(screen.getByText(/list_tasks schema/)).toBeInTheDocument();
-    expect(screen.getByText(/"title"/)).toBeInTheDocument();
+    // JsonBlock renders the schema as syntax-highlighted tokens, so "title"
+    // appears in more than one span (property key + required entry).
+    expect(screen.getAllByText(/title/).length).toBeGreaterThan(0);
   });
 
-  it("executes a tool from the tool menu and renders result JSON", async () => {
+  it("calls a tool from the detail panel and renders result JSON", async () => {
     const user = userEvent.setup();
     const callTool = vi.fn(async () => ({
       success: true,
@@ -192,14 +236,11 @@ describe("ActivityMcpTab", () => {
     renderMcp(makeProps({ callTool }));
 
     await user.click(await screen.findByText("gobby-tasks"));
-    await user.click(
-      screen.getByRole("button", { name: "Open actions for gobby-tasks.create_task" }),
-    );
-    await user.click(screen.getByRole("menuitem", { name: "Execute tool..." }));
+    await user.click(await screen.findByText("create_task"));
     await screen.findByText("create_task schema");
 
     await user.type(screen.getByRole("textbox", { name: /title/ }), "Fix docs");
-    await user.click(screen.getByRole("button", { name: "Execute" }));
+    await user.click(screen.getByRole("button", { name: "Call tool" }));
 
     await waitFor(() => {
       expect(callTool).toHaveBeenCalledWith(
@@ -208,10 +249,10 @@ describe("ActivityMcpTab", () => {
         { title: "Fix docs" },
       );
     });
-    expect(screen.getByLabelText("Tool result JSON")).toHaveTextContent('"ok": true');
+    expect(screen.getByText(/"ok": true/)).toBeInTheDocument();
   });
 
-  it("refreshes MCP tools from the toolbar", async () => {
+  it("refreshes MCP tools from the shared header", async () => {
     const user = userEvent.setup();
     const refreshToolCache = vi.fn(async () => true);
     renderMcp(makeProps({ refreshToolCache }));

@@ -5,6 +5,7 @@ import {
   useCallback,
   useRef,
   useMemo,
+  type ComponentProps,
   type MouseEvent,
 } from "react";
 import { ResizeHandle } from "../chat/artifacts/ResizeHandle";
@@ -47,6 +48,8 @@ import {
 } from "./TaskQuickMenu";
 import { TasksTabToolbar } from "./TasksTabToolbar";
 import { TasksTabList } from "./TasksTabList";
+import { TaskCreateForm } from "../tasks/TaskCreateForm";
+import { useRegisterActivityActions } from "./activityActions";
 import {
   claimTaskForSession,
   patchTaskFields,
@@ -113,6 +116,7 @@ export const TasksTab = memo(function TasksTab({
     () => new Set(DEFAULT_FILTERS),
   );
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
+  const [showCreateTask, setShowCreateTask] = useState(false);
   const previousDefaultStageFiltersRef = useRef<Set<string>>(new Set());
   const stageFiltersInitializedRef = useRef(false);
   useEffect(() => {
@@ -261,6 +265,40 @@ export const TasksTab = memo(function TasksTab({
   useEffect(() => {
     tasksRef.current = tasks;
   }, [tasks]);
+
+  const handleCreateTask = useCallback(
+    async (params: Parameters<ComponentProps<typeof TaskCreateForm>["onSubmit"]>[0]) => {
+      const baseUrl = getBaseUrl();
+      const body = projectId ? { ...params, project_id: projectId } : params;
+      const response = await fetch(`${baseUrl}/api/tasks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) {
+        throw new Error("Failed to create task");
+      }
+      fetchTasks();
+      return response.json();
+    },
+    [projectId, fetchTasks],
+  );
+
+  const handleOpenCreateTask = useCallback(() => setShowCreateTask(true), []);
+
+  // Register the shared header Add/Refresh actions for the Tasks view.
+  useRegisterActivityActions(
+    {
+      onAdd: handleOpenCreateTask,
+      addLabel: "Add",
+      addAriaLabel: "New task",
+      onRefresh: fetchTasks,
+      refreshing: loading,
+      refreshLabel: "Refresh",
+      refreshAriaLabel: "Refresh tasks",
+    },
+    [handleOpenCreateTask, fetchTasks, loading],
+  );
 
   // WebSocket: real-time task event subscription
   const handleTaskEventRef = useRef<
@@ -943,6 +981,12 @@ export const TasksTab = memo(function TasksTab({
         isSubmitting={activeTaskAction?.action === "close"}
         onCancel={() => setCloseDialogTask(null)}
         onConfirm={handleCloseTask}
+      />
+      <TaskCreateForm
+        isOpen={showCreateTask}
+        tasks={tasks}
+        onSubmit={handleCreateTask}
+        onClose={() => setShowCreateTask(false)}
       />
     </div>
   );
