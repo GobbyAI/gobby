@@ -279,7 +279,7 @@ export function ActivityMcpTab({
           onChange={setTypeFilter}
           options={TYPE_FILTER_OPTIONS}
           ariaLabel="MCP server type"
-          size="sm"
+          size="md"
           controlHeight="sm"
           className="activity-panel-toolbar-segmented"
         />
@@ -359,8 +359,10 @@ export function ActivityMcpTab({
                       <span className="activity-row-title">{server.name}</span>
                       <span
                         className={cn(
-                          "chip",
-                          serverType === "internal" ? "chip--auto" : "chip--web",
+                          "activity-mcp-chip",
+                          serverType === "internal"
+                            ? "activity-mcp-chip--internal"
+                            : "activity-mcp-chip--external",
                         )}
                       >
                         {serverType === "internal" ? "Internal" : "External"}

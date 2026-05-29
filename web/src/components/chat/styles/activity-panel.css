@@ -564,6 +564,36 @@
   opacity: 0.55;
 }
 
+/* Server-type chips. Self-contained (not the shared .chip, which has two
+   competing bases) but matching the Tasks tree chip metrics + sans font.
+   Provenance varies by colour: brand accent for Internal (Gobby's own) vs
+   info blue for External (third-party). Blue sits out of the deutan
+   confusion zone, and the text label carries the meaning regardless of hue. */
+.activity-mcp-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  height: 1.25rem;
+  padding: 0 0.375rem;
+  border-radius: 9999px;
+  font-family: var(--font-sans);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.activity-mcp-chip--internal {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+
+.activity-mcp-chip--external {
+  background: color-mix(in srgb, var(--color-info) 14%, transparent);
+  color: var(--color-info);
+}
+
 .activity-mcp-row-main {
   display: flex;
   align-items: center;
