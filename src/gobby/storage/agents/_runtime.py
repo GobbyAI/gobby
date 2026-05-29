@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, Protocol
 
+from gobby.agents.resume_metadata import dump_resume_metadata
 from gobby.storage.hub.protocol import HubDatabase
 
 from ._helpers import _positive_rowcount, utc_now_iso
@@ -27,6 +28,23 @@ class _AgentRunRuntimeHost(Protocol):
 
 
 class _AgentRunRuntimeMixin:
+    def update_resume_metadata(
+        self: _AgentRunRuntimeHost,
+        run_id: str,
+        resume_metadata_json: Mapping[str, Any] | None,
+    ) -> AgentRun | None:
+        """Replace the daemon-stop resume launch snapshot for a run."""
+        now = utc_now_iso()
+        self.db.execute(
+            """
+            UPDATE agent_runs
+            SET resume_metadata_json = %s, updated_at = %s
+            WHERE id = %s
+            """,
+            (dump_resume_metadata(resume_metadata_json), now, run_id),
+        )
+        return self.get(run_id)
+
     def update_sdk_session_id(
         self: _AgentRunRuntimeHost,
         run_id: str,

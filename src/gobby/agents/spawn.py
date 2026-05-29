@@ -105,6 +105,7 @@ def prepare_terminal_spawn(
     reasoning_required: bool = False,
     reasoning_status: str = "not_requested",
     reasoning_message: str | None = None,
+    resume_metadata_json: dict[str, Any] | None = None,
 ) -> PreparedSpawn:
     """
     Prepare a terminal spawn by creating the child session.
@@ -198,6 +199,7 @@ def prepare_terminal_spawn(
         reasoning_required=reasoning_required,
         reasoning_status=reasoning_status,
         reasoning_message=reasoning_message,
+        resume_metadata_json=resume_metadata_json,
     )
 
     # Persist agent_run_id to session record for hook-based lifecycle tracking

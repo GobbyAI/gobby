@@ -48,7 +48,7 @@ async def test_target_branch_none_resolves_to_head_when_project_repo_has_git(
 ) -> None:
     project_id, repo_path = _project(temp_db, tmp_path)
     (repo_path / ".git").mkdir()
-    plan_file = tmp_path / "plan.md"
+    plan_file = repo_path / "plan.md"
     plan_file.write_text("# Plan\n", encoding="utf-8")
 
     async def fake_exec(*_args: str, **_kwargs: object) -> object:

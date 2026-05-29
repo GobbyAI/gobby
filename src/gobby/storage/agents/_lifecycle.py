@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Protocol
 
+from gobby.agents.resume_metadata import dump_resume_metadata
 from gobby.storage.hub.protocol import HubDatabase
 
 from ._constants import TERMINAL_AGENT_RUN_STATUSES, AgentRunTerminalReason, get_logger
@@ -41,6 +42,7 @@ class _AgentRunLifecycleMixin:
         run_id: str | None = None,
         task_id: str | None = None,
         timeout_seconds: float | None = None,
+        resume_metadata_json: Mapping[str, object] | None = None,
     ) -> AgentRun:
         """
         Create a new agent run.
@@ -72,10 +74,10 @@ class _AgentRunLifecycleMixin:
                 provider, model, is_local,
                 requested_reasoning_effort, effective_reasoning_effort,
                 reasoning_required, reasoning_status, reasoning_message,
-                status, prompt, task_id, timeout_seconds,
+                status, prompt, task_id, timeout_seconds, resume_metadata_json,
                 created_at, updated_at
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending', %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending', %s, %s, %s, %s, %s, %s)
             """,
             (
                 run_id,
@@ -95,6 +97,7 @@ class _AgentRunLifecycleMixin:
                 prompt,
                 task_id,
                 timeout_seconds,
+                dump_resume_metadata(resume_metadata_json),
                 now,
                 now,
             ),

@@ -106,6 +106,7 @@ class SpawnRequest:
     # Timeout
     timeout_seconds: float | None = None  # Agent timeout (persisted to DB for restart survival)
     daemon_config: Any | None = None
+    resume_metadata_json: dict[str, Any] | None = None
 
 
 def _tmux_spawner_for_request(request: SpawnRequest) -> TmuxSpawner:
@@ -150,6 +151,36 @@ def _apply_extra_env(env: dict[str, str], request: SpawnRequest) -> None:
                 logger.warning("Ignoring reserved spawn environment override for %s", key)
                 continue
             env[key] = value
+
+
+def _record_resume_launch_details(
+    request: SpawnRequest,
+    *,
+    sandbox_args: list[str] | None = None,
+    sandbox_env: dict[str, str] | None = None,
+    config_overrides: list[str] | None = None,
+) -> None:
+    """Persist post-resolution CLI launch details for daemon-stop resume."""
+    if not request.agent_run_id or request.resume_metadata_json is None:
+        return
+    storage = getattr(request.session_manager, "_storage", None)
+    db = getattr(storage, "db", None)
+    if db is None:
+        return
+    metadata = dict(request.resume_metadata_json)
+    metadata["sandbox_args"] = list(sandbox_args or [])
+    metadata["sandbox_env"] = dict(sandbox_env or {})
+    metadata["env"] = dict(request.extra_env or {})
+    metadata["config_overrides"] = list(config_overrides or [])
+    tmux_config = getattr(request.daemon_config, "tmux", None)
+    if isinstance(tmux_config, TmuxConfig):
+        metadata["tmux_config"] = tmux_config.model_dump()
+    try:
+        from gobby.storage.agents import LocalAgentRunManager
+
+        LocalAgentRunManager(db).update_resume_metadata(request.agent_run_id, metadata)
+    except Exception as exc:
+        logger.warning("Failed to persist resume launch metadata: %s", exc)
 
 
 @dataclass
@@ -280,6 +311,7 @@ async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
         reasoning_required=request.reasoning_required,
         reasoning_status=request.reasoning_status,
         reasoning_message=request.reasoning_message,
+        resume_metadata_json=request.resume_metadata_json,
     )
 
     gobby_session_id = spawn_context.session_id
@@ -328,6 +360,8 @@ async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
     # Pass machine_id as env var for sandboxed agents
     if request.machine_id:
         env["GOBBY_MACHINE_ID"] = request.machine_id
+
+    _record_resume_launch_details(request, sandbox_args=sandbox_args, sandbox_env=sandbox_env)
 
     # Pre-approve workspace trust so the CLI doesn't show an interactive prompt
     pre_approve_directory("claude", request.cwd)
@@ -405,6 +439,7 @@ async def _spawn_gemini_terminal(request: SpawnRequest) -> SpawnResult:
         reasoning_required=request.reasoning_required,
         reasoning_status=request.reasoning_status,
         reasoning_message=request.reasoning_message,
+        resume_metadata_json=request.resume_metadata_json,
     )
 
     gobby_session_id = spawn_context.session_id
@@ -446,6 +481,8 @@ async def _spawn_gemini_terminal(request: SpawnRequest) -> SpawnResult:
     # Pass machine_id as env var for sandboxed agents that can't read ~/.gobby/machine_id
     if request.machine_id:
         env["GOBBY_MACHINE_ID"] = request.machine_id
+
+    _record_resume_launch_details(request, sandbox_args=sandbox_args, sandbox_env=sandbox_env)
 
     # Pre-approve workspace trust so the CLI doesn't show an interactive prompt
     pre_approve_directory("gemini", request.cwd)
@@ -522,6 +559,7 @@ async def _spawn_qwen_terminal(request: SpawnRequest) -> SpawnResult:
         reasoning_required=request.reasoning_required,
         reasoning_status=request.reasoning_status,
         reasoning_message=request.reasoning_message,
+        resume_metadata_json=request.resume_metadata_json,
     )
 
     gobby_session_id = spawn_context.session_id
@@ -558,6 +596,8 @@ async def _spawn_qwen_terminal(request: SpawnRequest) -> SpawnResult:
 
     if request.machine_id:
         env["GOBBY_MACHINE_ID"] = request.machine_id
+
+    _record_resume_launch_details(request, sandbox_args=sandbox_args, sandbox_env=sandbox_env)
 
     pre_approve_directory("qwen", request.cwd)
 
@@ -621,6 +661,7 @@ async def _spawn_grok_terminal(request: SpawnRequest) -> SpawnResult:
         reasoning_required=request.reasoning_required,
         reasoning_status=request.reasoning_status,
         reasoning_message=request.reasoning_message,
+        resume_metadata_json=request.resume_metadata_json,
     )
 
     gobby_session_id = spawn_context.session_id
@@ -656,6 +697,8 @@ async def _spawn_grok_terminal(request: SpawnRequest) -> SpawnResult:
         env["XAI_API_KEY"] = request.api_token
     if request.machine_id:
         env["GOBBY_MACHINE_ID"] = request.machine_id
+
+    _record_resume_launch_details(request, sandbox_args=sandbox_args, sandbox_env=sandbox_env)
 
     pre_approve_directory("grok", request.cwd)
 
@@ -731,6 +774,7 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
         reasoning_required=request.reasoning_required,
         reasoning_status=request.reasoning_status,
         reasoning_message=request.reasoning_message,
+        resume_metadata_json=request.resume_metadata_json,
     )
 
     gobby_session_id = spawn_context.session_id
@@ -745,6 +789,7 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
         )
         sandbox_args, _ = resolver.resolve(sandbox_config, paths)
 
+    config_overrides = _codex_mcp_config_overrides(request.project_path)
     cmd, _cmd_env = build_cli_command(
         cli="codex",
         prompt=request.prompt or "",
@@ -753,7 +798,7 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
         model=request.model,
         reasoning_effort=request.effective_reasoning_effort,
         sandbox_args=sandbox_args or None,
-        config_overrides=_codex_mcp_config_overrides(request.project_path),
+        config_overrides=config_overrides,
     )
 
     env = spawn_context.env_vars.copy()
@@ -761,6 +806,10 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
 
     if request.machine_id:
         env["GOBBY_MACHINE_ID"] = request.machine_id
+
+    _record_resume_launch_details(
+        request, sandbox_args=sandbox_args, config_overrides=config_overrides
+    )
 
     pre_approve_directory("codex", request.cwd)
 
@@ -852,6 +901,7 @@ async def _spawn_droid_terminal(request: SpawnRequest) -> SpawnResult:
         reasoning_required=request.reasoning_required,
         reasoning_status=request.reasoning_status,
         reasoning_message=request.reasoning_message,
+        resume_metadata_json=request.resume_metadata_json,
     )
 
     gobby_session_id = spawn_context.session_id
@@ -872,6 +922,8 @@ async def _spawn_droid_terminal(request: SpawnRequest) -> SpawnResult:
         env["FACTORY_API_BASE_URL"] = request.api_base
     if request.machine_id:
         env["GOBBY_MACHINE_ID"] = request.machine_id
+
+    _record_resume_launch_details(request)
 
     pre_approve_directory("droid", request.cwd)
 

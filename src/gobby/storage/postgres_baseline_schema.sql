@@ -361,7 +361,8 @@ ALTER TABLE agent_runs
     ADD COLUMN worktree_id TEXT,
     ADD COLUMN clone_id TEXT,
     ADD COLUMN timeout_seconds REAL,
-    ADD COLUMN terminal_reason TEXT;
+    ADD COLUMN terminal_reason TEXT,
+    ADD COLUMN resume_metadata_json JSONB;
 
 CREATE INDEX idx_agent_runs_parent_session ON agent_runs(parent_session_id);
 

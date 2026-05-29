@@ -440,6 +440,8 @@ def handle_pre_created_session(
             handler._session_coordinator.start_agent_run(session_obj.agent_run_id)
         except Exception as e:
             handler.logger.warning(f"Failed to start agent run: {e}")
+    if session_obj.agent_run_id:
+        _record_agent_run_native_session(handler, session_obj.agent_run_id, external_id)
 
     if session_obj.workflow_name and session_id:
         handler.logger.debug(
@@ -534,3 +536,27 @@ def handle_pre_created_session(
     if context_decision.mode == "full":
         mark_startup_context_injected(handler, session_id)
     return response
+
+
+def _record_agent_run_native_session(handler: Any, run_id: str, external_id: str) -> None:
+    """Store provider-native session id in the run's resume metadata when discovered."""
+    if not external_id or handler._session_manager is None:
+        return
+    try:
+        from gobby.storage.agents import LocalAgentRunManager
+
+        manager = LocalAgentRunManager(handler._session_manager.db)
+        run = manager.get(run_id)
+        if run is None:
+            return
+        metadata = dict(run.resume_metadata_json or {})
+        if metadata.get("provider_native_session_id") == external_id:
+            return
+        metadata["provider_native_session_id"] = external_id
+        manager.update_resume_metadata(run_id, metadata)
+    except Exception as exc:
+        handler.logger.debug(
+            "Failed to persist provider-native session id for agent run %s: %s",
+            run_id,
+            exc,
+        )

@@ -27,6 +27,7 @@ from gobby.dispatch.actions import (
     StartStageAction,
 )
 from gobby.dispatch.context import _field, build_context, reload_candidate
+from gobby.dispatch.daemon_resume import try_resume_daemon_stop_run
 from gobby.dispatch.mutex import (
     DispatchCandidateChangedError,
     DispatchMutexUnavailableError,
@@ -416,6 +417,15 @@ async def _execute_spawn_action(
     context: object | None,
     services: object | None,
 ) -> str | None:
+    resume_result = await try_resume_daemon_stop_run(
+        action,
+        mutex=mutex,
+        db=db,
+        context=context,
+        services=services,
+    )
+    if resume_result.handled:
+        return resume_result.run_id
     try:
         raw_run_id: object = spawn_agent(action, db=db, context=context, services=services)
         if inspect.isawaitable(raw_run_id):

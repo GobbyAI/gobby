@@ -54,6 +54,24 @@ class _AgentRunQueryMixin:
         )
         return runs[0] if runs else None
 
+    def list_daemon_stop_resume_candidates(
+        self: _AgentRunQueryHost,
+        task_id: str,
+        *,
+        limit: int = 20,
+    ) -> list[AgentRun]:
+        """List recent cancelled daemon-stop runs for task resume recovery."""
+        return self._fetch_runs_with_live_stats(
+            """
+            WHERE ar.task_id = %s
+              AND ar.status = 'cancelled'
+              AND ar.terminal_reason = 'daemon_stop'
+            """,
+            (task_id,),
+            order_by="ORDER BY ar.completed_at DESC NULLS LAST, ar.updated_at DESC",
+            limit=limit,
+        )
+
     def list_by_session(
         self: _AgentRunQueryHost,
         parent_session_id: str,

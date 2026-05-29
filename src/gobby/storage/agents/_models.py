@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from gobby.agents.resume_metadata import normalize_resume_metadata
 from gobby.llm.local_detection import is_local_legacy_fallback
 
 from ._constants import AgentRunStatus, AgentRunTerminalReason
@@ -49,6 +50,7 @@ class AgentRun:
     clone_id: str | None = None
     timeout_seconds: float | None = None
     terminal_reason: AgentRunTerminalReason | None = None
+    resume_metadata_json: dict[str, Any] | None = None
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> AgentRun:
@@ -114,6 +116,9 @@ class AgentRun:
             clone_id=row["clone_id"] if "clone_id" in row.keys() else None,
             timeout_seconds=row["timeout_seconds"] if "timeout_seconds" in row.keys() else None,
             terminal_reason=row["terminal_reason"] if "terminal_reason" in row.keys() else None,
+            resume_metadata_json=normalize_resume_metadata(
+                row["resume_metadata_json"] if "resume_metadata_json" in row.keys() else None
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:

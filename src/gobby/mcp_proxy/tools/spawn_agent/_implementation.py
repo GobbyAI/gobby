@@ -20,6 +20,7 @@ from gobby.agents.isolation import (
     repair_isolation_environment,
 )
 from gobby.agents.reasoning import resolve_spawn_reasoning
+from gobby.agents.resume_metadata import build_resume_metadata
 from gobby.agents.sandbox import SandboxConfig, agent_sandbox_config
 from gobby.agents.spawn_executor import SpawnRequest, execute_spawn
 from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
@@ -685,6 +686,36 @@ async def spawn_agent_impl(
     else:
         spawn_title = None  # fall back to existing default in create_child_session
 
+    stage_name = effective_initial_variables.get("stage_name")
+    stage_state = effective_initial_variables.get("stage_state")
+    resume_metadata = build_resume_metadata(
+        provider=effective_provider,
+        model=effective_model,
+        requested_reasoning_effort=reasoning.requested_effort,
+        effective_reasoning_effort=reasoning.effective_effort,
+        reasoning_required=reasoning.reasoning_required,
+        reasoning_status=reasoning.status,
+        reasoning_message=reasoning.message,
+        sandbox_config=effective_sandbox_config,
+        cwd=str(isolation_ctx.cwd),
+        project_id=project_id,
+        project_path=resolved_project_path,
+        parent_session_id=parent_session_id,
+        isolation=effective_isolation,
+        worktree_id=isolation_ctx.worktree_id,
+        clone_id=isolation_ctx.clone_id,
+        branch_name=isolation_ctx.branch_name,
+        base_branch=effective_base_branch,
+        base_commit_sha=base_commit_sha if isinstance(base_commit_sha, str) else None,
+        task_id=resolved_task_id,
+        task_ref=f"#{task_seq_num}" if task_seq_num else resolved_task_id,
+        stage_name=stage_name if isinstance(stage_name, str) else None,
+        stage_state=stage_state if isinstance(stage_state, str) else None,
+        agent_slug=agent_display_name,
+        workflow=effective_workflow,
+        initial_variables=effective_initial_variables,
+    )
+
     # 11a. Execute spawn via SpawnExecutor
     spawn_request = SpawnRequest(
         prompt=enhanced_prompt,
@@ -720,6 +751,7 @@ async def spawn_agent_impl(
         extra_env=code_index_preflight_env or None,
         timeout_seconds=effective_timeout,
         daemon_config=daemon_config,
+        resume_metadata_json=resume_metadata,
     )
 
     # run_id is minted above and threaded through SpawnRequest.agent_run_id.

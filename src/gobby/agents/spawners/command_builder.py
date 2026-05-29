@@ -11,6 +11,7 @@ def build_cli_command(
     cli: str,
     prompt: str | None = None,
     session_id: str | None = None,
+    resume_session_id: str | None = None,
     auto_approve: bool = False,
     working_directory: str | None = None,
     sandbox_args: list[str] | None = None,
@@ -67,12 +68,15 @@ def build_cli_command(
     """
     command = [cli]
     env: dict[str, str] = {}
+    sandbox_args_consumed = False
     if env_overrides:
         env.update(env_overrides)
 
     if cli == "claude":
         # Claude CLI flags
-        if session_id:
+        if resume_session_id:
+            command.extend(["--resume", resume_session_id])
+        elif session_id:
             command.extend(["--session-id", session_id])
         if model:
             command.extend(["--model", model])
@@ -90,9 +94,11 @@ def build_cli_command(
             command.extend(["--model", model])
         if auto_approve:
             command.extend(["--approval-mode", "yolo"])
+        if resume_session_id:
+            command.extend(["--resume", resume_session_id])
         if mode == "interactive":
             command.append("--acp")
-            if session_id:
+            if session_id and not resume_session_id:
                 command.extend(["--resume", session_id])
 
     elif cli == "grok":
@@ -113,10 +119,17 @@ def build_cli_command(
                 command.extend(["--model", model])
             if reasoning_effort:
                 command.extend(["--reasoning-effort", reasoning_effort])
+            if resume_session_id:
+                command.extend(["--resume", resume_session_id])
+            if sandbox_args:
+                command.extend(sandbox_args)
+                sandbox_args_consumed = True
             command.append("--single")
 
     elif cli == "codex":
         # Codex CLI flags
+        if resume_session_id:
+            command.append("resume")
         if model:
             command.extend(["--model", model])
         if cli == "codex" and reasoning_effort:
@@ -131,6 +144,8 @@ def build_cli_command(
     elif cli == "droid":
         # Droid exec flags, verified against `droid exec --help` on v0.106.0.
         command.extend(["exec", "--input-format", "stream-json"])
+        if resume_session_id:
+            command.extend(["--session-id", resume_session_id])
         if working_directory:
             command.extend(["--cwd", working_directory])
         if model:
@@ -140,8 +155,11 @@ def build_cli_command(
         command.extend(["--auto", "high" if auto_approve else "low"])
 
     # Add sandbox args before prompt (prompt must be last)
-    if sandbox_args:
+    if sandbox_args and not sandbox_args_consumed:
         command.extend(sandbox_args)
+
+    if cli == "codex" and resume_session_id:
+        command.append(resume_session_id)
 
     # Prompt only in agent/headless mode (interactive mode uses stdin)
     if prompt and mode != "interactive":
