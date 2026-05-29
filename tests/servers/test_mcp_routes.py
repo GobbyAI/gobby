@@ -1489,6 +1489,52 @@ class TestSetMCPServerEnabled:
         assert data["success"] is False
         assert "not found" in data["error"]
 
+    @pytest.mark.parametrize(
+        "error",
+        [
+            PermissionError("permission denied"),
+            OSError("socket unavailable"),
+            RuntimeError("connection failed"),
+        ],
+    )
+    def test_set_enabled_known_manager_errors_return_failure_response(
+        self, session_storage: SessionManager, error: Exception
+    ) -> None:
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        mcp_manager = FakeMCPManager()
+        mcp_manager.set_server_enabled = AsyncMock(side_effect=error)  # type: ignore[method-assign]
+        server.mcp_manager = mcp_manager
+
+        with TestClient(server.app) as client:
+            response = client.patch("/api/mcp/servers/github", json={"enabled": True})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is False
+        assert data["error"] == str(error)
+
+    def test_set_enabled_unexpected_manager_error_propagates(
+        self, session_storage: SessionManager
+    ) -> None:
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        mcp_manager = FakeMCPManager()
+        mcp_manager.set_server_enabled = AsyncMock(  # type: ignore[method-assign]
+            side_effect=KeyError("bad state")
+        )
+        server.mcp_manager = mcp_manager
+
+        with TestClient(server.app) as client:
+            with pytest.raises(KeyError, match="bad state"):
+                client.patch("/api/mcp/servers/github", json={"enabled": True})
+
 
 # ============================================================================
 # import_mcp_server Endpoint Tests

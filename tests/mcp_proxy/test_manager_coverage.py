@@ -373,6 +373,48 @@ class TestMCPClientManagerAddServer:
         assert result["full_tool_schemas"][0]["name"] == "test-tool"
 
     @pytest.mark.asyncio
+    async def test_set_server_enabled_connects_and_caches_listed_tools(self):
+        """Enabling a server discovers tools through the shared cache path."""
+        config = MCPServerConfig(
+            name="existing-server",
+            project_id="test-project",
+            transport="http",
+            url="http://localhost:8001",
+            enabled=False,
+        )
+        manager = MCPClientManager(server_configs=[config])
+
+        mock_session = AsyncMock()
+        mock_tool = MagicMock()
+        mock_tool.name = "enabled-tool"
+        mock_tool.description = "Enabled description"
+        mock_tool.inputSchema = {"type": "object"}
+        mock_session.list_tools.return_value = MagicMock(tools=[mock_tool])
+        connect_server = AsyncMock(return_value=mock_session)
+
+        with (
+            patch.object(manager, "_connect_server", new=connect_server),
+            patch.object(manager, "cache_discovered_tools") as cache_discovered_tools,
+        ):
+            result = await manager.set_server_enabled("existing-server", True)
+
+        assert result == {"success": True, "name": "existing-server", "enabled": True}
+        assert manager.get_server_config("existing-server") == config
+        assert config.enabled is True
+        connect_server.assert_awaited_once_with(config)
+        mock_session.list_tools.assert_awaited_once_with()
+        cache_discovered_tools.assert_called_once_with(
+            "existing-server",
+            [
+                {
+                    "name": "enabled-tool",
+                    "description": "Enabled description",
+                    "inputSchema": {"type": "object"},
+                }
+            ],
+        )
+
+    @pytest.mark.asyncio
     async def test_add_server_handles_list_tools_failure(self):
         """Test add_server handles failure when listing tools."""
         manager = MCPClientManager(server_configs=[])

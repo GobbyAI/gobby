@@ -4,7 +4,7 @@ import gzip
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -571,6 +571,46 @@ class TestTranscriptReaderRendered:
             ("sess-1",),
             {"transcript_path": str(transcript_path)},
         )
+
+    @pytest.mark.asyncio
+    async def test_rederives_transcript_path_in_thread(self):
+        session = MagicMock()
+        session.external_id = "ext-thread"
+        session.source = "qwen"
+        session.transcript_path = None
+
+        session_manager = MagicMock()
+        session_manager.get.return_value = session
+
+        async def run_in_thread(func, *args, **kwargs):
+            return func(*args, **kwargs)
+
+        to_thread = AsyncMock(side_effect=run_in_thread)
+        reader = TranscriptReader(session_manager)
+
+        with (
+            patch(
+                "gobby.sessions.transcript_reader._find_transcript_on_disk",
+                return_value="/tmp/derived.jsonl",
+            ) as find_transcript,
+            patch("gobby.sessions.transcript_reader.asyncio.to_thread", new=to_thread),
+        ):
+            result = await reader._ensure_transcript_path(
+                "sess-1",
+                session,
+                "qwen",
+                None,
+            )
+
+        assert result == "/tmp/derived.jsonl"
+        find_transcript.assert_called_once_with("qwen", "ext-thread")
+        assert to_thread.await_args_list[0].args == (
+            find_transcript,
+            "qwen",
+            "ext-thread",
+        )
+        assert to_thread.await_args_list[1].args == (session_manager.update, "sess-1")
+        assert to_thread.await_args_list[1].kwargs == {"transcript_path": "/tmp/derived.jsonl"}
 
     @pytest.mark.asyncio
     async def test_reports_unparseable_transcript_status(self, tmp_path: Path):

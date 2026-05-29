@@ -10,7 +10,10 @@ def _find_transcript_on_disk(
     external_id: str,
     max_days: int = 90,
 ) -> str | None:
-    """Try to find a transcript file on disk by CLI source and external_id."""
+    """Try to find a transcript file on disk by CLI source and external_id.
+
+    This performs blocking filesystem traversal; async callers must run it in a thread.
+    """
     if not external_id:
         return None
 

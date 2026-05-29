@@ -390,10 +390,7 @@ async def set_mcp_server_enabled(
 
     except HTTPException:
         raise
-    except ValueError as e:
-        response_time_ms = (time.perf_counter() - start_time) * 1000
-        return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
-    except Exception as e:
+    except (ValueError, PermissionError, OSError, RuntimeError) as e:
         logger.error(f"Set MCP server enabled error: {e}", exc_info=True)
         response_time_ms = (time.perf_counter() - start_time) * 1000
         return {"success": False, "error": str(e), "response_time_ms": response_time_ms}

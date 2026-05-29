@@ -15,6 +15,7 @@ import yaml
 from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
+from gobby.servers.routes.configuration_prompts import _normalize_variable_spec
 from gobby.servers.tool_approvals import DEFAULT_GLOBAL_APPROVAL_RULES
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
@@ -803,6 +804,17 @@ class TestPromptsEndpoints:
         assert "variables" in data
         assert data["source"] == "bundled"
 
+    def test_normalize_variable_spec_preserves_api_shape(self) -> None:
+        assert _normalize_variable_spec({"type": "int", "required": True, "default": 3}) == {
+            "type": "int",
+            "required": True,
+            "default": 3,
+        }
+        assert _normalize_variable_spec("fallback") == {
+            "type": "str",
+            "default": "fallback",
+        }
+
     def test_get_prompt_not_found(self, client: TestClient) -> None:
         response = client.get("/api/config/prompts/nonexistent/prompt")
         assert response.status_code == 404
@@ -947,6 +959,27 @@ class TestExportImport:
             json={"config": {"ui": {"port": 99999, "mode": "invalid"}}},
         )
         assert response.status_code == 400
+
+    def test_import_non_string_secret_value_fails_before_deleting_existing_config(
+        self, client: TestClient, temp_db: Any
+    ) -> None:
+        store = ConfigStore(temp_db)
+        store.set("daemon_port", 5555)
+
+        response = client.post(
+            "/api/config/import",
+            json={
+                "config_store": {
+                    "daemon_port": 9999,
+                    "service.provider_api_key": {"nested": "bad"},
+                }
+            },
+        )
+
+        assert response.status_code == 400
+        assert "Secret 'service.provider_api_key' must be a string" in response.json()["detail"]
+        assert store.get("daemon_port") == 5555
+        assert store.get("service.provider_api_key") is None
 
     def test_import_config_and_prompts_together(self, client: TestClient) -> None:
         response = client.post(

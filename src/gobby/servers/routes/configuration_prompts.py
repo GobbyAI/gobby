@@ -15,6 +15,17 @@ from gobby.servers.routes.configuration_models import SavePromptOverrideRequest
 logger = logging.getLogger(__name__)
 
 
+def _normalize_variable_spec(spec: Any) -> dict[str, Any]:
+    """Return the API shape for prompt variable metadata."""
+    if isinstance(spec, dict):
+        return {
+            "type": spec.get("type", "str"),
+            "required": spec.get("required", False),
+            "default": spec.get("default"),
+        }
+    return {"type": "str", "default": spec}
+
+
 def register_prompt_routes(router: APIRouter, context: ConfigurationRouteContext) -> None:
     """Register prompt listing, detail, override, and revert routes."""
 
@@ -99,15 +110,7 @@ def register_prompt_routes(router: APIRouter, context: ConfigurationRouteContext
                     "has_override": has_override,
                     "bundled_content": bundled_content,
                     "variables": {
-                        name: (
-                            {
-                                "type": spec.get("type", "str"),
-                                "required": spec.get("required", False),
-                                "default": spec.get("default"),
-                            }
-                            if isinstance(spec, dict)
-                            else {"type": "str", "default": spec}
-                        )
+                        name: _normalize_variable_spec(spec)
                         for name, spec in (record.variables or {}).items()
                     },
                 }

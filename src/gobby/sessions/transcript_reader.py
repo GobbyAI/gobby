@@ -174,7 +174,7 @@ class TranscriptReader:
             return transcript_path
 
         external_id = getattr(session, "external_id", None)
-        derived = _find_transcript_on_disk(source, external_id or "")
+        derived = await asyncio.to_thread(_find_transcript_on_disk, source, external_id or "")
         if not derived:
             return None
 

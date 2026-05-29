@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -12,6 +13,12 @@ from gobby.servers.routes.configuration_context import ConfigurationRouteContext
 from gobby.servers.routes.configuration_models import SaveUISettingsRequest
 
 logger = logging.getLogger(__name__)
+
+_UI_SETTINGS_ERRORS: tuple[type[Exception], ...] = (
+    TypeError,
+    ValueError,
+    json.JSONDecodeError,
+)
 
 UI_SETTINGS_PREFIX = "ui_settings."
 UI_SETTINGS_KEYS = (
@@ -39,7 +46,9 @@ def register_ui_setting_routes(router: APIRouter, context: ConfigurationRouteCon
                 if value is not None:
                     result[key] = value
             return JSONResponse(content=result)
-        except Exception as e:
+        except HTTPException:
+            raise
+        except _UI_SETTINGS_ERRORS as e:
             logger.error("Failed to get UI settings: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
@@ -56,7 +65,9 @@ def register_ui_setting_routes(router: APIRouter, context: ConfigurationRouteCon
             if entries:
                 config_store.set_many(entries, source="ui")
             return JSONResponse(content={"ok": True})
-        except Exception as e:
+        except HTTPException:
+            raise
+        except _UI_SETTINGS_ERRORS as e:
             logger.error("Failed to save UI settings: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 

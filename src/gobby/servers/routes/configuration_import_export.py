@@ -9,6 +9,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 
 from gobby.config.app import DaemonConfig
 from gobby.prompts.models import parse_frontmatter
@@ -25,6 +26,31 @@ from gobby.servers.routes.configuration_secrets import (
 from gobby.storage.config_store import flatten_config, is_secret_key_name, unflatten_config
 
 logger = logging.getLogger(__name__)
+
+_CONFIG_IMPORT_ERRORS: tuple[type[Exception], ...] = (
+    TypeError,
+    ValueError,
+    json.JSONDecodeError,
+    ValidationError,
+)
+_CONFIG_EXPORT_ERRORS: tuple[type[Exception], ...] = (
+    TypeError,
+    ValueError,
+    json.JSONDecodeError,
+)
+
+
+def _validate_imported_secret_values(secret_values: dict[str, Any]) -> dict[str, str | None]:
+    """Validate imported concrete secret value types before config_store mutation."""
+    validated: dict[str, str | None] = {}
+    for key, value in secret_values.items():
+        if value is None or value == "":
+            validated[key] = value
+            continue
+        if not isinstance(value, str):
+            raise ValueError(f"Secret '{key}' must be a string, got {type(value).__name__}")
+        validated[key] = value
+    return validated
 
 
 def register_import_export_routes(
@@ -75,7 +101,9 @@ def register_import_export_routes(
                     "secrets": secret_names,
                 }
             )
-        except Exception as e:
+        except HTTPException:
+            raise
+        except _CONFIG_EXPORT_ERRORS as e:
             logger.error("Config export failed: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
@@ -97,11 +125,11 @@ def register_import_export_routes(
                     config_secret_keys,
                 )
 
+                validated_secret_values = _validate_imported_secret_values(secret_values)
                 try:
-                    for key, value in secret_values.items():
-                        if value in (None, ""):
-                            continue
-                        validate_falkordb_secret(key, value)
+                    for key, value in validated_secret_values.items():
+                        if value is not None and value != "":
+                            validate_falkordb_secret(key, value)
                 except ValueError as e:
                     return falkordb_validation_response(e)
 
@@ -116,16 +144,11 @@ def register_import_export_routes(
                     config_store.delete_all()
                     if secret_references:
                         count += config_store.set_many(secret_references, source="import")
-                    if secret_values:
+                    if validated_secret_values:
                         secret_store = context.get_secret_store()
-                        for key, value in secret_values.items():
+                        for key, value in validated_secret_values.items():
                             if value is None or value == "":
                                 config_store.clear_secret(key, secret_store)
-                            elif not isinstance(value, str):
-                                raise HTTPException(
-                                    400,
-                                    f"Secret '{key}' must be a string, got {type(value).__name__}",
-                                )
                             else:
                                 config_store.set_secret(key, value, secret_store, source="import")
                                 count += 1
@@ -209,6 +232,11 @@ def register_import_export_routes(
             }
             add_restart_hint(response, restart_touched_keys)
             return JSONResponse(content=response)
-        except Exception as e:
+        except HTTPException:
+            raise
+        except _CONFIG_IMPORT_ERRORS as e:
             logger.error("Config import failed: %s", e, exc_info=True)
             raise HTTPException(status_code=400, detail=str(e)) from e
+        except Exception:
+            logger.error("Unexpected config import failure", exc_info=True)
+            raise

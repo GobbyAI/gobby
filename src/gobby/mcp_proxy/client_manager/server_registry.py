@@ -130,6 +130,34 @@ def is_connected(manager: Any, server_name: str) -> bool:
     return server_name in manager._connections
 
 
+async def _discover_and_cache_tools(
+    manager: Any,
+    config: MCPServerConfig,
+    session: Any | None,
+) -> list[dict[str, Any]]:
+    """List tools from a connected session and cache their full schemas."""
+    if session is None:
+        return []
+
+    try:
+        tools_result = await session.list_tools()
+        tool_schemas = [
+            {
+                "name": tool.name,
+                "description": getattr(tool, "description", "") or "",
+                "inputSchema": getattr(tool, "inputSchema", {}) or {},
+            }
+            for tool in tools_result.tools
+        ]
+    except Exception as exc:
+        LOGGER.warning("Failed to list tools for %s: %s", config.name, exc)
+        return []
+
+    if tool_schemas:
+        manager.cache_discovered_tools(config.name, tool_schemas)
+    return tool_schemas
+
+
 async def add_server(manager: Any, config: MCPServerConfig) -> dict[str, Any]:
     """Add a server config, persist it, and discover tools if enabled."""
     config = normalize_bundled_server_config(config)
@@ -156,26 +184,7 @@ async def add_server(manager: Any, config: MCPServerConfig) -> dict[str, Any]:
     tool_schemas: list[dict[str, Any]] = []
     if config.enabled:
         session = await manager._connect_server(config)
-        if session:
-            try:
-                tools_result = await session.list_tools()
-                for tool in tools_result.tools:
-                    tool_schemas.append(
-                        {
-                            "name": tool.name,
-                            "description": getattr(tool, "description", "") or "",
-                            "inputSchema": getattr(tool, "inputSchema", {}) or {},
-                        }
-                    )
-            except Exception as exc:
-                LOGGER.warning(
-                    "Failed to list tools for %s: %s",
-                    config.name,
-                    exc,
-                )
-
-        if tool_schemas:
-            manager.cache_discovered_tools(config.name, tool_schemas)
+        tool_schemas = await _discover_and_cache_tools(manager, config, session)
 
     return {
         "success": True,
@@ -238,21 +247,7 @@ async def set_server_enabled(
 
     if enabled:
         session = await manager._connect_server(config)
-        if session:
-            try:
-                tools_result = await session.list_tools()
-                tool_schemas = [
-                    {
-                        "name": tool.name,
-                        "description": getattr(tool, "description", "") or "",
-                        "inputSchema": getattr(tool, "inputSchema", {}) or {},
-                    }
-                    for tool in tools_result.tools
-                ]
-                if tool_schemas:
-                    manager.cache_discovered_tools(name, tool_schemas)
-            except Exception as exc:
-                LOGGER.warning("Failed to list tools for %s: %s", name, exc)
+        await _discover_and_cache_tools(manager, config, session)
     else:
         if name in manager._connections:
             await manager._connections[name].disconnect()
