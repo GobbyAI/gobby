@@ -1,0 +1,283 @@
+use std::path::{Path, PathBuf};
+
+use gobby_core::config::{ConfigSource, EnvOnlySource};
+
+use crate::{ScopeSelection, WikiError};
+
+const HUB_ENV: &str = "GOBBY_WIKI_HUB";
+const HUB_CONFIG_KEYS: [&str; 2] = ["wiki.hub_path", "gwiki.hub_path"];
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedScope {
+    kind: ScopeKind,
+    root: PathBuf,
+    registry_path: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ScopeKind {
+    Topic {
+        name: String,
+    },
+    Project {
+        project_id: String,
+        project_root: PathBuf,
+    },
+}
+
+impl ResolvedScope {
+    pub fn topic(name: String, root: PathBuf, registry_path: PathBuf) -> Self {
+        Self {
+            kind: ScopeKind::Topic { name },
+            root,
+            registry_path,
+        }
+    }
+
+    pub fn project(project_id: String, project_root: PathBuf, root: PathBuf) -> Self {
+        let registry_path = root.join("wikis.json");
+        Self {
+            kind: ScopeKind::Project {
+                project_id,
+                project_root,
+            },
+            root,
+            registry_path,
+        }
+    }
+
+    pub fn kind(&self) -> &ScopeKind {
+        &self.kind
+    }
+
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    pub fn registry_path(&self) -> &Path {
+        &self.registry_path
+    }
+
+    pub fn identity(&self) -> String {
+        match &self.kind {
+            ScopeKind::Topic { name } => format!("topic:{name}"),
+            ScopeKind::Project { project_id, .. } => format!("project:{project_id}"),
+        }
+    }
+
+    pub fn topic_name(&self) -> Option<&str> {
+        match &self.kind {
+            ScopeKind::Topic { name } => Some(name),
+            ScopeKind::Project { .. } => None,
+        }
+    }
+
+    pub fn project_id(&self) -> Option<&str> {
+        match &self.kind {
+            ScopeKind::Topic { .. } => None,
+            ScopeKind::Project { project_id, .. } => Some(project_id),
+        }
+    }
+
+    pub fn project_root(&self) -> Option<&Path> {
+        match &self.kind {
+            ScopeKind::Topic { .. } => None,
+            ScopeKind::Project { project_root, .. } => Some(project_root),
+        }
+    }
+}
+
+pub fn resolve(selection: &ScopeSelection, cwd: &Path) -> Result<ResolvedScope, WikiError> {
+    let mut source = EnvOnlySource;
+    resolve_with_source(selection, cwd, &mut source)
+}
+
+pub fn resolve_with_source(
+    selection: &ScopeSelection,
+    cwd: &Path,
+    source: &mut impl ConfigSource,
+) -> Result<ResolvedScope, WikiError> {
+    if let Some(topic) = selection.topic.as_deref() {
+        return resolve_topic(topic, source);
+    }
+
+    if selection.project {
+        return resolve_project(cwd);
+    }
+
+    if gobby_core::project::find_project_root(cwd).is_some() {
+        return resolve_project(cwd);
+    }
+
+    Err(WikiError::InvalidScope {
+        detail: "select a wiki scope with --topic <name> or run inside a Gobby project".to_string(),
+    })
+}
+
+fn resolve_topic(topic: &str, source: &mut impl ConfigSource) -> Result<ResolvedScope, WikiError> {
+    let topic = validate_topic_name(topic)?;
+    let hub = resolve_hub_path(source)?;
+    let root = hub.join("topics").join(&topic);
+
+    Ok(ResolvedScope::topic(topic, root, hub.join("wikis.json")))
+}
+
+fn resolve_project(cwd: &Path) -> Result<ResolvedScope, WikiError> {
+    let project_root =
+        gobby_core::project::find_project_root(cwd).ok_or_else(|| WikiError::InvalidScope {
+            detail: format!("no Gobby project found from {}", cwd.display()),
+        })?;
+    let project_id = gobby_core::project::read_project_id(&project_root).map_err(|error| {
+        WikiError::InvalidScope {
+            detail: format!(
+                "failed to read project identity from {}: {error}",
+                project_root.display()
+            ),
+        }
+    })?;
+    let root = project_root.join(".gobby").join("wiki");
+
+    Ok(ResolvedScope::project(project_id, project_root, root))
+}
+
+fn resolve_hub_path(source: &mut impl ConfigSource) -> Result<PathBuf, WikiError> {
+    if let Some(path) = std::env::var_os(HUB_ENV).filter(|value| !value.is_empty()) {
+        return Ok(PathBuf::from(path));
+    }
+
+    for key in HUB_CONFIG_KEYS {
+        let Some(value) = source.config_value(key) else {
+            continue;
+        };
+        let value = source
+            .resolve_value(&value)
+            .map_err(|error| WikiError::Config {
+                detail: format!("failed to resolve {key}: {error}"),
+            })?;
+        if !value.trim().is_empty() {
+            return Ok(expand_home(value.trim()));
+        }
+    }
+
+    default_hub_path()
+}
+
+fn validate_topic_name(topic: &str) -> Result<String, WikiError> {
+    let topic = topic.trim();
+    let invalid = topic.is_empty()
+        || topic == "."
+        || topic == ".."
+        || topic.contains('/')
+        || topic.contains('\\');
+    if invalid {
+        return Err(WikiError::InvalidScope {
+            detail: format!("invalid topic name `{topic}`"),
+        });
+    }
+
+    Ok(topic.to_string())
+}
+
+fn default_hub_path() -> Result<PathBuf, WikiError> {
+    let home = std::env::var_os("HOME").ok_or_else(|| WikiError::Config {
+        detail: "HOME is not set; configure GOBBY_WIKI_HUB or wiki.hub_path".to_string(),
+    })?;
+
+    Ok(PathBuf::from(home).join("wiki"))
+}
+
+fn expand_home(path: &str) -> PathBuf {
+    if path == "~" {
+        return std::env::var_os("HOME").map_or_else(|| PathBuf::from(path), PathBuf::from);
+    }
+
+    if let Some(rest) = path.strip_prefix("~/") {
+        return std::env::var_os("HOME")
+            .map(|home| PathBuf::from(home).join(rest))
+            .unwrap_or_else(|| PathBuf::from(path));
+    }
+
+    PathBuf::from(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gobby_core::config::ConfigSource;
+    use std::collections::HashMap;
+    use std::fs;
+
+    struct TestConfig {
+        values: HashMap<String, String>,
+    }
+
+    impl TestConfig {
+        fn with(key: &str, value: impl Into<String>) -> Self {
+            Self {
+                values: HashMap::from([(key.to_string(), value.into())]),
+            }
+        }
+    }
+
+    impl ConfigSource for TestConfig {
+        fn config_value(&mut self, key: &str) -> Option<String> {
+            self.values.get(key).cloned()
+        }
+
+        fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
+            Ok(value.to_string())
+        }
+    }
+
+    #[test]
+    fn resolves_global_topic() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let hub = tmp.path().join("knowledge");
+        let mut config = TestConfig::with("wiki.hub_path", hub.display().to_string());
+
+        let scope = resolve_with_source(
+            &crate::ScopeSelection::topic("rust-async"),
+            tmp.path(),
+            &mut config,
+        )
+        .expect("topic scope resolves");
+
+        assert_eq!(scope.identity(), "topic:rust-async");
+        assert_eq!(scope.root(), hub.join("topics").join("rust-async"));
+        assert_eq!(scope.registry_path(), hub.join("wikis.json"));
+    }
+
+    #[test]
+    fn resolves_project_scope_read_only() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let project = tmp.path().join("project");
+        let nested = project.join("src").join("bin");
+        fs::create_dir_all(project.join(".gobby")).expect("create .gobby");
+        fs::create_dir_all(&nested).expect("create nested dir");
+        let project_json = project.join(".gobby").join("project.json");
+        let original_project_json = r#"{
+  "id": "project-123",
+  "name": "demo"
+}
+"#;
+        fs::write(&project_json, original_project_json).expect("write project json");
+
+        let mut config = TestConfig::with(
+            "wiki.hub_path",
+            tmp.path().join("hub").display().to_string(),
+        );
+        let scope = resolve_with_source(&crate::ScopeSelection::project(), &nested, &mut config)
+            .expect("project scope resolves");
+
+        assert_eq!(scope.identity(), "project:project-123");
+        assert_eq!(scope.root(), project.join(".gobby").join("wiki"));
+        assert_eq!(
+            fs::read_to_string(project_json).expect("read project json"),
+            original_project_json
+        );
+        assert!(
+            !project.join(".gobby").join("wiki").exists(),
+            "resolution must not initialize the vault"
+        );
+    }
+}
