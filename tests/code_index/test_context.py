@@ -22,6 +22,7 @@ def _project(root: Path) -> IndexedProject:
     return IndexedProject(id="proj-1", root_path=str(root), total_files=1, total_symbols=1)
 
 
+@pytest.mark.asyncio
 async def test_context_graph_overview_resolves_project_root_and_delegates(
     tmp_path: Path,
 ) -> None:
@@ -38,6 +39,7 @@ async def test_context_graph_overview_resolves_project_root_and_delegates(
     gateway.graph_overview.assert_awaited_once_with(tmp_path, limit=5)
 
 
+@pytest.mark.asyncio
 async def test_context_clear_graph_uses_project_id_without_project_root() -> None:
     storage = MagicMock()
     gateway = MagicMock()
@@ -51,8 +53,10 @@ async def test_context_clear_graph_uses_project_id_without_project_root() -> Non
     gateway.graph_clear.assert_awaited_once_with("proj-1")
 
 
+@pytest.mark.asyncio
 async def test_context_rebuild_graph_uses_project_root_and_ignores_legacy_limit(
     tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     storage = MagicMock()
     storage.get_project_stats.return_value = _project(tmp_path)
@@ -60,12 +64,15 @@ async def test_context_rebuild_graph_uses_project_root_and_ignores_legacy_limit(
     gateway.graph_rebuild = AsyncMock(return_value={"success": True})
     context = CodeIndexContext(storage=storage, gcode_gateway=gateway)
 
-    result = await context.rebuild_graph("proj-1", limit=1)
+    with caplog.at_level("WARNING", logger="gobby.code_index.context"):
+        result = await context.rebuild_graph("proj-1", limit=1)
 
     assert result == {"success": True}
     gateway.graph_rebuild.assert_awaited_once_with(tmp_path)
+    assert "deprecated and ignored" in caplog.text
 
 
+@pytest.mark.asyncio
 async def test_context_raises_when_graph_disabled(tmp_path: Path) -> None:
     storage = MagicMock()
     storage.get_project_stats.return_value = _project(tmp_path)
@@ -79,6 +86,7 @@ async def test_context_raises_when_graph_disabled(tmp_path: Path) -> None:
         await context.graph_overview("proj-1")
 
 
+@pytest.mark.asyncio
 async def test_context_raises_when_project_root_missing() -> None:
     storage = MagicMock()
     storage.get_project_stats.return_value = None
@@ -86,3 +94,27 @@ async def test_context_raises_when_project_root_missing() -> None:
 
     with pytest.raises(CodeIndexProjectNotFound, match="proj-1"):
         await context.graph_file("proj-1", "src/app.py")
+
+
+def test_context_does_not_create_gateway_when_graph_disabled() -> None:
+    storage = MagicMock()
+    context = CodeIndexContext(storage=storage, config=CodeIndexConfig(graph_enabled=False))
+
+    assert context.gcode_gateway is None
+
+
+def test_context_continues_when_gateway_init_fails(caplog: pytest.LogCaptureFixture) -> None:
+    storage = MagicMock()
+
+    with (
+        pytest.MonkeyPatch.context() as monkeypatch,
+        caplog.at_level("WARNING", logger="gobby.code_index.context"),
+    ):
+        monkeypatch.setattr(
+            "gobby.code_index.context.GcodeGateway",
+            MagicMock(side_effect=RuntimeError("missing binary")),
+        )
+        context = CodeIndexContext(storage=storage, config=CodeIndexConfig(graph_enabled=True))
+
+    assert context.gcode_gateway is None
+    assert "Code graph gateway unavailable" in caplog.text

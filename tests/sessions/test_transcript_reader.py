@@ -8,7 +8,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.sessions.transcript_reader import TranscriptReader, clear_archive_cache
+from gobby.sessions.transcript_paths import _find_transcript_on_disk
+from gobby.sessions.transcript_reader import TranscriptReader, _filter_messages, clear_archive_cache
 from gobby.sessions.transcript_renderer import RenderedMessage
 
 
@@ -60,6 +61,30 @@ def _make_msg_dict(index: int, role: str = "assistant", content: str = "hi") -> 
         "timestamp": datetime.now(UTC).isoformat(),
         "raw_json": {},
     }
+
+
+def test_filter_messages_does_not_mutate_input() -> None:
+    messages = [{"role": "user", "content": "hello"}]
+
+    result = _filter_messages(messages, session_id="sess-1", role=None)
+
+    assert result == [{"role": "user", "content": "hello", "session_id": "sess-1"}]
+    assert messages == [{"role": "user", "content": "hello"}]
+
+
+def test_codex_transcript_scan_respects_exact_max_days(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    sessions = tmp_path / ".codex" / "sessions"
+    for day in ("03", "02", "01"):
+        (sessions / "2026" / "05" / day).mkdir(parents=True)
+    target = sessions / "2026" / "05" / "01" / "rollout-ext-abc.jsonl"
+    target.write_text("{}\n", encoding="utf-8")
+
+    assert _find_transcript_on_disk("codex", "ext-abc", max_days=2) is None
+    assert _find_transcript_on_disk("codex", "ext-abc", max_days=3) == str(target)
 
 
 def _write_gzip_archive(archive_dir: Path, external_id: str, lines: list[dict]) -> Path:

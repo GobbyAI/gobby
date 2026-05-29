@@ -41,7 +41,9 @@ from gobby.config.tmux import TmuxConfig
 logger = logging.getLogger(__name__)
 _RESERVED_EXTRA_ENV_KEYS = frozenset((*ALL_TERMINAL_ENV_VARS, CARGO_HOME, "GOBBY_MACHINE_ID"))
 
-# Spawned Codex agents need these Gobby proxy tools without interactive MCP approval prompts.
+# Spawned Codex agents must be able to use Gobby's progressive-discovery MCP flow without
+# interactive approval loops. Keep this allowlist narrow: these tools expose discovery,
+# schema lookup, dispatch, and session variables, not arbitrary filesystem or shell access.
 _CODEX_PREAPPROVED_GOBBY_TOOLS = [
     "list_mcp_servers",
     "list_tools",

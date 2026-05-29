@@ -47,8 +47,13 @@ class CodeIndexContext:
     ) -> None:
         self._storage = storage
         self._vector_store = vector_store
-        self._gcode_gateway = gcode_gateway or GcodeGateway()
         self._config = config or CodeIndexConfig()
+        self._gcode_gateway: GcodeGateway | None = gcode_gateway
+        if self._gcode_gateway is None and self._config.graph_enabled:
+            try:
+                self._gcode_gateway = GcodeGateway()
+            except Exception as e:
+                logger.warning("Code graph gateway unavailable during context init: %s", e)
         self._run_db = run_db
 
     @property
@@ -60,7 +65,7 @@ class CodeIndexContext:
         return self._vector_store
 
     @property
-    def gcode_gateway(self) -> GcodeGateway:
+    def gcode_gateway(self) -> GcodeGateway | None:
         return self._gcode_gateway
 
     @property
@@ -77,7 +82,7 @@ class CodeIndexContext:
         """Clear all index data for a project."""
         await self.run_db(self._storage.delete_project_index, project_id)
 
-        if self._config.graph_enabled:
+        if self._config.graph_enabled and self._gcode_gateway is not None:
             try:
                 result = await self._gcode_gateway.graph_clear(project_id)
                 if not result.get("success", False):
@@ -104,13 +109,15 @@ class CodeIndexContext:
 
     async def graph_overview(self, project_id: str, *, limit: int = 200) -> dict[str, Any]:
         """Return a gcode-owned overview graph for an indexed project."""
+        gateway = self._require_graph_enabled()
         root = await self._graph_project_root(project_id)
-        return await self._gcode_gateway.graph_overview(root, limit=limit)
+        return await gateway.graph_overview(root, limit=limit)
 
     async def graph_file(self, project_id: str, file_path: str) -> dict[str, Any]:
         """Return gcode-owned graph context for one indexed file."""
+        gateway = self._require_graph_enabled()
         root = await self._graph_project_root(project_id)
-        return await self._gcode_gateway.graph_file(root, file_path)
+        return await gateway.graph_file(root, file_path)
 
     async def graph_symbol_neighbors(
         self,
@@ -120,8 +127,9 @@ class CodeIndexContext:
         limit: int = 100,
     ) -> dict[str, Any]:
         """Return gcode-owned neighbors for one symbol."""
+        gateway = self._require_graph_enabled()
         root = await self._graph_project_root(project_id)
-        return await self._gcode_gateway.graph_neighbors(root, symbol_id, limit=limit)
+        return await gateway.graph_neighbors(root, symbol_id, limit=limit)
 
     async def graph_blast_radius(
         self,
@@ -133,8 +141,9 @@ class CodeIndexContext:
         limit: int = 100,
     ) -> dict[str, Any]:
         """Return gcode-owned transitive impact graph."""
+        gateway = self._require_graph_enabled()
         root = await self._graph_project_root(project_id)
-        return await self._gcode_gateway.graph_blast_radius(
+        return await gateway.graph_blast_radius(
             root,
             symbol_id=symbol_id,
             file_path=file_path,
@@ -144,14 +153,23 @@ class CodeIndexContext:
 
     async def clear_graph(self, project_id: str) -> dict[str, Any]:
         """Clear only the gcode-owned code graph projection for one project id."""
-        self._require_graph_enabled()
-        return await self._gcode_gateway.graph_clear(project_id)
+        gateway = self._require_graph_enabled()
+        return await gateway.graph_clear(project_id)
 
     async def rebuild_graph(self, project_id: str, limit: int = 10_000) -> dict[str, Any]:
-        """Rebuild the gcode-owned code graph projection for one indexed project."""
-        del limit
+        """Rebuild the gcode-owned code graph projection for one indexed project.
+
+        ``limit`` is a deprecated compatibility parameter. Rebuild now delegates to
+        gcode, which replays the full indexed project.
+        """
+        if limit != 10_000:
+            logger.warning(
+                "CodeIndexContext.rebuild_graph(limit=%s) is deprecated and ignored",
+                limit,
+            )
+        gateway = self._require_graph_enabled()
         root = await self._graph_project_root(project_id)
-        return await self._gcode_gateway.graph_rebuild(root)
+        return await gateway.graph_rebuild(root)
 
     async def _graph_project_root(self, project_id: str) -> Path:
         self._require_graph_enabled()
@@ -160,6 +178,7 @@ class CodeIndexContext:
             raise CodeIndexProjectNotFound(f"Code index project not found: {project_id}")
         return Path(project.root_path).expanduser()
 
-    def _require_graph_enabled(self) -> None:
-        if not self._config.graph_enabled:
+    def _require_graph_enabled(self) -> GcodeGateway:
+        if not self._config.graph_enabled or self._gcode_gateway is None:
             raise CodeIndexGraphUnavailable("Code graph not available")
+        return self._gcode_gateway

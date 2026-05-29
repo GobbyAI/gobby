@@ -241,7 +241,7 @@ async def test_sync_worker_delegates_graph_sync_to_gcode_gateway(tmp_path: Path)
 
     assert gcode_gateway.synced_files == [(tmp_path, pending_file.file_path)]
     storage.mark_graph_sync_attempted.assert_not_called()
-    storage.mark_graph_synced.assert_not_called()
+    storage.mark_graph_synced.assert_called_once_with(pending_file.id)
 
 
 @pytest.mark.asyncio
@@ -582,7 +582,7 @@ async def test_sync_file_uses_current_row_for_sync_state_and_marker_id(tmp_path:
     assert vector_store.calls == []
     storage.mark_vectors_synced.assert_not_called()
     storage.mark_graph_sync_attempted.assert_not_called()
-    storage.mark_graph_synced.assert_not_called()
+    storage.mark_graph_synced.assert_called_once_with(current_file.id)
     assert gcode_gateway.synced_files == [(tmp_path, file_path)]
 
 

@@ -48,9 +48,9 @@ class TestEnvironmentVariableConstants:
             assert var == var.upper(), f"{var} should be uppercase"
 
     def test_constants_start_with_gobby(self) -> None:
-        """All constants are prefixed with GOBBY_."""
+        """All Gobby-owned constants are prefixed with GOBBY_."""
         for var in ALL_TERMINAL_ENV_VARS:
-            if var == UV_CACHE_DIR:
+            if var in {UV_CACHE_DIR, CARGO_HOME}:
                 continue
             assert var.startswith("GOBBY_"), f"{var} should start with GOBBY_"
 
@@ -67,6 +67,7 @@ class TestEnvironmentVariableConstants:
             GOBBY_PROMPT,
             GOBBY_PROMPT_FILE,
             UV_CACHE_DIR,
+            CARGO_HOME,
         }
         assert set(ALL_TERMINAL_ENV_VARS) == expected
 
@@ -88,6 +89,7 @@ class TestGetTerminalEnvVars:
         assert result[GOBBY_AGENT_RUN_ID] == "run-123"
         assert result[GOBBY_PROJECT_ID] == "proj-abc"
         assert Path(result[UV_CACHE_DIR]).parts[-3:] == ("gobby", "uv-cache", "sess-child")
+        assert Path(result[CARGO_HOME]).parts[-3:] == ("gobby", "cargo-home", "sess-child")
 
     def test_uv_cache_dir_sanitizes_session_id(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """uv cache paths are writable temp paths scoped to safe session IDs."""

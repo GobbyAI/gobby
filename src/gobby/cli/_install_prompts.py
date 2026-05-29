@@ -264,7 +264,7 @@ def _prompt_hub_api_keys(
                             category="integration",
                             description=f"API key for {hub_name} skill hub",
                         )
-                        click.echo("    Stored credential")
+                        click.echo(f"    Stored credential for {hub_name} ({auth_key_name})")
                         result["stored"] += 1
                     except Exception as e:
                         logger.warning("Failed to store hub credential", exc_info=e)
@@ -342,11 +342,11 @@ def _prompt_api_keys(
                             category=key_info["category"],
                             description=key_info["description"],
                         )
-                        click.echo("    Stored secret")
+                        click.echo("    Stored credential")
                         result["stored"] += 1
                     except Exception as e:
-                        logger.warning("Failed to store prompted secret", exc_info=e)
-                        click.echo("    Warning: Failed to store secret")
+                        logger.warning("Failed to store prompted credential", exc_info=e)
+                        click.echo("    Warning: Failed to store credential")
                 else:
                     result["skipped"] += 1
 

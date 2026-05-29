@@ -203,6 +203,8 @@ async def remove_server(
         raise ValueError(f"MCP server '{name}' not found")
 
     config = manager._configs[name]
+    if config.transport == "internal":
+        raise ValueError(f"Internal MCP server '{name}' cannot be enabled or disabled")
     effective_project_id = project_id or config.project_id
 
     if name in manager._connections:
@@ -235,6 +237,9 @@ async def set_server_enabled(
         raise ValueError(f"MCP server '{name}' not found")
 
     config = manager._configs[name]
+    if config.transport == "internal":
+        raise ValueError(f"Internal MCP server '{name}' cannot be enabled or disabled")
+
     effective_project_id = project_id or config.project_id
 
     if config.enabled == enabled:

@@ -283,6 +283,16 @@ class TestPromptListing:
         assert len(overrides) == 1
         assert overrides[0].name == "test/override"
 
+    def test_get_and_delete_override(self, manager) -> None:
+        """Test prompt override lookup and deletion helpers."""
+        manager.create_prompt(name="test/bundled", content="B", scope="bundled")
+        override = manager.create_prompt(name="test/bundled", content="O", scope="global")
+
+        assert manager.get_override("test/bundled") == override
+        assert manager.delete_override("test/bundled") is True
+        assert manager.get_override("test/bundled") is None
+        assert manager.get_by_name("test/bundled").content == "B"
+
     def test_count_prompts(self, manager) -> None:
         """Test counting prompts."""
         manager.create_prompt(name="test/one", content="1", scope="bundled")

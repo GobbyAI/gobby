@@ -18,7 +18,7 @@ from gobby.code_index.gcode_gateway import (
 )
 from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 GCODE_PIN = MANAGED_BIN_VERSION_PINS["gcode"]
 GCODE_PIN_STDOUT = f"gcode {GCODE_PIN}\n".encode()
 

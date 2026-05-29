@@ -174,7 +174,7 @@ def test_clear_graph_returns_500_on_exception(client: TestClient, mock_server: M
     response = client.post("/api/code-index/graph/clear", params={"project_id": "proj-1"})
 
     assert response.status_code == 500
-    assert response.json()["detail"] == "boom"
+    assert response.json()["detail"] == "Code graph request failed"
 
 
 def test_rebuild_graph_returns_500_on_exception(client: TestClient, mock_server: MagicMock) -> None:
@@ -183,7 +183,7 @@ def test_rebuild_graph_returns_500_on_exception(client: TestClient, mock_server:
     response = client.post("/api/code-index/graph/rebuild", params={"project_id": "proj-1"})
 
     assert response.status_code == 500
-    assert response.json()["detail"] == "boom"
+    assert response.json()["detail"] == "Code graph request failed"
 
 
 def test_clear_graph_preserves_http_exception(client: TestClient, mock_server: MagicMock) -> None:
@@ -270,4 +270,4 @@ def test_graph_route_returns_500_when_gcode_command_fails(
     )
 
     assert response.status_code == 500
-    assert "gcode exited 2: boom" in response.json()["detail"]
+    assert response.json()["detail"] == "Code graph request failed"

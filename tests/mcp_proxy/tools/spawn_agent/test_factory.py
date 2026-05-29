@@ -258,6 +258,48 @@ class TestSpawnAgentDefaults:
         assert mock_spawn_impl.call_args.kwargs["parent_session_id"] == "parent-uuid"
         assert mock_spawn_impl.call_args.kwargs["project_path"] == str(tmp_path)
 
+    @pytest.mark.asyncio
+    async def test_explicit_project_path_does_not_fall_back_to_current_context(
+        self,
+        mock_runner,
+    ) -> None:
+        from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
+
+        agent_body = AgentDefinitionBody(name="default", provider="claude")
+        registry = create_spawn_agent_registry(mock_runner, db=MagicMock())
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory._context_from_project_path",
+                return_value=None,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory.get_project_context",
+                return_value={"id": "current-project", "project_path": "/current/project"},
+            ) as mock_current_context,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body",
+                return_value=agent_body,
+            ) as mock_load,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory.spawn_agent_impl",
+                new_callable=AsyncMock,
+                return_value={"success": True},
+            ) as mock_spawn_impl,
+        ):
+            result = await registry.call(
+                "spawn_agent",
+                {
+                    "prompt": "Use explicit path",
+                    "project_path": "/explicit/project",
+                },
+            )
+
+        assert result["success"] is True
+        mock_current_context.assert_not_called()
+        assert mock_load.call_args.kwargs["project_id"] is None
+        assert mock_spawn_impl.call_args.kwargs["project_path"] == "/explicit/project"
+
 
 class TestSpawnAgentParamOverrides:
     """Tests for tool params overriding agent definition values."""

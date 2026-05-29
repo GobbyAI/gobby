@@ -391,6 +391,36 @@ class LocalPromptManager:
         )
         return PromptRecord.from_row(row) if row else None
 
+    def get_override(self, name: str, project_id: str | None = None) -> PromptRecord | None:
+        """Get the active editable override for a prompt name."""
+        if project_id:
+            row = self.db.fetchone(
+                """
+                SELECT * FROM prompts
+                WHERE name = %s
+                  AND (
+                    (scope = 'project' AND project_id = %s)
+                    OR (scope = 'global' AND project_id IS NULL)
+                  )
+                ORDER BY CASE scope WHEN 'project' THEN 1 WHEN 'global' THEN 2 END
+                LIMIT 1
+                """,
+                (name, project_id),
+            )
+        else:
+            row = self.db.fetchone(
+                "SELECT * FROM prompts WHERE name = %s AND scope = 'global' AND project_id IS NULL",
+                (name,),
+            )
+        return PromptRecord.from_row(row) if row else None
+
+    def delete_override(self, name: str, project_id: str | None = None) -> bool:
+        """Delete the active editable override for a prompt name."""
+        record = self.get_override(name, project_id=project_id)
+        if record is None:
+            return False
+        return self.delete_prompt(record.id)
+
     def update_prompt(
         self,
         prompt_id: str,

@@ -520,8 +520,12 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
         except HTTPException:
             raise
         except Exception as e:
-            logger.warning(f"Failed to list PRs: {e}")
-            return {"prs": [], "github_available": True, "error": "Failed to list pull requests"}
+            logger.warning("Failed to list PRs: %s", e, exc_info=True)
+            return {
+                "prs": [],
+                "github_available": True,
+                "error": f"Failed to list pull requests: {e}",
+            }
 
     @router.get("/prs/{number}")
     async def get_pull_request(
@@ -573,7 +577,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
             )
             return {"checks": checks if isinstance(checks, list) else [], "status": "ok"}
         except Exception as e:
-            logger.warning(f"Failed to get PR checks: {e}")
+            logger.warning("Failed to get PR checks: %s", e, exc_info=True)
             return {
                 "checks": [],
                 "status": "error",
@@ -637,8 +641,12 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
         except HTTPException:
             raise
         except Exception as e:
-            logger.warning(f"Failed to list issues: {e}")
-            return {"issues": [], "github_available": True, "error": "Failed to list issues"}
+            logger.warning("Failed to list issues: %s", e, exc_info=True)
+            return {
+                "issues": [],
+                "github_available": True,
+                "error": f"Failed to list issues: {e}",
+            }
 
     @router.get("/issues/{number}")
     async def get_issue(
@@ -662,7 +670,7 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
         except HTTPException:
             raise
         except Exception as e:
-            logger.warning(f"Failed to get issue #{number}: {e}")
+            logger.warning("Failed to get issue #%s: %s", number, e, exc_info=True)
             raise HTTPException(502, "Failed to fetch issue") from e
 
     @router.get("/cicd/runs")
@@ -715,8 +723,12 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
             _set_cached(cache_key, result)
             return result
         except Exception as e:
-            logger.warning(f"Failed to list CI/CD runs: {e}")
-            return {"runs": [], "github_available": True, "error": "Failed to list CI/CD runs"}
+            logger.warning("Failed to list CI/CD runs: %s", e, exc_info=True)
+            return {
+                "runs": [],
+                "github_available": True,
+                "error": f"Failed to list CI/CD runs: {e}",
+            }
 
     # --- Worktrees ---
 

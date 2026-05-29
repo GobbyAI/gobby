@@ -122,7 +122,7 @@ def _notification_severity_from_payload(data: Mapping[str, Any]) -> str | None:
 
 
 def normalize_notification_input(data: dict[str, Any]) -> dict[str, Any]:
-    """Backfill strict NotificationInput fields while preserving extra payload keys."""
+    """Backfill strict NotificationInput fields in place and return the same dict."""
     data["notification_type"] = notification_type_from_payload(data)
     data["message"] = notification_message_from_payload(data)
 

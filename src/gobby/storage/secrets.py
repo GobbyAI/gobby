@@ -7,6 +7,7 @@ resolves `$secret:NAME` references internally at connection time.
 """
 
 import base64
+import hashlib
 import logging
 import os
 import re
@@ -32,6 +33,12 @@ SALT_FILE = Path("~/.gobby/.secret_salt").expanduser()
 
 # Valid categories for secrets
 VALID_CATEGORIES = {"general", "llm", "mcp_server", "memory", "integration"}
+
+
+def _safe_secret_identifier(normalized_name: str) -> str:
+    """Return a deterministic non-reversible identifier for logs."""
+    digest = hashlib.sha256(normalized_name.encode("utf-8")).hexdigest()
+    return f"sha256:{digest[:12]}"
 
 
 class SecretInfo:
@@ -207,7 +214,10 @@ class SecretStore:
             decrypted: str = fernet.decrypt(row["encrypted_value"].encode("utf-8")).decode("utf-8")
             return decrypted
         except InvalidToken:
-            logger.error("Failed to decrypt configured secret - machine ID may have changed")
+            logger.error(
+                "Failed to decrypt configured secret %s - machine ID may have changed",
+                _safe_secret_identifier(name),
+            )
             return None
 
     def delete(self, name: str) -> bool:
@@ -271,7 +281,10 @@ class SecretStore:
             value = self.get(name)
             if value is not None:
                 return value
-            logger.warning("Configured secret reference not found")
+            logger.warning(
+                "Configured secret reference not found: %s",
+                _safe_secret_identifier(self._normalize_name(name)),
+            )
             return match.group(0)
 
         return SECRET_REF_PATTERN.sub(_replace, text)

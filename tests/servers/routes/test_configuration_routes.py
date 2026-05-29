@@ -1034,6 +1034,25 @@ class TestExportImport:
         assert store.get("databases.falkordb.rrf_k") == 77
         assert SecretStore(postgres_db).get("requirepass") == "Valid-123"
 
+    def test_import_config_store_invalid_falkordb_requirepass_raises_http_exception(
+        self, postgres_client: TestClient, postgres_db: Any
+    ) -> None:
+        response = postgres_client.post(
+            "/api/config/import",
+            json={
+                "config_store": {
+                    "daemon_port": 9999,
+                    FALKOR_REQUIREPASS_KEY: "contains space",
+                }
+            },
+        )
+
+        assert response.status_code == 422
+        assert response.json()["detail"] == "FalkorDB password must not contain whitespace"
+        store = ConfigStore(postgres_db)
+        assert store.get("daemon_port") is None
+        assert store.get(FALKOR_REQUIREPASS_KEY) is None
+
     def test_import_legacy_config_falkordb_requirepass_encrypts(
         self, postgres_client: TestClient, postgres_db: Any, mock_machine_id: Any
     ) -> None:
@@ -1338,6 +1357,20 @@ class TestUISettings:
         response = client.put("/api/config/ui-settings", json={})
         assert response.status_code == 200
         assert response.json()["ok"] is True
+
+    def test_get_backend_error_returns_500(self, client: TestClient) -> None:
+        with patch.object(ConfigStore, "get", side_effect=RuntimeError("db down")):
+            response = client.get("/api/config/ui-settings")
+
+        assert response.status_code == 500
+        assert response.json()["detail"] == "Internal server error"
+
+    def test_put_backend_error_returns_500(self, client: TestClient) -> None:
+        with patch.object(ConfigStore, "set_many", side_effect=RuntimeError("db down")):
+            response = client.put("/api/config/ui-settings", json={"fontSize": 18})
+
+        assert response.status_code == 500
+        assert response.json()["detail"] == "Internal server error"
 
     def test_ui_settings_isolated_from_daemon_config(
         self, client: TestClient, temp_db: Any

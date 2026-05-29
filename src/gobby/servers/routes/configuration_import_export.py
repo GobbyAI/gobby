@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -54,6 +55,56 @@ def _validate_imported_secret_values(secret_values: dict[str, Any]) -> dict[str,
             raise ValueError(f"Secret '{key}' must be a string, got {type(value).__name__}")
         validated[key] = value
     return validated
+
+
+def persist_imported_config(
+    *,
+    flat_config: dict[str, Any],
+    config_store: Any,
+    secret_store_provider: Callable[[], Any],
+    config_secret_keys: set[str],
+    restart_touched_keys: set[str],
+) -> int:
+    """Persist validated import values into config_store and secret storage."""
+    secret_references, secret_values, plain_values = partition_config_entries(
+        flat_config,
+        config_secret_keys,
+    )
+
+    validated_secret_values = _validate_imported_secret_values(secret_values)
+    try:
+        for key, value in validated_secret_values.items():
+            if value is not None and value != "":
+                validate_falkordb_secret(key, value)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+
+    validation_flat = validation_flat_for_secret_entries(
+        flat_config,
+        set(secret_values),
+    )
+    DaemonConfig(**unflatten_config(validation_flat))
+
+    count = 0
+    with config_store.db.transaction():
+        config_store.delete_all()
+        if secret_references:
+            count += config_store.set_many(secret_references, source="import")
+        if validated_secret_values:
+            secret_store = secret_store_provider()
+            for key, value in validated_secret_values.items():
+                if value is None or value == "":
+                    config_store.clear_secret(key, secret_store)
+                else:
+                    config_store.set_secret(key, value, secret_store, source="import")
+                    count += 1
+        if plain_values:
+            count += config_store.set_many(plain_values, source="import")
+        mark_secret_keys(config_store, set(secret_references) | config_secret_keys)
+
+    restart_touched_keys.update(secret_references)
+    restart_touched_keys.update(secret_values)
+    return count
 
 
 def register_import_export_routes(
@@ -122,51 +173,14 @@ def register_import_export_routes(
                 key for key in (request.config_secret_keys or []) if isinstance(key, str) and key
             }
 
-            def persist_imported_config(flat_config: dict[str, Any]) -> int | JSONResponse:
-                secret_references, secret_values, plain_values = partition_config_entries(
-                    flat_config,
-                    config_secret_keys,
-                )
-
-                validated_secret_values = _validate_imported_secret_values(secret_values)
-                try:
-                    for key, value in validated_secret_values.items():
-                        if value is not None and value != "":
-                            validate_falkordb_secret(key, value)
-                except ValueError as e:
-                    return falkordb_validation_response(e)
-
-                validation_flat = validation_flat_for_secret_entries(
-                    flat_config,
-                    set(secret_values),
-                )
-                DaemonConfig(**unflatten_config(validation_flat))
-
-                count = 0
-                with config_store.db.transaction():
-                    config_store.delete_all()
-                    if secret_references:
-                        count += config_store.set_many(secret_references, source="import")
-                    if validated_secret_values:
-                        secret_store = context.get_secret_store()
-                        for key, value in validated_secret_values.items():
-                            if value is None or value == "":
-                                config_store.clear_secret(key, secret_store)
-                            else:
-                                config_store.set_secret(key, value, secret_store, source="import")
-                                count += 1
-                    if plain_values:
-                        count += config_store.set_many(plain_values, source="import")
-                    mark_secret_keys(config_store, set(secret_references) | config_secret_keys)
-
-                restart_touched_keys.update(secret_references)
-                restart_touched_keys.update(secret_values)
-                return count
-
             if request.config_store:
-                count = persist_imported_config(request.config_store)
-                if isinstance(count, JSONResponse):
-                    return count
+                count = persist_imported_config(
+                    flat_config=request.config_store,
+                    config_store=config_store,
+                    secret_store_provider=context.get_secret_store,
+                    config_secret_keys=config_secret_keys,
+                    restart_touched_keys=restart_touched_keys,
+                )
                 summary_parts.append(f"config restored ({count} keys)")
                 config_imported = True
 
@@ -186,9 +200,13 @@ def register_import_export_routes(
                 diff = {
                     k: v for k, v in flat.items() if k not in defaults_flat or defaults_flat[k] != v
                 }
-                count = persist_imported_config(diff)
-                if isinstance(count, JSONResponse):
-                    return count
+                count = persist_imported_config(
+                    flat_config=diff,
+                    config_store=config_store,
+                    secret_store_provider=context.get_secret_store,
+                    config_secret_keys=config_secret_keys,
+                    restart_touched_keys=restart_touched_keys,
+                )
                 summary_parts.append(f"config restored ({count} keys)")
                 config_imported = True
 
@@ -204,14 +222,10 @@ def register_import_export_routes(
                     version = str(frontmatter.get("version", "1.0"))
                     variables = frontmatter.get("variables")
 
-                    existing = manager.db.fetchone(
-                        "SELECT id FROM prompts WHERE name = %s AND scope = 'global' "
-                        "AND project_id IS NULL",
-                        (name,),
-                    )
+                    existing = manager.get_override(name)
                     if existing:
                         manager.update_prompt(
-                            prompt_id=existing["id"],
+                            prompt_id=existing.id,
                             description=description,
                             content=body.strip() if body.strip() else content,
                             version=version,

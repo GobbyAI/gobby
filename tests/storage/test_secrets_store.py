@@ -300,6 +300,27 @@ class TestSecretStoreGet:
             result = store_b.get("KEY")
             assert result is None
 
+    def test_get_invalid_token_logs_safe_identifier(
+        self,
+        temp_db: HubDatabase,
+        salt_dir: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Decrypt failures log a deterministic hash, not the secret name."""
+        with patch("gobby.storage.secrets.get_machine_id", return_value="machine-A"):
+            store_a = SecretStore(temp_db)
+            store_a.set("KEY", "secret")
+
+        with (
+            patch("gobby.storage.secrets.get_machine_id", return_value="machine-B"),
+            caplog.at_level("ERROR", logger="gobby.storage.secrets"),
+        ):
+            store_b = SecretStore(temp_db)
+            assert store_b.get("KEY") is None
+
+        assert "sha256:" in caplog.text
+        assert "KEY" not in caplog.text
+
     def test_get_various_value_types(self, store: SecretStore) -> None:
         """Encrypt/decrypt handles various string content."""
         test_values = [
@@ -413,6 +434,18 @@ class TestSecretStoreResolve:
     def test_resolve_unresolved_stays(self, store: SecretStore) -> None:
         result = store.resolve("Bearer $secret:MISSING_KEY")
         assert result == "Bearer $secret:MISSING_KEY"
+
+    def test_resolve_missing_reference_logs_safe_identifier(
+        self,
+        store: SecretStore,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        with caplog.at_level("WARNING", logger="gobby.storage.secrets"):
+            result = store.resolve("Bearer $secret:MISSING_KEY")
+
+        assert result == "Bearer $secret:MISSING_KEY"
+        assert "sha256:" in caplog.text
+        assert "MISSING_KEY" not in caplog.text
 
     def test_resolve_no_refs(self, store: SecretStore) -> None:
         result = store.resolve("plain text no refs")

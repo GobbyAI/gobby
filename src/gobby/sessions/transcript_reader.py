@@ -343,9 +343,8 @@ def _filter_messages(
     role: str | None,
 ) -> list[dict[str, Any]]:
     """Attach session ID and apply optional role filtering."""
-    for msg in messages:
-        msg["session_id"] = session_id
+    normalized = [{**msg, "session_id": session_id} for msg in messages]
 
     if role:
-        return [msg for msg in messages if msg["role"] == role]
-    return messages
+        return [msg for msg in normalized if msg.get("role") == role]
+    return normalized

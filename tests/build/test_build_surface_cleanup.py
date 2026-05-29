@@ -1,5 +1,6 @@
 """Tests for the cleaned build option surface."""
 
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -39,6 +40,18 @@ def test_http_build_options_tracks_profile_and_unattended_explicitness() -> None
     assert explicit_opts.unattended_explicit is True
 
 
+def test_http_build_options_resolves_missing_clones_dir_without_directory_check(
+    tmp_path: Path,
+) -> None:
+    from gobby.servers.routes.build import BuildRequest, _build_options
+
+    missing = tmp_path / "new-clones-root"
+
+    opts = _build_options(BuildRequest(input_ref="#42", clones_dir=str(missing)))
+
+    assert opts.clones_dir == missing.resolve()
+
+
 def test_quick_and_no_merge_flags_propagate(monkeypatch: pytest.MonkeyPatch) -> None:
     from gobby.cli.build import build_command
 
@@ -57,7 +70,10 @@ def test_quick_and_no_merge_flags_propagate(monkeypatch: pytest.MonkeyPatch) -> 
             tick_dispatched=0,
         )
 
-    monkeypatch.setattr("gobby.cli.build.resolve_project_id", lambda **_kwargs: "project-1")
+    monkeypatch.setattr(
+        "gobby.cli.build.resolve_project_id",
+        lambda *_args, **_kwargs: "project-1",
+    )
     monkeypatch.setattr("gobby.cli.build._open_database", lambda: _ClosableDb())
     monkeypatch.setattr("gobby.cli.build._try_daemon_build", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("gobby.cli.build.build", fake_build)

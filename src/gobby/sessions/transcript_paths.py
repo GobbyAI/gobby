@@ -40,9 +40,9 @@ def _find_transcript_on_disk(
                     for day_dir in sorted(month_dir.iterdir(), reverse=True):
                         if not day_dir.is_dir():
                             continue
-                        if inspected_days >= max_days:
-                            return None
                         inspected_days += 1
+                        if inspected_days > max_days:
+                            return None
                         matches = list(day_dir.glob(f"*{external_id}*"))
                         if matches:
                             return str(matches[0])

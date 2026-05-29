@@ -415,6 +415,19 @@ class TestMCPClientManagerAddServer:
         )
 
     @pytest.mark.asyncio
+    async def test_set_server_enabled_rejects_internal_servers(self) -> None:
+        config = MCPServerConfig(
+            name="gobby-tasks",
+            project_id=None,
+            transport="internal",
+            enabled=True,
+        )
+        manager = MCPClientManager(server_configs=[config])
+
+        with pytest.raises(ValueError, match="Internal MCP server"):
+            await manager.set_server_enabled("gobby-tasks", False)
+
+    @pytest.mark.asyncio
     async def test_add_server_handles_list_tools_failure(self):
         """Test add_server handles failure when listing tools."""
         manager = MCPClientManager(server_configs=[])

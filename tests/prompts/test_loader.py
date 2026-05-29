@@ -267,6 +267,18 @@ class TestPromptTemplate:
         assert frontmatter["description"] == "test"
         assert body == "Prompt body\n"
 
+    def test_parse_frontmatter_coerces_non_mapping_yaml(self) -> None:
+        frontmatter, body = parse_frontmatter("---\n- not\n- mapping\n---\nPrompt body\n")
+
+        assert frontmatter == {}
+        assert body == "Prompt body\n"
+
+    def test_parse_frontmatter_accepts_terminal_delimiter_without_newline(self) -> None:
+        frontmatter, body = parse_frontmatter("---\ndescription: test\n---")
+
+        assert frontmatter == {"description": "test"}
+        assert body == ""
+
 
 class TestBundledTemplates:
     """Tests to verify all bundled default templates load correctly."""

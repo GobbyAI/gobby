@@ -125,6 +125,7 @@ def get_terminal_env_vars(
         GOBBY_AGENT_DEPTH: str(agent_depth),
         GOBBY_MAX_AGENT_DEPTH: str(max_agent_depth),
         UV_CACHE_DIR: ensure_agent_uv_cache_dir(session_id),
+        CARGO_HOME: ensure_agent_cargo_home_dir(session_id),
     }
 
     if parent_session_id:
@@ -158,4 +159,5 @@ ALL_TERMINAL_ENV_VARS = [
     GOBBY_PROMPT,
     GOBBY_PROMPT_FILE,
     UV_CACHE_DIR,
+    CARGO_HOME,
 ]

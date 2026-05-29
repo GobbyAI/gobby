@@ -274,11 +274,18 @@ export const TasksTab = memo(function TasksTab({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
+      const payload = await response.json().catch(() => null);
       if (!response.ok) {
-        throw new Error("Failed to create task");
+        const record = payload as { detail?: unknown; error?: unknown } | null;
+        const detail = record?.detail ?? record?.error;
+        throw new Error(
+          typeof detail === "string"
+            ? detail
+            : `Failed to create task (${response.status})`,
+        );
       }
       fetchTasks();
-      return response.json();
+      return payload;
     },
     [projectId, fetchTasks],
   );

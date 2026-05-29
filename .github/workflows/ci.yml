@@ -402,6 +402,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.requires_full_ci == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     env:
       GOBBY_POSTGRES_TEST_CONTAINER: postgres-test
       GOBBY_POSTGRES_TEST_DB: gobby_test
@@ -524,6 +526,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.schemas_changed == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Check Out Repo
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -590,6 +594,8 @@ jobs:
       - schema-mirror
     if: always()
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Check gated jobs
         shell: bash

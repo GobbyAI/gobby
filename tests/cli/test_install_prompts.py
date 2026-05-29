@@ -50,7 +50,9 @@ def patched_deps():
 
 
 class TestPromptHubApiKeys:
-    def test_prompts_for_missing_key(self, patched_deps) -> None:
+    def test_prompts_for_missing_key(
+        self, patched_deps, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         patched_deps["load"].return_value = _config_with_hubs(
             {
                 "skillsmp": HubConfig(
@@ -74,6 +76,7 @@ class TestPromptHubApiKeys:
         assert result["already_configured"] == 0
         assert result["skipped"] == 0
         assert result["unresolved"] == []
+        assert "Stored credential for skillsmp (SKILLSMP_API_KEY)" in capsys.readouterr().out
 
     def test_skips_when_secret_exists(self, patched_deps) -> None:
         patched_deps["load"].return_value = _config_with_hubs(

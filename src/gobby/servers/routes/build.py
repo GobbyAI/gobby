@@ -137,8 +137,14 @@ def _existing_directory(value: str | None, *, field_name: str) -> Path | None:
     return path
 
 
+def _resolved_path(value: str | None) -> Path | None:
+    if value is None:
+        return None
+    return Path(value).expanduser().resolve()
+
+
 def _build_options(request_data: BuildRequest) -> BuildOptions:
-    clones_dir = _existing_directory(request_data.clones_dir, field_name="clones_dir")
+    clones_dir = _resolved_path(request_data.clones_dir)
     cwd = _existing_directory(request_data.cwd, field_name="cwd")
     isolation = resolve_build_isolation(
         isolation=request_data.isolation,

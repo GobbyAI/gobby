@@ -27,6 +27,71 @@ from gobby.storage.config_store import flatten_config, is_secret_key_name, unfla
 logger = logging.getLogger(__name__)
 
 
+def _compute_diff(
+    parsed_flat: dict[str, Any],
+    defaults_flat: dict[str, Any],
+    masked_secret_keys: set[str],
+) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in parsed_flat.items()
+        if key not in masked_secret_keys
+        and (key not in defaults_flat or defaults_flat[key] != value)
+    }
+
+
+def _categorize_secret_entries(
+    diff: dict[str, Any],
+    existing_secret_keys: set[str],
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
+    secret_entries = {
+        key: value
+        for key, value in diff.items()
+        if is_secret_key_name(key) or key in existing_secret_keys
+    }
+    secret_reference_entries = {
+        key: value for key, value in secret_entries.items() if is_secret_reference(value)
+    }
+    secret_value_entries = {
+        key: value for key, value in secret_entries.items() if key not in secret_reference_entries
+    }
+    plain_entries = {key: value for key, value in diff.items() if key not in secret_entries}
+    return secret_entries, secret_reference_entries, secret_value_entries, plain_entries
+
+
+def _apply_transactional_changes(
+    *,
+    context: ConfigurationRouteContext,
+    masked_secret_keys: set[str],
+    secret_reference_entries: dict[str, Any],
+    secret_value_entries: dict[str, Any],
+    plain_entries: dict[str, Any],
+) -> tuple[int, int]:
+    config_store = context.get_config_store()
+    count = 0
+    with config_store.db.transaction():
+        deleted_count = delete_all_except(config_store, masked_secret_keys)
+        if secret_reference_entries:
+            count += config_store.set_many(secret_reference_entries, source="user")
+            mark_secret_keys(config_store, set(secret_reference_entries))
+        if secret_value_entries:
+            secret_store = context.get_secret_store()
+            for key, value in secret_value_entries.items():
+                if value is None or value == "":
+                    config_store.clear_secret(key, secret_store)
+                elif not isinstance(value, str):
+                    raise HTTPException(
+                        400,
+                        f"Secret '{key}' must be a string, got {type(value).__name__}",
+                    )
+                else:
+                    config_store.set_secret(key, value, secret_store, source="user")
+                    count += 1
+        if plain_entries:
+            count += config_store.set_many(plain_entries, source="user")
+    return count, deleted_count
+
+
 def register_template_routes(router: APIRouter, context: ConfigurationRouteContext) -> None:
     """Register YAML template routes."""
 
@@ -91,48 +156,20 @@ def register_template_routes(router: APIRouter, context: ConfigurationRouteConte
 
             new_config = DaemonConfig(**unflatten_config(validation_flat))
 
-            diff = {
-                k: v
-                for k, v in parsed_flat.items()
-                if k not in masked_secret_keys and (k not in defaults_flat or defaults_flat[k] != v)
-            }
-
-            secret_entries = {
-                key: value
-                for key, value in diff.items()
-                if is_secret_key_name(key) or key in existing_secret_keys
-            }
-            secret_reference_entries = {
-                key: value for key, value in secret_entries.items() if is_secret_reference(value)
-            }
-            secret_value_entries = {
-                key: value
-                for key, value in secret_entries.items()
-                if key not in secret_reference_entries
-            }
-            plain_entries = {key: value for key, value in diff.items() if key not in secret_entries}
-
-            count = 0
-            with config_store.db.transaction():
-                deleted_count = delete_all_except(config_store, masked_secret_keys)
-                if secret_reference_entries:
-                    count += config_store.set_many(secret_reference_entries, source="user")
-                    mark_secret_keys(config_store, set(secret_reference_entries))
-                if secret_value_entries:
-                    secret_store = context.get_secret_store()
-                    for key, value in secret_value_entries.items():
-                        if value is None or value == "":
-                            config_store.clear_secret(key, secret_store)
-                        elif not isinstance(value, str):
-                            raise HTTPException(
-                                400,
-                                f"Secret '{key}' must be a string, got {type(value).__name__}",
-                            )
-                        else:
-                            config_store.set_secret(key, value, secret_store, source="user")
-                            count += 1
-                if plain_entries:
-                    count += config_store.set_many(plain_entries, source="user")
+            diff = _compute_diff(parsed_flat, defaults_flat, masked_secret_keys)
+            (
+                secret_entries,
+                secret_reference_entries,
+                secret_value_entries,
+                plain_entries,
+            ) = _categorize_secret_entries(diff, existing_secret_keys)
+            count, deleted_count = _apply_transactional_changes(
+                context=context,
+                masked_secret_keys=masked_secret_keys,
+                secret_reference_entries=secret_reference_entries,
+                secret_value_entries=secret_value_entries,
+                plain_entries=plain_entries,
+            )
             logger.info(f"Template saved: {count} non-default keys stored")
 
             context.set_runtime_config(new_config)

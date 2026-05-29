@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
 
 logger = logging.getLogger(__name__)
+_GRAPH_REQUEST_FAILED = "Code graph request failed"
 
 
 class InvalidateIndexRequest(BaseModel):
@@ -43,8 +44,10 @@ def _graph_http_exception(error: Exception) -> HTTPException:
     if isinstance(error, CodeIndexProjectNotFound):
         return HTTPException(status_code=404, detail=str(error))
     if isinstance(error, GcodeGatewayError):
-        return HTTPException(status_code=500, detail=str(error))
-    return HTTPException(status_code=500, detail=str(error))
+        logger.exception("Code graph gateway request failed")
+        return HTTPException(status_code=500, detail=_GRAPH_REQUEST_FAILED)
+    logger.exception("Code graph request failed")
+    return HTTPException(status_code=500, detail=_GRAPH_REQUEST_FAILED)
 
 
 async def _run_db(server: HTTPServer, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
@@ -103,7 +106,7 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
                     "context": {"route": "code_index", "operation": "graph_overview"},
                 },
             )
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail=_GRAPH_REQUEST_FAILED) from e
 
     @router.get("/graph/file/{file_path:path}")
     async def graph_file(
@@ -139,7 +142,7 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
                     },
                 },
             )
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail=_GRAPH_REQUEST_FAILED) from e
 
     @router.get("/graph/symbol/{symbol_id}/neighbors")
     async def graph_symbol_neighbors(
@@ -177,7 +180,7 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
                     },
                 },
             )
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail=_GRAPH_REQUEST_FAILED) from e
 
     @router.get("/graph/blast-radius")
     async def graph_blast_radius(
@@ -221,7 +224,7 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
                     "context": {"route": "code_index", "operation": "graph_blast_radius"},
                 },
             )
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail=_GRAPH_REQUEST_FAILED) from e
 
     @router.get("/graph/search")
     async def graph_search(
@@ -278,7 +281,7 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
                     "context": {"route": "code_index", "operation": "graph_search"},
                 },
             )
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail=_GRAPH_REQUEST_FAILED) from e
 
     @router.post("/graph/clear")
     async def clear_graph(
@@ -300,7 +303,7 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
             raise _graph_http_exception(e) from e
         except Exception as e:
             logger.exception(f"Failed to clear code graph for {scoped_project}")
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail=_GRAPH_REQUEST_FAILED) from e
         if not result.get("success", False):
             raise HTTPException(status_code=400, detail=result.get("error", "Unknown error"))
         return cast(dict[str, Any], result)
@@ -326,7 +329,7 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
             raise _graph_http_exception(e) from e
         except Exception as e:
             logger.exception(f"Failed to rebuild code graph for {scoped_project}")
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail=_GRAPH_REQUEST_FAILED) from e
         if not result.get("success", False):
             raise HTTPException(status_code=400, detail=result.get("error", "Unknown error"))
         return cast(dict[str, Any], result)

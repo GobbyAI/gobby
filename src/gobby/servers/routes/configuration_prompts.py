@@ -135,17 +135,11 @@ def register_prompt_routes(router: APIRouter, context: ConfigurationRouteContext
             version = str(frontmatter.get("version", "1.0"))
             variables = frontmatter.get("variables")
 
-            existing_override = manager.db.fetchone(
-                "SELECT * FROM prompts WHERE name = %s AND scope = 'global' AND project_id IS NULL",
-                (path,),
-            )
+            existing_override = manager.get_override(path)
 
             if existing_override:
-                from gobby.storage.prompts import PromptRecord
-
-                record = PromptRecord.from_row(existing_override)
                 manager.update_prompt(
-                    prompt_id=record.id,
+                    prompt_id=existing_override.id,
                     description=description,
                     content=body.strip() if body.strip() else request.content,
                     version=version,
@@ -175,17 +169,8 @@ def register_prompt_routes(router: APIRouter, context: ConfigurationRouteContext
         try:
             manager = context.get_prompt_manager()
 
-            row = manager.db.fetchone(
-                "SELECT * FROM prompts WHERE name = %s AND scope = 'global' AND project_id IS NULL",
-                (path,),
-            )
-            if not row:
+            if not manager.delete_override(path):
                 raise HTTPException(status_code=404, detail=f"No override for '{path}'")
-
-            from gobby.storage.prompts import PromptRecord
-
-            record = PromptRecord.from_row(row)
-            manager.delete_prompt(record.id)
 
             loader = context.get_prompt_loader()
             loader.clear_cache()

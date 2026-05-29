@@ -34,10 +34,12 @@ def parse_frontmatter(content: str) -> tuple[dict[str, Any], str]:
     while search_from < len(content):
         line_end = content.find("\n", search_from)
         if line_end == -1:
-            return {}, content
+            line_end = len(content)
         if content[search_from:line_end].strip() == "---":
             try:
                 frontmatter = yaml.safe_load(content[body_start:search_from]) or {}
+                if not isinstance(frontmatter, dict):
+                    frontmatter = {}
                 return frontmatter, content[line_end + 1 :]
             except yaml.YAMLError:
                 return {}, content

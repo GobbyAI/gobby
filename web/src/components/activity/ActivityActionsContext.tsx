@@ -1,4 +1,4 @@
-import { useCallback, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 
 import {
   ActivityActionsContext,
@@ -11,8 +11,9 @@ export function ActivityActionsProvider({ children }: { children: ReactNode }) {
   const register = useCallback((next: ActivityPanelActions | null) => {
     setActions(next);
   }, []);
+  const value = useMemo(() => ({ actions, register }), [actions, register]);
   return (
-    <ActivityActionsContext.Provider value={{ actions, register }}>
+    <ActivityActionsContext.Provider value={value}>
       {children}
     </ActivityActionsContext.Provider>
   );

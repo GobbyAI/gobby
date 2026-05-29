@@ -9,8 +9,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from pathlib import Path
-from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 from gobby.code_index.cleanup import purge_missing_project
@@ -25,6 +25,12 @@ if TYPE_CHECKING:
     from gobby.config.persistence import EmbeddingsConfig
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class _MissingProject:
+    id: str
+    root_path: str | None
 
 
 async def _run_db(
@@ -110,7 +116,7 @@ async def sync_worker_loop(
 async def _sync_pass(
     storage: CodeIndexStorage,
     vector_store: Any | None,
-    gcode_gateway: GcodeGateway,
+    gcode_gateway: GcodeGateway | None,
     config: CodeIndexConfig,
     embed_model: Any | None,
     batch_size: int,
@@ -240,11 +246,12 @@ async def _sync_file(
                     project_root=root,
                     file=current,
                 )
+                await _run_db(run_db, storage.mark_graph_synced, current.id)
                 did_work = True
             except GcodeProjectNotFoundError as e:
                 if not await asyncio.to_thread(root.is_dir):
                     await purge_missing_project(
-                        project=SimpleNamespace(id=project_id, root_path=str(root)),
+                        project=_MissingProject(id=project_id, root_path=str(root)),
                         storage=storage,
                         config=config,
                         vector_store=vector_store,

@@ -23,6 +23,13 @@ if TYPE_CHECKING:
     from gobby.storage.tasks import LocalTaskManager
 
 logger = logging.getLogger(__name__)
+_PROJECT_CONTEXT_ERRORS: tuple[type[Exception], ...] = (
+    ImportError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    ValueError,
+)
 
 
 def _non_empty_string(value: Any) -> str | None:
@@ -92,7 +99,7 @@ def _project_lookup_db(db: HubDatabase | None, session_manager: Any | None) -> A
 def _context_from_project_path(project_path: str) -> dict[str, Any] | None:
     try:
         return get_project_context(Path(project_path).expanduser())
-    except Exception:
+    except _PROJECT_CONTEXT_ERRORS:
         logger.debug("Failed to resolve project context from %s", project_path, exc_info=True)
         return None
 
@@ -112,7 +119,7 @@ def _parent_session_project_context(
 
     try:
         session = session_manager.get(parent_session_id)
-    except Exception:
+    except _PROJECT_CONTEXT_ERRORS:
         logger.debug("Failed to load parent session %s", parent_session_id, exc_info=True)
         return None
 
@@ -124,7 +131,7 @@ def _parent_session_project_context(
         from gobby.storage.projects import LocalProjectManager
 
         project = LocalProjectManager(lookup_db).get(project_id)
-    except Exception:
+    except _PROJECT_CONTEXT_ERRORS:
         logger.debug("Failed to load project %s for parent session", project_id, exc_info=True)
         return {"id": project_id}
 
@@ -148,12 +155,13 @@ def _resolve_spawn_project_context(
     explicit_path = _non_empty_string(project_path)
     if explicit_path:
         explicit_ctx = _context_from_project_path(explicit_path)
-        fallback_ctx = get_project_context()
-        return explicit_ctx or fallback_ctx, _project_path_from_context(
-            explicit_ctx
-        ) or explicit_path
+        return explicit_ctx, _project_path_from_context(explicit_ctx) or explicit_path
 
-    current_ctx = get_project_context()
+    try:
+        current_ctx = get_project_context()
+    except _PROJECT_CONTEXT_ERRORS:
+        logger.debug("Failed to resolve current project context", exc_info=True)
+        current_ctx = None
     current_path = _project_path_from_context(current_ctx)
     if current_path:
         return current_ctx, current_path
