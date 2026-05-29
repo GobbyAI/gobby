@@ -68,6 +68,10 @@ const TYPE_FILTER_OPTIONS = [
   { value: "external" as const, label: "External" },
 ];
 
+function actionErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
 function matchesTool(tool: McpTool, query: string): boolean {
   return (
     tool.name.toLowerCase().includes(query) ||
@@ -194,6 +198,8 @@ export function ActivityMcpTab({
     try {
       const ok = await refreshToolCache();
       if (!ok) setActionError("Failed to refresh MCP tools");
+    } catch (error) {
+      setActionError(actionErrorMessage(error, "Failed to refresh MCP tools"));
     } finally {
       setRefreshing(false);
     }
@@ -235,8 +241,14 @@ export function ActivityMcpTab({
     const name = menu.serverName;
     const next = menu.enabled === false;
     setMenu(null);
-    const ok = await setServerEnabled(name, next);
-    if (!ok) setActionError(`Failed to ${next ? "enable" : "disable"} ${name}`);
+    try {
+      const ok = await setServerEnabled(name, next);
+      if (!ok) setActionError(`Failed to ${next ? "enable" : "disable"} ${name}`);
+    } catch (error) {
+      setActionError(
+        actionErrorMessage(error, `Failed to ${next ? "enable" : "disable"} ${name}`),
+      );
+    }
   }, [menu, setServerEnabled]);
 
   const handleExecute = useCallback(async () => {

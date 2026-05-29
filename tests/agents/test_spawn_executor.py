@@ -10,14 +10,22 @@ import pytest
 from gobby.agents.constants import CARGO_HOME, UV_CACHE_DIR
 from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.spawn_executor import (
+    _CODEX_PREAPPROVED_GOBBY_TOOLS,
     SpawnRequest,
     SpawnResult,
     _apply_extra_env,
     _sandbox_config_for_spawn,
     execute_spawn,
 )
+from gobby.mcp_proxy.server import GobbyDaemonTools
 
 pytestmark = pytest.mark.unit
+
+
+def test_codex_preapproved_gobby_tools_exist_on_mcp_handler() -> None:
+    """Keep spawned Codex approval overrides aligned with the Gobby MCP surface."""
+    tool_names = {name for name in dir(GobbyDaemonTools) if not name.startswith("_")}
+    assert set(_CODEX_PREAPPROVED_GOBBY_TOOLS) <= tool_names
 
 
 class TestSpawnRequest:

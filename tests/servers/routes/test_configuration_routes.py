@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import psycopg
 import pytest
 import yaml
 from starlette.testclient import TestClient
@@ -959,6 +960,20 @@ class TestExportImport:
             json={"config": {"ui": {"port": 99999, "mode": "invalid"}}},
         )
         assert response.status_code == 400
+
+    def test_import_database_error_returns_400(self, client: TestClient) -> None:
+        with patch.object(
+            ConfigStore,
+            "delete_all",
+            side_effect=psycopg.OperationalError("database unavailable"),
+        ):
+            response = client.post(
+                "/api/config/import",
+                json={"config_store": {"daemon_port": 9999}},
+            )
+
+        assert response.status_code == 400
+        assert "database unavailable" in response.json()["detail"]
 
     def test_import_non_string_secret_value_fails_before_deleting_existing_config(
         self, client: TestClient, temp_db: Any

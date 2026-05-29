@@ -41,6 +41,16 @@ from gobby.config.tmux import TmuxConfig
 logger = logging.getLogger(__name__)
 _RESERVED_EXTRA_ENV_KEYS = frozenset((*ALL_TERMINAL_ENV_VARS, CARGO_HOME, "GOBBY_MACHINE_ID"))
 
+# Spawned Codex agents need these Gobby proxy tools without interactive MCP approval prompts.
+_CODEX_PREAPPROVED_GOBBY_TOOLS = [
+    "list_mcp_servers",
+    "list_tools",
+    "get_tool_schema",
+    "call_tool",
+    "get_variable",
+    "set_variable",
+]
+
 
 @dataclass
 class SpawnRequest:
@@ -797,14 +807,7 @@ def _codex_mcp_config_overrides(project_path: str | None) -> list[str]:
     # no longer sees user-level per-tool approvals. Re-seed only the Gobby proxy
     # tools required by worker contracts so unattended builds do not stop on MCP
     # permission prompts.
-    for tool_name in (
-        "list_mcp_servers",
-        "list_tools",
-        "get_tool_schema",
-        "call_tool",
-        "get_variable",
-        "set_variable",
-    ):
+    for tool_name in _CODEX_PREAPPROVED_GOBBY_TOOLS:
         overrides.append(f'mcp_servers.gobby.tools.{tool_name}.approval_mode="approve"')
     return overrides
 

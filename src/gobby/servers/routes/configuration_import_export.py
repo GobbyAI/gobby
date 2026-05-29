@@ -7,6 +7,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
+import psycopg
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
@@ -32,6 +33,8 @@ _CONFIG_IMPORT_ERRORS: tuple[type[Exception], ...] = (
     ValueError,
     json.JSONDecodeError,
     ValidationError,
+    RuntimeError,
+    psycopg.Error,
 )
 _CONFIG_EXPORT_ERRORS: tuple[type[Exception], ...] = (
     TypeError,

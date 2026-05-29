@@ -373,7 +373,7 @@ class TestMCPClientManagerAddServer:
         assert result["full_tool_schemas"][0]["name"] == "test-tool"
 
     @pytest.mark.asyncio
-    async def test_set_server_enabled_connects_and_caches_listed_tools(self):
+    async def test_set_server_enabled_connects_and_caches_listed_tools(self) -> None:
         """Enabling a server discovers tools through the shared cache path."""
         config = MCPServerConfig(
             name="existing-server",

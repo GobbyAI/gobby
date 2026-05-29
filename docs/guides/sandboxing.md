@@ -104,6 +104,11 @@ unsandboxed command fallback, allows loopback domains and local binding for
 local Gobby services, and leaves undocumented outbound-network wildcard settings
 unset.
 
+`allowLocalBinding` mirrors the daemon network policy used by
+`SandboxConfig.allow_network`. The `true` value shown above is the default when
+network is enabled; it will be `true` only when network is enabled or the
+daemon's network policy otherwise permits local binding.
+
 ### Codex
 
 Spawned Codex agents use the CLI sandbox flag:

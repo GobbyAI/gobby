@@ -34,7 +34,7 @@ interface TaskCreateFormProps {
   onClose: () => void
 }
 
-interface CreateTaskParams {
+export interface CreateTaskParams {
   title: string
   description?: string
   priority?: number

@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import Depends, HTTPException, Request
 
+from gobby.mcp_proxy.lazy import CircuitBreakerOpen
+from gobby.mcp_proxy.models import MCPError
 from gobby.servers.routes.dependencies import get_internal_manager, get_mcp_manager, get_server
 
 if TYPE_CHECKING:
@@ -390,7 +392,7 @@ async def set_mcp_server_enabled(
 
     except HTTPException:
         raise
-    except (ValueError, PermissionError, OSError, RuntimeError) as e:
+    except (ValueError, KeyError, RuntimeError, MCPError, CircuitBreakerOpen) as e:
         logger.error(f"Set MCP server enabled error: {e}", exc_info=True)
         response_time_ms = (time.perf_counter() - start_time) * 1000
         return {"success": False, "error": str(e), "response_time_ms": response_time_ms}

@@ -5,7 +5,6 @@ import {
   useCallback,
   useRef,
   useMemo,
-  type ComponentProps,
   type MouseEvent,
 } from "react";
 import { ResizeHandle } from "../chat/artifacts/ResizeHandle";
@@ -48,7 +47,7 @@ import {
 } from "./TaskQuickMenu";
 import { TasksTabToolbar } from "./TasksTabToolbar";
 import { TasksTabList } from "./TasksTabList";
-import { TaskCreateForm } from "../tasks/TaskCreateForm";
+import { TaskCreateForm, type CreateTaskParams } from "../tasks/TaskCreateForm";
 import { useRegisterActivityActions } from "./activityActions";
 import {
   claimTaskForSession,
@@ -267,7 +266,7 @@ export const TasksTab = memo(function TasksTab({
   }, [tasks]);
 
   const handleCreateTask = useCallback(
-    async (params: Parameters<ComponentProps<typeof TaskCreateForm>["onSubmit"]>[0]) => {
+    async (params: CreateTaskParams) => {
       const baseUrl = getBaseUrl();
       const body = projectId ? { ...params, project_id: projectId } : params;
       const response = await fetch(`${baseUrl}/api/tasks`, {

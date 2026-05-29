@@ -32,6 +32,8 @@ from fastapi.testclient import TestClient
 from starlette.requests import ClientDisconnect
 
 from gobby.app_context import ServiceContainer
+from gobby.mcp_proxy.lazy import CircuitBreakerOpen
+from gobby.mcp_proxy.models import MCPError
 from gobby.servers.http import HTTPServer
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
@@ -1444,6 +1446,11 @@ class TestSetMCPServerEnabled:
 
         assert response.status_code == 400
 
+        with TestClient(server.app) as client:
+            response = client.patch("/api/mcp/servers/test-server", json={"enabled": "true"})
+
+        assert response.status_code == 400
+
     def test_disable_then_enable_round_trip(self, session_storage: SessionManager) -> None:
         """Disabling then re-enabling persists through the manager."""
         server = create_http_server(
@@ -1492,9 +1499,10 @@ class TestSetMCPServerEnabled:
     @pytest.mark.parametrize(
         "error",
         [
-            PermissionError("permission denied"),
-            OSError("socket unavailable"),
             RuntimeError("connection failed"),
+            MCPError("mcp connection failed"),
+            CircuitBreakerOpen("github", 3.0),
+            KeyError("bad state"),
         ],
     )
     def test_set_enabled_known_manager_errors_return_failure_response(
@@ -1527,12 +1535,12 @@ class TestSetMCPServerEnabled:
         )
         mcp_manager = FakeMCPManager()
         mcp_manager.set_server_enabled = AsyncMock(  # type: ignore[method-assign]
-            side_effect=KeyError("bad state")
+            side_effect=PermissionError("permission denied")
         )
         server.mcp_manager = mcp_manager
 
         with TestClient(server.app) as client:
-            with pytest.raises(KeyError, match="bad state"):
+            with pytest.raises(PermissionError, match="permission denied"):
                 client.patch("/api/mcp/servers/github", json={"enabled": True})
 
 

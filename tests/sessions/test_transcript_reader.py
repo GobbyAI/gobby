@@ -573,7 +573,7 @@ class TestTranscriptReaderRendered:
         )
 
     @pytest.mark.asyncio
-    async def test_rederives_transcript_path_in_thread(self):
+    async def test_rederives_transcript_path_in_thread(self) -> None:
         session = MagicMock()
         session.external_id = "ext-thread"
         session.source = "qwen"
