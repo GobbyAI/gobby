@@ -13,6 +13,7 @@ Verifies rule-specific endpoints at /api/rules:
 from __future__ import annotations
 
 import json
+import logging
 from typing import Literal
 
 import pytest
@@ -271,6 +272,32 @@ class TestUpdateRule:
 
         resp = client.put("/api/rules/my-rule", json={})
         assert resp.status_code == 400
+
+    def test_update_failure_logs_rule_context(
+        self,
+        client: TestClient,
+        def_manager: LocalWorkflowDefinitionManager,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        row_id = _seed_rule(def_manager, name="my-rule")
+
+        def fail_update(
+            _self: LocalWorkflowDefinitionManager,
+            _definition_id: str,
+            **_fields: object,
+        ) -> object:
+            raise RuntimeError("write failed")
+
+        monkeypatch.setattr(LocalWorkflowDefinitionManager, "update", fail_update)
+
+        with caplog.at_level(logging.ERROR, logger="gobby.servers.routes.rules"):
+            resp = client.put("/api/rules/my-rule", json={"priority": 5})
+
+        assert resp.status_code == 500
+        assert row_id in caplog.text
+        assert "my-rule" in caplog.text
+        assert "write failed" in caplog.text
 
 
 # ═══════════════════════════════════════════════════════════════════════

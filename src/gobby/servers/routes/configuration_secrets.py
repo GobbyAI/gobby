@@ -46,7 +46,7 @@ def validate_falkordb_secret(key: str, value: Any) -> None:
 def falkordb_validation_response(error: ValueError) -> JSONResponse:
     return JSONResponse(
         status_code=422,
-        content={"detail": "Invalid FalkorDB password", "key": FALKOR_REQUIREPASS_KEY},
+        content={"detail": str(error), "key": FALKOR_REQUIREPASS_KEY},
     )
 
 
@@ -127,7 +127,7 @@ def register_secret_routes(router: APIRouter, context: ConfigurationRouteContext
         except HTTPException:
             raise
         except Exception as e:
-            logger.error("Failed to list secrets", exc_info=e)
+            logger.error("Failed to list secrets: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/secrets")
@@ -147,7 +147,7 @@ def register_secret_routes(router: APIRouter, context: ConfigurationRouteContext
         except HTTPException:
             raise
         except Exception as e:
-            logger.error("Failed to save secret", exc_info=e)
+            logger.error("Failed to save secret: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.delete("/secrets/{name}")
@@ -161,5 +161,5 @@ def register_secret_routes(router: APIRouter, context: ConfigurationRouteContext
         except HTTPException:
             raise
         except Exception as e:
-            logger.error("Failed to delete secret", exc_info=e)
-            raise HTTPException(status_code=500, detail="Internal server error") from e
+            logger.error("Failed to delete secret: %s", e, exc_info=True)
+            raise HTTPException(status_code=500, detail=str(e)) from e

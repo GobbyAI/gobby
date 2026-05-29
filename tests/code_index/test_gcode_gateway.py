@@ -229,6 +229,20 @@ async def test_gateway_builds_graph_read_args(
     ]
 
 
+async def test_gateway_rejects_blast_radius_without_target(tmp_path: Path) -> None:
+    gateway = GcodeGateway(binary="/tmp/gcode")
+
+    with pytest.raises(ValueError, match="exactly one"):
+        await gateway.graph_blast_radius(tmp_path)
+
+
+async def test_gateway_rejects_blast_radius_with_multiple_targets(tmp_path: Path) -> None:
+    gateway = GcodeGateway(binary="/tmp/gcode")
+
+    with pytest.raises(ValueError, match="exactly one"):
+        await gateway.graph_blast_radius(tmp_path, symbol_id="sym-1", file_path="src/app.py")
+
+
 async def test_gateway_rejects_stale_version(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_subprocess(monkeypatch, [FakeProcess(stdout=b"gcode 0.0.0\n")])
     gateway = GcodeGateway(binary="/tmp/gcode")

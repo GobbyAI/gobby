@@ -124,7 +124,7 @@ def register_value_routes(router: APIRouter, context: ConfigurationRouteContext)
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Config save failed: {e}", exc_info=True)
+            logger.error("Config save failed: %s", e, exc_info=True)
             raise HTTPException(status_code=400, detail=str(e)) from e
 
     @router.post("/values/validate")
@@ -150,5 +150,5 @@ def register_value_routes(router: APIRouter, context: ConfigurationRouteContext)
             context.set_runtime_config(DaemonConfig())
             return JSONResponse(content={"ok": True, "requires_restart": True})
         except Exception as e:
-            logger.error(f"Config reset failed: {e}")
-            raise HTTPException(status_code=500, detail="Internal server error") from e
+            logger.error("Config reset failed: %s", e, exc_info=True)
+            raise HTTPException(status_code=500, detail=str(e)) from e

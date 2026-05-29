@@ -38,7 +38,7 @@ def register_tool_approval_routes(router: APIRouter, context: ConfigurationRoute
                 }
             )
         except Exception as e:
-            logger.error(f"Failed to get global tool approval rules: {e}")
+            logger.error("Failed to get global tool approval rules: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.put("/tool-approvals/global")
@@ -59,5 +59,5 @@ def register_tool_approval_routes(router: APIRouter, context: ConfigurationRoute
                 }
             )
         except Exception as e:
-            logger.error(f"Failed to save global tool approval rules: {e}")
+            logger.error("Failed to save global tool approval rules: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e

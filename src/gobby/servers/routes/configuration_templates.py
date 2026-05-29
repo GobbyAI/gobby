@@ -41,7 +41,7 @@ def register_template_routes(router: APIRouter, context: ConfigurationRouteConte
             content = yaml.safe_dump(defaults, default_flow_style=False, sort_keys=False)
             return JSONResponse(content={"content": content})
         except Exception as e:
-            logger.error(f"Failed to generate config template: {e}")
+            logger.error("Failed to generate config template: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.put("/template")
@@ -148,4 +148,5 @@ def register_template_routes(router: APIRouter, context: ConfigurationRouteConte
         except HTTPException:
             raise
         except Exception as e:
+            logger.error("Failed to save config template: %s", e, exc_info=True)
             raise HTTPException(status_code=400, detail=str(e)) from e

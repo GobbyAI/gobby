@@ -35,7 +35,7 @@ from gobby.install.distribution import HomebrewHelperStatus
 from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
 
 pytestmark = pytest.mark.unit
-GCODE_PIN = MANAGED_BIN_VERSION_PINS["gcode"]
+GCODE_PIN: str = MANAGED_BIN_VERSION_PINS["gcode"]
 
 
 class TestEnsureDaemonConfig:

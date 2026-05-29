@@ -12,4 +12,9 @@ describe('detectSourceType', () => {
     expect(detectSourceType('https://github.com.evil.example/GobbyAI/gobby')).toBe('unknown')
     expect(detectSourceType('http://github.com@evil.example/GobbyAI/gobby')).toBe('unknown')
   })
+
+  it('rejects non-GitHub URL schemes before owner/repo fallback', () => {
+    expect(detectSourceType('ssh://github.com/GobbyAI/gobby')).toBe('unknown')
+    expect(detectSourceType('foo://bar/baz')).toBe('unknown')
+  })
 })

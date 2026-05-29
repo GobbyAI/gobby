@@ -76,7 +76,7 @@ def register_import_export_routes(
                 }
             )
         except Exception as e:
-            logger.error(f"Config export failed: {e}")
+            logger.error("Config export failed: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/import")
@@ -210,5 +210,5 @@ def register_import_export_routes(
             add_restart_hint(response, restart_touched_keys)
             return JSONResponse(content=response)
         except Exception as e:
-            logger.error(f"Config import failed: {e}")
+            logger.error("Config import failed: %s", e, exc_info=True)
             raise HTTPException(status_code=400, detail=str(e)) from e

@@ -96,7 +96,7 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
             if ws and hasattr(ws, "broadcast_workflow_event"):
                 await ws.broadcast_workflow_event(event, definition_id, **kwargs)
         except Exception as e:
-            logger.debug(f"Failed to broadcast rule event {event}: {e}")
+            logger.debug("Failed to broadcast rule event %s: %s", event, e, exc_info=True)
 
     # -----------------------------------------------------------------
     # GET /api/rules/groups (must be before /{name} to avoid conflict)
@@ -222,7 +222,17 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
             count = 0
             for row in rows:
                 if row.source == request.source:
-                    manager.update(row.id, enabled=request.enabled)
+                    try:
+                        manager.update(row.id, enabled=request.enabled)
+                    except Exception as e:
+                        logger.error(
+                            "Failed to update rule %s (%s): %s",
+                            row.id,
+                            row.name,
+                            e,
+                            exc_info=True,
+                        )
+                        raise
                     count += 1
             return {"status": "success", "count": count}
         except Exception as e:
@@ -284,6 +294,13 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
         try:
             updated = manager.update(row.id, **fields)
         except Exception as e:
+            logger.error(
+                "Failed to update rule %s (%s): %s",
+                row.id,
+                row.name,
+                e,
+                exc_info=True,
+            )
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
         body = json.loads(updated.definition_json)

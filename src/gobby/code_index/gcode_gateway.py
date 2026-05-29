@@ -133,12 +133,13 @@ class GcodeGateway:
         limit: int = 100,
     ) -> dict[str, Any]:
         args = ["graph", "blast-radius", "--project", str(project_root)]
-        if symbol_id:
-            args.extend(["--symbol-id", symbol_id])
-        elif file_path:
-            args.extend(["--file", file_path])
-        else:
+        if (symbol_id is None) == (file_path is None):
             raise ValueError("Provide exactly one of symbol_id or file_path")
+        if symbol_id is not None:
+            args.extend(["--symbol-id", symbol_id])
+        else:
+            assert file_path is not None
+            args.extend(["--file", file_path])
         args.extend(["--depth", str(depth), "--limit", str(limit)])
         return await self._run_json(args)
 

@@ -338,7 +338,7 @@ class TestResetConfig:
     def test_reset_failure(self, client: TestClient) -> None:
         """Reset failure returns 500."""
         with patch(
-            "gobby.servers.routes.configuration.ConfigStore.delete_all",
+            "gobby.servers.routes.configuration_context.ConfigStore.delete_all",
             side_effect=OSError("Permission denied"),
         ):
             response = client.post("/api/config/values/reset")
@@ -605,7 +605,7 @@ class TestValidationDetectionPreview:
         )
 
         with patch(
-            "gobby.servers.routes.configuration.validate_falkordb_password",
+            "gobby.servers.routes.configuration_secrets.validate_falkordb_password",
             side_effect=AssertionError("masked sentinel must not be validated"),
             create=True,
         ) as validator:
@@ -626,7 +626,7 @@ class TestValidationDetectionPreview:
 
 class TestSecretsEndpoints:
     def test_list_secrets_empty(self, client: TestClient) -> None:
-        with patch("gobby.servers.routes.configuration.SecretStore") as mock_cls:
+        with patch("gobby.servers.routes.configuration_context.SecretStore") as mock_cls:
             mock_store = MagicMock(spec=SecretStore)
             mock_store.list.return_value = []
             mock_cls.return_value = mock_store
@@ -716,7 +716,7 @@ class TestSecretsEndpoints:
         assert "not found" in response.json()["detail"]
 
     def test_delete_secret_internal_error(self, client: TestClient) -> None:
-        with patch("gobby.servers.routes.configuration.SecretStore") as mock_cls:
+        with patch("gobby.servers.routes.configuration_context.SecretStore") as mock_cls:
             mock_store = MagicMock()
             mock_store.delete.side_effect = RuntimeError("DB error")
             mock_cls.return_value = mock_store
@@ -725,7 +725,7 @@ class TestSecretsEndpoints:
         assert "DB error" in response.json()["detail"]
 
     def test_list_secrets_internal_error(self, client: TestClient) -> None:
-        with patch("gobby.servers.routes.configuration.SecretStore") as mock_cls:
+        with patch("gobby.servers.routes.configuration_context.SecretStore") as mock_cls:
             mock_store = MagicMock()
             mock_store.list.side_effect = RuntimeError("Boom")
             mock_cls.return_value = mock_store
@@ -733,7 +733,7 @@ class TestSecretsEndpoints:
         assert response.status_code == 500
 
     def test_create_secret_internal_error(self, client: TestClient) -> None:
-        with patch("gobby.servers.routes.configuration.SecretStore") as mock_cls:
+        with patch("gobby.servers.routes.configuration_context.SecretStore") as mock_cls:
             mock_store = MagicMock()
             mock_store.set.side_effect = RuntimeError("Encryption failed")
             mock_cls.return_value = mock_store
@@ -1022,7 +1022,7 @@ class TestExportImport:
         before_secret = _secret_row(postgres_db)
 
         with patch(
-            "gobby.servers.routes.configuration.validate_falkordb_password",
+            "gobby.servers.routes.configuration_secrets.validate_falkordb_password",
             side_effect=AssertionError("secret references must not be validated"),
             create=True,
         ) as validator:
@@ -1060,7 +1060,7 @@ class TestExportImport:
         bundle = export_response.json()
 
         with patch(
-            "gobby.servers.routes.configuration.validate_falkordb_password",
+            "gobby.servers.routes.configuration_secrets.validate_falkordb_password",
             side_effect=AssertionError("exported secret refs must not be validated"),
             create=True,
         ) as validator:

@@ -120,7 +120,9 @@ async def _run_maintenance(
                         pass
                 logger.warning(f"Maintenance reindex timed out for {project.id}")
             except Exception as e:
-                logger.warning(f"Maintenance reindex failed for {project.id}: {e}")
+                logger.warning(
+                    "Maintenance reindex failed for %s: %s", project.id, e, exc_info=True
+                )
 
         # Generate summaries for unsummarized symbols
         if summarizer:
@@ -129,7 +131,7 @@ async def _run_maintenance(
 
 async def _purge_missing_project(context: CodeIndexContext, project: Any) -> None:
     """Remove index data for a project whose root directory is gone."""
-    if getattr(context.config, "graph_enabled", True):
+    if context.config.graph_enabled:
         try:
             result = await context.clear_graph(project.id)
             if not result.get("success", False):
@@ -139,7 +141,12 @@ async def _purge_missing_project(context: CodeIndexContext, project: Any) -> Non
                     result.get("error", "unknown error"),
                 )
         except Exception as e:
-            logger.warning(f"Graph cleanup failed for missing code index project {project.id}: {e}")
+            logger.warning(
+                "Graph cleanup failed for missing code index project %s: %s",
+                project.id,
+                e,
+                exc_info=True,
+            )
 
     counts = await context.run_db(context.storage.delete_project_index, project.id)
 
@@ -149,7 +156,10 @@ async def _purge_missing_project(context: CodeIndexContext, project: Any) -> Non
             await context.vector_store.delete_collection(collection)
         except Exception as e:
             logger.warning(
-                f"Vector cleanup failed for missing code index project {project.id}: {e}"
+                "Vector cleanup failed for missing code index project %s: %s",
+                project.id,
+                e,
+                exc_info=True,
             )
 
     logger.info(

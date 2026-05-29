@@ -2,39 +2,47 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
-from gobby.storage.projects import LocalProjectManager
+from gobby.servers.http import HTTPServer
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.projects import LocalProjectManager, Project
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def skill_manager():
+def skill_manager() -> MagicMock:
     sm = MagicMock()
     return sm
 
 
 @pytest.fixture
-def hub_manager():
+def hub_manager() -> MagicMock:
     hm = MagicMock()
     return hm
 
 
 @pytest.fixture
-def websocket_server():
+def websocket_server() -> MagicMock:
     ws = MagicMock()
     ws.broadcast_skill_event = AsyncMock()
     return ws
 
 
 @pytest.fixture
-def server(skill_manager, hub_manager, websocket_server, temp_db):
+def server(
+    skill_manager: MagicMock,
+    hub_manager: MagicMock,
+    websocket_server: MagicMock,
+    temp_db: HubDatabase,
+) -> HTTPServer:
     svr = create_http_server(
         config=DaemonConfig(),
         websocket_server=websocket_server,
@@ -47,12 +55,12 @@ def server(skill_manager, hub_manager, websocket_server, temp_db):
 
 
 @pytest.fixture
-def client(server) -> TestClient:
+def client(server: HTTPServer) -> TestClient:
     return TestClient(server.app)
 
 
 @pytest.fixture
-def skill_project(temp_db, tmp_path):
+def skill_project(temp_db: HubDatabase, tmp_path: Path) -> Project:
     repo_path = tmp_path / "repo"
     repo_path.mkdir()
     return LocalProjectManager(temp_db).create(name="skills-project", repo_path=str(repo_path))

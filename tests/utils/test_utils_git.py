@@ -730,6 +730,50 @@ class TestLogging:
 
         assert "does not exist" in caplog.text
 
+    def test_get_git_metadata_logs_unresolvable_path(
+        self,
+        temp_dir: Path,
+        caplog: pytest.LogCaptureFixture,
+        enable_log_propagation,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Path resolution errors are logged and treated as missing git metadata."""
+
+        def fail_resolve(self: Path, *, strict: bool = False) -> Path:
+            raise RuntimeError("symlink loop")
+
+        monkeypatch.setattr("gobby.utils.git.Path.resolve", fail_resolve)
+
+        with caplog.at_level(logging.DEBUG, logger="gobby.utils.git"):
+            result = get_git_metadata(temp_dir)
+
+        assert result == {}
+        assert "cannot be resolved" in caplog.text
+
+    def test_get_git_metadata_logs_uninspectable_path(
+        self,
+        temp_dir: Path,
+        caplog: pytest.LogCaptureFixture,
+        enable_log_propagation,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Directory inspection errors are logged and treated as missing git metadata."""
+
+        class UninspectablePath:
+            def is_dir(self) -> bool:
+                raise OSError("permission denied")
+
+        monkeypatch.setattr(
+            "gobby.utils.git.Path.resolve",
+            lambda self, *, strict=False: UninspectablePath(),
+        )
+
+        with caplog.at_level(logging.DEBUG, logger="gobby.utils.git"):
+            result = get_git_metadata(temp_dir)
+
+        assert result == {}
+        assert "cannot be inspected" in caplog.text
+
 
 class TestNormalizeCommitSha:
     """Tests for normalize_commit_sha function."""

@@ -88,7 +88,7 @@ def run_git_command(command: list[str], cwd: str | Path, timeout: int = 5) -> st
         logger.warning("Git executable not found in PATH")
         return None
     except Exception as e:
-        logger.error(f"Git command error: {' '.join(command)}, error: {e}")
+        logger.error("Git command error: %s, error: %s", " ".join(command), e, exc_info=True)
         return None
 
 
@@ -96,10 +96,15 @@ def _resolve_git_directory(cwd: str | Path | None) -> Path | None:
     candidate = Path.cwd() if cwd is None else Path(cwd).expanduser()
     try:
         resolved = candidate.resolve(strict=True)
-    except OSError:
-        logger.warning("Git metadata path does not exist")
+    except (OSError, RuntimeError) as e:
+        logger.warning("Git metadata path does not exist or cannot be resolved: %s", e)
         return None
-    if not resolved.is_dir():
+    try:
+        is_directory = resolved.is_dir()
+    except OSError as e:
+        logger.warning("Git metadata path cannot be inspected: %s", e)
+        return None
+    if not is_directory:
         logger.warning("Git metadata path is not a directory")
         return None
     return resolved
@@ -212,7 +217,7 @@ def get_git_metadata(cwd: str | Path | None = None) -> GitMetadata:
         )
 
     except Exception as e:
-        logger.error(f"Error extracting git metadata: {e}")
+        logger.error("Error extracting git metadata: %s", e, exc_info=True)
 
     return metadata
 
