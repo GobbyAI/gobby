@@ -28,6 +28,17 @@ Search filters compose: `search` and `search-symbol` accept `--kind <kind>`; use
 
 Symbol IDs must be full stored UUIDs from `gcode search`, `gcode search-symbol`, or `gcode outline`. Literal placeholders, wildcards, globs, and prefix IDs such as `id1`, `514??`, `abc*`, or `80abc77f` are invalid.
 
+## Recommended Workflow
+
+When navigating code for context or understanding:
+
+1. **Locate with gcode**: `gcode search "concept"`, `gcode search-symbol "name"`, or `gcode search-content "text"` to find relevant hits.
+2. **Survey file structure**: `gcode outline path/to/file` to see the symbol hierarchy without reading the whole file.
+3. **Retrieve exact code**: `gcode symbol <full-uuid>` or `gcode symbols <full-uuid> <full-uuid> ...` using IDs from search or outline.
+4. **Fetch tight neighboring context only when needed**: use `sed`/`awk` only for tight neighboring context (1-3 lines) after symbol retrieval.
+
+Search output is intentionally snippet-sized. Broad file reads and wide line ranges can be truncated or compressed by `gsqz`, so use `gcode outline` and `gcode symbol` before reaching for broad `sed`, `awk`, or full-file reads.
+
 ## Navigation
 
 - `gcode repo-outline` — high-level project summary with module symbol counts
@@ -45,9 +56,16 @@ Use these **before making changes** to understand what you'll affect:
 - `gcode usages <name>` — all usages (calls + imports)
 - `gcode imports <file>` — what does this file import?
 
-## Graph Lifecycle (Gobby daemon required)
+## Graph Lifecycle
 
+Use `gcode` directly for the code-index graph projection via the Gobby daemon.
+
+`gcode` owns the code-index graph projection. The daemon exposes HTTP shim routes
+for the UI, but graph sync/read/lifecycle behavior lives in `gcode`.
+
+- `gcode graph sync-file --file <file>` — sync one indexed file into the graph projection
 - `gcode graph clear` — clear the current project's graph projection
+- `gcode graph clear --project-id <id>` — clear a projection without resolving a project root
 - `gcode graph rebuild` — rebuild it (cheaper than `gcode invalidate` + reindex; doesn't touch PostgreSQL symbol/content rows)
 
 ## When to use which
