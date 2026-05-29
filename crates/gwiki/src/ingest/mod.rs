@@ -2,6 +2,7 @@
 
 pub mod file;
 pub mod git;
+pub mod image;
 pub mod mediawiki;
 pub mod pdf;
 pub mod url;

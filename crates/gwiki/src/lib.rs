@@ -33,6 +33,7 @@ pub mod sources;
 pub mod store;
 pub mod synthesis;
 pub mod vault;
+pub mod vision;
 
 /// Parsed gwiki command passed in from the binary.
 #[derive(Debug, Clone, PartialEq, Eq)]
