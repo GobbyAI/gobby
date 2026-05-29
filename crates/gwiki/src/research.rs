@@ -390,6 +390,7 @@ mod tests {
                 agent_run_ids: vec!["run-a".to_string(), "run-b".to_string()],
             }),
             accepted_notes: Vec::new(),
+            compile_state: None,
         };
         checkpoint.save_checkpoint().expect("checkpoint saved");
 

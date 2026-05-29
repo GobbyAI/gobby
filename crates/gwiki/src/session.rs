@@ -45,6 +45,19 @@ pub struct AcceptedResearchNote {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompileState {
+    pub handoff_id: String,
+    pub topic: String,
+    pub bundle_path: PathBuf,
+    pub selected_note_paths: Vec<PathBuf>,
+    pub selected_source_titles: Vec<String>,
+    pub citations: Vec<String>,
+    pub conflicting_claims: Vec<String>,
+    pub missing_evidence: Vec<String>,
+    pub write_intent: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResearchSession {
     pub session_id: String,
     pub question: String,
@@ -55,6 +68,8 @@ pub struct ResearchSession {
     pub dispatch_task_id: Option<String>,
     pub dispatch: Option<DaemonDispatch>,
     pub accepted_notes: Vec<AcceptedResearchNote>,
+    #[serde(default)]
+    pub compile_state: Option<CompileState>,
 }
 
 impl ResearchSession {
@@ -83,6 +98,7 @@ impl ResearchSession {
             dispatch_task_id,
             dispatch: None,
             accepted_notes: Vec::new(),
+            compile_state: None,
         })
     }
 
@@ -125,6 +141,11 @@ impl ResearchSession {
             source: error.to_string(),
         })
     }
+
+    pub fn record_compile_state(&mut self, state: CompileState) -> Result<(), WikiError> {
+        self.compile_state = Some(state);
+        self.save_checkpoint()
+    }
 }
 
 fn new_session_id() -> String {
@@ -150,4 +171,45 @@ fn research_prompt(question: &str, source_constraints: &[String], agent_count: u
         }
     }
     prompt
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compile_state_is_resumable() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let scope = ResearchScope::project(temp.path());
+        let mut session = ResearchSession::new(
+            "How should compile state resume?",
+            scope.clone(),
+            vec!["accepted notes".to_string()],
+            1,
+            Some("#302".to_string()),
+        )
+        .expect("session created");
+
+        session
+            .record_compile_state(CompileState {
+                handoff_id: "compile-123".to_string(),
+                topic: "Compile state".to_string(),
+                bundle_path: scope.root().join(".gwiki/compile/compile-123.md"),
+                selected_note_paths: vec![scope.root().join("raw/research/compile.md")],
+                selected_source_titles: vec!["Compile behavior".to_string()],
+                citations: vec!["Example Docs".to_string()],
+                conflicting_claims: vec!["Conflicting claim".to_string()],
+                missing_evidence: vec!["Missing evidence".to_string()],
+                write_intent: false,
+            })
+            .expect("compile state recorded");
+
+        let loaded = ResearchSession::load_checkpoint(scope.root()).expect("checkpoint loaded");
+        let state = loaded.compile_state.expect("compile state persisted");
+        assert_eq!(state.handoff_id, "compile-123");
+        assert_eq!(state.topic, "Compile state");
+        assert_eq!(state.selected_source_titles, vec!["Compile behavior"]);
+        assert_eq!(state.citations, vec!["Example Docs"]);
+        assert!(!state.write_intent);
+    }
 }

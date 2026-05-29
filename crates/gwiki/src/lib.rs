@@ -1,6 +1,7 @@
 use std::fmt;
 use std::path::PathBuf;
 
+pub mod compile;
 pub mod credibility;
 pub mod daemon;
 pub mod events;
