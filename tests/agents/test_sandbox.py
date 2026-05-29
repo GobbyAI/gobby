@@ -448,7 +448,7 @@ class TestClaudeSandboxResolver:
         assert settings["sandbox"]["autoAllowBashIfSandboxed"] is False
         assert settings["sandbox"]["allowUnsandboxedCommands"] is False
         assert "network" in settings["sandbox"]
-        assert settings["sandbox"]["network"]["allowLocalBinding"] is False
+        assert settings["sandbox"]["network"]["allowLocalBinding"] is True
         assert settings["sandbox"]["network"]["allowedDomains"] == [
             "localhost",
             "127.0.0.1",
@@ -468,7 +468,7 @@ class TestClaudeSandboxResolver:
 
         settings = ClaudeSandboxResolver().build_settings(SandboxConfig(enabled=True), paths)
 
-        assert settings["sandbox"]["network"]["allowLocalBinding"] is False
+        assert settings["sandbox"]["network"]["allowLocalBinding"] is True
         assert settings["sandbox"]["network"]["allowedDomains"] == [
             "localhost",
             "127.0.0.1",
@@ -489,6 +489,7 @@ class TestClaudeSandboxResolver:
             paths,
         )
 
+        assert settings["sandbox"]["network"]["allowLocalBinding"] is False
         assert settings["sandbox"]["network"]["allowedDomains"] == []
 
     def test_external_write_paths_grant_filesystem_allow_write(self, tmp_path: Path) -> None:

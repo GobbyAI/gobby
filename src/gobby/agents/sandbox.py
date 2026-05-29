@@ -241,7 +241,7 @@ class ClaudeSandboxResolver(SandboxResolver):
             "network": {
                 "allowUnixSockets": [],
                 "allowAllUnixSockets": False,
-                "allowLocalBinding": False,
+                "allowLocalBinding": config.allow_network,
                 "allowedDomains": list(_CLAUDE_LOOPBACK_DOMAINS) if config.allow_network else [],
             },
             "enableWeakerNestedSandbox": False,

@@ -99,8 +99,8 @@ These tests cover the local hook binary contract:
 
 Claude's sandbox payload is intentionally conservative: Gobby enables the
 sandbox, uses managed permission rules only, disables unsandboxed command
-fallback, allows loopback domains for local Gobby services, and does not invent
-undocumented outbound-network wildcard settings.
+fallback, allows loopback domains and local binding for local Gobby services,
+and does not invent undocumented outbound-network wildcard settings.
 Codex maps permissive daemon mode to `workspace-write` and restrictive mode to
 `read-only`; spawned Codex agents also force workspace-write network access from
 daemon policy so local Gobby services, including Postgres, are reachable when

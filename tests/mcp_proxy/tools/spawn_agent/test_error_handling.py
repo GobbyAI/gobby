@@ -732,7 +732,7 @@ class TestSpawnAgentImplErrorBranches:
         mock_execute.assert_awaited_once()
         spawn_request = mock_execute.await_args.args[0]
         assert spawn_request.cwd == str(repo_path)
-        assert spawn_request.sandbox_config.enabled is False
+        assert spawn_request.sandbox_config.enabled is True
         assert spawn_request.extra_env == {"PATH": "/repo/.gobby/bin:/usr/bin"}
 
     @pytest.mark.asyncio

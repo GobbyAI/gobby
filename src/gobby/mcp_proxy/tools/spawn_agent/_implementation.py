@@ -44,9 +44,6 @@ if TYPE_CHECKING:
     from gobby.storage.tasks import LocalTaskManager
 
 logger = logging.getLogger(__name__)
-_UNSANDBOXED_MAIN_CONTEXT_AGENTS = frozenset(
-    {"planner", "plan-adversary", "plan-adversary-taskless"}
-)
 
 
 def _normalize_string_list(value: Any) -> list[str]:
@@ -60,11 +57,6 @@ def _normalize_optional_model(value: str | None) -> str | None:
         return None
     value = value.strip()
     return value or None
-
-
-def _needs_unsandboxed_main_context(agent_name: str | None) -> bool:
-    """Planning/review agents must reach local Gobby services for validation."""
-    return agent_name in _UNSANDBOXED_MAIN_CONTEXT_AGENTS
 
 
 def _run_string_attr(run: Any, name: str) -> str | None:
@@ -454,8 +446,6 @@ async def spawn_agent_impl(
     # Daemon-owned agent sandboxes inherit from config-store defaults only.
     effective_sandbox_config: SandboxConfig = agent_sandbox_config(daemon_config)
     requested_agent_name = agent_lookup_name or (agent_body.name if agent_body else None)
-    if _needs_unsandboxed_main_context(requested_agent_name):
-        effective_sandbox_config = effective_sandbox_config.model_copy(update={"enabled": False})
 
     # 2. Resolve project context
     ctx = get_project_context(Path(project_path) if project_path else None)

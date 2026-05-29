@@ -91,7 +91,7 @@ passed to the Claude SDK.
     "network": {
       "allowUnixSockets": [],
       "allowAllUnixSockets": false,
-      "allowLocalBinding": false,
+      "allowLocalBinding": true,
       "allowedDomains": ["localhost", "127.0.0.1", "::1"]
     },
     "enableWeakerNestedSandbox": false
@@ -100,8 +100,9 @@ passed to the Claude SDK.
 ```
 
 Gobby enables the sandbox, uses managed permission rules only, disables
-unsandboxed command fallback, allows loopback domains for local Gobby services,
-and leaves undocumented outbound-network wildcard settings unset.
+unsandboxed command fallback, allows loopback domains and local binding for
+local Gobby services, and leaves undocumented outbound-network wildcard settings
+unset.
 
 ### Codex
 
