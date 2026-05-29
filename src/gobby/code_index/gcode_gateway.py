@@ -15,6 +15,7 @@ from gobby.utils.native_bin import resolve_native_bin
 
 MIN_GCODE_GRAPH_VERSION = MANAGED_BIN_VERSION_PINS["gcode"]
 _VERSION_PATTERN = re.compile(r"\b(\d+\.\d+\.\d+(?:\.\d+)?)\b")
+_PROJECT_NOT_FOUND_PATTERN = re.compile(r"Project '([^']+)' not found")
 
 
 class GcodeGatewayError(RuntimeError):
@@ -42,6 +43,20 @@ class GcodeCommandError(GcodeGatewayError):
         self.stderr = stderr
         detail = stderr or "<no stderr>"
         super().__init__(f"gcode exited {returncode}: {detail}")
+
+
+class GcodeProjectNotFoundError(GcodeCommandError):
+    """Raised when gcode no longer has a project for the requested root."""
+
+    def __init__(
+        self,
+        command: Sequence[str],
+        returncode: int,
+        stderr: str,
+        project_path: str,
+    ) -> None:
+        self.project_path = project_path
+        super().__init__(command, returncode, stderr)
 
 
 class GcodeJsonError(GcodeGatewayError):
@@ -229,6 +244,13 @@ class GcodeGateway:
         if proc.returncode != 0:
             stderr_text = stderr.decode(errors="replace").strip()
             if check_version:
+                if match := _PROJECT_NOT_FOUND_PATTERN.search(stderr_text):
+                    raise GcodeProjectNotFoundError(
+                        command,
+                        proc.returncode or 1,
+                        stderr_text,
+                        match.group(1),
+                    )
                 raise GcodeCommandError(command, proc.returncode or 1, stderr_text)
             raise GcodeUnavailableError(stderr_text or f"gcode exited {proc.returncode}")
 
@@ -240,6 +262,7 @@ __all__ = [
     "GcodeGateway",
     "GcodeGatewayError",
     "GcodeJsonError",
+    "GcodeProjectNotFoundError",
     "GcodeTimeoutError",
     "GcodeUnavailableError",
     "GcodeVersionError",

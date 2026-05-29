@@ -11,6 +11,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from gobby.code_index.cleanup import purge_missing_project
 from gobby.utils.native_bin import resolve_native_bin
 
 if TYPE_CHECKING:
@@ -81,7 +82,14 @@ async def _run_maintenance(
 
         root = Path(project.root_path).expanduser()
         if not await asyncio.to_thread(root.is_dir):
-            await _purge_missing_project(context, project)
+            await purge_missing_project(
+                project=project,
+                storage=context.storage,
+                config=context.config,
+                vector_store=context.vector_store,
+                clear_graph=context.clear_graph,
+                run_db=context.run_db,
+            )
             continue
 
         if gcode_bin is not None:
@@ -127,45 +135,6 @@ async def _run_maintenance(
         # Generate summaries for unsummarized symbols
         if summarizer:
             await _summarize_unsummarized(context, project, summarizer, summary_batch_size)
-
-
-async def _purge_missing_project(context: CodeIndexContext, project: Any) -> None:
-    """Remove index data for a project whose root directory is gone."""
-    if getattr(context.config, "graph_enabled", True):
-        try:
-            result = await context.clear_graph(project.id)
-            if not result.get("success", False):
-                logger.warning(
-                    "Graph cleanup reported failure for missing code index project %s: %s",
-                    project.id,
-                    result.get("error", "unknown error"),
-                )
-        except Exception as e:
-            logger.warning(
-                "Graph cleanup failed for missing code index project %s: %s",
-                project.id,
-                e,
-                exc_info=True,
-            )
-
-    counts = await context.run_db(context.storage.delete_project_index, project.id)
-
-    if context.vector_store is not None:
-        collection = f"{context.config.qdrant_collection_prefix}{project.id}"
-        try:
-            await context.vector_store.delete_collection(collection)
-        except Exception as e:
-            logger.warning(
-                "Vector cleanup failed for missing code index project %s: %s",
-                project.id,
-                e,
-                exc_info=True,
-            )
-
-    logger.info(
-        f"Purged stale code index project {project.id} at {project.root_path}: "
-        f"{counts.get('files', 0)} files, {counts.get('symbols', 0)} symbols"
-    )
 
 
 async def _summarize_unsummarized(

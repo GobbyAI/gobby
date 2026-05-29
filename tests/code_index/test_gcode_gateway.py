@@ -11,6 +11,7 @@ from gobby.code_index.gcode_gateway import (
     GcodeCommandError,
     GcodeGateway,
     GcodeJsonError,
+    GcodeProjectNotFoundError,
     GcodeTimeoutError,
     GcodeUnavailableError,
     GcodeVersionError,
@@ -297,3 +298,24 @@ async def test_gateway_raises_for_nonzero_command(monkeypatch: pytest.MonkeyPatc
 
     with pytest.raises(GcodeCommandError, match="gcode exited 2: boom"):
         await gateway.graph_clear("proj-1")
+
+
+async def test_gateway_classifies_project_not_found(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    processes = [
+        FakeProcess(stdout=GCODE_PIN_STDOUT),
+        FakeProcess(
+            returncode=2,
+            stderr=f"Project '{tmp_path}' not found".encode(),
+        ),
+    ]
+    _patch_subprocess(monkeypatch, processes)
+    gateway = GcodeGateway(binary="/tmp/gcode")
+
+    with pytest.raises(GcodeProjectNotFoundError) as exc_info:
+        await gateway.graph_sync_file(tmp_path, "src/app.py")
+
+    assert exc_info.value.project_path == str(tmp_path)
+    assert exc_info.value.returncode == 2

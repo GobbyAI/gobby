@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import shutil
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -10,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gobby.code_index.gcode_gateway import GcodeProjectNotFoundError
 from gobby.code_index.models import IndexedFile, IndexedProject, Symbol
 from gobby.code_index.storage import CodeIndexStorage
 from gobby.code_index.sync_worker import _sync_file, _sync_graph, _sync_pass, sync_worker_loop
@@ -81,6 +84,19 @@ class RecordingGcodeGateway:
         if self.fail:
             raise RuntimeError("boom")
         return {"success": True}
+
+
+class ProjectNotFoundGcodeGateway:
+    def __init__(self, *, remove_root: bool = False) -> None:
+        self.remove_root = remove_root
+        self.synced_files: list[tuple[Path, str]] = []
+
+    async def graph_sync_file(self, project_root: Path, file_path: str) -> dict[str, Any]:
+        self.synced_files.append((project_root, file_path))
+        if self.remove_root:
+            shutil.rmtree(project_root)
+        stderr = f"Project '{project_root}' not found"
+        raise GcodeProjectNotFoundError(["gcode"], 2, stderr, str(project_root))
 
 
 def _indexed_project(root: Path) -> IndexedProject:
@@ -226,6 +242,150 @@ async def test_sync_worker_delegates_graph_sync_to_gcode_gateway(tmp_path: Path)
     assert gcode_gateway.synced_files == [(tmp_path, pending_file.file_path)]
     storage.mark_graph_sync_attempted.assert_not_called()
     storage.mark_graph_synced.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_sync_pass_purges_missing_project_before_pending_files(tmp_path: Path) -> None:
+    """Missing project roots are purged before polling pending graph work."""
+    missing_root = tmp_path / "deleted-worktree"
+    project = _indexed_project(missing_root)
+    storage = MagicMock()
+    storage.list_indexed_projects.return_value = [project]
+    storage.delete_project_index.return_value = {
+        "files": 1,
+        "symbols": 2,
+        "imports": 0,
+        "calls": 0,
+        "content_chunks": 0,
+        "projects": 1,
+    }
+    clear_graph = AsyncMock(return_value={"success": True})
+    vector_store = SimpleNamespace(delete_collection=AsyncMock())
+    run_db = RecordingRunDb()
+
+    await _sync_pass(
+        storage=storage,
+        vector_store=vector_store,
+        gcode_gateway=RecordingGcodeGateway(),
+        config=CodeIndexConfig(embedding_enabled=False, graph_enabled=True),
+        embed_model=None,
+        batch_size=10,
+        embedding_dim=4,
+        clear_graph=clear_graph,
+        run_db=run_db,
+    )
+
+    assert not missing_root.exists()
+    assert run_db.calls == ["list_indexed_projects", "delete_project_index"]
+    storage.get_pending_sync_files.assert_not_called()
+    storage.delete_project_index.assert_called_once_with(project.id)
+    clear_graph.assert_awaited_once_with(project.id)
+    vector_store.delete_collection.assert_awaited_once_with(f"code_symbols_{project.id}")
+
+
+@pytest.mark.asyncio
+async def test_sync_file_purges_when_gcode_project_missing_and_root_disappears(
+    tmp_path: Path,
+) -> None:
+    """A stale gcode project error purges the index when the worktree vanished."""
+    root = tmp_path / "repo"
+    _write_source(root)
+    pending_file = _indexed_file(vectors_synced=True, graph_synced=False)
+    storage = MagicMock()
+    storage.get_file.return_value = pending_file
+    storage.delete_project_index.return_value = {
+        "files": 1,
+        "symbols": 1,
+        "imports": 0,
+        "calls": 0,
+        "content_chunks": 0,
+        "projects": 1,
+    }
+    clear_graph = AsyncMock(return_value={"success": True})
+    vector_store = SimpleNamespace(delete_collection=AsyncMock())
+
+    did_sync = await _sync_file(
+        storage=storage,
+        vector_store=vector_store,
+        gcode_gateway=ProjectNotFoundGcodeGateway(remove_root=True),
+        config=CodeIndexConfig(embedding_enabled=False, graph_enabled=True),
+        embed_model=None,
+        project_id="proj-1",
+        root=root,
+        file=pending_file,
+        embedding_dim=4,
+        clear_graph=clear_graph,
+        run_db=RecordingRunDb(),
+    )
+
+    assert did_sync is False
+    assert not root.exists()
+    storage.delete_project_index.assert_called_once_with("proj-1")
+    clear_graph.assert_awaited_once_with("proj-1")
+    vector_store.delete_collection.assert_awaited_once_with("code_symbols_proj-1")
+
+
+@pytest.mark.asyncio
+async def test_sync_file_warns_without_traceback_when_gcode_project_missing_but_root_exists(
+    caplog: pytest.LogCaptureFixture,
+    tmp_path: Path,
+) -> None:
+    """A stale gcode project for an existing root is a warning without traceback noise."""
+    _write_source(tmp_path)
+    pending_file = _indexed_file(vectors_synced=True, graph_synced=False)
+    storage = MagicMock()
+    storage.get_file.return_value = pending_file
+
+    with caplog.at_level(logging.WARNING, logger="gobby.code_index.sync_worker"):
+        did_sync = await _sync_file(
+            storage=storage,
+            vector_store=None,
+            gcode_gateway=ProjectNotFoundGcodeGateway(),
+            config=CodeIndexConfig(embedding_enabled=False, graph_enabled=True),
+            embed_model=None,
+            project_id="proj-1",
+            root=tmp_path,
+            file=pending_file,
+            embedding_dim=4,
+        )
+
+    assert did_sync is False
+    assert "gcode project missing for proj-1" in caplog.text
+    assert not any(record.levelno >= logging.ERROR for record in caplog.records)
+    storage.delete_project_index.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_sync_file_logs_real_graph_failures_as_errors(
+    caplog: pytest.LogCaptureFixture,
+    tmp_path: Path,
+) -> None:
+    """Ordinary graph gateway failures stay ERROR-level diagnostics."""
+    _write_source(tmp_path)
+    pending_file = _indexed_file(vectors_synced=True, graph_synced=False)
+    storage = MagicMock()
+    storage.get_file.return_value = pending_file
+
+    with caplog.at_level(logging.ERROR, logger="gobby.code_index.sync_worker"):
+        did_sync = await _sync_file(
+            storage=storage,
+            vector_store=None,
+            gcode_gateway=RecordingGcodeGateway(fail=True),
+            config=CodeIndexConfig(embedding_enabled=False, graph_enabled=True),
+            embed_model=None,
+            project_id="proj-1",
+            root=tmp_path,
+            file=pending_file,
+            embedding_dim=4,
+        )
+
+    assert did_sync is False
+    assert any(
+        record.levelno == logging.ERROR
+        and "Sync worker: graph sync failed for src/app.py: boom" in record.getMessage()
+        and record.exc_info
+        for record in caplog.records
+    )
 
 
 @pytest.mark.asyncio

@@ -10,7 +10,11 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
+
+from gobby.code_index.cleanup import purge_missing_project
+from gobby.code_index.gcode_gateway import GcodeProjectNotFoundError
 
 if TYPE_CHECKING:
     from gobby.code_index.context import CodeIndexContext
@@ -88,6 +92,7 @@ async def sync_worker_loop(
                 embed_model=embed_model,
                 batch_size=batch_size,
                 embedding_dim=embeddings_config.dim,
+                clear_graph=getattr(context, "clear_graph", None),
                 run_db=run_db,
             )
         except Exception as e:
@@ -110,6 +115,7 @@ async def _sync_pass(
     embed_model: Any | None,
     batch_size: int,
     embedding_dim: int,
+    clear_graph: Callable[[str], Awaitable[dict[str, Any]]] | None = None,
     run_db: Callable[..., Awaitable[Any]] | None = None,
 ) -> None:
     """Single sync pass across all indexed projects."""
@@ -117,6 +123,18 @@ async def _sync_pass(
 
     for project in projects:
         if not project.root_path:
+            continue
+
+        root = Path(project.root_path).expanduser()
+        if not await asyncio.to_thread(root.is_dir):
+            await purge_missing_project(
+                project=project,
+                storage=storage,
+                config=config,
+                vector_store=vector_store,
+                clear_graph=clear_graph,
+                run_db=run_db,
+            )
             continue
 
         files = await _run_db(
@@ -130,7 +148,6 @@ async def _sync_pass(
         if not files:
             continue
 
-        root = Path(project.root_path)
         synced_count = 0
 
         for file in files:
@@ -145,6 +162,7 @@ async def _sync_pass(
                     root=root,
                     file=file,
                     embedding_dim=embedding_dim,
+                    clear_graph=clear_graph,
                     run_db=run_db,
                 )
                 if did_sync:
@@ -173,6 +191,7 @@ async def _sync_file(
     root: Path,
     file: IndexedFile,
     embedding_dim: int,
+    clear_graph: Callable[[str], Awaitable[dict[str, Any]]] | None = None,
     run_db: Callable[..., Awaitable[Any]] | None = None,
 ) -> bool:
     """Sync a single file's vectors and/or graph edges. Returns True if any work done."""
@@ -222,6 +241,25 @@ async def _sync_file(
                     file=current,
                 )
                 did_work = True
+            except GcodeProjectNotFoundError as e:
+                if not await asyncio.to_thread(root.is_dir):
+                    await purge_missing_project(
+                        project=SimpleNamespace(id=project_id, root_path=str(root)),
+                        storage=storage,
+                        config=config,
+                        vector_store=vector_store,
+                        clear_graph=clear_graph,
+                        run_db=run_db,
+                    )
+                else:
+                    logger.warning(
+                        "Sync worker: gcode project missing for %s at %s during graph sync "
+                        "of %s: %s",
+                        project_id,
+                        root,
+                        current.file_path,
+                        e,
+                    )
             except Exception as e:
                 logger.error(
                     "Sync worker: graph sync failed for %s: %s",
