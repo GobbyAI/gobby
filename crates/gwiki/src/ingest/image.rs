@@ -1,0 +1,235 @@
+use std::path::{Path, PathBuf};
+
+use crate::ingest::{
+    IngestResult, index_after_ingest, markdown_metadata, markdown_title, write_asset,
+    write_raw_markdown,
+};
+use crate::sources::{CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest};
+use crate::store::WikiIndexStore;
+use crate::vision::{
+    VisionDegradation, VisionEndpoint, VisionMarkdownResult, VisionRequest,
+    write_image_derived_markdown,
+};
+use crate::{ScopeIdentity, WikiError};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImageSnapshot {
+    pub location: String,
+    pub file_name: String,
+    pub fetched_at: String,
+    pub bytes: Vec<u8>,
+    pub mime_type: Option<String>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImageIngestResult {
+    pub record: crate::sources::SourceRecord,
+    pub raw_path: PathBuf,
+    pub asset_path: PathBuf,
+    pub derived_path: PathBuf,
+    pub vision_degradation: Option<VisionDegradation>,
+}
+
+pub fn ingest_image(
+    vault_root: &Path,
+    store: &mut impl WikiIndexStore,
+    scope: ScopeIdentity,
+    snapshot: ImageSnapshot,
+) -> Result<ImageIngestResult, WikiError> {
+    ingest_image_with_vision(
+        vault_root,
+        store,
+        scope,
+        snapshot,
+        VisionEndpoint::Unavailable(default_vision_degradation()),
+    )
+}
+
+pub fn ingest_image_with_vision(
+    vault_root: &Path,
+    store: &mut impl WikiIndexStore,
+    scope: ScopeIdentity,
+    snapshot: ImageSnapshot,
+    endpoint: VisionEndpoint<'_>,
+) -> Result<ImageIngestResult, WikiError> {
+    let title = markdown_title(&snapshot.file_name);
+    let draft = SourceDraft {
+        location: snapshot.location.clone(),
+        kind: SourceKind::Image,
+        fetched_at: snapshot.fetched_at.clone(),
+        content: snapshot.bytes.clone(),
+        title: Some(title),
+        citation: Some(snapshot.location.clone()),
+        license: None,
+        ingestion_method: IngestionMethod::Manual,
+        compile_status: CompileStatus::Pending,
+    };
+    let record = SourceManifest::register(vault_root, draft)?;
+    let asset_path = write_asset(vault_root, &record, &snapshot.file_name, &snapshot.bytes)?;
+    let raw_markdown = render_raw_image_markdown(&snapshot, &record.content_hash, &asset_path);
+    let raw_path = write_raw_markdown(vault_root, &record, &raw_markdown)?;
+    let VisionMarkdownResult {
+        path: derived_path,
+        degradation,
+    } = write_image_derived_markdown(
+        vault_root,
+        &scope,
+        &record,
+        VisionRequest {
+            file_name: &snapshot.file_name,
+            mime_type: snapshot.mime_type.as_deref(),
+            asset_path: &asset_path,
+            bytes: &snapshot.bytes,
+            width: snapshot.width,
+            height: snapshot.height,
+        },
+        endpoint,
+    )?;
+    index_after_ingest(vault_root, store)?;
+
+    Ok(ImageIngestResult {
+        record,
+        raw_path,
+        asset_path,
+        derived_path,
+        vision_degradation: degradation,
+    })
+}
+
+impl From<ImageIngestResult> for IngestResult {
+    fn from(result: ImageIngestResult) -> Self {
+        Self {
+            record: result.record,
+            raw_path: result.raw_path,
+            asset_path: Some(result.asset_path),
+        }
+    }
+}
+
+fn render_raw_image_markdown(
+    snapshot: &ImageSnapshot,
+    source_hash: &str,
+    asset_path: &Path,
+) -> String {
+    let asset_path = path_to_string(asset_path);
+    let mut fields = vec![
+        ("source_kind", "image".to_string()),
+        ("source_location", snapshot.location.clone()),
+        ("fetched_at", snapshot.fetched_at.clone()),
+        ("source_hash", source_hash.to_string()),
+        ("source_asset", asset_path.clone()),
+    ];
+    if let Some(mime_type) = &snapshot.mime_type {
+        fields.push(("image_mime_type", mime_type.clone()));
+    }
+    if let Some(width) = snapshot.width {
+        fields.push(("image_width", width.to_string()));
+    }
+    if let Some(height) = snapshot.height {
+        fields.push(("image_height", height.to_string()));
+    }
+
+    let mut markdown = markdown_metadata(&fields);
+    markdown.push_str("# ");
+    markdown.push_str(&markdown_title(&snapshot.file_name));
+    markdown.push_str("\n\n");
+    markdown.push_str("Original image stored under `");
+    markdown.push_str(&asset_path);
+    markdown.push_str("`.\n");
+    markdown
+}
+
+fn default_vision_degradation() -> VisionDegradation {
+    VisionDegradation {
+        reason: "missing_endpoint".to_string(),
+        fallback:
+            "Keep raw image assets and surface filename/metadata only; skip visual extraction."
+                .to_string(),
+    }
+}
+
+fn path_to_string(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+#[cfg(test)]
+mod tests {
+    use gobby_core::indexing::content_hash;
+
+    use super::*;
+    use crate::sources::{SourceKind, SourceManifest};
+    use crate::store::{MemoryWikiStore, WikiDocumentKind};
+
+    fn sample_snapshot() -> ImageSnapshot {
+        ImageSnapshot {
+            location: "/tmp/diagram.png".to_string(),
+            file_name: "diagram.png".to_string(),
+            fetched_at: "2026-05-29T20:30:00Z".to_string(),
+            bytes: b"\x89PNG\r\n\x1a\nimage-bytes\n".to_vec(),
+            mime_type: Some("image/png".to_string()),
+            width: Some(640),
+            height: Some(480),
+        }
+    }
+
+    #[test]
+    fn stores_original_image() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let snapshot = sample_snapshot();
+        let expected_hash = content_hash(&snapshot.bytes);
+        let mut store = MemoryWikiStore::default();
+
+        let result = ingest_image(
+            temp.path(),
+            &mut store,
+            ScopeIdentity::topic("field-work"),
+            snapshot.clone(),
+        )
+        .expect("ingest image");
+
+        assert_eq!(
+            result.asset_path.parent(),
+            Some(PathBuf::from("raw/assets").as_path())
+        );
+        assert_eq!(
+            std::fs::read(temp.path().join(&result.asset_path)).expect("asset bytes"),
+            snapshot.bytes
+        );
+        let raw =
+            std::fs::read_to_string(temp.path().join(&result.raw_path)).expect("raw markdown");
+        assert!(raw.contains("source_kind: image"));
+        assert!(raw.contains("source_asset: raw/assets/"));
+
+        let manifest = SourceManifest::read(temp.path()).expect("read source manifest");
+        assert_eq!(manifest.entries.len(), 1);
+        assert_eq!(manifest.entries[0].kind, SourceKind::Image);
+        assert_eq!(manifest.entries[0].content_hash, expected_hash);
+    }
+
+    #[test]
+    fn image_metadata_is_scope_indexed() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut store = MemoryWikiStore::default();
+
+        let result = ingest_image(
+            temp.path(),
+            &mut store,
+            ScopeIdentity::project("project-123"),
+            sample_snapshot(),
+        )
+        .expect("ingest image");
+
+        let document = store
+            .documents
+            .get(&result.derived_path)
+            .expect("derived image document indexed");
+        assert_eq!(document.kind, WikiDocumentKind::SourceNote);
+        assert!(document.body.contains("scope_kind: project"));
+        assert!(document.body.contains("scope_id: project-123"));
+        assert!(document.body.contains("image_width: 640"));
+        assert!(document.body.contains("image_height: 480"));
+        assert!(store.sources.contains_key(&result.derived_path));
+    }
+}
