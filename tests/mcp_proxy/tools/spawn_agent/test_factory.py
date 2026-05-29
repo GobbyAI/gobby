@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -10,6 +12,7 @@ import pytest
 
 from gobby.agents.isolation import IsolationContext
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.projects import LocalProjectManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import AgentDefinitionBody, WorkflowStep
 
@@ -199,6 +202,61 @@ class TestSpawnAgentDefaults:
             session_manager=None,
             db=db,
         )
+
+    @pytest.mark.asyncio
+    async def test_spawn_agent_derives_project_path_from_parent_session(
+        self,
+        mock_runner,
+        db: HubDatabase,
+        tmp_path: Path,
+    ) -> None:
+        from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
+
+        project = LocalProjectManager(db).create(
+            "spawn-parent-project",
+            repo_path=str(tmp_path),
+        )
+        session_manager = MagicMock()
+        session_manager.resolve_session_reference.return_value = "parent-uuid"
+        session_manager.get.return_value = SimpleNamespace(project_id=project.id)
+        agent_body = AgentDefinitionBody(
+            name="spawn-memory-recall-helper",
+            provider="claude",
+        )
+        registry = create_spawn_agent_registry(
+            mock_runner,
+            session_manager=session_manager,
+            db=db,
+        )
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory.get_project_context",
+                return_value=None,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body",
+                return_value=agent_body,
+            ) as mock_load,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory.spawn_agent_impl",
+                new_callable=AsyncMock,
+                return_value={"success": True},
+            ) as mock_spawn_impl,
+        ):
+            result = await registry.call(
+                "spawn_agent",
+                {
+                    "prompt": "Recall relevant memory",
+                    "agent": "spawn-memory-recall-helper",
+                    "parent_session_id": "parent-ref",
+                },
+            )
+
+        assert result["success"] is True
+        assert mock_load.call_args.kwargs["project_id"] == project.id
+        assert mock_spawn_impl.call_args.kwargs["parent_session_id"] == "parent-uuid"
+        assert mock_spawn_impl.call_args.kwargs["project_path"] == str(tmp_path)
 
 
 class TestSpawnAgentParamOverrides:

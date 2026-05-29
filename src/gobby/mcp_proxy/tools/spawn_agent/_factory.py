@@ -7,6 +7,7 @@ and delegates to spawn_agent_impl for execution.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from gobby.agents.completion_subscribers import subscribe_agent_completion
@@ -70,6 +71,101 @@ def _suggestion_task_description(
         return ""
     description = getattr(full_task, "description", "") if full_task else ""
     return description if isinstance(description, str) else ""
+
+
+def _project_id_from_context(ctx: dict[str, Any] | None) -> str | None:
+    if not ctx:
+        return None
+    return _first_string(ctx, "id", "project_id")
+
+
+def _project_path_from_context(ctx: dict[str, Any] | None) -> str | None:
+    if not ctx:
+        return None
+    return _non_empty_string(ctx.get("project_path"))
+
+
+def _project_lookup_db(db: HubDatabase | None, session_manager: Any | None) -> Any | None:
+    return db or getattr(session_manager, "db", None)
+
+
+def _context_from_project_path(project_path: str) -> dict[str, Any] | None:
+    try:
+        return get_project_context(Path(project_path).expanduser())
+    except Exception:
+        logger.debug("Failed to resolve project context from %s", project_path, exc_info=True)
+        return None
+
+
+def _parent_session_project_context(
+    *,
+    parent_session_id: str | None,
+    session_manager: Any | None,
+    db: HubDatabase | None,
+) -> dict[str, Any] | None:
+    if not parent_session_id or session_manager is None:
+        return None
+
+    lookup_db = _project_lookup_db(db, session_manager)
+    if lookup_db is None:
+        return None
+
+    try:
+        session = session_manager.get(parent_session_id)
+    except Exception:
+        logger.debug("Failed to load parent session %s", parent_session_id, exc_info=True)
+        return None
+
+    project_id = _non_empty_string(getattr(session, "project_id", None))
+    if project_id is None:
+        return None
+
+    try:
+        from gobby.storage.projects import LocalProjectManager
+
+        project = LocalProjectManager(lookup_db).get(project_id)
+    except Exception:
+        logger.debug("Failed to load project %s for parent session", project_id, exc_info=True)
+        return {"id": project_id}
+
+    if project is None:
+        return {"id": project_id}
+
+    return {
+        "id": project.id,
+        "name": project.name,
+        "project_path": _non_empty_string(project.repo_path),
+    }
+
+
+def _resolve_spawn_project_context(
+    *,
+    project_path: str | None,
+    parent_session_id: str | None,
+    session_manager: Any | None,
+    db: HubDatabase | None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    explicit_path = _non_empty_string(project_path)
+    if explicit_path:
+        explicit_ctx = _context_from_project_path(explicit_path)
+        fallback_ctx = get_project_context()
+        return explicit_ctx or fallback_ctx, _project_path_from_context(explicit_ctx) or explicit_path
+
+    current_ctx = get_project_context()
+    current_path = _project_path_from_context(current_ctx)
+    if current_path:
+        return current_ctx, current_path
+
+    parent_ctx = _parent_session_project_context(
+        parent_session_id=parent_session_id,
+        session_manager=session_manager,
+        db=db,
+    )
+    parent_path = _project_path_from_context(parent_ctx)
+    if parent_path:
+        return parent_ctx, parent_path
+
+    return current_ctx or parent_ctx, None
 
 
 def _load_agent_body(
@@ -219,8 +315,13 @@ def create_spawn_agent_registry(
                 return {"success": False, "error": str(e)}
 
         # Load agent definition body from DB
-        ctx = get_project_context()
-        project_id = ctx.get("id") if ctx else None
+        spawn_project_ctx, effective_project_path = _resolve_spawn_project_context(
+            project_path=project_path,
+            parent_session_id=resolved_parent_session_id,
+            session_manager=session_manager,
+            db=db,
+        )
+        project_id = _project_id_from_context(spawn_project_ctx)
         agent_body = _load_agent_body(agent, db, project_id=project_id)
         if agent_body is None and agent != "default":
             return {"success": False, "error": f"Agent '{agent}' not found"}
@@ -254,7 +355,10 @@ def create_spawn_agent_registry(
             from gobby.workflows.loader import WorkflowLoader
 
             wf_loader = WorkflowLoader(db=db)
-            wf_def = wf_loader.load_workflow_sync(effective_workflow, project_path=project_path)
+            wf_def = wf_loader.load_workflow_sync(
+                effective_workflow,
+                project_path=effective_project_path,
+            )
             if wf_def:
                 from gobby.workflows.definitions import PipelineDefinition
 
@@ -339,7 +443,7 @@ def create_spawn_agent_registry(
             timeout=timeout,
             max_turns=max_turns,
             parent_session_id=resolved_parent_session_id,
-            project_path=project_path,
+            project_path=effective_project_path,
             initial_variables=initial_variables,
             session_manager=session_manager,
             db=db,

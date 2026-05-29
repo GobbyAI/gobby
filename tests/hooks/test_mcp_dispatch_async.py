@@ -17,14 +17,18 @@ pytestmark = pytest.mark.unit
 def _make_event(
     platform_session_id: str = "plat-sess-1",
     prompt: str = "Fix the auth bug",
+    project_path: str | None = None,
 ) -> HookEvent:
+    metadata = {"_platform_session_id": platform_session_id}
+    if project_path is not None:
+        metadata["project_path"] = project_path
     return HookEvent(
         event_type=HookEventType.BEFORE_AGENT,
         session_id="ext-sess-1",
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         data={"prompt": prompt},
-        metadata={"_platform_session_id": platform_session_id},
+        metadata=metadata,
     )
 
 
@@ -63,6 +67,21 @@ class TestContextInjection:
 
         args = call_tool.call_args[0][2]
         assert args["session_id"] == "explicit"
+
+    @pytest.mark.asyncio
+    async def test_injects_project_path_from_event_metadata(self) -> None:
+        call_tool = AsyncMock()
+        event = _make_event(project_path="/repo/project")
+
+        await dispatch_mcp_calls(
+            [{"server": "gobby-agents", "tool": "spawn_agent", "arguments": {}}],
+            event,
+            call_tool,
+            logging.getLogger("test"),
+        )
+
+        args = call_tool.call_args[0][2]
+        assert args["project_path"] == "/repo/project"
 
     @pytest.mark.asyncio
     async def test_seeds_session_context_for_internal_callers(self) -> None:
