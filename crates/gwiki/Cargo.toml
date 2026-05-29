@@ -25,6 +25,8 @@ path = "src/main.rs"
 [dependencies]
 gobby-core = { path = "../gcore", version = "0.2.2", features = ["postgres", "falkor", "qdrant", "indexing", "search"] }
 clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+ureq = "2"
 
 [dev-dependencies]
 toml = "1"

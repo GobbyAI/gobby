@@ -892,7 +892,9 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "gobby-core",
+ "serde",
  "toml",
+ "ureq",
 ]
 
 [[package]]
