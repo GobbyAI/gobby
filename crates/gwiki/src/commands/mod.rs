@@ -1,4 +1,5 @@
 pub mod backlinks;
+pub mod collect;
 pub mod index;
 pub mod init;
 pub mod search;
