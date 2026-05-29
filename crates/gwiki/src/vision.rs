@@ -50,7 +50,18 @@ pub fn write_image_derived_markdown(
     endpoint: VisionEndpoint<'_>,
 ) -> Result<VisionMarkdownResult, WikiError> {
     let (extraction, degradation) = match endpoint {
-        VisionEndpoint::Available(client) => (Some(client.extract(&request)?), None),
+        VisionEndpoint::Available(client) => match client.extract(&request) {
+            Ok(extraction) => (Some(extraction), None),
+            Err(error) => (
+                None,
+                Some(VisionDegradation {
+                    reason: "vision_error".to_string(),
+                    fallback: format!(
+                        "Vision extraction failed: {error}; keep raw image assets and surface filename/metadata only."
+                    ),
+                }),
+            ),
+        },
         VisionEndpoint::Unavailable(degradation) => (None, Some(degradation)),
     };
     let relative_path = derived_markdown_path(record);
@@ -205,6 +216,8 @@ mod tests {
         calls: Cell<usize>,
     }
 
+    struct FailingVisionClient;
+
     impl VisionClient for FakeVisionClient {
         fn extract(&self, _request: &VisionRequest<'_>) -> Result<VisionExtraction, WikiError> {
             self.calls.set(self.calls.get() + 1);
@@ -212,6 +225,15 @@ mod tests {
                 description: "A labeled circuit diagram with two power rails.".to_string(),
                 ocr_text: Some("VCC GND Sensor".to_string()),
                 metadata: vec![("model".to_string(), "fake-vision".to_string())],
+            })
+        }
+    }
+
+    impl VisionClient for FailingVisionClient {
+        fn extract(&self, _request: &VisionRequest<'_>) -> Result<VisionExtraction, WikiError> {
+            Err(WikiError::Daemon {
+                endpoint: "/api/chat/attachments",
+                message: "temporarily unavailable".to_string(),
             })
         }
     }
@@ -320,5 +342,39 @@ mod tests {
         assert!(markdown.contains("vision_degradation: missing_endpoint"));
         assert!(markdown.contains("Keep raw image assets"));
         assert!(markdown.contains("Original image: `raw/assets/image.png`"));
+    }
+
+    #[test]
+    fn vision_client_error_degrades() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let record = record_for(temp.path());
+        let asset_path = PathBuf::from("raw/assets/image.png");
+
+        let result = write_image_derived_markdown(
+            temp.path(),
+            &ScopeIdentity::project("project-123"),
+            &record,
+            VisionRequest {
+                file_name: "circuit.png",
+                mime_type: Some("image/png"),
+                asset_path: &asset_path,
+                bytes: b"image-bytes",
+                width: None,
+                height: None,
+            },
+            VisionEndpoint::Available(&FailingVisionClient),
+        )
+        .expect("vision error degrades");
+
+        let degradation = result.degradation.expect("degradation");
+        assert_eq!(degradation.reason, "vision_error");
+        assert!(degradation.fallback.contains("/api/chat/attachments"));
+
+        let markdown =
+            std::fs::read_to_string(temp.path().join(&result.path)).expect("derived markdown");
+        assert!(markdown.contains("vision_status: unavailable"));
+        assert!(markdown.contains("vision_degradation: vision_error"));
+        assert!(markdown.contains("## Source References"));
+        assert!(markdown.contains("raw/assets/image.png"));
     }
 }
