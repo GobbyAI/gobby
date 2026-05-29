@@ -229,9 +229,12 @@ class TestAgentWorkflowCompletion:
         engine = RuleEngine(db, runner=runner, completion_registry=completion_registry)
         variables: dict[str, object] = {}
 
-        await engine.evaluate(_after_tool_event(), session_id="agent-session", variables=variables)
+        response = await engine.evaluate(
+            _after_tool_event(), session_id="agent-session", variables=variables
+        )
 
         assert variables["step_workflow_complete"] is True
+        assert response.decision == "allow"
         runner.complete_run.assert_not_called()
         runner.agent_lifecycle_monitor.terminalize_successful_run.assert_awaited_once_with(
             "run-123",
@@ -297,9 +300,12 @@ class TestAgentWorkflowCompletion:
         engine = RuleEngine(db, runner=runner, completion_registry=completion_registry)
         variables: dict[str, object] = {}
 
-        await engine.evaluate(_after_tool_event(), session_id="agent-session", variables=variables)
+        response = await engine.evaluate(
+            _after_tool_event(), session_id="agent-session", variables=variables
+        )
 
         assert variables["step_workflow_complete"] is True
+        assert response.decision == "allow"
         runner.complete_run.assert_not_called()
         completion_registry.notify.assert_not_awaited()
 

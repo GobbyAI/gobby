@@ -775,4 +775,5 @@ def test_hook_manager_reconciles_before_rules(
         manager._enricher.enrich = MagicMock()
         manager._handle_internal(event)
 
+    assert len(call_order) == 3
     assert call_order == ["reconcile", "rules", "handler"]

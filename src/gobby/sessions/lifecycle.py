@@ -63,7 +63,10 @@ def _coerce_context_window(value: Any) -> int | None:
 
 
 def _message_context_window(message: ParsedMessage) -> int | None:
-    payload = message.raw_json.get("payload")
+    raw_json = getattr(message, "raw_json", None)
+    if not isinstance(raw_json, dict):
+        return None
+    payload = raw_json.get("payload")
     if not isinstance(payload, dict):
         return None
     info = payload.get("info")

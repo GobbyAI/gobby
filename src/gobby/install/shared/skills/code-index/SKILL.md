@@ -47,6 +47,8 @@ Use these **before making changes** to understand what you'll affect:
 
 ## Graph Lifecycle
 
+Use `gcode` directly for the code-index graph projection via the Gobby daemon.
+
 `gcode` owns the code-index graph projection. The daemon exposes HTTP shim routes
 for the UI, but graph sync/read/lifecycle behavior lives in `gcode`.
 

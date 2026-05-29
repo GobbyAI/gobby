@@ -154,16 +154,17 @@ class TestSessionStartHandoff:
         mock_parent_obj.summary_markdown = "# Summary\nWorked on feature X"
         mock_parent_obj.terminal_context = mock_parent_for_find.terminal_context
 
-        # get() called: pre-created check (None), handoff var population (parent),
-        # seq_num fetch (new session)
         mock_new_session = MagicMock()
         mock_new_session.seq_num = 43
 
-        mock_dependencies["session_storage"].get.side_effect = [
-            None,  # pre-created session check
-            mock_parent_obj,  # handoff variable population
-            mock_new_session,  # fetch session for seq_num
-        ]
+        def get_session(session_id: str) -> MagicMock | None:
+            if session_id == "parent-sess-123":
+                return mock_parent_obj
+            if session_id == "new-sess-456":
+                return mock_new_session
+            return None
+
+        mock_dependencies["session_storage"].get.side_effect = get_session
         mock_dependencies["session_storage"].find_parent.return_value = mock_parent_for_find
         mock_dependencies["session_manager"].register_session.return_value = "new-sess-456"
 
@@ -217,11 +218,14 @@ class TestSessionStartHandoff:
         mock_new_session = MagicMock()
         mock_new_session.seq_num = 43
 
-        mock_dependencies["session_storage"].get.side_effect = [
-            None,  # pre-created session check
-            mock_parent_obj,  # handoff variable population
-            mock_new_session,  # fetch session for seq_num
-        ]
+        def get_session(session_id: str) -> MagicMock | None:
+            if session_id == "parent-sess-123":
+                return mock_parent_obj
+            if session_id == "new-sess-456":
+                return mock_new_session
+            return None
+
+        mock_dependencies["session_storage"].get.side_effect = get_session
         mock_dependencies["session_storage"].find_parent.return_value = mock_parent_for_find
         mock_dependencies["session_manager"].register_session.return_value = "new-sess-456"
 
@@ -281,12 +285,16 @@ class TestSessionStartHandoff:
         mock_new_session = MagicMock()
         mock_new_session.seq_num = 43
 
-        mock_dependencies["session_storage"].get.side_effect = [
-            None,  # pre-created session check
-            stale_parent,  # initial parent fetch before summary refresh
-            refreshed_parent,  # parent refetch after summary generation
-            mock_new_session,  # fetch session for seq_num
-        ]
+        parent_gets = [stale_parent, refreshed_parent]
+
+        def get_session(session_id: str) -> MagicMock | None:
+            if session_id == "parent-sess-123":
+                return parent_gets.pop(0)
+            if session_id == "new-sess-456":
+                return mock_new_session
+            return None
+
+        mock_dependencies["session_storage"].get.side_effect = get_session
         mock_dependencies["session_storage"].find_parent.return_value = mock_parent_for_find
         mock_dependencies["session_manager"].register_session.return_value = "new-sess-456"
 

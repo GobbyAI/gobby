@@ -532,6 +532,8 @@ class TestVoiceWarmup:
         )
 
         mixin._handle_chat_message.assert_awaited_once()
+        payloads = [json.loads(call.args[0]) for call in websocket.send.await_args_list]
+        assert payloads[-1]["text"] == "hello from voice"
         chat_data = mixin._handle_chat_message.await_args.args[1]
         assert chat_data == {
             "type": "chat_message",
@@ -598,6 +600,7 @@ class TestVoiceWarmup:
         )
 
         payloads = [json.loads(call.args[0]) for call in websocket.send.await_args_list]
+        assert [payload["status"] for payload in payloads] == ["transcribing", "error"]
         assert payloads[-1] == {
             "type": "voice_status",
             "conversation_id": "conv-timeout",

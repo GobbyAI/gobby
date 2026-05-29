@@ -360,6 +360,7 @@ class TestCloseTask:
             )
 
         assert result == {"success": True}
+        assert result["success"] is True
         mock_task_manager.update_task.assert_called_once_with(
             task.id,
             validation_status="valid",
@@ -553,6 +554,7 @@ class TestReopenTask:
                 result = await registry.call("reopen_task", {"task_id": task_id})
 
             assert "error" not in result
+            assert result == {}
             mock_remove.assert_called_once_with(mock_svm.get_variables.return_value, task_id)
 
     @pytest.mark.asyncio

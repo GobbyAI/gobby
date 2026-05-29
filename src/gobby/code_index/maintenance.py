@@ -131,7 +131,7 @@ async def _run_maintenance(
 
 async def _purge_missing_project(context: CodeIndexContext, project: Any) -> None:
     """Remove index data for a project whose root directory is gone."""
-    if context.config.graph_enabled:
+    if getattr(context.config, "graph_enabled", True):
         try:
             result = await context.clear_graph(project.id)
             if not result.get("success", False):

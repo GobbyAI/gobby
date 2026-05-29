@@ -574,7 +574,11 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
             return {"checks": checks if isinstance(checks, list) else [], "status": "ok"}
         except Exception as e:
             logger.warning(f"Failed to get PR checks: {e}")
-            return {"checks": [], "status": "error", "error": "Failed to get pull request checks"}
+            return {
+                "checks": [],
+                "status": "error",
+                "error": f"Failed to get pull request checks: {e}",
+            }
 
     @router.get("/issues")
     async def list_issues(

@@ -778,6 +778,7 @@ class TestSpawnAgentImplErrorBranches:
             "success": False,
             "error": "planner_code_index_unavailable:gcode_index_unavailable:boom",
         }
+        assert result["error"].startswith("planner_code_index_unavailable:")
         index.assert_awaited_once()
         mock_execute.assert_not_awaited()
 

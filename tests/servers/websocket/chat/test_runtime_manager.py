@@ -451,6 +451,7 @@ class TestCodexBackend:
             model="gpt-5.4",
             approval_policy="on-request",
             sandbox=None,
+            terminal_context=None,
         )
         assert session.sdk_session_id == "thread-1"
         assert session._thread_id == "thread-1"
@@ -481,6 +482,7 @@ class TestCodexBackend:
             model="gpt-5.4",
             approval_policy="on-request",
             sandbox="read-only",
+            terminal_context=None,
         )
         assert client.start_thread.await_count == 1
         assert client.start_thread.await_args is not None

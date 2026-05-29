@@ -131,27 +131,21 @@ def test_phase7_config_tracks_falkordb_and_neo4j_cutover() -> None:
     _assert_neo4j_transition_state(config, context)
 
 
-def test_phase7_falkor_client_pins_mutable_read_only_wrapper_contract() -> None:
-    """Phase 7.2 pins the FalkorDB wrapper surface before query bodies are ported."""
+def test_phase7_falkor_client_pins_core_graph_client_facade_contract() -> None:
+    """The Falkor facade delegates connection details to gobby-core."""
     falkor = _read("crates/gcode/src/falkor.rs")
 
     client = _struct_body(falkor, "FalkorClient")
-    _assert_field(client, "graph: SyncGraph")
+    _assert_field(client, "client: GraphClient")
 
     _assert_contains_all(
         falkor,
         (
-            "use falkordb::",
-            "FalkorClientBuilder",
-            "FalkorConnectionInfo",
-            "FalkorValue",
-            "SyncGraph",
-            "urlencoding::encode(password)",
-            "falkor://:{}@{}:{}",
-            ".with_connection_info(conn_info)",
-            ".with_params(&",
-            "result.header",
-            "FalkorValue::None",
+            "use gobby_core::falkor::GraphClient",
+            "pub type Row = gobby_core::falkor::Row",
+            "GraphClient::from_config",
+            "config.connection_config()",
+            "with_core_client",
             "let mut client =",
             "ctx.falkordb",
         ),
@@ -159,11 +153,10 @@ def test_phase7_falkor_client_pins_mutable_read_only_wrapper_contract() -> None:
     _assert_matches(
         falkor,
         (
-            r"pub\s+type\s+Row\s*=\s*HashMap<String,\s*Value>",
+            r"pub\s+type\s+Row\s*=\s*gobby_core::falkor::Row",
             r"pub\s+fn\s+from_config\(config:\s*&FalkorConfig\)",
             r"pub\s+fn\s+query\(\s*&mut\s+self,\s*cypher:\s*&str,\s*"
             r"params:\s*Option<HashMap<String,\s*String>>",
-            r"fn\s+parse_falkor_result\(",
             r"pub\s+fn\s+with_falkor<T>\(\s*ctx:\s*&Context,\s*default:\s*T,\s*"
             r"f:\s*impl\s+FnOnce\(&mut\s+FalkorClient\)",
         ),
@@ -171,7 +164,7 @@ def test_phase7_falkor_client_pins_mutable_read_only_wrapper_contract() -> None:
 
 
 def test_phase7_cargo_dependencies_and_lockfile_track_falkordb_client() -> None:
-    """Phase 7.2 adds the Rust FalkorDB deps and keeps the lockfile reproducible."""
+    """FalkorDB deps are supplied through gobby-core while the lockfile stays pinned."""
     cargo = _toml("crates/gcode/Cargo.toml")
     lockfile = _toml("Cargo.lock")
 
@@ -179,12 +172,13 @@ def test_phase7_cargo_dependencies_and_lockfile_track_falkordb_client() -> None:
     assert {"name": "gcode", "path": "src/main.rs"} in cargo["bin"]
 
     dependencies = cargo["dependencies"]
-    assert dependencies["falkordb"] == "0.2"
+    assert "falkor" in dependencies["gobby-core"]["features"]
     assert dependencies["urlencoding"] == "2"
     assert "base64" in dependencies
     assert "reqwest" in dependencies
 
     package_names = {package["name"] for package in lockfile["package"]}
+    assert "gobby-core" in package_names
     assert "falkordb" in package_names
     assert "urlencoding" in package_names
     assert "neo4j" not in package_names
@@ -195,6 +189,8 @@ def test_phase7_ports_all_eight_read_queries_without_unbound_numeric_params() ->
     """Phase 7.3 ports every Rust graph read helper to FalkorDB query semantics."""
     falkor = _read("crates/gcode/src/falkor.rs")
     production = _without_rust_unit_tests(falkor)
+    code_graph = _without_rust_unit_tests(_read("crates/gcode/src/graph/code_graph.rs"))
+    typed_query = _without_rust_unit_tests(_read("crates/gcode/src/graph/typed_query.rs"))
 
     read_helpers = (
         "count_callers",
@@ -211,14 +207,15 @@ def test_phase7_ports_all_eight_read_queries_without_unbound_numeric_params() ->
             rf"pub\s+fn\s+{function}\(\s*ctx:\s*&Context\b",
             production,
         ), f"missing public read helper {function}(ctx: &Context, ...)"
+        assert f"crate::graph::code_graph::{function}" in production
 
     _assert_contains_all(
-        production,
+        code_graph,
         (
             "target:CodeSymbol OR target:UnresolvedCallee OR target:ExternalSymbol",
             "depth.clamp(1, 5)",
-            "limit.clamp(1, MAX_GRAPH_LIMIT)",
-            "offset.min(MAX_GRAPH_LIMIT)",
+            "typed_query::clamp_limit(limit, MAX_GRAPH_LIMIT)",
+            "typed_query::clamp_offset(offset, MAX_GRAPH_LIMIT)",
             "SKIP {offset} LIMIT {limit}",
             "target.id IN [{ids}]",
             "src.id IN [{ids}]",
@@ -226,14 +223,15 @@ def test_phase7_ports_all_eight_read_queries_without_unbound_numeric_params() ->
         ),
     )
     _assert_matches(
-        production,
+        typed_query,
         (
-            r"fn\s+cypher_string_literal\(s:\s*&str\)\s*->\s*String",
-            r"fn\s+id_list_literal\(ids:\s*&\[String\]\)\s*->\s*String",
-            r"fn\s+clamp_offset\(offset:\s*usize\)\s*->\s*usize",
-            r"fn\s+blast_radius_query\(depth:\s*usize,\s*limit:\s*usize\)",
+            r"pub\s+fn\s+cypher_string_literal\(s:\s*&str\)\s*->\s*String",
+            r"pub\s+fn\s+id_list_literal\(ids:\s*&\[String\]\)\s*->\s*String",
+            r"pub\s+fn\s+clamp_offset\(offset:\s*usize,\s*max:\s*usize\)\s*->\s*usize",
+            r"pub\s+fn\s+clamp_limit\(limit:\s*usize,\s*max:\s*usize\)\s*->\s*usize",
         ),
     )
-    assert "$offset" not in production
-    assert "$limit" not in production
-    assert "$ids" not in production
+    assert re.search(r"fn\s+blast_radius_query\(depth:\s*usize,\s*limit:\s*usize\)", code_graph)
+    assert "$offset" not in code_graph
+    assert "$limit" not in code_graph
+    assert "$ids" not in code_graph

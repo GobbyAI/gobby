@@ -142,10 +142,12 @@ def test_post_api_build_omitted_backend_defaults_to_worktree() -> None:
     assert opts.isolation_explicit is False
 
 
-def test_post_api_build_resolves_project_from_request_context() -> None:
+def test_post_api_build_resolves_project_from_request_context(tmp_path: Path) -> None:
     from gobby.build.service import BuildResult, DispatcherTickSummary
     from gobby.servers.routes.build import create_build_router
 
+    project_path = tmp_path / "project-2"
+    project_path.mkdir()
     server = SimpleNamespace(
         services=SimpleNamespace(
             database=MagicMock(),
@@ -173,14 +175,14 @@ def test_post_api_build_resolves_project_from_request_context() -> None:
             json={
                 "input_ref": "plan.md",
                 "project_id": "project-2",
-                "cwd": "/tmp/project-2",
+                "cwd": str(project_path),
             },
         )
 
     assert response.status_code == 200
     server.resolve_project_id.assert_called_once_with(
         project_id="project-2",
-        cwd="/tmp/project-2",
+        cwd=str(project_path),
     )
     assert build.call_args.kwargs["project_id"] == "project-2"
 

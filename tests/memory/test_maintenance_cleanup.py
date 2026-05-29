@@ -149,7 +149,7 @@ class TestFindStaleMemories:
         find_stale_memories(db)
 
         sql = db.fetchall.call_args[0][0]
-        assert "COALESCE(updated_at, created_at) < ?" in sql
+        assert "COALESCE(updated_at, created_at) < %s" in sql
         assert "last_accessed_at IS NULL OR last_accessed_at < %s" in sql
 
 

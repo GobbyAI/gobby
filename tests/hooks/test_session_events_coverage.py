@@ -565,6 +565,7 @@ class TestSessionStartAndHelpers:
             )
 
         assert changes["is_spawned_agent"] is True
+        assert changes["_agent_type"] == "test-agent"
 
 
 class TestSessionMoreCoverage:
