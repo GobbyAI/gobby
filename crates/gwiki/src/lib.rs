@@ -1,8 +1,11 @@
 use std::fmt;
 use std::path::PathBuf;
 
+pub mod models;
 pub mod registry;
+pub mod schema;
 pub mod scope;
+pub mod setup;
 pub mod vault;
 
 /// Parsed gwiki command passed in from the binary.
