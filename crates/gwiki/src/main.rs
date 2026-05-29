@@ -47,6 +47,12 @@ enum CliCommand {
     Research(ResearchArgs),
     /// Compile accepted research notes into wiki articles.
     Compile(CompileArgs),
+    /// Report claims that lack source support.
+    Audit,
+    /// Detect broken links and vault hygiene issues.
+    Lint,
+    /// Write wiki health snapshots under meta/health.
+    Health,
     /// Show shell readiness.
     Status,
 }
@@ -208,6 +214,9 @@ fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Comman
             write_intent: args.write_intent,
             scope,
         }),
+        CliCommand::Audit => Ok(Command::Audit { scope }),
+        CliCommand::Lint => Ok(Command::Lint { scope }),
+        CliCommand::Health => Ok(Command::Health { scope }),
         CliCommand::Status => Ok(Command::Status { scope }),
     }
 }

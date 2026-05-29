@@ -1,6 +1,7 @@
 use std::fmt;
 use std::path::PathBuf;
 
+pub mod audit;
 pub mod citations;
 pub mod collect;
 pub mod commands;
@@ -10,9 +11,11 @@ pub mod daemon;
 pub mod events;
 pub mod frontmatter;
 pub mod graph;
+pub mod health;
 pub mod indexer;
 pub mod ingest;
 pub mod links;
+pub mod lint;
 pub mod markdown;
 pub mod models;
 pub mod output;
@@ -68,6 +71,15 @@ pub enum Command {
         target_kind: synthesis::ArticleKind,
         target_page: Option<PathBuf>,
         write_intent: bool,
+        scope: ScopeSelection,
+    },
+    Audit {
+        scope: ScopeSelection,
+    },
+    Lint {
+        scope: ScopeSelection,
+    },
+    Health {
         scope: ScopeSelection,
     },
     Status {
@@ -269,6 +281,9 @@ pub fn run(command: Command) -> Result<CommandOutcome, WikiError> {
             write_intent,
             scope,
         ),
+        Command::Audit { scope } => run_audit(scope),
+        Command::Lint { scope } => run_lint(scope),
+        Command::Health { scope } => run_health(scope),
         Command::Status { scope } => Ok(commands::status::run(scope.identity())),
     }
 }
@@ -368,6 +383,66 @@ fn run_compile(
         payload,
         text,
     ))
+}
+
+fn run_audit(selection: ScopeSelection) -> Result<CommandOutcome, WikiError> {
+    let scope = resolve_command_scope(&selection)?;
+    let output_scope = resolved_scope_identity(&scope);
+    let report = audit::run(scope.root(), output_scope.clone())?;
+    let payload = serde_json::to_value(&report).map_err(|error| WikiError::Json {
+        action: "serialize audit report",
+        path: None,
+        source: error.to_string(),
+    })?;
+    Ok(commands::scoped_outcome(
+        "audit",
+        &output_scope,
+        payload,
+        audit::render_text(&report),
+    ))
+}
+
+fn run_lint(selection: ScopeSelection) -> Result<CommandOutcome, WikiError> {
+    let scope = resolve_command_scope(&selection)?;
+    let output_scope = resolved_scope_identity(&scope);
+    let report = lint::run(scope.root(), output_scope.clone())?;
+    let payload = serde_json::to_value(&report).map_err(|error| WikiError::Json {
+        action: "serialize lint report",
+        path: None,
+        source: error.to_string(),
+    })?;
+    Ok(commands::scoped_outcome(
+        "lint",
+        &output_scope,
+        payload,
+        lint::render_text(&report),
+    ))
+}
+
+fn run_health(selection: ScopeSelection) -> Result<CommandOutcome, WikiError> {
+    let scope = resolve_command_scope(&selection)?;
+    let output_scope = resolved_scope_identity(&scope);
+    let report = health::run(scope.root(), output_scope.clone())?;
+    let payload = serde_json::to_value(&report).map_err(|error| WikiError::Json {
+        action: "serialize health report",
+        path: None,
+        source: error.to_string(),
+    })?;
+    Ok(commands::scoped_outcome(
+        "health",
+        &output_scope,
+        payload,
+        health::render_text(&report),
+    ))
+}
+
+fn resolve_command_scope(selection: &ScopeSelection) -> Result<scope::ResolvedScope, WikiError> {
+    let cwd = std::env::current_dir().map_err(|error| WikiError::Io {
+        action: "read current directory",
+        path: None,
+        source: error.to_string(),
+    })?;
+    scope::resolve(selection, &cwd)
 }
 
 fn research_scope_identity(scope: &session::ResearchScope) -> ScopeIdentity {
