@@ -1540,8 +1540,12 @@ class TestSetMCPServerEnabled:
         server.mcp_manager = mcp_manager
 
         with TestClient(server.app) as client:
-            with pytest.raises(PermissionError, match="permission denied"):
-                client.patch("/api/mcp/servers/github", json={"enabled": True})
+            response = client.patch("/api/mcp/servers/github", json={"enabled": True})
+
+        assert response.status_code == 403
+        data = response.json()["detail"]
+        assert data["success"] is False
+        assert "permission denied" in data["error"]
 
 
 # ============================================================================
