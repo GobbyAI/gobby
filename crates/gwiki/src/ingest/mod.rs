@@ -1,8 +1,11 @@
 //! Ingestion helpers for immutable raw wiki sources.
 
 pub mod file;
+pub mod git;
+pub mod mediawiki;
 pub mod pdf;
 pub mod url;
+pub mod wayback;
 
 use std::path::{Path, PathBuf};
 
@@ -54,6 +57,23 @@ pub(crate) fn index_after_ingest(
     indexer::index_vault(vault_root, store).map_err(|error| WikiError::InvalidInput {
         field: "vault_root",
         message: error.to_string(),
+    })
+}
+
+pub(crate) fn write_raw_then_index(
+    vault_root: &Path,
+    store: &mut impl WikiIndexStore,
+    record: SourceRecord,
+    markdown: &str,
+    asset_path: Option<PathBuf>,
+) -> Result<IngestResult, WikiError> {
+    let raw_path = write_raw_markdown(vault_root, &record, markdown)?;
+    index_after_ingest(vault_root, store)?;
+
+    Ok(IngestResult {
+        record,
+        raw_path,
+        asset_path,
     })
 }
 
@@ -130,7 +150,12 @@ mod tests {
     use gobby_core::indexing::content_hash;
 
     use crate::ingest::file;
-    use crate::store::{MemoryWikiStore, WikiIngestionEvent};
+    use crate::ingest::wayback::{self, WaybackCaptureSnapshot};
+    use crate::sources::{CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest};
+    use crate::store::{
+        MemoryWikiStore, WikiChunk, WikiDocument, WikiIndexStore, WikiIngestion,
+        WikiIngestionEvent, WikiLink, WikiSource,
+    };
 
     fn write_file(root: &std::path::Path, relative: &str, contents: &str) {
         let path = root.join(relative);
@@ -178,5 +203,109 @@ mod tests {
             ingestion.path == Path::new("raw/INDEX.md")
                 && ingestion.event == WikiIngestionEvent::Added
         }));
+    }
+
+    #[derive(Debug, Default)]
+    struct RawFirstStore {
+        vault_root: PathBuf,
+        expected_raw_path: PathBuf,
+        inner: MemoryWikiStore,
+        observed_index_write: bool,
+    }
+
+    impl RawFirstStore {
+        fn new(vault_root: &Path, expected_raw_path: impl Into<PathBuf>) -> Self {
+            Self {
+                vault_root: vault_root.to_path_buf(),
+                expected_raw_path: expected_raw_path.into(),
+                inner: MemoryWikiStore::default(),
+                observed_index_write: false,
+            }
+        }
+
+        fn assert_raw_exists_before_index(&mut self) {
+            self.observed_index_write = true;
+            assert!(
+                self.vault_root.join(&self.expected_raw_path).is_file(),
+                "external connector must write raw source before derived index rows"
+            );
+        }
+    }
+
+    impl WikiIndexStore for RawFirstStore {
+        fn indexed_hashes(&self) -> std::collections::BTreeMap<PathBuf, String> {
+            self.inner.indexed_hashes()
+        }
+
+        fn upsert_document(&mut self, document: WikiDocument) {
+            self.assert_raw_exists_before_index();
+            self.inner.upsert_document(document);
+        }
+
+        fn replace_chunks(&mut self, path: &Path, chunks: Vec<WikiChunk>) {
+            self.assert_raw_exists_before_index();
+            self.inner.replace_chunks(path, chunks);
+        }
+
+        fn replace_links(&mut self, path: &Path, links: Vec<WikiLink>) {
+            self.assert_raw_exists_before_index();
+            self.inner.replace_links(path, links);
+        }
+
+        fn upsert_source(&mut self, source: WikiSource) {
+            self.assert_raw_exists_before_index();
+            self.inner.upsert_source(source);
+        }
+
+        fn record_ingestion(&mut self, ingestion: WikiIngestion) {
+            self.assert_raw_exists_before_index();
+            self.inner.record_ingestion(ingestion);
+        }
+
+        fn record_file_hash(&mut self, path: PathBuf, content_hash: String) {
+            self.assert_raw_exists_before_index();
+            self.inner.record_file_hash(path, content_hash);
+        }
+
+        fn delete_derived_rows(&mut self, path: &Path) {
+            self.assert_raw_exists_before_index();
+            self.inner.delete_derived_rows(path);
+        }
+    }
+
+    #[test]
+    fn external_connectors_write_raw_first() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let snapshot = WaybackCaptureSnapshot {
+            original_url: "https://example.com/reference".to_string(),
+            capture_url: "https://web.archive.org/web/20260529120000/https://example.com/reference"
+                .to_string(),
+            capture_timestamp: "20260529120000".to_string(),
+            fetched_at: "2026-05-29T18:30:00Z".to_string(),
+            body: b"<html><body>Archived reference.</body></html>".to_vec(),
+            content_type: Some("text/html".to_string()),
+        };
+        let expected_record = SourceManifest::register(
+            temp.path(),
+            SourceDraft {
+                location: snapshot.capture_url.clone(),
+                kind: SourceKind::Wayback,
+                fetched_at: snapshot.fetched_at.clone(),
+                content: snapshot.body.clone(),
+                title: Some(snapshot.original_url.clone()),
+                citation: Some(snapshot.capture_url.clone()),
+                license: None,
+                ingestion_method: IngestionMethod::Manual,
+                compile_status: CompileStatus::Pending,
+            },
+        )
+        .expect("predict wayback record");
+        let expected_raw_path = PathBuf::from("raw").join(format!("{}.md", expected_record.id));
+        std::fs::remove_file(temp.path().join("raw/INDEX.md")).expect("remove predicted manifest");
+        let mut store = RawFirstStore::new(temp.path(), expected_raw_path);
+
+        wayback::ingest_capture(temp.path(), &mut store, snapshot).expect("ingest wayback");
+
+        assert!(store.observed_index_write);
     }
 }
