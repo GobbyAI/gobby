@@ -60,7 +60,8 @@ pub fn build_bm25_sql(query: &str, scope: &SearchScope, limit: usize) -> Option<
         return None;
     }
 
-    let searchable_path_predicate = searchable_path_predicate("d.path");
+    let chunk_searchable_path_predicate = searchable_path_predicate("c.path");
+    let document_searchable_path_predicate = searchable_path_predicate("d.path");
     let sql = format!(
         r#"
 WITH hits AS (
@@ -69,24 +70,31 @@ WITH hits AS (
         'chunk' AS hit_kind,
         d.title,
         c.path,
-        COALESCE(d.source_path, c.path) AS source_path,
+        COALESCE(NULLIF(c.provenance->>'source_path', ''), NULLIF(d.provenance->>'source_path', ''), c.path) AS source_path,
         c.chunk_index::BIGINT AS chunk_index,
-        c.byte_start::BIGINT AS byte_start,
-        c.byte_end::BIGINT AS byte_end,
-        c.heading,
+        CASE
+            WHEN c.provenance->>'byte_start' ~ '^[0-9]+$'
+            THEN (c.provenance->>'byte_start')::BIGINT
+        END AS byte_start,
+        CASE
+            WHEN c.provenance->>'byte_end' ~ '^[0-9]+$'
+            THEN (c.provenance->>'byte_end')::BIGINT
+        END AS byte_end,
+        COALESCE(NULLIF(c.provenance->>'heading', ''), c.heading_path[array_length(c.heading_path, 1)]) AS heading,
         c.content AS snippet,
-        d.kind AS source_kind,
-        d.content_hash,
+        c.source_kind,
+        c.content_hash,
         pdb.score(c.id) AS score
     FROM gwiki_chunks c
     JOIN gwiki_documents d
-        ON d.scope_kind = c.scope_kind
+        ON d.id = c.document_id
+       AND d.scope_kind = c.scope_kind
        AND d.scope_id = c.scope_id
        AND d.path = c.path
     WHERE c.scope_kind = $2
       AND c.scope_id = $3
-      AND ({searchable_path_predicate})
-      AND (c.content @@@ $1 OR c.heading @@@ $1)
+      AND ({chunk_searchable_path_predicate})
+      AND (c.path @@@ $1 OR c.content @@@ $1)
 
     UNION ALL
 
@@ -95,20 +103,20 @@ WITH hits AS (
         'document' AS hit_kind,
         d.title,
         d.path,
-        COALESCE(d.source_path, d.path) AS source_path,
+        COALESCE(NULLIF(d.provenance->>'source_path', ''), d.path) AS source_path,
         NULL::BIGINT AS chunk_index,
         NULL::BIGINT AS byte_start,
         NULL::BIGINT AS byte_end,
         NULL::TEXT AS heading,
         d.body AS snippet,
-        d.kind AS source_kind,
+        d.source_kind,
         d.content_hash,
         pdb.score(d.id) AS score
     FROM gwiki_documents d
     WHERE d.scope_kind = $2
       AND d.scope_id = $3
-      AND ({searchable_path_predicate})
-      AND (d.title @@@ $1 OR d.body @@@ $1)
+      AND ({document_searchable_path_predicate})
+      AND (d.path @@@ $1 OR d.title @@@ $1 OR d.body @@@ $1)
 )
 SELECT *
 FROM hits
@@ -292,6 +300,8 @@ impl Bm25SearchBackend for MemoryBm25Backend {
 mod tests {
     use super::*;
     use crate::search::{SearchHitKind, SearchScope};
+    use crate::setup::{GwikiPostgresObject, GwikiStandaloneSetup};
+    use std::collections::BTreeSet;
 
     #[test]
     fn bm25_is_scope_filtered() {
@@ -342,6 +352,26 @@ mod tests {
         assert!(!is_keyword_searchable_path("outputs/export.md"));
     }
 
+    #[test]
+    fn bm25_sql_uses_setup_created_columns() {
+        let setup_objects = GwikiStandaloneSetup::new("public")
+            .postgres_objects()
+            .expect("setup schema objects");
+        let document_columns = table_columns(&setup_objects, "gwiki_documents");
+        let chunk_columns = table_columns(&setup_objects, "gwiki_chunks");
+        let sql = build_bm25_sql("ownership", &SearchScope::project("project-1"), 10)
+            .expect("query is searchable")
+            .sql;
+
+        let unknown_document_columns = unknown_alias_columns("d", &sql, &document_columns);
+        let unknown_chunk_columns = unknown_alias_columns("c", &sql, &chunk_columns);
+
+        assert!(
+            unknown_document_columns.is_empty() && unknown_chunk_columns.is_empty(),
+            "BM25 SQL references columns absent from setup schema: documents={unknown_document_columns:?}, chunks={unknown_chunk_columns:?}"
+        );
+    }
+
     fn memory_hit(id: &str, scope: SearchScope) -> crate::search::WikiSearchResult {
         crate::search::WikiSearchResult {
             id: id.to_string(),
@@ -367,5 +397,57 @@ mod tests {
                 content_hash: Some("hash".to_string()),
             },
         }
+    }
+
+    fn table_columns(objects: &[GwikiPostgresObject], table_name: &str) -> BTreeSet<String> {
+        let sql = objects
+            .iter()
+            .find(|object| object.name == table_name)
+            .unwrap_or_else(|| panic!("missing setup object {table_name}"))
+            .sql
+            .as_str();
+        let (_, definitions) = sql
+            .split_once('(')
+            .unwrap_or_else(|| panic!("missing table body for {table_name}: {sql}"));
+
+        definitions
+            .lines()
+            .filter_map(|line| {
+                let column = line
+                    .trim()
+                    .trim_end_matches(',')
+                    .split_whitespace()
+                    .next()?;
+                if column.starts_with(')') || matches!(column, "UNIQUE" | "PRIMARY" | "FOREIGN") {
+                    None
+                } else {
+                    Some(column.to_string())
+                }
+            })
+            .collect()
+    }
+
+    fn unknown_alias_columns(
+        alias: &str,
+        sql: &str,
+        setup_columns: &BTreeSet<String>,
+    ) -> Vec<String> {
+        alias_columns(sql, alias)
+            .difference(setup_columns)
+            .cloned()
+            .collect::<Vec<_>>()
+    }
+
+    fn alias_columns(sql: &str, alias: &str) -> BTreeSet<String> {
+        let marker = format!("{alias}.");
+        sql.match_indices(&marker)
+            .filter_map(|(start, _)| {
+                let column = sql[start + marker.len()..]
+                    .chars()
+                    .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+                    .collect::<String>();
+                (!column.is_empty()).then_some(column)
+            })
+            .collect()
     }
 }
