@@ -2,6 +2,7 @@ use std::fmt;
 use std::path::PathBuf;
 
 pub mod indexer;
+pub mod search;
 pub mod store;
 
 /// Parsed gwiki command passed in from the binary.

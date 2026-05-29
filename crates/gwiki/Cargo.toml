@@ -25,6 +25,9 @@ path = "src/main.rs"
 [dependencies]
 gobby-core = { path = "../gcore", version = "0.2.2", features = ["postgres", "falkor", "qdrant", "indexing", "search"] }
 clap = { version = "4", features = ["derive"] }
+postgres = "0.19"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 [dev-dependencies]
