@@ -1,29 +1,45 @@
 use std::fmt;
 use std::path::PathBuf;
 
+pub mod commands;
 pub mod graph;
 pub mod indexer;
+pub mod output;
 pub mod search;
 pub mod store;
 
 /// Parsed gwiki command passed in from the binary.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
-    Init(ScopeSelection),
-    Setup,
-    Index(ScopeSelection),
+    Init {
+        scope: ScopeSelection,
+    },
+    Setup {
+        scope: ScopeSelection,
+    },
+    Index {
+        scope: ScopeSelection,
+    },
     IngestFile {
         path: PathBuf,
+        scope: ScopeSelection,
     },
     Search {
         query: String,
         scope: ScopeSelection,
+        limit: usize,
     },
     Backlinks {
         page: String,
         scope: ScopeSelection,
     },
-    Status,
+    LinkSuggest {
+        scope: ScopeSelection,
+        limit: usize,
+    },
+    Status {
+        scope: ScopeSelection,
+    },
 }
 
 /// Shared scope flags accepted by shell commands.
@@ -47,17 +63,54 @@ impl ScopeSelection {
             topic: Some(topic.into()),
         }
     }
+
+    pub fn identity(&self) -> ScopeIdentity {
+        if let Some(topic) = &self.topic {
+            return ScopeIdentity::topic(topic.clone());
+        }
+
+        ScopeIdentity::project("current")
+    }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CommandOutput {
-    pub kind: OutputKind,
-    pub message: String,
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ScopeIdentity {
+    pub kind: String,
+    pub id: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OutputKind {
-    Status,
+impl ScopeIdentity {
+    pub fn project(id: impl Into<String>) -> Self {
+        Self {
+            kind: "project".to_string(),
+            id: id.into(),
+        }
+    }
+
+    pub fn topic(id: impl Into<String>) -> Self {
+        Self {
+            kind: "topic".to_string(),
+            id: id.into(),
+        }
+    }
+}
+
+impl fmt::Display for ScopeIdentity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}", self.kind, self.id)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CommandOutcome {
+    pub status_messages: Vec<String>,
+    pub result: CommandResult,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CommandResult {
+    pub payload: serde_json::Value,
+    pub text: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,42 +141,25 @@ impl fmt::Display for WikiError {
 
 impl std::error::Error for WikiError {}
 
-pub fn run(command: Command) -> Result<CommandOutput, WikiError> {
+pub fn run(command: Command) -> Result<CommandOutcome, WikiError> {
     match command {
-        Command::Status => Ok(status()),
-        Command::Init(_) => {
-            not_implemented("init", "vault initialization lands in the scope/vault task")
+        Command::Init { scope } => Ok(commands::init::run(scope.identity())),
+        Command::Setup { scope } => Ok(commands::setup::run(scope.identity())),
+        Command::Index { scope } => Ok(commands::index::run(scope.identity())),
+        Command::IngestFile { path, scope } => {
+            Ok(commands::index::ingest_file(path, scope.identity()))
         }
-        Command::Setup => not_implemented(
-            "setup",
-            "gwiki-owned schema setup lands in the datastore task",
-        ),
-        Command::Index(_) => {
-            not_implemented("index", "wiki markdown indexing lands in the indexing task")
+        Command::Search {
+            query,
+            scope,
+            limit,
+        } => Ok(commands::search::run(query, scope.identity(), limit)),
+        Command::Backlinks { page, scope } => Ok(commands::backlinks::run(page, scope.identity())),
+        Command::LinkSuggest { scope, limit } => {
+            Ok(commands::backlinks::link_suggest(scope.identity(), limit))
         }
-        Command::IngestFile { .. } => not_implemented(
-            "ingest-file",
-            "source ingestion lands in the ingestion task",
-        ),
-        Command::Search { .. } => not_implemented("search", "wiki search lands in the search task"),
-        Command::Backlinks { .. } => {
-            not_implemented("backlinks", "wiki graph queries land in the graph task")
-        }
+        Command::Status { scope } => Ok(commands::status::run(scope.identity())),
     }
-}
-
-fn status() -> CommandOutput {
-    CommandOutput {
-        kind: OutputKind::Status,
-        message: format!(
-            "gwiki shell ready; daemon={}",
-            gobby_core::daemon_url::daemon_url()
-        ),
-    }
-}
-
-fn not_implemented<T>(command: &'static str, detail: &'static str) -> Result<T, WikiError> {
-    Err(WikiError::NotImplemented { command, detail })
 }
 
 #[cfg(test)]
