@@ -34,6 +34,7 @@ pub mod store;
 pub mod synthesis;
 pub mod transcribe;
 pub mod vault;
+pub mod video;
 pub mod vision;
 
 /// Parsed gwiki command passed in from the binary.
