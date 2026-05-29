@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use gobby_wiki::{Command, ScopeSelection, WikiError, output};
 
 #[derive(Debug, Parser)]
@@ -45,6 +45,16 @@ enum CliCommand {
     LinkSuggest(LinkSuggestArgs),
     /// Dispatch research workers and checkpoint wiki research state.
     Research(ResearchArgs),
+    /// Compile accepted research notes into wiki articles.
+    Compile(CompileArgs),
+    /// Export generated bundles and reports under outputs/.
+    Export(ExportArgs),
+    /// Report claims that lack source support.
+    Audit,
+    /// Detect broken links and vault hygiene issues.
+    Lint,
+    /// Write wiki health snapshots under meta/health.
+    Health,
     /// Show shell readiness.
     Status,
 }
@@ -97,6 +107,54 @@ struct ResearchArgs {
 
     #[arg(long)]
     resume: bool,
+}
+
+#[derive(Debug, Args)]
+struct CompileArgs {
+    #[arg(value_name = "TOPIC")]
+    topic: Option<String>,
+
+    #[arg(long = "outline", value_name = "HEADING")]
+    outline: Vec<String>,
+
+    #[arg(long, value_enum, default_value = "topic")]
+    kind: CompileKind,
+
+    #[arg(long, value_name = "PAGE")]
+    target: Option<PathBuf>,
+
+    #[arg(long = "write-intent")]
+    write_intent: bool,
+}
+
+#[derive(Debug, Args)]
+struct ExportArgs {
+    #[command(subcommand)]
+    command: ExportSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum ExportSubcommand {
+    /// Export bundled workflow prompts and skill assets.
+    WorkflowAssets {
+        #[arg(long, default_value = "workflow-assets.md", value_name = "FILE")]
+        output: String,
+    },
+    /// Export an existing generated report file.
+    Report {
+        #[arg(long, value_name = "FILE")]
+        output: String,
+
+        #[arg(long = "from", value_name = "PATH")]
+        source: PathBuf,
+    },
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum CompileKind {
+    Source,
+    Concept,
+    Topic,
 }
 
 fn main() -> ExitCode {
@@ -173,7 +231,46 @@ fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Comman
                 accepted_notes: Vec::new(),
             }))
         }
+        CliCommand::Compile(args) => Ok(Command::Compile {
+            topic: args.topic,
+            outline: args.outline,
+            target_kind: args.kind.into(),
+            target_page: args.target,
+            write_intent: args.write_intent,
+            scope,
+        }),
+        CliCommand::Export(args) => Ok(Command::Export {
+            scope,
+            command: args.into(),
+        }),
+        CliCommand::Audit => Ok(Command::Audit { scope }),
+        CliCommand::Lint => Ok(Command::Lint { scope }),
+        CliCommand::Health => Ok(Command::Health { scope }),
         CliCommand::Status => Ok(Command::Status { scope }),
+    }
+}
+
+impl From<CompileKind> for gobby_wiki::synthesis::ArticleKind {
+    fn from(kind: CompileKind) -> Self {
+        match kind {
+            CompileKind::Source => Self::Source,
+            CompileKind::Concept => Self::Concept,
+            CompileKind::Topic => Self::Topic,
+        }
+    }
+}
+
+impl From<ExportArgs> for gobby_wiki::exports::ExportCommand {
+    fn from(args: ExportArgs) -> Self {
+        match args.command {
+            ExportSubcommand::WorkflowAssets { output } => {
+                Self::WorkflowAssets { filename: output }
+            }
+            ExportSubcommand::Report { output, source } => Self::ReportFile {
+                filename: output,
+                source_path: source,
+            },
+        }
     }
 }
 

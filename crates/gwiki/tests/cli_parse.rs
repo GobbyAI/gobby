@@ -35,6 +35,9 @@ fn core_commands_parse_scope_flags() {
         vec!["search", "--topic", "rust", "ownership"],
         vec!["backlinks", "--topic", "rust", "wiki/topics/rust.md"],
         vec!["link-suggest", "--topic", "rust"],
+        vec!["audit", "--topic", "rust"],
+        vec!["lint", "--topic", "rust"],
+        vec!["health", "--topic", "rust"],
         vec!["status", "--topic", "rust"],
         vec!["search", "--project", "ownership"],
     ];
