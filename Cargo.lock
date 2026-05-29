@@ -893,6 +893,8 @@ dependencies = [
  "clap",
  "gobby-core",
  "serde",
+ "serde_json",
+ "tempfile",
  "toml",
  "ureq",
 ]

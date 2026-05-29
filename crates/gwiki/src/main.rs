@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand};
-use gobby_wiki::{Command, ScopeSelection};
+use gobby_wiki::{Command, ScopeSelection, WikiError};
 
 #[derive(Debug, Parser)]
 #[command(name = "gwiki", version, about = "Gobby wiki CLI")]
@@ -29,6 +29,8 @@ enum CliCommand {
     Search(SearchArgs),
     /// Show backlinks for a wiki page.
     Backlinks(BacklinksArgs),
+    /// Dispatch research workers and checkpoint wiki research state.
+    Research(ResearchArgs),
     /// Show shell readiness.
     Status,
 }
@@ -62,10 +64,39 @@ struct BacklinksArgs {
     page: String,
 }
 
+#[derive(Debug, Args)]
+struct ResearchArgs {
+    #[command(flatten)]
+    scope: ScopeArgs,
+
+    #[arg(value_name = "QUESTION")]
+    question: String,
+
+    #[arg(long = "source-constraint", value_name = "TEXT")]
+    source_constraints: Vec<String>,
+
+    #[arg(long, default_value_t = 3, value_name = "N")]
+    agent_count: usize,
+
+    #[arg(long, value_name = "TASK")]
+    task_id: Option<String>,
+
+    #[arg(long)]
+    resume: bool,
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
 
-    match gobby_wiki::run(Command::from(cli.command)) {
+    let command = match Command::try_from(cli.command) {
+        Ok(command) => command,
+        Err(error) => {
+            eprintln!("gwiki: {error}");
+            return exit_code_for_error(&error);
+        }
+    };
+
+    match gobby_wiki::run(command) {
         Ok(output) => {
             let mut stdout = std::io::stdout().lock();
             if let Err(error) = writeln!(stdout, "{}", output.message) {
@@ -76,29 +107,41 @@ fn main() -> ExitCode {
         }
         Err(error) => {
             eprintln!("gwiki: {error}");
-            match error {
-                gobby_wiki::WikiError::NotImplemented { .. } => ExitCode::from(2),
-            }
+            exit_code_for_error(&error)
         }
     }
 }
 
-impl From<CliCommand> for Command {
-    fn from(command: CliCommand) -> Self {
+impl TryFrom<CliCommand> for Command {
+    type Error = WikiError;
+
+    fn try_from(command: CliCommand) -> Result<Self, Self::Error> {
         match command {
-            CliCommand::Init(scope) => Self::Init(scope.into()),
-            CliCommand::Setup => Self::Setup,
-            CliCommand::Index(scope) => Self::Index(scope.into()),
-            CliCommand::IngestFile { path } => Self::IngestFile { path },
-            CliCommand::Search(args) => Self::Search {
+            CliCommand::Init(scope) => Ok(Self::Init(scope.into())),
+            CliCommand::Setup => Ok(Self::Setup),
+            CliCommand::Index(scope) => Ok(Self::Index(scope.into())),
+            CliCommand::IngestFile { path } => Ok(Self::IngestFile { path }),
+            CliCommand::Search(args) => Ok(Self::Search {
                 query: args.query,
                 scope: args.scope.into(),
-            },
-            CliCommand::Backlinks(args) => Self::Backlinks {
+            }),
+            CliCommand::Backlinks(args) => Ok(Self::Backlinks {
                 page: args.page,
                 scope: args.scope.into(),
-            },
-            CliCommand::Status => Self::Status,
+            }),
+            CliCommand::Research(args) => {
+                let scope_selection = ScopeSelection::from(args.scope);
+                Ok(Self::Research(gobby_wiki::research::ResearchOptions {
+                    question: args.question,
+                    scope: gobby_wiki::research::resolve_scope(&scope_selection)?,
+                    source_constraints: args.source_constraints,
+                    agent_count: args.agent_count,
+                    dispatch_task_id: args.task_id,
+                    resume: args.resume,
+                    accepted_notes: Vec::new(),
+                }))
+            }
+            CliCommand::Status => Ok(Self::Status),
         }
     }
 }
@@ -108,6 +151,15 @@ impl From<ScopeArgs> for ScopeSelection {
         Self {
             project: scope.project,
             topic: scope.topic,
+        }
+    }
+}
+
+fn exit_code_for_error(error: &WikiError) -> ExitCode {
+    match error {
+        WikiError::NotImplemented { .. } | WikiError::InvalidInput { .. } => ExitCode::from(2),
+        WikiError::Io { .. } | WikiError::Json { .. } | WikiError::Daemon { .. } => {
+            ExitCode::from(1)
         }
     }
 }

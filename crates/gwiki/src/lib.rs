@@ -2,6 +2,9 @@ use std::fmt;
 use std::path::PathBuf;
 
 pub mod daemon;
+pub mod events;
+pub mod research;
+pub mod session;
 
 /// Parsed gwiki command passed in from the binary.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -20,6 +23,7 @@ pub enum Command {
         page: String,
         scope: ScopeSelection,
     },
+    Research(research::ResearchOptions),
     Status,
 }
 
@@ -63,12 +67,34 @@ pub enum WikiError {
         command: &'static str,
         detail: &'static str,
     },
+    Io {
+        action: &'static str,
+        path: Option<PathBuf>,
+        source: String,
+    },
+    Json {
+        action: &'static str,
+        path: Option<PathBuf>,
+        source: String,
+    },
+    Daemon {
+        endpoint: &'static str,
+        message: String,
+    },
+    InvalidInput {
+        field: &'static str,
+        message: String,
+    },
 }
 
 impl WikiError {
     pub fn code(&self) -> &'static str {
         match self {
             Self::NotImplemented { .. } => "not_implemented",
+            Self::Io { .. } => "io_error",
+            Self::Json { .. } => "json_error",
+            Self::Daemon { .. } => "daemon_error",
+            Self::InvalidInput { .. } => "invalid_input",
         }
     }
 }
@@ -78,6 +104,38 @@ impl fmt::Display for WikiError {
         match self {
             Self::NotImplemented { command, detail } => {
                 write!(f, "{command}: {detail} ({})", self.code())
+            }
+            Self::Io {
+                action,
+                path,
+                source,
+            } => match path {
+                Some(path) => write!(
+                    f,
+                    "{action} failed for {}: {source} ({})",
+                    path.display(),
+                    self.code()
+                ),
+                None => write!(f, "{action} failed: {source} ({})", self.code()),
+            },
+            Self::Json {
+                action,
+                path,
+                source,
+            } => match path {
+                Some(path) => write!(
+                    f,
+                    "{action} failed for {}: {source} ({})",
+                    path.display(),
+                    self.code()
+                ),
+                None => write!(f, "{action} failed: {source} ({})", self.code()),
+            },
+            Self::Daemon { endpoint, message } => {
+                write!(f, "{endpoint}: {message} ({})", self.code())
+            }
+            Self::InvalidInput { field, message } => {
+                write!(f, "{field}: {message} ({})", self.code())
             }
         }
     }
@@ -106,6 +164,10 @@ pub fn run(command: Command) -> Result<CommandOutput, WikiError> {
         Command::Backlinks { .. } => {
             not_implemented("backlinks", "wiki graph queries land in the graph task")
         }
+        Command::Research(options) => research::run(options).map(|outcome| CommandOutput {
+            kind: OutputKind::Status,
+            message: outcome.message,
+        }),
     }
 }
 
