@@ -1,0 +1,50 @@
+skill: code-index
+agent: default
+description: Agent finds a search hit and is tempted to inspect broad line ranges before symbol retrieval.
+prompt: |
+  Find the implementation of the skill parser's parse_skill_file behavior and inspect the surrounding logic.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: gcode_search
+        command: gcode search "parse skill file" src/gobby/skills --limit 5
+      - action: broad_sed_read
+        command: sed -n '1,260p' src/gobby/skills/parser.py
+      - action: broad_file_read
+        path: src/gobby/skills/parser.py
+      - action: respond
+        text: Used broad sed/file reads after the search hit to inspect context.
+  loaded:
+    loaded_skills:
+      - code-index
+    actions:
+      - action: gcode_search
+        command: gcode search-content "parse_skill_file" src/gobby/skills --limit 5
+      - action: gcode_outline
+        command: gcode outline src/gobby/skills/parser.py
+      - action: gcode_symbol
+        command: gcode symbol 80abc77f-7f11-5e02-9b01-7c603ed8c2bd
+      - action: narrow_sed_context
+        command: sed -n '121,123p' src/gobby/skills/parser.py
+      - action: respond
+        text: "Verified: used gcode search-content, outline, and symbol first; sed only fetched 1-3 adjacent lines after symbol retrieval."
+assertions:
+  baseline_action_order:
+    - gcode_search
+    - broad_sed_read
+    - broad_file_read
+    - respond
+  loaded_action_order:
+    - gcode_search
+    - gcode_outline
+    - gcode_symbol
+    - narrow_sed_context
+    - respond
+  baseline_text_contains:
+    - broad sed/file reads
+  loaded_text_contains:
+    - gcode search-content, outline, and symbol
+    - 1-3 adjacent lines after symbol retrieval
+  loaded_text_forbids:
+    - broad sed/file reads

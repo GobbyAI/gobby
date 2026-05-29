@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 
@@ -71,4 +72,32 @@ def test_coderabbit_verifies_findings_before_fixing() -> None:
         "commit_and_close_task",
         "respond",
     )
+    assert result.has_behavioral_delta
+
+
+def test_code_index_uses_gcode_navigation_before_line_readers() -> None:
+    """Verify loaded code-index behavior retrieves symbols before narrow line context."""
+    result = run_recorded_skill_scenario(
+        SCENARIOS / "code-index/gcode-before-line-readers.yaml"
+    )
+
+    assert result.baseline.action_names == (
+        "gcode_search",
+        "broad_sed_read",
+        "broad_file_read",
+        "respond",
+    )
+    assert result.loaded.action_names == (
+        "gcode_search",
+        "gcode_outline",
+        "gcode_symbol",
+        "narrow_sed_context",
+        "respond",
+    )
+
+    symbol_command = str(result.loaded.actions[2]["command"])
+    symbol_id = symbol_command.removeprefix("gcode symbol ")
+    assert symbol_command != symbol_id
+    assert UUID(symbol_id).version == 5
+    assert result.loaded.actions[3]["command"] == "sed -n '121,123p' src/gobby/skills/parser.py"
     assert result.has_behavioral_delta

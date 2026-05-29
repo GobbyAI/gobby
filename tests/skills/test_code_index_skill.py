@@ -24,3 +24,20 @@ def test_code_index_skill_documents_positional_path_filters() -> None:
     assert "--path <glob>" not in body
     assert "positional path filters" in body
     assert "code-index graph projection via the Gobby daemon" in body
+
+
+def test_code_index_skill_documents_gcode_first_retrieval_workflow() -> None:
+    """Document gcode-first navigation before falling back to line readers."""
+    parsed = parse_skill_file(SKILL_PATH)
+    body = parsed.content
+
+    assert "## Recommended Workflow" in body
+    assert '`gcode search "concept"`' in body
+    assert '`gcode search-symbol "name"`' in body
+    assert '`gcode search-content "text"`' in body
+    assert "`gcode outline path/to/file`" in body
+    assert "`gcode symbol <full-uuid>`" in body
+    assert "`gcode symbols <full-uuid> <full-uuid> ...`" in body
+    assert "Search output is intentionally snippet-sized" in body
+    assert "`gsqz`" in body
+    assert "use `sed`/`awk` only for tight neighboring context (1-3 lines)" in body
