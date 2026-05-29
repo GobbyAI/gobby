@@ -49,7 +49,7 @@ def build_agent_changes(
     from gobby.mcp_proxy.tools.apply_persona import build_persona_changes
 
     session = handler._session_manager.get(session_id)
-    is_spawned = bool(session and session.agent_run_id)
+    is_spawned = bool(session and (session.agent_run_id or session.agent_depth))
 
     return build_persona_changes(
         agent_body=agent_body,

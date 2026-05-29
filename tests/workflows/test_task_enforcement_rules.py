@@ -856,6 +856,24 @@ class TestBlockNeedsReviewInteractive:
         assert "block-needs-review-interactive" in (response.reason or "")
 
     @pytest.mark.asyncio
+    async def test_submit_for_review_allows_spawned_agent(self, db) -> None:
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        variables = {
+            "is_spawned_agent": True,
+            "loaded_skills": ["task-transitions"],
+        }
+
+        response = await engine.evaluate(
+            self._review_event("submit_for_review"),
+            session_id="test-session",
+            variables=variables,
+        )
+
+        assert response.decision == "allow"
+        assert "block-needs-review-interactive" not in (response.reason or "")
+
+    @pytest.mark.asyncio
     async def test_approve_review_stays_blocked_for_active_plan_anchor(self, db) -> None:
         _sync_bundled(db)
         engine = RuleEngine(db)

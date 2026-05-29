@@ -50,6 +50,7 @@ def _make_session(
     seq_num: int | None = 10,
     project_id: str | None = "proj-1",
     agent_run_id: str | None = None,
+    agent_depth: int = 0,
     workflow_name: str | None = None,
     created_at: str = "2024-01-01T00:00:00Z",
 ) -> MagicMock:
@@ -61,6 +62,7 @@ def _make_session(
     session.seq_num = seq_num
     session.project_id = project_id
     session.agent_run_id = agent_run_id
+    session.agent_depth = agent_depth
     session.workflow_name = workflow_name
     session.created_at = created_at
     return session
@@ -537,6 +539,32 @@ class TestSessionStartAndHelpers:
             assert "_bad_var" not in changes
             assert rules == {"rule1"}
             assert skills == {"skill1"}
+
+    def test_build_agent_changes_marks_depth_child_as_spawned(self) -> None:
+        handler = _TestHandler()
+        handler._session_manager.get.return_value = _make_session(agent_depth=1)
+
+        mock_agent_body = MagicMock()
+        mock_agent_body.name = "test-agent"
+        mock_agent_body.workflows.skill_format = "content"
+        mock_agent_body.workflows.variables = {}
+        mock_agent_body.steps = None
+        mock_agent_body.step_variables = {}
+
+        with (
+            patch("gobby.workflows.selectors.resolve_rules_for_agent", return_value=set()),
+            patch("gobby.workflows.selectors.resolve_skills_for_agent", return_value=set()),
+            patch("gobby.workflows.selectors.resolve_variables_for_agent", return_value=None),
+        ):
+            changes, _, _ = handler._build_agent_changes(
+                agent_body=mock_agent_body,
+                session_id="sess-1",
+                enabled_rules=[],
+                all_skills=[],
+                enabled_variables=[],
+            )
+
+        assert changes["is_spawned_agent"] is True
 
 
 class TestSessionMoreCoverage:

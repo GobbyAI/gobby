@@ -558,6 +558,48 @@ def test_existing_step_workflow_current_step_is_preserved(
     assert instance.current_step == "implement"
 
 
+def test_stale_spawned_flag_is_repaired_from_session_depth(
+    db: HubDatabase,
+    session_manager: SessionManager,
+    handlers: EventHandlers,
+    project_id: str,
+    tmp_path,
+) -> None:
+    child_id = _register_session(
+        session_manager,
+        project_id,
+        tmp_path,
+        external_id="child-external",
+        agent_depth=1,
+    )
+    SessionVariableManager(db).merge_variables(
+        child_id,
+        {
+            MARKER_COMPLETED: True,
+            MARKER_VERSION: SESSION_ACTIVATION_CONTRACT_VERSION,
+            MARKER_HASH: SESSION_ACTIVATION_CONTRACT_HASH,
+            "_agent_type": "default",
+            "_active_rule_names": [],
+            "_active_skill_names": None,
+            "_skill_format": None,
+            "_agent_blocked_tools": [],
+            "_agent_blocked_mcp_tools": [],
+            "is_spawned_agent": False,
+            "baseline_dirty_files": [],
+            "session_edited_files": [],
+        },
+    )
+
+    result = reconcile_session_activation(
+        _event(HookEventType.BEFORE_TOOL, child_id, tmp_path),
+        handlers,
+    )
+
+    variables = _variables(db, child_id)
+    assert result.changed is True
+    assert variables["is_spawned_agent"] is True
+
+
 def test_baseline_dirty_initializes_once_and_preserves_session_edits(
     db: HubDatabase,
     session_manager: SessionManager,
@@ -643,7 +685,24 @@ def test_agent_run_from_row_returns_recovery_for_valid_row() -> None:
     assert recovery.prompt == "do the work"
 
 
-def test_hook_manager_reconciles_before_before_agent_rules() -> None:
+@pytest.mark.parametrize(
+    ("event_type", "data"),
+    [
+        (HookEventType.BEFORE_AGENT, {"prompt": "hello"}),
+        (
+            HookEventType.BEFORE_TOOL,
+            {
+                "tool_name": "mcp__gobby__call_tool",
+                "mcp_server": "gobby-tasks-ops",
+                "mcp_tool": "submit_for_review",
+            },
+        ),
+    ],
+)
+def test_hook_manager_reconciles_before_rules(
+    event_type: HookEventType,
+    data: dict[str, str],
+) -> None:
     components = MagicMock()
     for name in (
         "config",
@@ -687,11 +746,11 @@ def test_hook_manager_reconciles_before_before_agent_rules() -> None:
     ) or HookResponse(decision="allow")
 
     event = HookEvent(
-        event_type=HookEventType.BEFORE_AGENT,
+        event_type=event_type,
         session_id="external-1",
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
-        data={"prompt": "hello"},
+        data=data,
         metadata={"_platform_session_id": "session-1"},
     )
 

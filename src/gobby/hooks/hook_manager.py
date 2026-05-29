@@ -342,7 +342,7 @@ class HookManager:
                 if webhook_block:
                     return webhook_block
         else:
-            if event.event_type == HookEventType.BEFORE_AGENT:
+            if event.event_type in (HookEventType.BEFORE_AGENT, HookEventType.BEFORE_TOOL):
                 reconcile_session_activation(event, self._event_handlers, logger=self.logger)
 
             workflow_context, blocking_response = self._evaluate_workflow_rules(event)

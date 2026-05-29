@@ -247,7 +247,7 @@ def _marker_updates(variables: dict[str, Any]) -> dict[str, Any]:
 
 
 def _fallback_agent_updates(variables: dict[str, Any], session: Any) -> dict[str, Any]:
-    spawned = bool(getattr(session, "agent_run_id", None) or getattr(session, "agent_depth", 0))
+    spawned = _session_is_spawned(session)
     defaults: dict[str, Any] = {
         "_agent_type": "default",
         "_active_rule_names": None,
@@ -257,7 +257,10 @@ def _fallback_agent_updates(variables: dict[str, Any], session: Any) -> dict[str
         "_agent_blocked_mcp_tools": [],
         "is_spawned_agent": spawned,
     }
-    return {key: value for key, value in defaults.items() if key not in variables}
+    updates = {key: value for key, value in defaults.items() if key not in variables}
+    if variables.get("is_spawned_agent") != spawned:
+        updates["is_spawned_agent"] = spawned
+    return updates
 
 
 def _active_rule_name_updates(db: Any, variables: dict[str, Any], session: Any) -> dict[str, Any]:
@@ -450,8 +453,7 @@ def _terminal_context_value(event: HookEvent, *keys: str) -> str | None:
 
 def _needs_agent_run(session: Any, variables: dict[str, Any], event: HookEvent) -> bool:
     return bool(
-        getattr(session, "agent_run_id", None)
-        or getattr(session, "agent_depth", 0)
+        _session_is_spawned(session)
         or variables.get("is_spawned_agent")
         or _terminal_context_value(event, "agent_run_id", "gobby_agent_run_id")
     )
@@ -526,7 +528,7 @@ def _missing_step_workflow(
     session: Any,
     agent_run: _AgentRunRecovery | None,
 ) -> list[str]:
-    spawned = bool(variables.get("is_spawned_agent") or getattr(session, "agent_run_id", None))
+    spawned = bool(variables.get("is_spawned_agent") or _session_is_spawned(session))
     if not spawned:
         return []
 
@@ -602,3 +604,7 @@ def _ensure_step_workflow_from_definition(
         )
     )
     return True
+
+
+def _session_is_spawned(session: Any) -> bool:
+    return bool(getattr(session, "agent_run_id", None) or getattr(session, "agent_depth", 0))
