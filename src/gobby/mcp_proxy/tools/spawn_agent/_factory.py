@@ -149,7 +149,9 @@ def _resolve_spawn_project_context(
     if explicit_path:
         explicit_ctx = _context_from_project_path(explicit_path)
         fallback_ctx = get_project_context()
-        return explicit_ctx or fallback_ctx, _project_path_from_context(explicit_ctx) or explicit_path
+        return explicit_ctx or fallback_ctx, _project_path_from_context(
+            explicit_ctx
+        ) or explicit_path
 
     current_ctx = get_project_context()
     current_path = _project_path_from_context(current_ctx)
