@@ -1,6 +1,16 @@
 use std::fmt;
 use std::path::PathBuf;
 
+pub mod frontmatter;
+pub mod links;
+pub mod markdown;
+pub mod models;
+pub mod registry;
+pub mod schema;
+pub mod scope;
+pub mod setup;
+pub mod vault;
+
 /// Parsed gwiki command passed in from the binary.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
@@ -61,12 +71,28 @@ pub enum WikiError {
         command: &'static str,
         detail: &'static str,
     },
+    InvalidScope {
+        detail: String,
+    },
+    Config {
+        detail: String,
+    },
+    Io {
+        detail: String,
+    },
+    Registry {
+        detail: String,
+    },
 }
 
 impl WikiError {
     pub fn code(&self) -> &'static str {
         match self {
             Self::NotImplemented { .. } => "not_implemented",
+            Self::InvalidScope { .. } => "invalid_scope",
+            Self::Config { .. } => "config_error",
+            Self::Io { .. } => "io_error",
+            Self::Registry { .. } => "registry_error",
         }
     }
 }
@@ -77,6 +103,10 @@ impl fmt::Display for WikiError {
             Self::NotImplemented { command, detail } => {
                 write!(f, "{command}: {detail} ({})", self.code())
             }
+            Self::InvalidScope { detail }
+            | Self::Config { detail }
+            | Self::Io { detail }
+            | Self::Registry { detail } => write!(f, "{detail} ({})", self.code()),
         }
     }
 }
@@ -86,9 +116,7 @@ impl std::error::Error for WikiError {}
 pub fn run(command: Command) -> Result<CommandOutput, WikiError> {
     match command {
         Command::Status => Ok(status()),
-        Command::Init(_) => {
-            not_implemented("init", "vault initialization lands in the scope/vault task")
-        }
+        Command::Init(scope) => init(scope),
         Command::Setup => not_implemented(
             "setup",
             "gwiki-owned schema setup lands in the datastore task",
@@ -105,6 +133,25 @@ pub fn run(command: Command) -> Result<CommandOutput, WikiError> {
             not_implemented("backlinks", "wiki graph queries land in the graph task")
         }
     }
+}
+
+fn init(selection: ScopeSelection) -> Result<CommandOutput, WikiError> {
+    let cwd = std::env::current_dir().map_err(|error| WikiError::Io {
+        detail: format!("failed to read current directory: {error}"),
+    })?;
+    let scope = scope::resolve(&selection, &cwd)?;
+
+    vault::initialize(&scope)?;
+    registry::register_scope(scope.registry_path(), &scope)?;
+
+    Ok(CommandOutput {
+        kind: OutputKind::Status,
+        message: format!(
+            "initialized {} wiki at {}",
+            scope.identity(),
+            scope.root().display()
+        ),
+    })
 }
 
 fn status() -> CommandOutput {
