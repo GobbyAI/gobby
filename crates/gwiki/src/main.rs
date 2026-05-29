@@ -30,6 +30,8 @@ enum CliCommand {
     Setup,
     /// Index markdown and source notes in the selected scope.
     Index,
+    /// Collect recognized inbox drops into raw storage.
+    Collect,
     /// Capture a local source file into the wiki inbox.
     IngestFile {
         #[arg(value_name = "PATH")]
@@ -144,6 +146,7 @@ fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Comman
         CliCommand::Init => Ok(Command::Init { scope }),
         CliCommand::Setup => Ok(Command::Setup { scope }),
         CliCommand::Index => Ok(Command::Index { scope }),
+        CliCommand::Collect => Ok(Command::Collect { scope }),
         CliCommand::IngestFile { path } => Ok(Command::IngestFile { path, scope }),
         CliCommand::Search(args) => Ok(Command::Search {
             query: args.query,

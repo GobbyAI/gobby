@@ -1,6 +1,7 @@
 use std::fmt;
 use std::path::PathBuf;
 
+pub mod collect;
 pub mod commands;
 pub mod compile;
 pub mod credibility;
@@ -36,6 +37,9 @@ pub enum Command {
         scope: ScopeSelection,
     },
     Index {
+        scope: ScopeSelection,
+    },
+    Collect {
         scope: ScopeSelection,
     },
     IngestFile {
@@ -226,6 +230,7 @@ pub fn run(command: Command) -> Result<CommandOutcome, WikiError> {
         Command::Init { scope } => init(scope),
         Command::Setup { scope } => Ok(commands::setup::run(scope.identity())),
         Command::Index { scope } => Ok(commands::index::run(scope.identity())),
+        Command::Collect { scope } => collect(scope),
         Command::IngestFile { path, scope } => {
             Ok(commands::index::ingest_file(path, scope.identity()))
         }
@@ -241,6 +246,20 @@ pub fn run(command: Command) -> Result<CommandOutcome, WikiError> {
         Command::Research(options) => run_research(options),
         Command::Status { scope } => Ok(commands::status::run(scope.identity())),
     }
+}
+
+fn collect(selection: ScopeSelection) -> Result<CommandOutcome, WikiError> {
+    let cwd = std::env::current_dir().map_err(|error| WikiError::Io {
+        action: "read current directory",
+        path: None,
+        source: error.to_string(),
+    })?;
+    let scope = scope::resolve(&selection, &cwd)?;
+
+    vault::initialize(&scope)?;
+    let output_scope = resolved_scope_identity(&scope);
+    let report = collect::collect_inbox(scope.root(), &collect_timestamp())?;
+    Ok(commands::collect::run(output_scope, scope.root(), report))
 }
 
 fn run_research(options: research::ResearchOptions) -> Result<CommandOutcome, WikiError> {
@@ -315,6 +334,14 @@ fn resolved_scope_identity(scope: &scope::ResolvedScope) -> ScopeIdentity {
     }
 
     ScopeIdentity::project("current")
+}
+
+fn collect_timestamp() -> String {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default();
+    format!("unix-ms:{millis}")
 }
 
 #[cfg(test)]
