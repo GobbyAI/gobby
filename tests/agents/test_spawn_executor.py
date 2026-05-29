@@ -463,6 +463,10 @@ class TestExecuteSpawn:
                 in command
             )
             assert "mcp_servers.gobby.startup_timeout_sec=120" in command
+            assert 'mcp_servers.gobby.tools.list_mcp_servers.approval_mode="approve"' in command
+            assert 'mcp_servers.gobby.tools.list_tools.approval_mode="approve"' in command
+            assert 'mcp_servers.gobby.tools.get_tool_schema.approval_mode="approve"' in command
+            assert 'mcp_servers.gobby.tools.call_tool.approval_mode="approve"' in command
             assert "--full-auto" not in command
 
             # Env is passed to the tmux spawner so the SessionStart hook can

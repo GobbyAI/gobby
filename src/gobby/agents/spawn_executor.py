@@ -770,11 +770,25 @@ def _codex_mcp_config_overrides(project_path: str | None) -> list[str]:
         return []
     args = ["run", "--project", project_path, "gobby", "mcp-server"]
     args_toml = "[" + ",".join(json.dumps(arg) for arg in args) + "]"
-    return [
+    overrides = [
         'mcp_servers.gobby.command="uv"',
         f"mcp_servers.gobby.args={args_toml}",
         "mcp_servers.gobby.startup_timeout_sec=120",
     ]
+    # Dotted -c overrides replace enough of the spawned server table that Codex
+    # no longer sees user-level per-tool approvals. Re-seed only the Gobby proxy
+    # tools required by worker contracts so unattended builds do not stop on MCP
+    # permission prompts.
+    for tool_name in (
+        "list_mcp_servers",
+        "list_tools",
+        "get_tool_schema",
+        "call_tool",
+        "get_variable",
+        "set_variable",
+    ):
+        overrides.append(f'mcp_servers.gobby.tools.{tool_name}.approval_mode="approve"')
+    return overrides
 
 
 async def _spawn_droid_terminal(request: SpawnRequest) -> SpawnResult:
