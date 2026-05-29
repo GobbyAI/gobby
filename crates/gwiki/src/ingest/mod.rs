@@ -1,5 +1,6 @@
 //! Ingestion helpers for immutable raw wiki sources.
 
+pub mod audio;
 pub mod file;
 pub mod git;
 pub mod image;

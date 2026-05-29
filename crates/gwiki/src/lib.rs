@@ -32,6 +32,7 @@ pub mod setup;
 pub mod sources;
 pub mod store;
 pub mod synthesis;
+pub mod transcribe;
 pub mod vault;
 pub mod vision;
 
