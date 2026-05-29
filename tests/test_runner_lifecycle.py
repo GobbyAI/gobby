@@ -589,6 +589,56 @@ class TestShutdownDaemonServices:
         assert server.should_exit is True
 
     @pytest.mark.asyncio
+    async def test_http_connections_drain_before_uvicorn_exit(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        runner = self._minimal_shutdown_runner(ShutdownIntent.STOP)
+        server = SimpleNamespace(should_exit=False)
+        connections: set[MagicMock] = set()
+        tasks: set[object] = {object()}
+        events: list[str] = []
+
+        transport = SimpleNamespace(closed=False)
+
+        def close_transport() -> None:
+            assert server.should_exit is False
+            transport.closed = True
+            connections.clear()
+            tasks.clear()
+            events.append("close")
+
+        transport.close = close_transport
+        transport.is_closing = lambda: bool(transport.closed)
+        connection = MagicMock()
+        connection.transport = transport
+        connection.shutdown.side_effect = lambda: events.append("connection-shutdown")
+        connections.add(connection)
+        server.server_state = SimpleNamespace(connections=connections, tasks=tasks)
+
+        async def server_done() -> None:
+            return None
+
+        server_task: asyncio.Task[None] = asyncio.create_task(server_done())
+        monkeypatch.setattr(runner_lifecycle_shutdown, "_HTTP_CONNECTION_GRACE_SECONDS", 0.0)
+
+        await runner_lifecycle_shutdown.shutdown_daemon_services(
+            runner,
+            server,
+            server_task,
+            1,
+            await_critical_stop_hook_grace_window=AsyncMock(),
+            shutdown_websocket_server=AsyncMock(),
+            cancel_active_agent_runs_for_shutdown=AsyncMock(return_value=0),
+            reap_remaining_child_processes=AsyncMock(),
+            shutdown_telemetry=MagicMock(),
+            cleanup_pid_file=MagicMock(),
+        )
+
+        assert events[:2] == ["connection-shutdown", "close"]
+        assert transport.closed is True
+        assert server.should_exit is True
+
+    @pytest.mark.asyncio
     async def test_restart_lifecycle_manager_timeout_logs_info(
         self,
         caplog: pytest.LogCaptureFixture,

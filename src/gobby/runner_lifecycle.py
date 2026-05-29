@@ -141,45 +141,56 @@ async def run_daemon(runner: GobbyRunner) -> None:
             timeout_graceful_shutdown=uvicorn_drain_timeout,
         )
         server = uvicorn.Server(config)
-        server_task = asyncio.create_task(server.serve())
-
-        runner._subsystem_init_task = asyncio.create_task(
-            _init_subsystems(runner, rebuild_vector_store),
-            name="subsystem-init",
-        )
-        runner._subsystem_init_task.add_done_callback(_log_subsystem_init_result)
-
-        _start_periodic_tasks(
-            runner,
-            metrics_cleanup_loop=metrics_cleanup_loop,
-            metrics_archive_loop=metrics_archive_loop,
-            span_cleanup_loop=span_cleanup_loop,
-            memory_reconcile_loop=memory_reconcile_loop,
-            cleanup_zombie_messages_loop=cleanup_zombie_messages_loop,
-            cleanup_comms_messages_loop=cleanup_comms_messages_loop,
-            cleanup_chat_attachments_loop=cleanup_chat_attachments_loop,
-            cleanup_expired_isolation_loop=cleanup_expired_isolation_loop,
-            metric_snapshot_loop=metric_snapshot_loop,
-            bin_freshness_loop=bin_freshness_loop,
-            drain_hook_inbox_loop=drain_hook_inbox_loop,
-            expire_approval_timeouts_loop=expire_approval_timeouts_loop,
+        from gobby.servers.uvicorn_shutdown import (
+            install_uvicorn_shutdown_filter,
+            remove_uvicorn_shutdown_filter,
         )
 
-        while not runner._shutdown_requested:
-            await asyncio.sleep(0.5)
-
-        await shutdown_daemon_services(
-            runner,
-            server,
-            server_task,
-            uvicorn_drain_timeout,
-            await_critical_stop_hook_grace_window=_await_critical_stop_hook_grace_window,
-            shutdown_websocket_server=_shutdown_websocket_server,
-            cancel_active_agent_runs_for_shutdown=_cancel_active_agent_runs_for_shutdown,
-            reap_remaining_child_processes=_reap_remaining_child_processes,
-            shutdown_telemetry=shutdown_telemetry,
-            cleanup_pid_file=cleanup_pid_file,
+        shutdown_log_filter = install_uvicorn_shutdown_filter(
+            lambda: bool(getattr(runner.http_server.services, "shutdown_in_progress", False))
         )
+        try:
+            server_task = asyncio.create_task(server.serve())
+
+            runner._subsystem_init_task = asyncio.create_task(
+                _init_subsystems(runner, rebuild_vector_store),
+                name="subsystem-init",
+            )
+            runner._subsystem_init_task.add_done_callback(_log_subsystem_init_result)
+
+            _start_periodic_tasks(
+                runner,
+                metrics_cleanup_loop=metrics_cleanup_loop,
+                metrics_archive_loop=metrics_archive_loop,
+                span_cleanup_loop=span_cleanup_loop,
+                memory_reconcile_loop=memory_reconcile_loop,
+                cleanup_zombie_messages_loop=cleanup_zombie_messages_loop,
+                cleanup_comms_messages_loop=cleanup_comms_messages_loop,
+                cleanup_chat_attachments_loop=cleanup_chat_attachments_loop,
+                cleanup_expired_isolation_loop=cleanup_expired_isolation_loop,
+                metric_snapshot_loop=metric_snapshot_loop,
+                bin_freshness_loop=bin_freshness_loop,
+                drain_hook_inbox_loop=drain_hook_inbox_loop,
+                expire_approval_timeouts_loop=expire_approval_timeouts_loop,
+            )
+
+            while not runner._shutdown_requested:
+                await asyncio.sleep(0.5)
+
+            await shutdown_daemon_services(
+                runner,
+                server,
+                server_task,
+                uvicorn_drain_timeout,
+                await_critical_stop_hook_grace_window=_await_critical_stop_hook_grace_window,
+                shutdown_websocket_server=_shutdown_websocket_server,
+                cancel_active_agent_runs_for_shutdown=_cancel_active_agent_runs_for_shutdown,
+                reap_remaining_child_processes=_reap_remaining_child_processes,
+                shutdown_telemetry=shutdown_telemetry,
+                cleanup_pid_file=cleanup_pid_file,
+            )
+        finally:
+            remove_uvicorn_shutdown_filter(shutdown_log_filter)
 
     except Exception as e:
         logger.error(f"Fatal error: {e}", exc_info=True)

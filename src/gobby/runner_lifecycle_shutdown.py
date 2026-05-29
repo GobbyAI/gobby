@@ -18,6 +18,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger("gobby.runner_lifecycle")
 
 _CRITICAL_STOP_HOOK_GRACE_SECONDS = 5.0
+_HTTP_CONNECTION_DRAIN_SECONDS = 3.0
+_HTTP_CONNECTION_GRACE_SECONDS = 0.25
 
 
 class ReapChildProcesses(Protocol):
@@ -90,6 +92,63 @@ async def _shutdown_websocket_server(runner: GobbyRunner, timeout: float = 5.0) 
 
     if websocket_task is not None:
         runner._websocket_task = None
+
+
+async def _drain_uvicorn_http_connections(server: uvicorn.Server) -> None:
+    """Ask uvicorn HTTP connections to close before uvicorn starts its timeout."""
+    state = getattr(server, "server_state", None)
+    connections = getattr(state, "connections", None)
+    tasks = getattr(state, "tasks", None)
+    if connections is None and tasks is None:
+        return
+
+    if connections:
+        for connection in list(connections):
+            shutdown = getattr(connection, "shutdown", None)
+            if callable(shutdown):
+                shutdown()
+
+    if await _wait_for_uvicorn_http_drain(
+        connections,
+        tasks,
+        timeout=_HTTP_CONNECTION_GRACE_SECONDS,
+    ):
+        return
+
+    if connections:
+        for connection in list(connections):
+            transport = getattr(connection, "transport", None)
+            close = getattr(transport, "close", None)
+            is_closing = getattr(transport, "is_closing", None)
+            if callable(close) and not (callable(is_closing) and is_closing()):
+                close()
+
+    drained = await _wait_for_uvicorn_http_drain(
+        connections,
+        tasks,
+        timeout=_HTTP_CONNECTION_DRAIN_SECONDS,
+    )
+    if not drained:
+        logger.debug(
+            "HTTP request drain left %d connection(s) and %d task(s) for uvicorn shutdown",
+            len(connections or ()),
+            len(tasks or ()),
+        )
+
+
+async def _wait_for_uvicorn_http_drain(
+    connections: Any,
+    tasks: Any,
+    *,
+    timeout: float,
+) -> bool:
+    deadline = asyncio.get_running_loop().time() + timeout
+    while True:
+        if not connections and not tasks:
+            return True
+        if asyncio.get_running_loop().time() >= deadline:
+            return False
+        await asyncio.sleep(0.05)
 
 
 async def _reap_remaining_child_processes(
@@ -365,6 +424,8 @@ async def shutdown_daemon_services(
         await runner.http_server._terminate_streamable_http_sessions()
     except Exception as e:
         logger.warning(f"Failed to terminate Streamable HTTP sessions: {e}")
+
+    await _drain_uvicorn_http_connections(server)
 
     server.should_exit = True
 
