@@ -890,8 +890,12 @@ dependencies = [
 name = "gobby-wiki"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "clap",
  "gobby-core",
+ "serde",
+ "serde_json",
+ "tempfile",
  "toml",
 ]
 
