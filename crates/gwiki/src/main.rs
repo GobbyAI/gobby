@@ -103,6 +103,7 @@ fn main() -> ExitCode {
             eprintln!("gwiki: {error}");
             match error {
                 gobby_wiki::WikiError::NotImplemented { .. } => ExitCode::from(2),
+                _ => ExitCode::from(1),
             }
         }
     }
