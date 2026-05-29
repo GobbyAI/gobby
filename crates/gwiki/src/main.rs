@@ -1,13 +1,23 @@
-use std::io::Write;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand};
-use gobby_wiki::{Command, ScopeSelection, WikiError};
+use gobby_wiki::{Command, ScopeSelection, WikiError, output};
 
 #[derive(Debug, Parser)]
 #[command(name = "gwiki", version, about = "Gobby wiki CLI")]
 struct Cli {
+    #[command(flatten)]
+    scope: ScopeArgs,
+
+    /// Output format.
+    #[arg(long, global = true, default_value = "json")]
+    format: output::Format,
+
+    /// Suppress status messages.
+    #[arg(long, global = true)]
+    quiet: bool,
+
     #[command(subcommand)]
     command: CliCommand,
 }
@@ -15,11 +25,11 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum CliCommand {
     /// Initialize a wiki vault.
-    Init(ScopeArgs),
+    Init,
     /// Create gwiki-owned derived storage.
     Setup,
     /// Index markdown and source notes in the selected scope.
-    Index(ScopeArgs),
+    Index,
     /// Capture a local source file into the wiki inbox.
     IngestFile {
         #[arg(value_name = "PATH")]
@@ -29,6 +39,8 @@ enum CliCommand {
     Search(SearchArgs),
     /// Show backlinks for a wiki page.
     Backlinks(BacklinksArgs),
+    /// Suggest unresolved wiki links in the selected scope.
+    LinkSuggest(LinkSuggestArgs),
     /// Dispatch research workers and checkpoint wiki research state.
     Research(ResearchArgs),
     /// Show shell readiness.
@@ -38,37 +50,37 @@ enum CliCommand {
 #[derive(Debug, Args)]
 struct ScopeArgs {
     /// Use the current Gobby project's wiki scope.
-    #[arg(long, conflicts_with = "topic")]
+    #[arg(long, global = true, conflicts_with = "topic")]
     project: bool,
 
     /// Use a global topic wiki scope.
-    #[arg(long, value_name = "NAME")]
+    #[arg(long, global = true, value_name = "NAME")]
     topic: Option<String>,
 }
 
 #[derive(Debug, Args)]
 struct SearchArgs {
-    #[command(flatten)]
-    scope: ScopeArgs,
-
     #[arg(value_name = "QUERY")]
     query: String,
+
+    #[arg(long, default_value = "10")]
+    limit: usize,
 }
 
 #[derive(Debug, Args)]
 struct BacklinksArgs {
-    #[command(flatten)]
-    scope: ScopeArgs,
-
     #[arg(value_name = "PAGE")]
     page: String,
 }
 
 #[derive(Debug, Args)]
-struct ResearchArgs {
-    #[command(flatten)]
-    scope: ScopeArgs,
+struct LinkSuggestArgs {
+    #[arg(long, default_value = "10")]
+    limit: usize,
+}
 
+#[derive(Debug, Args)]
+struct ResearchArgs {
     #[arg(value_name = "QUESTION")]
     question: String,
 
@@ -86,9 +98,14 @@ struct ResearchArgs {
 }
 
 fn main() -> ExitCode {
-    let cli = Cli::parse();
+    let Cli {
+        scope,
+        format,
+        quiet,
+        command,
+    } = Cli::parse();
 
-    let command = match Command::try_from(cli.command) {
+    let command = match command_from_cli(command, scope.into()) {
         Ok(command) => command,
         Err(error) => {
             eprintln!("gwiki: {error}");
@@ -97,10 +114,20 @@ fn main() -> ExitCode {
     };
 
     match gobby_wiki::run(command) {
-        Ok(output) => {
-            let mut stdout = std::io::stdout().lock();
-            if let Err(error) = writeln!(stdout, "{}", output.message) {
-                eprintln!("gwiki: failed to write output: {error}");
+        Ok(outcome) => {
+            if !quiet {
+                let mut stderr = std::io::stderr().lock();
+                for message in &outcome.status_messages {
+                    if let Err(error) = output::print_status(&mut stderr, message) {
+                        eprintln!("gwiki: failed to write status: {error}");
+                        return ExitCode::from(1);
+                    }
+                }
+            }
+
+            let stdout = std::io::stdout().lock();
+            if let Err(error) = output::print_result(stdout, format, &outcome.result) {
+                eprintln!("gwiki: {error}");
                 return ExitCode::from(1);
             }
             ExitCode::SUCCESS
@@ -112,37 +139,38 @@ fn main() -> ExitCode {
     }
 }
 
-impl TryFrom<CliCommand> for Command {
-    type Error = WikiError;
-
-    fn try_from(command: CliCommand) -> Result<Self, Self::Error> {
-        match command {
-            CliCommand::Init(scope) => Ok(Self::Init(scope.into())),
-            CliCommand::Setup => Ok(Self::Setup),
-            CliCommand::Index(scope) => Ok(Self::Index(scope.into())),
-            CliCommand::IngestFile { path } => Ok(Self::IngestFile { path }),
-            CliCommand::Search(args) => Ok(Self::Search {
-                query: args.query,
-                scope: args.scope.into(),
-            }),
-            CliCommand::Backlinks(args) => Ok(Self::Backlinks {
-                page: args.page,
-                scope: args.scope.into(),
-            }),
-            CliCommand::Research(args) => {
-                let scope_selection = ScopeSelection::from(args.scope);
-                Ok(Self::Research(gobby_wiki::research::ResearchOptions {
-                    question: args.question,
-                    scope: gobby_wiki::research::resolve_scope(&scope_selection)?,
-                    source_constraints: args.source_constraints,
-                    agent_count: args.agent_count,
-                    dispatch_task_id: args.task_id,
-                    resume: args.resume,
-                    accepted_notes: Vec::new(),
-                }))
-            }
-            CliCommand::Status => Ok(Self::Status),
+fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Command, WikiError> {
+    match command {
+        CliCommand::Init => Ok(Command::Init { scope }),
+        CliCommand::Setup => Ok(Command::Setup { scope }),
+        CliCommand::Index => Ok(Command::Index { scope }),
+        CliCommand::IngestFile { path } => Ok(Command::IngestFile { path, scope }),
+        CliCommand::Search(args) => Ok(Command::Search {
+            query: args.query,
+            scope,
+            limit: args.limit,
+        }),
+        CliCommand::Backlinks(args) => Ok(Command::Backlinks {
+            page: args.page,
+            scope,
+        }),
+        CliCommand::LinkSuggest(args) => Ok(Command::LinkSuggest {
+            scope,
+            limit: args.limit,
+        }),
+        CliCommand::Research(args) => {
+            let research_scope = gobby_wiki::research::resolve_scope(&scope)?;
+            Ok(Command::Research(gobby_wiki::research::ResearchOptions {
+                question: args.question,
+                scope: research_scope,
+                source_constraints: args.source_constraints,
+                agent_count: args.agent_count,
+                dispatch_task_id: args.task_id,
+                resume: args.resume,
+                accepted_notes: Vec::new(),
+            }))
         }
+        CliCommand::Status => Ok(Command::Status { scope }),
     }
 }
 
@@ -157,9 +185,13 @@ impl From<ScopeArgs> for ScopeSelection {
 
 fn exit_code_for_error(error: &WikiError) -> ExitCode {
     match error {
-        WikiError::NotImplemented { .. } | WikiError::InvalidInput { .. } => ExitCode::from(2),
-        WikiError::Io { .. } | WikiError::Json { .. } | WikiError::Daemon { .. } => {
-            ExitCode::from(1)
-        }
+        WikiError::NotImplemented { .. }
+        | WikiError::InvalidInput { .. }
+        | WikiError::InvalidScope { .. } => ExitCode::from(2),
+        WikiError::Config { .. }
+        | WikiError::Io { .. }
+        | WikiError::Json { .. }
+        | WikiError::Registry { .. }
+        | WikiError::Daemon { .. } => ExitCode::from(1),
     }
 }
