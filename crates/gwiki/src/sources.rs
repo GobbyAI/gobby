@@ -14,7 +14,11 @@ const SOURCE_MARKER: &str = "<!-- gwiki-source:";
 #[serde(rename_all = "snake_case")]
 pub enum SourceKind {
     Url,
+    Pdf,
+    Markdown,
+    Text,
     File,
+    Stdin,
     ResearchNote,
 }
 
@@ -22,7 +26,11 @@ impl fmt::Display for SourceKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::Url => "url",
+            Self::Pdf => "pdf",
+            Self::Markdown => "markdown",
+            Self::Text => "text",
             Self::File => "file",
+            Self::Stdin => "stdin",
             Self::ResearchNote => "research_note",
         })
     }

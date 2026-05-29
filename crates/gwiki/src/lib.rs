@@ -9,6 +9,7 @@ pub mod events;
 pub mod frontmatter;
 pub mod graph;
 pub mod indexer;
+pub mod ingest;
 pub mod links;
 pub mod markdown;
 pub mod models;
