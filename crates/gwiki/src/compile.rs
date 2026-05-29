@@ -1,8 +1,21 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use serde::Serialize;
+
 use crate::WikiError;
+use crate::citations::{
+    render_source_citations, source_record_matches_path, source_records_for_paths,
+};
+use crate::provenance::{ProvenanceGraph, ProvenanceLink, SourceChunkRef, WikiSectionRef};
 use crate::session::{CompileState, ResearchSession};
+use crate::sources::{CompileStatus, SourceManifest};
+use crate::synthesis::{
+    ArticleKind, PageWriteOutcome, SynthesisInput, SynthesisPrompt, SynthesisSource,
+    SynthesizedPage, WritePolicy, build_synthesis_prompt, ensure_page_write_allowed, relative_path,
+    slugify as page_slugify, synthesize_article, synthesize_source_pages, wiki_link,
+    write_synthesized_page,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompileRequest {
@@ -16,6 +29,31 @@ pub struct CompileRequest {
 pub struct CompileOutcome {
     pub bundle: CompileBundle,
     pub state: CompileState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WikiCompileOptions {
+    pub target_kind: ArticleKind,
+    pub daemon_synthesis_available: bool,
+}
+
+impl Default for WikiCompileOptions {
+    fn default() -> Self {
+        Self {
+            target_kind: ArticleKind::Topic,
+            daemon_synthesis_available: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct WikiCompileOutcome {
+    pub handoff_id: String,
+    pub article_path: PathBuf,
+    pub source_paths: Vec<PathBuf>,
+    pub index_path: PathBuf,
+    pub page_writes: Vec<PageWriteOutcome>,
+    pub prompt: SynthesisPrompt,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,6 +75,98 @@ pub struct AcceptedCompileSource {
     pub title: String,
     pub path: PathBuf,
     pub chunks: Vec<String>,
+}
+
+pub fn compile_to_wiki(
+    session: &mut ResearchSession,
+    request: CompileRequest,
+) -> Result<WikiCompileOutcome, WikiError> {
+    compile_to_wiki_with_options(session, request, WikiCompileOptions::default())
+}
+
+pub fn compile_to_wiki_with_options(
+    session: &mut ResearchSession,
+    request: CompileRequest,
+    options: WikiCompileOptions,
+) -> Result<WikiCompileOutcome, WikiError> {
+    let target_page = request.target_page.clone();
+    let write_intent = request.write_intent;
+    let handoff_request = CompileRequest {
+        topic: request.topic,
+        outline: request.outline,
+        target_page: None,
+        write_intent: false,
+    };
+    let mut handoff = prepare_handoff(session, handoff_request)?;
+    handoff.bundle.target_page = target_page.clone();
+    handoff.bundle.write_intent = write_intent;
+    handoff.state.write_intent = write_intent;
+    session.record_compile_state(handoff.state.clone())?;
+
+    let vault_root = session.scope.root();
+    let source_paths: Vec<PathBuf> = handoff
+        .bundle
+        .accepted_sources
+        .iter()
+        .map(|source| source.path.clone())
+        .collect();
+    let mut citations = handoff.bundle.citations.clone();
+    extend_unique(
+        &mut citations,
+        render_source_citations(vault_root, &source_paths)?,
+    );
+
+    let synthesis_sources = handoff
+        .bundle
+        .accepted_sources
+        .iter()
+        .map(|source| SynthesisSource {
+            title: source.title.clone(),
+            path: source.path.clone(),
+            chunks: source.chunks.clone(),
+        })
+        .collect();
+    let input = SynthesisInput {
+        handoff_id: handoff.bundle.handoff_id.clone(),
+        topic: handoff.bundle.topic.clone(),
+        outline: handoff.bundle.outline.clone(),
+        target_kind: options.target_kind,
+        accepted_sources: synthesis_sources,
+        citations,
+        conflicting_claims: handoff.bundle.conflicting_claims.clone(),
+        missing_evidence: handoff.bundle.missing_evidence.clone(),
+        daemon_synthesis_available: options.daemon_synthesis_available,
+    };
+    let prompt = build_synthesis_prompt(&input);
+    let article = synthesize_article(vault_root, &input, target_page);
+    let mut pages = vec![article.clone()];
+    pages.extend(synthesize_source_pages(vault_root, &input, &article.path));
+
+    let policy = if write_intent {
+        WritePolicy::AllowOverwriteAfterMerge
+    } else {
+        WritePolicy::RequireMergeIntent
+    };
+    for page in &pages {
+        ensure_page_write_allowed(page, policy)?;
+    }
+
+    let mut page_writes = Vec::with_capacity(pages.len());
+    for page in &pages {
+        page_writes.push(write_synthesized_page(page, policy)?);
+    }
+    update_wiki_index(vault_root, &article)?;
+    write_provenance(vault_root, &article, &handoff.bundle.accepted_sources)?;
+    mark_sources_compiled(vault_root, &source_paths)?;
+
+    Ok(WikiCompileOutcome {
+        handoff_id: handoff.bundle.handoff_id,
+        article_path: article.path,
+        source_paths: pages.iter().skip(1).map(|page| page.path.clone()).collect(),
+        index_path: vault_root.join("_index.md"),
+        page_writes,
+        prompt,
+    })
 }
 
 pub fn prepare_handoff(
@@ -117,6 +247,116 @@ pub fn prepare_handoff(
     session.record_compile_state(state.clone())?;
 
     Ok(CompileOutcome { bundle, state })
+}
+
+fn update_wiki_index(vault_root: &Path, article: &SynthesizedPage) -> Result<(), WikiError> {
+    let index_path = vault_root.join("_index.md");
+    let mut index = if index_path.exists() {
+        fs::read_to_string(&index_path).map_err(|error| WikiError::Io {
+            action: "read wiki index",
+            path: Some(index_path.clone()),
+            source: error.to_string(),
+        })?
+    } else {
+        "# Wiki Index\n\n".to_string()
+    };
+
+    let link = wiki_link(vault_root, &article.path, &article.title);
+    if !index.contains("## Compiled pages") {
+        if !index.ends_with('\n') {
+            index.push('\n');
+        }
+        index.push_str("\n## Compiled pages\n\n");
+    }
+    if !index.contains(&link) {
+        if !index.ends_with('\n') {
+            index.push('\n');
+        }
+        index.push_str("- ");
+        index.push_str(&link);
+        index.push('\n');
+    }
+
+    if let Some(parent) = index_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| WikiError::Io {
+            action: "create wiki index directory",
+            path: Some(parent.to_path_buf()),
+            source: error.to_string(),
+        })?;
+    }
+    fs::write(&index_path, index).map_err(|error| WikiError::Io {
+        action: "write wiki index",
+        path: Some(index_path),
+        source: error.to_string(),
+    })
+}
+
+fn write_provenance(
+    vault_root: &Path,
+    article: &SynthesizedPage,
+    sources: &[AcceptedCompileSource],
+) -> Result<(), WikiError> {
+    let provenance_path = vault_root.join("meta").join("provenance.json");
+    let mut graph = if provenance_path.exists() {
+        ProvenanceGraph::load_from_vault(vault_root)?
+    } else {
+        ProvenanceGraph::default()
+    };
+    let section = WikiSectionRef {
+        page_path: PathBuf::from(relative_path(vault_root, &article.path)),
+        heading: "Overview".to_string(),
+        section_id: page_slugify(&article.title),
+    };
+    let manifest_records = source_records_for_paths(
+        vault_root,
+        &sources
+            .iter()
+            .map(|source| source.path.clone())
+            .collect::<Vec<_>>(),
+    )?;
+
+    for source in sources {
+        let source_id = manifest_records
+            .iter()
+            .find(|record| source_record_matches_path(record, vault_root, &source.path))
+            .map(|record| record.id.clone())
+            .unwrap_or_else(|| page_slugify(&source.title));
+        for (index, chunk) in source.chunks.iter().enumerate() {
+            graph.add_link(ProvenanceLink {
+                source: SourceChunkRef {
+                    source_id: source_id.clone(),
+                    chunk_id: format!("{source_id}#chunk-{index}"),
+                    path: PathBuf::from(relative_path(vault_root, &source.path)),
+                    byte_start: 0,
+                    byte_end: chunk.len(),
+                },
+                section: section.clone(),
+                claim: Some(chunk.clone()),
+            });
+        }
+    }
+
+    graph.save_to_vault(vault_root)
+}
+
+fn mark_sources_compiled(vault_root: &Path, source_paths: &[PathBuf]) -> Result<(), WikiError> {
+    let mut manifest = SourceManifest::read(vault_root)?;
+    let mut changed = false;
+    for entry in &mut manifest.entries {
+        if source_paths
+            .iter()
+            .any(|path| source_record_matches_path(entry, vault_root, path))
+            && entry.compile_status != CompileStatus::Compiled
+        {
+            entry.compile_status = CompileStatus::Compiled;
+            changed = true;
+        }
+    }
+
+    if changed {
+        manifest.write(vault_root)?;
+    }
+    Ok(())
 }
 
 #[derive(Debug, Default)]
@@ -300,6 +540,15 @@ fn render_list_section(rendered: &mut String, title: &str, values: &[String]) {
 }
 
 fn write_target_page(target_page: &Path, rendered: &str) -> Result<(), WikiError> {
+    if target_page.exists() {
+        return Err(WikiError::InvalidInput {
+            field: "write_intent",
+            message: format!(
+                "existing page {} requires merge/diff handling before overwrite",
+                target_page.display()
+            ),
+        });
+    }
     if let Some(parent) = target_page.parent() {
         fs::create_dir_all(parent).map_err(|error| WikiError::Io {
             action: "create compile target directory",
@@ -486,5 +735,86 @@ mod tests {
                 .iter()
                 .any(|source| source.path.starts_with(out_of_scope.path()))
         );
+    }
+
+    #[test]
+    fn compile_writes_obsidian_markdown() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let scope = ResearchScope::project(temp.path());
+        let note_path = scope.root().join("raw/research/compile.md");
+        std::fs::create_dir_all(note_path.parent().expect("note parent")).expect("raw dir");
+        std::fs::write(
+            &note_path,
+            concat!(
+                "---\n",
+                "title: Compile behavior\n",
+                "source: daemon notes\n",
+                "---\n\n",
+                "Citation: Example Docs, Compile API\n",
+                "Compile turns accepted notes into source-grounded wiki articles."
+            ),
+        )
+        .expect("note written");
+        let mut session = session_with_note(&scope, "Compile behavior", "raw/research/compile.md");
+
+        let outcome = compile_to_wiki(
+            &mut session,
+            CompileRequest {
+                topic: "Durable Compile".to_string(),
+                outline: vec!["Overview".to_string(), "Evidence".to_string()],
+                target_page: None,
+                write_intent: false,
+            },
+        )
+        .expect("wiki articles compiled");
+
+        let page = std::fs::read_to_string(&outcome.article_path).expect("article written");
+        assert!(
+            outcome
+                .article_path
+                .ends_with("wiki/topics/durable-compile.md")
+        );
+        assert!(page.starts_with("---\n"));
+        assert!(page.contains("title: Durable Compile"));
+        assert!(page.contains("source_kind: topic"));
+        assert!(page.contains("[[wiki/sources/compile-behavior|Compile behavior]]"));
+        assert!(page.contains("Example Docs, Compile API"));
+
+        let source_page = scope.root().join("wiki/sources/compile-behavior.md");
+        assert!(source_page.exists());
+        let provenance =
+            std::fs::read_to_string(scope.root().join("meta/provenance.json")).expect("provenance");
+        assert!(provenance.contains("wiki/topics/durable-compile.md"));
+        assert!(provenance.contains("raw/research/compile.md"));
+    }
+
+    #[test]
+    fn index_update_preserves_unrelated_entries() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let scope = ResearchScope::project(temp.path());
+        std::fs::write(
+            scope.root().join("_index.md"),
+            "# Wiki Index\n\n- [[wiki/topics/existing|Existing Entry]]\n",
+        )
+        .expect("index written");
+        let note_path = scope.root().join("raw/research/index.md");
+        std::fs::create_dir_all(note_path.parent().expect("note parent")).expect("raw dir");
+        std::fs::write(&note_path, "Index updates keep unrelated entries.").expect("note written");
+        let mut session = session_with_note(&scope, "Index behavior", "raw/research/index.md");
+
+        compile_to_wiki(
+            &mut session,
+            CompileRequest {
+                topic: "Index Preservation".to_string(),
+                outline: vec!["Overview".to_string()],
+                target_page: None,
+                write_intent: false,
+            },
+        )
+        .expect("wiki article compiled");
+
+        let index = std::fs::read_to_string(scope.root().join("_index.md")).expect("index read");
+        assert!(index.contains("[[wiki/topics/existing|Existing Entry]]"));
+        assert!(index.contains("[[wiki/topics/index-preservation|Index Preservation]]"));
     }
 }

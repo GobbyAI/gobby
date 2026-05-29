@@ -1,6 +1,7 @@
 use std::fmt;
 use std::path::PathBuf;
 
+pub mod citations;
 pub mod collect;
 pub mod commands;
 pub mod compile;
@@ -25,6 +26,7 @@ pub mod session;
 pub mod setup;
 pub mod sources;
 pub mod store;
+pub mod synthesis;
 pub mod vault;
 
 /// Parsed gwiki command passed in from the binary.
@@ -60,6 +62,14 @@ pub enum Command {
         limit: usize,
     },
     Research(research::ResearchOptions),
+    Compile {
+        topic: Option<String>,
+        outline: Vec<String>,
+        target_kind: synthesis::ArticleKind,
+        target_page: Option<PathBuf>,
+        write_intent: bool,
+        scope: ScopeSelection,
+    },
     Status {
         scope: ScopeSelection,
     },
@@ -244,6 +254,21 @@ pub fn run(command: Command) -> Result<CommandOutcome, WikiError> {
             Ok(commands::backlinks::link_suggest(scope.identity(), limit))
         }
         Command::Research(options) => run_research(options),
+        Command::Compile {
+            topic,
+            outline,
+            target_kind,
+            target_page,
+            write_intent,
+            scope,
+        } => run_compile(
+            topic,
+            outline,
+            target_kind,
+            target_page,
+            write_intent,
+            scope,
+        ),
         Command::Status { scope } => Ok(commands::status::run(scope.identity())),
     }
 }
@@ -279,6 +304,69 @@ fn run_research(options: research::ResearchOptions) -> Result<CommandOutcome, Wi
         &output_scope,
         payload,
         message,
+    ))
+}
+
+fn run_compile(
+    topic: Option<String>,
+    outline: Vec<String>,
+    target_kind: synthesis::ArticleKind,
+    target_page: Option<PathBuf>,
+    write_intent: bool,
+    scope: ScopeSelection,
+) -> Result<CommandOutcome, WikiError> {
+    let research_scope = research::resolve_scope(&scope)?;
+    let mut session = session::ResearchSession::load_checkpoint(research_scope.root())?;
+    let topic = topic.unwrap_or_else(|| {
+        session
+            .compile_state
+            .as_ref()
+            .map(|state| state.topic.clone())
+            .unwrap_or_else(|| session.question.clone())
+    });
+    let target_page = target_page.map(|path| {
+        if path.is_absolute() {
+            path
+        } else {
+            research_scope.root().join(path)
+        }
+    });
+    let daemon_report = daemon::probe_daemon_capabilities();
+    let outcome = compile::compile_to_wiki_with_options(
+        &mut session,
+        compile::CompileRequest {
+            topic,
+            outline,
+            target_page,
+            write_intent,
+        },
+        compile::WikiCompileOptions {
+            target_kind,
+            daemon_synthesis_available: daemon_report.synthesis.available,
+        },
+    )?;
+    let output_scope = research_scope_identity(&session.scope);
+    let payload = serde_json::json!({
+        "command": "compile",
+        "scope": output_scope,
+        "status": "compiled",
+        "daemon_synthesis_available": daemon_report.synthesis.available,
+        "article_path": outcome.article_path,
+        "source_paths": outcome.source_paths,
+        "index_path": outcome.index_path,
+        "handoff_id": outcome.handoff_id,
+        "page_writes": outcome.page_writes,
+        "prompt": outcome.prompt,
+    });
+    let text = format!(
+        "Compiled wiki article\nScope: {output_scope}\nArticle: {}",
+        outcome.article_path.display()
+    );
+    Ok(commands::scoped_outcome(
+        "compile",
+        &output_scope,
+        payload,
+        text,
     ))
 }
 

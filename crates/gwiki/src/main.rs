@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use gobby_wiki::{Command, ScopeSelection, WikiError, output};
 
 #[derive(Debug, Parser)]
@@ -45,6 +45,8 @@ enum CliCommand {
     LinkSuggest(LinkSuggestArgs),
     /// Dispatch research workers and checkpoint wiki research state.
     Research(ResearchArgs),
+    /// Compile accepted research notes into wiki articles.
+    Compile(CompileArgs),
     /// Show shell readiness.
     Status,
 }
@@ -97,6 +99,31 @@ struct ResearchArgs {
 
     #[arg(long)]
     resume: bool,
+}
+
+#[derive(Debug, Args)]
+struct CompileArgs {
+    #[arg(value_name = "TOPIC")]
+    topic: Option<String>,
+
+    #[arg(long = "outline", value_name = "HEADING")]
+    outline: Vec<String>,
+
+    #[arg(long, value_enum, default_value = "topic")]
+    kind: CompileKind,
+
+    #[arg(long, value_name = "PAGE")]
+    target: Option<PathBuf>,
+
+    #[arg(long = "write-intent")]
+    write_intent: bool,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum CompileKind {
+    Source,
+    Concept,
+    Topic,
 }
 
 fn main() -> ExitCode {
@@ -173,7 +200,25 @@ fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Comman
                 accepted_notes: Vec::new(),
             }))
         }
+        CliCommand::Compile(args) => Ok(Command::Compile {
+            topic: args.topic,
+            outline: args.outline,
+            target_kind: args.kind.into(),
+            target_page: args.target,
+            write_intent: args.write_intent,
+            scope,
+        }),
         CliCommand::Status => Ok(Command::Status { scope }),
+    }
+}
+
+impl From<CompileKind> for gobby_wiki::synthesis::ArticleKind {
+    fn from(kind: CompileKind) -> Self {
+        match kind {
+            CompileKind::Source => Self::Source,
+            CompileKind::Concept => Self::Concept,
+            CompileKind::Topic => Self::Topic,
+        }
     }
 }
 
