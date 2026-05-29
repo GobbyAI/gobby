@@ -307,6 +307,7 @@ fn hit_to_result(hit: SearchHit, scope: &SearchScope) -> Option<WikiSearchResult
             .unwrap_or_default(),
         score: f64::from(hit.score),
         sources: vec![SearchSource::Semantic],
+        explanations: Vec::new(),
         chunk,
         provenance: SearchProvenance {
             document_path: PathBuf::from(path),

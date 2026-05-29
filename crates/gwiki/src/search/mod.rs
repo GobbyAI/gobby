@@ -1,7 +1,8 @@
 pub mod bm25;
+pub mod graph_boost;
+pub mod rrf;
 pub mod semantic;
 
-use std::collections::BTreeMap;
 use std::fmt;
 use std::path::PathBuf;
 
@@ -45,6 +46,7 @@ impl SearchScope {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum SearchSource {
     Bm25,
+    Graph,
     Semantic,
 }
 
@@ -52,13 +54,15 @@ impl SearchSource {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Bm25 => "bm25",
+            Self::Graph => "graph",
             Self::Semantic => "semantic",
         }
     }
 
-    fn from_source_name(source: &str) -> Option<Self> {
+    pub(crate) fn from_source_name(source: &str) -> Option<Self> {
         match source {
             "bm25" => Some(Self::Bm25),
+            "graph" => Some(Self::Graph),
             "semantic" => Some(Self::Semantic),
             _ => None,
         }
@@ -87,6 +91,13 @@ pub struct SearchProvenance {
     pub content_hash: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct SearchSourceExplanation {
+    pub source: SearchSource,
+    pub rank: usize,
+    pub score: f64,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WikiSearchResult {
     pub id: String,
@@ -98,6 +109,7 @@ pub struct WikiSearchResult {
     pub snippet: String,
     pub score: f64,
     pub sources: Vec<SearchSource>,
+    pub explanations: Vec<SearchSourceExplanation>,
     pub chunk: Option<ChunkProvenance>,
     pub provenance: SearchProvenance,
 }
@@ -171,52 +183,13 @@ where
         });
     }
 
-    let results = fuse_results(bm25_hits, semantic_outcome.hits);
-    Ok(WikiSearchResponse {
-        results,
+    Ok(rrf::fuse_sources(
+        bm25_hits,
+        semantic_outcome.hits,
+        Vec::new(),
         degradations,
-    })
-}
-
-fn fuse_results(
-    bm25_hits: Vec<WikiSearchResult>,
-    semantic_hits: Vec<WikiSearchResult>,
-) -> Vec<WikiSearchResult> {
-    let bm25_ids = bm25_hits
-        .iter()
-        .map(|hit| hit.id.clone())
-        .collect::<Vec<_>>();
-    let semantic_ids = semantic_hits
-        .iter()
-        .map(|hit| hit.id.clone())
-        .collect::<Vec<_>>();
-
-    let mut by_id = BTreeMap::new();
-    for hit in bm25_hits.into_iter().chain(semantic_hits) {
-        by_id.entry(hit.id.clone()).or_insert(hit);
-    }
-
-    let mut sources = Vec::new();
-    if !bm25_ids.is_empty() {
-        sources.push((SearchSource::Bm25.as_str(), bm25_ids));
-    }
-    if !semantic_ids.is_empty() {
-        sources.push((SearchSource::Semantic.as_str(), semantic_ids));
-    }
-
-    gobby_core::search::rrf_merge(sources)
-        .into_iter()
-        .filter_map(|fused| {
-            let mut result = by_id.remove(&fused.id)?;
-            result.score = fused.score;
-            result.sources = fused
-                .sources
-                .iter()
-                .filter_map(|source| SearchSource::from_source_name(source))
-                .collect();
-            Some(result)
-        })
-        .collect()
+        request.limit,
+    ))
 }
 
 #[cfg(test)]
@@ -276,6 +249,7 @@ mod tests {
             snippet: "Ownership and borrowing".to_string(),
             score: 1.0,
             sources: vec![SearchSource::Bm25],
+            explanations: Vec::new(),
             chunk: Some(ChunkProvenance {
                 chunk_index: 0,
                 byte_start: 0,
