@@ -460,13 +460,19 @@ class VectorStore:
         return _vector_size(info.config.params.vectors)
 
     async def ensure_collection(
-        self, collection_name: str, embedding_dim: int | None = None
+        self,
+        collection_name: str,
+        embedding_dim: int | None = None,
+        *,
+        recreate_on_mismatch: bool = True,
     ) -> None:
         """Ensure a named collection exists, creating it if needed.
 
         Args:
             collection_name: Collection to ensure
             embedding_dim: Vector dimension (defaults to instance's _embedding_dim)
+            recreate_on_mismatch: Whether to recreate existing collections with
+                a different dimension.
         """
         client = await self._ensure_initialized()
         dim = embedding_dim or self._embedding_dim
@@ -492,6 +498,15 @@ class VectorStore:
                 vectors_cfg = info.config.params.vectors
                 existing_dim = _vector_size(vectors_cfg)
                 if existing_dim is not None and existing_dim != dim:
+                    if not recreate_on_mismatch:
+                        logger.warning(
+                            "Qdrant collection '%s' dimension mismatch "
+                            "(expected_dim=%s, observed_dim=%s); leaving unchanged",
+                            collection_name,
+                            dim,
+                            existing_dim,
+                        )
+                        return
                     # Auto-recreate with correct dimensions
                     await asyncio.to_thread(
                         client.delete_collection, collection_name=collection_name

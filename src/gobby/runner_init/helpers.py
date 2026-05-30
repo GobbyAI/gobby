@@ -49,8 +49,13 @@ def resolve_embedding_api_key(secret_store: Any, model: str) -> str | None:
     if model.startswith(("local/", "ollama/")):
         return None
 
-    default_key: str | None = secret_store.get("openai_api_key")
-    return default_key
+    from gobby.search.embeddings import is_openai_cloud_embedding_model
+
+    if is_openai_cloud_embedding_model(model):
+        openai_key: str | None = secret_store.get("openai_api_key")
+        return openai_key
+
+    return None
 
 
 _HEADLESS_SETTINGS = Path.home() / ".gobby" / "settings" / "headless.json"

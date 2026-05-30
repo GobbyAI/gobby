@@ -117,7 +117,12 @@ def _coerce_positive_int(value: object) -> int | None:
     if isinstance(value, bool) or value is None:
         return None
     try:
-        coerced = int(value)
+        if isinstance(value, int):
+            coerced = value
+        elif isinstance(value, float | str | bytes | bytearray):
+            coerced = int(value)
+        else:
+            return None
     except (TypeError, ValueError):
         return None
     return coerced if coerced > 0 else None

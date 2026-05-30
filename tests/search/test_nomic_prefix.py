@@ -16,6 +16,7 @@ from gobby.search.embeddings import (
 )
 
 pytestmark = pytest.mark.unit
+LOCAL_API_BASE = "http://localhost:1234/v1"
 
 
 @pytest.fixture(autouse=True)
@@ -104,7 +105,12 @@ async def test_generate_embedding_document_prefix_reaches_api() -> None:
     mock_client, captured = _make_mock_client()
 
     with patch("openai.AsyncOpenAI", return_value=mock_client):
-        await generate_embedding("cats", model="nomic-embed-text", is_query=False)
+        await generate_embedding(
+            "cats",
+            model="nomic-embed-text",
+            api_base=LOCAL_API_BASE,
+            is_query=False,
+        )
 
     assert len(captured) == 1
     assert captured[0] == ["search_document: cats"]
@@ -116,7 +122,12 @@ async def test_generate_embedding_query_prefix_reaches_api() -> None:
     mock_client, captured = _make_mock_client()
 
     with patch("openai.AsyncOpenAI", return_value=mock_client):
-        await generate_embedding("cats", model="nomic-embed-text", is_query=True)
+        await generate_embedding(
+            "cats",
+            model="nomic-embed-text",
+            api_base=LOCAL_API_BASE,
+            is_query=True,
+        )
 
     assert len(captured) == 1
     assert captured[0] == ["search_query: cats"]
@@ -365,14 +376,16 @@ async def test_lmstudio_connection_recovery_retries_once() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "api_base",
+    ("api_base", "error_match", "sdk_called"),
     [
-        "http://remote.example:1234/v1",
-        None,
+        ("http://remote.example:1234/v1", "Embedding generation failed", True),
+        (None, "embeddings.api_base", False),
     ],
 )
 async def test_connection_failures_do_not_trigger_lmstudio_recovery_for_remote_or_openai(
     api_base: str | None,
+    error_match: str,
+    sdk_called: bool,
 ) -> None:
     """Remote/OpenAI endpoints should fail fast without LM Studio recovery."""
     mock_client = AsyncMock()
@@ -385,7 +398,7 @@ async def test_connection_failures_do_not_trigger_lmstudio_recovery_for_remote_o
             new=AsyncMock(return_value=True),
         ) as mock_ready,
     ):
-        with pytest.raises(RuntimeError, match="Embedding generation failed"):
+        with pytest.raises(RuntimeError, match=error_match):
             await generate_embedding(
                 "test",
                 model="nomic-embed-text",
@@ -395,3 +408,7 @@ async def test_connection_failures_do_not_trigger_lmstudio_recovery_for_remote_o
     mock_ready.assert_not_awaited()
     assert mock_ready.await_count == 0
     assert mock_ready.await_args is None
+    if sdk_called:
+        mock_client.embeddings.create.assert_awaited_once()
+    else:
+        mock_client.embeddings.create.assert_not_awaited()

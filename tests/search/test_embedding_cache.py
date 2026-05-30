@@ -17,6 +17,7 @@ from gobby.search.embeddings import (
 )
 
 pytestmark = pytest.mark.unit
+LOCAL_API_BASE = "http://localhost:1234/v1"
 
 
 @pytest.fixture(autouse=True)
@@ -70,12 +71,12 @@ async def test_cache_hit_avoids_api_call() -> None:
     mock_client.embeddings.create = tracking_create
 
     with patch("openai.AsyncOpenAI", return_value=mock_client):
-        result1 = await generate_embedding("hello", model="test-model")
-        result2 = await generate_embedding("hello", model="test-model")
+        result1 = await generate_embedding("hello", model="test-model", api_base=LOCAL_API_BASE)
+        result2 = await generate_embedding("hello", model="test-model", api_base=LOCAL_API_BASE)
 
     assert result1 == result2
     assert call_count == 1  # second call hit cache
-    key = _cache_key("hello", "test-model", None)
+    key = _cache_key("hello", "test-model", LOCAL_API_BASE)
     assert key in _cache
 
 
@@ -85,7 +86,11 @@ async def test_openai_client_closed_after_success() -> None:
     mock_client = _make_mock_client()
 
     with patch("openai.AsyncOpenAI", return_value=mock_client):
-        await generate_embedding("close-success", model="close-success-model")
+        await generate_embedding(
+            "close-success",
+            model="close-success-model",
+            api_base=LOCAL_API_BASE,
+        )
 
     mock_client.close.assert_awaited_once()
     assert mock_client.close.await_count == 1
@@ -102,7 +107,11 @@ async def test_openai_client_closed_after_failure() -> None:
         patch("openai.AsyncOpenAI", return_value=mock_client),
         pytest.raises(ValueError, match="boom"),
     ):
-        await generate_embedding("close-failure", model="close-failure-model")
+        await generate_embedding(
+            "close-failure",
+            model="close-failure-model",
+            api_base=LOCAL_API_BASE,
+        )
 
     mock_client.close.assert_awaited_once()
 
@@ -121,7 +130,7 @@ async def test_empty_provider_response_raises_embedding_generation_error() -> No
         patch("openai.AsyncOpenAI", return_value=mock_client),
         pytest.raises(EmbeddingGenerationError, match="empty result"),
     ):
-        await generate_embedding("empty", model="empty-model")
+        await generate_embedding("empty", model="empty-model", api_base=LOCAL_API_BASE)
 
     mock_client.close.assert_awaited_once()
 
@@ -141,8 +150,8 @@ async def test_cache_miss_on_different_text() -> None:
     mock_client.embeddings.create = tracking_create
 
     with patch("openai.AsyncOpenAI", return_value=mock_client):
-        r1 = await generate_embedding("hello", model="test-model")
-        r2 = await generate_embedding("world", model="test-model")
+        r1 = await generate_embedding("hello", model="test-model", api_base=LOCAL_API_BASE)
+        r2 = await generate_embedding("world", model="test-model", api_base=LOCAL_API_BASE)
 
     assert r1 != r2
     assert call_count == 2
@@ -167,12 +176,12 @@ async def test_ttl_expiry() -> None:
         patch("gobby.search.embeddings.time") as mock_time,
     ):
         mock_time.monotonic.return_value = 1000.0
-        await generate_embedding("hello", model="test-model")
+        await generate_embedding("hello", model="test-model", api_base=LOCAL_API_BASE)
         assert call_count == 1
 
         # Advance past TTL
         mock_time.monotonic.return_value = 1000.0 + _CACHE_TTL + 1.0
-        await generate_embedding("hello", model="test-model")
+        await generate_embedding("hello", model="test-model", api_base=LOCAL_API_BASE)
         assert call_count == 2
 
 
@@ -190,7 +199,11 @@ async def test_batch_dedup_within_request() -> None:
     mock_client.embeddings.create = tracking_create
 
     with patch("openai.AsyncOpenAI", return_value=mock_client):
-        results = await generate_embeddings(["alpha", "alpha", "beta"], model="test-model")
+        results = await generate_embeddings(
+            ["alpha", "alpha", "beta"],
+            model="test-model",
+            api_base=LOCAL_API_BASE,
+        )
 
     # API should receive only unique texts
     assert len(captured_inputs) == 1
@@ -217,10 +230,14 @@ async def test_cross_call_dedup() -> None:
 
     with patch("openai.AsyncOpenAI", return_value=mock_client):
         # First call caches "x"
-        r1 = await generate_embedding("x", model="test-model")
+        r1 = await generate_embedding("x", model="test-model", api_base=LOCAL_API_BASE)
 
         # Second call should only fetch "y"
-        results = await generate_embeddings(["x", "y"], model="test-model")
+        results = await generate_embeddings(
+            ["x", "y"],
+            model="test-model",
+            api_base=LOCAL_API_BASE,
+        )
 
     assert len(captured_inputs) == 2
     assert captured_inputs[0] == ["x"]  # first call
@@ -243,8 +260,8 @@ async def test_different_model_is_cache_miss() -> None:
     mock_client.embeddings.create = tracking_create
 
     with patch("openai.AsyncOpenAI", return_value=mock_client):
-        await generate_embedding("hello", model="model-a")
-        await generate_embedding("hello", model="model-b")
+        await generate_embedding("hello", model="model-a", api_base=LOCAL_API_BASE)
+        await generate_embedding("hello", model="model-b", api_base=LOCAL_API_BASE)
 
     assert call_count == 2
 
@@ -281,13 +298,13 @@ async def test_max_size_eviction() -> None:
     ):
         # Fill cache with 5 entries
         for i in range(5):
-            await generate_embedding(f"text-{i}", model="test-model")
+            await generate_embedding(f"text-{i}", model="test-model", api_base=LOCAL_API_BASE)
         assert len(_cache) == 5
 
         # Add one more — should evict the oldest
-        await generate_embedding("text-new", model="test-model")
+        await generate_embedding("text-new", model="test-model", api_base=LOCAL_API_BASE)
         assert len(_cache) == 5
-        assert _cache_key("text-new", "test-model", None) in _cache
+        assert _cache_key("text-new", "test-model", LOCAL_API_BASE) in _cache
 
 
 @pytest.mark.asyncio
@@ -304,7 +321,7 @@ async def test_clear_cache() -> None:
     mock_client = _make_mock_client()
 
     with patch("openai.AsyncOpenAI", return_value=mock_client):
-        await generate_embedding("hello", model="test-model")
+        await generate_embedding("hello", model="test-model", api_base=LOCAL_API_BASE)
     assert len(_cache) > 0
 
     clear_cache()

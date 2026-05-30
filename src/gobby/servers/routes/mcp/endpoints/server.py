@@ -273,6 +273,7 @@ async def import_mcp_server(
             result = await importer.import_from_github(github_url)
         else:
             # query must be truthy due to earlier validation
+            assert query is not None
             result = await importer.import_from_query(query)
 
         # Broadcast MCP server imported event

@@ -229,7 +229,11 @@ class TestSemanticToolSearch:
             description="Does useful things",
         )
 
-        mock_vs.ensure_collection.assert_called_once_with("tool_embeddings", DEFAULT_EMBEDDING_DIM)
+        mock_vs.ensure_collection.assert_called_once_with(
+            "tool_embeddings",
+            DEFAULT_EMBEDDING_DIM,
+            recreate_on_mismatch=False,
+        )
         mock_vs.upsert.assert_called_once()
         call_kwargs = mock_vs.upsert.call_args[1]
         assert call_kwargs["memory_id"] == "tool-1"
@@ -720,100 +724,83 @@ class TestSearchTools:
             assert results[0].description == "Create a new task"
 
     @pytest.mark.asyncio
-    async def test_store_embedding_repairs_dimension_mismatch_and_retries(
+    async def test_store_embedding_reports_dimension_conflict_without_repair(
         self,
         temp_db: HubDatabase,
     ) -> None:
-        """Test store_embedding repairs tool collection mismatch and retries once."""
+        """store_embedding does not recreate a mismatched tool collection."""
         mock_vs = AsyncMock()
-        mock_vs.get_collection_dimension = AsyncMock(side_effect=[DEFAULT_EMBEDDING_DIM, 1])
-        mock_vs.upsert = AsyncMock(
-            side_effect=[
-                RuntimeError("Wrong input: Vector dimension error: expected dim: 1, got 768"),
-                None,
-            ]
-        )
+        mock_vs.get_collection_dimension = AsyncMock(return_value=1536)
+        mock_vs.upsert = AsyncMock()
         search = SemanticToolSearch(temp_db, vector_store=mock_vs)
 
-        await search.store_embedding(
-            tool_id="tool-1",
-            server_name="test-server",
-            project_id="proj-1",
-            embedding=[0.1] * DEFAULT_EMBEDDING_DIM,
-        )
+        with pytest.raises(RuntimeError, match="configured_dim=768, observed_dim=1536"):
+            await search.store_embedding(
+                tool_id="tool-1",
+                server_name="test-server",
+                project_id="proj-1",
+                embedding=[0.1] * DEFAULT_EMBEDDING_DIM,
+            )
 
-        assert mock_vs.upsert.await_count == 2
-        assert mock_vs.ensure_collection.await_args_list == [
-            call("tool_embeddings", DEFAULT_EMBEDDING_DIM),
-            call("tool_embeddings", DEFAULT_EMBEDDING_DIM),
-        ]
+        mock_vs.ensure_collection.assert_not_awaited()
+        mock_vs.upsert.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_search_tools_repairs_dimension_mismatch_and_retries(
+    async def test_search_tools_reports_runtime_dimension_conflict_without_repair(
         self,
         search_with_vs: SemanticToolSearch,
         sample_project: dict,
     ) -> None:
-        """Test search_tools repairs tool collection mismatch and retries once."""
+        """search_tools reports runtime dimension conflicts without recreating."""
         search_with_vs._vector_store.get_collection_dimension = AsyncMock(
             side_effect=[DEFAULT_EMBEDDING_DIM, 1]
         )
         search_with_vs._vector_store.search_with_payload = AsyncMock(
-            side_effect=[
-                RuntimeError("Wrong input: Vector dimension error: expected dim: 1, got 768"),
-                [
-                    (
-                        "tool-id-1",
-                        0.95,
-                        {
-                            "server_name": "search-server",
-                            "tool_name": "search_tool",
-                            "description": "Search for things",
-                            "project_id": sample_project["id"],
-                        },
-                    )
-                ],
-            ]
+            side_effect=RuntimeError(
+                "Wrong input: Vector dimension error: expected dim: 1, got 768"
+            )
         )
 
         with patch.object(search_with_vs, "embed_text", new_callable=AsyncMock) as mock_embed:
             mock_embed.return_value = [0.9] * DEFAULT_EMBEDDING_DIM
 
-            results = await search_with_vs.search_tools(
-                query="find something",
-                project_id=sample_project["id"],
-            )
+            with pytest.raises(RuntimeError, match="configured_dim=768, observed_dim=1"):
+                await search_with_vs.search_tools(
+                    query="find something",
+                    project_id=sample_project["id"],
+                )
 
-        assert len(results) == 1
-        assert results[0].tool_name == "search_tool"
-        assert search_with_vs._vector_store.search_with_payload.await_count == 2
+        assert search_with_vs._vector_store.search_with_payload.await_count == 1
         assert search_with_vs._vector_store.ensure_collection.await_args_list == [
-            call("tool_embeddings", DEFAULT_EMBEDDING_DIM),
-            call("tool_embeddings", DEFAULT_EMBEDDING_DIM),
+            call(
+                "tool_embeddings",
+                DEFAULT_EMBEDDING_DIM,
+                recreate_on_mismatch=False,
+            ),
         ]
 
     @pytest.mark.asyncio
-    async def test_runtime_repair_stays_scoped_to_tool_embeddings(
+    async def test_runtime_dimension_conflict_stays_scoped_to_tool_embeddings(
         self,
         temp_db: HubDatabase,
     ) -> None:
-        """Test runtime repair only targets the tool embeddings collection."""
+        """Runtime conflict checks only target the tool embeddings collection."""
         mock_vs = AsyncMock()
         mock_vs.get_collection_dimension = AsyncMock(side_effect=[DEFAULT_EMBEDDING_DIM, 1])
         mock_vs.upsert = AsyncMock(
-            side_effect=[
-                RuntimeError("Wrong input: Vector dimension error: expected dim: 1, got 768"),
-                None,
-            ]
+            side_effect=RuntimeError(
+                "Wrong input: Vector dimension error: expected dim: 1, got 768"
+            )
         )
         search = SemanticToolSearch(temp_db, vector_store=mock_vs)
 
-        await search.store_embedding(
-            tool_id="tool-1",
-            server_name="test-server",
-            project_id="proj-1",
-            embedding=[0.1] * DEFAULT_EMBEDDING_DIM,
-        )
+        with pytest.raises(RuntimeError, match="Semantic tool collection dimension conflict"):
+            await search.store_embedding(
+                tool_id="tool-1",
+                server_name="test-server",
+                project_id="proj-1",
+                embedding=[0.1] * DEFAULT_EMBEDDING_DIM,
+            )
 
         for ensure_call in mock_vs.ensure_collection.await_args_list:
             assert ensure_call.args[0] == SemanticToolSearch.TOOL_COLLECTION

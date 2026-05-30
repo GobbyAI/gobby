@@ -7,7 +7,7 @@ OpenAI-compatible endpoint: OpenAI cloud, Ollama, LM Studio, etc.
 |------------|-------------------------------|-------------------------------------------|
 | Ollama     | nomic-embed-text              | api_base=http://localhost:11434/v1        |
 | LM Studio  | nomic-embed-text              | api_base=http://localhost:1234/v1         |
-| OpenAI     | text-embedding-3-small        | OPENAI_API_KEY                            |
+| OpenAI     | text-embedding-3-small        | api_key                                   |
 
 Availability helpers come in two flavors:
 
@@ -37,7 +37,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-import os
 import random
 import time
 from dataclasses import dataclass
@@ -48,9 +47,113 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+_OPENAI_CLOUD_API_BASE = "https://api.openai.com/v1"
+_OPENAI_CLOUD_MODEL_DIMS: dict[str, int] = {
+    "text-embedding-3-small": 1536,
+    "text-embedding-3-large": 3072,
+    "text-embedding-ada-002": 1536,
+}
+
 
 class EmbeddingGenerationError(RuntimeError):
     """Raised for expected provider-side embedding generation failures."""
+
+
+@dataclass(frozen=True, slots=True)
+class _ResolvedEmbeddingProvider:
+    """Provider settings validated for one embedding request."""
+
+    model: str
+    api_base: str | None
+    api_key: str
+
+
+def _normalize_api_base(api_base: str | None) -> str | None:
+    """Normalize empty strings to None while preserving configured endpoints."""
+    if api_base is None:
+        return None
+    normalized = api_base.strip()
+    return normalized or None
+
+
+def _strip_openai_prefix(model: str) -> str:
+    """Return the provider-native model name for explicit OpenAI-prefixed config."""
+    if model.lower().startswith("openai/"):
+        return model.split("/", 1)[1]
+    return model
+
+
+def is_openai_cloud_embedding_model(model: str | None) -> bool:
+    """Return True when model names a built-in OpenAI cloud embedding model."""
+    if not model:
+        return False
+    return _strip_openai_prefix(model) in _OPENAI_CLOUD_MODEL_DIMS
+
+
+def _masked_key_state(api_key: str | None) -> str:
+    """Report key presence without leaking the key."""
+    return "[set]" if api_key else "[not set]"
+
+
+def _embedding_unavailable_message(
+    *,
+    model: str,
+    api_base: str | None,
+    api_key: str | None,
+    reason: str,
+) -> str:
+    """Build a clear provider-unavailable error without exposing secrets."""
+    return (
+        "Embedding provider unavailable: "
+        f"{reason} "
+        f"(model={model}, api_base={api_base}, api_key={_masked_key_state(api_key)})"
+    )
+
+
+def _resolve_embedding_provider(
+    *,
+    model: str,
+    api_base: str | None,
+    api_key: str | None,
+) -> _ResolvedEmbeddingProvider:
+    """Resolve and validate the embedding provider before any SDK call.
+
+    Local/OpenAI-compatible providers must set ``api_base``. OpenAI cloud is
+    allowed only for a known OpenAI embedding model with an explicit API key.
+    """
+    normalized_api_base = _normalize_api_base(api_base)
+    if normalized_api_base:
+        return _ResolvedEmbeddingProvider(
+            model=model,
+            api_base=normalized_api_base,
+            api_key=api_key or "unused",
+        )
+
+    if not is_openai_cloud_embedding_model(model):
+        raise EmbeddingGenerationError(
+            _embedding_unavailable_message(
+                model=model,
+                api_base=normalized_api_base,
+                api_key=api_key,
+                reason=("local or OpenAI-compatible embedding models require embeddings.api_base"),
+            )
+        )
+
+    if not api_key:
+        raise EmbeddingGenerationError(
+            _embedding_unavailable_message(
+                model=model,
+                api_base=normalized_api_base,
+                api_key=api_key,
+                reason="OpenAI cloud embeddings require embeddings.api_key",
+            )
+        )
+
+    return _ResolvedEmbeddingProvider(
+        model=_strip_openai_prefix(model),
+        api_base=None,
+        api_key=api_key,
+    )
 
 
 # Default retry settings for rate-limited requests
@@ -166,7 +269,7 @@ async def generate_embeddings(
         texts: List of texts to embed
         model: Model name (e.g., "nomic-embed-text", "text-embedding-3-small")
         api_base: API base URL for OpenAI-compatible endpoint (e.g., "http://localhost:1234/v1" for LM Studio)
-        api_key: Optional API key (uses env var OPENAI_API_KEY if not set)
+        api_key: Optional API key from embedding configuration
         max_retries: Maximum retry attempts for rate limit errors (default: 5)
         base_delay: Initial backoff delay in seconds (default: 1.0)
         is_query: Whether this is a query embedding (applies nomic prefix when model is nomic)
@@ -422,6 +525,12 @@ async def _fetch_embeddings(
     expected_dim: int | None,
 ) -> list[list[float]]:
     """Raw API call to generate embeddings (no caching)."""
+    provider = _resolve_embedding_provider(
+        model=model,
+        api_base=api_base,
+        api_key=api_key,
+    )
+
     from openai import (
         APIConnectionError,
         APIError,
@@ -432,27 +541,25 @@ async def _fetch_embeddings(
         RateLimitError,
     )
 
-    # Use "unused" as default key for local endpoints (Ollama doesn't need a key)
-    effective_key = api_key or os.environ.get("OPENAI_API_KEY") or "unused"
-    client = AsyncOpenAI(base_url=api_base, api_key=effective_key)
+    client = AsyncOpenAI(base_url=provider.api_base, api_key=provider.api_key)
 
     try:
         last_error: Exception | None = None
         for attempt in range(max_retries + 1):
             try:
-                response = await client.embeddings.create(model=model, input=texts)
+                response = await client.embeddings.create(model=provider.model, input=texts)
                 embeddings: list[list[float]] = [item.embedding for item in response.data]
                 _validate_embedding_response(
                     embeddings,
                     requested_count=len(texts),
                     model=model,
-                    api_base=api_base,
+                    api_base=provider.api_base,
                 )
                 _validate_embeddings_dim(
                     embeddings,
                     expected_dim=expected_dim,
                     model=model,
-                    api_base=api_base,
+                    api_base=provider.api_base,
                 )
                 logger.debug(f"Generated {len(embeddings)} embeddings ({model})")
                 return embeddings
@@ -462,13 +569,13 @@ async def _fetch_embeddings(
             except (APIConnectionError, httpx.HTTPError) as e:
                 from gobby.cli.services import _is_lm_studio_endpoint
 
-                if not api_base or not _is_lm_studio_endpoint(api_base):
+                if not provider.api_base or not _is_lm_studio_endpoint(provider.api_base):
                     logger.error(f"Failed to generate embeddings: {e}")
                     raise EmbeddingGenerationError(f"Embedding generation failed: {e}") from e
 
                 recovered = await _try_recover_local_lm_studio_service(
                     model=model,
-                    api_base=api_base,
+                    api_base=provider.api_base,
                     api_key=api_key,
                     expected_dim=expected_dim,
                 )
@@ -478,9 +585,9 @@ async def _fetch_embeddings(
                     return await _retry_embeddings_after_reload(
                         client,
                         texts,
-                        model,
+                        provider.model,
                         expected_dim,
-                        api_base,
+                        provider.api_base,
                     )
                 except RuntimeError:
                     raise
@@ -490,22 +597,24 @@ async def _fetch_embeddings(
                     ) from retry_err
             except NotFoundError as e:
                 error_message = _get_api_error_message(e).lower()
-                if "try pulling it first" not in error_message or not _is_ollama_endpoint(api_base):
+                if "try pulling it first" not in error_message or not _is_ollama_endpoint(
+                    provider.api_base
+                ):
                     logger.error(f"Embedding model not found: {e}")
                     raise EmbeddingGenerationError(f"Model not found: {e}") from e
                 assert (
-                    api_base is not None
-                )  # guaranteed: _is_ollama_endpoint(api_base) was True above
-                reloaded = await _try_reload_model(model, api_base)
+                    provider.api_base is not None
+                )  # guaranteed: _is_ollama_endpoint(provider.api_base) was True above
+                reloaded = await _try_reload_model(model, provider.api_base)
                 if not reloaded:
                     raise EmbeddingGenerationError(f"Model not found: {e}") from e
                 try:
                     return await _retry_embeddings_after_reload(
                         client,
                         texts,
-                        model,
+                        provider.model,
                         expected_dim,
-                        api_base,
+                        provider.api_base,
                     )
                 except RuntimeError:
                     raise
@@ -515,20 +624,20 @@ async def _fetch_embeddings(
                     ) from retry_err
             except BadRequestError as e:
                 error_message = _get_api_error_message(e).lower()
-                if "no models loaded" not in error_message or not api_base:
+                if "no models loaded" not in error_message or not provider.api_base:
                     logger.error(f"Failed to generate embeddings: {e}")
                     raise EmbeddingGenerationError(f"Embedding generation failed: {e}") from e
                 # Model was evicted from local inference server — try to reload
-                reloaded = await _try_reload_model(model, api_base)
+                reloaded = await _try_reload_model(model, provider.api_base)
                 if not reloaded:
                     raise EmbeddingGenerationError(f"Embedding generation failed: {e}") from e
                 try:
                     return await _retry_embeddings_after_reload(
                         client,
                         texts,
-                        model,
+                        provider.model,
                         expected_dim,
-                        api_base,
+                        provider.api_base,
                     )
                 except RuntimeError:
                     raise
@@ -604,7 +713,7 @@ async def generate_embedding(
     if not embeddings:
         raise EmbeddingGenerationError(
             f"Embedding API returned empty result for model={model}, "
-            f"api_base={api_base}, api_key={'[set]' if api_key else '[not set]'}"
+            f"api_base={api_base}, api_key={_masked_key_state(api_key)}"
         )
     return embeddings[0]
 
@@ -617,28 +726,25 @@ def is_embedding_configured(
     """Check whether embedding *configuration* is present.
 
     This is a pure configuration check — it does **not** probe the endpoint.
-    Returns True if a local ``api_base`` is set (Ollama, LM Studio, custom)
-    or an OpenAI-style API key is resolvable from args or the environment.
+    Returns True if a local/custom ``api_base`` is set, or if the model names a
+    supported OpenAI cloud embedding model and an explicit ``api_key`` is set.
 
     A True return only means "we have something to try"; it does not mean
     the endpoint is reachable or the model is loaded. Callers that need a
     real health signal should use :func:`is_embedding_reachable` instead.
 
     Args:
-        model: Model name (unused for the config check today, kept for
-            symmetry with ``is_embedding_reachable``)
+        model: Model name used to determine whether OpenAI cloud is explicit
         api_key: Optional explicit API key
         api_base: Optional API base URL
 
     Returns:
         True if embedding config is present, False otherwise.
     """
-    del model  # reserved for future per-model gating
-    if api_base:
+    if _normalize_api_base(api_base):
         return True
 
-    effective_key = api_key or os.environ.get("OPENAI_API_KEY")
-    return effective_key is not None and len(effective_key) > 0
+    return is_openai_cloud_embedding_model(model) and bool(api_key)
 
 
 # ---------------------------------------------------------------------------
@@ -712,8 +818,8 @@ async def is_embedding_reachable(
         model: Model name (reserved; the probe does not currently filter
             by model since ``/models`` returns the full list)
         api_key: Optional explicit API key
-        api_base: Optional API base URL. When omitted, probes OpenAI
-            cloud at ``https://api.openai.com/v1``.
+        api_base: Optional API base URL. When omitted, probes OpenAI cloud
+            only for an explicit OpenAI embedding model and API key.
         timeout: Per-request timeout in seconds
         cache_ttl: How long to trust a cached probe result
 
@@ -721,14 +827,12 @@ async def is_embedding_reachable(
         True if the endpoint answered with a 2xx within the timeout,
         False otherwise (including all exceptions).
     """
-    del model  # reserved for future per-model probing
-
-    if not is_embedding_configured(api_key=api_key, api_base=api_base):
+    if not is_embedding_configured(model=model, api_key=api_key, api_base=api_base):
         return False
 
-    effective_key = api_key or os.environ.get("OPENAI_API_KEY")
-    has_key = bool(effective_key)
-    cache_key = _reachability_cache_key(api_base, has_key)
+    normalized_api_base = _normalize_api_base(api_base)
+    has_key = bool(api_key)
+    cache_key = _reachability_cache_key(normalized_api_base, has_key)
     lock = _get_lock()
 
     now = time.monotonic()
@@ -737,11 +841,11 @@ async def is_embedding_reachable(
         if cached is not None and (now - cached.checked_at) < cache_ttl:
             return cached.reachable
 
-    base = (api_base or "https://api.openai.com/v1").rstrip("/")
+    base = (normalized_api_base or _OPENAI_CLOUD_API_BASE).rstrip("/")
     url = f"{base}/models"
     headers: dict[str, str] = {}
-    if effective_key:
-        headers["Authorization"] = f"Bearer {effective_key}"
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
 
     reachable = False
     try:

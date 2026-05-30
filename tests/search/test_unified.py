@@ -227,6 +227,25 @@ class TestUnifiedSearcher:
             assert len(fallback_events) == 1
             assert "unavailable" in fallback_events[0].reason.lower()
 
+    def test_embedding_backend_preserves_daemon_embedding_config(self, db) -> None:
+        """UnifiedSearcher forwards daemon embedding endpoint and dim unchanged."""
+        searcher = UnifiedSearcher(
+            SearchConfig(mode="auto"),
+            db=db,
+            fts_table="skills_fts",
+            embedding_model="text-embedding-nomic-embed-text-v1.5@f16",
+            embedding_api_base="http://localhost:1234/v1",
+            embedding_api_key="local-key",
+            embedding_dim=768,
+        )
+
+        backend = searcher._get_embedding_backend()
+
+        assert backend._model == "text-embedding-nomic-embed-text-v1.5@f16"
+        assert backend._api_base == "http://localhost:1234/v1"
+        assert backend._api_key == "local-key"
+        assert backend._dim == 768
+
     @pytest.mark.asyncio
     async def test_auto_mode_embedding_available(self, db) -> None:
         """Test auto mode uses embedding when available."""
@@ -514,7 +533,11 @@ class TestEmbeddingBackend:
     @pytest.mark.asyncio
     async def test_fit_dimension_mismatch_raises(self) -> None:
         """Backend fit should fail fast when provider output has the wrong dimension."""
-        backend = EmbeddingBackend(model="dimension-mismatch-model", dim=4)
+        backend = EmbeddingBackend(
+            model="dimension-mismatch-model",
+            api_base="http://localhost:1234/v1",
+            dim=4,
+        )
         mock_client = _make_openai_client(dim=3)
 
         with patch("openai.AsyncOpenAI", return_value=mock_client):

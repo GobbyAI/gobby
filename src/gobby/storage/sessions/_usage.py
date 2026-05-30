@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Protocol
 from ._constants import get_logger
 
 if TYPE_CHECKING:
+    from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
     from gobby.storage.hub.protocol import HubDatabase
 
 
@@ -129,6 +130,48 @@ class _UsageMixin:
         except Exception as e:
             get_logger().error(
                 f"Failed to add usage delta for session {session_id}: {e}",
+                exc_info=True,
+            )
+            return False
+
+    def update_context_usage(
+        self: _ManagerState,
+        session_id: str,
+        snapshot: ContextUsageSnapshot,
+    ) -> bool:
+        """Update normalized context pressure fields for a session."""
+        query = """
+        UPDATE sessions
+        SET
+            context_window = COALESCE(%s, context_window),
+            context_used_tokens = %s,
+            context_usage_ratio = %s,
+            context_usage_source = %s,
+            context_usage_confidence = %s,
+            context_usage_updated_at = %s,
+            model = COALESCE(%s, model),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = %s
+        """
+        try:
+            with self.db.transaction():
+                cursor = self.db.execute(
+                    query,
+                    (
+                        snapshot.context_window,
+                        snapshot.context_used_tokens,
+                        snapshot.context_usage_ratio,
+                        snapshot.source,
+                        snapshot.confidence,
+                        snapshot.timestamp,
+                        snapshot.model,
+                        session_id,
+                    ),
+                )
+                return cursor.rowcount > 0
+        except Exception as e:
+            get_logger().error(
+                f"Failed to update context usage for session {session_id}: {e}",
                 exc_info=True,
             )
             return False

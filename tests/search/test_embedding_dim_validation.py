@@ -11,6 +11,7 @@ import gobby.search.embeddings as embeddings_mod
 from gobby.search.embeddings import EmbeddingGenerationError, clear_cache, generate_embedding
 
 pytestmark = pytest.mark.unit
+LOCAL_API_BASE = "http://localhost:1234/v1"
 
 
 @pytest.fixture(autouse=True)
@@ -138,7 +139,12 @@ async def test_stale_cache_entry_is_refetched_for_new_expected_dim() -> None:
     replacement_client = _make_mock_client(dim=1024)
 
     with patch("openai.AsyncOpenAI", return_value=initial_client):
-        cached = await generate_embedding("hello", model="test-model", expected_dim=768)
+        cached = await generate_embedding(
+            "hello",
+            model="test-model",
+            api_base=LOCAL_API_BASE,
+            expected_dim=768,
+        )
 
     replacement_calls = 0
     original_create = replacement_client.embeddings.create
@@ -151,7 +157,12 @@ async def test_stale_cache_entry_is_refetched_for_new_expected_dim() -> None:
     replacement_client.embeddings.create = tracking_create
 
     with patch("openai.AsyncOpenAI", return_value=replacement_client):
-        refreshed = await generate_embedding("hello", model="test-model", expected_dim=1024)
+        refreshed = await generate_embedding(
+            "hello",
+            model="test-model",
+            api_base=LOCAL_API_BASE,
+            expected_dim=1024,
+        )
 
     assert len(cached) == 768
     assert len(refreshed) == 1024
@@ -164,7 +175,7 @@ async def test_expected_dim_none_preserves_back_compat() -> None:
     mock_client = _make_mock_client(dim=768)
 
     with patch("openai.AsyncOpenAI", return_value=mock_client):
-        result = await generate_embedding("hello", model="test-model")
+        result = await generate_embedding("hello", model="test-model", api_base=LOCAL_API_BASE)
 
     assert len(result) == 768
 

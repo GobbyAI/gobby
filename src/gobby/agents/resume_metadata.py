@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 from gobby.agents.sandbox import SandboxConfig
 
@@ -77,41 +77,44 @@ def build_resume_metadata(
     initial_variables: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Build the normalized launch snapshot persisted on agent_runs."""
-    return json_safe(
-        {
-            "version": RESUME_METADATA_VERSION,
-            "provider": provider,
-            "model": model,
-            "requested_reasoning_effort": requested_reasoning_effort,
-            "effective_reasoning_effort": effective_reasoning_effort,
-            "reasoning_required": reasoning_required,
-            "reasoning_status": reasoning_status,
-            "reasoning_message": reasoning_message,
-            "sandbox_config": sandbox_config.model_dump(),
-            "approval_mode": "auto",
-            "auto_approve": True,
-            "cwd": cwd,
-            "workspace_path": cwd,
-            "project_id": project_id,
-            "project_path": project_path,
-            "parent_session_id": parent_session_id,
-            "isolation": isolation,
-            "worktree_id": worktree_id,
-            "clone_id": clone_id,
-            "branch_name": branch_name,
-            "base_branch": base_branch,
-            "base_commit_sha": base_commit_sha,
-            "task_id": task_id,
-            "task_ref": task_ref,
-            "stage_name": stage_name,
-            "stage_state": stage_state,
-            "agent_slug": agent_slug,
-            "workflow": workflow,
-            "initial_variables": dict(initial_variables),
-            "provider_native_session_id": None,
-            "env": {},
-            "sandbox_args": [],
-            "sandbox_env": {},
-            "config_overrides": [],
-        }
+    return cast(
+        dict[str, Any],
+        json_safe(
+            {
+                "version": RESUME_METADATA_VERSION,
+                "provider": provider,
+                "model": model,
+                "requested_reasoning_effort": requested_reasoning_effort,
+                "effective_reasoning_effort": effective_reasoning_effort,
+                "reasoning_required": reasoning_required,
+                "reasoning_status": reasoning_status,
+                "reasoning_message": reasoning_message,
+                "sandbox_config": sandbox_config.model_dump(),
+                "approval_mode": "auto",
+                "auto_approve": True,
+                "cwd": cwd,
+                "workspace_path": cwd,
+                "project_id": project_id,
+                "project_path": project_path,
+                "parent_session_id": parent_session_id,
+                "isolation": isolation,
+                "worktree_id": worktree_id,
+                "clone_id": clone_id,
+                "branch_name": branch_name,
+                "base_branch": base_branch,
+                "base_commit_sha": base_commit_sha,
+                "task_id": task_id,
+                "task_ref": task_ref,
+                "stage_name": stage_name,
+                "stage_state": stage_state,
+                "agent_slug": agent_slug,
+                "workflow": workflow,
+                "initial_variables": dict(initial_variables),
+                "provider_native_session_id": None,
+                "env": {},
+                "sandbox_args": [],
+                "sandbox_env": {},
+                "config_overrides": [],
+            },
+        ),
     )

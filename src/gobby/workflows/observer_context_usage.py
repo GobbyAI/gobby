@@ -24,11 +24,13 @@ def detect_context_compact_guidance(
 
     turn_seq = _next_turn_seq(variables)
     last_compacted = _int_or_none(variables.get("last_compacted_turn_seq"))
-    turns_since_compact = (
-        max(0, turn_seq - last_compacted)
-        if last_compacted is not None
-        else _int_or_none(variables.get("turns_since_compact"), default=0) + 1
-    )
+    if last_compacted is not None:
+        turns_since_compact = max(0, turn_seq - last_compacted)
+    else:
+        previous_turns_since_compact = (
+            _int_or_none(variables.get("turns_since_compact"), default=0) or 0
+        )
+        turns_since_compact = previous_turns_since_compact + 1
     variables["turns_since_compact"] = turns_since_compact
 
     session = _load_session(session_manager, session_id)
@@ -121,7 +123,8 @@ def _next_turn_seq(variables: dict[str, Any]) -> int:
     parent_turn_seq = _int_or_none(variables.get("parent_turn_seq"))
     if parent_turn_seq is not None:
         return parent_turn_seq + 1
-    current = _int_or_none(variables.get("_context_usage_turn_seq"), default=0) + 1
+    previous = _int_or_none(variables.get("_context_usage_turn_seq"), default=0) or 0
+    current = previous + 1
     variables["_context_usage_turn_seq"] = current
     return current
 

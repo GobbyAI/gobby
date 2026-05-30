@@ -621,6 +621,12 @@ class TestResolveEmbeddingApiKey:
         assert key is None
         mock_secret_store.get.assert_not_called()
 
+    def test_unprefixed_local_nomic_does_not_resolve_openai(self, mock_secret_store) -> None:
+        """Unprefixed local models must not inherit the OpenAI secret."""
+        key = resolve_embedding_api_key(mock_secret_store, "nomic-embed-text")
+        assert key is None
+        mock_secret_store.get.assert_not_called()
+
     def test_missing_secret_returns_none(self) -> None:
         """Returns None when the secret doesn't exist."""
         store = MagicMock()

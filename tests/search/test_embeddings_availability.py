@@ -43,16 +43,19 @@ class TestIsEmbeddingConfigured:
 
     def test_explicit_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-        assert is_embedding_configured(api_key="sk-test") is True
+        assert is_embedding_configured(model="text-embedding-3-small", api_key="sk-test") is True
 
-    def test_env_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_env_key_does_not_configure_default_local_model(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("OPENAI_API_KEY", "sk-env")
-        assert is_embedding_configured() is True
+        assert is_embedding_configured() is False
 
-    def test_empty_explicit_key_falls_back_to_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_empty_explicit_key_does_not_fall_back_to_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("OPENAI_API_KEY", "sk-env")
-        # Empty explicit key is falsy, so env var is consulted.
-        assert is_embedding_configured(api_key="") is True
+        assert is_embedding_configured(model="text-embedding-3-small", api_key="") is False
 
     def test_empty_key_no_env_is_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -194,7 +197,10 @@ class TestIsEmbeddingReachable:
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         factory, client = _mock_httpx_client(status=200)
         with patch("gobby.search.embeddings.httpx.AsyncClient", factory):
-            await is_embedding_reachable(api_key="sk-secret")
+            await is_embedding_reachable(
+                model="text-embedding-3-small",
+                api_key="sk-secret",
+            )
         headers = client.get.await_args.kwargs["headers"]
         assert headers["Authorization"] == "Bearer sk-secret"
 
@@ -204,7 +210,10 @@ class TestIsEmbeddingReachable:
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         factory, client = _mock_httpx_client(status=200)
         with patch("gobby.search.embeddings.httpx.AsyncClient", factory):
-            await is_embedding_reachable(api_key="sk-test")
+            await is_embedding_reachable(
+                model="text-embedding-3-small",
+                api_key="sk-test",
+            )
         assert client.get.await_args.args[0] == "https://api.openai.com/v1/models"
 
     @pytest.mark.asyncio

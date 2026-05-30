@@ -426,25 +426,6 @@ class SessionMessageProcessor:
         if latest_context_snapshot is not None:
             self.session_manager.update_context_usage(session_id, latest_context_snapshot)
         if self.websocket_server is not None:
-            context_payload = (
-                {
-                    "context_used_tokens": latest_context_snapshot.context_used_tokens,
-                    "context_usage_ratio": latest_context_snapshot.context_usage_ratio,
-                    "context_usage_source": latest_context_snapshot.source,
-                    "context_usage_confidence": latest_context_snapshot.confidence,
-                    "last_prompt_input_tokens": latest_context_snapshot.raw_prompt_footprint,
-                    "last_prompt_uncached_input_tokens": (
-                        latest_context_snapshot.uncached_prompt_tokens
-                    ),
-                    "last_prompt_cache_read_tokens": latest_context_snapshot.cache_read_tokens,
-                    "last_prompt_cache_creation_tokens": (
-                        latest_context_snapshot.cache_creation_tokens
-                    ),
-                    "last_completion_output_tokens": latest_context_snapshot.output_tokens,
-                }
-                if latest_context_snapshot is not None
-                else {}
-            )
             await self.websocket_server.broadcast_session_usage_updated(
                 build_session_usage_payload(
                     session_id=session_id,
@@ -453,7 +434,51 @@ class SessionMessageProcessor:
                     context_window=context_window,
                     totals=session_totals,
                     updated_at=latest_event_at,
-                    **context_payload,
+                    context_used_tokens=(
+                        latest_context_snapshot.context_used_tokens
+                        if latest_context_snapshot is not None
+                        else None
+                    ),
+                    context_usage_ratio=(
+                        latest_context_snapshot.context_usage_ratio
+                        if latest_context_snapshot is not None
+                        else None
+                    ),
+                    context_usage_source=(
+                        latest_context_snapshot.source
+                        if latest_context_snapshot is not None
+                        else None
+                    ),
+                    context_usage_confidence=(
+                        latest_context_snapshot.confidence
+                        if latest_context_snapshot is not None
+                        else None
+                    ),
+                    last_prompt_input_tokens=(
+                        latest_context_snapshot.raw_prompt_footprint
+                        if latest_context_snapshot is not None
+                        else None
+                    ),
+                    last_prompt_uncached_input_tokens=(
+                        latest_context_snapshot.uncached_prompt_tokens
+                        if latest_context_snapshot is not None
+                        else None
+                    ),
+                    last_prompt_cache_read_tokens=(
+                        latest_context_snapshot.cache_read_tokens
+                        if latest_context_snapshot is not None
+                        else None
+                    ),
+                    last_prompt_cache_creation_tokens=(
+                        latest_context_snapshot.cache_creation_tokens
+                        if latest_context_snapshot is not None
+                        else None
+                    ),
+                    last_completion_output_tokens=(
+                        latest_context_snapshot.output_tokens
+                        if latest_context_snapshot is not None
+                        else None
+                    ),
                 )
             )
 

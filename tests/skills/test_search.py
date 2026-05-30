@@ -148,6 +148,24 @@ class TestSkillSearch:
         assert not search._indexed
         assert search.search("query") == []
 
+    def test_preserves_daemon_embedding_config(self, db) -> None:
+        """SkillSearch forwards configured endpoint and dim into UnifiedSearcher."""
+        search = SkillSearch(
+            db=db,
+            config=SearchConfig(mode="auto"),
+            embedding_model="text-embedding-nomic-embed-text-v1.5@f16",
+            embedding_api_base="http://localhost:1234/v1",
+            embedding_api_key="local-key",
+            embedding_dim=768,
+        )
+
+        backend = search._searcher._get_embedding_backend()
+
+        assert backend._model == "text-embedding-nomic-embed-text-v1.5@f16"
+        assert backend._api_base == "http://localhost:1234/v1"
+        assert backend._api_key == "local-key"
+        assert backend._dim == 768
+
     def test_index_skills(self, db, sample_skills) -> None:
         """Test indexing skills."""
         search = SkillSearch(db=db, config=SearchConfig(mode="keyword"))

@@ -109,7 +109,7 @@ async def _archive_transcript_counts(
     get_parsed_messages_from_archive: Callable[[str], Awaitable[list[ParsedMessage]]],
 ) -> tuple[int, int, str | None, bool]:
     try:
-        lines = await asyncio.to_thread(_decompress_archive, str(archive_path))
+        lines = list(await asyncio.to_thread(_decompress_archive, str(archive_path)))
         raw_record_count = _count_nonempty_lines(lines)
         _, detected_source = _resolve_effective_source(
             session,

@@ -184,24 +184,24 @@ class SemanticToolSearch:
         if existing_dim is not None and existing_dim != self.embedding_dim:
             logger.warning(
                 "Semantic tool collection '%s' dimension drift detected before %s "
-                "(expected_dim=%s, observed_dim=%s); recreating",
+                "(expected_dim=%s, observed_dim=%s); semantic search unavailable "
+                "until writers use one daemon embedding config",
                 self.TOOL_COLLECTION,
                 operation,
                 self.embedding_dim,
                 existing_dim,
             )
-
-        await self._vector_store.ensure_collection(self.TOOL_COLLECTION, self.embedding_dim)
-
-        if existing_dim is not None and existing_dim != self.embedding_dim:
-            logger.info(
-                "Semantic tool collection '%s' repaired before %s "
-                "(expected_dim=%s, observed_dim=%s)",
-                self.TOOL_COLLECTION,
-                operation,
-                self.embedding_dim,
-                existing_dim,
+            raise RuntimeError(
+                f"Semantic tool collection dimension conflict during {operation}: "
+                f"collection={self.TOOL_COLLECTION}, configured_dim={self.embedding_dim}, "
+                f"observed_dim={existing_dim}"
             )
+
+        await self._vector_store.ensure_collection(
+            self.TOOL_COLLECTION,
+            self.embedding_dim,
+            recreate_on_mismatch=False,
+        )
 
     async def _repair_tool_collection_and_retry(
         self,
@@ -216,24 +216,18 @@ class SemanticToolSearch:
         existing_dim = await self._get_tool_collection_dimension()
         logger.warning(
             "Semantic tool collection '%s' dimension mismatch during %s "
-            "(expected_dim=%s, observed_dim=%s): %s",
+            "(expected_dim=%s, observed_dim=%s); leaving collection unchanged: %s",
             self.TOOL_COLLECTION,
             operation,
             self.embedding_dim,
             existing_dim if existing_dim is not None else "unknown",
             error,
         )
-        await self._vector_store.ensure_collection(self.TOOL_COLLECTION, self.embedding_dim)
-        result = await action()
-        logger.info(
-            "Semantic tool collection '%s' repaired and retry succeeded during %s "
-            "(expected_dim=%s, observed_dim=%s)",
-            self.TOOL_COLLECTION,
-            operation,
-            self.embedding_dim,
-            existing_dim if existing_dim is not None else "unknown",
-        )
-        return result
+        raise RuntimeError(
+            f"Semantic tool collection dimension conflict during {operation}: "
+            f"collection={self.TOOL_COLLECTION}, configured_dim={self.embedding_dim}, "
+            f"observed_dim={existing_dim if existing_dim is not None else 'unknown'}"
+        ) from error
 
     async def store_embedding(
         self,

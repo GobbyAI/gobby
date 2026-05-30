@@ -128,7 +128,7 @@ class TranscriptReader:
             return []
 
         try:
-            lines = await asyncio.to_thread(_decompress_archive, str(archive_path))
+            lines = list(await asyncio.to_thread(_decompress_archive, str(archive_path)))
             source, _ = _resolve_effective_source(
                 session,
                 transcript_path=None,
@@ -252,7 +252,7 @@ class TranscriptReader:
             return []
 
         try:
-            lines = await asyncio.to_thread(_decompress_archive, str(archive_path))
+            lines = list(await asyncio.to_thread(_decompress_archive, str(archive_path)))
             source, _ = _resolve_effective_source(
                 session,
                 transcript_path=None,

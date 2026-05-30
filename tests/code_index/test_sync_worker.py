@@ -21,6 +21,7 @@ from gobby.code_index.models import IndexedFile, IndexedProject, Symbol
 from gobby.code_index.storage import CodeIndexStorage
 from gobby.code_index.sync_worker import _sync_file, _sync_graph, _sync_pass, sync_worker_loop
 from gobby.config.code_index import CodeIndexConfig
+from gobby.config.persistence import EmbeddingsConfig
 
 pytestmark = pytest.mark.unit
 
@@ -89,6 +90,67 @@ class RecordingGcodeGateway:
         if self.fail:
             raise RuntimeError("boom")
         return self.result
+
+
+@pytest.mark.asyncio
+async def test_sync_worker_embed_adapter_preserves_embeddings_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The sync worker passes daemon embedding config unchanged to vector sync."""
+    shutdown = asyncio.Event()
+    captured: dict[str, Any] = {}
+
+    async def fake_generate_embeddings(
+        texts: list[str],
+        *,
+        model: str,
+        api_base: str | None,
+        api_key: str | None,
+        expected_dim: int | None,
+    ) -> list[list[float]]:
+        captured["embed_args"] = {
+            "texts": texts,
+            "model": model,
+            "api_base": api_base,
+            "api_key": api_key,
+            "expected_dim": expected_dim,
+        }
+        return [[0.1] * expected_dim] if expected_dim else [[0.1]]
+
+    async def fake_sync_pass(**kwargs: Any) -> None:
+        captured["embedding_dim"] = kwargs["embedding_dim"]
+        await kwargs["embed_model"].embed(["symbol text"])
+        shutdown.set()
+
+    monkeypatch.setattr("gobby.search.embeddings.generate_embeddings", fake_generate_embeddings)
+    monkeypatch.setattr("gobby.code_index.sync_worker._sync_pass", fake_sync_pass)
+
+    await sync_worker_loop(
+        storage=MagicMock(),
+        vector_store=object(),
+        context=SimpleNamespace(gcode_gateway=None, clear_graph=None),
+        config=CodeIndexConfig(
+            embedding_enabled=True,
+            graph_enabled=False,
+            sync_worker_interval_seconds=0.01,
+        ),
+        embeddings_config=EmbeddingsConfig(
+            model="text-embedding-nomic-embed-text-v1.5@f16",
+            api_base="http://localhost:1234/v1",
+            api_key="local-key",
+            dim=768,
+        ),
+        shutdown_flag=shutdown,
+    )
+
+    assert captured["embedding_dim"] == 768
+    assert captured["embed_args"] == {
+        "texts": ["symbol text"],
+        "model": "text-embedding-nomic-embed-text-v1.5@f16",
+        "api_base": "http://localhost:1234/v1",
+        "api_key": "local-key",
+        "expected_dim": 768,
+    }
 
 
 class IndexedFileNotFoundGcodeGateway:
