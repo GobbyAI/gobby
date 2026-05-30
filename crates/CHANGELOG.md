@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.8] — gcode
+
+### Changed
+
+#### gcode
+
+- **Grouped text output** — `gcode grep` and high-volume navigation outputs now
+  reduce repeated file path prefixes by grouping text results under file or
+  directory headers, while JSON output remains unchanged.
+- **Quiet symbol retrieval** — `gcode outline`, `gcode symbol`, and
+  `gcode symbols` no longer print savings banners to stderr.
+
 ## [0.9.7] — gcode
 
 ### Fixed

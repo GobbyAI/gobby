@@ -22,13 +22,20 @@ pub enum Command {
 }
 
 /// Shared scope flags accepted by shell commands.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScopeSelection {
-    pub project: bool,
-    pub topic: Option<String>,
+    project: bool,
+    topic: Option<String>,
 }
 
 impl ScopeSelection {
+    pub fn global() -> Self {
+        Self {
+            project: false,
+            topic: None,
+        }
+    }
+
     pub fn project() -> Self {
         Self {
             project: true,
@@ -41,6 +48,20 @@ impl ScopeSelection {
             project: false,
             topic: Some(topic.into()),
         }
+    }
+
+    pub fn is_project(&self) -> bool {
+        self.project
+    }
+
+    pub fn topic_name(&self) -> Option<&str> {
+        self.topic.as_deref()
+    }
+}
+
+impl Default for ScopeSelection {
+    fn default() -> Self {
+        Self::global()
     }
 }
 
@@ -124,6 +145,24 @@ fn not_implemented<T>(command: &'static str, detail: &'static str) -> Result<T, 
 #[cfg(test)]
 mod lib {
     mod tests {
+        use crate::ScopeSelection;
+
+        #[test]
+        fn scope_selection_constructors_express_allowed_states() {
+            let global = ScopeSelection::global();
+            assert!(!global.is_project());
+            assert_eq!(global.topic_name(), None);
+            assert_eq!(ScopeSelection::default(), global);
+
+            let project = ScopeSelection::project();
+            assert!(project.is_project());
+            assert_eq!(project.topic_name(), None);
+
+            let topic = ScopeSelection::topic("ops");
+            assert!(!topic.is_project());
+            assert_eq!(topic.topic_name(), Some("ops"));
+        }
+
         #[test]
         fn crate_has_no_gcode_dependency() {
             let manifest =

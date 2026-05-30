@@ -1,9 +1,12 @@
+use std::collections::BTreeMap;
+
 use crate::config::Context;
 use crate::db;
 use crate::graph::code_graph::{
     self, GraphBlastRadiusTarget, GraphLifecycleAction, GraphLifecycleOutput, GraphPayload,
 };
 use crate::graph::report::{ProjectGraphReport, ProjectGraphReportOptions};
+use crate::models::GraphResult;
 use crate::models::PagedResponse;
 use crate::output::{self, Format};
 use crate::projection::sync::ProjectionSyncReport;
@@ -451,6 +454,34 @@ fn empty_paged_response<T: Serialize>(
     }
 }
 
+fn format_grouped_graph_results<F>(results: &[GraphResult], format_line: F) -> String
+where
+    F: Fn(&GraphResult) -> String,
+{
+    let mut grouped: BTreeMap<&str, Vec<&GraphResult>> = BTreeMap::new();
+    for result in results {
+        grouped.entry(&result.file_path).or_default().push(result);
+    }
+
+    let mut lines = Vec::new();
+    for (file_path, mut entries) in grouped {
+        lines.push(if file_path.is_empty() {
+            "<unknown>".to_string()
+        } else {
+            file_path.to_string()
+        });
+        entries.sort_by(|a, b| {
+            a.line
+                .cmp(&b.line)
+                .then_with(|| a.name.cmp(&b.name))
+                .then_with(|| a.relation.cmp(&b.relation))
+                .then_with(|| a.distance.cmp(&b.distance))
+        });
+        lines.extend(entries.into_iter().map(&format_line));
+    }
+    lines.join("\n")
+}
+
 /// Resolve user input to a canonical symbol id, printing suggestions on ambiguity.
 /// Returns None and prints an error message if no match found.
 fn resolve_symbol(ctx: &Context, input: &str) -> Option<ResolvedGraphSymbol> {
@@ -539,12 +570,9 @@ pub fn callers(
             } else if results.is_empty() {
                 eprintln!("No callers at offset {offset} (total {total})");
             } else {
-                for r in &results {
-                    println!(
-                        "{}:{} {} -> {}",
-                        r.file_path, r.line, r.name, symbol.display_name
-                    );
-                }
+                output::print_text(&format_grouped_graph_results(&results, |r| {
+                    format!("{} {} -> {}", r.line, r.name, symbol.display_name)
+                }))?;
                 if total > offset + results.len() {
                     eprintln!(
                         "-- {} of {} results (use --offset {} for more)",
@@ -607,13 +635,10 @@ pub fn usages(
             } else if results.is_empty() {
                 eprintln!("No usages at offset {offset} (total {total})");
             } else {
-                for r in &results {
+                output::print_text(&format_grouped_graph_results(&results, |r| {
                     let rel = r.relation.as_deref().unwrap_or("unknown");
-                    println!(
-                        "{}:{} [{}] {} -> {}",
-                        r.file_path, r.line, rel, r.name, symbol.display_name
-                    );
-                }
+                    format!("{} [{}] {} -> {}", r.line, rel, r.name, symbol.display_name)
+                }))?;
                 if total > offset + results.len() {
                     eprintln!(
                         "-- {} of {} results (use --offset {} for more)",
@@ -703,10 +728,10 @@ pub fn blast_radius(
                 println!("No blast radius found for '{}'", symbol.display_name);
                 print_graph_hint_text(ctx);
             } else {
-                for r in &results {
+                output::print_text(&format_grouped_graph_results(&results, |r| {
                     let dist = r.distance.unwrap_or(0);
-                    println!("{}:{} [distance={}] {}", r.file_path, r.line, dist, r.name);
-                }
+                    format!("{} [distance={}] {}", r.line, dist, r.name)
+                }))?;
             }
             Ok(())
         }
@@ -738,7 +763,9 @@ mod tests {
     fn graph_reads_degrade_when_falkor_missing() {
         let ctx = make_ctx_no_falkordb();
 
-        imports(&ctx, "src/lib.rs", Format::Text).expect("imports degrade to empty output");
+        let result = imports(&ctx, "src/lib.rs", Format::Text);
+
+        assert!(result.is_ok(), "imports should degrade cleanly: {result:?}");
     }
 
     #[test]
@@ -757,6 +784,45 @@ mod tests {
                 .contains("# Project Graph Report")
         );
         assert!(!text.trim_start().starts_with('#'));
+    }
+
+    #[test]
+    fn graph_text_groups_by_file_and_sorts_entries() {
+        let results = vec![
+            GraphResult {
+                id: "b".to_string(),
+                name: "beta".to_string(),
+                file_path: "src/b.rs".to_string(),
+                line: 9,
+                relation: Some("CALLS".to_string()),
+                distance: None,
+                metadata: None,
+            },
+            GraphResult {
+                id: "a2".to_string(),
+                name: "zeta".to_string(),
+                file_path: "src/a.rs".to_string(),
+                line: 8,
+                relation: Some("CALLS".to_string()),
+                distance: None,
+                metadata: None,
+            },
+            GraphResult {
+                id: "a1".to_string(),
+                name: "alpha".to_string(),
+                file_path: "src/a.rs".to_string(),
+                line: 3,
+                relation: Some("CALLS".to_string()),
+                distance: None,
+                metadata: None,
+            },
+        ];
+
+        let text = format_grouped_graph_results(&results, |result| {
+            format!("{} {}", result.line, result.name)
+        });
+
+        assert_eq!(text, "src/a.rs\n3 alpha\n8 zeta\nsrc/b.rs\n9 beta");
     }
 
     #[test]

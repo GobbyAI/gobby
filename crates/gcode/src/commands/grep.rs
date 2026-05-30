@@ -111,7 +111,6 @@ fn load_indexed_chunks(
 ) -> anyhow::Result<Vec<IndexedContentChunk>> {
     let rows = conn.query(
         "SELECT c.file_path,
-                c.chunk_index::BIGINT AS chunk_index,
                 c.line_start::BIGINT AS line_start,
                 c.content
          FROM code_content_chunks c
@@ -328,27 +327,64 @@ fn format_text_matches(matches: &[GrepMatch]) -> String {
     let matching_lines: BTreeSet<(String, usize)> =
         matches.iter().map(|m| (m.path.clone(), m.line)).collect();
     let mut emitted_context = BTreeSet::new();
+    let mut current_path: Option<&str> = None;
     let mut lines = Vec::new();
 
     for item in matches {
         for context in &item.before {
             let key = (item.path.clone(), context.line);
             if !matching_lines.contains(&key) && emitted_context.insert(key) {
-                lines.push(format!("{}-{}-{}", item.path, context.line, context.text));
+                push_grouped_grep_line(
+                    &mut lines,
+                    &mut current_path,
+                    &item.path,
+                    context.line,
+                    '-',
+                    &context.text,
+                );
             }
         }
 
-        lines.push(format!("{}:{}:{}", item.path, item.line, item.text));
+        push_grouped_grep_line(
+            &mut lines,
+            &mut current_path,
+            &item.path,
+            item.line,
+            ':',
+            &item.text,
+        );
 
         for context in &item.after {
             let key = (item.path.clone(), context.line);
             if !matching_lines.contains(&key) && emitted_context.insert(key) {
-                lines.push(format!("{}-{}-{}", item.path, context.line, context.text));
+                push_grouped_grep_line(
+                    &mut lines,
+                    &mut current_path,
+                    &item.path,
+                    context.line,
+                    '-',
+                    &context.text,
+                );
             }
         }
     }
 
     lines.join("\n")
+}
+
+fn push_grouped_grep_line<'a>(
+    lines: &mut Vec<String>,
+    current_path: &mut Option<&'a str>,
+    path: &'a str,
+    line: usize,
+    marker: char,
+    text: &str,
+) {
+    if *current_path != Some(path) {
+        lines.push(path.to_string());
+        *current_path = Some(path);
+    }
+    lines.push(format!("{line}{marker}{text}"));
 }
 
 fn i64_to_usize(value: i64, column: &str) -> anyhow::Result<usize> {
@@ -385,11 +421,25 @@ mod tests {
     }
 
     #[test]
-    fn text_renders_grep_shape() {
+    fn text_renders_grouped_grep_shape() {
         let chunks = vec![chunk("src/lib.rs", 1, "one\nneedle\nthree")];
         let result = grep_chunks(&chunks, &options("needle")).expect("grep chunks");
 
-        assert_eq!(format_text_matches(&result.matches), "src/lib.rs:2:needle");
+        assert_eq!(format_text_matches(&result.matches), "src/lib.rs\n2:needle");
+    }
+
+    #[test]
+    fn text_groups_multiple_files() {
+        let chunks = vec![
+            chunk("src/a.rs", 1, "needle a"),
+            chunk("tests/b.rs", 10, "needle b"),
+        ];
+        let result = grep_chunks(&chunks, &options("needle")).expect("grep chunks");
+
+        assert_eq!(
+            format_text_matches(&result.matches),
+            "src/a.rs\n1:needle a\ntests/b.rs\n10:needle b"
+        );
     }
 
     #[test]
@@ -461,7 +511,24 @@ mod tests {
         );
         assert_eq!(
             format_text_matches(&result.matches),
-            "src/lib.rs-2-two\nsrc/lib.rs:3:needle\nsrc/lib.rs-4-four\nsrc/lib.rs-5-five"
+            "src/lib.rs\n2-two\n3:needle\n4-four\n5-five"
+        );
+    }
+
+    #[test]
+    fn text_suppresses_duplicate_context_lines() {
+        let chunks = vec![chunk(
+            "src/lib.rs",
+            1,
+            "one\nneedle one\nmiddle\nneedle two\nfive",
+        )];
+        let mut opts = options("needle");
+        opts.context = Some(1);
+        let result = grep_chunks(&chunks, &opts).expect("grep chunks");
+
+        assert_eq!(
+            format_text_matches(&result.matches),
+            "src/lib.rs\n1-one\n2:needle one\n3-middle\n4:needle two\n5-five"
         );
     }
 
@@ -482,6 +549,10 @@ mod tests {
         assert_eq!(result.matches[0].line, 2);
         assert_eq!(result.matches[0].before.len(), 1);
         assert_eq!(result.matches[0].after.len(), 1);
+        assert_eq!(
+            format_text_matches(&result.matches),
+            "src/lib.rs\n1-before\n2:needle one\n3-middle"
+        );
     }
 
     #[test]

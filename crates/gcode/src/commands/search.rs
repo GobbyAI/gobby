@@ -512,7 +512,10 @@ pub fn search_content(
             for r in &results {
                 println!(
                     "{}:{}-{} {}",
-                    r.file_path, r.line_start, r.line_end, r.snippet
+                    r.file_path,
+                    r.line_start,
+                    r.line_end,
+                    compact_snippet(&r.snippet)
                 );
             }
             if total > offset + results.len() {
@@ -634,6 +637,10 @@ fn format_symbol_lookup_text(symbol: &Symbol) -> String {
     line
 }
 
+fn compact_snippet(snippet: &str) -> String {
+    snippet.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 fn print_empty_diagnostic(ctx: &Context, is_empty: bool, offset: usize, total: usize) {
     if !is_empty || ctx.quiet {
         return;
@@ -738,5 +745,13 @@ mod tests {
 
         assert!(hint.contains("fetch cap"));
         assert!(hint.contains("post-filtered"));
+    }
+
+    #[test]
+    fn content_snippet_compaction_collapses_whitespace() {
+        assert_eq!(
+            compact_snippet("  first line\n    second\tline\r\nthird  "),
+            "first line second line third"
+        );
     }
 }

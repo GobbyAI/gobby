@@ -13,7 +13,7 @@ This project is indexed. Use `gcode` via Bash for fast code search and navigatio
 
 ## Search
 
-- `gcode grep "pattern" [PATH ...] -m 50` — exact indexed content grep over `code_content_chunks`; defaults to text output for bounded line matches
+- `gcode grep "pattern" [PATH ...] -m 50` — exact indexed content grep over `code_content_chunks`; defaults to grouped text output for bounded line matches
 - `gcode search "query" [PATH ...]` — hybrid search: pg_search BM25 + semantic + graph boost (best for fuzzy or natural-language queries)
 - `gcode search-symbol "name" [PATH ...]` — exact-first symbol lookup with deterministic ranking; add `--with-graph` to include FalkorDB graph neighbors when available
 - `gcode search-text "query" [PATH ...]` — pg_search BM25 search on symbol names, signatures, and docstrings
@@ -43,7 +43,7 @@ Search output is intentionally snippet-sized. Broad file reads and wide line ran
 ## Navigation
 
 - `gcode repo-outline` — high-level project summary with module symbol counts
-- `gcode tree` — whole-project file tree with symbol counts per file; it takes no path argument
+- `gcode tree` — whole-project file tree with symbol counts per file; text output groups files by directory and it takes no path argument
 - `gcode kinds` — list distinct symbol kinds in the index (helps pick `--kind` values)
 
 For directory-focused exploration, use `gcode tree --format text` with shell filtering, or scope search commands with positional paths: `gcode search "query" crates/gcode/src docs/**/*.md`.
@@ -86,4 +86,4 @@ for the UI, but graph sync/read/lifecycle behavior lives in `gcode`.
 
 ## Output and global flags
 
-`gcode grep` defaults to text output; use `--format json` when you need structured matches and spans. Other commands support `--format text` for human-readable output where available. Use `--quiet` to suppress warnings, and `--no-freshness` to skip the read-time staleness check (cheaper when you know the index is current).
+`gcode grep` defaults to grouped text output; use `--format json` when you need structured matches and spans. High-volume text outputs such as `tree`, `callers`, `usages`, and `blast-radius` group repeated paths under directory or file headers. Other commands support `--format text` for human-readable output where available. Use `--quiet` to suppress warnings, and `--no-freshness` to skip the read-time staleness check (cheaper when you know the index is current).
