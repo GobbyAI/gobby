@@ -1,6 +1,6 @@
 [package]
 name = "gobby-code"
-version = "0.9.5"
+version = "0.9.9"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Josh Wilhelmi <hello@gobby.ai>"]
@@ -63,7 +63,6 @@ tree-sitter-elixir = "0.3"
 # Tier 3: Data formats
 tree-sitter-json = "0.23"
 tree-sitter-yaml = "0.7"
-tree-sitter-md = "0.5"
 
 # Iterator
 streaming-iterator = "0.1"

@@ -276,9 +276,12 @@ impl From<ExportArgs> for gobby_wiki::exports::ExportCommand {
 
 impl From<ScopeArgs> for ScopeSelection {
     fn from(scope: ScopeArgs) -> Self {
-        Self {
-            project: scope.project,
-            topic: scope.topic,
+        if scope.project {
+            Self::project()
+        } else if let Some(topic) = scope.topic {
+            Self::topic(topic)
+        } else {
+            Self::global()
         }
     }
 }
