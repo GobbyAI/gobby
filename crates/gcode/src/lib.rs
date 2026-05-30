@@ -19,6 +19,7 @@ pub mod setup;
 pub mod skill;
 pub mod utils;
 pub mod vector;
+pub mod visibility;
 
 pub use index::api::{IndexDegradation, IndexDurations, IndexOutcome, IndexRequest, index_files};
 
@@ -84,6 +85,7 @@ mod tests {
             embedding: None,
             code_vectors: crate::config::CodeVectorSettings::default(),
             daemon_url: None,
+            index_scope: crate::config::ProjectIndexScope::Single,
         };
 
         let value = crate::falkor::with_falkor(&ctx, 7usize, |_| Ok(9usize))

@@ -5,9 +5,14 @@
 pub use crate::vector::code_symbols::{embed_query, vector_search};
 
 use crate::config::{CODE_SYMBOL_COLLECTION_PREFIX, Context};
+use crate::visibility;
 use gobby_core::qdrant::{CollectionScope, SearchRequest};
 
 pub fn semantic_search(ctx: &Context, query: &str, limit: usize) -> Vec<(String, f64)> {
+    let project_ids = visibility::visible_project_ids(ctx);
+    let Some(per_project_limit) = per_project_semantic_limit(limit, project_ids.len()) else {
+        return vec![];
+    };
     let Some(embedding_config) = ctx.embedding.as_ref() else {
         return vec![];
     };
@@ -15,30 +20,38 @@ pub fn semantic_search(ctx: &Context, query: &str, limit: usize) -> Vec<(String,
         return vec![];
     };
 
-    let collection = gobby_core::qdrant::collection_name(
-        "gcode",
-        CollectionScope::Custom(&format!(
-            "{CODE_SYMBOL_COLLECTION_PREFIX}{}",
-            ctx.project_id
-        )),
-    );
-    let request = SearchRequest {
-        vector: query_vector,
-        limit,
-        filter: None,
-    };
+    let mut results = Vec::new();
+    for project_id in project_ids {
+        let collection = gobby_core::qdrant::collection_name(
+            "gcode",
+            CollectionScope::Custom(&format!("{CODE_SYMBOL_COLLECTION_PREFIX}{project_id}")),
+        );
+        let request = SearchRequest {
+            vector: query_vector.clone(),
+            limit: per_project_limit,
+            filter: None,
+        };
 
-    let Ok((hits, _state)) =
-        gobby_core::qdrant::with_qdrant(ctx.qdrant.as_ref(), Vec::new(), |config| {
-            gobby_core::qdrant::search(config, &collection, request)
-        })
-    else {
-        return vec![];
-    };
+        let Ok((hits, _state)) =
+            gobby_core::qdrant::with_qdrant(ctx.qdrant.as_ref(), Vec::new(), |config| {
+                gobby_core::qdrant::search(config, &collection, request)
+            })
+        else {
+            continue;
+        };
 
-    hits.into_iter()
-        .map(|hit| (hit.id, f64::from(hit.score)))
-        .collect()
+        results.extend(hits.into_iter().map(|hit| (hit.id, f64::from(hit.score))));
+    }
+    results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    results.truncate(limit);
+    results
+}
+
+fn per_project_semantic_limit(limit: usize, project_count: usize) -> Option<usize> {
+    if limit == 0 || project_count == 0 {
+        return None;
+    }
+    Some(limit.div_ceil(project_count))
 }
 
 #[cfg(test)]
@@ -58,6 +71,7 @@ mod tests {
             embedding: None,
             code_vectors: crate::config::CodeVectorSettings::default(),
             daemon_url: None,
+            index_scope: crate::config::ProjectIndexScope::Single,
         }
     }
 
@@ -79,5 +93,18 @@ mod tests {
         };
         let result = semantic_search(&ctx, "test query", 10);
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn per_project_limit_divides_across_visible_projects() {
+        assert_eq!(per_project_semantic_limit(10, 2), Some(5));
+        assert_eq!(per_project_semantic_limit(11, 2), Some(6));
+        assert_eq!(per_project_semantic_limit(1, 2), Some(1));
+    }
+
+    #[test]
+    fn per_project_limit_handles_empty_work() {
+        assert_eq!(per_project_semantic_limit(0, 2), None);
+        assert_eq!(per_project_semantic_limit(10, 0), None);
     }
 }
