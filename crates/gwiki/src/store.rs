@@ -141,36 +141,6 @@ pub trait WikiIndexStore {
     fn delete_derived_rows(&mut self, path: &Path) -> Result<(), StoreError>;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WikiIndexScope {
-    pub scope_kind: String,
-    pub scope_id: String,
-    pub project_id: Option<String>,
-    pub topic_name: Option<String>,
-}
-
-impl WikiIndexScope {
-    pub fn project(project_id: impl Into<String>) -> Self {
-        let project_id = project_id.into();
-        Self {
-            scope_kind: "project".to_string(),
-            scope_id: project_id.clone(),
-            project_id: Some(project_id),
-            topic_name: None,
-        }
-    }
-
-    pub fn topic(topic_name: impl Into<String>) -> Self {
-        let topic_name = topic_name.into();
-        Self {
-            scope_kind: "topic".to_string(),
-            scope_id: topic_name.clone(),
-            project_id: None,
-            topic_name: Some(topic_name),
-        }
-    }
-}
-
 #[derive(Debug, Default)]
 pub struct MemoryWikiStore {
     pub documents: BTreeMap<PathBuf, WikiDocument>,
