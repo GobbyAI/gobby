@@ -247,11 +247,12 @@ def test_no_assertion():
     assert payload["diff"]["baseline"]["message"] == (
         "Baseline missing; treating current issues as new"
     )
-    assert payload["warnings"] == [
+    assert "warnings" not in payload
+    assert payload["report"]["warnings"] == [
         {
             "code": "BASELINE_MISSING",
             "message": "Baseline missing; treating current issues as new",
-            "path": str(baseline_path),
+            "path": ".gobby/missing-baseline.json",
         }
     ]
 

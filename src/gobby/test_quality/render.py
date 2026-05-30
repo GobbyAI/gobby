@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 from gobby.test_quality.baseline import AuditDiff
@@ -10,12 +12,10 @@ from gobby.test_quality.models import AuditReport, AuditWarning
 
 
 def render_json(report: AuditReport, diff: AuditDiff | None = None) -> str:
+    report = _with_combined_warnings(report, diff)
     payload: dict[str, Any] = {"report": report.to_dict()}
     if diff is not None:
         payload["diff"] = diff.to_dict()
-    warnings = _combined_warnings(report, diff)
-    if warnings:
-        payload["warnings"] = [warning.to_dict() for warning in warnings]
     return json.dumps(payload, indent=2, sort_keys=True) + "\n"
 
 
@@ -74,14 +74,35 @@ def _format_counts(label: str, counts: dict[str, int]) -> str:
     return f"{label}: {rendered or 'none'}"
 
 
+def _with_combined_warnings(report: AuditReport, diff: AuditDiff | None) -> AuditReport:
+    warnings = _combined_warnings(report, diff)
+    if warnings == report.warnings:
+        return report
+    return replace(report, warnings=warnings)
+
+
 def _combined_warnings(report: AuditReport, diff: AuditDiff | None) -> tuple[AuditWarning, ...]:
     warnings = list(report.warnings)
     if diff is not None and diff.warning_message:
         warnings.append(
             AuditWarning(
                 code="BASELINE_MISSING",
-                path=diff.baseline_path,
+                path=_normalize_report_path(diff.baseline_path, report.root),
                 message=diff.warning_message,
             )
         )
     return tuple(warnings)
+
+
+def _normalize_report_path(path: str | None, root: str) -> str | None:
+    if path is None:
+        return None
+
+    candidate = Path(path)
+    if not candidate.is_absolute():
+        return candidate.as_posix()
+
+    try:
+        return candidate.resolve().relative_to(Path(root).resolve()).as_posix()
+    except (OSError, ValueError):
+        return candidate.as_posix()

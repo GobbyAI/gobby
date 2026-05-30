@@ -162,7 +162,7 @@ def _provider_native_session_id(
         return None
     try:
         session = session_manager.get(run.child_session_id)
-    except Exception:
+    except LookupError:
         return None
     value = getattr(session, "external_id", None)
     if not isinstance(value, str) or not value:

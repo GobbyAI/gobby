@@ -360,7 +360,10 @@ class TestCloseTask:
             )
 
         assert result == {"success": True}
-        assert result["success"] is True
+        task_validator.validate_task.assert_awaited_once()
+        validation_kwargs = task_validator.validate_task.await_args.kwargs
+        assert validation_kwargs["task_id"] == task.id
+        assert "Implemented and verified" in validation_kwargs["changes_summary"]
         mock_task_manager.update_task.assert_called_once_with(
             task.id,
             validation_status="valid",

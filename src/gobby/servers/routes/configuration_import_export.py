@@ -221,13 +221,14 @@ def register_import_export_routes(
                     description = frontmatter.get("description", "")
                     version = str(frontmatter.get("version", "1.0"))
                     variables = frontmatter.get("variables")
+                    stripped_body = body.strip()
 
                     existing = manager.get_override(name)
                     if existing:
                         manager.update_prompt(
                             prompt_id=existing.id,
                             description=description,
-                            content=body.strip() if body.strip() else content,
+                            content=stripped_body if stripped_body else content,
                             version=version,
                             variables=variables,
                         )
@@ -235,7 +236,7 @@ def register_import_export_routes(
                         manager.create_prompt(
                             name=name,
                             description=description,
-                            content=body.strip() if body.strip() else content,
+                            content=stripped_body if stripped_body else content,
                             version=version,
                             variables=variables,
                             scope="global",
@@ -252,8 +253,8 @@ def register_import_export_routes(
         except HTTPException:
             raise
         except _CONFIG_IMPORT_ERRORS as e:
-            logger.error("Config import failed: %s", e, exc_info=True)
-            raise HTTPException(status_code=400, detail=str(e)) from e
-        except Exception:
+            logger.error("Config import failed", exc_info=True)
+            raise HTTPException(status_code=400, detail="Invalid import data") from e
+        except Exception as e:
             logger.error("Unexpected config import failure", exc_info=True)
-            raise
+            raise HTTPException(status_code=500, detail="Unexpected server error") from e

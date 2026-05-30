@@ -170,7 +170,7 @@ def register_template_routes(router: APIRouter, context: ConfigurationRouteConte
                 secret_value_entries=secret_value_entries,
                 plain_entries=plain_entries,
             )
-            logger.info(f"Template saved: {count} non-default keys stored")
+            logger.info("Template saved: %d non-default keys stored", count)
 
             context.set_runtime_config(new_config)
 

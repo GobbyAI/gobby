@@ -134,6 +134,7 @@ def register_prompt_routes(router: APIRouter, context: ConfigurationRouteContext
             description = frontmatter.get("description", "")
             version = str(frontmatter.get("version", "1.0"))
             variables = frontmatter.get("variables")
+            stripped_body = body.strip()
 
             existing_override = manager.get_override(path)
 
@@ -141,7 +142,7 @@ def register_prompt_routes(router: APIRouter, context: ConfigurationRouteContext
                 manager.update_prompt(
                     prompt_id=existing_override.id,
                     description=description,
-                    content=body.strip() if body.strip() else request.content,
+                    content=stripped_body if stripped_body else request.content,
                     version=version,
                     variables=variables,
                 )
@@ -149,7 +150,7 @@ def register_prompt_routes(router: APIRouter, context: ConfigurationRouteContext
                 manager.create_prompt(
                     name=path,
                     description=description,
-                    content=body.strip() if body.strip() else request.content,
+                    content=stripped_body if stripped_body else request.content,
                     version=version,
                     variables=variables,
                     scope="global",

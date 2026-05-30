@@ -71,7 +71,13 @@ async def purge_missing_project(
 
     counts = await _run_db(run_db, storage.delete_project_index, project_id)
     if not isinstance(counts, dict):
-        counts = {}
+        logger.warning(
+            "delete_project_index returned unexpected %s for project %s: %r",
+            type(counts).__name__,
+            project_id,
+            counts,
+        )
+        raise TypeError(f"delete_project_index returned {type(counts).__name__}, expected dict")
 
     if vector_store is not None:
         collection = f"{config.qdrant_collection_prefix}{project_id}"

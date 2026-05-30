@@ -275,7 +275,7 @@ def test_tdd_discipline_skills_are_bundled() -> None:
     assert "missing baseline is not a skip reason" in tdd.lower()
     assert "unsupported-language warning" in tdd
     assert "repo-native validation" in tdd
-    assert "missing" in discipline.lower()
+    assert ".gobby/test-quality-baseline.json` is missing" in discipline.lower()
     assert "unsupported-language warning" in discipline
 
 

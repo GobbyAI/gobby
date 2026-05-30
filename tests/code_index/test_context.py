@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -64,7 +65,7 @@ async def test_context_rebuild_graph_uses_project_root_and_ignores_legacy_limit(
     gateway.graph_rebuild = AsyncMock(return_value={"success": True})
     context = CodeIndexContext(storage=storage, gcode_gateway=gateway)
 
-    with caplog.at_level("WARNING", logger="gobby.code_index.context"):
+    with caplog.at_level(logging.WARNING, logger="gobby.code_index.context"):
         result = await context.rebuild_graph("proj-1", limit=1)
 
     assert result == {"success": True}
@@ -108,7 +109,7 @@ def test_context_continues_when_gateway_init_fails(caplog: pytest.LogCaptureFixt
 
     with (
         pytest.MonkeyPatch.context() as monkeypatch,
-        caplog.at_level("WARNING", logger="gobby.code_index.context"),
+        caplog.at_level(logging.WARNING, logger="gobby.code_index.context"),
     ):
         monkeypatch.setattr(
             "gobby.code_index.context.GcodeGateway",

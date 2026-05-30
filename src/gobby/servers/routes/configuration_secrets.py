@@ -162,4 +162,4 @@ def register_secret_routes(router: APIRouter, context: ConfigurationRouteContext
             raise
         except Exception as e:
             logger.error("Failed to delete secret: %s", e, exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e

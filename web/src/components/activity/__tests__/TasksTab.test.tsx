@@ -8,6 +8,10 @@ import {
   afterEach,
 } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  ActivityActionButtons,
+  ActivityActionsProvider,
+} from "../ActivityActionsContext";
 import { TasksTab } from "../TasksTab";
 import {
   createMockFetch,
@@ -100,6 +104,37 @@ describe("TasksTab", () => {
       );
       expect(taskRequest).toBeTruthy();
       expect(taskRequest).not.toContain("stage=development");
+    });
+  });
+
+  it("surfaces create task API errors in the task alert banner", async () => {
+    mockFetch.mockJsonResponse(
+      "/api/tasks",
+      { detail: "Task category is required" },
+      { status: 400 },
+    );
+
+    render(
+      <ActivityActionsProvider>
+        <ActivityActionButtons />
+        <TasksTab projectId="proj-1" />
+      </ActivityActionsProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Review approved task")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "New task" }));
+    fireEvent.change(screen.getByPlaceholderText("Task title..."), {
+      target: { value: "Invalid task" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Task category is required",
+      );
     });
   });
 

@@ -204,7 +204,7 @@ async def remove_server(
 
     config = manager._configs[name]
     if config.transport == "internal":
-        raise ValueError(f"Internal MCP server '{name}' cannot be enabled or disabled")
+        raise ValueError(f"Internal MCP server '{name}' cannot be removed")
     effective_project_id = project_id or config.project_id
 
     if name in manager._connections:
@@ -245,10 +245,10 @@ async def set_server_enabled(
     if config.enabled == enabled:
         return {"success": True, "name": name, "enabled": enabled}
 
-    config.enabled = enabled
-
     if manager.mcp_db_manager and effective_project_id:
         manager.mcp_db_manager.update_server(name, effective_project_id, enabled=enabled)
+
+    config.enabled = enabled
 
     if enabled:
         session = await manager._connect_server(config)

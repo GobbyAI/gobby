@@ -428,6 +428,25 @@ class TestMCPClientManagerAddServer:
             await manager.set_server_enabled("gobby-tasks", False)
 
     @pytest.mark.asyncio
+    async def test_set_server_enabled_keeps_memory_state_when_db_update_fails(self) -> None:
+        config = MCPServerConfig(
+            name="existing-server",
+            project_id="test-project",
+            transport="http",
+            url="http://localhost:8001",
+            enabled=False,
+        )
+        mock_db = MagicMock()
+        mock_db.update_server.side_effect = RuntimeError("db down")
+        manager = MCPClientManager(server_configs=[config], mcp_db_manager=mock_db)
+
+        with pytest.raises(RuntimeError, match="db down"):
+            await manager.set_server_enabled("existing-server", True)
+
+        assert config.enabled is False
+        assert manager.get_server_config("existing-server") is config
+
+    @pytest.mark.asyncio
     async def test_add_server_handles_list_tools_failure(self):
         """Test add_server handles failure when listing tools."""
         manager = MCPClientManager(server_configs=[])

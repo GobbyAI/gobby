@@ -52,6 +52,35 @@ def test_initial_transition_condition_unexpected_error_propagates(
         _implementation._transition_condition_met("boom()", {})
 
 
+def test_resolve_spawn_project_context_prefers_parent_session_project() -> None:
+    from gobby.mcp_proxy.tools.spawn_agent._factory import _resolve_spawn_project_context
+
+    parent_ctx = {"id": "parent-project", "project_path": "/tmp/parent-project"}
+    current_ctx = {"id": "current-project", "project_path": "/tmp/current-project"}
+
+    with (
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._factory._parent_session_project_context",
+            return_value=parent_ctx,
+        ) as parent_context,
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._factory.get_project_context",
+            return_value=current_ctx,
+        ) as current_context,
+    ):
+        ctx, path = _resolve_spawn_project_context(
+            project_path=None,
+            parent_session_id="parent-session",
+            session_manager=MagicMock(),
+            db=MagicMock(),
+        )
+
+    assert ctx == parent_ctx
+    assert path == "/tmp/parent-project"
+    parent_context.assert_called_once()
+    current_context.assert_not_called()
+
+
 class TestSpawnAgentPipelineInjection:
     """Tests for _assigned_pipeline injection when workflow resolves to PipelineDefinition."""
 

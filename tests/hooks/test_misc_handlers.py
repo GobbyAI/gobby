@@ -239,7 +239,7 @@ class TestNotificationHandlerEdgeCases:
             data=data,
         )
 
-        with caplog.at_level("DEBUG", logger="test"):
+        with caplog.at_level("DEBUG"):
             response = handlers.handle_notification(event)
 
         assert response.decision == "allow"

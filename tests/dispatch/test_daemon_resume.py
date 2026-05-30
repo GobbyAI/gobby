@@ -3,15 +3,17 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
 from gobby.agents.resume_executor import ResumeAgentResult
 from gobby.agents.session import ChildSessionManager
 from gobby.dispatch.actions import SpawnAgentAction
-from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.agents import AgentRunTerminalReason, LocalAgentRunManager
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
-from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.tasks._crud import get_task, update_task
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from tests.storage.tasks._stage_test_helpers import initialize_manifest, set_stage_state, spec
@@ -19,7 +21,12 @@ from tests.storage.tasks._stage_test_helpers import initialize_manifest, set_sta
 pytestmark = pytest.mark.unit
 
 
-def _task(temp_db, sample_project, *, work_attempt_count: int = 0):
+def _task(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    *,
+    work_attempt_count: int = 0,
+) -> Task:
     manager = LocalTaskManager(temp_db)
     task = manager.create_task(project_id=sample_project["id"], title="Daemon resume task")
     update_task(
@@ -50,7 +57,7 @@ def _workspace(tmp_path: Path, *, dirty: bool) -> Path:
     return path
 
 
-def _services(temp_db):
+def _services(temp_db: HubDatabase) -> SimpleNamespace:
     session_manager = SessionManager(temp_db)
     run_storage = LocalAgentRunManager(temp_db)
     return SimpleNamespace(
@@ -65,12 +72,12 @@ def _services(temp_db):
 
 
 def _seed_daemon_stop_run(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
     *,
     task_id: str,
     workspace: Path,
-    terminal_reason: str = "daemon_stop",
+    terminal_reason: AgentRunTerminalReason | None = "daemon_stop",
 ) -> None:
     sessions = SessionManager(temp_db)
     parent = sessions.register(
@@ -115,7 +122,7 @@ def _seed_daemon_stop_run(
             "auto_approve": True,
         },
     )
-    runs.cancel(run.id, terminal_reason=terminal_reason)  # type: ignore[arg-type]
+    runs.cancel(run.id, terminal_reason=terminal_reason)
 
 
 @pytest.mark.asyncio

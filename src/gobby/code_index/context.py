@@ -105,7 +105,7 @@ class CodeIndexContext:
             except Exception as e:
                 logger.warning(f"Vector collection delete failed for {collection}: {e}")
 
-        logger.info(f"Invalidated code index for project {project_id}")
+        logger.info("Invalidated code index for project %s", project_id)
 
     async def graph_overview(self, project_id: str, *, limit: int = 200) -> dict[str, Any]:
         """Return a gcode-owned overview graph for an indexed project."""

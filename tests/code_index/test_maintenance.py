@@ -22,6 +22,7 @@ T = TypeVar("T")
 
 
 class _MaintenanceConfig(Protocol):
+    graph_enabled: bool
     qdrant_collection_prefix: str
 
 
@@ -71,7 +72,7 @@ async def test_maintenance_purges_indexed_project_when_root_is_missing(tmp_path:
         storage=storage,
         clear_graph=clear_graph,
         vector_store=vector_store,
-        config=SimpleNamespace(qdrant_collection_prefix="code_symbols_"),
+        config=SimpleNamespace(graph_enabled=True, qdrant_collection_prefix="code_symbols_"),
         run_db=run_db,
     )
 
@@ -87,6 +88,44 @@ async def test_maintenance_purges_indexed_project_when_root_is_missing(tmp_path:
     create_proc.assert_not_called()
     assert not missing_root.exists()
     assert run_db_calls == ["list_indexed_projects", "delete_project_index"]
+
+
+@pytest.mark.asyncio
+async def test_maintenance_logs_and_raises_on_unexpected_delete_counts(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    missing_root = tmp_path / "missing"
+    project = IndexedProject(
+        id="proj-missing",
+        root_path=str(missing_root),
+        total_files=2,
+        total_symbols=3,
+    )
+    storage = MagicMock()
+    storage.list_indexed_projects.return_value = [project]
+    storage.delete_project_index.return_value = ["bad"]
+
+    async def run_db(func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
+        return func(*args, **kwargs)
+
+    context: _MaintenanceContext = SimpleNamespace(
+        storage=storage,
+        clear_graph=AsyncMock(return_value={"success": True}),
+        vector_store=None,
+        config=SimpleNamespace(graph_enabled=True, qdrant_collection_prefix="code_symbols_"),
+        run_db=run_db,
+    )
+
+    with (
+        patch("gobby.code_index.maintenance.resolve_native_bin", return_value="/tmp/gcode"),
+        caplog.at_level(logging.WARNING, logger="gobby.code_index.cleanup"),
+        pytest.raises(TypeError, match="delete_project_index returned list"),
+    ):
+        await _run_maintenance(context)
+
+    assert "delete_project_index returned unexpected list" in caplog.text
+    assert "['bad']" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -116,7 +155,7 @@ async def test_summary_updates_are_concurrency_limited() -> None:
         storage=SimpleNamespace(update_symbol_summary=update_symbol_summary),
         clear_graph=AsyncMock(return_value={"success": True}),
         vector_store=None,
-        config=SimpleNamespace(qdrant_collection_prefix="code_symbols_"),
+        config=SimpleNamespace(graph_enabled=True, qdrant_collection_prefix="code_symbols_"),
         run_db=asyncio.to_thread,
     )
     results = {f"sym-{index}": f"summary-{index}" for index in range(12)}
@@ -147,7 +186,7 @@ async def test_summary_update_logs_per_symbol_failures(caplog: pytest.LogCapture
         storage=SimpleNamespace(update_symbol_summary=update_symbol_summary),
         clear_graph=AsyncMock(return_value={"success": True}),
         vector_store=None,
-        config=SimpleNamespace(qdrant_collection_prefix="code_symbols_"),
+        config=SimpleNamespace(graph_enabled=True, qdrant_collection_prefix="code_symbols_"),
         run_db=run_db,
     )
 

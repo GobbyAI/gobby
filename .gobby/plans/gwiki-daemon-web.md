@@ -3,13 +3,15 @@
 **Plan ID:** gwiki-daemon-web
 
 ## O1: Overview
+
 `kind: framing`
 
 Add Gobby daemon, MCP, and web-chat integration for the `gwiki` Rust CLI after the `gobby-cli` `gwiki` plan lands its JSON command contracts. The daemon does not own wiki domain behavior, schema, vault layout, synthesis, or indexing internals. It wraps `gwiki --format json`, exposes API and MCP surfaces, and gives web chat a Wiki Activity panel plus chat actions for search, read, attach, ingest, compile, audit, and health checks.
 
-This plan lives in the Gobby repo because it changes daemon routes, MCP tools, scheduling, watchers, and web UI. It depends on `/Users/josh/Projects/gobby-cli/.gobby/plans/gwiki.md` for the Rust CLI/library contract.
+This plan lives in the Gobby repo because it changes daemon routes, MCP tools, scheduling, watchers, and web UI. It depends on `gobby-cli/.gobby/plans/gwiki.md` for the Rust CLI/library contract.
 
 ## C1: Constraints
+
 `kind: framing`
 
 - **Contract dependency**: daemon and web work consume stable `gwiki --format json` commands. Do not duplicate wiki parsing, source manifests, search ranking, compile, audit, or datastore ownership in Python or TypeScript.
@@ -22,6 +24,7 @@ This plan lives in the Gobby repo because it changes daemon routes, MCP tools, s
 - **Scope clarity**: every API, MCP, and web result carries project/topic scope identity and never crosses scopes implicitly.
 
 ## D1: Dependency Contracts
+
 `kind: framing`
 
 The daemon/web work requires these `gwiki` JSON command contracts from the CLI plan:
@@ -40,11 +43,13 @@ The daemon/web work requires these `gwiki` JSON command contracts from the CLI p
 Required JSON fields: `scope`, `command`, `ok`, `degraded`, actionable `paths`, and command-specific payloads. Errors must preserve stderr plus parsed structured guidance when available.
 
 ## P1: Gateway And Contract Probe
+
 `kind: framing`
 
 **Goal**: create one daemon gateway for all `gwiki` subprocess calls and pin the JSON contract before route work starts.
 
 ### 1.1 Document gwiki JSON command contracts [category: docs]
+
 `kind: deliverable`
 
 Targets: `docs/guides/gwiki-daemon-web.md`
@@ -58,6 +63,7 @@ Document each consumed `gwiki --format json` command, required arguments, reques
 - 1.1.3 - Guide states daemon/web code must use `GwikiGateway`, not direct subprocess calls. file: `docs/guides/gwiki-daemon-web.md`.
 
 ### 1.2 Add GwikiGateway wrapper [category: code] (depends: 1.1)
+
 `kind: deliverable`
 
 Targets: `src/gobby/gwiki_gateway.py`, `tests/test_gwiki_gateway.py`
@@ -72,11 +78,13 @@ Add a single async wrapper around `gwiki --format json` with methods for status,
 - 1.2.4 - No route, MCP tool, watcher, or cron path invokes `gwiki` outside `GwikiGateway`. behavior: "grep for create_subprocess_exec gwiki has only gateway hits" in `src/gobby/`.
 
 ## P2: API And MCP Surfaces
+
 `kind: framing`
 
 **Goal**: expose wiki capabilities to local clients through HTTP and MCP without duplicating `gwiki` logic.
 
 ### 2.1 Add `/api/wiki/*` routes [category: code] (depends: 1.2)
+
 `kind: deliverable`
 
 Targets: `src/gobby/servers/routes/wiki.py`, `tests/servers/routes/test_wiki_routes.py`
@@ -105,6 +113,7 @@ Explicit write routes trigger immediate indexing when the `gwiki` result reports
 - 2.1.3 - Explicit write routes invoke immediate index handoff when changed paths are reported. test: `tests/servers/routes/test_wiki_routes.py::test_write_routes_trigger_index`.
 
 ### 2.2 Add gobby-wiki MCP tools [category: code] (depends: 2.1)
+
 `kind: deliverable`
 
 Targets: `src/gobby/mcp_proxy/tools/wiki.py`, `tests/mcp_proxy/tools/test_wiki.py`
@@ -118,11 +127,13 @@ Expose MCP tools for `wiki_search`, `wiki_read`, `wiki_attach`, `wiki_ingest`, `
 - 2.2.3 - Tools preserve gateway degradation and path metadata. test: `tests/mcp_proxy/tools/test_wiki.py::test_degradation_passthrough`.
 
 ## P3: Web Chat Wiki Experience
+
 `kind: framing`
 
 **Goal**: make wiki activity visible and actionable from web chat.
 
 ### 3.1 Add Wiki Activity panel [category: code] (depends: 2.1)
+
 `kind: deliverable`
 
 Targets: `web/src/components/activity/WikiTab.tsx`, `web/src/hooks/useWiki.ts`, `web/src/components/activity/ActivityPanelTabs.tsx`, `web/src/components/activity/useActivityPanel.ts`, `web/src/components/activity/ActivityPanel.tsx`
@@ -136,6 +147,7 @@ Add a Wiki tab showing current scope, status, recent searches, indexed paths, he
 - 3.1.3 - Frontend hook has typed API wrappers for wiki routes. file: `web/src/hooks/useWiki.ts`.
 
 ### 3.2 Add chat actions for wiki operations [category: code] (depends: 3.1)
+
 `kind: deliverable`
 
 Targets: `web/src/components/chat/`, `web/src/hooks/useWiki.ts`
@@ -149,11 +161,13 @@ Add chat actions for search, read, attach, ingest, compile, audit, and health. A
 - 3.2.3 - Attach/ingest/compile actions require explicit user intent before writes. test: `web/src/components/chat/__tests__/wiki-actions.test.tsx`.
 
 ## P4: Hybrid Self-Updating Model
+
 `kind: framing`
 
 **Goal**: keep wiki indexes fresh without turning routine daemon bookkeeping into noisy cron history.
 
 ### 4.1 Index immediately after explicit gwiki writes [category: code] (depends: 2.1)
+
 `kind: deliverable`
 
 Targets: `src/gobby/wiki/update_coordinator.py`, `tests/wiki/test_update_coordinator.py`
@@ -167,6 +181,7 @@ After explicit writes through attach, ingest, collect, compile, or accepted rese
 - 4.1.3 - Read-only operations never trigger indexing. test: `tests/wiki/test_update_coordinator.py::test_read_only_operations_do_not_index`.
 
 ### 4.2 Add debounced daemon watcher for local wiki file changes [category: code] (depends: 4.1)
+
 `kind: deliverable`
 
 Targets: `src/gobby/wiki/watcher.py`, `tests/wiki/test_watcher.py`
@@ -180,6 +195,7 @@ Watch configured project and topic wiki roots for local edits. Debounce bursts, 
 - 4.2.3 - Watcher ignores `outputs/` and routine `meta/health/` churn unless configured otherwise. test: `tests/wiki/test_watcher.py::test_ignores_noncanonical_churn`.
 
 ### 4.3 Add user-visible scheduled wiki jobs [category: code] (depends: 4.1)
+
 `kind: deliverable`
 
 Targets: `src/gobby/wiki/scheduled_jobs.py`, `tests/wiki/test_scheduled_jobs.py`
@@ -193,6 +209,7 @@ Add cron-backed scheduled jobs only for user-visible wiki operations: scheduled 
 - 4.3.3 - Scheduled jobs use `GwikiGateway` and update coordinator, not direct subprocess calls. test: `tests/wiki/test_scheduled_jobs.py::test_scheduled_jobs_use_gateway`.
 
 ### 4.4 Keep lightweight maintenance out of cron history [category: code] (depends: 4.2)
+
 `kind: deliverable`
 
 Targets: `src/gobby/wiki/status.py`, `tests/wiki/test_status.py`, `web/src/components/activity/WikiTab.tsx`
@@ -206,6 +223,7 @@ Expose lightweight wiki maintenance/status signals through daemon status or acti
 - 4.4.3 - Wiki Activity panel consumes the status surface. file: `web/src/components/activity/WikiTab.tsx`.
 
 ## VS1: Verification
+
 `kind: verification`
 
 Plan validation:
@@ -219,6 +237,7 @@ Implementation validation after expansion:
 - Manual web smoke: search/read/attach/ingest/compile/audit actions update the Wiki Activity panel without duplicate cron-history entries.
 
 ## AC1: Acceptance Criteria
+
 `kind: verification`
 
 - Daemon/wiki integration goes through `GwikiGateway` and stable `gwiki --format json` contracts.
@@ -229,11 +248,13 @@ Implementation validation after expansion:
 - Routine maintenance/status stays out of cron-history spam.
 
 ## V1 Plan Changelog
+
 `kind: verification`
 
 - **R1 (2026-05-28)**: Initial sibling Gobby repo plan for daemon/web `gwiki` integration. Scoped implementation to daemon gateway, API routes, MCP tools, Wiki Activity panel, chat actions, and hybrid self-updating behavior dependent on the `gobby-cli` `gwiki` JSON/CLI contracts.
 
 ## M1 Task Manifest
+
 `kind: manifest`
 
 ```yaml

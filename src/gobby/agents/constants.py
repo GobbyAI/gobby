@@ -60,12 +60,17 @@ UV_CACHE_DIR = "UV_CACHE_DIR"
 CARGO_HOME = "CARGO_HOME"
 
 
-def get_agent_uv_cache_dir(session_id: str) -> str:
-    """Return a writable, per-session uv cache directory for spawned agents."""
+def get_agent_session_cache_dir(session_id: str, *path_components: str) -> Path:
+    """Return a safe per-session cache directory path for spawned agents."""
     safe_session_id = re.sub(r"[^a-zA-Z0-9_-]", "-", session_id).strip("-")
     if not safe_session_id:
         safe_session_id = "unknown-session"
-    return str(Path(tempfile.gettempdir()) / "gobby" / "uv-cache" / safe_session_id)
+    return Path(tempfile.gettempdir(), *path_components, safe_session_id)
+
+
+def get_agent_uv_cache_dir(session_id: str) -> str:
+    """Return a writable, per-session uv cache directory for spawned agents."""
+    return str(get_agent_session_cache_dir(session_id, "gobby", "uv-cache"))
 
 
 def ensure_agent_uv_cache_dir(session_id: str) -> str:
@@ -77,15 +82,12 @@ def ensure_agent_uv_cache_dir(session_id: str) -> str:
 
 def get_agent_cargo_home_dir(session_id: str) -> str:
     """Return a writable, per-session Cargo home directory for sandboxed agents."""
-    safe_session_id = re.sub(r"[^a-zA-Z0-9_-]", "-", session_id).strip("-")
-    if not safe_session_id:
-        safe_session_id = "unknown-session"
-    return str(Path(tempfile.gettempdir()) / "gobby" / "cargo-home" / safe_session_id)
+    return str(get_agent_session_cache_dir(session_id, "gobby", "cargo-home"))
 
 
 def ensure_agent_cargo_home_dir(session_id: str) -> str:
     """Create and return the spawned agent's Cargo home directory."""
-    cargo_home = Path(get_agent_cargo_home_dir(session_id))
+    cargo_home = get_agent_session_cache_dir(session_id, "gobby", "cargo-home")
     cargo_home.mkdir(parents=True, exist_ok=True)
     return str(cargo_home)
 

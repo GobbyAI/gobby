@@ -157,6 +157,17 @@ def _resolve_spawn_project_context(
         explicit_ctx = _context_from_project_path(explicit_path)
         return explicit_ctx, _project_path_from_context(explicit_ctx) or explicit_path
 
+    parent_ctx = None
+    if parent_session_id:
+        parent_ctx = _parent_session_project_context(
+            parent_session_id=parent_session_id,
+            session_manager=session_manager,
+            db=db,
+        )
+        parent_path = _project_path_from_context(parent_ctx)
+        if parent_path:
+            return parent_ctx, parent_path
+
     try:
         current_ctx = get_project_context()
     except _PROJECT_CONTEXT_ERRORS:
@@ -165,15 +176,6 @@ def _resolve_spawn_project_context(
     current_path = _project_path_from_context(current_ctx)
     if current_path:
         return current_ctx, current_path
-
-    parent_ctx = _parent_session_project_context(
-        parent_session_id=parent_session_id,
-        session_manager=session_manager,
-        db=db,
-    )
-    parent_path = _project_path_from_context(parent_ctx)
-    if parent_path:
-        return parent_ctx, parent_path
 
     return current_ctx or parent_ctx, None
 

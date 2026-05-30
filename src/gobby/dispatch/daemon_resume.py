@@ -178,8 +178,16 @@ def _workspace_dirty(workspace_path: str | None) -> bool:
             check=False,
         )
     except (OSError, subprocess.SubprocessError):
+        logger.debug("Failed to inspect workspace dirty state for %s", path, exc_info=True)
         return True
     if result.returncode != 0:
+        logger.debug(
+            "git status --porcelain failed for %s with return code %s stdout=%r stderr=%r",
+            path,
+            result.returncode,
+            result.stdout,
+            result.stderr,
+        )
         return True
     return bool(result.stdout.strip())
 

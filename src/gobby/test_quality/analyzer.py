@@ -728,6 +728,7 @@ def _find_matching_delimiter(
     quote: str | None = None
     escaped = False
     index = open_index
+    rust_body = open_char == "{" and close_char == "}"
 
     while index < len(source):
         char = source[index]
@@ -742,6 +743,23 @@ def _find_matching_delimiter(
             index += 1
             continue
 
+        if rust_body:
+            raw_string_end = _rust_raw_string_end(source, index)
+            if raw_string_end is not None:
+                index = raw_string_end + 1
+                continue
+
+            if char == "'":
+                char_literal_end = _rust_char_literal_end(source, index)
+                if char_literal_end is not None:
+                    index = char_literal_end + 1
+                    continue
+
+                lifetime_end = _rust_lifetime_end(source, index)
+                if lifetime_end is not None:
+                    index = lifetime_end
+                    continue
+
         if char in {"'", '"', "`"}:
             quote = char
         elif char == open_char:
@@ -754,6 +772,59 @@ def _find_matching_delimiter(
         index += 1
 
     return None
+
+
+def _rust_raw_string_end(source: str, index: int) -> int | None:
+    if source[index] != "r":
+        return None
+
+    cursor = index + 1
+    while cursor < len(source) and source[cursor] == "#":
+        cursor += 1
+
+    if cursor >= len(source) or source[cursor] != '"':
+        return None
+
+    hashes = cursor - index - 1
+    terminator = '"' + ("#" * hashes)
+    end = source.find(terminator, cursor + 1)
+    if end == -1:
+        return None
+    return end + len(terminator) - 1
+
+
+def _rust_char_literal_end(source: str, index: int) -> int | None:
+    cursor = index + 1
+    if cursor >= len(source):
+        return None
+
+    if source[cursor] == "\\":
+        cursor += 1
+        if cursor >= len(source):
+            return None
+        if source[cursor] == "u" and cursor + 1 < len(source) and source[cursor + 1] == "{":
+            cursor = source.find("}", cursor + 2)
+            if cursor == -1:
+                return None
+        cursor += 1
+    else:
+        if source[cursor] in {"\n", "\r", "'"}:
+            return None
+        cursor += 1
+
+    if cursor < len(source) and source[cursor] == "'":
+        return cursor
+    return None
+
+
+def _rust_lifetime_end(source: str, index: int) -> int | None:
+    cursor = index + 1
+    if cursor >= len(source) or not (source[cursor].isalpha() or source[cursor] == "_"):
+        return None
+    cursor += 1
+    while cursor < len(source) and (source[cursor].isalnum() or source[cursor] == "_"):
+        cursor += 1
+    return cursor
 
 
 def _script_test_name(call_source: str) -> str | None:

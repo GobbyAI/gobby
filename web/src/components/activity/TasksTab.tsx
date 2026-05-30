@@ -47,8 +47,7 @@ import {
 } from "./TaskQuickMenu";
 import { TasksTabToolbar } from "./TasksTabToolbar";
 import { TasksTabList } from "./TasksTabList";
-import { TaskCreateForm, type CreateTaskParams } from "../tasks/TaskCreateForm";
-import { useRegisterActivityActions } from "./activityActions";
+import { TaskCreateForm } from "../tasks/TaskCreateForm";
 import {
   claimTaskForSession,
   patchTaskFields,
@@ -67,6 +66,7 @@ import {
   mergeTasksById,
   normalizeActivityTask,
 } from "./TasksTabData";
+import { useTaskActions } from "./useTaskActions";
 
 interface TasksTabProps {
   projectId?: string | null;
@@ -265,46 +265,13 @@ export const TasksTab = memo(function TasksTab({
     tasksRef.current = tasks;
   }, [tasks]);
 
-  const handleCreateTask = useCallback(
-    async (params: CreateTaskParams) => {
-      const baseUrl = getBaseUrl();
-      const body = projectId ? { ...params, project_id: projectId } : params;
-      const response = await fetch(`${baseUrl}/api/tasks`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const payload = await response.json().catch(() => null);
-      if (!response.ok) {
-        const record = payload as { detail?: unknown; error?: unknown } | null;
-        const detail = record?.detail ?? record?.error;
-        throw new Error(
-          typeof detail === "string"
-            ? detail
-            : `Failed to create task (${response.status})`,
-        );
-      }
-      fetchTasks();
-      return payload;
-    },
-    [projectId, fetchTasks],
-  );
-
-  const handleOpenCreateTask = useCallback(() => setShowCreateTask(true), []);
-
-  // Register the shared header Add/Refresh actions for the Tasks view.
-  useRegisterActivityActions(
-    {
-      onAdd: handleOpenCreateTask,
-      addLabel: "Add",
-      addAriaLabel: "New task",
-      onRefresh: fetchTasks,
-      refreshing: loading,
-      refreshLabel: "Refresh",
-      refreshAriaLabel: "Refresh tasks",
-    },
-    [handleOpenCreateTask, fetchTasks, loading],
-  );
+  const { handleCreateTask } = useTaskActions({
+    projectId,
+    fetchTasks,
+    loading,
+    setShowCreateTask,
+    setActionError,
+  });
 
   // WebSocket: real-time task event subscription
   const handleTaskEventRef = useRef<

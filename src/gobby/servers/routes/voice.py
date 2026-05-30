@@ -125,7 +125,7 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
                 "content_type": content_type,
             }
         except Exception as e:
-            logger.error(f"Transcription error: {e}", exc_info=True)
-            return {"error": f"Transcription failed: {e}", "text": ""}
+            logger.error("Transcription error: %s", e, exc_info=True)
+            return {"error": "Transcription failed", "text": ""}
 
     return router

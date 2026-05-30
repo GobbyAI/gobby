@@ -109,7 +109,7 @@ def register_value_routes(router: APIRouter, context: ConfigurationRouteContext)
                         config_store.set_secret(key, value, secret_store, source="user")
                         count += 1
 
-            logger.info(f"Config saved to DB ({count} keys)")
+            logger.info("Config saved to DB (%d keys)", count)
 
             resolved = context.current_config_values()
             deep_merge(
@@ -146,7 +146,7 @@ def register_value_routes(router: APIRouter, context: ConfigurationRouteContext)
         try:
             config_store = context.get_config_store()
             deleted = config_store.delete_all()
-            logger.info(f"Config reset: deleted {deleted} keys from config_store")
+            logger.info("Config reset: deleted %d keys from config_store", deleted)
             context.set_runtime_config(DaemonConfig())
             return JSONResponse(content={"ok": True, "requires_restart": True})
         except Exception as e:
