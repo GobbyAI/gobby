@@ -1,0 +1,155 @@
+from __future__ import annotations
+
+import pytest
+
+from gobby.ai import (
+    CANONICAL_AI_CAPABILITIES,
+    AIAdapterStyle,
+    AICapability,
+    AICapabilityRegistry,
+    CapabilityBinding,
+    CapabilityUnavailableError,
+    build_daemon_ai_capability_registry,
+)
+from gobby.config.app import DaemonConfig
+from gobby.config.persistence import EmbeddingsConfig
+from gobby.config.voice import VoiceConfig
+from gobby.providers import AGY_UNAVAILABLE_REASON, ProviderMetadata
+
+pytestmark = pytest.mark.unit
+
+
+def test_empty_registry_advertises_every_canonical_capability() -> None:
+    registry = AICapabilityRegistry()
+
+    assert registry.capabilities == CANONICAL_AI_CAPABILITIES
+    snapshot = registry.status_snapshot()
+    assert tuple(snapshot["capabilities"]) == tuple(
+        capability.value for capability in CANONICAL_AI_CAPABILITIES
+    )
+
+    for capability in CANONICAL_AI_CAPABILITIES:
+        status = registry.status(capability)
+        assert status.available is False
+        assert status.to_dict()["state"] == "unavailable"
+        assert status.reason is not None
+        assert capability.value in status.reason
+
+
+def test_registry_tracks_available_and_unavailable_bindings() -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="claude",
+                adapter_style=AIAdapterStyle.LLM_PROVIDER,
+                available=True,
+                models=("sonnet",),
+            ),
+            CapabilityBinding.unavailable(
+                AICapability.TEXT_GENERATE,
+                "agy",
+                reason=AGY_UNAVAILABLE_REASON,
+            ),
+        ]
+    )
+
+    status = registry.status("text_generate")
+
+    assert status.available is True
+    assert registry.select(AICapability.TEXT_GENERATE, model="sonnet").provider == "claude"
+    agy = registry.binding(AICapability.TEXT_GENERATE, "agy")
+    assert agy is not None
+    assert agy.available is False
+    assert agy.reason == AGY_UNAVAILABLE_REASON
+
+
+def test_select_reports_unavailable_provider_reason() -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding.unavailable(
+                AICapability.VISION_EXTRACT,
+                "agy",
+                reason=AGY_UNAVAILABLE_REASON,
+            )
+        ]
+    )
+
+    with pytest.raises(CapabilityUnavailableError, match="AGY has no documented"):
+        registry.select(AICapability.VISION_EXTRACT, provider="agy")
+
+
+def test_daemon_registry_keeps_web_chat_and_text_generate_separate() -> None:
+    registry = build_daemon_ai_capability_registry(
+        DaemonConfig(),
+        provider_installed=lambda _entry: True,
+    )
+
+    text_generate = registry.status(AICapability.TEXT_GENERATE)
+    web_chat = registry.status(AICapability.WEB_CHAT)
+
+    assert text_generate.capability == AICapability.TEXT_GENERATE
+    assert web_chat.capability == AICapability.WEB_CHAT
+    assert registry.binding(AICapability.TEXT_GENERATE, "claude") is None
+    assert registry.binding(AICapability.WEB_CHAT, "claude") is not None
+
+
+def test_daemon_registry_marks_agy_unavailable_even_when_provider_probe_succeeds() -> None:
+    registry = build_daemon_ai_capability_registry(
+        DaemonConfig(),
+        provider_installed=lambda _entry: True,
+    )
+
+    for capability in (
+        AICapability.TEXT_GENERATE,
+        AICapability.VISION_EXTRACT,
+        AICapability.AGENT_SPAWN,
+        AICapability.WEB_CHAT,
+    ):
+        binding = registry.binding(capability, "agy")
+        assert binding is not None
+        assert binding.available is False
+        assert binding.reason == AGY_UNAVAILABLE_REASON
+
+
+def test_daemon_registry_reports_embedding_configured_state() -> None:
+    registry = build_daemon_ai_capability_registry(
+        DaemonConfig(embeddings=EmbeddingsConfig(api_base="http://localhost:11434/v1")),
+        provider_installed=lambda _entry: False,
+    )
+
+    binding = registry.select(AICapability.EMBED)
+
+    assert binding.provider == "local"
+    assert binding.adapter_style == AIAdapterStyle.OPENAI_COMPATIBLE
+    assert binding.models == ("nomic-embed-text",)
+    assert binding.metadata["dim"] == 768
+
+
+def test_daemon_registry_reports_voice_transcribe_configured_state() -> None:
+    registry = build_daemon_ai_capability_registry(
+        DaemonConfig(voice=VoiceConfig(enabled=True, stt_enabled=True)),
+        provider_installed=lambda _entry: False,
+    )
+
+    binding = registry.select(AICapability.AUDIO_TRANSCRIBE)
+
+    assert binding.provider == "whisper"
+    assert binding.adapter_style == AIAdapterStyle.LOCAL
+    assert binding.models == ("base",)
+
+
+def test_daemon_registry_marks_missing_provider_binaries_unavailable() -> None:
+    def installed(entry: ProviderMetadata) -> bool:
+        return entry.provider == "claude"
+
+    registry = build_daemon_ai_capability_registry(DaemonConfig(), provider_installed=installed)
+
+    claude = registry.binding(AICapability.AGENT_SPAWN, "claude")
+    codex = registry.binding(AICapability.AGENT_SPAWN, "codex")
+
+    assert claude is not None
+    assert claude.available is True
+    assert codex is not None
+    assert codex.available is False
+    assert codex.reason == "Codex CLI is not installed."
