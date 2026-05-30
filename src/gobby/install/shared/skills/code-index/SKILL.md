@@ -13,13 +13,13 @@ This project is indexed. Use `gcode` via Bash for fast code search and navigatio
 
 ## Search
 
+- `gcode grep "pattern" [PATH ...] -m 50` — exact indexed content grep over `code_content_chunks`; defaults to text output for bounded line matches
 - `gcode search "query" [PATH ...]` — hybrid search: pg_search BM25 + semantic + graph boost (best for fuzzy or natural-language queries)
 - `gcode search-symbol "name" [PATH ...]` — exact-first symbol lookup with deterministic ranking; add `--with-graph` to include FalkorDB graph neighbors when available
 - `gcode search-text "query" [PATH ...]` — pg_search BM25 search on symbol names, signatures, and docstrings
-- `gcode grep "pattern" [PATH ...]` — exact indexed content grep over `code_content_chunks`; use `gcode grep "pattern" src -m 50` to cap matching lines
 - `gcode search-content "query" [PATH ...]` — full-text search across repo text chunks: source, comments, docs/Markdown, skill files, configs, scripts, CSS, SQL, and extensionless text
 
-Search filters compose: `search` and `search-symbol` accept `--kind <kind>`; use `gcode kinds` to discover values. Ranked search commands accept positional path filters after the query (paths or globs, OR semantics), plus `--language <lang>`, `--limit N`, and `--offset N` for scoped or paginated results. `gcode grep` accepts positional paths, `-g/--glob`, `-i`, `-F`, `-C/-A/-B`, and `-m/--max-count`; it rejects `--limit`. Hybrid JSON results include final display `score`, raw `rrf_score`, and deterministic `sources`; path globs that require post-filter fallback surface a hint/warning.
+Search filters compose: `search` and `search-symbol` accept `--kind <kind>`; use `gcode kinds` to discover values. Ranked search commands accept positional path filters after the query (paths or globs, OR semantics), plus `--language <lang>`, `--limit N`, and `--offset N` for scoped or paginated results. `gcode grep` accepts positional paths, `-g/--glob`, `-i`, `-F`, `-C/-A/-B`, and `-m/--max-count`; it rejects `--limit`. Add `--format json` to `gcode grep` for structured matches with spans. Hybrid JSON results include final display `score`, raw `rrf_score`, and deterministic `sources`; path globs that require post-filter fallback surface a hint/warning.
 
 ## Retrieval
 
@@ -33,7 +33,7 @@ Symbol IDs must be full stored UUIDs from `gcode search`, `gcode search-symbol`,
 
 When navigating code for context or understanding:
 
-1. **Locate with gcode**: `gcode grep "exact string"` for exact line matches, `gcode search "concept"`, `gcode search-symbol "name"`, or `gcode search-content "text"` for ranked/fuzzy hits.
+1. **Locate with gcode**: `gcode grep "exact string" [PATH ...] -m 50` for exact line matches, `gcode search "concept"`, `gcode search-symbol "name"`, or `gcode search-content "text"` for ranked/fuzzy hits.
 2. **Survey file structure**: `gcode outline path/to/file` to see the symbol hierarchy without reading the whole file.
 3. **Retrieve exact code**: `gcode symbol <full-uuid>` or `gcode symbols <full-uuid> <full-uuid> ...` using IDs from search or outline.
 4. **Fetch tight neighboring context only when needed**: use `sed`/`awk` only for tight neighboring context (1-3 lines) after symbol retrieval.
@@ -86,4 +86,4 @@ for the UI, but graph sync/read/lifecycle behavior lives in `gcode`.
 
 ## Output and global flags
 
-All commands default to JSON output. Use `--format text` for human-readable output, `--quiet` to suppress warnings, and `--no-freshness` to skip the read-time staleness check (cheaper when you know the index is current).
+`gcode grep` defaults to text output; use `--format json` when you need structured matches and spans. Other commands support `--format text` for human-readable output where available. Use `--quiet` to suppress warnings, and `--no-freshness` to skip the read-time staleness check (cheaper when you know the index is current).
