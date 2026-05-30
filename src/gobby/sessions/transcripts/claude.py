@@ -8,13 +8,16 @@ from __future__ import annotations
 
 import json
 import logging
+from collections import deque
+from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime
 from typing import Any
 
 from gobby.sessions.transcripts.base import (
     BaseTranscriptParser,
     ParsedMessage,
-    ParsedToolEvent,
+    ParseEvent,
+    RawLine,
     TokenUsage,
 )
 
@@ -714,50 +717,77 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
             return f"{self.session_id}:claude:{index}"
         return f"claude:{index}"
 
-    def parse_lines(
-        self, lines: list[str], start_index: int = 0
-    ) -> list[ParsedMessage | ParsedToolEvent]:
+    #: Claude peeks 1 raw line ahead to drop a duplicate model-facing tool_result
+    #: emitted after a hook block (see ``_should_skip_pair``).
+    max_lookahead: int = 1
+
+    def iter_parse_events(
+        self, raw_lines: Iterable[RawLine], start_index: int = 0
+    ) -> Iterator[ParseEvent]:
         """
-        Parse a list of transcript lines, expanding multi-block messages.
+        Stream parse events, expanding multi-block lines and applying Claude's
+        1-line skip (a hook-blocking error followed by its duplicate tool_result).
 
         Each JSONL line may produce multiple ParsedMessages (e.g. an assistant
-        message with text + two tool_use blocks becomes three messages). Indices
-        are assigned sequentially starting from start_index.
-
-        Args:
-            lines: List of JSON line strings
-            start_index: Starting index for messages
-
-        Returns:
-            List of parsed ParsedMessage objects
+        message with text + two tool_use blocks becomes three messages); indices are
+        assigned **per parsed message** from ``start_index``. The skip partner is
+        consumed atomically within the event that triggers it, so every emitted event
+        boundary is ``parser_safe`` (a skip-pair is never split).
         """
-        parsed_messages: list[ParsedMessage | ParsedToolEvent] = []
         current_index = start_index
+        source = iter(raw_lines)
+        peek: deque[RawLine] = deque()
 
-        idx = 0
-        while idx < len(lines):
-            line = lines[idx]
-            skip_next = self._should_skip_next_line(idx, lines)
+        def _next() -> RawLine | None:
+            if peek:
+                return peek.popleft()
+            return next(source, None)
 
-            expanded = self._expand_line(line, current_index)
+        def _peek() -> RawLine | None:
+            if not peek:
+                nxt = next(source, None)
+                if nxt is None:
+                    return None
+                peek.append(nxt)
+            return peek[0]
+
+        while True:
+            cur = _next()
+            if cur is None:
+                break
+            nxt = _peek()
+            skip_next = self._should_skip_pair(cur.text, nxt.text if nxt else None)
+
+            start_idx = current_index
+            expanded = self._expand_line(cur.text, current_index)
             for msg in expanded:
                 msg.index = current_index
-                parsed_messages.append(msg)
                 current_index += 1
-            idx += 2 if skip_next else 1
 
-        return parsed_messages
+            if expanded:
+                yield ParseEvent(
+                    byte_offset=cur.byte_offset,
+                    raw_line_no=cur.raw_line_no,
+                    parsed_index=start_idx,
+                    records=list(expanded),
+                    parser_safe=True,
+                )
 
-    def _should_skip_next_line(self, idx: int, lines: list[str]) -> bool:
-        data = self._load_json_for_dedupe(lines[idx])
+            if skip_next:
+                _next()  # consume and drop the duplicate tool_result line
+
+    def _should_skip_pair(self, cur_text: str, next_text: str | None) -> bool:
+        """Whether ``next_text`` is the duplicate tool_result for a hook block in
+        ``cur_text`` and should be dropped (streaming form of the old lookahead)."""
+        data = self._load_json_for_dedupe(cur_text)
         if data is None:
             return False
         tool_use_id = self._tool_use_id_from_turn(data)
         if tool_use_id is None or not self._is_hook_blocking_error(data):
             return False
-        if idx + 1 >= len(lines):
+        if next_text is None:
             return False
-        next_data = self._load_json_for_dedupe(lines[idx + 1])
+        next_data = self._load_json_for_dedupe(next_text)
         if next_data is None:
             return False
         return self._is_tool_result_for(next_data, tool_use_id)

@@ -5,14 +5,18 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from gobby.sessions.transcripts.base import (
     BaseTranscriptParser,
+    ParsedAdjustment,
     ParsedMessage,
     ParsedToolEvent,
+    ParseEvent,
+    RawLine,
     TokenUsage,
 )
 
@@ -248,33 +252,43 @@ class DroidTranscriptParser(BaseTranscriptParser):
         expanded = self._expand_line(line, index)
         return expanded[0] if expanded else None
 
-    def parse_lines(
-        self,
-        lines: list[str],
-        start_index: int = 0,
-    ) -> list[ParsedMessage | ParsedToolEvent]:
-        """Parse lines and expand each content block into its own ParsedMessage."""
+    def iter_parse_events(
+        self, raw_lines: Iterable[RawLine], start_index: int = 0
+    ) -> Iterator[ParseEvent]:
+        """Stream events with per-ParsedMessage indexing; track the last assistant
+        message so :meth:`finalize` can apply sidecar token usage to it (Droid's
+        post-pass mutation). No forward lookahead, so every event is ``parser_safe``.
+        """
         if self._transcript_path is not None:
             self._load_sidecar(self._transcript_path)
+        self._last_assistant_index = None
 
-        results: list[ParsedMessage | ParsedToolEvent] = []
         current_index = start_index
-        for line in lines:
-            if not line.strip():
+        for raw in raw_lines:
+            if not raw.text.strip():
                 continue
-            expanded = self._expand_line(line, current_index)
+            start_idx = current_index
+            expanded = self._expand_line(raw.text, current_index)
             for msg in expanded:
                 msg.index = current_index
+                if isinstance(msg, ParsedMessage) and msg.role == "assistant":
+                    self._last_assistant_index = current_index
                 current_index += 1
-            results.extend(expanded)
+            if expanded:
+                yield ParseEvent(
+                    byte_offset=raw.byte_offset,
+                    raw_line_no=raw.raw_line_no,
+                    parsed_index=start_idx,
+                    records=list(expanded),
+                    parser_safe=True,
+                )
 
-        if self._sidecar_usage is not None:
-            for record in reversed(results):
-                if isinstance(record, ParsedMessage) and record.role == "assistant":
-                    record.usage = self._sidecar_usage
-                    break
-
-        return results
+    def finalize(self) -> list[ParsedAdjustment]:
+        """Assign sidecar token usage to the last assistant message (post-pass)."""
+        last_assistant_index = getattr(self, "_last_assistant_index", None)
+        if self._sidecar_usage is not None and last_assistant_index is not None:
+            return [ParsedAdjustment(last_assistant_index, "usage", self._sidecar_usage)]
+        return []
 
     def extract_last_messages(
         self, turns: list[dict[str, Any]], num_pairs: int = 2

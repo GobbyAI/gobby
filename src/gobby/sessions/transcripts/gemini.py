@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -20,7 +21,8 @@ from typing import Any
 from gobby.sessions.transcripts.base import (
     BaseTranscriptParser,
     ParsedMessage,
-    ParsedToolEvent,
+    ParseEvent,
+    RawLine,
     TokenUsage,
 )
 
@@ -358,22 +360,27 @@ class GeminiTranscriptParser(BaseTranscriptParser):
 
         return None
 
-    def parse_lines(
-        self, lines: list[str], start_index: int = 0
-    ) -> list[ParsedMessage | ParsedToolEvent]:
+    def iter_parse_events(
+        self, raw_lines: Iterable[RawLine], start_index: int = 0
+    ) -> Iterator[ParseEvent]:
+        """Stream events with per-ParsedMessage indexing (no forward lookahead).
+
+        Mirrors the original batch ``parse_lines``: a line that parses to a message
+        yields one event and advances the index; lines that parse to ``None`` are
+        skipped without advancing. Every event is ``parser_safe``.
         """
-        Parse a list of transcript lines.
-        """
-        parsed_messages: list[ParsedMessage | ParsedToolEvent] = []
         current_index = start_index
-
-        for line in lines:
-            message = self.parse_line(line, current_index)
+        for raw in raw_lines:
+            message = self.parse_line(raw.text, current_index)
             if message:
-                parsed_messages.append(message)
+                yield ParseEvent(
+                    byte_offset=raw.byte_offset,
+                    raw_line_no=raw.raw_line_no,
+                    parsed_index=current_index,
+                    records=[message],
+                    parser_safe=True,
+                )
                 current_index += 1
-
-        return parsed_messages
 
     def parse_session_json(self, data: dict[str, Any]) -> list[ParsedMessage]:
         """

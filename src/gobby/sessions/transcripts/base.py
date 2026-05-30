@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+from collections.abc import Iterable, Iterator
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -119,6 +120,56 @@ class ParsedMessage:
 
 
 @dataclass
+class RawLine:
+    """A positioned raw transcript line fed to the streaming parser.
+
+    Positions are owned by the *reader* (file streamer / batch wrapper), not the
+    parser. ``byte_offset`` is the start byte of the line in the source file when
+    streaming a seekable JSONL file, or ``None`` in batch mode (where byte offsets
+    are unused). ``raw_line_no`` is the 0-based index of the line in the source.
+    """
+
+    byte_offset: int | None
+    raw_line_no: int
+    text: str
+
+
+@dataclass
+class ParsedAdjustment:
+    """A post-pass mutation to an already-yielded message.
+
+    Emitted by :meth:`BaseTranscriptParser.finalize` for parsers that mutate
+    earlier messages after consuming the whole stream (e.g. Droid assigns sidecar
+    token usage to the last assistant message). ``parsed_index`` targets the
+    message by its global :attr:`ParsedMessage.index`; ``field`` names the
+    attribute to set to ``value``.
+    """
+
+    parsed_index: int
+    field: str
+    value: Any
+
+
+@dataclass
+class ParseEvent:
+    """One streaming parse step: the records produced from one raw line/event.
+
+    ``byte_offset``/``raw_line_no`` are echoed from the first :class:`RawLine` the
+    event consumed. ``parsed_index`` is the global parsed-message index assigned to
+    ``records[0]`` (parsers assign indices per their own convention — per line for
+    the base parser, per parsed message for most overrides). ``parser_safe`` is
+    ``True`` iff the parser's lookahead buffer is empty *after* this event, i.e. the
+    point immediately after it is a safe place to stop/resume the stream.
+    """
+
+    byte_offset: int | None
+    raw_line_no: int
+    parsed_index: int
+    records: list[ParsedMessage | ParsedToolEvent] = field(default_factory=list)
+    parser_safe: bool = True
+
+
+@dataclass
 class ParsedToolEvent:
     """A tool-call lifecycle event extracted from a transcript.
 
@@ -230,8 +281,35 @@ class TranscriptParser(Protocol):
         ...
 
 
+def raw_lines_from_texts(texts: Iterable[str]) -> Iterator[RawLine]:
+    """Wrap plain line strings as positionless :class:`RawLine`s (batch mode)."""
+    for i, text in enumerate(texts):
+        yield RawLine(byte_offset=None, raw_line_no=i, text=text)
+
+
+def apply_adjustment(
+    messages: list[ParsedMessage | ParsedToolEvent], adjustment: ParsedAdjustment
+) -> None:
+    """Apply a finalize() post-pass mutation to the matching parsed message."""
+    for msg in messages:
+        if isinstance(msg, ParsedMessage) and msg.index == adjustment.parsed_index:
+            setattr(msg, adjustment.field, adjustment.value)
+            return
+
+
 class BaseTranscriptParser:
-    """Base class for transcript parsers with integrated error logging."""
+    """Base class for transcript parsers with integrated error logging.
+
+    Subclasses implement :meth:`parse_line` (single-line parsing). The streaming
+    surface — :meth:`iter_parse_events` plus :meth:`finalize` — is the one code
+    path that both batch :meth:`parse_lines` and the windowed index/render build on,
+    so they cannot drift. Parsers with cross-line lookahead (e.g. Claude's 1-line
+    skip) or post-pass mutation (e.g. Droid sidecar usage) override these.
+    """
+
+    #: Maximum number of *following* raw lines this parser may inspect before
+    #: emitting an event (0 = no forward lookahead). Claude overrides to 1.
+    max_lookahead: int = 0
 
     def __init__(
         self,
@@ -244,11 +322,47 @@ class BaseTranscriptParser:
         self.error_log = TranscriptParserErrorLog(cli_name)
         self.logger = logger_instance or logging.getLogger(f"gobby.sessions.transcripts.{cli_name}")
 
+    def iter_parse_events(
+        self, raw_lines: Iterable[RawLine], start_index: int = 0
+    ) -> Iterator[ParseEvent]:
+        """Stream parse events from positioned raw lines.
+
+        Default implementation matches the base :meth:`parse_lines` semantics: one
+        record per non-blank line, index assigned **per raw line** as
+        ``start_index + offset`` (blank lines consume an offset slot, preserving the
+        original index gaps). Has no forward lookahead, so every event is
+        ``parser_safe``. Subclasses that assign indices per parsed message (Codex,
+        Droid, Gemini) or do lookahead (Claude) override this.
+        """
+        offset = 0
+        for raw in raw_lines:
+            idx = start_index + offset
+            offset += 1
+            if not raw.text.strip():
+                continue
+            record = self.parse_line(raw.text, idx)
+            records: list[ParsedMessage | ParsedToolEvent] = [record] if record else []
+            yield ParseEvent(
+                byte_offset=raw.byte_offset,
+                raw_line_no=raw.raw_line_no,
+                parsed_index=idx,
+                records=records,
+                parser_safe=True,
+            )
+
+    def finalize(self) -> list[ParsedAdjustment]:
+        """Post-pass mutations to already-yielded messages (default: none)."""
+        return []
+
     def parse_lines(
         self, lines: list[str], start_index: int = 0
     ) -> list[ParsedMessage | ParsedToolEvent]:
         """
         Parse multiple lines from the transcript.
+
+        Implemented in terms of :meth:`iter_parse_events` + :meth:`finalize` so the
+        batch and streaming paths share one implementation. ``finalize`` adjustments
+        are applied before returning, reproducing the original batch output.
 
         Args:
             lines: List of raw JSON line strings
@@ -258,12 +372,10 @@ class BaseTranscriptParser:
             List of ParsedMessage and/or ParsedToolEvent records, in source order.
         """
         results: list[ParsedMessage | ParsedToolEvent] = []
-        for i, line in enumerate(lines):
-            if not line.strip():
-                continue
-            parsed = self.parse_line(line, start_index + i)
-            if parsed:
-                results.append(parsed)
+        for event in self.iter_parse_events(raw_lines_from_texts(lines), start_index):
+            results.extend(event.records)
+        for adjustment in self.finalize():
+            apply_adjustment(results, adjustment)
         return results
 
     def parse_line(self, line: str, index: int) -> ParsedMessage | ParsedToolEvent | None:

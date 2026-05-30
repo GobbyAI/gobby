@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime
 from typing import Any
 
@@ -30,6 +31,8 @@ from gobby.sessions.transcripts.base import (
     BaseTranscriptParser,
     ParsedMessage,
     ParsedToolEvent,
+    ParseEvent,
+    RawLine,
     TokenUsage,
 )
 
@@ -359,23 +362,30 @@ class CodexTranscriptParser(BaseTranscriptParser):
             message_id=self._message_id_for(index, payload.get("message_id") or payload.get("id")),
         )
 
-    def parse_lines(
-        self, lines: list[str], start_index: int = 0
-    ) -> list[ParsedMessage | ParsedToolEvent]:
-        parsed_records: list[ParsedMessage | ParsedToolEvent] = []
-        current_index = start_index
+    def iter_parse_events(
+        self, raw_lines: Iterable[RawLine], start_index: int = 0
+    ) -> Iterator[ParseEvent]:
+        """Stream events with per-ParsedMessage indexing (no forward lookahead).
 
-        for line in lines:
-            record = self.parse_line(line, current_index)
+        Mirrors the original batch ``parse_lines``: each non-skipped line yields one
+        event; only ``ParsedMessage`` records consume an index slot (tool events are
+        identified by call_id and don't participate in message ordering). Every event
+        is ``parser_safe`` since Codex has no cross-line lookahead.
+        """
+        current_index = start_index
+        for raw in raw_lines:
+            record = self.parse_line(raw.text, current_index)
             if record is None:
                 continue
-            parsed_records.append(record)
-            # Only ParsedMessage records consume an index slot; tool events are
-            # identified by call_id and don't participate in message ordering.
+            yield ParseEvent(
+                byte_offset=raw.byte_offset,
+                raw_line_no=raw.raw_line_no,
+                parsed_index=current_index,
+                records=[record],
+                parser_safe=True,
+            )
             if isinstance(record, ParsedMessage):
                 current_index += 1
-
-        return parsed_records
 
     def _parse_mcp_tool_call(
         self,
