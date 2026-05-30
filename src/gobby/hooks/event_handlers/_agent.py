@@ -8,7 +8,7 @@ import psycopg
 
 from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.events import HookEvent, HookResponse, SessionSource
-from gobby.skills.formatting import format_skill_fetch_context, skill_fetch_directive
+from gobby.skills.formatting import skill_fetch_directive
 
 logger = logging.getLogger(__name__)
 
@@ -248,7 +248,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
         if not skill:
             return self._skill_not_found_context(skill_name, command_prefix=command_prefix)
 
-        return format_skill_fetch_context(skill.name, args)
+        return skill_fetch_directive(skill.name)
 
     def _suggest_skills(self, prompt: str) -> str | None:
         """Suggest skills based on trigger keyword matching.

@@ -33,7 +33,9 @@ class TestGobbyRouterSkill:
             "/gobby:<skill> [args]",
             'get_skill(name="<skill>")',
             "does not inline skill bodies",
-            "Preserve",
+            "Trailing command arguments remain in the original user prompt",
+            "must not be",
+            "duplicated into `<gobby-context>`",
             "Do not present `/gobby` as universal syntax.",
         ):
             assert text in body

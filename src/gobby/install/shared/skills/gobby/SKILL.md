@@ -38,8 +38,9 @@ $gobby skill <skill> [args]
 /gobby:<skill> [args]
 ```
 
-The router emits a fetch directive only. It does not inline skill bodies. Preserve
-the user's trailing arguments and continue after the named skill is loaded.
+The router emits a fetch directive only. It does not inline skill bodies.
+Trailing command arguments remain in the original user prompt and must not be
+duplicated into `<gobby-context>`. Continue after the named skill is loaded.
 
 ## MCP Server Discovery
 

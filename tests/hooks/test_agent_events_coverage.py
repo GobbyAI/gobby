@@ -315,7 +315,8 @@ class TestInterceptSkillCommand:
             'Call get_skill(name="expand") on gobby-skills through mcp__gobby__ progressive discovery'
             in result
         )
-        assert "some args" in result
+        assert "User arguments:" not in result
+        assert "some args" not in result
 
     def test_codex_gobby_space_skill(self) -> None:
         handler = _TestHandler()
@@ -331,7 +332,29 @@ class TestInterceptSkillCommand:
             'Call get_skill(name="expand") on gobby-skills through mcp__gobby__ progressive discovery'
             in result
         )
-        assert "some args" in result
+        assert "User arguments:" not in result
+        assert "some args" not in result
+
+    def test_codex_gobby_coderabbit_multiline_paste_does_not_duplicate_args(self) -> None:
+        handler = _TestHandler()
+        mock_skill = MagicMock()
+        mock_skill.name = "coderabbit"
+        mock_skill.content = "# CodeRabbit"
+        handler._skill_manager.resolve_skill_name.return_value = mock_skill
+
+        result = handler._intercept_skill_command(
+            "$gobby coderabbit CodeRabbit finding 1\n"
+            "Path: src/gobby/hooks/event_handlers/_agent.py\n"
+            "Comment: duplicated clipboard text"
+        )
+
+        assert result is not None
+        assert (
+            'Call get_skill(name="coderabbit") on gobby-skills through mcp__gobby__ progressive discovery'
+            in result
+        )
+        assert "User arguments:" not in result
+        assert "CodeRabbit finding 1" not in result
 
     def test_gobby_plan_does_not_inline_oversized_skill_body(self) -> None:
         handler = _TestHandler()
@@ -347,7 +370,8 @@ class TestInterceptSkillCommand:
             'Call get_skill(name="plan") on gobby-skills through mcp__gobby__ progressive discovery'
             in result
         )
-        assert "User arguments: draft auth" in result
+        assert "User arguments:" not in result
+        assert "draft auth" not in result
         assert "<skill-context" not in result
         assert "# Plan" not in result
         assert "... [truncated]" not in result
@@ -387,7 +411,9 @@ class TestInterceptSkillCommand:
         handler._skill_manager.resolve_skill_name.return_value = mock_skill
 
         result = handler._intercept_skill_command("/gobby:expand --tdd")
-        assert "User arguments: --tdd" in result
+        assert result is not None
+        assert "User arguments:" not in result
+        assert "--tdd" not in result
 
     def test_gobby_skills_namespace(self) -> None:
         handler = _TestHandler()
@@ -428,7 +454,8 @@ class TestInterceptSkillCommand:
 
         result = handler._intercept_skill_command("/gobby skills bridge --verbose")
         assert result is not None
-        assert "User arguments: --verbose" in result
+        assert "User arguments:" not in result
+        assert "--verbose" not in result
 
     def test_gobby_skills_bare_returns_help(self) -> None:
         handler = _TestHandler()
