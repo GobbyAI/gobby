@@ -1333,6 +1333,57 @@ class TestExecuteSpawnErrorPaths:
         assert call_kwargs["env"]["GOBBY_MACHINE_ID"] == "machine-xyz"
 
     @pytest.mark.asyncio
+    async def test_claude_terminal_uses_workspace_mcp_config(self, tmp_path: Path) -> None:
+        """Claude isolated spawns must not fall back to conflicting user MCP scope."""
+        (tmp_path / ".mcp.json").write_text(
+            '{"mcpServers":{"gobby":{"command":"uv","args":["run","gobby","mcp-server"]}}}'
+        )
+        request = SpawnRequest(
+            prompt="Test",
+            cwd=str(tmp_path),
+            provider="claude",
+            session_id="sess",
+            run_id="run",
+            parent_session_id="parent",
+            project_id="proj",
+            session_manager=MagicMock(),
+            machine_id="m",
+        )
+
+        mock_spawn_context = MagicMock()
+        mock_spawn_context.session_id = "child"
+        mock_spawn_context.agent_run_id = "run-1"
+        mock_spawn_context.env_vars = {}
+
+        mock_spawner = MagicMock()
+        mock_spawner.spawn.return_value = MagicMock(
+            success=True,
+            pid=99,
+            terminal_type="tmux",
+        )
+
+        with (
+            patch(
+                "gobby.agents.spawn_executor.prepare_terminal_spawn",
+                return_value=mock_spawn_context,
+            ),
+            patch(
+                "gobby.agents.spawn_executor.TmuxSpawner",
+                return_value=mock_spawner,
+            ),
+        ):
+            result = await execute_spawn(request)
+
+        command = mock_spawner.spawn.call_args.kwargs["command"]
+        mcp_config_path = str(tmp_path / ".mcp.json")
+        assert result.success is True
+        assert command[-1] == "Test"
+        assert "--mcp-config" in command
+        assert command[command.index("--mcp-config") + 1] == mcp_config_path
+        assert "--strict-mcp-config" in command
+        assert command.index("--strict-mcp-config") < command.index("Test")
+
+    @pytest.mark.asyncio
     async def test_claude_terminal_tmux_session_name_in_result(self) -> None:
         """Test that tmux_session_name is propagated to SpawnResult."""
         mock_session_manager = MagicMock()

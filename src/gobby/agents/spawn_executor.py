@@ -9,6 +9,7 @@ import json
 import logging
 import shutil
 from collections.abc import Mapping
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from gobby.agents.constants import ALL_TERMINAL_ENV_VARS
@@ -238,12 +239,15 @@ async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
     # (and auto-activate the workflow, which delivers the prompt via on_enter).
     cmd, _cmd_env = build_cli_command(
         cli="claude",
-        prompt=request.prompt,
+        prompt=None,
         session_id=gobby_session_id,
         auto_approve=True,
         model=request.model,
         reasoning_effort=request.effective_reasoning_effort,
     )
+    claude_mcp_config = Path(request.cwd) / ".mcp.json"
+    if claude_mcp_config.exists():
+        cmd.extend(["--mcp-config", str(claude_mcp_config), "--strict-mcp-config"])
 
     # Resolve sandbox config if provided
     sandbox_config = _sandbox_config_for_spawn(request.sandbox_config, spawn_context.env_vars)
@@ -260,6 +264,9 @@ async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
         )
         sandbox_args, sandbox_env = resolver.resolve(sandbox_config, paths)
         cmd.extend(sandbox_args)
+
+    if request.prompt:
+        cmd.append(request.prompt)
 
     # Merge env vars: spawn context + sandbox
     env = spawn_context.env_vars.copy()
