@@ -1,0 +1,371 @@
+use postgres::Client;
+
+use crate::config::Context;
+
+use super::common::{
+    PgParam, SymbolFilters, escape_like, param_refs, push_param, push_path_filter,
+    push_symbol_filters, push_visible_project_file_filter, query_count, sanitize_pg_search_query,
+};
+
+pub fn count_text(
+    conn: &mut Client,
+    query: &str,
+    project_id: &str,
+    language: Option<&str>,
+    paths: &[String],
+) -> usize {
+    if query.trim().is_empty() {
+        return 0;
+    }
+
+    let bm25_query = sanitize_pg_search_query(query);
+    // Intentional fallback: when BM25 sanitization empties the query, use
+    // count_symbols_by_name_like, which may count LIKE matches BM25 filtered out.
+    if bm25_query.is_empty() {
+        return count_symbols_by_name_like(conn, query, project_id, language, paths);
+    }
+
+    let mut params = Vec::new();
+    let query_placeholder = push_param(&mut params, bm25_query);
+    let project_placeholder = push_param(&mut params, project_id.to_string());
+    let mut conditions = vec![
+        format!(
+            "(cs.name @@@ {q} OR cs.qualified_name @@@ {q} OR cs.signature @@@ {q} OR cs.docstring @@@ {q} OR cs.summary @@@ {q})",
+            q = query_placeholder
+        ),
+        format!("cs.project_id = {project_placeholder}"),
+    ];
+    push_symbol_filters(
+        &mut conditions,
+        &mut params,
+        "cs",
+        SymbolFilters {
+            kind: None,
+            language,
+            paths,
+        },
+    );
+    let refs = param_refs(&params);
+    let sql = format!(
+        "SELECT COUNT(*)::BIGINT AS count
+         FROM code_symbols cs
+         JOIN code_indexed_files cf
+           ON cf.project_id = cs.project_id AND cf.file_path = cs.file_path
+         WHERE {}",
+        conditions.join(" AND ")
+    );
+    let count = conn
+        .query_one(&sql, &refs)
+        .ok()
+        .and_then(|row| row.try_get::<_, i64>("count").ok())
+        .unwrap_or(0);
+    if count > 0 {
+        return count as usize;
+    }
+
+    count_symbols_by_name_like(conn, query, project_id, language, paths)
+}
+
+fn count_symbols_by_name_like(
+    conn: &mut Client,
+    query: &str,
+    project_id: &str,
+    language: Option<&str>,
+    paths: &[String],
+) -> usize {
+    let escaped_query = escape_like(query);
+    let pattern = format!("%{escaped_query}%");
+    let mut params = Vec::new();
+    let project_placeholder = push_param(&mut params, project_id.to_string());
+    let name_placeholder = push_param(&mut params, pattern.clone());
+    let qualified_placeholder = push_param(&mut params, pattern);
+    let mut conditions = vec![
+        format!("cs.project_id = {project_placeholder}"),
+        format!(
+            "(cs.name LIKE {name_placeholder} ESCAPE '\\' OR cs.qualified_name LIKE {qualified_placeholder} ESCAPE '\\')"
+        ),
+    ];
+    push_symbol_filters(
+        &mut conditions,
+        &mut params,
+        "cs",
+        SymbolFilters {
+            kind: None,
+            language,
+            paths,
+        },
+    );
+    let refs = param_refs(&params);
+    let sql = format!(
+        "SELECT COUNT(*)::BIGINT AS count
+         FROM code_symbols cs
+         JOIN code_indexed_files cf
+           ON cf.project_id = cs.project_id AND cf.file_path = cs.file_path
+         WHERE {}",
+        conditions.join(" AND ")
+    );
+    conn.query_one(&sql, &refs)
+        .ok()
+        .and_then(|row| row.try_get::<_, i64>("count").ok())
+        .unwrap_or(0) as usize
+}
+
+/// Count matching content chunks using pg_search BM25, with LIKE fallback.
+pub fn count_content(
+    conn: &mut Client,
+    query: &str,
+    project_id: &str,
+    language: Option<&str>,
+    paths: &[String],
+) -> usize {
+    if query.trim().is_empty() {
+        return 0;
+    }
+
+    let bm25_query = sanitize_pg_search_query(query);
+    if bm25_query.is_empty() {
+        return count_content_like(conn, query, project_id, language, paths);
+    }
+    let mut params = Vec::new();
+    let query_placeholder = push_param(&mut params, bm25_query);
+    let project_placeholder = push_param(&mut params, project_id.to_string());
+    let mut conditions = vec![
+        format!("c.content @@@ {query_placeholder}"),
+        format!("c.project_id = {project_placeholder}"),
+    ];
+    if let Some(lang) = language {
+        let placeholder = push_param(&mut params, lang.to_string());
+        conditions.push(format!("c.language = {placeholder}"));
+    }
+    push_path_filter(&mut conditions, &mut params, "c", paths);
+    let refs = param_refs(&params);
+    let sql = format!(
+        "SELECT COUNT(*)::BIGINT AS count
+         FROM code_content_chunks c
+         JOIN code_indexed_files cf
+           ON cf.project_id = c.project_id AND cf.file_path = c.file_path
+         WHERE {}",
+        conditions.join(" AND ")
+    );
+    let count = conn
+        .query_one(&sql, &refs)
+        .ok()
+        .and_then(|row| row.try_get::<_, i64>("count").ok())
+        .unwrap_or(0);
+    if count > 0 {
+        return count as usize;
+    }
+
+    count_content_like(conn, query, project_id, language, paths)
+}
+
+fn count_content_like(
+    conn: &mut Client,
+    query: &str,
+    project_id: &str,
+    language: Option<&str>,
+    paths: &[String],
+) -> usize {
+    let escaped_query = escape_like(query);
+    let like_query = format!("%{escaped_query}%");
+    let mut params = Vec::new();
+    let project_placeholder = push_param(&mut params, project_id.to_string());
+    let like_placeholder = push_param(&mut params, like_query);
+    let mut conditions = vec![
+        format!("c.project_id = {project_placeholder}"),
+        format!("c.content LIKE {like_placeholder} ESCAPE '\\'"),
+    ];
+    if let Some(lang) = language {
+        let placeholder = push_param(&mut params, lang.to_string());
+        conditions.push(format!("c.language = {placeholder}"));
+    }
+    push_path_filter(&mut conditions, &mut params, "c", paths);
+    let refs = param_refs(&params);
+    let sql = format!(
+        "SELECT COUNT(*)::BIGINT AS count
+         FROM code_content_chunks c
+         JOIN code_indexed_files cf
+           ON cf.project_id = c.project_id AND cf.file_path = c.file_path
+         WHERE {}",
+        conditions.join(" AND ")
+    );
+    conn.query_one(&sql, &refs)
+        .ok()
+        .and_then(|row| row.try_get::<_, i64>("count").ok())
+        .unwrap_or(0) as usize
+}
+
+fn count_visible_symbols_by_conditions(
+    conn: &mut Client,
+    ctx: &Context,
+    mut conditions: Vec<String>,
+    mut params: Vec<PgParam>,
+    language: Option<&str>,
+    paths: &[String],
+) -> usize {
+    push_symbol_filters(
+        &mut conditions,
+        &mut params,
+        "cs",
+        SymbolFilters {
+            kind: None,
+            language,
+            paths,
+        },
+    );
+    push_visible_project_file_filter(&mut conditions, &mut params, "cs", "cf", ctx);
+    let sql = format!(
+        "SELECT COUNT(*)::BIGINT AS count
+         FROM code_symbols cs
+         JOIN code_indexed_files cf
+           ON cf.project_id = cs.project_id AND cf.file_path = cs.file_path
+         WHERE {}",
+        conditions.join(" AND ")
+    );
+    query_count(conn, &sql, &params)
+}
+
+fn count_symbols_fts_visible(
+    conn: &mut Client,
+    bm25_query: &str,
+    ctx: &Context,
+    language: Option<&str>,
+    paths: &[String],
+) -> usize {
+    let mut params = Vec::new();
+    let query_placeholder = push_param(&mut params, bm25_query.to_string());
+    let conditions = vec![format!(
+        "(cs.name @@@ {q} OR cs.qualified_name @@@ {q} OR cs.signature @@@ {q} OR cs.docstring @@@ {q} OR cs.summary @@@ {q})",
+        q = query_placeholder
+    )];
+    count_visible_symbols_by_conditions(conn, ctx, conditions, params, language, paths)
+}
+
+fn count_symbols_by_name_like_visible(
+    conn: &mut Client,
+    query: &str,
+    ctx: &Context,
+    language: Option<&str>,
+    paths: &[String],
+) -> usize {
+    let escaped_query = escape_like(query);
+    let pattern = format!("%{escaped_query}%");
+    let mut params = Vec::new();
+    let name_placeholder = push_param(&mut params, pattern.clone());
+    let qualified_placeholder = push_param(&mut params, pattern);
+    let conditions = vec![format!(
+        "(cs.name LIKE {name_placeholder} ESCAPE '\\' OR cs.qualified_name LIKE {qualified_placeholder} ESCAPE '\\')"
+    )];
+    count_visible_symbols_by_conditions(conn, ctx, conditions, params, language, paths)
+}
+
+fn push_content_filters(
+    conditions: &mut Vec<String>,
+    params: &mut Vec<PgParam>,
+    alias: &str,
+    language: Option<&str>,
+    paths: &[String],
+) {
+    if let Some(lang) = language {
+        let placeholder = push_param(params, lang.to_string());
+        conditions.push(format!("{alias}.language = {placeholder}"));
+    }
+    push_path_filter(conditions, params, alias, paths);
+}
+
+fn count_visible_content_by_conditions(
+    conn: &mut Client,
+    ctx: &Context,
+    mut conditions: Vec<String>,
+    mut params: Vec<PgParam>,
+    language: Option<&str>,
+    paths: &[String],
+) -> usize {
+    push_content_filters(&mut conditions, &mut params, "c", language, paths);
+    push_visible_project_file_filter(&mut conditions, &mut params, "c", "cf", ctx);
+    let sql = format!(
+        "SELECT COUNT(*)::BIGINT AS count
+         FROM code_content_chunks c
+         JOIN code_indexed_files cf
+           ON cf.project_id = c.project_id AND cf.file_path = c.file_path
+         WHERE {}",
+        conditions.join(" AND ")
+    );
+    query_count(conn, &sql, &params)
+}
+
+fn count_content_bm25_visible(
+    conn: &mut Client,
+    bm25_query: &str,
+    ctx: &Context,
+    language: Option<&str>,
+    paths: &[String],
+) -> usize {
+    let mut params = Vec::new();
+    let query_placeholder = push_param(&mut params, bm25_query.to_string());
+    let conditions = vec![format!("c.content @@@ {query_placeholder}")];
+    count_visible_content_by_conditions(conn, ctx, conditions, params, language, paths)
+}
+
+fn count_content_like_visible(
+    conn: &mut Client,
+    query: &str,
+    ctx: &Context,
+    language: Option<&str>,
+    paths: &[String],
+) -> usize {
+    let escaped_query = escape_like(query);
+    let like_query = format!("%{escaped_query}%");
+    let mut params = Vec::new();
+    let like_placeholder = push_param(&mut params, like_query);
+    let conditions = vec![format!("c.content LIKE {like_placeholder} ESCAPE '\\'")];
+    count_visible_content_by_conditions(conn, ctx, conditions, params, language, paths)
+}
+
+pub fn count_text_visible(
+    conn: &mut Client,
+    query: &str,
+    ctx: &Context,
+    language: Option<&str>,
+    paths: &[String],
+) -> usize {
+    if query.trim().is_empty() {
+        return 0;
+    }
+
+    let bm25_query = sanitize_pg_search_query(query);
+    if bm25_query.is_empty() {
+        return count_symbols_by_name_like_visible(conn, query, ctx, language, paths);
+    }
+
+    let count = count_symbols_fts_visible(conn, &bm25_query, ctx, language, paths);
+    if count > 0 {
+        return count;
+    }
+
+    count_symbols_by_name_like_visible(conn, query, ctx, language, paths)
+}
+
+pub fn count_content_visible(
+    conn: &mut Client,
+    query: &str,
+    ctx: &Context,
+    language: Option<&str>,
+    paths: &[String],
+) -> usize {
+    if query.trim().is_empty() {
+        return 0;
+    }
+
+    let bm25_query = sanitize_pg_search_query(query);
+    if bm25_query.is_empty() {
+        return count_content_like_visible(conn, query, ctx, language, paths);
+    }
+
+    let count = count_content_bm25_visible(conn, &bm25_query, ctx, language, paths);
+    if count > 0 {
+        return count;
+    }
+
+    count_content_like_visible(conn, query, ctx, language, paths)
+}
