@@ -156,7 +156,7 @@ mod tests {
     use crate::ingest::wayback::{self, WaybackCaptureSnapshot};
     use crate::sources::{CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest};
     use crate::store::{
-        MemoryWikiStore, WikiChunk, WikiDocument, WikiIndexStore, WikiIngestion,
+        MemoryWikiStore, StoreError, WikiChunk, WikiDocument, WikiIndexStore, WikiIngestion,
         WikiIngestionEvent, WikiLink, WikiSource,
     };
 
@@ -236,43 +236,53 @@ mod tests {
     }
 
     impl WikiIndexStore for RawFirstStore {
-        fn indexed_hashes(&self) -> std::collections::BTreeMap<PathBuf, String> {
+        fn indexed_hashes(
+            &mut self,
+        ) -> Result<std::collections::BTreeMap<PathBuf, String>, StoreError> {
             self.inner.indexed_hashes()
         }
 
-        fn upsert_document(&mut self, document: WikiDocument) {
+        fn upsert_document(&mut self, document: WikiDocument) -> Result<(), StoreError> {
             self.assert_raw_exists_before_index();
-            self.inner.upsert_document(document);
+            self.inner.upsert_document(document)
         }
 
-        fn replace_chunks(&mut self, path: &Path, chunks: Vec<WikiChunk>) {
+        fn replace_chunks(
+            &mut self,
+            path: &Path,
+            chunks: Vec<WikiChunk>,
+        ) -> Result<(), StoreError> {
             self.assert_raw_exists_before_index();
-            self.inner.replace_chunks(path, chunks);
+            self.inner.replace_chunks(path, chunks)
         }
 
-        fn replace_links(&mut self, path: &Path, links: Vec<WikiLink>) {
+        fn replace_links(&mut self, path: &Path, links: Vec<WikiLink>) -> Result<(), StoreError> {
             self.assert_raw_exists_before_index();
-            self.inner.replace_links(path, links);
+            self.inner.replace_links(path, links)
         }
 
-        fn upsert_source(&mut self, source: WikiSource) {
+        fn upsert_source(&mut self, source: WikiSource) -> Result<(), StoreError> {
             self.assert_raw_exists_before_index();
-            self.inner.upsert_source(source);
+            self.inner.upsert_source(source)
         }
 
-        fn record_ingestion(&mut self, ingestion: WikiIngestion) {
+        fn record_ingestion(&mut self, ingestion: WikiIngestion) -> Result<(), StoreError> {
             self.assert_raw_exists_before_index();
-            self.inner.record_ingestion(ingestion);
+            self.inner.record_ingestion(ingestion)
         }
 
-        fn record_file_hash(&mut self, path: PathBuf, content_hash: String) {
+        fn record_file_hash(
+            &mut self,
+            path: PathBuf,
+            content_hash: String,
+        ) -> Result<(), StoreError> {
             self.assert_raw_exists_before_index();
-            self.inner.record_file_hash(path, content_hash);
+            self.inner.record_file_hash(path, content_hash)
         }
 
-        fn delete_derived_rows(&mut self, path: &Path) {
+        fn delete_derived_rows(&mut self, path: &Path) -> Result<(), StoreError> {
             self.assert_raw_exists_before_index();
-            self.inner.delete_derived_rows(path);
+            self.inner.delete_derived_rows(path)
         }
     }
 

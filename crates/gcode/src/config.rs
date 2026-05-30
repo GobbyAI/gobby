@@ -80,6 +80,7 @@ impl FalkorConfig {
 }
 
 /// Resolved runtime context for gcode commands.
+#[derive(Debug, Clone)]
 pub struct Context {
     /// PostgreSQL hub DSN
     pub database_url: String,
@@ -99,6 +100,20 @@ pub struct Context {
     pub code_vectors: CodeVectorSettings,
     /// Gobby daemon base URL (e.g. http://localhost:60887)
     pub daemon_url: Option<String>,
+    /// Project read/index scope.
+    pub index_scope: ProjectIndexScope,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum ProjectIndexScope {
+    #[default]
+    Single,
+    Overlay {
+        overlay_project_id: String,
+        overlay_root: PathBuf,
+        parent_project_id: String,
+        parent_root: PathBuf,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -112,6 +127,7 @@ pub enum ProjectIdentitySource {
     ProjectJson,
     GcodeJson,
     IsolatedRoot,
+    IsolatedOverlay,
     LinkedWorktree,
     Generated,
 }
@@ -123,6 +139,7 @@ pub struct ProjectIdentity {
     pub source: ProjectIdentitySource,
     pub warning: Option<String>,
     pub should_write_gcode_json: bool,
+    pub index_scope: ProjectIndexScope,
 }
 
 impl Context {
@@ -145,10 +162,12 @@ impl Context {
         let identity = resolve_project_identity(&project_root, MissingIdentity::Error)?;
         warn_project_identity(&identity, quiet);
         let project_id = identity.project_id;
+        let index_scope = identity.index_scope;
 
         // Resolve service configs from config_store (best-effort).
         let standalone_config = read_standalone_config();
         let mut conn = db::connect_readonly(&database_url)?;
+        validate_parent_code_index(&mut conn, &index_scope)?;
         let falkordb = resolve_falkordb_config(&mut conn, standalone_config.clone(), quiet);
         let qdrant = resolve_qdrant_config(&mut conn, standalone_config.clone(), quiet);
         let embedding = resolve_embedding_config(&mut conn, standalone_config.clone(), quiet);
@@ -166,6 +185,7 @@ impl Context {
             embedding,
             code_vectors,
             daemon_url,
+            index_scope,
         })
     }
 
@@ -190,6 +210,7 @@ impl Context {
             embedding: None,
             code_vectors: CodeVectorSettings::default(),
             daemon_url,
+            index_scope: ProjectIndexScope::Single,
         })
     }
 }
@@ -205,12 +226,35 @@ pub fn resolve_project_identity(
     if let Some(marker) = crate::project::read_isolation_marker(&root)
         && !is_self_referential_isolation_marker(&marker, &root)
     {
+        if let (Some(parent_project_path), Some(parent_project_id)) = (
+            marker.parent_project_path.as_deref(),
+            marker.parent_project_id.as_deref(),
+        ) {
+            let overlay_project_id = crate::project::code_index_id_for_root(&root);
+            let parent_root = resolve_parent_project_root(&root, parent_project_path);
+            let parent_project_id = normalize_project_id(parent_project_id)?;
+            return Ok(ProjectIdentity {
+                project_id: overlay_project_id.clone(),
+                root: root.clone(),
+                source: ProjectIdentitySource::IsolatedOverlay,
+                warning: None,
+                should_write_gcode_json: false,
+                index_scope: ProjectIndexScope::Overlay {
+                    overlay_project_id,
+                    overlay_root: root,
+                    parent_project_id,
+                    parent_root,
+                },
+            });
+        }
+
         return Ok(ProjectIdentity {
             project_id: crate::project::code_index_id_for_root(&root),
             root,
             source: ProjectIdentitySource::IsolatedRoot,
             warning: None,
             should_write_gcode_json: false,
+            index_scope: ProjectIndexScope::Single,
         });
     }
 
@@ -235,6 +279,7 @@ pub fn resolve_project_identity(
             source: ProjectIdentitySource::LinkedWorktree,
             warning,
             should_write_gcode_json: false,
+            index_scope: ProjectIndexScope::Single,
         });
     }
 
@@ -246,6 +291,7 @@ pub fn resolve_project_identity(
             source: ProjectIdentitySource::ProjectJson,
             warning: None,
             should_write_gcode_json: false,
+            index_scope: ProjectIndexScope::Single,
         });
     }
     if gobby_dir.join("gcode.json").exists() {
@@ -255,6 +301,7 @@ pub fn resolve_project_identity(
             source: ProjectIdentitySource::GcodeJson,
             warning: None,
             should_write_gcode_json: false,
+            index_scope: ProjectIndexScope::Single,
         });
     }
 
@@ -265,6 +312,7 @@ pub fn resolve_project_identity(
             source: ProjectIdentitySource::Generated,
             warning: None,
             should_write_gcode_json: true,
+            index_scope: ProjectIndexScope::Single,
         }),
         MissingIdentity::Error => anyhow::bail!(
             "No gcode project found. Run `gcode init` to initialize, \
@@ -280,14 +328,17 @@ fn is_self_referential_isolation_marker(
     let Some(parent_project_path) = marker.parent_project_path.as_deref() else {
         return false;
     };
+    resolve_parent_project_root(root, parent_project_path) == root
+}
+
+fn resolve_parent_project_root(root: &Path, parent_project_path: &str) -> PathBuf {
     let parent = PathBuf::from(parent_project_path);
     let parent = if parent.is_absolute() {
         parent
     } else {
         root.join(parent)
     };
-    let parent = parent.canonicalize().unwrap_or(parent);
-    parent == root
+    parent.canonicalize().unwrap_or(parent)
 }
 
 fn normalize_project_id(project_id: &str) -> anyhow::Result<String> {
@@ -296,6 +347,39 @@ fn normalize_project_id(project_id: &str) -> anyhow::Result<String> {
         anyhow::bail!("--project-id must not be empty");
     }
     Ok(project_id.to_string())
+}
+
+pub(crate) fn validate_parent_code_index(
+    conn: &mut Client,
+    scope: &ProjectIndexScope,
+) -> anyhow::Result<()> {
+    let ProjectIndexScope::Overlay {
+        parent_project_id,
+        parent_root,
+        ..
+    } = scope
+    else {
+        return Ok(());
+    };
+
+    let exists = conn
+        .query_one(
+            "SELECT EXISTS(
+                SELECT 1 FROM code_indexed_files WHERE project_id = $1
+            )",
+            &[parent_project_id],
+        )
+        .and_then(|row| row.try_get::<_, bool>(0))?;
+
+    if !exists {
+        anyhow::bail!(
+            "parent code index missing for {} ({})",
+            parent_root.display(),
+            short_id(parent_project_id)
+        );
+    }
+
+    Ok(())
 }
 
 pub fn warn_project_identity(identity: &ProjectIdentity, quiet: bool) {
@@ -944,14 +1028,50 @@ mod tests {
     }
 
     #[test]
-    fn isolated_marker_uses_path_derived_id_without_warning() {
+    fn isolated_marker_with_parent_metadata_resolves_overlay_scope() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let parent = tmp.path().join("parent");
+        std::fs::create_dir(&parent).expect("create parent");
+        let worktree = tmp.path().join("worktree");
+        std::fs::create_dir(&worktree).expect("create worktree");
+        write_project_json(
+            &worktree,
+            serde_json::json!({
+                "id": "parent-id",
+                "parent_project_path": parent.to_string_lossy(),
+                "parent_project_id": "parent-id"
+            }),
+        );
+
+        let identity =
+            resolve_project_identity(&worktree, MissingIdentity::Error).expect("identity");
+
+        assert_eq!(
+            identity.project_id,
+            crate::project::code_index_id_for_root(&worktree)
+        );
+        assert_eq!(identity.source, ProjectIdentitySource::IsolatedOverlay);
+        assert_eq!(
+            identity.index_scope,
+            ProjectIndexScope::Overlay {
+                overlay_project_id: crate::project::code_index_id_for_root(&worktree),
+                overlay_root: worktree.canonicalize().unwrap(),
+                parent_project_id: "parent-id".to_string(),
+                parent_root: parent.canonicalize().unwrap(),
+            }
+        );
+        assert!(!identity.should_write_gcode_json);
+        assert!(identity.warning.is_none());
+    }
+
+    #[test]
+    fn isolated_marker_without_complete_parent_metadata_keeps_single_scope() {
         let tmp = tempfile::tempdir().expect("tempdir");
         write_project_json(
             tmp.path(),
             serde_json::json!({
                 "id": "parent-id",
-                "parent_project_path": "/parent",
-                "parent_project_id": "parent-id"
+                "parent_project_path": "/parent"
             }),
         );
 
@@ -963,8 +1083,7 @@ mod tests {
             crate::project::code_index_id_for_root(tmp.path())
         );
         assert_eq!(identity.source, ProjectIdentitySource::IsolatedRoot);
-        assert!(!identity.should_write_gcode_json);
-        assert!(identity.warning.is_none());
+        assert_eq!(identity.index_scope, ProjectIndexScope::Single);
     }
 
     #[test]

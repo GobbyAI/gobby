@@ -1,0 +1,223 @@
+use std::collections::{HashMap, HashSet};
+use std::sync::OnceLock;
+
+use super::context::{ImportResolutionContext, JS_BUILTIN_MODULES};
+
+pub(super) fn is_external_python_module(
+    module: &str,
+    import_context: &ImportResolutionContext,
+) -> bool {
+    if module.starts_with('.') {
+        return false;
+    }
+
+    !import_context.python_modules.iter().any(|local_module| {
+        local_module == module
+            || local_module.starts_with(&format!("{module}."))
+            || module.starts_with(&format!("{local_module}."))
+    })
+}
+
+pub(super) fn is_external_js_module(
+    module: &str,
+    import_context: &ImportResolutionContext,
+) -> bool {
+    if module.starts_with("node:") {
+        return true;
+    }
+    if module.starts_with("./")
+        || module.starts_with("../")
+        || module.starts_with('/')
+        || module.starts_with('#')
+        || module.starts_with("~/")
+        || module.starts_with("@/")
+    {
+        return false;
+    }
+
+    let Some(package_name) = js_package_name(module) else {
+        return false;
+    };
+    if import_context.js_self_package_name.as_deref() == Some(package_name) {
+        return false;
+    }
+
+    import_context.js_external_packages.contains(package_name)
+        || JS_BUILTIN_MODULES.contains(&package_name)
+}
+
+pub(super) fn is_external_go_module(
+    module: &str,
+    import_context: &ImportResolutionContext,
+) -> bool {
+    if module.starts_with('.') {
+        return false;
+    }
+    if let Some(self_module) = import_context.go_module_path.as_deref()
+        && (module == self_module || module.starts_with(&format!("{self_module}/")))
+    {
+        return false;
+    }
+    true
+}
+
+pub(super) fn rust_external_roots(import_context: &ImportResolutionContext) -> HashSet<String> {
+    let mut roots = import_context.rust_external_crates.clone();
+    roots.extend(
+        ["std", "core", "alloc", "proc_macro", "test"]
+            .into_iter()
+            .map(ToOwned::to_owned),
+    );
+    if let Some(self_crate) = import_context.rust_self_crate_name.as_deref() {
+        roots.remove(self_crate);
+    }
+    roots
+}
+
+pub(super) fn java_declared_types(contents: &str) -> Vec<String> {
+    declared_types(contents, &["class", "interface", "enum", "record"])
+}
+
+pub(super) fn csharp_declared_types(contents: &str) -> Vec<String> {
+    declared_types(
+        contents,
+        &["class", "interface", "enum", "record", "struct"],
+    )
+}
+
+pub(super) fn declared_types(contents: &str, keywords: &[&str]) -> Vec<String> {
+    let mut names = Vec::new();
+    let tokens: Vec<&str> = contents
+        .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+        .filter(|token| !token.is_empty())
+        .collect();
+    for window in tokens.windows(2) {
+        if keywords.contains(&window[0]) {
+            names.push(window[1].to_string());
+        }
+    }
+    names
+}
+
+pub(super) fn php_declared_symbols(contents: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let tokens: Vec<&str> = contents
+        .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+        .filter(|token| !token.is_empty())
+        .collect();
+    for window in tokens.windows(2) {
+        if matches!(
+            window[0],
+            "class" | "interface" | "trait" | "enum" | "function"
+        ) {
+            names.push(window[1].to_string());
+        }
+    }
+    names
+}
+
+pub(super) fn is_external_java_class(
+    class_path: &str,
+    import_context: &ImportResolutionContext,
+) -> bool {
+    !import_context.java_local_classes.contains(class_path)
+        && class_path
+            .rsplit('.')
+            .next()
+            .is_none_or(|class_name| !import_context.java_local_classes.contains(class_name))
+}
+
+pub(super) fn is_external_csharp_path(
+    path: &str,
+    import_context: &ImportResolutionContext,
+) -> bool {
+    path.split('.')
+        .next()
+        .is_some_and(|root| !import_context.csharp_local_roots.contains(root))
+}
+
+pub(super) fn is_external_php_symbol(path: &str, import_context: &ImportResolutionContext) -> bool {
+    !import_context.php_local_symbols.contains(path)
+        && path
+            .rsplit('\\')
+            .next()
+            .is_none_or(|name| !import_context.php_local_symbols.contains(name))
+}
+
+pub(super) fn is_external_rust_root(root: &str, import_context: &ImportResolutionContext) -> bool {
+    if matches!(root, "crate" | "self" | "super") {
+        return false;
+    }
+    if import_context.rust_self_crate_name.as_deref() == Some(root) {
+        return false;
+    }
+    import_context.rust_external_crates.contains(root)
+        || matches!(root, "std" | "core" | "alloc" | "proc_macro" | "test")
+}
+
+/// Returns a curated Ruby `require` to constant-root mapping.
+///
+/// Keep the bundled map small and documented in
+/// `assets/import_roots/ruby_require_roots.json`; use runtime overrides when
+/// constructing `ImportResolutionContext` for project-specific roots.
+pub(super) fn ruby_require_root(required: &str) -> Option<&'static str> {
+    bundled_ruby_require_roots()
+        .get(required)
+        .map(String::as_str)
+}
+pub(super) fn is_external_dart_uri(uri: &str, import_context: &ImportResolutionContext) -> bool {
+    if uri.starts_with("dart:") {
+        return true;
+    }
+    let Some(package) = uri
+        .strip_prefix("package:")
+        .and_then(|rest| rest.split('/').next())
+    else {
+        return false;
+    };
+    import_context.dart_self_package_name.as_deref() != Some(package)
+        && import_context.dart_external_packages.contains(package)
+}
+
+/// Returns curated Elixir dependency module roots.
+///
+/// Hex package names do not mechanically map to Elixir module roots. Maintain
+/// the bundled map in `assets/import_roots/elixir_dependency_roots.json`; use
+/// runtime overrides when constructing `ImportResolutionContext` if discovery
+/// can provide more precise roots.
+pub(super) fn elixir_dependency_roots(dep: &str) -> Option<&'static [String]> {
+    bundled_elixir_dependency_roots()
+        .get(dep)
+        .map(Vec::as_slice)
+}
+
+pub(super) fn bundled_ruby_require_roots() -> &'static HashMap<String, String> {
+    static ROOTS: OnceLock<HashMap<String, String>> = OnceLock::new();
+    ROOTS.get_or_init(|| {
+        serde_json::from_str(include_str!(
+            "../../../assets/import_roots/ruby_require_roots.json"
+        ))
+        .expect("bundled Ruby require roots JSON parses")
+    })
+}
+
+pub(super) fn bundled_elixir_dependency_roots() -> &'static HashMap<String, Vec<String>> {
+    static ROOTS: OnceLock<HashMap<String, Vec<String>>> = OnceLock::new();
+    ROOTS.get_or_init(|| {
+        serde_json::from_str(include_str!(
+            "../../../assets/import_roots/elixir_dependency_roots.json"
+        ))
+        .expect("bundled Elixir dependency roots JSON parses")
+    })
+}
+pub(super) fn js_package_name(module: &str) -> Option<&str> {
+    if let Some(stripped) = module.strip_prefix('@') {
+        let mut segments = stripped.split('/');
+        let scope = segments.next()?;
+        let package = segments.next()?;
+        let consumed = scope.len() + package.len() + 2;
+        module.get(..consumed)
+    } else {
+        module.split('/').next()
+    }
+}

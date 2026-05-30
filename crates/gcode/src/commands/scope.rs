@@ -3,6 +3,7 @@ use std::path::{Component, Path, PathBuf};
 use postgres::Client;
 
 use crate::config::Context;
+use crate::visibility;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ProjectMatch {
@@ -40,28 +41,12 @@ pub(crate) fn path_exists_in_current_project(ctx: &Context, file_path: &str) -> 
     abs.starts_with(root)
 }
 
-pub(crate) fn indexed_file_exists(conn: &mut Client, project_id: &str, file_path: &str) -> bool {
-    conn.query_one(
-        "SELECT EXISTS(
-            SELECT 1 FROM code_indexed_files
-            WHERE project_id = $1 AND file_path = $2
-        )",
-        &[&project_id, &file_path],
-    )
-    .and_then(|row| row.try_get::<_, bool>(0))
-    .unwrap_or(false)
+pub(crate) fn indexed_file_exists(conn: &mut Client, ctx: &Context, file_path: &str) -> bool {
+    visibility::indexed_file_exists(conn, ctx, file_path)
 }
 
-pub(crate) fn content_chunks_exist(conn: &mut Client, project_id: &str, file_path: &str) -> bool {
-    conn.query_one(
-        "SELECT EXISTS(
-            SELECT 1 FROM code_content_chunks
-            WHERE project_id = $1 AND file_path = $2
-        )",
-        &[&project_id, &file_path],
-    )
-    .and_then(|row| row.try_get::<_, bool>(0))
-    .unwrap_or(false)
+pub(crate) fn content_chunks_exist(conn: &mut Client, ctx: &Context, file_path: &str) -> bool {
+    visibility::content_chunks_exist(conn, ctx, file_path)
 }
 
 pub(crate) fn current_indexed_path_is_valid(
@@ -69,8 +54,7 @@ pub(crate) fn current_indexed_path_is_valid(
     ctx: &Context,
     file_path: &str,
 ) -> bool {
-    indexed_file_exists(conn, &ctx.project_id, file_path)
-        && path_exists_in_current_project(ctx, file_path)
+    indexed_file_exists(conn, ctx, file_path) && path_exists_in_current_project(ctx, file_path)
 }
 
 pub(crate) fn other_project_for_path(
@@ -166,6 +150,7 @@ mod tests {
             embedding: None,
             code_vectors: crate::config::CodeVectorSettings::default(),
             daemon_url: None,
+            index_scope: crate::config::ProjectIndexScope::Single,
         }
     }
 

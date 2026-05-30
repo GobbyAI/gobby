@@ -8,6 +8,7 @@ use crate::index::security;
 
 /// Maximum file size to index (10 MB).
 const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
+const SKIPPED_EXTENSIONS: &[&str] = &["mjs", "md", "markdown"];
 
 /// How a file should be indexed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,6 +51,10 @@ pub fn classify_file(
     path: &Path,
     exclude_patterns: &[String],
 ) -> Option<FileClassification> {
+    if has_skipped_extension(path) {
+        return None;
+    }
+
     if !is_safe_text_file(root, path, exclude_patterns) {
         return None;
     }
@@ -75,6 +80,16 @@ pub fn content_language(path: &Path) -> String {
         .map(|e| e.to_string_lossy().to_lowercase())
         .filter(|ext| !ext.is_empty())
         .unwrap_or_else(|| "text".to_string())
+}
+
+fn has_skipped_extension(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| {
+            SKIPPED_EXTENSIONS
+                .iter()
+                .any(|skipped| ext.eq_ignore_ascii_case(skipped))
+        })
 }
 
 fn is_safe_text_file(root: &Path, path: &Path, exclude_patterns: &[String]) -> bool {
@@ -137,6 +152,8 @@ mod tests {
         write_file(root, "README.md", b"# Title\n");
         write_file(root, "skills/gcode/SKILL.md", b"# gcode\n");
         write_file(root, "src/lib.rs", b"fn main() {}\n");
+        write_file(root, "src/generated.mjs", b"export const value = 1;\n");
+        write_file(root, "docs/reference.markdown", b"# Reference\n");
         write_file(root, "docs/guide.rst", b"Guide\n=====\n");
         write_file(root, "notes.txt", b"plain notes\n");
         write_file(root, "config/app.properties", b"mode=dev\n");
@@ -153,10 +170,7 @@ mod tests {
         // discover_files omits api_key.txt via the security module
         // (SECRET_SUBSTRINGS matches "api_key"), image.bin via binary
         // detection, and target/* via the explicit excludes vector.
-        assert_eq!(
-            rels(root, ast),
-            vec!["README.md", "skills/gcode/SKILL.md", "src/lib.rs"]
-        );
+        assert_eq!(rels(root, ast), vec!["src/lib.rs"]);
         assert_eq!(
             rels(root, content_only),
             vec![
@@ -182,6 +196,29 @@ mod tests {
             Some(FileClassification::ContentOnly)
         );
         assert_eq!(content_language(&root.join("Makefile")), "text");
+    }
+
+    #[test]
+    fn classifies_mjs_and_markdown_as_skipped() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        write_file(root, "src/generated.mjs", b"export const value = 1;\n");
+        write_file(root, "README.md", b"# Title\n");
+        write_file(root, "docs/guide.markdown", b"# Guide\n");
+        let excludes = Vec::new();
+
+        assert_eq!(
+            classify_file(root, &root.join("src/generated.mjs"), &excludes),
+            None
+        );
+        assert_eq!(
+            classify_file(root, &root.join("README.md"), &excludes),
+            None
+        );
+        assert_eq!(
+            classify_file(root, &root.join("docs/guide.markdown"), &excludes),
+            None
+        );
     }
 
     #[test]
