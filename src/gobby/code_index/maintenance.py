@@ -163,7 +163,7 @@ async def _summarize_unsummarized(
     await _update_symbol_summaries(context, results)
 
     if results:
-        logger.info(
+        logger.debug(
             f"Generated {len(results)} summaries for {project.id} "
             f"({len(symbols) - len(results)} skipped/failed)"
         )

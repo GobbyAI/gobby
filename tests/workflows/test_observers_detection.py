@@ -1468,11 +1468,15 @@ class TestDetectVerificationEvidence:
         command = "uv run pytest tests/workflows/test_hooks.py -v"
         event = _make_bash_event("passed", command=command, cwd="/repo")
 
-        with caplog.at_level(logging.INFO, logger="gobby.workflows.observers"):
+        with caplog.at_level(logging.DEBUG, logger="gobby.workflows.observers"):
             detect_verification_evidence(event, variables, SESSION_ID)
 
         assert command not in caplog.text
-        assert "verification_evidence_recorded=true via validation command" in caplog.text
+        assert any(
+            record.levelno == logging.DEBUG
+            and "verification_evidence_recorded=true via validation command" in record.message
+            for record in caplog.records
+        )
 
     def test_validation_evidence_keeps_latest_50_items(self, variables) -> None:
         variables["verification_evidence"] = [

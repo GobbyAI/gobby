@@ -185,7 +185,7 @@ async def _sync_pass(
                 )
 
         if synced_count > 0:
-            logger.info(
+            logger.debug(
                 f"Sync worker: processed {synced_count}/{len(files)} files for project {project.id}"
             )
 

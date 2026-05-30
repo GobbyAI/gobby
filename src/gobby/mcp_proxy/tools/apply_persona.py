@@ -118,7 +118,7 @@ def build_persona_changes(
                 agent_body.steps[0].name,
             )
         else:
-            logger.info(
+            logger.debug(
                 "Preserved existing step workflow instance %s for session %s (agent=%s, step=%s)",
                 step_wf_name,
                 session_id,

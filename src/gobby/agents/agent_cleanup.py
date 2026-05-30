@@ -158,7 +158,7 @@ class AgentCleanupHandler:
             child_session_id=run.child_session_id,
         )
         if cleanup.dispatch_mutex_rows or cleanup.workflow_instance_rows:
-            logger.info(
+            logger.debug(
                 "Cleaned runtime state for agent %s: dispatch_mutex=%s workflow_instances=%s",
                 run.id,
                 cleanup.dispatch_mutex_rows,

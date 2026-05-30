@@ -494,7 +494,7 @@ async def bootstrap_session_title(
     if updated is None:
         return None
 
-    logger.info("Bootstrapped heuristic title for session %s", session_id)
+    logger.debug("Bootstrapped heuristic title for session %s", session_id)
     return title
 
 
@@ -893,7 +893,7 @@ async def build_turn_and_digest(
                 f"{session_id}; aborting digest persistence to avoid partial state."
             )
 
-        logger.info(
+        logger.debug(
             f"build_turn_and_digest: Turn {turn_num} recorded ({len(last_turn)} chars) for session {session_id}",
         )
 

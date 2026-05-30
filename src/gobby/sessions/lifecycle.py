@@ -281,7 +281,7 @@ class SessionLifecycleManager:
                 logger.warning(f"KG processing failed for memory {memory.id}: {e}")
 
         if processed > 0:
-            logger.info(f"Processed {processed} memories for knowledge graph")
+            logger.debug(f"Processed {processed} memories for knowledge graph")
 
         return processed
 
@@ -445,7 +445,7 @@ class SessionLifecycleManager:
                     logger.warning(f"Transcript backup failed for {session.id}: {e}")
 
         if processed > 0:
-            logger.info(f"Processed {processed} session transcripts")
+            logger.debug(f"Processed {processed} session transcripts")
 
         return processed
 

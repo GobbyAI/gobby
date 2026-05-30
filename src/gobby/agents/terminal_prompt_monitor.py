@@ -191,7 +191,7 @@ class TerminalPromptMonitor:
                 )
                 if sent:
                     self._last_enter_sent_at[run.id] = now
-                    logger.info("Sent periodic Enter to agent terminal %s", run.id)
+                    logger.debug("Sent periodic Enter to agent terminal %s", run.id)
                     handled += 1
             except Exception as e:
                 logger.warning("Error sending periodic Enter to agent %s: %s", run.id, e)
