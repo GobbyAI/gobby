@@ -160,11 +160,5 @@ pub(crate) fn store_search_hits(
             .then_with(|| left.path.cmp(&right.path))
             .then_with(|| left.id.cmp(&right.id))
     });
-    ranked
-        .into_iter()
-        .map(|(rank, mut result)| {
-            result.score = rank as f64;
-            result
-        })
-        .collect()
+    ranked.into_iter().map(|(_, result)| result).collect()
 }

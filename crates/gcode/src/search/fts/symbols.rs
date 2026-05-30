@@ -112,13 +112,12 @@ pub fn search_symbols_exact_first(
 
     let mut params = Vec::new();
     let project = push_param(&mut params, project_id.to_string());
-    let name = push_param(&mut params, query.to_string());
-    let qualified = push_param(&mut params, query.to_string());
+    let query_param = push_param(&mut params, query.to_string());
     let exact = query_symbols_by_conditions(
         conn,
         vec![
             format!("cs.project_id = {project}"),
-            format!("(cs.name = {name} OR cs.qualified_name = {qualified})"),
+            format!("(cs.name = {query_param} OR cs.qualified_name = {query_param})"),
         ],
         params,
         filters,
@@ -132,14 +131,13 @@ pub fn search_symbols_exact_first(
 
     let mut params = Vec::new();
     let project = push_param(&mut params, project_id.to_string());
-    let name = push_param(&mut params, query.to_string());
-    let qualified = push_param(&mut params, query.to_string());
+    let query_param = push_param(&mut params, query.to_string());
     let ci_exact = query_symbols_by_conditions(
         conn,
         vec![
             format!("cs.project_id = {project}"),
             format!(
-                "(lower(cs.name) = lower({name}) OR lower(cs.qualified_name) = lower({qualified}))"
+                "(lower(cs.name) = lower({query_param}) OR lower(cs.qualified_name) = lower({query_param}))"
             ),
         ],
         params,
@@ -155,14 +153,13 @@ pub fn search_symbols_exact_first(
     let prefix_pattern = format!("{}%", escape_like(query));
     let mut params = Vec::new();
     let project = push_param(&mut params, project_id.to_string());
-    let name = push_param(&mut params, prefix_pattern.clone());
-    let qualified = push_param(&mut params, prefix_pattern);
+    let prefix = push_param(&mut params, prefix_pattern);
     let prefix_matches = query_symbols_by_conditions(
         conn,
         vec![
             format!("cs.project_id = {project}"),
             format!(
-                "(cs.name LIKE {name} ESCAPE '\\' OR cs.qualified_name LIKE {qualified} ESCAPE '\\')"
+                "(cs.name LIKE {prefix} ESCAPE '\\' OR cs.qualified_name LIKE {prefix} ESCAPE '\\')"
             ),
         ],
         params,

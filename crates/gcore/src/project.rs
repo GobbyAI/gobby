@@ -24,18 +24,28 @@ pub fn find_project_root(start: &Path) -> Option<PathBuf> {
     }
 }
 
-/// Read the project id from `<project_root>/.gobby/project.json`. Accepts
-/// either `id` or `project_id` as the key (legacy fallback).
+/// Read the project id from `.gobby/project.json`, falling back to
+/// `.gobby/gcode.json` for standalone code-index roots. Accepts either `id` or
+/// `project_id` as the key.
 pub fn read_project_id(project_root: &Path) -> anyhow::Result<String> {
-    let path = project_root.join(".gobby").join("project.json");
-    let contents = std::fs::read_to_string(&path)
+    let project_json = project_root.join(".gobby").join("project.json");
+    if project_json.exists() {
+        return read_project_id_from(&project_json);
+    }
+
+    let gcode_json = project_root.join(".gobby").join("gcode.json");
+    read_project_id_from(&gcode_json)
+}
+
+fn read_project_id_from(path: &Path) -> anyhow::Result<String> {
+    let contents = std::fs::read_to_string(path)
         .with_context(|| format!("failed to read {}", path.display()))?;
     let json: serde_json::Value = serde_json::from_str(&contents)?;
     json.get("id")
         .or_else(|| json.get("project_id"))
         .and_then(|v| v.as_str())
         .map(String::from)
-        .context("'id' field not found in .gobby/project.json")
+        .with_context(|| format!("'id' field not found in {}", path.display()))
 }
 
 #[cfg(test)]
@@ -62,6 +72,30 @@ mod tests {
         assert_eq!(
             fs::read_to_string(&project_json).expect("read project json"),
             contents
+        );
+    }
+
+    #[test]
+    fn read_project_id_falls_back_to_gcode_json_root_marker() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let nested = tmp.path().join("src").join("bin");
+        let gobby_dir = tmp.path().join(".gobby");
+        fs::create_dir(&gobby_dir).expect("create .gobby");
+        fs::create_dir_all(&nested).expect("create nested");
+        fs::write(
+            gobby_dir.join("gcode.json"),
+            r#"{
+  "id": "standalone-code-index",
+  "name": "example"
+}
+"#,
+        )
+        .expect("write gcode json");
+
+        assert_eq!(find_project_root(&nested).as_deref(), Some(tmp.path()));
+        assert_eq!(
+            read_project_id(tmp.path()).expect("read gcode project id"),
+            "standalone-code-index"
         );
     }
 }

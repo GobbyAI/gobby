@@ -305,6 +305,8 @@ pub fn validate_standalone_request(request: &StandaloneSetupRequest) -> Result<(
     if !request.standalone {
         return Err(SetupError::AttachedModeRefused);
     }
+    // The daemon adopts the standalone code-index tables from `public`; using a
+    // different schema would create an isolated index the daemon cannot share.
     if request.schema != DEFAULT_SCHEMA {
         return Err(SetupError::CreationFailed {
             object: "schema".to_string(),

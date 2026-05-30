@@ -165,6 +165,7 @@ pub(super) fn ruby_require_root(required: &str) -> Option<&'static str> {
         .get(required)
         .map(String::as_str)
 }
+
 pub(super) fn is_external_dart_uri(uri: &str, import_context: &ImportResolutionContext) -> bool {
     if uri.starts_with("dart:") {
         return true;
@@ -210,6 +211,7 @@ pub(super) fn bundled_elixir_dependency_roots() -> &'static HashMap<String, Vec<
         .expect("bundled Elixir dependency roots JSON parses")
     })
 }
+
 pub(super) fn js_package_name(module: &str) -> Option<&str> {
     if let Some(stripped) = module.strip_prefix('@') {
         let mut segments = stripped.split('/');

@@ -1,5 +1,6 @@
-use std::fs;
 use std::process::Command;
+
+mod common;
 
 fn assert_vault_shape(root: &std::path::Path) {
     for dir in [
@@ -37,15 +38,7 @@ fn init_creates_vault_shape() {
     assert!(hub.join("wikis.json").is_file());
 
     let project = tmp.path().join("project");
-    let gobby_dir = project.join(".gobby");
-    fs::create_dir_all(&gobby_dir).expect("create .gobby");
-    let project_json = gobby_dir.join("project.json");
-    let original_project_json = r#"{
-  "id": "project-123",
-  "name": "demo"
-}
-"#;
-    fs::write(&project_json, original_project_json).expect("write project json");
+    let project_json = common::write_project_json(&project);
 
     let project_status = Command::new(env!("CARGO_BIN_EXE_gwiki"))
         .args(["init", "--project"])
@@ -63,8 +56,5 @@ fn init_creates_vault_shape() {
             .join("wikis.json")
             .is_file()
     );
-    assert_eq!(
-        fs::read_to_string(project_json).expect("read project json"),
-        original_project_json
-    );
+    common::assert_project_json_unchanged(&project_json);
 }

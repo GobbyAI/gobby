@@ -32,4 +32,5 @@ uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 jsonschema = { version = "0.17", default-features = false }
+temp-env = "0.3.6"
 tempfile = "3"

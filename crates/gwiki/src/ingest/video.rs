@@ -15,6 +15,8 @@ use crate::video::{
 };
 use crate::{ScopeIdentity, WikiError};
 
+pub const DEFAULT_FRAME_INTERVAL_SECONDS: u32 = 5;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VideoSnapshot {
     pub location: String,
@@ -65,7 +67,9 @@ pub fn ingest_video(
         &asset_path,
         FrameSamplingPlan {
             duration_seconds: snapshot.duration_seconds,
-            interval_seconds: snapshot.frame_interval_seconds.unwrap_or(5),
+            interval_seconds: snapshot
+                .frame_interval_seconds
+                .unwrap_or(DEFAULT_FRAME_INTERVAL_SECONDS),
         },
     );
     let VideoMarkdownResult {

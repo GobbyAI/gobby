@@ -283,7 +283,7 @@ pub fn imports(ctx: &Context, file: &str, format: Format) -> anyhow::Result<()> 
                 print_graph_hint_text(ctx);
             } else {
                 for r in &results {
-                    println!("{}", r.name);
+                    output::print_text(&r.name)?;
                 }
             }
             Ok(())

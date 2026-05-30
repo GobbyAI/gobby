@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use gobby_core::config::{ConfigSource, EnvOnlySource};
 
+use crate::models::{validate_project_id, validate_topic_name};
 use crate::{ScopeSelection, WikiError};
 
 const HUB_ENV: &str = "GOBBY_WIKI_HUB";
@@ -135,6 +136,7 @@ fn resolve_project(cwd: &Path, project_root: Option<PathBuf>) -> Result<Resolved
             ),
         }
     })?;
+    let project_id = validate_project_id(&project_id)?;
     let root = project_root.join(".gobby").join("wiki");
 
     Ok(ResolvedScope::project(project_id, project_root, root))
@@ -166,22 +168,6 @@ fn resolve_hub_path(source: &mut impl ConfigSource) -> Result<PathBuf, WikiError
     }
 
     default_hub_path()
-}
-
-fn validate_topic_name(topic: &str) -> Result<String, WikiError> {
-    let topic = topic.trim();
-    let invalid = topic.is_empty()
-        || topic == "."
-        || topic == ".."
-        || topic.contains('/')
-        || topic.contains('\\');
-    if invalid {
-        return Err(WikiError::InvalidScope {
-            detail: format!("invalid topic name `{topic}`"),
-        });
-    }
-
-    Ok(topic.to_string())
 }
 
 fn default_hub_path() -> Result<PathBuf, WikiError> {
@@ -255,6 +241,23 @@ mod tests {
         assert_eq!(scope.identity(), "topic:rust-async");
         assert_eq!(scope.root(), hub.join("topics").join("rust-async"));
         assert_eq!(scope.registry_path(), hub.join("wikis.json"));
+    }
+
+    #[test]
+    fn rejects_invalid_topic_names() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let hub = tmp.path().join("knowledge");
+        for topic in [".", "..", "bad/topic", r"bad\topic", "bad:topic"] {
+            let mut config = TestConfig::with("wiki.hub_path", hub.display().to_string());
+            let err = resolve_with_source(
+                &crate::ScopeSelection::topic(topic),
+                tmp.path(),
+                &mut config,
+            )
+            .expect_err("invalid topic fails");
+
+            assert!(matches!(err, WikiError::InvalidScope { .. }));
+        }
     }
 
     #[test]

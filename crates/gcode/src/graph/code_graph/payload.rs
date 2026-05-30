@@ -216,14 +216,21 @@ pub(super) fn row_usize(row: &Row, keys: &[&str]) -> Option<usize> {
 }
 
 fn row_usize_owned(row: &Row, keys: &[&str]) -> Option<usize> {
-    keys.iter()
-        .find_map(|key| row.get(*key))
-        .and_then(|value| {
-            value
-                .as_u64()
-                .or_else(|| value.as_i64().and_then(|value| value.try_into().ok()))
-        })
-        .map(|value| value as usize)
+    for key in keys {
+        let Some(value) = row.get(*key) else {
+            continue;
+        };
+        if let Some(value) = value.as_u64() {
+            return usize::try_from(value).ok();
+        }
+        if let Some(value) = value.as_i64() {
+            if let Ok(value) = usize::try_from(value) {
+                return Some(value);
+            }
+            log::warn!("negative graph payload integer ignored; key={key} value={value}");
+        }
+    }
+    None
 }
 
 pub(super) fn add_link_from_row(payload: &mut GraphPayload, row: &Row) {

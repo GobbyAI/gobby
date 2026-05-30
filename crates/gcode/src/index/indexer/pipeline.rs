@@ -59,6 +59,7 @@ fn index_discovered_files(
         candidates = filter_discovered_paths(root_path, filter, candidates);
         content_only = filter_discovered_paths(root_path, filter, content_only);
     }
+    let discovered_files = candidates.len() + content_only.len();
     let import_context = parser::build_import_resolution_context(root_path, &candidates);
     let mut semantic_resolver =
         create_semantic_resolver_if_needed(root_path, &candidates, request.require_cpp_semantics)?;
@@ -81,8 +82,17 @@ fn index_discovered_files(
         }
     }
 
-    let eligible_files = candidates.len() + content_only.len();
-    outcome.scanned_files = eligible_files;
+    let eligible_files = if let Some(stale_map) = stale.as_ref() {
+        candidates
+            .iter()
+            .chain(content_only.iter())
+            .filter_map(|path| relative_path(path, root_path).ok())
+            .filter(|rel| stale_map.contains_key(rel))
+            .count()
+    } else {
+        discovered_files
+    };
+    outcome.scanned_files = discovered_files;
     outcome.durations.discovery_ms = discovery_start.elapsed().as_millis() as u64;
 
     let indexing_start = Instant::now();

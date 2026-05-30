@@ -93,17 +93,28 @@ fn remove_tag_block(html: &str, tag: &str) -> String {
     let lower = html.to_ascii_lowercase();
     let open = format!("<{tag}");
     let close = format!("</{tag}>");
+    let mut search_cursor = cursor;
 
-    while let Some(start_offset) = lower[cursor..].find(&open) {
-        let start = cursor + start_offset;
+    while let Some(start_offset) = lower[search_cursor..].find(&open) {
+        let start = search_cursor + start_offset;
+        let name_end = start + open.len();
+        if !is_tag_name_boundary(lower[name_end..].chars().next()) {
+            search_cursor = name_end;
+            continue;
+        }
         output.push_str(&html[cursor..start]);
         let Some(end_offset) = lower[start..].find(&close) else {
             return output;
         };
         cursor = start + end_offset + close.len();
+        search_cursor = cursor;
     }
     output.push_str(&html[cursor..]);
     output
+}
+
+fn is_tag_name_boundary(next: Option<char>) -> bool {
+    next.is_none_or(|ch| ch == '>' || ch == '/' || ch.is_ascii_whitespace())
 }
 
 fn strip_tags(html: &str) -> String {
@@ -188,5 +199,16 @@ mod tests {
         assert_eq!(entry.content_hash, expected_hash);
         assert_eq!(entry.fetched_at, "2026-05-29T16:00:00Z");
         assert!(store.documents.contains_key(&PathBuf::from("raw/INDEX.md")));
+    }
+
+    #[test]
+    fn remove_tag_block_respects_tag_name_boundaries() {
+        let html = "<scripture>keep</scripture><script>drop()</script><script type=\"x\">also_drop()</script>";
+
+        let stripped = remove_tag_block(html, "script");
+
+        assert!(stripped.contains("<scripture>keep</scripture>"));
+        assert!(!stripped.contains("drop()"));
+        assert!(!stripped.contains("also_drop()"));
     }
 }

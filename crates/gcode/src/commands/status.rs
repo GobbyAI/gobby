@@ -90,7 +90,7 @@ pub fn run(ctx: &Context, format: Format) -> anyhow::Result<()> {
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_else(|| s.id.clone());
                 let mut text = String::new();
-                text.push_str(&format!("{} ({})\n", name, &s.id[..8]));
+                text.push_str(&format!("{} ({})\n", name, short_id(&s.id)));
                 text.push_str(&format!("  Root:     {}\n", s.root_path));
                 text.push_str(&format!(
                     "  Files:    {}",
@@ -265,8 +265,7 @@ fn display_name(p: &IndexedProject) -> String {
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| p.id.clone());
-    let short_id = if p.id.len() >= 8 { &p.id[..8] } else { &p.id };
-    format!("{basename} ({short_id})")
+    format!("{basename} ({})", short_id(&p.id))
 }
 
 /// List all indexed projects from the PostgreSQL hub.

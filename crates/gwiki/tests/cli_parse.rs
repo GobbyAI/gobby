@@ -1,21 +1,13 @@
 use std::fs;
 use std::process::{Command, Output};
 
+mod common;
+
 fn gwiki(args: &[&str]) -> Output {
     let tmp = tempfile::tempdir().expect("tempdir");
     let hub = tmp.path().join("hub");
     let project = tmp.path().join("project");
-    let gobby_dir = project.join(".gobby");
-    fs::create_dir_all(&gobby_dir).expect("create .gobby");
-    fs::write(
-        gobby_dir.join("project.json"),
-        r#"{
-  "id": "project-123",
-  "name": "parse-fixture"
-}
-"#,
-    )
-    .expect("write project json");
+    common::write_gcode_json(&project);
     fs::write(project.join("README.md"), "# Parse fixture\n").expect("write ingest fixture");
 
     Command::new(env!("CARGO_BIN_EXE_gwiki"))

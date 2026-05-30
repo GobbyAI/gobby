@@ -78,11 +78,9 @@ fn connect(database_url: &str) -> anyhow::Result<Client> {
             .context("failed to connect to the Gobby PostgreSQL hub"),
         SslMode::Prefer => match connect_with_tls_unverified(&config) {
             Ok(client) => Ok(client),
-            Err(error) if is_no_tls_server_error(&error) || is_tls_verification_error(&error) => {
-                config
-                    .connect(NoTls)
-                    .context("failed to connect to the Gobby PostgreSQL hub")
-            }
+            Err(error) if is_no_tls_server_error(&error) => config
+                .connect(NoTls)
+                .context("failed to connect to the Gobby PostgreSQL hub"),
             Err(error) => Err(error),
         },
         SslMode::Require => connect_with_tls_unverified(&config),
@@ -123,17 +121,6 @@ fn is_no_tls_server_error(error: &anyhow::Error) -> bool {
             || message.contains("the server does not support ssl")
             || message.contains("tls not supported")
             || message.contains("ssl is not enabled")
-    })
-}
-
-fn is_tls_verification_error(error: &anyhow::Error) -> bool {
-    error.chain().any(|cause| {
-        let message = cause.to_string().to_ascii_lowercase();
-        message.contains("certificate verify failed")
-            || message.contains("certificate verification failed")
-            || message.contains("self-signed certificate")
-            || message.contains("invalid certificate")
-            || message.contains("unknown issuer")
     })
 }
 

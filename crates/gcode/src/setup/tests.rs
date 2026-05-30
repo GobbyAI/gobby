@@ -144,6 +144,9 @@ fn standalone_setup_request_redacts_password_in_json() {
 #[serial_test::serial]
 fn overwrite_recreates_incompatible_code_index_and_preserves_sentinel_table() {
     let Ok(database_url) = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL") else {
+        eprintln!(
+            "skipping PostgreSQL overwrite test: GCODE_POSTGRES_TEST_DATABASE_URL is not set"
+        );
         return;
     };
     let mut client = Client::connect(&database_url, NoTls).expect("connect test PostgreSQL hub");

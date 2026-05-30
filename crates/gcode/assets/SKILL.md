@@ -17,7 +17,7 @@ This project is indexed. Use `gcode` via Bash for fast code search and navigatio
 - `gcode search "query" [PATH ...]` — hybrid search: pg_search BM25 + semantic + graph boost (best for fuzzy or natural-language queries)
 - `gcode search-symbol "name" [PATH ...]` — exact-first symbol lookup with deterministic ranking; add `--with-graph` to include FalkorDB graph neighbors when available
 - `gcode search-text "query" [PATH ...]` — pg_search BM25 search on symbol names, signatures, and docstrings
-- `gcode search-content "query" [PATH ...]` — full-text search across repo text chunks: source, comments, docs/Markdown, skill files, configs, scripts, CSS, SQL, and extensionless text
+- `gcode search-content "query" [PATH ...]` — full-text search across indexed text chunks: source, comments, configs, scripts, CSS, SQL, and extensionless text. Markdown (`.md`, `.markdown`, including `SKILL.md`) is currently excluded by the index walker.
 
 Search filters compose: `search` and `search-symbol` accept `--kind <kind>`; use `gcode kinds` to discover values. Ranked search commands accept positional path filters after the query (paths or globs, OR semantics), plus `--language <lang>`, `--limit N`, and `--offset N` for scoped or paginated results. `gcode grep` accepts positional paths, `-g/--glob`, `-i`, `-F`, `-C/-A/-B`, and `-m/--max-count`; it rejects `--limit`. Add `--format json` to `gcode grep` for structured matches with spans. Hybrid JSON results include final display `score`, raw `rrf_score`, and deterministic `sources`; path globs that require post-filter fallback surface a hint/warning.
 

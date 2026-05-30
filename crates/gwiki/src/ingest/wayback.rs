@@ -2,6 +2,7 @@ use std::path::Path;
 use std::sync::OnceLock;
 
 use regex::Regex;
+use scraper::{Html, Selector};
 
 use crate::WikiError;
 use crate::ingest::{
@@ -73,20 +74,7 @@ fn render_wayback_markdown(
 
 fn html_to_text(bytes: &[u8]) -> String {
     let html = text_from_utf8_lossy(bytes);
-    let html = strip_script_style(&html);
-    let mut output = String::new();
-    let mut in_tag = false;
-    for ch in html.chars() {
-        match ch {
-            '<' => in_tag = true,
-            '>' => {
-                in_tag = false;
-                output.push(' ');
-            }
-            _ if !in_tag => output.push(ch),
-            _ => {}
-        }
-    }
+    let output = extract_html_text(&strip_script_style(&html));
     let decoded = html_escape::decode_html_entities(&output);
     decoded
         .lines()
@@ -94,6 +82,22 @@ fn html_to_text(bytes: &[u8]) -> String {
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>()
         .join("\n\n")
+}
+
+fn extract_html_text(html: &str) -> String {
+    let document = Html::parse_document(html);
+    let body_selector = Selector::parse("body").expect("body selector parses");
+    document
+        .select(&body_selector)
+        .next()
+        .map(|body| body.text().collect::<Vec<_>>().join("\n"))
+        .unwrap_or_else(|| {
+            document
+                .root_element()
+                .text()
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
 }
 
 fn strip_script_style(html: &str) -> String {
@@ -159,5 +163,16 @@ mod tests {
             Some("https://web.archive.org/web/20260529123456/https://example.com/research")
         );
         assert_eq!(entry.fetched_at, "2026-05-29T18:10:00Z");
+    }
+
+    #[test]
+    fn wayback_extracts_body_text_without_head_metadata() {
+        let body = b"<html><head><title>Archive Shell</title></head><body><script>ignore()</script><p>Visible &amp; decoded.</p></body></html>";
+
+        let text = html_to_text(body);
+
+        assert_eq!(text, "Visible & decoded.");
+        assert!(!text.contains("Archive Shell"));
+        assert!(!text.contains("ignore()"));
     }
 }

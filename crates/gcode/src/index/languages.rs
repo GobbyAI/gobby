@@ -375,6 +375,8 @@ mod tests {
 
     #[test]
     fn mjs_and_markdown_extensions_are_not_detected() {
+        // These formats are intentionally handled by the walker skip list, not
+        // by AST language detection.
         assert_eq!(detect_language("src/generated.mjs"), None);
         assert_eq!(detect_language("README.md"), None);
         assert_eq!(detect_language("docs/guide.markdown"), None);

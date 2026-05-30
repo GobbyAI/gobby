@@ -1,21 +1,12 @@
-use std::fs;
 use std::process::{Command, Output};
+
+mod common;
 
 fn gwiki(args: &[&str]) -> Output {
     let tmp = tempfile::tempdir().expect("tempdir");
     let hub = tmp.path().join("hub");
     let project = tmp.path().join("project");
-    let gobby_dir = project.join(".gobby");
-    fs::create_dir_all(&gobby_dir).expect("create .gobby");
-    fs::write(
-        gobby_dir.join("project.json"),
-        r#"{
-  "id": "project-123",
-  "name": "collect-fixture"
-}
-"#,
-    )
-    .expect("write project json");
+    common::write_project_json(&project);
 
     Command::new(env!("CARGO_BIN_EXE_gwiki"))
         .args(args)
@@ -49,7 +40,10 @@ fn collect_parses_scope_flags() {
         if args.contains(&"--topic") {
             assert!(stdout.contains("Scope: topic:rust"), "{stdout}");
         } else {
-            assert!(stdout.contains("Scope: project:project-123"), "{stdout}");
+            assert!(
+                stdout.contains(&format!("Scope: project:{}", common::PROJECT_ID)),
+                "{stdout}"
+            );
         }
     }
 }

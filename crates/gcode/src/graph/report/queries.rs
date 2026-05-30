@@ -25,18 +25,12 @@ fn report_node_name_expr(alias: &str) -> String {
 
 pub(super) fn report_node_counts_query(project_id: &str) -> (String, HashMap<String, String>) {
     (
-        "MATCH (n {project: $project}) \
-         WHERE n:CodeFile OR n:CodeSymbol OR n:CodeModule OR n:UnresolvedCallee OR n:ExternalSymbol \
-         RETURN CASE \
-                  WHEN n:CodeFile THEN 'file' \
-                  WHEN n:CodeModule THEN 'module' \
-                  WHEN n:CodeSymbol THEN coalesce(n.kind, 'symbol') \
-                  WHEN n:UnresolvedCallee THEN 'unresolved' \
-                  WHEN n:ExternalSymbol THEN 'external' \
-                  ELSE 'node' \
-                END AS name, \
-                count(n) AS count"
-            .to_string(),
+        format!(
+            "MATCH (n {{project: $project}}) \
+             WHERE n:CodeFile OR n:CodeSymbol OR n:CodeModule OR n:UnresolvedCallee OR n:ExternalSymbol \
+             RETURN {} AS name, count(n) AS count",
+            report_node_type_case("n")
+        ),
         typed_query::string_params(&[("project", project_id)]),
     )
 }

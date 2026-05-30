@@ -233,7 +233,7 @@ fn grep_chunks(
 
     Ok(GrepResult {
         scanned_chunks,
-        matched_lines: retained.len(),
+        matched_lines: total_matching_lines,
         truncated: total_matching_lines > retained.len(),
         matches: retained,
     })
@@ -593,7 +593,7 @@ mod tests {
     }
 
     #[test]
-    fn max_count_caps_matching_lines_not_context() {
+    fn max_count_caps_retained_matches_not_total_matching_lines() {
         let chunks = vec![chunk(
             "src/lib.rs",
             1,
@@ -604,7 +604,7 @@ mod tests {
         opts.max_count = Some(1);
         let result = grep_chunks(&chunks, &opts).expect("grep chunks");
 
-        assert_eq!(result.matched_lines, 1);
+        assert_eq!(result.matched_lines, 2);
         assert!(result.truncated);
         assert_eq!(result.matches[0].line, 2);
         assert_eq!(result.matches[0].before.len(), 1);

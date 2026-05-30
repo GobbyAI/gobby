@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::WikiError;
+
 pub const WIKI_DOC_LABEL: &str = "WikiDoc";
 pub const WIKI_SOURCE_LABEL: &str = "WikiSource";
 pub const WIKI_TOPIC_LABEL: &str = "WikiTopic";
@@ -40,7 +42,7 @@ impl WikiScope {
         }
     }
 
-    pub fn vector_collection_name(&self) -> String {
+    pub fn vector_collection_name(&self) -> Result<String, WikiError> {
         match self {
             Self::Project { project_id } => project_collection_name(project_id),
             Self::Topic { name } => topic_collection_name(name),
@@ -90,12 +92,39 @@ pub struct WikiDocumentRow {
     pub provenance: Value,
 }
 
-pub fn project_collection_name(project_id: &str) -> String {
-    format!("gwiki:project:{project_id}")
+pub fn validate_project_id(project_id: &str) -> Result<String, WikiError> {
+    validate_scope_id("project id", project_id)
 }
 
-pub fn topic_collection_name(topic_name: &str) -> String {
-    format!("gwiki:topic:{topic_name}")
+pub fn validate_topic_name(topic_name: &str) -> Result<String, WikiError> {
+    validate_scope_id("topic name", topic_name)
+}
+
+pub fn project_collection_name(project_id: &str) -> Result<String, WikiError> {
+    Ok(format!(
+        "gwiki:project:{}",
+        validate_project_id(project_id)?
+    ))
+}
+
+pub fn topic_collection_name(topic_name: &str) -> Result<String, WikiError> {
+    Ok(format!("gwiki:topic:{}", validate_topic_name(topic_name)?))
+}
+
+fn validate_scope_id(kind: &'static str, value: &str) -> Result<String, WikiError> {
+    let value = value.trim();
+    let invalid = value.is_empty()
+        || value == "."
+        || value == ".."
+        || value.contains(':')
+        || value.contains('/')
+        || value.contains('\\');
+    if invalid {
+        return Err(WikiError::InvalidScope {
+            detail: format!("invalid {kind} `{value}`"),
+        });
+    }
+    Ok(value.to_string())
 }
 
 #[cfg(test)]
@@ -108,10 +137,13 @@ mod tests {
         assert_eq!(WIKI_SOURCE_LABEL, "WikiSource");
         assert_eq!(WIKI_TOPIC_LABEL, "WikiTopic");
         assert_eq!(
-            project_collection_name("project-123"),
+            project_collection_name("project-123").expect("valid project collection"),
             "gwiki:project:project-123"
         );
-        assert_eq!(topic_collection_name("rust"), "gwiki:topic:rust");
+        assert_eq!(
+            topic_collection_name("rust").expect("valid topic collection"),
+            "gwiki:topic:rust"
+        );
 
         let project_scope = WikiScope::Project {
             project_id: "project-123".to_string(),
@@ -120,7 +152,9 @@ mod tests {
         assert_eq!(project_scope.identity(), "project-123");
         assert_eq!(project_scope.project_id(), Some("project-123"));
         assert_eq!(
-            project_scope.vector_collection_name(),
+            project_scope
+                .vector_collection_name()
+                .expect("valid project collection"),
             "gwiki:project:project-123"
         );
 
@@ -130,6 +164,25 @@ mod tests {
         assert_eq!(topic_scope.kind(), "topic");
         assert_eq!(topic_scope.identity(), "rust");
         assert_eq!(topic_scope.topic_name(), Some("rust"));
-        assert_eq!(topic_scope.vector_collection_name(), "gwiki:topic:rust");
+        assert_eq!(
+            topic_scope
+                .vector_collection_name()
+                .expect("valid topic collection"),
+            "gwiki:topic:rust"
+        );
+    }
+
+    #[test]
+    fn scope_storage_names_reject_path_like_or_nested_ids() {
+        for invalid in ["", ".", "..", "bad/topic", r"bad\topic", "bad:topic"] {
+            assert!(
+                project_collection_name(invalid).is_err(),
+                "{invalid:?} should fail"
+            );
+            assert!(
+                topic_collection_name(invalid).is_err(),
+                "{invalid:?} should fail"
+            );
+        }
     }
 }

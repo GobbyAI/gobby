@@ -285,7 +285,7 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
             .into_iter()
             .map(|row| {
                 (
-                    PathBuf::from(row.get::<_, String>("path")),
+                    platform_path_from_display(&row.get::<_, String>("path")),
                     row.get("content_hash"),
                 )
             })

@@ -22,6 +22,15 @@ fn sanitize_pg_search_query_matches_gobby_rules() {
 }
 
 #[test]
+fn sanitize_pg_search_query_escapes_leading_minus_per_token() {
+    assert_eq!(
+        sanitize_pg_search_query("-foo bar-baz -qux"),
+        "\\-foo bar-baz \\-qux"
+    );
+    assert_eq!(sanitize_pg_search_query("foo-bar"), "foo-bar");
+}
+
+#[test]
 fn sanitize_pg_search_query_drops_empty_queries() {
     assert_eq!(sanitize_pg_search_query(":: + ()"), "");
 }

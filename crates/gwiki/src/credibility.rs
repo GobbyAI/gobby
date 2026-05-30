@@ -36,7 +36,7 @@ pub struct CredibilityScore {
 }
 
 impl CredibilityScore {
-    pub fn score(input: CredibilityInput) -> Self {
+    pub fn evaluate(input: CredibilityInput) -> Self {
         let mut raw_score = 50;
         let signals = vec![
             source_type_signal(input.source_type),
@@ -194,7 +194,7 @@ mod tests {
 
     #[test]
     fn credibility_score_has_explanation() {
-        let score = CredibilityScore::score(CredibilityInput {
+        let score = CredibilityScore::evaluate(CredibilityInput {
             source_type: CredibilitySourceType::Official,
             age_days: Some(4),
             author: Some("Gobby Docs Team".to_string()),

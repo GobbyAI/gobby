@@ -74,15 +74,36 @@ pub(super) fn format_success_text(output: &GraphLifecycleOutput) -> String {
     )
 }
 
-fn run_lifecycle_action(
+pub(super) trait LifecycleBackend {
+    fn run(
+        &self,
+        ctx: &Context,
+        action: GraphLifecycleAction,
+    ) -> anyhow::Result<GraphLifecycleOutput>;
+}
+
+struct CodeGraphLifecycleBackend;
+
+impl LifecycleBackend for CodeGraphLifecycleBackend {
+    fn run(
+        &self,
+        ctx: &Context,
+        action: GraphLifecycleAction,
+    ) -> anyhow::Result<GraphLifecycleOutput> {
+        match action {
+            GraphLifecycleAction::Clear => clear_project_graph(ctx),
+            GraphLifecycleAction::Rebuild => rebuild_project_graph(ctx),
+        }
+    }
+}
+
+pub(super) fn run_lifecycle_action_with_backend(
     ctx: &Context,
     action: GraphLifecycleAction,
     format: Format,
+    backend: &impl LifecycleBackend,
 ) -> anyhow::Result<()> {
-    let output = match action {
-        GraphLifecycleAction::Clear => clear_project_graph(ctx)?,
-        GraphLifecycleAction::Rebuild => rebuild_project_graph(ctx)?,
-    };
+    let output = backend.run(ctx, action)?;
     match format {
         Format::Json => output::print_json(&output.payload),
         Format::Text => {
@@ -257,11 +278,21 @@ fn rebuild_project_graph(ctx: &Context) -> anyhow::Result<GraphLifecycleOutput> 
 }
 
 pub fn clear(ctx: &Context, format: Format) -> anyhow::Result<()> {
-    run_lifecycle_action(ctx, GraphLifecycleAction::Clear, format)
+    run_lifecycle_action_with_backend(
+        ctx,
+        GraphLifecycleAction::Clear,
+        format,
+        &CodeGraphLifecycleBackend,
+    )
 }
 
 pub fn rebuild(ctx: &Context, format: Format) -> anyhow::Result<()> {
-    run_lifecycle_action(ctx, GraphLifecycleAction::Rebuild, format)
+    run_lifecycle_action_with_backend(
+        ctx,
+        GraphLifecycleAction::Rebuild,
+        format,
+        &CodeGraphLifecycleBackend,
+    )
 }
 
 pub fn sync_file(

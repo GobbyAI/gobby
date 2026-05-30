@@ -237,7 +237,6 @@ fn degradation_for_observation(
 ) -> Option<DaemonDegradation> {
     match observation {
         ProbeObservation::HttpStatus(status) if (200..=299).contains(&status) => None,
-        ProbeObservation::HttpStatus(405) => None,
         ProbeObservation::HttpStatus(status @ (401 | 403)) => Some(degradation(
             contract,
             DegradationReason::Unauthorized,
@@ -330,6 +329,18 @@ mod tests {
                     && d.http_status == Some(404)
                     && d.fallback.contains("Keep raw image assets"))
         );
-        assert!(report.agent_dispatch.available);
+        assert!(!report.agent_dispatch.available);
+        assert_eq!(
+            report.agent_dispatch.degradation.as_ref().map(|d| d.reason),
+            Some(DegradationReason::UnexpectedStatus)
+        );
+        assert_eq!(
+            report
+                .agent_dispatch
+                .degradation
+                .as_ref()
+                .and_then(|d| d.http_status),
+            Some(405)
+        );
     }
 }

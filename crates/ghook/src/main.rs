@@ -577,55 +577,13 @@ mod tests {
     use super::*;
     use crate::transport::DeliveryFailureKind;
     use serde_json::json;
-    use std::ffi::OsString;
-    use std::sync::{Mutex, MutexGuard};
+    use std::sync::Mutex;
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn with_tmux_env<T>(tmux: Option<&str>, tmux_pane: Option<&str>, f: impl FnOnce() -> T) -> T {
-        let _env = TmuxEnv::set(tmux, tmux_pane);
-        f()
-    }
-
-    struct TmuxEnv {
-        _guard: MutexGuard<'static, ()>,
-        original_tmux: Option<OsString>,
-        original_tmux_pane: Option<OsString>,
-    }
-
-    impl TmuxEnv {
-        fn set(tmux: Option<&str>, tmux_pane: Option<&str>) -> Self {
-            let guard = ENV_LOCK.lock().unwrap();
-            let original_tmux = std::env::var_os("TMUX");
-            let original_tmux_pane = std::env::var_os("TMUX_PANE");
-
-            set_env_var("TMUX", tmux.map(OsString::from));
-            set_env_var("TMUX_PANE", tmux_pane.map(OsString::from));
-
-            Self {
-                _guard: guard,
-                original_tmux,
-                original_tmux_pane,
-            }
-        }
-    }
-
-    impl Drop for TmuxEnv {
-        fn drop(&mut self) {
-            set_env_var("TMUX", self.original_tmux.take());
-            set_env_var("TMUX_PANE", self.original_tmux_pane.take());
-        }
-    }
-
-    fn set_env_var(key: &str, value: Option<OsString>) {
-        // SAFETY: tests that mutate TMUX/TMUX_PANE serialize those mutations
-        // with ENV_LOCK and restore the original values before releasing it.
-        unsafe {
-            match value {
-                Some(value) => std::env::set_var(key, value),
-                None => std::env::remove_var(key),
-            }
-        }
+        let _guard = ENV_LOCK.lock().unwrap();
+        temp_env::with_vars([("TMUX", tmux), ("TMUX_PANE", tmux_pane)], f)
     }
 
     #[test]

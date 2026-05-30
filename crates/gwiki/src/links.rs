@@ -72,7 +72,7 @@ fn parse_wikilink(
     known_targets: &BTreeSet<String>,
 ) -> Option<(WikiLink, usize)> {
     let inner_start = byte_start + 2;
-    let close_start = markdown[inner_start..].find("]]")? + inner_start;
+    let close_start = wikilink_close_start(markdown, inner_start)?;
     let byte_end = close_start + 2;
     let inner = &markdown[inner_start..close_start];
     let (target, alias) = split_alias(inner, '|');
@@ -104,7 +104,7 @@ fn parse_markdown_link(
     known_targets: &BTreeSet<String>,
 ) -> Option<(WikiLink, usize)> {
     let label_start = byte_start + 1;
-    let label_end = markdown[label_start..].find(']')? + label_start;
+    let label_end = markdown_label_end(markdown, label_start)?;
     let open_paren = label_end + 1;
     if markdown.as_bytes().get(open_paren).copied() != Some(b'(') {
         return None;
@@ -177,6 +177,36 @@ fn markdown_destination_end(markdown: &str, start: usize) -> Option<usize> {
         }
     }
     None
+}
+
+fn markdown_label_end(markdown: &str, start: usize) -> Option<usize> {
+    markdown[start..].char_indices().find_map(|(offset, ch)| {
+        let index = start + offset;
+        (ch == ']' && !is_escaped(markdown, index)).then_some(index)
+    })
+}
+
+fn wikilink_close_start(markdown: &str, start: usize) -> Option<usize> {
+    let mut search_start = start;
+    while let Some(offset) = markdown[search_start..].find("]]") {
+        let close_start = search_start + offset;
+        if !is_escaped(markdown, close_start) {
+            return Some(close_start);
+        }
+        search_start = close_start + 1;
+    }
+    None
+}
+
+fn is_escaped(markdown: &str, byte_index: usize) -> bool {
+    let bytes = markdown.as_bytes();
+    let mut count = 0usize;
+    let mut index = byte_index;
+    while index > 0 && bytes[index - 1] == b'\\' {
+        count += 1;
+        index -= 1;
+    }
+    count % 2 == 1
 }
 
 fn normalized_target_parts(target: &str) -> (String, Option<String>) {
@@ -290,5 +320,24 @@ mod tests {
         assert_eq!(links[0].target, "docs/Parser_(v2).md");
         assert_eq!(links[0].normalized_target, "docs/Parser_(v2)");
         assert!(links[0].resolved);
+    }
+
+    #[test]
+    fn markdown_link_labels_ignore_escaped_brackets() {
+        let links = extract_links(r"[Escaped \] label](docs/Guide.md)", ["docs/Guide"]);
+
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].target, "docs/Guide.md");
+        assert_eq!(links[0].alias.as_deref(), Some(r"Escaped \] label"));
+    }
+
+    #[test]
+    fn wikilinks_ignore_escaped_closing_brackets() {
+        let markdown = r"[[Topic \]] still inside]] and [[Done]]";
+        let links = extract_links(markdown, ["Done"]);
+
+        assert_eq!(links.len(), 2);
+        assert_eq!(links[0].target, r"Topic \]] still inside");
+        assert_eq!(links[1].target, "Done");
     }
 }

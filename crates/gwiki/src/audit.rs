@@ -9,6 +9,73 @@ use crate::sources::SourceManifest;
 use crate::synthesis::slugify;
 use crate::{ScopeIdentity, WikiError};
 
+const DEFAULT_IGNORED_SECTIONS: &[&str] = &[
+    "citations",
+    "citation",
+    "sources",
+    "source",
+    "backlinks",
+    "extracts",
+    "used by",
+    "missing evidence",
+    "conflicting claims",
+];
+
+const IGNORED_SECTIONS_ENV: &str = "GOBBY_WIKI_AUDIT_IGNORED_SECTIONS";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuditOptions {
+    ignored_sections: BTreeSet<String>,
+}
+
+impl AuditOptions {
+    pub fn from_env() -> Self {
+        let mut options = Self::default();
+        if let Ok(value) = std::env::var(IGNORED_SECTIONS_ENV) {
+            options.extend_ignored_sections(value.split(','));
+        }
+        options
+    }
+
+    pub fn with_additional_ignored_sections<I, S>(mut self, sections: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.extend_ignored_sections(sections);
+        self
+    }
+
+    fn ignores_section(&self, heading: &str) -> bool {
+        self.ignored_sections
+            .contains(&heading.trim().to_ascii_lowercase())
+    }
+
+    fn extend_ignored_sections<I, S>(&mut self, sections: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.ignored_sections.extend(
+            sections
+                .into_iter()
+                .map(|section| section.as_ref().trim().to_ascii_lowercase())
+                .filter(|section| !section.is_empty()),
+        );
+    }
+}
+
+impl Default for AuditOptions {
+    fn default() -> Self {
+        Self {
+            ignored_sections: DEFAULT_IGNORED_SECTIONS
+                .iter()
+                .map(|section| section.to_string())
+                .collect(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AuditReport {
     pub command: &'static str,
@@ -37,12 +104,20 @@ pub struct AuditSourceContext {
 }
 
 pub fn run(vault_root: &Path, scope: ScopeIdentity) -> Result<AuditReport, WikiError> {
+    run_with_options(vault_root, scope, AuditOptions::from_env())
+}
+
+pub fn run_with_options(
+    vault_root: &Path,
+    scope: ScopeIdentity,
+    options: AuditOptions,
+) -> Result<AuditReport, WikiError> {
     let pages = collect_pages(vault_root)?;
     let source_context = source_context(vault_root)?;
     let provenance = load_provenance(vault_root)?;
     let unsupported_claims = pages
         .iter()
-        .flat_map(|page| unsupported_claims(page, &provenance, &source_context))
+        .flat_map(|page| unsupported_claims(page, &provenance, &source_context, &options))
         .collect();
 
     Ok(AuditReport {
@@ -112,9 +187,10 @@ fn unsupported_claims(
     page: &WikiPage,
     provenance: &ProvenanceGraph,
     source_context: &[AuditSourceContext],
+    options: &AuditOptions,
 ) -> Vec<UnsupportedClaim> {
-    let supported_lines = supported_claim_lines(page, provenance);
-    claim_lines(page)
+    let supported_lines = supported_claim_lines(page, provenance, options);
+    claim_lines(page, options)
         .into_iter()
         .filter_map(|claim| {
             if supported_lines.contains(&claim.line) || has_inline_source_support(&claim.text) {
@@ -132,7 +208,11 @@ fn unsupported_claims(
         .collect()
 }
 
-fn supported_claim_lines(page: &WikiPage, provenance: &ProvenanceGraph) -> BTreeSet<usize> {
+fn supported_claim_lines(
+    page: &WikiPage,
+    provenance: &ProvenanceGraph,
+    options: &AuditOptions,
+) -> BTreeSet<usize> {
     let page_path = page.relative_path.to_string_lossy().replace('\\', "/");
     let page_title = crate::lint::title_for_page(page);
     let page_slug = slugify(&page_title);
@@ -155,7 +235,7 @@ fn supported_claim_lines(page: &WikiPage, provenance: &ProvenanceGraph) -> BTree
         return BTreeSet::new();
     }
 
-    claim_lines(page)
+    claim_lines(page, options)
         .into_iter()
         .filter_map(|claim| {
             claim
@@ -174,11 +254,10 @@ struct ClaimLine {
     text: String,
 }
 
-fn claim_lines(page: &WikiPage) -> Vec<ClaimLine> {
+fn claim_lines(page: &WikiPage, options: &AuditOptions) -> Vec<ClaimLine> {
     let mut claims = Vec::new();
     let mut offset = 0;
-    let mut in_frontmatter = page.has_frontmatter;
-    let mut frontmatter_delimiters = 0;
+    let mut frontmatter_marker: Option<&str> = None;
     let mut in_fence = false;
     let mut current_heading: Option<String> = None;
 
@@ -188,12 +267,13 @@ fn claim_lines(page: &WikiPage) -> Vec<ClaimLine> {
         let line_start = offset;
         offset += raw_line.len();
 
-        if in_frontmatter {
-            if trimmed == "---" || trimmed == "+++" {
-                frontmatter_delimiters += 1;
-                if frontmatter_delimiters == 2 {
-                    in_frontmatter = false;
-                }
+        if line_start == 0 && (trimmed == "---" || trimmed == "+++") {
+            frontmatter_marker = Some(trimmed);
+            continue;
+        }
+        if let Some(marker) = frontmatter_marker {
+            if trimmed == marker {
+                frontmatter_marker = None;
             }
             continue;
         }
@@ -208,7 +288,8 @@ fn claim_lines(page: &WikiPage) -> Vec<ClaimLine> {
             current_heading = Some(heading);
             continue;
         }
-        if ignored_claim_section(current_heading.as_deref()) || ignored_claim_line(trimmed) {
+        if ignored_claim_section(current_heading.as_deref(), options) || ignored_claim_line(trimmed)
+        {
             continue;
         }
         let text = trimmed
@@ -239,21 +320,8 @@ fn heading_title(line: &str) -> Option<String> {
     (!rest.is_empty()).then(|| rest.trim_end_matches('#').trim().to_string())
 }
 
-fn ignored_claim_section(heading: Option<&str>) -> bool {
-    heading.is_some_and(|heading| {
-        matches!(
-            heading.to_ascii_lowercase().as_str(),
-            "citations"
-                | "citation"
-                | "sources"
-                | "source"
-                | "backlinks"
-                | "extracts"
-                | "used by"
-                | "missing evidence"
-                | "conflicting claims"
-        )
-    })
+fn ignored_claim_section(heading: Option<&str>, options: &AuditOptions) -> bool {
+    heading.is_some_and(|heading| options.ignores_section(heading))
 }
 
 fn ignored_claim_line(line: &str) -> bool {
@@ -342,5 +410,50 @@ mod tests {
                 .and_then(serde_json::Value::as_str),
             Some("wiki/topics/path-scope.md")
         );
+    }
+
+    #[test]
+    fn frontmatter_closes_only_on_matching_document_start_delimiter() {
+        let page = WikiPage {
+            path: PathBuf::from("wiki/topics/frontmatter.md"),
+            relative_path: PathBuf::from("wiki/topics/frontmatter.md"),
+            markdown: "+++\ntitle = \"Frontmatter\"\n---\nstill_frontmatter = true\n+++\n# Body\nClaim after TOML frontmatter.\n---\nClaim after thematic break.\n".to_string(),
+            parsed: crate::markdown::parse_markdown(
+                "wiki/topics/frontmatter.md",
+                "# Body\n",
+                std::iter::empty::<&str>(),
+            )
+            .expect("parse markdown"),
+            has_frontmatter: true,
+        };
+
+        let claims = claim_lines(&page, &AuditOptions::default());
+
+        assert_eq!(claims.len(), 3);
+        assert_eq!(claims[0].text, "Claim after TOML frontmatter.");
+        assert_eq!(claims[1].text, "---");
+        assert_eq!(claims[2].text, "Claim after thematic break.");
+    }
+
+    #[test]
+    fn configured_ignored_sections_extend_defaults() {
+        let page = WikiPage {
+            path: PathBuf::from("wiki/topics/release.md"),
+            relative_path: PathBuf::from("wiki/topics/release.md"),
+            markdown: "# Release\nClaim needing support.\n## Notes\nIgnored internal note.\n## Sources\nIgnored source note.\n".to_string(),
+            parsed: crate::markdown::parse_markdown(
+                "wiki/topics/release.md",
+                "# Release\n",
+                std::iter::empty::<&str>(),
+            )
+            .expect("parse markdown"),
+            has_frontmatter: false,
+        };
+        let options = AuditOptions::default().with_additional_ignored_sections(["Notes"]);
+
+        let claims = claim_lines(&page, &options);
+
+        assert_eq!(claims.len(), 1);
+        assert_eq!(claims[0].text, "Claim needing support.");
     }
 }

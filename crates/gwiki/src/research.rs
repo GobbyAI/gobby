@@ -302,7 +302,7 @@ fn write_accepted_note(
 
     let file_name = format!("{}.md", slugify(&note.title));
     let path = research_dir.join(file_name);
-    let frontmatter = serde_yaml::to_string(&AcceptedNoteFrontmatter {
+    let frontmatter = serde_norway::to_string(&AcceptedNoteFrontmatter {
         title: &note.title,
         research_session: session_id,
         indexable: true,

@@ -30,7 +30,7 @@ pub(crate) fn snippet_from_text(text: &str) -> String {
         return snippet.to_string();
     }
 
-    format!("{}...", snippet.chars().take(240).collect::<String>())
+    format!("{}...", snippet.chars().take(237).collect::<String>())
 }
 
 pub(crate) fn degradation_label(degradation: &DegradationKind) -> String {
@@ -79,4 +79,17 @@ pub(crate) fn slugify(value: &str) -> String {
         }
     }
     slug.trim_matches('-').to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn snippets_reserve_space_for_ellipsis() {
+        let snippet = snippet_from_text(&"a".repeat(300));
+
+        assert!(snippet.ends_with("..."));
+        assert_eq!(snippet.chars().count(), 240);
+    }
 }

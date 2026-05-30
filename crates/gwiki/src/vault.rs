@@ -8,7 +8,7 @@ use crate::scope::ResolvedScope;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VaultPaths {
     pub directories: &'static [&'static str],
-    pub files: &'static [&'static str],
+    pub files: Vec<&'static str>,
 }
 
 const DIRECTORIES: &[&str] = &[
@@ -25,12 +25,16 @@ const DIRECTORIES: &[&str] = &[
     ".gwiki",
 ];
 
-const FILES: &[&str] = &["raw/INDEX.md", "_index.md", "log.md"];
+pub const DEFAULT_FILES: &[(&str, &str)] = &[
+    ("raw/INDEX.md", "# Raw Sources\n\n"),
+    ("_index.md", "# Wiki Index\n\n"),
+    ("log.md", "# Log\n\n"),
+];
 
 pub fn required_paths() -> VaultPaths {
     VaultPaths {
         directories: DIRECTORIES,
-        files: FILES,
+        files: DEFAULT_FILES.iter().map(|(path, _)| *path).collect(),
     }
 }
 
@@ -40,9 +44,9 @@ pub fn initialize(scope: &ResolvedScope) -> Result<(), WikiError> {
         create_dir(root.join(directory).as_path())?;
     }
 
-    ensure_file(root.join("raw/INDEX.md").as_path(), "# Raw Sources\n\n")?;
-    ensure_file(root.join("_index.md").as_path(), "# Wiki Index\n\n")?;
-    ensure_file(root.join("log.md").as_path(), "# Log\n\n")?;
+    for (path, contents) in DEFAULT_FILES {
+        ensure_file(root.join(path).as_path(), contents)?;
+    }
     let identity = scope.identity();
     let root_path = root.display().to_string();
     let scope_json = serde_json::to_string_pretty(&ScopeFile {
@@ -117,6 +121,34 @@ mod tests {
         assert!(paths.files.contains(&"raw/INDEX.md"));
         assert!(paths.files.contains(&"_index.md"));
         assert!(paths.files.contains(&"log.md"));
+    }
+
+    #[test]
+    fn default_files_drive_required_paths_and_contents() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("wiki");
+        let scope = ResolvedScope::topic(
+            "rust".to_string(),
+            root.clone(),
+            temp.path().join("wikis.json"),
+        );
+
+        initialize(&scope).expect("initialize");
+        let required = required_paths();
+
+        assert_eq!(
+            required.files,
+            DEFAULT_FILES
+                .iter()
+                .map(|(path, _)| *path)
+                .collect::<Vec<_>>()
+        );
+        for (path, contents) in DEFAULT_FILES {
+            assert_eq!(
+                std::fs::read_to_string(root.join(path)).expect("read default file"),
+                *contents
+            );
+        }
     }
 
     #[test]

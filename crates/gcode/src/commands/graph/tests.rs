@@ -10,6 +10,7 @@ use crate::graph::code_graph::{self, GraphLifecycleAction, GraphLifecycleOutput}
 use crate::models::{GraphResult, PagedResponse, ProjectionMetadata, ProjectionProvenance};
 use crate::output::Format;
 use serde_json::json;
+use std::cell::RefCell;
 use std::path::PathBuf;
 
 fn make_ctx_no_falkordb() -> Context {
@@ -40,7 +41,7 @@ fn graph_reads_degrade_when_falkor_missing() {
 fn report_text_uses_markdown_output() {
     let report = crate::graph::report::empty_report("project-123");
 
-    let text = format_report_text(&report).expect("format report text");
+    let text = format_report_text(&report);
 
     assert!(text.contains("# Project Graph Report"));
     assert!(text.contains("Project: `project-123`"));
@@ -103,20 +104,56 @@ fn report_requires_graph_service() {
     );
 }
 
-#[test]
-fn graph_lifecycle_commands_call_core_directly() {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let source = std::fs::read_to_string(manifest_dir.join("src/commands/graph/lifecycle.rs"))
-        .expect("read commands/graph/lifecycle.rs");
-    let clear_project = ["code_graph", "::clear_project(ctx)"].concat();
-    let sync_file_graph = ["code_graph", "::sync_file_graph("].concat();
-    let lifecycle_request = ["GraphLifecycleRequest", "::from_context"].concat();
-    let daemon_lifecycle = ["code_graph", "::run_lifecycle_action"].concat();
+#[derive(Default)]
+struct SpyLifecycleBackend {
+    actions: RefCell<Vec<GraphLifecycleAction>>,
+}
 
-    assert!(source.contains(&clear_project));
-    assert!(source.contains(&sync_file_graph));
-    assert!(!source.contains(&lifecycle_request));
-    assert!(!source.contains(&daemon_lifecycle));
+impl super::lifecycle::LifecycleBackend for SpyLifecycleBackend {
+    fn run(
+        &self,
+        ctx: &Context,
+        action: GraphLifecycleAction,
+    ) -> anyhow::Result<GraphLifecycleOutput> {
+        self.actions.borrow_mut().push(action);
+        Ok(GraphLifecycleOutput {
+            project_id: ctx.project_id.clone(),
+            action,
+            summary: "spy lifecycle".to_string(),
+            payload: json!({
+                "success": true,
+                "project_id": ctx.project_id,
+                "action": format!("{action:?}"),
+                "summary": "spy lifecycle",
+            }),
+        })
+    }
+}
+
+#[test]
+fn graph_lifecycle_commands_dispatch_to_core_backend() {
+    let ctx = make_ctx_no_falkordb();
+    let backend = SpyLifecycleBackend::default();
+
+    super::lifecycle::run_lifecycle_action_with_backend(
+        &ctx,
+        GraphLifecycleAction::Clear,
+        Format::Json,
+        &backend,
+    )
+    .expect("clear dispatch succeeds");
+    super::lifecycle::run_lifecycle_action_with_backend(
+        &ctx,
+        GraphLifecycleAction::Rebuild,
+        Format::Json,
+        &backend,
+    )
+    .expect("rebuild dispatch succeeds");
+
+    assert_eq!(
+        backend.actions.into_inner(),
+        vec![GraphLifecycleAction::Clear, GraphLifecycleAction::Rebuild]
+    );
 }
 
 #[test]
