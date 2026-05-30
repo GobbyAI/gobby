@@ -225,7 +225,7 @@
     "workflows/rules/memory-lifecycle/memory-recall-on-prompt.yaml": "eda3feb0fb62da611d023960cef981e294ee07cc70f7823a98e1644ad91ee963",
     "workflows/rules/memory-lifecycle/require-memory-review-before-status.yaml": "81724afbfbf851fa040525353271ef2220d07f2acbe99f0c9dc07b91ead43216",
     "workflows/rules/memory-lifecycle/reset-memory-tracking-on-start.yaml": "eeb0d4944ccdb850994137d3a4aa2fdfe49e4cdade0e8ad39e33efa9376ee2ff",
-    "workflows/rules/memory-lifecycle/spawn-memory-recall-helper.yaml": "06401f81641b18361dc96a014d6fc7d17f363728992138d981ab0819a52c7c2b",
+    "workflows/rules/memory-lifecycle/spawn-memory-recall-helper.yaml": "5b1991cfd6035aadb1e95850fdc4db1d36f40868e1fe0bdae06d62825772ef61",
     "workflows/rules/messaging/deliver-pending-messages.yaml": "af09701ecc000c53be16d24bbf541af0fe8644e542ad293a156bc3b3da5c1647",
     "workflows/rules/output-compression/compress-bash-output.yaml": "cbea551b89de3fed110ad04c617d8e2114045da79d880fb3a1ab8c7ebc051762",
     "workflows/rules/pipeline-enforcement/auto-run-pipeline.yaml": "7f27af1e4047aed4c5ee075fcbe05979bda2af147f5a7901f5e419e7b1579639",

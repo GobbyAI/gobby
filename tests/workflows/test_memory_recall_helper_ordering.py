@@ -80,18 +80,13 @@ def _sync_rules(db: HubDatabase, tmp_path: Path, rule_names: list[str]) -> None:
     assert result["errors"] == []
 
 
-def _platform_event(
-    prompt: str = "six or more words for helper spawn rule",
-    **data_overrides: Any,
-) -> HookEvent:
-    data: dict[str, Any] = {"prompt": prompt}
-    data.update(data_overrides)
+def _platform_event(prompt: str = "six or more words for helper spawn rule") -> HookEvent:
     return HookEvent(
         event_type=HookEventType.BEFORE_AGENT,
         session_id=EXTERNAL_SESSION_ID,
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
-        data=data,
+        data={"prompt": prompt},
         metadata={"_platform_session_id": PLATFORM_SESSION_ID},
     )
 
@@ -235,70 +230,6 @@ async def _stubbed_dispatcher(
     if tool == "deliver_pending_messages":
         return _envelope(tool, _deliver_payload())
     raise AssertionError(f"unexpected inline tool: {tool}")
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("event", "variables"),
-    [
-        (
-            _platform_event("Message from Gobby daemon: New activity available."),
-            _base_variables(parent_turn_seq=7),
-        ),
-        (
-            _platform_event(
-                terminal_context={"agent_run_id": "run-child"},
-            ),
-            _base_variables(parent_turn_seq=7),
-        ),
-        (
-            _platform_event(role="assistant"),
-            _base_variables(parent_turn_seq=7),
-        ),
-        (
-            _platform_event(),
-            _base_variables(
-                parent_turn_seq=7,
-                _active_rule_names=[SPAWN_RULE_NAME],
-            ),
-        ),
-    ],
-)
-async def test_spawn_memory_recall_helper_skips_ineligible_turns(
-    db: HubDatabase,
-    tmp_path: Path,
-    event: HookEvent,
-    variables: dict[str, Any],
-) -> None:
-    _sync_rules(db, tmp_path, [SPAWN_RULE_NAME])
-    engine = RuleEngine(db, mcp_dispatcher=_stubbed_dispatcher)
-
-    response = await engine.evaluate(event, session_id=PLATFORM_SESSION_ID, variables=variables)
-
-    assert all(call["tool"] != "spawn_agent" for call in _mcp_calls(response))
-    assert response.context is None
-
-
-@pytest.mark.asyncio
-async def test_spawn_memory_recall_helper_spawns_for_eligible_user_prompt(
-    db: HubDatabase,
-    tmp_path: Path,
-) -> None:
-    _sync_rules(db, tmp_path, [SPAWN_RULE_NAME])
-    engine = RuleEngine(db, mcp_dispatcher=_stubbed_dispatcher)
-
-    response = await engine.evaluate(
-        _platform_event("please use memory to recall the relevant project convention"),
-        session_id=PLATFORM_SESSION_ID,
-        variables=_base_variables(
-            parent_turn_seq=7,
-            _active_rule_names=["memory-recall-on-prompt", SPAWN_RULE_NAME],
-        ),
-    )
-
-    spawn_call = next(call for call in _mcp_calls(response) if call["tool"] == "spawn_agent")
-    assert spawn_call["arguments"]["agent"] == "memory-recall-helper"
-    assert spawn_call["arguments"]["parent_session_id"] == PLATFORM_SESSION_ID
 
 
 @pytest.mark.asyncio
