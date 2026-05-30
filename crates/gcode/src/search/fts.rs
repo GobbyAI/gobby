@@ -8,8 +8,10 @@ use std::collections::HashSet;
 use postgres::Client;
 use postgres::types::ToSql;
 
+use crate::config::{Context, ProjectIndexScope};
 use crate::db;
 use crate::models::{ContentSearchHit, SearchResult, Symbol};
+use crate::visibility;
 
 type PgParam = Box<dyn ToSql + Sync>;
 
@@ -41,6 +43,51 @@ fn param_refs(params: &[PgParam]) -> Vec<&(dyn ToSql + Sync)> {
         .iter()
         .map(|param| param.as_ref() as &(dyn ToSql + Sync))
         .collect()
+}
+
+fn query_count(conn: &mut Client, sql: &str, params: &[PgParam]) -> usize {
+    let refs = param_refs(params);
+    conn.query_one(sql, &refs)
+        .ok()
+        .and_then(|row| row.try_get::<_, i64>("count").ok())
+        .unwrap_or(0) as usize
+}
+
+fn push_visible_project_file_filter(
+    conditions: &mut Vec<String>,
+    params: &mut Vec<PgParam>,
+    row_alias: &str,
+    indexed_file_alias: &str,
+    ctx: &Context,
+) {
+    let tombstone = push_param(params, visibility::TOMBSTONE_LANGUAGE.to_string());
+    conditions.push(format!("{indexed_file_alias}.language != {tombstone}"));
+
+    match &ctx.index_scope {
+        ProjectIndexScope::Single => {
+            let project = push_param(params, ctx.project_id.clone());
+            conditions.push(format!("{row_alias}.project_id = {project}"));
+        }
+        ProjectIndexScope::Overlay {
+            overlay_project_id,
+            parent_project_id,
+            ..
+        } => {
+            let overlay = push_param(params, overlay_project_id.clone());
+            let parent = push_param(params, parent_project_id.clone());
+            conditions.push(format!(
+                "({row_alias}.project_id = {overlay}
+                  OR (
+                      {row_alias}.project_id = {parent}
+                      AND NOT EXISTS (
+                          SELECT 1 FROM code_indexed_files shadow
+                          WHERE shadow.project_id = {overlay}
+                            AND shadow.file_path = {row_alias}.file_path
+                      )
+                  ))"
+            ));
+        }
+    }
 }
 
 /// Escape LIKE wildcards (`%`, `_`) and the backslash escape char itself.
@@ -177,6 +224,24 @@ fn append_unique_symbols(
 ) {
     for symbol in symbols {
         if seen.insert(symbol.id.clone()) {
+            out.push(symbol);
+            if out.len() >= limit {
+                return;
+            }
+        }
+    }
+}
+
+fn append_visible_symbols(
+    conn: &mut Client,
+    ctx: &Context,
+    out: &mut Vec<Symbol>,
+    seen: &mut HashSet<String>,
+    symbols: Vec<Symbol>,
+    limit: usize,
+) {
+    for symbol in symbols {
+        if seen.insert(symbol.id.clone()) && visibility::symbol_is_visible(conn, ctx, &symbol) {
             out.push(symbol);
             if out.len() >= limit {
                 return;
@@ -410,6 +475,71 @@ pub fn search_symbols_exact_first(
     let fts = search_symbols_fts(conn, query, project_id, kind, language, paths, limit);
     append_unique_symbols(&mut results, &mut seen, fts, limit);
 
+    results
+}
+
+pub fn search_symbols_fts_visible(
+    conn: &mut Client,
+    query: &str,
+    ctx: &Context,
+    kind: Option<&str>,
+    language: Option<&str>,
+    paths: &[String],
+    limit: usize,
+) -> Vec<Symbol> {
+    let mut results = Vec::new();
+    let mut seen = HashSet::new();
+    for project_id in visibility::visible_project_ids(ctx) {
+        let symbols = search_symbols_fts(conn, query, &project_id, kind, language, paths, limit);
+        append_visible_symbols(conn, ctx, &mut results, &mut seen, symbols, limit);
+        if results.len() >= limit {
+            break;
+        }
+    }
+    results
+}
+
+pub fn search_symbols_by_name_visible(
+    conn: &mut Client,
+    query: &str,
+    ctx: &Context,
+    kind: Option<&str>,
+    language: Option<&str>,
+    paths: &[String],
+    limit: usize,
+) -> Vec<Symbol> {
+    let mut results = Vec::new();
+    let mut seen = HashSet::new();
+    for project_id in visibility::visible_project_ids(ctx) {
+        let symbols =
+            search_symbols_by_name(conn, query, &project_id, kind, language, paths, limit);
+        append_visible_symbols(conn, ctx, &mut results, &mut seen, symbols, limit);
+        if results.len() >= limit {
+            break;
+        }
+    }
+    results
+}
+
+pub fn search_symbols_exact_first_visible(
+    conn: &mut Client,
+    query: &str,
+    ctx: &Context,
+    kind: Option<&str>,
+    language: Option<&str>,
+    paths: &[String],
+    limit: usize,
+) -> Vec<Symbol> {
+    let mut results = Vec::new();
+    let mut seen = HashSet::new();
+    for project_id in visibility::visible_project_ids(ctx) {
+        let symbols =
+            search_symbols_exact_first(conn, query, &project_id, kind, language, paths, limit);
+        append_visible_symbols(conn, ctx, &mut results, &mut seen, symbols, limit);
+        if results.len() >= limit {
+            break;
+        }
+    }
     results
 }
 
@@ -698,6 +828,181 @@ fn count_content_like(
         .unwrap_or(0) as usize
 }
 
+fn count_visible_symbols_by_conditions(
+    conn: &mut Client,
+    ctx: &Context,
+    mut conditions: Vec<String>,
+    mut params: Vec<PgParam>,
+    language: Option<&str>,
+    paths: &[String],
+) -> usize {
+    push_symbol_filters(
+        &mut conditions,
+        &mut params,
+        "cs",
+        SymbolFilters {
+            kind: None,
+            language,
+            paths,
+        },
+    );
+    push_visible_project_file_filter(&mut conditions, &mut params, "cs", "cf", ctx);
+    let sql = format!(
+        "SELECT COUNT(*)::BIGINT AS count
+         FROM code_symbols cs
+         JOIN code_indexed_files cf
+           ON cf.project_id = cs.project_id AND cf.file_path = cs.file_path
+         WHERE {}",
+        conditions.join(" AND ")
+    );
+    query_count(conn, &sql, &params)
+}
+
+fn count_symbols_fts_visible(
+    conn: &mut Client,
+    bm25_query: &str,
+    ctx: &Context,
+    language: Option<&str>,
+    paths: &[String],
+) -> usize {
+    let mut params = Vec::new();
+    let query_placeholder = push_param(&mut params, bm25_query.to_string());
+    let conditions = vec![format!(
+        "(cs.name @@@ {q} OR cs.qualified_name @@@ {q} OR cs.signature @@@ {q} OR cs.docstring @@@ {q} OR cs.summary @@@ {q})",
+        q = query_placeholder
+    )];
+    count_visible_symbols_by_conditions(conn, ctx, conditions, params, language, paths)
+}
+
+fn count_symbols_by_name_like_visible(
+    conn: &mut Client,
+    query: &str,
+    ctx: &Context,
+    language: Option<&str>,
+    paths: &[String],
+) -> usize {
+    let escaped_query = escape_like(query);
+    let pattern = format!("%{escaped_query}%");
+    let mut params = Vec::new();
+    let name_placeholder = push_param(&mut params, pattern.clone());
+    let qualified_placeholder = push_param(&mut params, pattern);
+    let conditions = vec![format!(
+        "(cs.name LIKE {name_placeholder} ESCAPE '\\' OR cs.qualified_name LIKE {qualified_placeholder} ESCAPE '\\')"
+    )];
+    count_visible_symbols_by_conditions(conn, ctx, conditions, params, language, paths)
+}
+
+fn push_content_filters(
+    conditions: &mut Vec<String>,
+    params: &mut Vec<PgParam>,
+    alias: &str,
+    language: Option<&str>,
+    paths: &[String],
+) {
+    if let Some(lang) = language {
+        let placeholder = push_param(params, lang.to_string());
+        conditions.push(format!("{alias}.language = {placeholder}"));
+    }
+    push_path_filter(conditions, params, alias, paths);
+}
+
+fn count_visible_content_by_conditions(
+    conn: &mut Client,
+    ctx: &Context,
+    mut conditions: Vec<String>,
+    mut params: Vec<PgParam>,
+    language: Option<&str>,
+    paths: &[String],
+) -> usize {
+    push_content_filters(&mut conditions, &mut params, "c", language, paths);
+    push_visible_project_file_filter(&mut conditions, &mut params, "c", "cf", ctx);
+    let sql = format!(
+        "SELECT COUNT(*)::BIGINT AS count
+         FROM code_content_chunks c
+         JOIN code_indexed_files cf
+           ON cf.project_id = c.project_id AND cf.file_path = c.file_path
+         WHERE {}",
+        conditions.join(" AND ")
+    );
+    query_count(conn, &sql, &params)
+}
+
+fn count_content_bm25_visible(
+    conn: &mut Client,
+    bm25_query: &str,
+    ctx: &Context,
+    language: Option<&str>,
+    paths: &[String],
+) -> usize {
+    let mut params = Vec::new();
+    let query_placeholder = push_param(&mut params, bm25_query.to_string());
+    let conditions = vec![format!("c.content @@@ {query_placeholder}")];
+    count_visible_content_by_conditions(conn, ctx, conditions, params, language, paths)
+}
+
+fn count_content_like_visible(
+    conn: &mut Client,
+    query: &str,
+    ctx: &Context,
+    language: Option<&str>,
+    paths: &[String],
+) -> usize {
+    let escaped_query = escape_like(query);
+    let like_query = format!("%{escaped_query}%");
+    let mut params = Vec::new();
+    let like_placeholder = push_param(&mut params, like_query);
+    let conditions = vec![format!("c.content LIKE {like_placeholder} ESCAPE '\\'")];
+    count_visible_content_by_conditions(conn, ctx, conditions, params, language, paths)
+}
+
+pub fn count_text_visible(
+    conn: &mut Client,
+    query: &str,
+    ctx: &Context,
+    language: Option<&str>,
+    paths: &[String],
+) -> usize {
+    if query.trim().is_empty() {
+        return 0;
+    }
+
+    let bm25_query = sanitize_pg_search_query(query);
+    if bm25_query.is_empty() {
+        return count_symbols_by_name_like_visible(conn, query, ctx, language, paths);
+    }
+
+    let count = count_symbols_fts_visible(conn, &bm25_query, ctx, language, paths);
+    if count > 0 {
+        return count;
+    }
+
+    count_symbols_by_name_like_visible(conn, query, ctx, language, paths)
+}
+
+pub fn count_content_visible(
+    conn: &mut Client,
+    query: &str,
+    ctx: &Context,
+    language: Option<&str>,
+    paths: &[String],
+) -> usize {
+    if query.trim().is_empty() {
+        return 0;
+    }
+
+    let bm25_query = sanitize_pg_search_query(query);
+    if bm25_query.is_empty() {
+        return count_content_like_visible(conn, query, ctx, language, paths);
+    }
+
+    let count = count_content_bm25_visible(conn, &bm25_query, ctx, language, paths);
+    if count > 0 {
+        return count;
+    }
+
+    count_content_like_visible(conn, query, ctx, language, paths)
+}
+
 /// Full-text search for symbols: BM25 with LIKE fallback.
 pub fn search_text(
     conn: &mut Client,
@@ -710,6 +1015,21 @@ pub fn search_text(
     let mut results = search_symbols_fts(conn, query, project_id, None, language, paths, limit);
     if results.is_empty() {
         results = search_symbols_by_name(conn, query, project_id, None, language, paths, limit);
+    }
+    results.into_iter().map(|s| s.to_brief()).collect()
+}
+
+pub fn search_text_visible(
+    conn: &mut Client,
+    query: &str,
+    ctx: &Context,
+    language: Option<&str>,
+    paths: &[String],
+    limit: usize,
+) -> Vec<SearchResult> {
+    let mut results = search_symbols_fts_visible(conn, query, ctx, None, language, paths, limit);
+    if results.is_empty() {
+        results = search_symbols_by_name_visible(conn, query, ctx, None, language, paths, limit);
     }
     results.into_iter().map(|s| s.to_brief()).collect()
 }
@@ -784,6 +1104,33 @@ pub fn search_content(
     }
 
     search_content_like(conn, query, project_id, language, paths, limit)
+}
+
+pub fn search_content_visible(
+    conn: &mut Client,
+    query: &str,
+    ctx: &Context,
+    language: Option<&str>,
+    paths: &[String],
+    limit: usize,
+) -> Vec<ContentSearchHit> {
+    let mut results = Vec::new();
+    let mut seen = HashSet::new();
+    for project_id in visibility::visible_project_ids(ctx) {
+        let hits = search_content(conn, query, &project_id, language, paths, limit);
+        for hit in hits {
+            let key = format!("{}:{}:{}", project_id, hit.file_path, hit.line_start);
+            if seen.insert(key)
+                && visibility::project_path_is_visible(conn, ctx, &project_id, &hit.file_path)
+            {
+                results.push(hit);
+                if results.len() >= limit {
+                    return results;
+                }
+            }
+        }
+    }
+    results
 }
 
 fn search_content_like(
@@ -885,6 +1232,10 @@ fn lowercase_with_original_char_map(content: &str) -> (String, Vec<usize>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{CodeVectorSettings, ProjectIndexScope};
+    use postgres::NoTls;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn sanitize_pg_search_query_matches_gobby_rules() {
@@ -971,5 +1322,304 @@ mod tests {
 
         assert!(snippet.contains("target call here"));
         assert!(snippet.chars().count() <= 180);
+    }
+
+    #[test]
+    fn overlay_visibility_counts_and_kinds_use_database_predicates() {
+        let Some(mut conn) = connect_overlay_visibility_test_db() else {
+            return;
+        };
+
+        let ids = OverlayFixtureIds::new();
+        cleanup_overlay_visibility_fixture(&mut conn, &ids);
+        let _cleanup = OverlayFixtureCleanup {
+            database_url: ids.database_url.clone(),
+            parent_project_id: ids.parent_project_id.clone(),
+            overlay_project_id: ids.overlay_project_id.clone(),
+        };
+
+        seed_overlay_visibility_fixture(&mut conn, &ids);
+        let ctx = overlay_visibility_context(&ids);
+
+        assert_eq!(
+            crate::visibility::visible_kinds(&mut conn, &ctx).expect("visible kinds"),
+            vec!["overlay_kind", "overlay_shadow_kind", "parent_kind"]
+        );
+        assert_eq!(
+            count_text_visible(&mut conn, "parentonly", &ctx, None, &[]),
+            1
+        );
+        assert_eq!(count_text_visible(&mut conn, "++", &ctx, None, &[]), 3);
+        assert_eq!(
+            count_content_visible(&mut conn, "parentonly", &ctx, None, &[]),
+            1
+        );
+        assert_eq!(count_content_visible(&mut conn, "++", &ctx, None, &[]), 3);
+    }
+
+    fn connect_overlay_visibility_test_db() -> Option<Client> {
+        let explicit_url = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL").ok();
+        let database_url = explicit_url
+            .clone()
+            .or_else(|| crate::db::resolve_database_url().ok())?;
+        match Client::connect(&database_url, NoTls) {
+            Ok(mut conn) => {
+                if let Err(err) = crate::schema::validate_runtime_schema(&mut conn) {
+                    if explicit_url.is_some() {
+                        panic!("test PostgreSQL hub schema is invalid: {err}");
+                    }
+                    return None;
+                }
+                Some(conn)
+            }
+            Err(err) => {
+                if explicit_url.is_some() {
+                    panic!("failed to connect test PostgreSQL hub: {err}");
+                }
+                None
+            }
+        }
+    }
+
+    struct OverlayFixtureIds {
+        database_url: String,
+        parent_project_id: String,
+        overlay_project_id: String,
+    }
+
+    impl OverlayFixtureIds {
+        fn new() -> Self {
+            let database_url = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL")
+                .ok()
+                .or_else(|| crate::db::resolve_database_url().ok())
+                .expect("database URL already resolved");
+            let suffix = format!(
+                "{}-{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("system time after epoch")
+                    .as_nanos()
+            );
+            Self {
+                database_url,
+                parent_project_id: format!("gcode-overlay-test-parent-{suffix}"),
+                overlay_project_id: format!("gcode-overlay-test-overlay-{suffix}"),
+            }
+        }
+    }
+
+    struct OverlayFixtureCleanup {
+        database_url: String,
+        parent_project_id: String,
+        overlay_project_id: String,
+    }
+
+    impl Drop for OverlayFixtureCleanup {
+        fn drop(&mut self) {
+            let Ok(mut conn) = Client::connect(&self.database_url, NoTls) else {
+                return;
+            };
+            cleanup_overlay_visibility_projects(
+                &mut conn,
+                &self.parent_project_id,
+                &self.overlay_project_id,
+            );
+        }
+    }
+
+    fn cleanup_overlay_visibility_fixture(conn: &mut Client, ids: &OverlayFixtureIds) {
+        cleanup_overlay_visibility_projects(conn, &ids.parent_project_id, &ids.overlay_project_id);
+    }
+
+    fn cleanup_overlay_visibility_projects(
+        conn: &mut Client,
+        parent_project_id: &str,
+        overlay_project_id: &str,
+    ) {
+        for table in [
+            "code_calls",
+            "code_imports",
+            "code_symbols",
+            "code_content_chunks",
+            "code_indexed_files",
+        ] {
+            let sql = format!("DELETE FROM {table} WHERE project_id = $1 OR project_id = $2");
+            let _ = conn.execute(&sql, &[&parent_project_id, &overlay_project_id]);
+        }
+        let _ = conn.execute(
+            "DELETE FROM code_indexed_projects WHERE id = $1 OR id = $2",
+            &[&parent_project_id, &overlay_project_id],
+        );
+    }
+
+    fn seed_overlay_visibility_fixture(conn: &mut Client, ids: &OverlayFixtureIds) {
+        insert_project(conn, &ids.parent_project_id, "/tmp/gcode-overlay-parent");
+        insert_project(conn, &ids.overlay_project_id, "/tmp/gcode-overlay");
+
+        insert_file(conn, &ids.parent_project_id, "src/parent.rs", "rust", 1);
+        insert_file(conn, &ids.parent_project_id, "src/shadowed.rs", "rust", 1);
+        insert_file(conn, &ids.parent_project_id, "src/deleted.rs", "rust", 1);
+        insert_file(conn, &ids.overlay_project_id, "src/overlay.rs", "rust", 1);
+        insert_file(conn, &ids.overlay_project_id, "src/shadowed.rs", "rust", 1);
+        insert_file(
+            conn,
+            &ids.overlay_project_id,
+            "src/deleted.rs",
+            crate::visibility::TOMBSTONE_LANGUAGE,
+            0,
+        );
+
+        insert_symbol(
+            conn,
+            &ids.parent_project_id,
+            "src/parent.rs",
+            "parentonly_marker_visible++",
+            "parent_kind",
+        );
+        insert_symbol(
+            conn,
+            &ids.parent_project_id,
+            "src/shadowed.rs",
+            "parentonly_marker_shadowed++",
+            "parent_shadow_kind",
+        );
+        insert_symbol(
+            conn,
+            &ids.parent_project_id,
+            "src/deleted.rs",
+            "parentonly_marker_deleted++",
+            "parent_deleted_kind",
+        );
+        insert_symbol(
+            conn,
+            &ids.overlay_project_id,
+            "src/overlay.rs",
+            "overlay_marker_visible++",
+            "overlay_kind",
+        );
+        insert_symbol(
+            conn,
+            &ids.overlay_project_id,
+            "src/shadowed.rs",
+            "overlay_marker_shadowed++",
+            "overlay_shadow_kind",
+        );
+
+        insert_chunk(
+            conn,
+            &ids.parent_project_id,
+            "src/parent.rs",
+            0,
+            "marker parentonly visible++",
+        );
+        insert_chunk(
+            conn,
+            &ids.parent_project_id,
+            "src/shadowed.rs",
+            0,
+            "marker parentonly shadowed++",
+        );
+        insert_chunk(
+            conn,
+            &ids.parent_project_id,
+            "src/deleted.rs",
+            0,
+            "marker parentonly deleted++",
+        );
+        insert_chunk(
+            conn,
+            &ids.overlay_project_id,
+            "src/overlay.rs",
+            0,
+            "marker overlay visible++",
+        );
+        insert_chunk(
+            conn,
+            &ids.overlay_project_id,
+            "src/shadowed.rs",
+            0,
+            "marker overlay shadowed++",
+        );
+    }
+
+    fn insert_project(conn: &mut Client, project_id: &str, root_path: &str) {
+        conn.execute(
+            "INSERT INTO code_indexed_projects
+                (id, root_path, total_files, total_symbols, last_indexed_at, index_duration_ms)
+             VALUES ($1, $2, 0, 0, NOW(), 0)",
+            &[&project_id, &root_path],
+        )
+        .expect("insert project");
+    }
+
+    fn insert_file(
+        conn: &mut Client,
+        project_id: &str,
+        file_path: &str,
+        language: &str,
+        symbol_count: i32,
+    ) {
+        let id = format!("{project_id}:{file_path}");
+        conn.execute(
+            "INSERT INTO code_indexed_files
+                (id, project_id, file_path, language, content_hash, symbol_count, byte_size,
+                 graph_synced, vectors_synced, graph_sync_attempted_at, indexed_at)
+             VALUES ($1, $2, $3, $4, 'hash', $5, 1, false, false, NULL, NOW())",
+            &[&id, &project_id, &file_path, &language, &symbol_count],
+        )
+        .expect("insert indexed file");
+    }
+
+    fn insert_symbol(conn: &mut Client, project_id: &str, file_path: &str, name: &str, kind: &str) {
+        let id = format!("{project_id}:{file_path}:{name}");
+        conn.execute(
+            "INSERT INTO code_symbols
+                (id, project_id, file_path, name, qualified_name, kind, language, byte_start,
+                 byte_end, line_start, line_end, signature, docstring, parent_symbol_id,
+                 content_hash, summary, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $4, $5, 'rust', 0, 1, 1, 1, $4, NULL, NULL,
+                     'hash', NULL, NOW(), NOW())",
+            &[&id, &project_id, &file_path, &name, &kind],
+        )
+        .expect("insert symbol");
+    }
+
+    fn insert_chunk(
+        conn: &mut Client,
+        project_id: &str,
+        file_path: &str,
+        chunk_index: i32,
+        content: &str,
+    ) {
+        let id = format!("{project_id}:{file_path}:{chunk_index}");
+        conn.execute(
+            "INSERT INTO code_content_chunks
+                (id, project_id, file_path, chunk_index, line_start, line_end, content, language,
+                 created_at)
+             VALUES ($1, $2, $3, $4, 1, 1, $5, 'rust', NOW())",
+            &[&id, &project_id, &file_path, &chunk_index, &content],
+        )
+        .expect("insert content chunk");
+    }
+
+    fn overlay_visibility_context(ids: &OverlayFixtureIds) -> Context {
+        Context {
+            database_url: ids.database_url.clone(),
+            project_root: PathBuf::from("/tmp/gcode-overlay"),
+            project_id: ids.overlay_project_id.clone(),
+            quiet: true,
+            falkordb: None,
+            qdrant: None,
+            embedding: None,
+            code_vectors: CodeVectorSettings::default(),
+            daemon_url: None,
+            index_scope: ProjectIndexScope::Overlay {
+                overlay_project_id: ids.overlay_project_id.clone(),
+                overlay_root: PathBuf::from("/tmp/gcode-overlay"),
+                parent_project_id: ids.parent_project_id.clone(),
+                parent_root: PathBuf::from("/tmp/gcode-overlay-parent"),
+            },
+        }
     }
 }
