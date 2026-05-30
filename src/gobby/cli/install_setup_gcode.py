@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from gobby.cli.install_setup_versions import managed_version_satisfies_pin
+from gobby.install.bin_freshness_models import compare_versions
 from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
 
 
@@ -25,12 +26,39 @@ def get_latest_gcode_version(module: Any) -> str | None:
 
 
 def get_installed_gcode_version(module: Any, bin_dir: Path) -> str | None:
-    """Read installed gcode version from stamp file."""
+    """Read installed gcode version, preferring the binary over the stamp."""
+    gcode_path = bin_dir / module._GCODE_BIN_NAME
+    if gcode_path.exists():
+        probed_version = probe_gcode_version(module, gcode_path)
+        if probed_version:
+            return probed_version
+
     stamp = bin_dir / module._GCODE_VERSION_STAMP
     try:
         return stamp.read_text().strip() if stamp.exists() else None
     except OSError:
         return None
+
+
+def probe_gcode_version(module: Any, gcode_path: Path) -> str | None:
+    """Probe gcode binary for a version string."""
+    try:
+        result = module.subprocess.run(
+            [str(gcode_path), "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except Exception as e:
+        module.logger.warning("gcode: failed running --version probe: %s", e)
+        return None
+
+    if result.returncode != 0:
+        module.logger.warning("gcode: --version probe failed: %s", result.stderr.strip())
+        return None
+
+    output = (result.stdout or result.stderr).strip()
+    return output.split()[-1] if output else None
 
 
 def write_gcode_version_stamp(module: Any, bin_dir: Path, version: str) -> None:
@@ -224,11 +252,15 @@ def install_gcode(module: Any, force: bool = False) -> dict[str, Any]:
         }
 
     installed_version = module._get_installed_gcode_version(bin_dir)
+    pinned_version = MANAGED_BIN_VERSION_PINS["gcode"]
     if gcode_path.exists() and not force:
-        if managed_version_satisfies_pin("gcode", installed_version):
+        if installed_version and managed_version_satisfies_pin("gcode", installed_version):
+            module._write_gcode_version_stamp(bin_dir, installed_version)
             return {"installed": False, "skipped": True, "version": installed_version}
 
-    target_version = MANAGED_BIN_VERSION_PINS["gcode"]
+    target_version = pinned_version
+    if compare_versions(installed_version, pinned_version) == 1:
+        target_version = installed_version
     bin_dir.mkdir(parents=True, exist_ok=True)
     method = None
 
@@ -247,22 +279,7 @@ def install_gcode(module: Any, force: bool = False) -> dict[str, Any]:
 
     gcode_path.chmod(0o755)
 
-    resolved_version = target_version
-    if not resolved_version:
-        try:
-            result = module.subprocess.run(
-                [str(gcode_path), "--version"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                parts = result.stdout.strip().split()
-                resolved_version = parts[-1] if parts else "unknown"
-            else:
-                resolved_version = "unknown"
-        except Exception:
-            resolved_version = "unknown"
+    resolved_version = probe_gcode_version(module, gcode_path) or target_version or "unknown"
     module._write_gcode_version_stamp(bin_dir, resolved_version)
 
     module._ensure_gobby_bin_on_path()
