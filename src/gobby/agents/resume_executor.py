@@ -6,6 +6,7 @@ import logging
 import shutil
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from gobby.agents.spawn import prepare_terminal_spawn
@@ -106,17 +107,25 @@ async def resume_agent_run(
         resume_metadata_json=metadata,
     )
 
+    sandbox_args = _str_list(resume_metadata.get("sandbox_args"))
     command, _cmd_env = build_cli_command(
         cli=provider,
-        prompt=prompt,
+        prompt=None if provider == "claude" else prompt,
         resume_session_id=native_session_id,
         auto_approve=bool(resume_metadata.get("auto_approve", True)),
         working_directory=cwd if provider in {"codex", "droid", "grok"} else None,
-        sandbox_args=_str_list(resume_metadata.get("sandbox_args")),
+        sandbox_args=None if provider == "claude" else sandbox_args,
         model=_metadata_str(resume_metadata, "model"),
         reasoning_effort=_metadata_str(resume_metadata, "effective_reasoning_effort"),
         config_overrides=_str_list(resume_metadata.get("config_overrides")),
     )
+    if provider == "claude":
+        claude_mcp_config = Path(cwd) / ".mcp.json"
+        if claude_mcp_config.exists():
+            command.extend(["--mcp-config", str(claude_mcp_config), "--strict-mcp-config"])
+        command.extend(sandbox_args)
+        command.append(prompt)
+
     env = _str_dict(resume_metadata.get("env"))
     env.update(spawn_context.env_vars)
     env.update(_str_dict(resume_metadata.get("sandbox_env")))
