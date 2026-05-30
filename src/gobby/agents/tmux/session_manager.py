@@ -484,12 +484,14 @@ class TmuxSessionManager:
         """
         rc, _stdout, stderr = await self._run(
             "set-option",
-            "-g",
+            "-t",
+            target,
             "set-titles",
             "on",
             ";",
             "set-option",
-            "-g",
+            "-t",
+            target,
             "set-titles-string",
             "#W",
             ";",

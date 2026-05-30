@@ -371,6 +371,49 @@ class TestRenameTmuxWindow:
         assert manager.rename_calls == [("%42", "#99: My Title")]
 
     @pytest.mark.asyncio
+    async def test_empty_title_falls_back_to_cwd_basename_and_ref(self):
+        """Empty titles use cwd basename before applying the session ref."""
+        from gobby.workflows.summary_actions import _rename_tmux_window
+
+        _RecordingTmuxManager.instances = []
+        session = MagicMock()
+        session.terminal_context = {"tmux_pane": "%42", "cwd": "/work/repos/gobby/"}
+        session.agent_depth = 0
+        session.ref = "#99"
+        session.source = "claude"
+
+        with patch("gobby.sessions.tmux_context.TmuxSessionManager", _RecordingTmuxManager):
+            await _rename_tmux_window(session, "")
+
+        manager = _RecordingTmuxManager.instances[0]
+        assert manager.rename_calls == [("%42", "#99: gobby")]
+
+    @pytest.mark.asyncio
+    async def test_empty_title_falls_back_to_source_then_session(self):
+        """Empty titles use source when no path basename exists, then session."""
+        from gobby.workflows.summary_actions import _rename_tmux_window
+
+        _RecordingTmuxManager.instances = []
+        source_session = MagicMock()
+        source_session.terminal_context = {"tmux_pane": "%43", "cwd": "/"}
+        source_session.agent_depth = 0
+        source_session.ref = None
+        source_session.source = "codex"
+
+        session_fallback = MagicMock()
+        session_fallback.terminal_context = {"tmux_pane": "%44"}
+        session_fallback.agent_depth = 0
+        session_fallback.ref = None
+        session_fallback.source = None
+
+        with patch("gobby.sessions.tmux_context.TmuxSessionManager", _RecordingTmuxManager):
+            await _rename_tmux_window(source_session, "")
+            await _rename_tmux_window(session_fallback, "")
+
+        assert _RecordingTmuxManager.instances[0].rename_calls == [("%43", "codex")]
+        assert _RecordingTmuxManager.instances[1].rename_calls == [("%44", "session")]
+
+    @pytest.mark.asyncio
     async def test_spawned_agent_renames_on_gobby_socket(self):
         """Spawned agent (depth > 0) uses TmuxSessionManager."""
         from gobby.workflows.summary_actions import _rename_tmux_window

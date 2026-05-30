@@ -132,6 +132,67 @@ class TestSessionStartPreCreatedSession:
         mock_schedule.assert_called_once()
         assert response.metadata.get("terminal_tmux_pane") == "%77"
 
+    def test_pre_created_session_renames_empty_title_with_cwd(
+        self, mock_dependencies: dict
+    ) -> None:
+        """Pre-created SessionStart should rename panes using cwd fallback."""
+        mock_session = MagicMock()
+        mock_session.id = "sess-pre-123"
+        mock_session.project_id = "proj-123"
+        mock_session.parent_session_id = None
+        mock_session.agent_depth = 0
+        mock_session.agent_run_id = None
+        mock_session.title = None
+        mock_session.digest_markdown = None
+        mock_session.terminal_context = None
+
+        updated_session = MagicMock()
+        updated_session.id = "sess-pre-123"
+        updated_session.project_id = "proj-123"
+        updated_session.parent_session_id = None
+        updated_session.agent_depth = 0
+        updated_session.agent_run_id = None
+        updated_session.title = None
+        updated_session.digest_markdown = None
+        updated_session.terminal_context = {
+            "tmux_pane": "%77",
+            "parent_pid": 123,
+            "cwd": "/work/repos/gobby",
+        }
+
+        mock_dependencies["session_storage"].get.return_value = mock_session
+        mock_dependencies["session_storage"].update.return_value = mock_session
+        mock_dependencies["session_manager"].backfill_terminal_context.return_value = (
+            updated_session,
+            True,
+        )
+
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.SESSION_START,
+            session_id="sess-pre-123",
+            data={
+                "cwd": "/work/repos/gobby",
+                "terminal_context": {"tmux_pane": "%77", "parent_pid": 123},
+            },
+        )
+
+        with patch(
+            "gobby.hooks.event_handlers._session_start.schedule_tmux_window_rename"
+        ) as mock_schedule:
+            response = handlers.handle_session_start(event)
+
+        assert response.decision == "allow"
+        mock_dependencies["session_manager"].backfill_terminal_context.assert_called_once_with(
+            "sess-pre-123",
+            {"tmux_pane": "%77", "parent_pid": 123, "cwd": "/work/repos/gobby"},
+        )
+        mock_schedule.assert_called_once_with(
+            updated_session,
+            "",
+            loop=mock_dependencies["session_coordinator"]._event_loop,
+        )
+
     def test_pre_created_session_with_parent(self, mock_dependencies: dict) -> None:
         """Test pre-created session with parent session ID includes parent context."""
         mock_session = MagicMock()
@@ -569,6 +630,48 @@ class TestSessionStartNewSession:
         call_kwargs = mock_dependencies["session_manager"].register_session.call_args
         assert call_kwargs.kwargs.get("parent_session_id") is None or (
             call_kwargs[1].get("parent_session_id") is None if call_kwargs[1] else True
+        )
+
+    def test_new_session_start_renames_captured_tmux_pane(self, mock_dependencies: dict) -> None:
+        """New SessionStart should persist cwd and rename captured panes immediately."""
+        new_session = MagicMock()
+        new_session.id = "new-sess-456"
+        new_session.project_id = "proj-123"
+        new_session.parent_session_id = None
+        new_session.agent_depth = 0
+        new_session.agent_run_id = None
+        new_session.title = None
+        new_session.terminal_context = {"tmux_pane": "%88", "cwd": "/work/repos/gobby"}
+
+        mock_dependencies["session_storage"].get.side_effect = [None, new_session]
+        mock_dependencies["session_manager"].register_session.return_value = "new-sess-456"
+
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.SESSION_START,
+            session_id="ext-rename",
+            data={
+                "cwd": "/work/repos/gobby",
+                "terminal_context": {"tmux_pane": "%88"},
+            },
+            metadata={},
+        )
+
+        with patch(
+            "gobby.hooks.event_handlers._session_start.schedule_tmux_window_rename"
+        ) as mock_schedule:
+            response = handlers.handle_session_start(event)
+
+        assert response.decision == "allow"
+        register_kwargs = mock_dependencies["session_manager"].register_session.call_args.kwargs
+        assert register_kwargs["terminal_context"] == {
+            "tmux_pane": "%88",
+            "cwd": "/work/repos/gobby",
+        }
+        mock_schedule.assert_called_once_with(
+            new_session,
+            "",
+            loop=mock_dependencies["session_coordinator"]._event_loop,
         )
 
     def test_new_session_parent_lookup_error(self, mock_dependencies: dict) -> None:

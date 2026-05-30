@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 from gobby.hooks.events import HookEvent, HookEventType
 from gobby.hooks.project_context import apply_project_id_to_event, resolve_hook_project_context
 from gobby.hooks.session_types import HookSessionManager
+from gobby.hooks.terminal_context import enrich_terminal_context_with_cwd, hook_cwd
 from gobby.tasks.state_semantics import serialize_task_state
 from gobby.workflows.summary_actions import schedule_tmux_window_rename
 
@@ -174,8 +175,13 @@ class SessionLookupService:
 
     def _backfill_terminal_context(self, platform_session_id: str, event: HookEvent) -> None:
         """Merge terminal metadata discovered after the original registration."""
-        terminal_context = event.data.get("terminal_context")
-        if not isinstance(terminal_context, dict) or not terminal_context:
+        raw_context = event.data.get("terminal_context")
+        terminal_context = raw_context if isinstance(raw_context, dict) else None
+        terminal_context = enrich_terminal_context_with_cwd(
+            terminal_context,
+            hook_cwd(event.data, event.cwd),
+        )
+        if not terminal_context:
             return
 
         try:
@@ -192,13 +198,12 @@ class SessionLookupService:
             return
 
         if tmux_pane_added and updated_session is not None:
-            title = getattr(updated_session, "title", None)
-            if title:
-                schedule_tmux_window_rename(
-                    updated_session,
-                    title,
-                    loop=getattr(self._session_coordinator, "_event_loop", None),
-                )
+            title = getattr(updated_session, "title", None) or ""
+            schedule_tmux_window_rename(
+                updated_session,
+                title,
+                loop=getattr(self._session_coordinator, "_event_loop", None),
+            )
 
     def _resolve_session_id(self, external_id: str, event: HookEvent) -> str | None:
         """Look up or create platform session ID for the given external_id."""

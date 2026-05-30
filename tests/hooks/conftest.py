@@ -21,6 +21,7 @@ def mock_dependencies() -> dict[str, Any]:
     session_manager = session_storage
     session_storage.find_parent.return_value = None
     session_storage.update.return_value = None
+    session_storage.backfill_terminal_context.return_value = (None, False)
     return {
         "session_manager": session_manager,
         "workflow_handler": workflow_handler,

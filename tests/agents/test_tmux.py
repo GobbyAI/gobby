@@ -457,12 +457,14 @@ class TestTmuxSessionManager:
             assert await mgr.rename_window("%42", "My Title") is True
             mock_run.assert_called_once_with(
                 "set-option",
-                "-g",
+                "-t",
+                "%42",
                 "set-titles",
                 "on",
                 ";",
                 "set-option",
-                "-g",
+                "-t",
+                "%42",
                 "set-titles-string",
                 "#W",
                 ";",
@@ -491,6 +493,7 @@ class TestTmuxSessionManager:
                 "allow-rename",
                 "off",
             )
+            assert "-g" not in mock_run.call_args.args
 
     @pytest.mark.asyncio
     async def test_rename_window_missing_pane_logs_debug(

@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -63,6 +63,36 @@ def test_valid_platform_session_metadata_is_preserved_and_enriched() -> None:
         {"tmux_pane": "%1"},
     )
     session_task_manager.get_session_tasks.assert_called_once_with("platform-session")
+
+
+def test_terminal_context_backfill_adds_cwd_and_renames_empty_title() -> None:
+    session_manager = MagicMock()
+    session_manager.get.return_value = SimpleNamespace(
+        id="platform-session", project_id="project-1"
+    )
+    updated_session = SimpleNamespace(
+        id="platform-session",
+        project_id="project-1",
+        title=None,
+        terminal_context={"tmux_pane": "%1", "cwd": "/work/repos/gobby"},
+    )
+    session_manager.backfill_terminal_context.return_value = (updated_session, True)
+    session_task_manager = MagicMock()
+    session_task_manager.get_session_tasks.return_value = []
+    service = _service(session_manager, session_task_manager, MagicMock(return_value="project-1"))
+    event = _event({"_platform_session_id": "platform-session"})
+    event.data["cwd"] = "/work/repos/gobby"
+
+    with patch("gobby.hooks.session_lookup.schedule_tmux_window_rename") as mock_schedule:
+        result = service.resolve(event)
+
+    assert result == "platform-session"
+    session_manager.backfill_terminal_context.assert_called_once_with(
+        "platform-session",
+        {"tmux_pane": "%1", "cwd": "/work/repos/gobby"},
+    )
+    mock_schedule.assert_called_once()
+    assert mock_schedule.call_args.args == (updated_session, "")
 
 
 def test_root_cwd_platform_session_metadata_sets_project_on_event_data() -> None:

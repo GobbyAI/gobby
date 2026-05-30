@@ -325,6 +325,39 @@ def schedule_tmux_window_rename(
         logger.debug("Failed to run tmux rename synchronously", exc_info=True)
 
 
+def _synthesize_fallback_title(session: Any, terminal_context: dict[str, Any]) -> str:
+    """Synthesize a fallback title from terminal context when title is empty.
+
+    Prefers basename from terminal context fields (cwd, project_path, workspace_path,
+    repo_path), falls back to session source, then defaults to "session".
+
+    Args:
+        session: The session object
+        terminal_context: Parsed terminal context dict
+
+    Returns:
+        A fallback title string
+    """
+    fallback_fields = ["cwd", "project_path", "workspace_path", "repo_path"]
+    for field in fallback_fields:
+        title = _path_basename_title(terminal_context.get(field))
+        if title:
+            return title
+
+    session_source = getattr(session, "source", None)
+    if session_source:
+        return str(session_source)
+
+    return "session"
+
+
+def _path_basename_title(value: Any) -> str | None:
+    if not isinstance(value, str) or not value:
+        return None
+    title = Path(value).name
+    return title or None
+
+
 async def _rename_tmux_window(session: Any, title: str) -> None:
     """Rename the tmux window for a session after title synthesis.
 
@@ -339,6 +372,9 @@ async def _rename_tmux_window(session: Any, title: str) -> None:
     pane = tc.get("tmux_pane")
     if not pane:
         return
+
+    if not title:
+        title = _synthesize_fallback_title(session, tc)
 
     agent_depth = getattr(session, "agent_depth", 0) or 0
 

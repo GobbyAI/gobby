@@ -1224,6 +1224,7 @@ class TestHookManagerSessionLookup:
         assert updated is not None
         assert updated.terminal_context is not None
         assert updated.terminal_context["tmux_pane"] == "%5"
+        assert updated.terminal_context["cwd"] == str(temp_dir)
         mock_schedule.assert_called_once()
 
     def test_handle_resolves_active_task(

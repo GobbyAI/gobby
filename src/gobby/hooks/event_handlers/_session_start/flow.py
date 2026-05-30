@@ -7,6 +7,7 @@ from typing import Any, cast
 
 from gobby.hooks.events import HookEvent, HookResponse
 from gobby.hooks.project_context import resolve_hook_project_context
+from gobby.hooks.terminal_context import enrich_terminal_context_with_cwd, hook_cwd
 
 from .agents import _seed_memory_recall_helper_vars
 from .context import classify_session_start_context, mark_startup_context_injected
@@ -41,6 +42,18 @@ def _consume_pending_compact_self_continuation(
     )
 
 
+def _schedule_tmux_window_rename_for_session(handler: Any, session: Any) -> None:
+    terminal_context = getattr(session, "terminal_context", None)
+    if not isinstance(terminal_context, dict) or not terminal_context.get("tmux_pane"):
+        return
+
+    _compat_module().schedule_tmux_window_rename(
+        session,
+        getattr(session, "title", None) or "",
+        loop=getattr(handler._session_coordinator, "_event_loop", None),
+    )
+
+
 def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     """Handle SESSION_START event."""
     _t0 = time.monotonic()
@@ -48,7 +61,7 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     input_data = event.data
     transcript_path = input_data.get("transcript_path")
     cli_source = event.source.value
-    cwd = input_data.get("cwd")
+    cwd = hook_cwd(input_data, event.cwd)
 
     if not transcript_path:
         transcript_path = handler._derive_transcript_path(cli_source, input_data, external_id)
@@ -56,11 +69,9 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     _t_pre_check = time.monotonic()
 
     existing_session = None
-    terminal_context = (
-        input_data.get("terminal_context")
-        if isinstance(input_data.get("terminal_context"), dict)
-        else None
-    )
+    raw_terminal_context = input_data.get("terminal_context")
+    terminal_context = raw_terminal_context if isinstance(raw_terminal_context, dict) else None
+    terminal_context = enrich_terminal_context_with_cwd(terminal_context, cwd)
 
     if terminal_context and terminal_context.get("gobby_acp_child") == "1":
         handler.logger.info(
@@ -248,6 +259,8 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     session_obj = None
     if session_id and handler._session_manager:
         session_obj = handler._session_manager.get(session_id)
+    if session_obj:
+        _schedule_tmux_window_rename_for_session(handler, session_obj)
 
     context_decision = classify_session_start_context(
         handler,
@@ -409,14 +422,11 @@ def handle_pre_created_session(
         if refreshed is not None:
             session_obj = refreshed
 
-    if tmux_pane_added:
-        title = getattr(session_obj, "title", None)
-        if title:
-            _compat_module().schedule_tmux_window_rename(
-                session_obj,
-                title,
-                loop=getattr(handler._session_coordinator, "_event_loop", None),
-            )
+    if tmux_pane_added or (
+        isinstance(getattr(session_obj, "terminal_context", None), dict)
+        and session_obj.terminal_context.get("tmux_pane")
+    ):
+        _schedule_tmux_window_rename_for_session(handler, session_obj)
 
     if handler._session_manager:
         handler._session_manager.cache_session_mapping(
