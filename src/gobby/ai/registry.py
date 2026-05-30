@@ -338,11 +338,15 @@ def build_daemon_ai_capability_registry(
         _embedding_binding(config),
         _whisper_transcribe_binding(config),
         _audio_translate_binding(),
+        _local_text_generate_binding(config),
     ]
 
     for entry in provider_metadata():
         if entry.provider == "agy":
             continue
+        text_binding = _text_generate_binding(config, entry, installed)
+        if text_binding is not None:
+            bindings.append(text_binding)
         bindings.append(_provider_binding(AICapability.AGENT_SPAWN, entry, installed))
         bindings.append(_provider_binding(AICapability.WEB_CHAT, entry, installed))
 
@@ -438,6 +442,72 @@ def _audio_translate_binding() -> CapabilityBinding:
         adapter_style=AIAdapterStyle.LOCAL,
         reason="No audio_translate binding registered.",
     )
+
+
+def _text_generate_binding(
+    config: DaemonConfig | None,
+    entry: ProviderMetadata,
+    provider_installed: Callable[[ProviderMetadata], bool],
+) -> CapabilityBinding | None:
+    metadata = {
+        "display_name": entry.display_name,
+        "deprecated": entry.deprecated,
+        "deprecation_message": entry.deprecation_message,
+    }
+
+    adapter_style = _text_generate_adapter_style(entry.provider)
+    if adapter_style is None:
+        return None
+
+    if provider_installed(entry):
+        return CapabilityBinding(
+            capability=AICapability.TEXT_GENERATE,
+            provider=entry.provider,
+            adapter_style=adapter_style,
+            available=True,
+            metadata=metadata,
+        )
+
+    return CapabilityBinding.unavailable(
+        AICapability.TEXT_GENERATE,
+        entry.provider,
+        adapter_style=adapter_style,
+        reason=f"{entry.display_name} CLI is not installed.",
+        metadata=metadata,
+    )
+
+
+def _local_text_generate_binding(config: DaemonConfig | None) -> CapabilityBinding:
+    local_config = config.local if config and config.local else None
+    metadata: dict[str, object] = {"display_name": "Local"}
+    if local_config:
+        metadata["api_base"] = local_config.url
+        return CapabilityBinding(
+            capability=AICapability.TEXT_GENERATE,
+            provider="local",
+            adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+            available=True,
+            models=(local_config.model,),
+            metadata=metadata,
+        )
+
+    return CapabilityBinding.unavailable(
+        AICapability.TEXT_GENERATE,
+        "local",
+        adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+        reason="Local text_generate binding is not configured.",
+        metadata=metadata,
+    )
+
+
+def _text_generate_adapter_style(provider: str) -> AIAdapterStyle | None:
+    if provider in {"claude", "codex"}:
+        return AIAdapterStyle.LLM_PROVIDER
+    if provider in {"gemini", "grok", "qwen"}:
+        return AIAdapterStyle.ACP
+    if provider == "droid":
+        return AIAdapterStyle.CLI
+    return None
 
 
 def _provider_binding(

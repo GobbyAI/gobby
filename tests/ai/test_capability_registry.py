@@ -12,6 +12,7 @@ from gobby.ai import (
     build_daemon_ai_capability_registry,
 )
 from gobby.config.app import DaemonConfig
+from gobby.config.local import LocalConfig
 from gobby.config.persistence import EmbeddingsConfig
 from gobby.config.voice import VoiceConfig
 from gobby.providers import AGY_UNAVAILABLE_REASON, ProviderMetadata
@@ -90,8 +91,38 @@ def test_daemon_registry_keeps_web_chat_and_text_generate_separate() -> None:
 
     assert text_generate.capability == AICapability.TEXT_GENERATE
     assert web_chat.capability == AICapability.WEB_CHAT
-    assert registry.binding(AICapability.TEXT_GENERATE, "claude") is None
-    assert registry.binding(AICapability.WEB_CHAT, "claude") is not None
+    text_binding = registry.binding(AICapability.TEXT_GENERATE, "claude")
+    web_chat_binding = registry.binding(AICapability.WEB_CHAT, "claude")
+    assert text_binding is not None
+    assert text_binding.adapter_style == AIAdapterStyle.LLM_PROVIDER
+    assert web_chat_binding is not None
+    assert web_chat_binding.adapter_style == AIAdapterStyle.CLI
+
+
+def test_daemon_registry_reports_text_generate_provider_bindings() -> None:
+    registry = build_daemon_ai_capability_registry(
+        DaemonConfig(local=LocalConfig(url="http://localhost:1234/v1", model="llama")),
+        provider_installed=lambda _entry: True,
+    )
+
+    expected_styles = {
+        "claude": AIAdapterStyle.LLM_PROVIDER,
+        "codex": AIAdapterStyle.LLM_PROVIDER,
+        "local": AIAdapterStyle.OPENAI_COMPATIBLE,
+        "gemini": AIAdapterStyle.ACP,
+        "grok": AIAdapterStyle.ACP,
+        "qwen": AIAdapterStyle.ACP,
+        "droid": AIAdapterStyle.CLI,
+    }
+
+    for provider, adapter_style in expected_styles.items():
+        binding = registry.select(AICapability.TEXT_GENERATE, provider=provider)
+        assert binding.provider == provider
+        assert binding.adapter_style == adapter_style
+
+    local = registry.binding(AICapability.TEXT_GENERATE, "local")
+    assert local is not None
+    assert local.models == ("llama",)
 
 
 def test_daemon_registry_marks_agy_unavailable_even_when_provider_probe_succeeds() -> None:
