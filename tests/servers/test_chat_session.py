@@ -124,6 +124,51 @@ class TestCanUseTool:
         assert session.has_pending_question is False
 
 
+class TestStartupInjectionBoundaries:
+    """Regression coverage for web chat avoiding terminal SessionStart injection."""
+
+    def test_build_sdk_hooks_has_no_session_start_hook(self, session: ChatSession) -> None:
+        session._on_before_agent = AsyncMock()
+
+        hooks = session._build_sdk_hooks()
+
+        assert hooks is not None
+        assert "UserPromptSubmit" in hooks
+        assert "SessionStart" not in hooks
+
+    @pytest.mark.asyncio
+    async def test_resume_uses_sdk_resume_without_system_prompt(self, session: ChatSession) -> None:
+        session.resume_session_id = "claude-resume-123"
+        session.system_prompt_override = "should not be used on resume"
+        captured_options: dict[str, Any] = {}
+
+        def capture_options(**kwargs: Any) -> MagicMock:
+            captured_options.update(kwargs)
+            return MagicMock()
+
+        with (
+            patch("gobby.servers.chat_session._find_cli_path", return_value="/usr/bin/claude"),
+            patch(
+                "gobby.servers.chat_session._build_gobby_mcp_entry",
+                return_value={"command": "gobby", "args": ["mcp-server"]},
+            ),
+            patch("gobby.servers.chat_session._find_project_root", return_value=None),
+            patch("gobby.servers.chat_session._load_chat_system_prompt") as mock_load_prompt,
+            patch("gobby.servers.chat_session.ClaudeAgentOptions", side_effect=capture_options),
+            patch("gobby.servers.chat_session.ClaudeSDKClient") as mock_client_cls,
+        ):
+            mock_client = AsyncMock()
+            mock_client_cls.return_value = mock_client
+
+            await session.start()
+
+        mock_load_prompt.assert_not_called()
+        assert captured_options["system_prompt"] is None
+        assert captured_options["resume"] == "claude-resume-123"
+        assert captured_options["continue_conversation"] is True
+        assert captured_options["setting_sources"] == []
+
+
 class TestDefaultModelResolution:
     """Tests for chat config default model resolution."""
 

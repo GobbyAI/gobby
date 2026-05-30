@@ -26,6 +26,23 @@ class TestQwenAdapter:
         assert result["hookSpecificOutput"]["hookEventName"] == "SessionStart"
         assert result["hookSpecificOutput"]["additionalContext"].count(banner) == 1
 
+    def test_session_start_live_context_does_not_replay_persona(self) -> None:
+        adapter = QwenAdapter()
+        response = HookResponse(
+            decision="allow",
+            system_message="Gobby Session ID: #6273 (sess-live-123)",
+            context="Claimed task refs: #15237 [in_progress]",
+        )
+
+        result = adapter.translate_from_hook_response(response, hook_type="SessionStart")
+
+        assert "systemMessage" not in result
+        ctx = result["hookSpecificOutput"]["additionalContext"]
+        assert "Gobby Session ID: #6273 (sess-live-123)" in ctx
+        assert "Claimed task refs: #15237 [in_progress]" in ctx
+        assert "## Role" not in ctx
+        assert "## Personality" not in ctx
+
     def test_session_start_banner_and_metadata_include_session_id_once(self) -> None:
         adapter = QwenAdapter()
         banner = "Gobby Session ID: #42 (uuid-123)"

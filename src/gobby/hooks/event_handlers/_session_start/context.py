@@ -28,30 +28,46 @@ def classify_session_start_context(
     is_existing_session: bool,
 ) -> SessionStartContextDecision:
     """Decide whether SessionStart should emit full startup or live context."""
+    _ = is_existing_session
     variables = _load_session_variables(handler, session_id)
     explicit_context_loss = _has_explicit_context_loss(session_source, variables)
 
-    if explicit_context_loss or not is_existing_session:
+    if explicit_context_loss:
         return SessionStartContextDecision("full", variables, explicit_context_loss)
 
     if _has_prior_context_evidence(session, variables):
         return SessionStartContextDecision("live", variables, explicit_context_loss)
 
+    if session_id:
+        claimed_mode = _claim_startup_context_atomically(handler, session_id)
+        return SessionStartContextDecision(claimed_mode, variables, explicit_context_loss)
+
     return SessionStartContextDecision("full", variables, explicit_context_loss)
+
+
+def _claim_startup_context_atomically(handler: Any, session_id: str | None) -> ContextInjectionMode:
+    """Atomically claim startup context for this session.
+
+    Returns 'full' if this call is first to claim; 'live' if already claimed.
+    """
+    if not session_id or not getattr(handler, "_session_manager", None):
+        return "full"
+
+    try:
+        from gobby.workflows.state_manager import SessionVariableManager
+
+        sv_mgr = SessionVariableManager(handler._session_manager.db)
+        claimed_mode = sv_mgr.claim_startup_context(session_id)
+        return claimed_mode
+    except Exception as e:
+        handler.logger.debug(f"Failed to claim startup context for {session_id}: {e}")
+        return "full"
 
 
 def mark_startup_context_injected(handler: Any, session_id: str | None) -> None:
     """Persist markers that full startup context has been emitted."""
     if not session_id or not getattr(handler, "_session_manager", None):
         return
-
-    try:
-        from gobby.workflows.state_manager import SessionVariableManager
-
-        sv_mgr = SessionVariableManager(handler._session_manager.db)
-        sv_mgr.merge_variables(session_id, {"_startup_context_injected": True})
-    except Exception as e:
-        handler.logger.debug(f"Failed to mark startup context variable for {session_id}: {e}")
 
     update_terminal_pickup_metadata = getattr(
         handler._session_manager,

@@ -2,7 +2,7 @@ import json
 import logging
 import time
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from gobby.storage.hub.protocol import HubDatabase, SessionVariableMutation
 
@@ -324,6 +324,39 @@ class SessionVariableManager:
                     (session_id, json.dumps(current_vars), now),
                 )
         return True
+
+    def claim_startup_context(self, session_id: str) -> Literal["full", "live"]:
+        """Atomically claim the startup context for this session.
+
+        Returns:
+            'full' if this call owns the startup context (first caller).
+            'live' if another concurrent caller already claimed it.
+        """
+        now = datetime.now(UTC).isoformat()
+        with self.db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
+            row = conn.execute(
+                "SELECT variables FROM session_variables WHERE session_id = %s",
+                (session_id,),
+            ).fetchone()
+            current_vars = json.loads(row["variables"]) if row and row["variables"] else {}
+
+            if current_vars.get("_startup_context_injected") is True:
+                return "live"
+
+            current_vars["_startup_context_injected"] = True
+            if row:
+                conn.execute(
+                    "UPDATE session_variables SET variables = %s, updated_at = %s "
+                    "WHERE session_id = %s",
+                    (json.dumps(current_vars), now, session_id),
+                )
+            else:
+                conn.execute(
+                    "INSERT INTO session_variables (session_id, variables, updated_at) "
+                    "VALUES (%s, %s, %s)",
+                    (session_id, json.dumps(current_vars), now),
+                )
+        return "full"
 
     def delete_variables(self, session_id: str) -> None:
         """Delete all session variables for a session."""

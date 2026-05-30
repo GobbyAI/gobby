@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
+from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.event_handlers._session_start import AgentActivationResult
+from gobby.hooks.event_handlers._session_start.context import classify_session_start_context
 from gobby.hooks.events import HookEventType
+from gobby.workflows.state_manager import SessionVariableManager
 
 from ._event_handler_helpers import make_event
 
@@ -27,6 +33,13 @@ def _agent_activation_context() -> AgentActivationResult:
         variables_count=0,
         injected_skill_names=[],
     )
+
+
+def _session_variable_handler(db: Any) -> MagicMock:
+    handler = MagicMock()
+    handler._session_manager = SimpleNamespace(db=db)
+    handler.logger = MagicMock()
+    return handler
 
 
 class TestSessionHandlers:
@@ -48,6 +61,78 @@ class TestSessionHandlers:
         )
         response = event_handlers.handle_session_end(event)
         assert response.decision == "allow"
+
+
+class TestSessionStartContextClaim:
+    """Test shared SessionStart startup context claim behavior."""
+
+    def test_duplicate_session_start_claims_full_context_once(self, temp_db: Any) -> None:
+        handler = _session_variable_handler(temp_db)
+        session_id = "sess-duplicate-start"
+
+        first = classify_session_start_context(
+            handler,
+            session_id=session_id,
+            session=None,
+            session_source="startup",
+            is_existing_session=False,
+        )
+        second = classify_session_start_context(
+            handler,
+            session_id=session_id,
+            session=None,
+            session_source="startup",
+            is_existing_session=True,
+        )
+
+        assert first.mode == "full"
+        assert second.mode == "live"
+        variables = SessionVariableManager(temp_db).get_variables(session_id)
+        assert variables["_startup_context_injected"] is True
+
+    def test_concurrent_duplicate_session_start_claims_full_context_once(
+        self, temp_db: Any
+    ) -> None:
+        handler = _session_variable_handler(temp_db)
+        session_id = "sess-concurrent-start"
+        barrier = Barrier(8)
+
+        def classify_once(_: int) -> str:
+            barrier.wait()
+            return classify_session_start_context(
+                handler,
+                session_id=session_id,
+                session=None,
+                session_source="startup",
+                is_existing_session=False,
+            ).mode
+
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            modes = list(executor.map(classify_once, range(8)))
+
+        assert modes.count("full") == 1
+        assert modes.count("live") == 7
+        variables = SessionVariableManager(temp_db).get_variables(session_id)
+        assert variables["_startup_context_injected"] is True
+
+    def test_explicit_context_loss_bypasses_existing_startup_claim(self, temp_db: Any) -> None:
+        handler = _session_variable_handler(temp_db)
+        session_id = "sess-clear-start"
+        SessionVariableManager(temp_db).merge_variables(
+            session_id,
+            {"_startup_context_injected": True},
+        )
+
+        decision = classify_session_start_context(
+            handler,
+            session_id=session_id,
+            session=None,
+            session_source="clear",
+            is_existing_session=True,
+        )
+
+        assert decision.mode == "full"
+        assert decision.explicit_context_loss is True
 
 
 class TestSessionStartPreCreatedSession:
@@ -472,6 +557,7 @@ class TestSessionStartPreCreatedSession:
 
         mock_svm = MagicMock()
         mock_svm.get_variables.return_value = {}
+        mock_svm.claim_startup_context.return_value = "full"
         mock_svm_cls.return_value = mock_svm
         mock_dependencies["session_storage"].get.return_value = mock_session
         mock_dependencies["session_manager"].update.return_value = mock_session
@@ -503,6 +589,7 @@ class TestSessionStartPreCreatedSession:
             "sess-first-123",
             context_injected=True,
         )
+        mock_svm.claim_startup_context.assert_called_once_with("sess-first-123")
 
     @pytest.mark.parametrize(
         ("source", "pending_reset"),

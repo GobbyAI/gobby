@@ -612,6 +612,23 @@ class TestTranslateFromHookResponse:
         assert "systemMessage" not in result
         assert result["hookSpecificOutput"]["additionalContext"].count(banner) == 1
 
+    def test_session_start_live_context_does_not_replay_persona(self) -> None:
+        adapter = ClaudeCodeAdapter()
+        response = HookResponse(
+            decision="allow",
+            system_message="Gobby Session ID: #6273 (sess-live-123)",
+            context="Claimed task refs: #15237 [in_progress]",
+        )
+
+        result = adapter.translate_from_hook_response(response, hook_type="session-start")
+
+        assert "systemMessage" not in result
+        ctx = result["hookSpecificOutput"]["additionalContext"]
+        assert "Gobby Session ID: #6273 (sess-live-123)" in ctx
+        assert "Claimed task refs: #15237 [in_progress]" in ctx
+        assert "## Role" not in ctx
+        assert "## Personality" not in ctx
+
     def test_context_injection_post_tool_use(self) -> None:
         adapter = ClaudeCodeAdapter()
         response = HookResponse(decision="allow", context="Post tool context")

@@ -14,25 +14,68 @@ import json
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.adapters.claude_code import ClaudeCodeAdapter
 from gobby.adapters.codex_impl.app_server_adapter import CodexAdapter, _get_daemon_machine_id
 from gobby.adapters.codex_impl.client import CodexAppServerClient
-from gobby.adapters.codex_impl.hooks_adapter import CodexNotifyAdapter
+from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter, CodexNotifyAdapter
 from gobby.adapters.codex_impl.types import (
     CodexConnectionState,
     CodexItem,
     CodexThread,
     CodexTurn,
 )
+from gobby.adapters.droid import DroidAdapter
+from gobby.adapters.gemini import GeminiAdapter
+from gobby.adapters.qwen import QwenAdapter
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.llm.sdk_utils import ADDITIONAL_CONTEXT_LIMIT
 from tests._timing import wait_forever
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize(
+    ("cli_name", "adapter", "hook_type"),
+    [
+        ("codex", CodexHooksAdapter(), "SessionStart"),
+        ("claude", ClaudeCodeAdapter(), "session-start"),
+        ("gemini", GeminiAdapter(), "SessionStart"),
+        ("qwen", QwenAdapter(), "SessionStart"),
+        ("droid", DroidAdapter(), "SessionStart"),
+    ],
+)
+def test_duplicate_session_start_adapter_output_omits_persona(
+    cli_name: str, adapter: Any, hook_type: str
+) -> None:
+    first_response = HookResponse(
+        decision="allow",
+        system_message="Gobby Session ID: #6273 (sess-live-123)",
+        context="## Role\nSenior engineer\n\n## Personality\nDirect and concise",
+    )
+    first_result = adapter.translate_from_hook_response(first_response, hook_type=hook_type)
+    first_payload = json.dumps(first_result, sort_keys=True)
+
+    second_response = HookResponse(
+        decision="allow",
+        system_message="Gobby Session ID: #6273 (sess-live-123)",
+        context="Claimed task refs: #15237 [in_progress]",
+    )
+    second_result = adapter.translate_from_hook_response(second_response, hook_type=hook_type)
+    second_payload = json.dumps(second_result, sort_keys=True)
+
+    assert cli_name
+    assert "## Role" in first_payload
+    assert "## Personality" in first_payload
+    assert "Claimed task refs: #15237 [in_progress]" in second_payload
+    assert "## Role" not in second_payload
+    assert "## Personality" not in second_payload
+
 
 # =============================================================================
 # Data Types Tests
@@ -2439,6 +2482,7 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
         assert "Gobby Session ID: #6273 (sess-live-123)" in ctx
         assert "Claimed task refs: #15237 [in_progress]" in ctx
         assert "## Role" not in ctx
+        assert "## Personality" not in ctx
         assert "## Claimed Tasks (Persisted)" not in ctx
 
     def test_pre_tool_use_combines_system_message_and_context(self) -> None:

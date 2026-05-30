@@ -165,6 +165,24 @@ class TestDroidTranslateFromHookResponse:
         assert hso["additionalContext"].count("Gobby Session ID: #100 (uuid-123)") == 1
         assert "Project context" in hso["additionalContext"]
 
+    def test_session_start_live_context_does_not_replay_persona(self) -> None:
+        adapter = DroidAdapter()
+        result = adapter.translate_from_hook_response(
+            HookResponse(
+                decision="allow",
+                system_message="Gobby Session ID: #6273 (sess-live-123)",
+                context="Claimed task refs: #15237 [in_progress]",
+            ),
+            hook_type="SessionStart",
+        )
+
+        assert "systemMessage" not in result
+        ctx = result["hookSpecificOutput"]["additionalContext"]
+        assert "Gobby Session ID: #6273 (sess-live-123)" in ctx
+        assert "Claimed task refs: #15237 [in_progress]" in ctx
+        assert "## Role" not in ctx
+        assert "## Personality" not in ctx
+
     @pytest.mark.parametrize("hook_type", ["Notification", "PreCompact", "SessionEnd"])
     def test_none_style_denial_warns_without_blocking(self, hook_type: str) -> None:
         adapter = DroidAdapter()
