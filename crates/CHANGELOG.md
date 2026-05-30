@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.7] — gcode
+
+### Fixed
+
+#### gcode
+
+- **Indexed grep unsupported flags** — Unsupported grep/rg flags such as
+  `--files-with-matches` now preserve the indexed-search error message while
+  still allowing supported options like `-m/--max-count` after positional path
+  filters.
+
 ## [0.9.6] — gcode
 
 ### Changed

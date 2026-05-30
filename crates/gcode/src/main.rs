@@ -1,4 +1,4 @@
-use clap::{ArgGroup, Parser, Subcommand};
+use clap::{ArgAction, ArgGroup, Parser, Subcommand};
 use gobby_code::{commands, config, freshness, output, setup};
 
 #[derive(Parser)]
@@ -221,6 +221,45 @@ enum Command {
         /// Unsupported: use -m/--max-count for indexed grep caps
         #[arg(long = "limit", hide = true, value_parser = reject_grep_limit)]
         _unsupported_limit: Option<String>,
+        /// Unsupported: use raw rg for filesystem grep
+        #[arg(short = 'l', long = "files-with-matches", hide = true, action = ArgAction::SetTrue)]
+        unsupported_files_with_matches: bool,
+        /// Unsupported: use raw rg for filesystem grep
+        #[arg(short = 'L', long = "files-without-match", hide = true, action = ArgAction::SetTrue)]
+        unsupported_files_without_match: bool,
+        /// Unsupported: use raw rg for filesystem grep
+        #[arg(short = 'c', long = "count", hide = true, action = ArgAction::SetTrue)]
+        unsupported_count: bool,
+        /// Unsupported: use raw rg for filesystem grep
+        #[arg(short = 'o', long = "only-matching", hide = true, action = ArgAction::SetTrue)]
+        unsupported_only_matching: bool,
+        /// Unsupported: use raw rg for filesystem grep
+        #[arg(short = 'v', long = "invert-match", hide = true, action = ArgAction::SetTrue)]
+        unsupported_invert_match: bool,
+        /// Unsupported: use raw rg for filesystem grep
+        #[arg(short = 'w', long = "word-regexp", hide = true, action = ArgAction::SetTrue)]
+        unsupported_word_regexp: bool,
+        /// Unsupported: use raw rg for filesystem grep
+        #[arg(short = 'e', long = "regexp", hide = true)]
+        unsupported_regexp: Option<String>,
+        /// Unsupported: use raw rg for filesystem grep
+        #[arg(short = 'r', long = "recursive", hide = true, action = ArgAction::SetTrue)]
+        unsupported_recursive: bool,
+        /// Unsupported: use raw rg for filesystem grep
+        #[arg(short = 't', long = "type", hide = true)]
+        unsupported_type: Option<String>,
+        /// Unsupported: use raw rg for filesystem grep
+        #[arg(short = 'T', long = "type-not", hide = true)]
+        unsupported_type_not: Option<String>,
+        /// Unsupported: use raw rg for filesystem grep
+        #[arg(short = 'P', long = "pcre2", hide = true, action = ArgAction::SetTrue)]
+        unsupported_pcre2: bool,
+        /// Unsupported: use raw rg for filesystem grep
+        #[arg(short = 'U', long = "multiline", hide = true, action = ArgAction::SetTrue)]
+        unsupported_multiline: bool,
+        /// Unsupported: use --format json for structured indexed grep output
+        #[arg(long = "json", hide = true, action = ArgAction::SetTrue)]
+        unsupported_json: bool,
     },
 
     // ── Symbol Retrieval (works in all modes) ────────────────────────
@@ -395,6 +434,55 @@ fn effective_format(explicit_format: Option<output::Format>, command: &Command) 
     })
 }
 
+fn reject_unsupported_grep_flags(command: &Command) -> anyhow::Result<()> {
+    let Command::Grep {
+        unsupported_files_with_matches,
+        unsupported_files_without_match,
+        unsupported_count,
+        unsupported_only_matching,
+        unsupported_invert_match,
+        unsupported_word_regexp,
+        unsupported_regexp,
+        unsupported_recursive,
+        unsupported_type,
+        unsupported_type_not,
+        unsupported_pcre2,
+        unsupported_multiline,
+        unsupported_json,
+        ..
+    } = command
+    else {
+        return Ok(());
+    };
+
+    let flag = [
+        (*unsupported_files_with_matches).then_some("--files-with-matches"),
+        (*unsupported_files_without_match).then_some("--files-without-match"),
+        (*unsupported_count).then_some("--count"),
+        (*unsupported_only_matching).then_some("--only-matching"),
+        (*unsupported_invert_match).then_some("--invert-match"),
+        (*unsupported_word_regexp).then_some("--word-regexp"),
+        unsupported_regexp.as_ref().map(|_| "--regexp"),
+        (*unsupported_recursive).then_some("--recursive"),
+        unsupported_type.as_ref().map(|_| "--type"),
+        unsupported_type_not.as_ref().map(|_| "--type-not"),
+        (*unsupported_pcre2).then_some("--pcre2"),
+        (*unsupported_multiline).then_some("--multiline"),
+        (*unsupported_json).then_some("--json"),
+    ]
+    .into_iter()
+    .flatten()
+    .next();
+
+    if let Some(flag) = flag {
+        anyhow::bail!(
+            "gcode grep is indexed search; unsupported grep/rg flag `{flag}`. Use raw `rg` for filesystem grep."
+        );
+    }
+
+    Ok(())
+}
+
 fn dispatch_early_command<F>(
     cli: &Cli,
     format: output::Format,
@@ -491,6 +579,7 @@ fn main() -> std::process::ExitCode {
 fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let format = effective_format(cli.format, &cli.command);
+    reject_unsupported_grep_flags(&cli.command)?;
 
     // Commands that must run before Context::resolve() (work on uninitialized projects)
     if dispatch_early_command(&cli, format, commands::setup::run)? {
@@ -706,6 +795,19 @@ fn run() -> anyhow::Result<()> {
             max_count,
             line_number: _,
             _unsupported_limit: _,
+            unsupported_files_with_matches: _,
+            unsupported_files_without_match: _,
+            unsupported_count: _,
+            unsupported_only_matching: _,
+            unsupported_invert_match: _,
+            unsupported_word_regexp: _,
+            unsupported_regexp: _,
+            unsupported_recursive: _,
+            unsupported_type: _,
+            unsupported_type_not: _,
+            unsupported_pcre2: _,
+            unsupported_multiline: _,
+            unsupported_json: _,
         } => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
             commands::grep::run(
@@ -1502,14 +1604,34 @@ mod tests {
 
     #[test]
     fn parse_grep_unsupported_flag_fails_before_context_resolution() {
-        let err = match Cli::try_parse_from(["gcode", "grep", "needle", "--files-with-matches"]) {
-            Ok(_) => panic!("unsupported grep flag should fail"),
-            Err(err) => err,
-        };
+        let cli = Cli::try_parse_from(["gcode", "grep", "needle", "--files-with-matches"])
+            .expect("unsupported grep flag parses for contract rejection");
+        let err = reject_unsupported_grep_flags(&cli.command)
+            .expect_err("unsupported grep flag should fail before context resolution");
 
         assert!(
-            err.to_string()
-                .contains("unexpected argument '--files-with-matches'"),
+            err.to_string().contains("gcode grep is indexed search"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            err.to_string().contains("--files-with-matches"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            err.to_string().contains("raw `rg`"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_grep_unsupported_flag_after_path_fails_with_indexed_search_message() {
+        let cli = Cli::try_parse_from(["gcode", "grep", "needle", "src", "--files-with-matches"])
+            .expect("unsupported grep flag after path parses for contract rejection");
+        let err = reject_unsupported_grep_flags(&cli.command)
+            .expect_err("unsupported grep flag after path should fail");
+
+        assert!(
+            err.to_string().contains("gcode grep is indexed search"),
             "unexpected error: {err}"
         );
     }
