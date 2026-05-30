@@ -7,14 +7,15 @@ use gobby_core::indexing::{
 };
 
 use crate::store::{
-    WikiChunk, WikiDocument, WikiDocumentKind, WikiIndexStore, WikiIngestion, WikiIngestionEvent,
-    WikiLink, WikiSource,
+    StoreError, WikiChunk, WikiDocument, WikiDocumentKind, WikiIndexStore, WikiIngestion,
+    WikiIngestionEvent, WikiLink, WikiSource,
 };
 
 #[derive(Debug)]
 pub enum IndexError {
     Io(std::io::Error),
     Walk(String),
+    Store(StoreError),
     PathOutsideVault { path: PathBuf, vault_root: PathBuf },
 }
 
@@ -23,6 +24,7 @@ impl fmt::Display for IndexError {
         match self {
             Self::Io(error) => write!(f, "wiki index I/O failed: {error}"),
             Self::Walk(error) => write!(f, "wiki index walk failed: {error}"),
+            Self::Store(error) => write!(f, "{error}"),
             Self::PathOutsideVault { path, vault_root } => write!(
                 f,
                 "wiki index path {} is outside vault {}",
@@ -35,6 +37,12 @@ impl fmt::Display for IndexError {
 
 impl std::error::Error for IndexError {}
 
+impl From<StoreError> for IndexError {
+    fn from(error: StoreError) -> Self {
+        Self::Store(error)
+    }
+}
+
 impl From<std::io::Error> for IndexError {
     fn from(error: std::io::Error) -> Self {
         Self::Io(error)
@@ -46,7 +54,7 @@ pub fn index_vault(
     store: &mut impl WikiIndexStore,
 ) -> Result<(), IndexError> {
     let vault_root = vault_root.as_ref();
-    let previous_hashes = store.indexed_hashes();
+    let previous_hashes = store.indexed_hashes()?;
     let current_hashes = discover_indexable_hashes(vault_root)?;
 
     for event in index_events_from_hashes(&previous_hashes, &current_hashes) {
@@ -70,12 +78,12 @@ pub fn index_vault(
                 )?;
             }
             IndexEvent::Deleted(path) => {
-                store.delete_derived_rows(&path);
+                store.delete_derived_rows(&path)?;
                 store.record_ingestion(WikiIngestion {
                     path,
                     event: WikiIngestionEvent::Deleted,
                     content_hash: None,
-                });
+                })?;
             }
             IndexEvent::Unchanged(path) => {
                 let content_hash = current_hashes
@@ -86,14 +94,14 @@ pub fn index_vault(
                     path,
                     event: WikiIngestionEvent::Unchanged,
                     content_hash,
-                });
+                })?;
             }
             IndexEvent::Skipped { path, .. } => {
                 store.record_ingestion(WikiIngestion {
                     path,
                     event: WikiIngestionEvent::Unchanged,
                     content_hash: None,
-                });
+                })?;
             }
         }
     }
@@ -142,16 +150,16 @@ fn index_file(
     let kind = document_kind(&path).expect("indexable path has a document kind");
     let parsed = parse_wiki_document(&path, kind, content_hash.clone(), body);
 
-    store.upsert_document(parsed.document);
-    store.replace_chunks(&path, parsed.chunks);
-    store.replace_links(&path, parsed.links);
-    store.upsert_source(parsed.source);
-    store.record_file_hash(path.clone(), content_hash.clone());
+    store.upsert_document(parsed.document)?;
+    store.replace_chunks(&path, parsed.chunks)?;
+    store.replace_links(&path, parsed.links)?;
+    store.upsert_source(parsed.source)?;
+    store.record_file_hash(path.clone(), content_hash.clone())?;
     store.record_ingestion(WikiIngestion {
         path,
         event,
         content_hash: Some(content_hash),
-    });
+    })?;
 
     Ok(())
 }
