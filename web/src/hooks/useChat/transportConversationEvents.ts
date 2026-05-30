@@ -1,12 +1,14 @@
 import { normalizeChatMode } from "../../types/chat";
 import {
-  isChatProvider,
-  normalizeSessionType,
   saveConversationId,
   saveDbSessionId,
-  toSessionObservationMeta,
   uuid,
-} from "./core";
+} from "./conversationPersistence";
+import {
+  isChatProvider,
+  normalizeSessionType,
+  toSessionObservationMeta,
+} from "./sessionRecords";
 import { MESSAGE_FEEDBACK_DELAY_MS } from "./constants";
 import type { UseChatTransportParams } from "./transportTypes";
 

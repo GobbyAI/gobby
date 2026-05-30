@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   looksLikeSystemBootstrapText,
+  mapApiMessages,
   mapRenderedMessageToChatMessage,
   normalizeChatRole,
 } from '../chatMessageMapping'
@@ -93,5 +94,164 @@ Stay concise and direct.`
     })
 
     expect(message.thinkingContent).toBe('one two')
+  })
+
+  it('preserves rendered content blocks from api messages', () => {
+    const contentBlocks = [
+      { type: 'text' as const, content: 'Rendered text' },
+      { type: 'thinking' as const, content: 'hidden thought' },
+      {
+        type: 'tool_chain' as const,
+        tool_calls: [
+          {
+            id: 'tool-rendered',
+            tool_name: 'Read',
+            server_name: 'builtin',
+            tool_type: 'read',
+            status: 'completed' as const,
+          },
+        ],
+      },
+    ]
+
+    const [message] = mapApiMessages([
+      {
+        id: 'rendered-message',
+        role: 'assistant',
+        content: 'Rendered text',
+        timestamp: '2026-05-30T00:00:00.000Z',
+        content_blocks: contentBlocks,
+      },
+    ])
+
+    expect(message.contentBlocks).toBe(contentBlocks)
+    expect(message.toolCalls?.map((tool) => tool.id)).toEqual(['tool-rendered'])
+    expect(message.thinkingContent).toBe('hidden thought')
+  })
+
+  it('pairs tool results by tool_use_id', () => {
+    const [assistant] = mapApiMessages([
+      {
+        id: 'call-1',
+        role: 'assistant',
+        content: '',
+        content_type: 'tool_use',
+        tool_name: 'mcp__repo__read',
+        tool_use_id: 'tool-a',
+        timestamp: '2026-05-30T00:00:00.000Z',
+      },
+      {
+        id: 'call-2',
+        role: 'assistant',
+        content: '',
+        content_type: 'tool_use',
+        tool_name: 'mcp__repo__write',
+        tool_use_id: 'tool-b',
+        timestamp: '2026-05-30T00:00:01.000Z',
+      },
+      {
+        id: 'result-1',
+        role: 'user',
+        content: '{"ok":true}',
+        content_type: 'tool_result',
+        tool_use_id: 'tool-a',
+        timestamp: '2026-05-30T00:00:02.000Z',
+      },
+    ])
+
+    expect(assistant.toolCalls?.map((tool) => [tool.id, tool.status])).toEqual([
+      ['tool-a', 'completed'],
+      ['tool-b', 'calling'],
+    ])
+    expect(assistant.toolCalls?.[0].result).toEqual({ ok: true })
+  })
+
+  it('keeps consecutive tool calls in separate tool chain blocks', () => {
+    const [assistant] = mapApiMessages([
+      {
+        id: 'call-1',
+        role: 'assistant',
+        content: '',
+        content_type: 'tool_use',
+        tool_name: 'Read',
+        tool_use_id: 'tool-a',
+        timestamp: '2026-05-30T00:00:00.000Z',
+      },
+      {
+        id: 'call-2',
+        role: 'assistant',
+        content: '',
+        content_type: 'tool_use',
+        tool_name: 'Write',
+        tool_use_id: 'tool-b',
+        timestamp: '2026-05-30T00:00:01.000Z',
+      },
+    ])
+
+    expect(assistant.contentBlocks).toEqual([
+      {
+        type: 'tool_chain',
+        tool_calls: [expect.objectContaining({ id: 'tool-a' })],
+      },
+      {
+        type: 'tool_chain',
+        tool_calls: [expect.objectContaining({ id: 'tool-b' })],
+      },
+    ])
+  })
+
+  it('attaches hook feedback to the last tool call as an error', () => {
+    const [assistant] = mapApiMessages([
+      {
+        id: 'call-1',
+        role: 'assistant',
+        content: '',
+        content_type: 'tool_use',
+        tool_name: 'Read',
+        tool_use_id: 'tool-a',
+        timestamp: '2026-05-30T00:00:00.000Z',
+      },
+      {
+        id: 'feedback-1',
+        role: 'user',
+        content: 'Stop hook feedback: command blocked',
+        timestamp: '2026-05-30T00:00:01.000Z',
+      },
+    ])
+
+    expect(assistant.toolCalls?.[0]).toEqual(
+      expect.objectContaining({
+        error: 'Stop hook feedback: command blocked',
+        status: 'error',
+      }),
+    )
+    expect(assistant.contentBlocks?.[0]).toEqual({
+      type: 'tool_chain',
+      tool_calls: [
+        expect.objectContaining({
+          error: 'Stop hook feedback: command blocked',
+          status: 'error',
+        }),
+      ],
+    })
+  })
+
+  it('renders orphan hook feedback as a system message', () => {
+    const [message] = mapApiMessages([
+      {
+        id: 'feedback-1',
+        role: 'user',
+        content: 'UserPromptSubmit hook feedback',
+        timestamp: '2026-05-30T00:00:00.000Z',
+      },
+    ])
+
+    expect(message).toEqual(
+      expect.objectContaining({
+        id: 'feedback-1',
+        role: 'system',
+        content: 'UserPromptSubmit hook feedback',
+      }),
+    )
   })
 })

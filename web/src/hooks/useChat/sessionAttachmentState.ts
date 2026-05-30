@@ -6,9 +6,9 @@ import type {
 import {
   loadViewingSessionId,
   loadViewingSessionMode,
-  type ContinuationRollbackSnapshot,
-  type PendingProxyMessage,
-} from "./core";
+} from "./conversationPersistence";
+import type { PendingProxyMessage } from "./pendingProxyMessages";
+import type { ContinuationRollbackSnapshot } from "./sessionRecords";
 
 const AGENT_NAME_RESOLVE_TIMEOUT_MS = 5_000;
 const AGENT_NAME_RESOLVE_SUCCESS_TTL_MS = 10 * 60_000;

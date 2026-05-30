@@ -1,14 +1,14 @@
 /* eslint-disable react-hooks/exhaustive-deps -- Extracted useChat lifecycle effects intentionally close over parent refs and stable setters to preserve the original hook behavior. */
 import { useEffect } from "react";
 import type { ChatMessage } from "../../types/chat";
+import { mapStoredChatMessage } from "../../lib/chatMessageMapping";
 import {
-  isRestorableSessionRecord,
   loadConversationId,
   loadDbSessionId,
-  mapStoredChatMessage,
   saveConversationId,
   saveDbSessionId,
-} from "./core";
+} from "./conversationPersistence";
+import { isRestorableSessionRecord } from "./sessionRecords";
 
 type UseChatLifecycleParams = Record<string, any>;
 

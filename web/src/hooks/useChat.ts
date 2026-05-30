@@ -2,18 +2,20 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import type { ChatMessage, QueuedFile } from "../types/chat";
 import type { A2UISurfaceState } from "../components/canvas/types";
 import type { CanvasPanelState } from "../components/canvas/hooks/useCanvasPanel";
+import type {
+  ChatError,
+  ChatStreamChunk,
+  ChatThinkingMessage,
+  ModelSwitchedMessage,
+  ToolStatusMessage,
+} from "./useChat/transportEventTypes";
+import { clearPendingProxyMessages } from "./useChat/pendingProxyMessages";
 import {
-  clearPendingProxyMessages,
   saveDbSessionId,
   saveViewingSessionId,
   saveViewingSessionMode,
   uuid,
-  type ChatError,
-  type ChatStreamChunk,
-  type ChatThinkingMessage,
-  type ModelSwitchedMessage,
-  type ToolStatusMessage,
-} from "./useChat/core";
+} from "./useChat/conversationPersistence";
 import { useChatActions } from "./useChat/actions";
 import { usePlanArtifactCallbacks } from "./useChat/callbacksState";
 import {

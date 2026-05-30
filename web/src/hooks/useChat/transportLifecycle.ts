@@ -1,5 +1,5 @@
 import type { ChatMessage } from "../../types/chat";
-import { mapStoredChatMessage } from "./core";
+import { mapStoredChatMessage } from "../../lib/chatMessageMapping";
 import { routeTransportMessage } from "./transportRouter";
 import type {
   TransportConnectRef,

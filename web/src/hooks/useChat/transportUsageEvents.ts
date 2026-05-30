@@ -1,9 +1,11 @@
 import {
   buildContextUsageFromTotals,
   computeContextUsageFromSessionData,
-  type SessionUsageUpdatedMessage,
-  type TokenEventMessage,
-} from "./core";
+} from "./contextUsage";
+import type {
+  SessionUsageUpdatedMessage,
+  TokenEventMessage,
+} from "./transportEventTypes";
 import type { UseChatTransportParams } from "./transportTypes";
 
 function isFiniteNumber(value: unknown): value is number {

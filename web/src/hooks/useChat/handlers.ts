@@ -1,18 +1,22 @@
 /* eslint-disable react-hooks/exhaustive-deps -- Extracted useChat handlers intentionally close over parent refs and stable setters to preserve the original hook behavior. */
 import { useCallback, useEffect } from "react";
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
-import type { ChatMessage, SessionObservationMeta, ToolCall } from "../../types/chat";
+import type {
+  ChatMessage,
+  ContextUsage,
+  SessionObservationMeta,
+  ToolCall,
+} from "../../types/chat";
 import { classifyTool } from "../../types/chat";
+import { extractServerName } from "../../lib/chatMessageMapping";
+import { uuid } from "./conversationPersistence";
 import {
   type ChatError,
   type ChatStreamChunk,
   type ChatThinkingMessage,
-  type ContextUsage,
   type ModelSwitchedMessage,
   type ToolStatusMessage,
-  extractServerName,
-  uuid,
-} from "./core";
+} from "./transportEventTypes";
 import { MESSAGE_FEEDBACK_DELAY_MS } from "./constants";
 
 type Setter<T> = Dispatch<SetStateAction<T>>;

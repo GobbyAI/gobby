@@ -4,21 +4,24 @@ import type {
   MutableRefObject,
   SetStateAction,
 } from "react";
-import type { ChatMode, SessionObservationMeta } from "../../types/chat";
+import type { ChatMode, ContextUsage, SessionObservationMeta } from "../../types/chat";
 import { normalizeChatMode } from "../../types/chat";
 import { clearFreshChatDraft } from "../../lib/sessionPersistence";
 import {
   computeContextUsageFromSessionData,
-  createWebChatSession,
   hasSessionUsage,
-  isChatProvider,
+} from "./contextUsage";
+import {
   loadConversationId,
   loadDbSessionId,
   saveConversationId,
   saveDbSessionId,
+} from "./conversationPersistence";
+import {
+  createWebChatSession,
+  isChatProvider,
   toSessionObservationMeta,
-  type ContextUsage,
-} from "./core";
+} from "./sessionRecords";
 
 type Setter<T> = Dispatch<SetStateAction<T>>;
 

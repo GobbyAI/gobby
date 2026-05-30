@@ -1,17 +1,23 @@
 import type { ChatMessage, SessionObservationMeta } from "../../types/chat";
 import { normalizeChatMode } from "../../types/chat";
-import { mapRenderedMessageToChatMessage } from "../../lib/chatMessageMapping";
-import { canProxyAttachObservationMeta } from "../../lib/sessionProxyAttach";
 import {
   type ApiMessage,
-  clearPendingProxyMessages,
-  computeContextUsageFromSessionData,
-  consumePendingProxyMessage,
-  hasSessionUsage,
   mapApiMessages,
+  mapRenderedMessageToChatMessage,
+} from "../../lib/chatMessageMapping";
+import { canProxyAttachObservationMeta } from "../../lib/sessionProxyAttach";
+import {
+  computeContextUsageFromSessionData,
+  hasSessionUsage,
+} from "./contextUsage";
+import {
+  clearPendingProxyMessages,
+  consumePendingProxyMessage,
   removePendingProxyMessageFromQueue,
+} from "./pendingProxyMessages";
+import {
   toSessionObservationMeta,
-} from "./core";
+} from "./sessionRecords";
 import type { UseChatTransportParams } from "./transportTypes";
 
 const UNKNOWN_SESSION_META = {

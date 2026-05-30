@@ -12,8 +12,8 @@ import {
   saveDbSessionId,
   saveViewingSessionId,
   saveViewingSessionMode,
-  type ContinuationRollbackSnapshot,
-} from "./core";
+} from "./conversationPersistence";
+import type { ContinuationRollbackSnapshot } from "./sessionRecords";
 
 type Setter<T> = (value: T) => void;
 

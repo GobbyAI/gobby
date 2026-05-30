@@ -3,18 +3,22 @@ import { useCallback, useEffect, useRef } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { SessionObservationMeta } from "../../types/chat";
 import { normalizeChatMode } from "../../types/chat";
-import { mapRenderedMessageToChatMessage } from "../../lib/chatMessageMapping";
+import {
+  mapApiMessages,
+  mapRenderedMessageToChatMessage,
+} from "../../lib/chatMessageMapping";
 import { clearFreshChatDraft } from "../../lib/sessionPersistence";
 import { canProxyAttachSessionRecord } from "../../lib/sessionProxyAttach";
 import {
   buildContextUsageFromTotals,
-  clearPendingProxyMessages,
   computeContextUsageFromSessionData,
-  type ContextUsage,
-  loadDbSessionId,
-  mapApiMessages,
+} from "./contextUsage";
+import type { ContextUsage } from "../../types/chat";
+import { loadDbSessionId } from "./conversationPersistence";
+import { clearPendingProxyMessages } from "./pendingProxyMessages";
+import {
   normalizeSessionType,
-} from "./core";
+} from "./sessionRecords";
 
 type Setter<T> = Dispatch<SetStateAction<T>>;
 type ViewSessionOptions = { forceRefresh?: boolean };

@@ -10,18 +10,24 @@ import type {
 } from "../../types/chat";
 import { normalizeChatMode } from "../../types/chat";
 import type { UserAction } from "../../components/canvas/types";
-import { mapRenderedMessageToChatMessage } from "../../lib/chatMessageMapping";
+import {
+  mapApiMessages,
+  mapRenderedMessageToChatMessage,
+} from "../../lib/chatMessageMapping";
 import { markFreshChatDraft } from "../../lib/sessionPersistence";
 import {
   computeContextUsageFromSessionData,
-  enqueuePendingProxyMessage,
   hasSessionUsage,
-  isChatProvider,
-  mapApiMessages,
-  normalizeReasoningEffort,
+} from "./contextUsage";
+import {
   saveConversationId,
   uuid,
-} from "./core";
+} from "./conversationPersistence";
+import { enqueuePendingProxyMessage } from "./pendingProxyMessages";
+import {
+  isChatProvider,
+  normalizeReasoningEffort,
+} from "./sessionRecords";
 
 type Setter<T> = Dispatch<SetStateAction<T>>;
 

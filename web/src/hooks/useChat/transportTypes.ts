@@ -8,20 +8,20 @@ import type { A2UISurfaceState } from "../../components/canvas/types";
 import type {
   ChatMessage,
   ChatMode,
+  ContextUsage,
   QueuedFile,
   SessionInteractionMode,
   SessionObservationMeta,
 } from "../../types/chat";
+import type { ContinuationRollbackSnapshot } from "./sessionRecords";
+import type { PendingProxyMessage } from "./pendingProxyMessages";
 import type {
   ChatError,
   ChatStreamChunk,
   ChatThinkingMessage,
-  ContextUsage,
-  ContinuationRollbackSnapshot,
   ModelSwitchedMessage,
-  PendingProxyMessage,
   ToolStatusMessage,
-} from "./core";
+} from "./transportEventTypes";
 
 export type Setter<T> = Dispatch<SetStateAction<T>>;
 

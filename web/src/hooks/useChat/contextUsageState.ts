@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ContextUsage } from "./core";
+import type { ContextUsage } from "../../types/chat";
 
 export const LIVE_CONTEXT_USAGE_TTL_MS = 10 * 60 * 1000;
 export const LIVE_CONTEXT_USAGE_MAX_ENTRIES = 200;

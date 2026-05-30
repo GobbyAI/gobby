@@ -5,7 +5,7 @@ import {
   type ModelSwitchedMessage,
   type ToolStatusMessage,
   type WebSocketMessage,
-} from "./core";
+} from "./transportEventTypes";
 import {
   handleArtifactTransportEvent,
   handleCanvasTransportEvent,

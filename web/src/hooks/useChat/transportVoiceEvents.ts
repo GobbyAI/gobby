@@ -1,4 +1,4 @@
-import { type VoiceTranscriptionMessage } from "./core";
+import { type VoiceTranscriptionMessage } from "./transportEventTypes";
 import type { UseChatTransportParams } from "./transportTypes";
 
 const VOICE_EVENT_TYPES = new Set([
