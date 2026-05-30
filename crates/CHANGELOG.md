@@ -9,6 +9,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.8] — gcode
+
+### Changed
+
+#### gcode
+
+- **Grouped text output** — `gcode grep` and high-volume navigation outputs now
+  reduce repeated file path prefixes by grouping text results under file or
+  directory headers, while JSON output remains unchanged.
+- **Quiet symbol retrieval** — `gcode outline`, `gcode symbol`, and
+  `gcode symbols` no longer print savings banners to stderr.
+
+## [0.9.7] — gcode
+
+### Fixed
+
+#### gcode
+
+- **Indexed grep unsupported flags** — Unsupported grep/rg flags such as
+  `--files-with-matches` now preserve the indexed-search error message while
+  still allowing supported options like `-m/--max-count` after positional path
+  filters.
+
+## [0.9.6] — gcode
+
+### Changed
+
+#### gcode
+
+- **Indexed grep default output** — `gcode grep` now defaults to text output
+  when `--format` is omitted, while explicit `--format json` still returns the
+  JSON envelope. Other `gcode` commands keep their JSON default.
+
+### Fixed
+
+#### gcode
+
+- **Indexed grep option ordering** — `gcode grep <pattern> PATH -m N` and
+  `gcode grep <pattern> PATH --max-count N` now parse `-m/--max-count`
+  correctly after positional path filters instead of treating the flag as an
+  unsupported path value.
+
 ## [0.9.5] — gcode
 
 ### Added
