@@ -1,6 +1,6 @@
 [package]
 name = "gobby-code"
-version = "0.9.4"
+version = "0.9.5"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Josh Wilhelmi <hello@gobby.ai>"]
@@ -70,6 +70,7 @@ streaming-iterator = "0.1"
 
 # Utilities
 glob = "0.3"
+regex = "1"
 shlex = "1"
 sha2 = "0.10"
 uuid = { version = "1", features = ["v5"] }

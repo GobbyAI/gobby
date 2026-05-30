@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.5] — gcode
+
+### Added
+
+#### gcode
+
+- **Indexed grep** — `gcode grep <pattern> [PATH ...]` now provides exact
+  line-oriented search over the indexed `code_content_chunks` corpus. It
+  supports `-i`, `-F`, `-C/-A/-B`, `-g/--glob`, and `-m/--max-count`, with text
+  output shaped like grep and JSON output that includes match spans, context,
+  scan counts, and truncation state.
+
+### Changed
+
+#### gcode
+
+- **Graph sync-file contract** — `gcode graph sync-file` now classifies missing
+  indexed projects and files from PostgreSQL before FalkorDB access. Human
+  defaults stay strict with typed JSON errors and exit code `2`, while daemon
+  and background-worker callers can use `--allow-missing-indexed-file` to turn
+  stale missing-file work into a skipped payload.
+
 ## [0.4.4] — gobby-hooks
 
 ### Added

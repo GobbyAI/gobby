@@ -770,7 +770,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-code"
-version = "0.9.4"
+version = "0.9.5"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -785,6 +785,7 @@ dependencies = [
  "openssl",
  "pbkdf2",
  "postgres",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",

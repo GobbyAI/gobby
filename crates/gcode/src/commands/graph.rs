@@ -13,6 +13,66 @@ use serde_json::{Value, json};
 
 const GOBBY_HINT: &str =
     "Graph commands require FalkorDB, available with Gobby. See: https://github.com/GobbyAI/gobby";
+pub const GRAPH_SYNC_CONTRACT_EXIT_CODE: u8 = 2;
+
+#[derive(Debug)]
+pub struct GraphSyncContractError {
+    payload: Value,
+}
+
+impl GraphSyncContractError {
+    fn project_not_indexed(ctx: &Context, file_path: &str) -> Self {
+        Self {
+            payload: json!({
+                "success": false,
+                "project_id": ctx.project_id,
+                "file_path": file_path,
+                "status": "error",
+                "reason": "project_not_indexed",
+                "error": format!("project {} is not indexed", ctx.project_id),
+            }),
+        }
+    }
+
+    fn indexed_file_not_found(ctx: &Context, file_path: &str) -> Self {
+        Self {
+            payload: json!({
+                "success": false,
+                "project_id": ctx.project_id,
+                "file_path": file_path,
+                "status": "error",
+                "reason": "indexed_file_not_found",
+                "error": format!("indexed file `{file_path}` was not found for project {}", ctx.project_id),
+            }),
+        }
+    }
+
+    pub fn exit_code(&self) -> u8 {
+        GRAPH_SYNC_CONTRACT_EXIT_CODE
+    }
+
+    pub fn print(&self) -> anyhow::Result<()> {
+        output::print_json(&self.payload)
+    }
+
+    pub fn payload(&self) -> &Value {
+        &self.payload
+    }
+}
+
+impl std::fmt::Display for GraphSyncContractError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let reason = self
+            .payload
+            .get("reason")
+            .and_then(Value::as_str)
+            .unwrap_or("graph_sync_contract_error");
+        write!(f, "graph sync-file contract error: {reason}")
+    }
+}
+
+impl std::error::Error for GraphSyncContractError {}
+
 fn format_success_text(output: &GraphLifecycleOutput) -> String {
     format!(
         "{} for project {}: {}",
@@ -54,20 +114,46 @@ fn lifecycle_output(
     }
 }
 
-struct GraphFileSyncOutcome {
-    relationships_written: usize,
-    symbols_synced: usize,
+enum GraphFileSyncOutcome {
+    Synced {
+        relationships_written: usize,
+        symbols_synced: usize,
+    },
+    SkippedMissingIndexedFile,
 }
 
-fn sync_file_graph(ctx: &Context, file_path: &str) -> anyhow::Result<GraphFileSyncOutcome> {
-    code_graph::require_graph_reads(ctx)?;
+fn skipped_missing_indexed_file_payload(ctx: &Context, file_path: &str) -> Value {
+    json!({
+        "project_id": ctx.project_id,
+        "file_path": file_path,
+        "status": "skipped",
+        "reason": "indexed_file_not_found",
+    })
+}
+
+fn sync_file_graph(
+    ctx: &Context,
+    file_path: &str,
+    allow_missing_indexed_file: bool,
+) -> anyhow::Result<GraphFileSyncOutcome> {
     let mut conn = db::connect_readwrite(&ctx.database_url)?;
+    if !db::indexed_project_exists(&mut conn, &ctx.project_id)? {
+        return Err(GraphSyncContractError::project_not_indexed(ctx, file_path).into());
+    }
+    if !db::indexed_file_exists(&mut conn, &ctx.project_id, file_path)? {
+        if allow_missing_indexed_file {
+            return Ok(GraphFileSyncOutcome::SkippedMissingIndexedFile);
+        }
+        return Err(GraphSyncContractError::indexed_file_not_found(ctx, file_path).into());
+    }
+
+    code_graph::require_graph_reads(ctx)?;
     let facts = db::read_graph_file_facts(&mut conn, &ctx.project_id, file_path)?;
     if !db::mark_graph_sync_attempted(&mut conn, &ctx.project_id, file_path)? {
-        anyhow::bail!(
-            "indexed file `{file_path}` was not found for project {}",
-            ctx.project_id
-        );
+        if allow_missing_indexed_file {
+            return Ok(GraphFileSyncOutcome::SkippedMissingIndexedFile);
+        }
+        return Err(GraphSyncContractError::indexed_file_not_found(ctx, file_path).into());
     }
     let relationships_written = code_graph::sync_file_graph(
         ctx,
@@ -77,7 +163,7 @@ fn sync_file_graph(ctx: &Context, file_path: &str) -> anyhow::Result<GraphFileSy
         &facts.calls,
     )?;
     db::mark_graph_synced(&mut conn, &ctx.project_id, file_path)?;
-    Ok(GraphFileSyncOutcome {
+    Ok(GraphFileSyncOutcome::Synced {
         relationships_written,
         symbols_synced: facts.definitions.len(),
     })
@@ -186,10 +272,25 @@ pub fn rebuild(ctx: &Context, format: Format) -> anyhow::Result<()> {
     run_lifecycle_action(ctx, GraphLifecycleAction::Rebuild, format)
 }
 
-pub fn sync_file(ctx: &Context, file_path: &str, format: Format) -> anyhow::Result<()> {
-    let sync = sync_file_graph(ctx, file_path)?;
-    let relationships_written = sync.relationships_written;
-    let report = ProjectionSyncReport::ok(1, sync.symbols_synced);
+pub fn sync_file(
+    ctx: &Context,
+    file_path: &str,
+    allow_missing_indexed_file: bool,
+    format: Format,
+) -> anyhow::Result<()> {
+    let sync = sync_file_graph(ctx, file_path, allow_missing_indexed_file)?;
+    let GraphFileSyncOutcome::Synced {
+        relationships_written,
+        symbols_synced,
+    } = sync
+    else {
+        let payload = skipped_missing_indexed_file_payload(ctx, file_path);
+        return match format {
+            Format::Json => output::print_json(&payload),
+            Format::Text => output::print_json_compact(&payload),
+        };
+    };
+    let report = ProjectionSyncReport::ok(1, symbols_synced);
     let summary = format!("synced {relationships_written} graph relationships for {file_path}");
     let payload = json!({
         "success": true,
@@ -689,6 +790,37 @@ mod tests {
         assert!(source.contains(&sync_file_graph));
         assert!(!source.contains(&lifecycle_request));
         assert!(!source.contains(&daemon_lifecycle));
+    }
+
+    #[test]
+    fn missing_project_sync_error_has_typed_payload() {
+        let ctx = make_ctx_no_falkordb();
+        let error = GraphSyncContractError::project_not_indexed(&ctx, "src/lib.rs");
+
+        assert_eq!(error.exit_code(), GRAPH_SYNC_CONTRACT_EXIT_CODE);
+        assert_eq!(error.payload()["project_id"], "test-project");
+        assert_eq!(error.payload()["file_path"], "src/lib.rs");
+        assert_eq!(error.payload()["status"], "error");
+        assert_eq!(error.payload()["reason"], "project_not_indexed");
+    }
+
+    #[test]
+    fn missing_file_sync_error_and_skip_payloads_are_typed() {
+        let ctx = make_ctx_no_falkordb();
+        let error = GraphSyncContractError::indexed_file_not_found(&ctx, "src/missing.rs");
+        let skipped = skipped_missing_indexed_file_payload(&ctx, "src/missing.rs");
+
+        assert_eq!(error.exit_code(), GRAPH_SYNC_CONTRACT_EXIT_CODE);
+        assert_eq!(error.payload()["reason"], "indexed_file_not_found");
+        assert_eq!(
+            skipped,
+            json!({
+                "project_id": "test-project",
+                "file_path": "src/missing.rs",
+                "status": "skipped",
+                "reason": "indexed_file_not_found",
+            })
+        );
     }
 
     #[test]
