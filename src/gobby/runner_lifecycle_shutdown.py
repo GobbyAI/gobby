@@ -20,6 +20,8 @@ logger = logging.getLogger("gobby.runner_lifecycle")
 _CRITICAL_STOP_HOOK_GRACE_SECONDS = 5.0
 _HTTP_CONNECTION_DRAIN_SECONDS = 3.0
 _HTTP_CONNECTION_GRACE_SECONDS = 0.25
+_HTTP_REQUEST_TASK_CANCEL_TIMEOUT_SECONDS = 1.0
+_GOBBY_SHUTDOWN_DRAIN_MESSAGE = "Gobby shutdown drain"
 
 
 class ReapChildProcesses(Protocol):
@@ -95,7 +97,7 @@ async def _shutdown_websocket_server(runner: GobbyRunner, timeout: float = 5.0) 
 
 
 async def _drain_uvicorn_http_connections(server: uvicorn.Server) -> None:
-    """Ask uvicorn HTTP connections to close before uvicorn starts its timeout."""
+    """Ask uvicorn HTTP connections to close and cancel remaining request tasks."""
     state = getattr(server, "server_state", None)
     connections = getattr(state, "connections", None)
     tasks = getattr(state, "tasks", None)
@@ -128,12 +130,23 @@ async def _drain_uvicorn_http_connections(server: uvicorn.Server) -> None:
         tasks,
         timeout=_HTTP_CONNECTION_DRAIN_SECONDS,
     )
-    if not drained:
-        logger.debug(
-            "HTTP request drain left %d connection(s) and %d task(s) for uvicorn shutdown",
-            len(connections or ()),
-            len(tasks or ()),
-        )
+
+    if drained:
+        return
+
+    remaining_connections = len(connections or ())
+    remaining_tasks = len(_live_uvicorn_http_tasks(tasks))
+
+    if remaining_tasks:
+        await _cancel_remaining_request_tasks(tasks)
+        remaining_connections = len(connections or ())
+        remaining_tasks = len(_live_uvicorn_http_tasks(tasks))
+
+    logger.debug(
+        "HTTP request drain left %d connection(s) and %d live task(s) after cancellation",
+        remaining_connections,
+        remaining_tasks,
+    )
 
 
 async def _wait_for_uvicorn_http_drain(
@@ -149,6 +162,30 @@ async def _wait_for_uvicorn_http_drain(
         if asyncio.get_running_loop().time() >= deadline:
             return False
         await asyncio.sleep(0.05)
+
+
+async def _cancel_remaining_request_tasks(tasks: Any) -> None:
+    """Cancel any remaining HTTP/MCP request tasks during shutdown."""
+    task_list = _live_uvicorn_http_tasks(tasks)
+    if not task_list:
+        return
+
+    for task in task_list:
+        task.cancel(_GOBBY_SHUTDOWN_DRAIN_MESSAGE)
+
+    deadline = asyncio.get_running_loop().time() + _HTTP_REQUEST_TASK_CANCEL_TIMEOUT_SECONDS
+    while True:
+        if not _live_uvicorn_http_tasks(tasks):
+            return
+        if asyncio.get_running_loop().time() >= deadline:
+            return
+        await asyncio.sleep(0.05)
+
+
+def _live_uvicorn_http_tasks(tasks: Any) -> list[asyncio.Task[Any]]:
+    if not tasks:
+        return []
+    return [task for task in list(tasks) if isinstance(task, asyncio.Task) and not task.done()]
 
 
 async def _reap_remaining_child_processes(

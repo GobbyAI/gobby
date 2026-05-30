@@ -398,17 +398,17 @@ class HTTPServer:
         if not isinstance(server_instances, dict) or not server_instances:
             return
 
-        transports = list(server_instances.values())
+        transports = list(server_instances.items())
         logger.debug(
             "Terminating %d active Streamable HTTP session(s)",
             len(transports),
         )
-        pending: list[tuple[Any, asyncio.Task[None]]] = []
-        for transport in transports:
+        pending: list[tuple[Any, Any, asyncio.Task[None]]] = []
+        for session_id, transport in transports:
             terminate = getattr(transport, "terminate", None)
             if not callable(terminate):
                 continue
-            pending.append((transport, asyncio.create_task(terminate())))
+            pending.append((session_id, transport, asyncio.create_task(terminate())))
 
         results = await asyncio.gather(
             *(
@@ -416,7 +416,7 @@ class HTTPServer:
                     task,
                     timeout=_STREAMABLE_HTTP_TERMINATE_TIMEOUT_SECONDS,
                 )
-                for _transport, task in pending
+                for _session_id, _transport, task in pending
             ),
             return_exceptions=True,
         )
@@ -425,7 +425,7 @@ class HTTPServer:
         # already awaited completion with return_exceptions=True. We only need
         # to classify results for logging — no secondary cancellation pass or
         # lingering cleanup is required.
-        for (transport, _task), result in zip(pending, results, strict=False):
+        for (session_id, transport, _task), result in zip(pending, results, strict=False):
             if isinstance(result, TimeoutError):
                 logger.warning(
                     "Timed out terminating Streamable HTTP session %s after %.1fs",
@@ -438,6 +438,8 @@ class HTTPServer:
                     getattr(transport, "mcp_session_id", "<unknown>"),
                     result,
                 )
+            elif server_instances.get(session_id) is transport:
+                server_instances.pop(session_id, None)
 
     def resolve_project_id(self, project_id: str | None, cwd: str | None) -> str:
         """

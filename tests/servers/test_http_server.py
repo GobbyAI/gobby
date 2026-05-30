@@ -68,6 +68,7 @@ class TestStreamableHttpShutdown:
             for record in caplog.records
         )
         assert transport.terminate.await_count == 1
+        assert http_server._mcp_server.session_manager._server_instances == {"one": transport}
 
     @pytest.mark.asyncio
     async def test_terminate_streamable_http_sessions_uses_wait_for(
@@ -92,6 +93,7 @@ class TestStreamableHttpShutdown:
         mock_wait_for.assert_awaited_once()
         assert mock_wait_for.await_args.kwargs["timeout"] == 2.0
         assert transport.terminate.await_count == 1
+        assert http_server._mcp_server.session_manager._server_instances == {}
 
 
 class TestHooksEndpoint:

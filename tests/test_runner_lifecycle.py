@@ -639,6 +639,95 @@ class TestShutdownDaemonServices:
         assert server.should_exit is True
 
     @pytest.mark.asyncio
+    async def test_http_request_tasks_cancel_before_uvicorn_exit(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        runner = self._minimal_shutdown_runner(ShutdownIntent.STOP)
+        events: list[str] = []
+        connections: set[MagicMock] = set()
+        tasks: set[asyncio.Task[None]] = set()
+
+        class FakeServer:
+            def __init__(self) -> None:
+                self._should_exit = False
+                self.server_state = SimpleNamespace(connections=connections, tasks=tasks)
+
+            @property
+            def should_exit(self) -> bool:
+                return self._should_exit
+
+            @should_exit.setter
+            def should_exit(self, value: bool) -> None:
+                events.append("should-exit")
+                self._should_exit = value
+
+        server = FakeServer()
+        transport = SimpleNamespace(closed=False)
+        request_started = asyncio.Event()
+
+        def close_transport() -> None:
+            assert server.should_exit is False
+            transport.closed = True
+            connections.clear()
+            events.append("close")
+
+        async def lingering_request() -> None:
+            request_started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError as exc:
+                assert server.should_exit is False
+                events.append(f"request-cancel:{exc.args[0]}")
+                raise
+
+        request_task = asyncio.create_task(lingering_request())
+        tasks.add(request_task)
+        request_task.add_done_callback(tasks.discard)
+        await asyncio.wait_for(request_started.wait(), timeout=1)
+
+        transport.close = close_transport
+        transport.is_closing = lambda: bool(transport.closed)
+        connection = MagicMock()
+        connection.transport = transport
+        connection.shutdown.side_effect = lambda: events.append("connection-shutdown")
+        connections.add(connection)
+
+        async def server_done() -> None:
+            return None
+
+        server_task: asyncio.Task[None] = asyncio.create_task(server_done())
+        monkeypatch.setattr(runner_lifecycle_shutdown, "_HTTP_CONNECTION_GRACE_SECONDS", 0.0)
+        monkeypatch.setattr(runner_lifecycle_shutdown, "_HTTP_CONNECTION_DRAIN_SECONDS", 0.0)
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "_HTTP_REQUEST_TASK_CANCEL_TIMEOUT_SECONDS",
+            0.2,
+        )
+
+        await runner_lifecycle_shutdown.shutdown_daemon_services(
+            runner,
+            server,
+            server_task,
+            1,
+            await_critical_stop_hook_grace_window=AsyncMock(),
+            shutdown_websocket_server=AsyncMock(),
+            cancel_active_agent_runs_for_shutdown=AsyncMock(return_value=0),
+            reap_remaining_child_processes=AsyncMock(),
+            shutdown_telemetry=MagicMock(),
+            cleanup_pid_file=MagicMock(),
+        )
+
+        assert events[:4] == [
+            "connection-shutdown",
+            "close",
+            "request-cancel:Gobby shutdown drain",
+            "should-exit",
+        ]
+        assert transport.closed is True
+        assert request_task.cancelled()
+        assert tasks == set()
+
+    @pytest.mark.asyncio
     async def test_restart_lifecycle_manager_timeout_logs_info(
         self,
         caplog: pytest.LogCaptureFixture,

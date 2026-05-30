@@ -63,6 +63,7 @@ class TestProcessShutdown:
         transport_two.terminate.assert_awaited_once()
         assert transport_two.terminate.await_count == 1
         assert transport_two.terminate.await_args is not None
+        assert session_manager._server_instances == {}
 
     @pytest.mark.asyncio
     async def test_terminate_streamable_http_sessions_logs_and_continues_on_error(
@@ -100,6 +101,7 @@ class TestProcessShutdown:
         assert healthy_transport.terminate.await_count == 1
         assert healthy_transport.terminate.await_args is not None
         assert "Failed to terminate Streamable HTTP session sess-fail" in caplog.text
+        assert session_manager._server_instances == {"sess-fail": failing_transport}
 
     @pytest.mark.asyncio
     async def test_shutdown_no_pending_tasks(self) -> None:

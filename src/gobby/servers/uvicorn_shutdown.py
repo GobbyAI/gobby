@@ -8,6 +8,7 @@ from collections.abc import Callable
 
 _GRACEFUL_TIMEOUT_MESSAGE = "timeout graceful shutdown exceeded"
 _RUNNING_TASKS_MESSAGE = "running task(s)"
+_GOBBY_SHUTDOWN_DRAIN_MESSAGE = "Gobby shutdown drain"
 
 
 class UvicornShutdownLogFilter(logging.Filter):
@@ -30,14 +31,17 @@ class UvicornShutdownLogFilter(logging.Filter):
             return True
 
         exc = _record_exception(record)
-        if exc is not None and _is_expected_shutdown_cancellation(exc):
-            _rewrite_as_info(
-                record,
-                "HTTP request task cancelled during daemon shutdown after graceful timeout",
-            )
-            record.exc_info = None
-            record.exc_text = None
-            return True
+        if exc is not None:
+            if _is_gobby_shutdown_drain_cancellation(exc):
+                return False
+            if _is_expected_shutdown_cancellation(exc):
+                _rewrite_as_info(
+                    record,
+                    "HTTP request task cancelled during daemon shutdown after graceful timeout",
+                )
+                record.exc_info = None
+                record.exc_text = None
+                return True
 
         return True
 
@@ -81,6 +85,16 @@ def _is_expected_shutdown_cancellation(exc: BaseException) -> bool:
     if isinstance(exc, BaseExceptionGroup):
         return bool(exc.exceptions) and all(
             _is_expected_shutdown_cancellation(child) for child in exc.exceptions
+        )
+    return False
+
+
+def _is_gobby_shutdown_drain_cancellation(exc: BaseException) -> bool:
+    if isinstance(exc, asyncio.CancelledError):
+        return _GOBBY_SHUTDOWN_DRAIN_MESSAGE in str(exc)
+    if isinstance(exc, BaseExceptionGroup):
+        return bool(exc.exceptions) and all(
+            _is_gobby_shutdown_drain_cancellation(child) for child in exc.exceptions
         )
     return False
 

@@ -55,6 +55,14 @@ def test_shutdown_filter_downgrades_expected_asgi_cancellation() -> None:
     assert "cancelled during daemon shutdown" in record.getMessage()
 
 
+def test_shutdown_filter_suppresses_gobby_drain_cancellation() -> None:
+    log_filter = UvicornShutdownLogFilter(lambda: True)
+    exc = asyncio.CancelledError("Gobby shutdown drain")
+    record = _record("Exception in ASGI application\n", exc=exc)
+
+    assert log_filter.filter(record) is False
+
+
 def test_shutdown_filter_preserves_non_shutdown_errors() -> None:
     log_filter = UvicornShutdownLogFilter(lambda: True)
     exc = RuntimeError("boom")
@@ -78,3 +86,15 @@ def test_shutdown_filter_preserves_records_when_shutdown_is_not_active() -> None
 
     assert record.levelno == logging.ERROR
     assert record.getMessage() == "Cancel 90 running task(s), timeout graceful shutdown exceeded"
+
+
+def test_shutdown_filter_preserves_gobby_drain_cancellation_when_shutdown_is_not_active() -> None:
+    log_filter = UvicornShutdownLogFilter(lambda: False)
+    exc = asyncio.CancelledError("Gobby shutdown drain")
+    record = _record("Exception in ASGI application\n", exc=exc)
+
+    assert log_filter.filter(record) is True
+
+    assert record.levelno == logging.ERROR
+    assert record.exc_info is not None
+    assert record.getMessage() == "Exception in ASGI application\n"
