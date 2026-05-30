@@ -7,7 +7,17 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from gobby.ai import AICapability, VisionExtractRequest, VisionExtractResult
+from gobby.ai import (
+    AIAdapterStyle,
+    AICapability,
+    AICapabilityRegistry,
+    CapabilityBinding,
+    TextGenerationRequest,
+    TextGenerationService,
+    VisionExtractRequest,
+    VisionExtractResult,
+    VisionExtractService,
+)
 from gobby.config.app import DaemonConfig
 from gobby.config.local import LocalConfig
 from gobby.servers.routes.llm import create_llm_router
@@ -30,6 +40,15 @@ class _FakeVisionService:
         )
 
 
+class _FakeTextAdapter:
+    def __init__(self) -> None:
+        self.requests: list[TextGenerationRequest] = []
+
+    async def generate(self, request: TextGenerationRequest) -> str:
+        self.requests.append(request)
+        return "Generated text"
+
+
 @pytest.fixture
 def server_with_llm() -> MagicMock:
     server = MagicMock()
@@ -42,6 +61,98 @@ def client(server_with_llm: MagicMock) -> TestClient:
     app = FastAPI()
     app.include_router(create_llm_router(server_with_llm))
     return TestClient(app)
+
+
+def test_llm_status_returns_registry_snapshot(client: TestClient) -> None:
+    response = client.get("/api/llm/status")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert "capabilities" in data
+    assert "text_generate" in data["capabilities"]
+    assert "vision_extract" in data["capabilities"]
+    assert data["capabilities"]["vision_extract"]["capability"] == "vision_extract"
+
+
+def test_generate_selects_acp_backed_provider(
+    client: TestClient,
+    server_with_llm: MagicMock,
+) -> None:
+    adapter = _FakeTextAdapter()
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="gemini",
+                adapter_style=AIAdapterStyle.ACP,
+                available=True,
+                models=("gemini-pro",),
+            )
+        ]
+    )
+    service = TextGenerationService(registry, {"gemini": adapter})
+
+    with patch(
+        "gobby.servers.routes.llm.build_daemon_text_generation_service",
+        return_value=service,
+    ) as build_service:
+        response = client.post(
+            "/api/llm/generate",
+            json={
+                "prompt": "Summarize this",
+                "provider": "gemini",
+                "model": "gemini-pro",
+                "system_prompt": "Be concise",
+                "max_tokens": 128,
+                "cwd": "/tmp/project",
+            },
+        )
+
+    assert response.status_code == 200
+    build_service.assert_called_once_with(server_with_llm.config)
+    assert response.json() == {
+        "text": "Generated text",
+        "capability": "text_generate",
+        "provider": "gemini",
+        "model": "gemini-pro",
+    }
+    assert adapter.requests == [
+        TextGenerationRequest(
+            prompt="Summarize this",
+            provider="gemini",
+            model="gemini-pro",
+            system_prompt="Be concise",
+            max_tokens=128,
+            caller="llm-generate-route",
+            cwd="/tmp/project",
+        )
+    ]
+
+
+def test_generate_returns_deterministic_unavailable_error(client: TestClient) -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding.unavailable(
+                AICapability.TEXT_GENERATE,
+                "gemini",
+                adapter_style=AIAdapterStyle.ACP,
+                reason="Gemini CLI is not installed.",
+            )
+        ]
+    )
+    service = TextGenerationService(registry, {})
+
+    with patch(
+        "gobby.servers.routes.llm.build_daemon_text_generation_service",
+        return_value=service,
+    ):
+        response = client.post(
+            "/api/llm/generate",
+            json={"prompt": "Summarize this", "provider": "gemini"},
+        )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Gemini CLI is not installed. (provider=gemini)"}
 
 
 def test_vision_status_lists_only_proven_providers_as_available(
@@ -98,3 +209,37 @@ def test_vision_extract_upload_executes_service(
     assert service.request.model == "llava"
     assert service.request.context == "settings screenshot"
     assert Path(service.request.image_path).exists() is False
+
+
+def test_vision_extract_rejects_unproven_provider(client: TestClient) -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding.unavailable(
+                AICapability.VISION_EXTRACT,
+                "droid",
+                adapter_style=AIAdapterStyle.CLI,
+                reason=(
+                    "No daemon vision_extract adapter has proven image payload support for Droid."
+                ),
+            )
+        ]
+    )
+    service = VisionExtractService(registry, {})
+
+    with patch(
+        "gobby.servers.routes.llm.build_daemon_vision_extract_service",
+        return_value=service,
+    ):
+        response = client.post(
+            "/api/llm/vision/extract",
+            data={"provider": "droid"},
+            files={"file": ("screen.png", b"image bytes", "image/png")},
+        )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "detail": (
+            "No daemon vision_extract adapter has proven image payload support for Droid. "
+            "(provider=droid)"
+        )
+    }
