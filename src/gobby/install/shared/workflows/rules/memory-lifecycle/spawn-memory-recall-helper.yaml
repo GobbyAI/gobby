@@ -9,7 +9,16 @@ rules:
     when: >
       len((event.data.get('prompt') or '').split()) >= 6
       and not variables.get('is_spawned_agent')
-      and variables.get('memory_recall_helper_enabled', True)
+      and not (event.data.get('terminal_context') or {}).get('agent_run_id')
+      and not (event.data.get('terminal_context') or {}).get('gobby_agent_run_id')
+      and event.data.get('role', 'user') == 'user'
+      and event.data.get('turn_role', 'user') == 'user'
+      and (event.data.get('prompt') or '').strip() != 'Message from Gobby daemon: New activity available.'
+      and variables.get('memory_recall_helper_enabled') is True
+      and (
+        variables.get('_active_rule_names') is none
+        or 'memory-recall-on-prompt' in variables.get('_active_rule_names', [])
+      )
       and event.metadata.get('_platform_session_id')
       and variables.get('parent_turn_seq') is not none
     effects:

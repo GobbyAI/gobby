@@ -336,7 +336,13 @@ class TestSpawnMemoryRecallHelper:
         assert body.when is not None
         assert "len((event.data.get('prompt') or '').split()) >= 6" in body.when
         assert "not variables.get('is_spawned_agent')" in body.when
-        assert "variables.get('memory_recall_helper_enabled', True)" in body.when
+        assert "(event.data.get('terminal_context') or {}).get('agent_run_id')" in body.when
+        assert "(event.data.get('terminal_context') or {}).get('gobby_agent_run_id')" in body.when
+        assert "event.data.get('role', 'user') == 'user'" in body.when
+        assert "event.data.get('turn_role', 'user') == 'user'" in body.when
+        assert "Message from Gobby daemon: New activity available." in body.when
+        assert "variables.get('memory_recall_helper_enabled') is True" in body.when
+        assert "'memory-recall-on-prompt' in variables.get('_active_rule_names', [])" in (body.when)
         assert "event.metadata.get('_platform_session_id')" in body.when
         assert "variables.get('parent_turn_seq') is not none" in body.when
 
