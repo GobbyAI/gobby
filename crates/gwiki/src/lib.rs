@@ -341,56 +341,21 @@ fn run_setup(selection: ScopeSelection) -> Result<CommandOutcome, WikiError> {
         ("ready", Vec::new(), Vec::new(), Vec::new())
     };
 
-    let payload = json!({
-        "command": "setup",
-        "scope": &output_scope,
-        "status": status,
-        "objects": object_payloads,
-        "created": created,
-        "skipped": skipped,
-        "failed": failed,
-        "ownership": setup::SETUP_OWNERSHIP_NOTE,
-    });
-    let text = format!(
-        "Setup {status}\nScope: {output_scope}\nObjects: {}",
-        objects.len()
-    );
-
-    Ok(commands::scoped_outcome(
-        "setup",
-        &output_scope,
-        payload,
-        text,
+    Ok(commands::setup::run(
+        output_scope,
+        status,
+        object_payloads,
+        created,
+        skipped,
+        failed,
+        setup::SETUP_OWNERSHIP_NOTE,
     ))
 }
 
 fn run_index(selection: ScopeSelection) -> Result<CommandOutcome, WikiError> {
     let (scope, output_scope, _, store) = indexed_store_for_selection(&selection)?;
     let counts = index_counts(&store);
-    let payload = json!({
-        "command": "index",
-        "scope": &output_scope,
-        "status": "indexed",
-        "root": scope.root(),
-        "indexed": {
-            "documents": counts.documents,
-            "chunks": counts.chunks,
-            "links": counts.links,
-            "sources": counts.sources,
-            "ingestions": counts.ingestions,
-        },
-    });
-    let text = format!(
-        "Index complete\nScope: {output_scope}\nDocuments: {}\nChunks: {}\nLinks: {}",
-        counts.documents, counts.chunks, counts.links
-    );
-
-    Ok(commands::scoped_outcome(
-        "index",
-        &output_scope,
-        payload,
-        text,
-    ))
+    Ok(commands::index::run(output_scope, scope.root(), counts))
 }
 
 fn run_ingest_file(path: PathBuf, selection: ScopeSelection) -> Result<CommandOutcome, WikiError> {
@@ -400,37 +365,11 @@ fn run_ingest_file(path: PathBuf, selection: ScopeSelection) -> Result<CommandOu
     let mut store = store::MemoryWikiStore::default();
     let result = ingest::file::ingest_path(scope.root(), &mut store, &path, &collect_timestamp())?;
     let counts = index_counts(&store);
-    let payload = json!({
-        "command": "ingest-file",
-        "scope": &output_scope,
-        "status": "ingested",
-        "path": &path,
-        "raw_path": &result.raw_path,
-        "asset_path": &result.asset_path,
-        "source": {
-            "id": &result.record.id,
-            "kind": &result.record.kind,
-            "content_hash": &result.record.content_hash,
-            "location": &result.record.location,
-        },
-        "indexed": {
-            "documents": counts.documents,
-            "chunks": counts.chunks,
-            "links": counts.links,
-            "sources": counts.sources,
-            "ingestions": counts.ingestions,
-        },
-    });
-    let text = format!(
-        "Ingested file\nScope: {output_scope}\nRaw: {}",
-        result.raw_path.display()
-    );
-
-    Ok(commands::scoped_outcome(
-        "ingest-file",
-        &output_scope,
-        payload,
-        text,
+    Ok(commands::index::ingest_file(
+        &path,
+        output_scope,
+        &result,
+        counts,
     ))
 }
 
@@ -561,78 +500,24 @@ where
         results,
         degradations,
     );
-    let payload = serde_json::to_value(&output).map_err(|error| WikiError::Json {
-        action: "serialize search output",
-        path: None,
-        source: error.to_string(),
-    })?;
-    let text = render_search_text(&query, &output_scope, &output.results);
-
-    Ok(commands::scoped_outcome(
-        "search",
-        &output_scope,
-        payload,
-        text,
-    ))
+    commands::search::run(output)
 }
 
 fn run_backlinks(page: String, selection: ScopeSelection) -> Result<CommandOutcome, WikiError> {
     let (_, output_scope, search_scope, store) = indexed_store_for_selection(&selection)?;
     let graph = memory_graph_from_store(&store, &search_scope);
     let backlinks = graph.backlinks(&search_scope, PathBuf::from(&page));
-    let backlink_payloads = backlinks
-        .iter()
-        .map(|backlink| {
-            json!({
-                "source_path": &backlink.source_path,
-                "target_path": &backlink.target_path,
-                "raw_target": &backlink.raw_target,
-            })
-        })
-        .collect::<Vec<_>>();
-    let payload = json!({
-        "command": "backlinks",
-        "scope": &output_scope,
-        "page": &page,
-        "backlinks": backlink_payloads,
-    });
-    let text = render_backlinks_text(&page, &output_scope, &backlinks);
-
-    Ok(commands::scoped_outcome(
-        "backlinks",
-        &output_scope,
-        payload,
-        text,
-    ))
+    Ok(commands::backlinks::run(&page, output_scope, &backlinks))
 }
 
 fn run_link_suggest(selection: ScopeSelection, limit: usize) -> Result<CommandOutcome, WikiError> {
     let (_, output_scope, search_scope, store) = indexed_store_for_selection(&selection)?;
     let graph = memory_graph_from_store(&store, &search_scope);
     let suggestions = graph.link_suggestions(&search_scope, limit);
-    let suggestion_payloads = suggestions
-        .iter()
-        .map(|suggestion| {
-            json!({
-                "target": &suggestion.target,
-                "mention_count": suggestion.mention_count,
-                "source_paths": &suggestion.source_paths,
-            })
-        })
-        .collect::<Vec<_>>();
-    let payload = json!({
-        "command": "link-suggest",
-        "scope": &output_scope,
-        "limit": limit,
-        "suggestions": suggestion_payloads,
-    });
-    let text = render_link_suggest_text(&output_scope, &suggestions);
-
-    Ok(commands::scoped_outcome(
-        "link-suggest",
-        &output_scope,
-        payload,
-        text,
+    Ok(commands::backlinks::link_suggest(
+        output_scope,
+        limit,
+        &suggestions,
     ))
 }
 
@@ -1144,72 +1029,6 @@ fn snippet_from_text(text: &str) -> String {
     format!("{}...", &snippet[..240])
 }
 
-fn render_search_text(
-    query: &str,
-    scope: &ScopeIdentity,
-    results: &[output::SearchResultOutput],
-) -> String {
-    let mut text = format!("Search results for \"{query}\"\nScope: {scope}\n");
-    if results.is_empty() {
-        text.push_str("No results");
-        return text;
-    }
-
-    for result in results {
-        text.push_str("- ");
-        text.push_str(&result.wiki_page.display().to_string());
-        if let Some(title) = &result.title {
-            text.push_str(" | ");
-            text.push_str(title);
-        }
-        text.push_str(" | ");
-        text.push_str(&result.snippet);
-        text.push('\n');
-    }
-    text
-}
-
-fn render_backlinks_text(
-    page: &str,
-    scope: &ScopeIdentity,
-    backlinks: &[graph::WikiBacklink],
-) -> String {
-    let mut text = format!("Backlinks for {page}\nScope: {scope}\n");
-    if backlinks.is_empty() {
-        text.push_str("No backlinks");
-        return text;
-    }
-
-    for backlink in backlinks {
-        text.push_str("- ");
-        text.push_str(&backlink.source_path.display().to_string());
-        text.push_str(" via ");
-        text.push_str(&backlink.raw_target);
-        text.push('\n');
-    }
-    text
-}
-
-fn render_link_suggest_text(
-    scope: &ScopeIdentity,
-    suggestions: &[graph::LinkSuggestion],
-) -> String {
-    let mut text = format!("Link suggestions\nScope: {scope}\n");
-    if suggestions.is_empty() {
-        text.push_str("No suggestions");
-        return text;
-    }
-
-    for suggestion in suggestions {
-        text.push_str("- ");
-        text.push_str(&suggestion.target);
-        text.push_str(" (");
-        text.push_str(&suggestion.mention_count.to_string());
-        text.push_str(" mentions)\n");
-    }
-    text
-}
-
 fn degradation_label(degradation: &DegradationKind) -> String {
     match degradation {
         DegradationKind::ServiceUnavailable { service, state } => match state {
@@ -1322,25 +1141,10 @@ fn init(selection: ScopeSelection) -> Result<CommandOutcome, WikiError> {
 
     let output_scope = resolved_scope_identity(&scope);
     let required_paths = vault::required_paths();
-    let payload = serde_json::json!({
-        "command": "init",
-        "scope": output_scope,
-        "status": "ready",
-        "root": scope.root(),
-        "created": {
-            "directories": required_paths.directories,
-            "files": required_paths.files,
-        },
-    });
-    let text = format!(
-        "Initialized wiki\nScope: {output_scope}\nRoot: {}",
-        scope.root().display()
-    );
-    Ok(commands::scoped_outcome(
-        "init",
-        &output_scope,
-        payload,
-        text,
+    Ok(commands::init::run(
+        output_scope,
+        scope.root(),
+        &required_paths,
     ))
 }
 

@@ -28,6 +28,41 @@ fn json_output(output: &Output) -> serde_json::Value {
 }
 
 #[test]
+fn command_modules_do_not_define_static_placeholder_results() {
+    let commands_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/commands");
+    let placeholder_patterns = [
+        "\"objects\": []",
+        "\"created\": []",
+        "\"results\": []",
+        "\"backlinks\": []",
+        "\"suggestions\": []",
+        "\"documents\": 0",
+        "\"chunks\": 0",
+        "\"links\": 0",
+        "Init ready",
+        "Setup ready",
+        "Index ready",
+        "Ingest file ready",
+    ];
+
+    for entry in fs::read_dir(commands_dir).expect("read commands dir") {
+        let path = entry.expect("read command entry").path();
+        if path.extension().and_then(|extension| extension.to_str()) != Some("rs") {
+            continue;
+        }
+
+        let source = fs::read_to_string(&path).expect("read command source");
+        for pattern in placeholder_patterns {
+            assert!(
+                !source.contains(pattern),
+                "{} still contains placeholder pattern {pattern:?}",
+                path.display()
+            );
+        }
+    }
+}
+
+#[test]
 fn public_cli_smoke_uses_gwiki_modules() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let hub = tmp.path().join("hub");
