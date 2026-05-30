@@ -20,6 +20,19 @@ fn gwiki(hub: &Path, cwd: &Path, args: &[&str]) -> Output {
         .expect("gwiki binary runs")
 }
 
+fn gwiki_with_database_url(hub: &Path, cwd: &Path, database_url: &str, args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_gwiki"))
+        .args(args)
+        .env("GOBBY_WIKI_HUB", hub)
+        .env("HOME", cwd.join("home"))
+        .env("GWIKI_DATABASE_URL", database_url)
+        .env_remove("GOBBY_POSTGRES_DSN")
+        .env_remove("GCODE_DATABASE_URL")
+        .current_dir(cwd)
+        .output()
+        .expect("gwiki binary runs")
+}
+
 fn assert_success(output: &Output, label: &str) {
     assert!(
         output.status.success(),
@@ -39,6 +52,14 @@ fn assert_json_path(value: &serde_json::Value, expected: &Path) {
         Some(expected.to_str().expect("path utf8")),
         "{value:#}"
     );
+}
+
+fn unique_topic(label: &str) -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system time after epoch")
+        .as_nanos();
+    format!("{label}-{}-{nanos}", std::process::id())
 }
 
 fn seed_accepted_research_checkpoint(vault: &Path) {
@@ -119,6 +140,149 @@ fn command_modules_do_not_define_static_placeholder_results() {
                 path.display()
             );
         }
+    }
+}
+
+#[test]
+fn configured_index_uses_postgres_writer_when_database_url_is_set() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let hub = tmp.path().join("hub");
+    let topic = unique_topic("pg-writer-contract");
+    let invalid_database_url = "postgresql://127.0.0.1:1/gwiki";
+
+    let init = gwiki(
+        &hub,
+        tmp.path(),
+        &["--format", "json", "init", "--topic", &topic],
+    );
+    assert_success(&init, "init");
+
+    let vault = hub.join("topics").join(&topic);
+    fs::create_dir_all(vault.join("wiki/topics")).expect("create topic dir");
+    fs::write(
+        vault.join("wiki/topics/durable-search.md"),
+        "# Durable Search\n\nConfigured indexing must use PostgreSQL.\n",
+    )
+    .expect("write topic page");
+
+    let index = gwiki_with_database_url(
+        &hub,
+        tmp.path(),
+        invalid_database_url,
+        &["--format", "json", "index", "--topic", &topic],
+    );
+    assert!(
+        !index.status.success(),
+        "configured index unexpectedly succeeded\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&index.stdout),
+        String::from_utf8_lossy(&index.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&index.stderr)
+            .contains("failed to connect to PostgreSQL for gwiki index"),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&index.stderr)
+    );
+}
+
+#[test]
+fn configured_postgres_index_feeds_configured_search_when_test_database_is_available() {
+    let Some(database_url) = std::env::var("GWIKI_POSTGRES_TEST_DATABASE_URL")
+        .ok()
+        .or_else(|| std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL").ok())
+    else {
+        return;
+    };
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let hub = tmp.path().join("hub");
+    let topic = unique_topic("pg-index-search");
+
+    let init = gwiki(
+        &hub,
+        tmp.path(),
+        &["--format", "json", "init", "--topic", &topic],
+    );
+    assert_success(&init, "init");
+
+    let setup = gwiki_with_database_url(
+        &hub,
+        tmp.path(),
+        &database_url,
+        &["--format", "json", "setup", "--topic", &topic],
+    );
+    assert_success(&setup, "setup");
+
+    let vault = hub.join("topics").join(&topic);
+    fs::create_dir_all(vault.join("wiki/topics")).expect("create topic dir");
+    fs::write(
+        vault.join("wiki/topics/durable-search.md"),
+        "# Durable Search\n\nDurable bm25needle content is searchable after indexing.\n",
+    )
+    .expect("write topic page");
+
+    let index = gwiki_with_database_url(
+        &hub,
+        tmp.path(),
+        &database_url,
+        &["--format", "json", "index", "--topic", &topic],
+    );
+    assert_success(&index, "index");
+
+    let search = gwiki_with_database_url(
+        &hub,
+        tmp.path(),
+        &database_url,
+        &[
+            "--format",
+            "json",
+            "search",
+            "--topic",
+            &topic,
+            "bm25needle",
+            "--limit",
+            "3",
+        ],
+    );
+    assert_success(&search, "search");
+    let search_payload = json_output(&search);
+    assert!(
+        search_payload["results"].as_array().is_some_and(|results| {
+            results.iter().any(|result| {
+                result["wiki_page"] == "wiki/topics/durable-search.md"
+                    && result["sources"]
+                        .as_array()
+                        .is_some_and(|sources| sources.iter().any(|source| source == "bm25"))
+            })
+        }),
+        "{search_payload:#}"
+    );
+
+    cleanup_postgres_topic(&database_url, &topic);
+}
+
+fn cleanup_postgres_topic(database_url: &str, topic: &str) {
+    if let Ok(mut client) = postgres::Client::connect(database_url, postgres::NoTls) {
+        let _ = client.execute(
+            "DELETE FROM gwiki_ingestions WHERE scope_kind = 'topic' AND scope_id = $1",
+            &[&topic],
+        );
+        let _ = client.execute(
+            "DELETE FROM gwiki_links WHERE scope_kind = 'topic' AND scope_id = $1",
+            &[&topic],
+        );
+        let _ = client.execute(
+            "DELETE FROM gwiki_sources WHERE scope_kind = 'topic' AND scope_id = $1",
+            &[&topic],
+        );
+        let _ = client.execute(
+            "DELETE FROM gwiki_chunks WHERE scope_kind = 'topic' AND scope_id = $1",
+            &[&topic],
+        );
+        let _ = client.execute(
+            "DELETE FROM gwiki_documents WHERE scope_kind = 'topic' AND scope_id = $1",
+            &[&topic],
+        );
     }
 }
 

@@ -381,6 +381,24 @@ fn run_setup(selection: ScopeSelection) -> Result<CommandOutcome, WikiError> {
 }
 
 fn run_index(selection: ScopeSelection) -> Result<CommandOutcome, WikiError> {
+    let scope = resolve_command_scope(&selection)?;
+    let output_scope = resolved_scope_identity(&scope);
+    if let Some(database_url) = database_url_from_env() {
+        let mut conn = gobby_core::postgres::connect_readwrite(&database_url).map_err(|error| {
+            WikiError::Config {
+                detail: format!("failed to connect to PostgreSQL for gwiki index: {error}"),
+            }
+        })?;
+        let search_scope = search_scope_for_resolved(&scope);
+        if scope.root().is_dir() {
+            let mut store =
+                store::PostgresWikiStore::new(&mut conn, store_scope_for_search(&search_scope));
+            indexer::index_vault(scope.root(), &mut store).map_err(index_error_to_wiki_error)?;
+        }
+        let counts = postgres_index_counts(&mut conn, &search_scope)?;
+        return Ok(commands::index::run(output_scope, scope.root(), counts));
+    }
+
     let (scope, output_scope, _, store) = indexed_store_for_selection(&selection)?;
     let counts = index_counts(&store);
     Ok(commands::index::run(output_scope, scope.root(), counts))
@@ -390,6 +408,27 @@ fn run_ingest_file(path: PathBuf, selection: ScopeSelection) -> Result<CommandOu
     let scope = resolve_command_scope(&selection)?;
     vault::initialize(&scope)?;
     let output_scope = resolved_scope_identity(&scope);
+    if let Some(database_url) = database_url_from_env() {
+        let mut conn = gobby_core::postgres::connect_readwrite(&database_url).map_err(|error| {
+            WikiError::Config {
+                detail: format!("failed to connect to PostgreSQL for gwiki ingest-file: {error}"),
+            }
+        })?;
+        let search_scope = search_scope_for_resolved(&scope);
+        let result = {
+            let mut store =
+                store::PostgresWikiStore::new(&mut conn, store_scope_for_search(&search_scope));
+            ingest::file::ingest_path(scope.root(), &mut store, &path, &collect_timestamp())?
+        };
+        let counts = postgres_index_counts(&mut conn, &search_scope)?;
+        return Ok(commands::index::ingest_file(
+            &path,
+            output_scope,
+            &result,
+            counts,
+        ));
+    }
+
     let mut store = store::MemoryWikiStore::default();
     let result = ingest::file::ingest_path(scope.root(), &mut store, &path, &collect_timestamp())?;
     let counts = index_counts(&store);
@@ -820,6 +859,13 @@ fn search_scope_for_resolved(scope: &scope::ResolvedScope) -> search::SearchScop
     search::SearchScope::project("current")
 }
 
+fn store_scope_for_search(scope: &search::SearchScope) -> store::WikiStoreScope {
+    match scope {
+        search::SearchScope::Project { project_id } => store::WikiStoreScope::project(project_id),
+        search::SearchScope::Topic { topic } => store::WikiStoreScope::topic(topic),
+    }
+}
+
 fn index_counts(store: &store::MemoryWikiStore) -> IndexCounts {
     IndexCounts {
         documents: store.documents.len(),
@@ -828,6 +874,37 @@ fn index_counts(store: &store::MemoryWikiStore) -> IndexCounts {
         sources: store.sources.len(),
         ingestions: store.ingestions.len(),
     }
+}
+
+fn postgres_index_counts(
+    conn: &mut postgres::Client,
+    scope: &search::SearchScope,
+) -> Result<IndexCounts, WikiError> {
+    Ok(IndexCounts {
+        documents: postgres_count(conn, "gwiki_documents", scope)?,
+        chunks: postgres_count(conn, "gwiki_chunks", scope)?,
+        links: postgres_count(conn, "gwiki_links", scope)?,
+        sources: postgres_count(conn, "gwiki_sources", scope)?,
+        ingestions: postgres_count(conn, "gwiki_ingestions", scope)?,
+    })
+}
+
+fn postgres_count(
+    conn: &mut postgres::Client,
+    table: &'static str,
+    scope: &search::SearchScope,
+) -> Result<usize, WikiError> {
+    let sql =
+        format!("SELECT COUNT(*)::BIGINT FROM {table} WHERE scope_kind = $1 AND scope_id = $2");
+    let count = conn
+        .query_one(&sql, &[&scope.scope_kind(), &scope.scope_value()])
+        .map_err(|error| WikiError::Config {
+            detail: format!("failed to count PostgreSQL gwiki rows in {table}: {error}"),
+        })?
+        .get::<_, i64>(0);
+    usize::try_from(count).map_err(|error| WikiError::Config {
+        detail: format!("invalid PostgreSQL gwiki row count in {table}: {error}"),
+    })
 }
 
 fn store_search_hits(
