@@ -272,6 +272,7 @@ class TestBrevityRules:
         assert variables["brevity_disabled"]["value"] is False
         assert variables["brevity_last_violation"]["value"] == ""
         assert variables["brevity_last_violation_rule"]["value"] == ""
+        assert variables["code_index_navigation_used_this_turn"]["value"] is False
 
     @pytest.mark.asyncio
     async def test_reinforcer_repeats_after_brevity_is_loaded(self, db) -> None:
@@ -547,25 +548,27 @@ class TestCodeIndexRuleCondition:
     """Test the code-index onboarding rule against canonical tool metadata."""
 
     CONDITION = (
-        "not skill_loaded('code-index') "
-        "and not variables.get('code_index_preflight_warning') and ("
-        "(event.data.get('canonical_tool_kind') == 'read' "
-        "and event.data.get('canonical_file_path', '').rpartition('.')[2] "
-        "in ('py', 'rs', 'ts', 'tsx', 'js', 'jsx', 'go', 'java', 'rb', "
-        "'c', 'cpp', 'h', 'hpp', 'cs', 'kt', 'swift', 'scala')) "
-        "or event.data.get('canonical_tool_kind') == 'search')"
+        "variables.get('code_index_available') "
+        "and not skill_loaded('code-index') "
+        "and not variables.get('code_index_preflight_warning') "
+        "and not event.data.get('canonical_code_index_navigation') "
+        "and event.data.get('canonical_code_navigation_broad')"
     )
 
     def _eval(
         self,
         *,
-        canonical_tool_kind: str,
-        canonical_file_path: str = "",
+        code_index_available: bool = True,
+        canonical_code_navigation_broad: bool = True,
+        canonical_code_index_navigation: bool = False,
         loaded_skills: list[str] | None = None,
         injected_skills: list[str] | None = None,
         code_index_preflight_warning: bool = False,
     ) -> bool:
-        variables = {"loaded_skills": loaded_skills or []}
+        variables = {
+            "loaded_skills": loaded_skills or [],
+            "code_index_available": code_index_available,
+        }
         if code_index_preflight_warning:
             variables["code_index_preflight_warning"] = {
                 "preflight": "code_index",
@@ -577,8 +580,8 @@ class TestCodeIndexRuleCondition:
             "variables": variables,
             "event": SimpleNamespace(
                 data={
-                    "canonical_tool_kind": canonical_tool_kind,
-                    "canonical_file_path": canonical_file_path,
+                    "canonical_code_navigation_broad": canonical_code_navigation_broad,
+                    "canonical_code_index_navigation": canonical_code_index_navigation,
                 }
             ),
             "tool_input": {},
@@ -587,25 +590,29 @@ class TestCodeIndexRuleCondition:
         evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
         return evaluator.evaluate(self.CONDITION)
 
-    def test_matches_code_file_read(self) -> None:
-        assert self._eval(canonical_tool_kind="read", canonical_file_path="/repo/app.py") is True
+    def test_matches_broad_code_navigation(self) -> None:
+        assert self._eval(canonical_code_navigation_broad=True) is True
 
     def test_matches_search(self) -> None:
-        assert self._eval(canonical_tool_kind="search") is True
+        assert self._eval(canonical_code_navigation_broad=True) is True
 
-    def test_skips_non_code_read(self) -> None:
-        assert (
-            self._eval(canonical_tool_kind="read", canonical_file_path="/repo/README.md") is False
-        )
+    def test_skips_narrow_context_read(self) -> None:
+        assert self._eval(canonical_code_navigation_broad=False) is False
+
+    def test_skips_when_code_index_unavailable(self) -> None:
+        assert self._eval(code_index_available=False) is False
 
     def test_skips_when_already_loaded(self) -> None:
-        assert self._eval(canonical_tool_kind="search", loaded_skills=["code-index"]) is False
+        assert self._eval(loaded_skills=["code-index"]) is False
 
     def test_does_not_skip_when_legacy_injected(self) -> None:
-        assert self._eval(canonical_tool_kind="search", injected_skills=["code-index"]) is True
+        assert self._eval(injected_skills=["code-index"]) is True
 
     def test_skips_when_isolated_code_index_preflight_failed(self) -> None:
-        assert self._eval(canonical_tool_kind="search", code_index_preflight_warning=True) is False
+        assert self._eval(code_index_preflight_warning=True) is False
+
+    def test_skips_gcode_navigation(self) -> None:
+        assert self._eval(canonical_code_index_navigation=True) is False
 
 
 class TestRequireCodeIndexSkillStructure:
@@ -620,11 +627,206 @@ class TestRequireCodeIndexSkillStructure:
 
         assert body.event.value == "before_tool"
         assert body.when is not None
+        assert "variables.get('code_index_available')" in body.when
         assert "not skill_loaded('code-index')" in body.when
         assert "not variables.get('code_index_preflight_warning')" in body.when
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert body.effects[0].reason == skill_fetch_directive("code-index")
+        assert skill_fetch_directive("code-index") in body.effects[0].reason
+        assert 'gcode grep "pattern" [PATH...] -m 50' in body.effects[0].reason
+
+    def test_code_index_navigation_rules_sync(self, db, manager) -> None:
+        _sync_bundled(db)
+        expected = {
+            "reset-code-index-navigation",
+            "track-code-index-navigation",
+            "prefer-gcode-for-code-search",
+            "prefer-gcode-for-source-read",
+        }
+        rules = {row.name for row in manager.list_all(workflow_type="rule")}
+        assert expected.issubset(rules)
+
+
+class TestCodeIndexNavigationRules:
+    """Verify indexed-project gcode-first rule behavior."""
+
+    @staticmethod
+    def _variables(*, loaded: bool = True, used: bool = False) -> dict[str, Any]:
+        return {
+            "loaded_skills": ["code-index"] if loaded else [],
+            "code_index_available": True,
+            "code_index_navigation_used_this_turn": used,
+            "brevity_disabled": True,
+            "skill_discovery_instructions_shown": True,
+        }
+
+    @staticmethod
+    def _event(event_type: HookEventType, data: dict[str, Any]) -> HookEvent:
+        return HookEvent(
+            event_type=event_type,
+            session_id="test-session",
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data=data,
+        )
+
+    @pytest.mark.asyncio
+    async def test_first_rg_requires_code_index_skill(self, db) -> None:
+        _sync_bundled(db)
+        variables = self._variables(loaded=False)
+        event = self._event(
+            HookEventType.BEFORE_TOOL,
+            {
+                "tool_name": "Bash",
+                "command": "rg pattern src",
+                "canonical_tool_kind": "search",
+                "canonical_code_navigation_action": "search",
+                "canonical_code_navigation_broad": True,
+            },
+        )
+
+        response = await RuleEngine(db).evaluate(event, session_id="sess-1", variables=variables)
+
+        assert response.decision == "block"
+        assert response.reason is not None
+        assert skill_fetch_directive("code-index") in response.reason
+        assert 'gcode grep "pattern" [PATH...] -m 50' in response.reason
+
+    @pytest.mark.asyncio
+    async def test_loaded_code_index_blocks_rg_with_gcode_grep_guidance(self, db) -> None:
+        _sync_bundled(db)
+        event = self._event(
+            HookEventType.BEFORE_TOOL,
+            {
+                "tool_name": "Bash",
+                "command": "rg pattern src",
+                "canonical_tool_kind": "search",
+                "canonical_code_navigation_action": "search",
+                "canonical_code_navigation_broad": True,
+            },
+        )
+
+        response = await RuleEngine(db).evaluate(
+            event,
+            session_id="sess-1",
+            variables=self._variables(loaded=True),
+        )
+
+        assert response.decision == "block"
+        assert response.reason is not None
+        assert 'gcode grep "pattern" [PATH...] -m 50' in response.reason
+
+    @pytest.mark.asyncio
+    async def test_gcode_navigation_is_allowed_and_sets_turn_flag(self, db) -> None:
+        _sync_bundled(db)
+        variables = self._variables(loaded=True)
+        before = self._event(
+            HookEventType.BEFORE_TOOL,
+            {
+                "tool_name": "Bash",
+                "command": 'gcode grep "pattern" src -m 50',
+                "canonical_tool_kind": "search",
+                "canonical_code_index_navigation": True,
+                "canonical_code_navigation_action": "search",
+            },
+        )
+        after = self._event(
+            HookEventType.AFTER_TOOL,
+            {
+                "tool_name": "Bash",
+                "command": 'gcode grep "pattern" src -m 50',
+                "canonical_tool_kind": "search",
+                "canonical_code_index_navigation": True,
+                "is_error": False,
+            },
+        )
+
+        allowed = await RuleEngine(db).evaluate(before, session_id="sess-1", variables=variables)
+        await RuleEngine(db).evaluate(after, session_id="sess-1", variables=variables)
+
+        assert allowed.decision == "allow"
+        assert variables["code_index_navigation_used_this_turn"] is True
+
+    @pytest.mark.asyncio
+    async def test_turn_start_resets_gcode_navigation_flag(self, db) -> None:
+        _sync_bundled(db)
+        variables = self._variables(loaded=True, used=True)
+        event = self._event(HookEventType.BEFORE_AGENT, {"prompt": "continue"})
+
+        await RuleEngine(db).evaluate(event, session_id="sess-1", variables=variables)
+
+        assert variables["code_index_navigation_used_this_turn"] is False
+
+    @pytest.mark.asyncio
+    async def test_broad_cat_blocks_but_tight_line_read_allows(self, db) -> None:
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        variables = self._variables(loaded=True)
+        broad = self._event(
+            HookEventType.BEFORE_TOOL,
+            {
+                "tool_name": "Bash",
+                "command": "cat src/app.py",
+                "canonical_tool_kind": "read",
+                "canonical_file_path": "src/app.py",
+                "canonical_code_navigation_action": "read",
+                "canonical_code_navigation_broad": True,
+                "canonical_source_read_scope": "full_file",
+            },
+        )
+        narrow = self._event(
+            HookEventType.BEFORE_TOOL,
+            {
+                "tool_name": "Bash",
+                "command": "sed -n '1,40p' src/app.py",
+                "canonical_tool_kind": "read",
+                "canonical_file_path": "src/app.py",
+                "canonical_code_navigation_action": "read",
+                "canonical_code_navigation_broad": False,
+                "canonical_narrow_source_context": True,
+                "canonical_source_line_count": 40,
+                "canonical_source_read_scope": "line_range",
+            },
+        )
+
+        broad_response = await engine.evaluate(broad, session_id="sess-1", variables=variables)
+        narrow_response = await engine.evaluate(narrow, session_id="sess-1", variables=variables)
+
+        assert broad_response.decision == "block"
+        assert broad_response.reason is not None
+        assert "gcode outline path/to/file" in broad_response.reason
+        assert narrow_response.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_wide_line_read_requires_prior_gcode_navigation(self, db) -> None:
+        _sync_bundled(db)
+        event = self._event(
+            HookEventType.BEFORE_TOOL,
+            {
+                "tool_name": "Bash",
+                "command": "sed -n '1,80p' src/app.py",
+                "canonical_tool_kind": "read",
+                "canonical_file_path": "src/app.py",
+                "canonical_code_navigation_action": "read",
+                "canonical_code_navigation_broad": True,
+                "canonical_source_line_count": 80,
+                "canonical_source_read_scope": "line_range",
+            },
+        )
+
+        blocked = await RuleEngine(db).evaluate(
+            event,
+            session_id="sess-1",
+            variables=self._variables(loaded=True, used=False),
+        )
+        allowed = await RuleEngine(db).evaluate(
+            event,
+            session_id="sess-1",
+            variables=self._variables(loaded=True, used=True),
+        )
+
+        assert blocked.decision == "block"
+        assert allowed.decision == "allow"
 
 
 class TestContext7RuleCondition:

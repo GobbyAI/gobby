@@ -1,21 +1,75 @@
 tags: [code-index, gobby, default]
 
 rules:
+  reset-code-index-navigation:
+    description: "Clear per-turn gcode navigation state"
+    event: turn_start
+    enabled: true
+    priority: 5
+    effects:
+      - type: set_variable
+        variable: code_index_navigation_used_this_turn
+        value: false
+
+  track-code-index-navigation:
+    description: "Remember successful gcode navigation for follow-up line context"
+    event: after_tool
+    enabled: true
+    priority: 20
+    when: >
+      variables.get('code_index_available')
+      and event.data.get('canonical_code_index_navigation')
+      and not event.data.get('is_error')
+    effects:
+      - type: set_variable
+        variable: code_index_navigation_used_this_turn
+        value: true
+
   require-code-index-skill:
     description: "Block first code navigation until code-index skill is loaded"
     event: before_tool
     enabled: true
     priority: 30
     when: >
-      not skill_loaded('code-index')
+      variables.get('code_index_available')
+      and not skill_loaded('code-index')
       and not variables.get('code_index_preflight_warning')
+      and not event.data.get('canonical_code_index_navigation')
+      and event.data.get('canonical_code_navigation_broad')
+    effects:
+      - type: block
+        reason: 'Call get_skill(name="code-index") on gobby-skills through mcp__gobby__ progressive discovery: list_mcp_servers -> list_tools("gobby-skills") -> get_tool_schema("gobby-skills", "get_skill") -> call_tool("gobby-skills", "get_skill", {"name": "code-index"}). Then continue. After loading, retry with `gcode grep "pattern" [PATH...] -m 50`, `gcode search-content "query" [PATH...]`, `gcode outline path/to/file`, or `gcode symbol <id>`.'
+
+  prefer-gcode-for-code-search:
+    description: "Block broad shell search in indexed projects after code-index is loaded"
+    event: before_tool
+    enabled: true
+    priority: 31
+    when: >
+      variables.get('code_index_available')
+      and skill_loaded('code-index')
+      and not event.data.get('canonical_code_index_navigation')
+      and event.data.get('canonical_code_navigation_action') == 'search'
+      and event.data.get('canonical_code_navigation_broad')
+    effects:
+      - type: block
+        reason: 'Use `gcode grep "pattern" [PATH...] -m 50` for exact text search, or `gcode search-content "query" [PATH...]` for ranked content search.'
+
+  prefer-gcode-for-source-read:
+    description: "Block broad source reads in indexed projects after code-index is loaded"
+    event: before_tool
+    enabled: true
+    priority: 31
+    when: >
+      variables.get('code_index_available')
+      and skill_loaded('code-index')
+      and not event.data.get('canonical_code_index_navigation')
+      and event.data.get('canonical_code_navigation_action') == 'read'
+      and event.data.get('canonical_code_navigation_broad')
       and (
-        (event.data.get('canonical_tool_kind') == 'read'
-         and event.data.get('canonical_file_path', '').rpartition('.')[2]
-             in ('py', 'rs', 'ts', 'tsx', 'js', 'jsx', 'go', 'java', 'rb',
-                 'c', 'cpp', 'h', 'hpp', 'cs', 'kt', 'swift', 'scala'))
-        or event.data.get('canonical_tool_kind') == 'search'
+        event.data.get('canonical_source_read_scope') == 'full_file'
+        or not variables.get('code_index_navigation_used_this_turn')
       )
     effects:
       - type: block
-        reason: 'Call get_skill(name="code-index") on gobby-skills through mcp__gobby__ progressive discovery: list_mcp_servers -> list_tools("gobby-skills") -> get_tool_schema("gobby-skills", "get_skill") -> call_tool("gobby-skills", "get_skill", {"name": "code-index"}). Then continue.'
+        reason: 'Use `gcode outline path/to/file` to inspect file structure or `gcode symbol <id>` to retrieve a target symbol before broad source reads. Keep follow-up line reads to 40 lines or fewer unless gcode already located the target this turn.'

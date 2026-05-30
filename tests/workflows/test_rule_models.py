@@ -214,8 +214,8 @@ class TestRuleEffect:
 
         effect = RuleEffect(
             type="mcp_call",
-            server="gobby-code",
-            tool="search_content",
+            server="gobby-skills",
+            tool="search_skills",
             arguments={"query": "TaskValidator"},
             inject_result=True,
             block_on_success=True,

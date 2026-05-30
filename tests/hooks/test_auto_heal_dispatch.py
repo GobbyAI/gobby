@@ -201,8 +201,8 @@ class TestBlockOnSuccess:
 
         calls = [
             {
-                "server": "gobby-code",
-                "tool": "search_content",
+                "server": "gobby-skills",
+                "tool": "search_skills",
                 "arguments": {"query": "TaskValidator"},
                 "inject_result": True,
                 "block_on_failure": False,
@@ -217,18 +217,18 @@ class TestBlockOnSuccess:
         assert results[0]["block_on_success"] is True
 
     def test_block_on_success_allows_when_call_fails(self) -> None:
-        """When block_on_success=True and call fails, no block — Grep falls through."""
+        """When block_on_success=True and call fails, no block is recorded."""
         proxy = AsyncMock()
         proxy.call_tool = AsyncMock(
-            return_value={"success": False, "error": "gobby-code unavailable"}
+            return_value={"success": False, "error": "gobby-skills unavailable"}
         )
         stub = _make_hook_manager_stub(tool_proxy_getter=lambda: proxy, loop=None)
         event = _make_event()
 
         calls = [
             {
-                "server": "gobby-code",
-                "tool": "search_content",
+                "server": "gobby-skills",
+                "tool": "search_skills",
                 "arguments": {"query": "TaskValidator"},
                 "inject_result": True,
                 "block_on_failure": False,
@@ -251,16 +251,16 @@ class TestBlockOnSuccess:
 
         calls = [
             {
-                "server": "gobby-code",
-                "tool": "search_content",
+                "server": "gobby-skills",
+                "tool": "search_skills",
                 "arguments": {"query": "foo"},
                 "inject_result": True,
                 "block_on_failure": True,
                 "block_on_success": True,
             },
             {
-                "server": "gobby-code",
-                "tool": "search_symbols",
+                "server": "gobby-skills",
+                "tool": "get_skill",
                 "arguments": {"query": "foo"},
                 "inject_result": True,
                 "block_on_failure": False,

@@ -17,6 +17,16 @@ import shlex as _shlex
 from collections.abc import Mapping
 from typing import Any
 
+from gobby.hooks.code_navigation import (
+    count_option_line_count,
+    gcode_navigation_metadata,
+    line_count_from_tool_input,
+    search_navigation_metadata,
+    sed_line_count,
+    shell_command_name,
+    source_read_navigation_metadata,
+)
+
 # Tools that run shell commands. ``Bash`` is the canonical runtime name, but
 # several adapters and transcripts use shell aliases that should behave the same.
 _SHELL_TOOLS = frozenset(
@@ -330,6 +340,7 @@ def _build_canonical_tool_metadata(
     paths: list[str] | None = None,
     repo_mutation: bool = False,
     confidence: str = "high",
+    extra: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a canonical metadata payload for a tool event."""
     data: dict[str, Any] = {
@@ -341,6 +352,8 @@ def _build_canonical_tool_metadata(
         data["canonical_file_path"] = paths[0]
     if repo_mutation:
         data["canonical_repo_mutation"] = True
+    if extra:
+        data.update(extra)
     return data
 
 
@@ -391,7 +404,12 @@ def _normalize_shell_tool_metadata(command: str) -> dict[str, Any]:
     if any(token in _SHELL_INPUT_REDIRECTION_TOKENS for token in parts):
         return {}
 
-    cmd = parts[0]
+    cmd = shell_command_name(parts[0])
+    gcode_metadata = gcode_navigation_metadata(parts)
+    if gcode_metadata:
+        kind, extra = gcode_metadata
+        return _build_canonical_tool_metadata(kind, extra=extra)
+
     redirection_paths = _extract_redirection_paths(parts)
     if redirection_paths:
         return _build_canonical_tool_metadata(
@@ -403,12 +421,25 @@ def _normalize_shell_tool_metadata(command: str) -> dict[str, Any]:
     if cmd in {"rg", "grep", "git"}:
         if cmd == "git" and len(parts) > 1 and parts[1] != "grep":
             return {}
-        return _build_canonical_tool_metadata("search")
+        return _build_canonical_tool_metadata("search", extra=search_navigation_metadata())
+
+    if cmd == "find":
+        return _build_canonical_tool_metadata("search", extra=search_navigation_metadata())
 
     if cmd in {"cat", "head", "tail", "bat", "nl"}:
         positional = _shell_positional_args(parts)
         paths = [candidate for candidate in positional if _looks_file_like(candidate)]
-        return _build_canonical_tool_metadata("read", paths=paths or None)
+        line_count = count_option_line_count(parts) if cmd in {"head", "tail"} else None
+        read_scope = "line_range" if line_count is not None else "full_file"
+        return _build_canonical_tool_metadata(
+            "read",
+            paths=paths or None,
+            extra=source_read_navigation_metadata(
+                paths,
+                line_count=line_count,
+                read_scope=read_scope,
+            ),
+        )
 
     if cmd == "sed" and len(parts) >= 2:
         positional = _shell_positional_args(parts)
@@ -421,7 +452,17 @@ def _normalize_shell_tool_metadata(command: str) -> dict[str, Any]:
                 repo_mutation=True,
             )
         paths = [item for item in positional if _looks_file_like(item)]
-        return _build_canonical_tool_metadata("read", paths=paths or None)
+        line_count = sed_line_count(parts, positional)
+        read_scope = "line_range" if line_count is not None else "full_file"
+        return _build_canonical_tool_metadata(
+            "read",
+            paths=paths or None,
+            extra=source_read_navigation_metadata(
+                paths,
+                line_count=line_count,
+                read_scope=read_scope,
+            ),
+        )
 
     if cmd == "perl" and _has_perl_inplace_option(parts):
         positional = _shell_positional_args(parts)
@@ -518,6 +559,27 @@ def _set_canonical_tool_metadata(data: dict[str, Any]) -> None:
 
     if canonical_file_paths and "canonical_file_path" not in metadata:
         metadata["canonical_file_path"] = canonical_file_paths[0]
+
+    if (
+        metadata.get("canonical_tool_kind") == "read"
+        and "canonical_code_navigation_broad" not in metadata
+    ):
+        line_count = line_count_from_tool_input(tool_input)
+        read_scope = "line_range" if line_count is not None else "full_file"
+        metadata.update(
+            source_read_navigation_metadata(
+                canonical_file_paths,
+                line_count=line_count,
+                read_scope=read_scope,
+            )
+        )
+
+    if (
+        metadata.get("canonical_tool_kind") == "search"
+        and not metadata.get("canonical_code_index_navigation")
+        and "canonical_code_navigation_broad" not in metadata
+    ):
+        metadata.update(search_navigation_metadata())
 
     if metadata.get("canonical_tool_kind") == "write" and "canonical_repo_mutation" not in metadata:
         metadata["canonical_repo_mutation"] = True

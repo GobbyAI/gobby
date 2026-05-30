@@ -625,6 +625,9 @@ class TestCanonicalToolMetadata:
         assert data["canonical_tool_kind"] == "read"
         assert data["canonical_file_path"] == "/repo/main.py"
         assert data["canonical_tool_confidence"] == "high"
+        assert data["canonical_code_navigation_action"] == "read"
+        assert data["canonical_code_navigation_broad"] is True
+        assert data["canonical_source_read_scope"] == "full_file"
 
     def test_exec_command_cat_sets_canonical_read_fields(self) -> None:
         data = {
@@ -638,6 +641,9 @@ class TestCanonicalToolMetadata:
         assert data["canonical_tool_kind"] == "read"
         assert data["canonical_file_path"] == "src/app.py"
         assert data["canonical_file_paths"] == ["src/app.py"]
+        assert data["canonical_code_navigation_action"] == "read"
+        assert data["canonical_code_navigation_broad"] is True
+        assert data["canonical_source_read_scope"] == "full_file"
 
     def test_exec_command_rg_sets_canonical_search_kind(self) -> None:
         data = {
@@ -650,6 +656,91 @@ class TestCanonicalToolMetadata:
         assert data["tool_name"] == "Bash"
         assert data["canonical_tool_kind"] == "search"
         assert "canonical_file_path" not in data
+        assert data["canonical_code_navigation_action"] == "search"
+        assert data["canonical_code_navigation_broad"] is True
+
+    @pytest.mark.parametrize(
+        ("command", "expected_kind"),
+        [
+            ('gcode grep "pattern" src -m 50', "search"),
+            ('gcode search-content "query" src', "search"),
+            ("gcode outline src/app.py", "read"),
+            ("gcode symbol 00000000-0000-0000-0000-000000000000", "read"),
+            ("gcode callers TaskValidator", "read"),
+        ],
+    )
+    def test_exec_command_gcode_navigation_is_canonical(self, command, expected_kind) -> None:
+        data = {"tool_name": "exec_command", "tool_input": {"command": command}}
+
+        normalize_tool_fields(data)
+
+        assert data["tool_name"] == "Bash"
+        assert data["canonical_tool_kind"] == expected_kind
+        assert data["canonical_code_index_navigation"] is True
+        assert data["canonical_code_index_command"].startswith("gcode ")
+
+    def test_exec_command_git_grep_sets_broad_search(self) -> None:
+        data = {
+            "tool_name": "exec_command",
+            "tool_input": {"command": "git grep TaskValidator src"},
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "search"
+        assert data["canonical_code_navigation_action"] == "search"
+        assert data["canonical_code_navigation_broad"] is True
+
+    def test_exec_command_find_sets_broad_search(self) -> None:
+        data = {
+            "tool_name": "exec_command",
+            "tool_input": {"command": "find src -name '*.py'"},
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "search"
+        assert data["canonical_code_navigation_action"] == "search"
+        assert data["canonical_code_navigation_broad"] is True
+
+    def test_exec_command_tight_sed_source_read_sets_narrow_context(self) -> None:
+        data = {
+            "tool_name": "exec_command",
+            "tool_input": {"command": "sed -n '10,49p' src/app.py"},
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "read"
+        assert data["canonical_file_path"] == "src/app.py"
+        assert data["canonical_source_line_count"] == 40
+        assert data["canonical_code_navigation_broad"] is False
+        assert data["canonical_narrow_source_context"] is True
+
+    def test_exec_command_wide_sed_source_read_sets_broad_context(self) -> None:
+        data = {
+            "tool_name": "exec_command",
+            "tool_input": {"command": "sed -n '10,60p' src/app.py"},
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "read"
+        assert data["canonical_source_line_count"] == 51
+        assert data["canonical_code_navigation_broad"] is True
+        assert data["canonical_source_read_scope"] == "line_range"
+
+    def test_exec_command_head_source_read_respects_line_limit(self) -> None:
+        data = {
+            "tool_name": "exec_command",
+            "tool_input": {"command": "head -n 40 src/app.py"},
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "read"
+        assert data["canonical_source_line_count"] == 40
+        assert data["canonical_code_navigation_broad"] is False
 
     def test_exec_command_redirection_sets_canonical_write_fields(self) -> None:
         data = {

@@ -84,6 +84,9 @@ variables:
   loaded_skills:
     value: []
     description: "Skill names the agent has fetched with gobby-skills:get_skill this session"
+  code_index_navigation_used_this_turn:
+    value: false
+    description: "True after successful gcode navigation in the current turn"
   memory_nudge_fired:
     value: false
     description: "True after memory-capture-nudge has fired once this session"

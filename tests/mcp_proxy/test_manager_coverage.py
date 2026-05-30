@@ -11,6 +11,7 @@ Focuses on MCP client management operations including:
 
 import asyncio
 from datetime import datetime
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -35,6 +36,13 @@ def test_truncate_tool_brief_handles_non_positive_lengths() -> None:
     assert truncate_tool_brief("abcdef", max_chars=-1) == ""
     assert truncate_tool_brief("abcdef", max_chars=1) == "…"
     assert truncate_tool_brief("abcdef", max_chars=4) == "abc…"
+
+
+def test_mcp_proxy_source_does_not_register_legacy_gobby_code_server() -> None:
+    active_sources = Path("src/gobby/mcp_proxy").rglob("*.py")
+    matches = [path for path in active_sources if "gobby-code" in path.read_text()]
+
+    assert matches == []
 
 
 class MockDBServer:

@@ -9,6 +9,7 @@ from gobby.skills.parser import parse_skill_file
 pytestmark = pytest.mark.unit
 
 SKILL_PATH = Path("src/gobby/install/shared/skills/code-index/SKILL.md")
+GOBBY_CLI_SKILL_PATH = Path("/Users/josh/Projects/gobby-cli/crates/gcode/assets/SKILL.md")
 
 
 def test_code_index_skill_documents_positional_path_filters() -> None:
@@ -20,7 +21,10 @@ def test_code_index_skill_documents_positional_path_filters() -> None:
     assert parsed.get_category() == "core"
 
     assert 'gcode search "query" [PATH ...]' in body
+    assert 'gcode grep "pattern" [PATH ...] -m 50' in body
     assert 'gcode search-content "query" [PATH ...]' in body
+    assert "-m/--max-count" in body
+    assert "--format json" in body
     assert "--path <glob>" not in body
     assert "positional path filters" in body
     assert "code-index graph projection via the Gobby daemon" in body
@@ -41,3 +45,11 @@ def test_code_index_skill_documents_gcode_first_retrieval_workflow() -> None:
     assert "Search output is intentionally snippet-sized" in body
     assert "`gsqz`" in body
     assert "use `sed`/`awk` only for tight neighboring context (1-3 lines)" in body
+
+
+def test_code_index_skill_matches_gcode_bundled_asset_when_present() -> None:
+    """Keep Gobby's install template byte-identical to gcode's bundled skill."""
+    if not GOBBY_CLI_SKILL_PATH.exists():
+        pytest.skip("gobby-cli checkout is not present")
+
+    assert SKILL_PATH.read_bytes() == GOBBY_CLI_SKILL_PATH.read_bytes()
