@@ -272,6 +272,30 @@ fn explicit_file_route_sends_unsupported_text_to_content_only() {
 }
 
 #[test]
+fn explicit_file_route_skips_mjs_and_markdown() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    write_file(root, "src/generated.mjs", b"export const value = 1;\n");
+    write_file(root, "README.md", b"# Title\n");
+    write_file(root, "docs/guide.markdown", b"# Guide\n");
+
+    let excludes: Vec<String> = DEFAULT_EXCLUDES.iter().map(|s| s.to_string()).collect();
+
+    assert_eq!(
+        explicit_file_route(root, &root.join("src/generated.mjs"), &excludes),
+        ExplicitFileRoute::Skip
+    );
+    assert_eq!(
+        explicit_file_route(root, &root.join("README.md"), &excludes),
+        ExplicitFileRoute::Skip
+    );
+    assert_eq!(
+        explicit_file_route(root, &root.join("docs/guide.markdown"), &excludes),
+        ExplicitFileRoute::Skip
+    );
+}
+
+#[test]
 fn overlay_reconciliation_actions_cover_inherit_shadow_add_delete() {
     let parent = IndexedFileState {
         content_hash: "parent-hash".to_string(),
