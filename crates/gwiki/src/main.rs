@@ -220,7 +220,7 @@ fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Comman
             limit: args.limit,
         }),
         CliCommand::Research(args) => {
-            let research_scope = gobby_wiki::research::resolve_scope(&scope)?;
+            let research_scope = gobby_wiki::resolve_research_scope(&scope)?;
             Ok(Command::Research(gobby_wiki::research::ResearchOptions {
                 question: args.question,
                 scope: research_scope,

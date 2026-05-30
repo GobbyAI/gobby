@@ -3,7 +3,10 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::WikiError;
+use crate::{
+    WikiError,
+    scope::{ResolvedScope, ScopeKind},
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -27,6 +30,15 @@ impl ResearchScope {
     pub fn root(&self) -> &Path {
         match self {
             Self::Project { root } | Self::Topic { root, .. } => root,
+        }
+    }
+}
+
+impl From<&ResolvedScope> for ResearchScope {
+    fn from(scope: &ResolvedScope) -> Self {
+        match scope.kind() {
+            ScopeKind::Topic { name } => Self::topic(name.clone(), scope.root().to_path_buf()),
+            ScopeKind::Project { .. } => Self::project(scope.root().to_path_buf()),
         }
     }
 }

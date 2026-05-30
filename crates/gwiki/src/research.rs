@@ -1,9 +1,10 @@
 use std::fs::{self, OpenOptions};
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 
 use crate::events::{EventMonitor, SessionEvent};
+use crate::scope::{self, ScopeKind};
 use crate::session::{AcceptedResearchNote, DaemonDispatch, ResearchScope, ResearchSession};
 use crate::{ScopeSelection, WikiError};
 
@@ -184,26 +185,20 @@ impl ResearchDispatcher for GobbyDaemonResearchDispatcher {
 }
 
 pub fn resolve_scope(selection: &ScopeSelection) -> Result<ResearchScope, WikiError> {
-    if let Some(topic) = &selection.topic {
-        let home =
-            std::env::var_os("HOME")
-                .map(PathBuf::from)
-                .ok_or_else(|| WikiError::InvalidInput {
-                    field: "topic",
-                    message: "HOME is required for topic wiki resolution".to_string(),
-                })?;
-        return Ok(ResearchScope::topic(
-            topic.clone(),
-            home.join("wiki").join("topics").join(topic),
-        ));
-    }
-
     let cwd = std::env::current_dir().map_err(|error| WikiError::Io {
-        action: "resolve current directory",
+        action: "read current directory",
         path: None,
         source: error.to_string(),
     })?;
-    Ok(ResearchScope::project(cwd.join(".gobby").join("wiki")))
+    let scope = scope::resolve(selection, &cwd)?;
+    Ok(research_scope_from_resolved(&scope))
+}
+
+pub fn research_scope_from_resolved(scope: &scope::ResolvedScope) -> ResearchScope {
+    match scope.kind() {
+        ScopeKind::Topic { name } => ResearchScope::topic(name.clone(), scope.root().to_path_buf()),
+        ScopeKind::Project { .. } => ResearchScope::project(scope.root().to_path_buf()),
+    }
 }
 
 #[derive(Debug, serde::Deserialize)]
