@@ -2,8 +2,6 @@
 //!
 //! Reports token savings to the Gobby daemon via HTTP POST when gcode returns
 //! compact symbol/outline data instead of full file contents.
-//!
-//! Display output follows the gsqz pattern: stderr prefix showing savings.
 
 /// Calculate savings percentage.
 pub fn savings_pct(original_chars: usize, actual_chars: usize) -> f64 {
@@ -53,15 +51,6 @@ pub fn resolve_daemon_url(config_url: Option<&str>) -> Option<String> {
 
     // Default to well-known Gobby daemon (matches bootstrap.yaml defaults)
     Some("http://localhost:60887".to_string())
-}
-
-/// Print savings info to stderr in gsqz-style format.
-pub fn print_savings(label: &str, original_chars: usize, actual_chars: usize) {
-    if actual_chars == 0 || original_chars <= actual_chars {
-        return;
-    }
-    let pct = savings_pct(original_chars, actual_chars);
-    eprintln!("[gcode \u{2014} {label}, saved {pct:.0}% ({actual_chars}B vs {original_chars}B)]");
 }
 
 #[cfg(test)]

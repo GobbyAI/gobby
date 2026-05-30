@@ -94,7 +94,12 @@ fn resolve_index_context(
 ) -> anyhow::Result<(Context, Option<std::path::PathBuf>)> {
     let Some(p) = path else {
         return Ok((
-            clone_context(ctx, ctx.project_root.clone(), ctx.project_id.clone()),
+            clone_context(
+                ctx,
+                ctx.project_root.clone(),
+                ctx.project_id.clone(),
+                ctx.index_scope.clone(),
+            ),
             None,
         ));
     };
@@ -121,19 +126,31 @@ fn resolve_index_context(
         if identity.should_write_gcode_json {
             crate::project::ensure_gcode_json(&target_root)?;
         }
+        let mut conn = crate::db::connect_readonly(&ctx.database_url)?;
+        crate::config::validate_parent_code_index(&mut conn, &identity.index_scope)?;
         Ok((
-            clone_context(ctx, target_root, identity.project_id),
+            clone_context(ctx, target_root, identity.project_id, identity.index_scope),
             target_filter,
         ))
     } else {
         Ok((
-            clone_context(ctx, target_root, ctx.project_id.clone()),
+            clone_context(
+                ctx,
+                target_root,
+                ctx.project_id.clone(),
+                ctx.index_scope.clone(),
+            ),
             target_filter,
         ))
     }
 }
 
-fn clone_context(ctx: &Context, project_root: std::path::PathBuf, project_id: String) -> Context {
+fn clone_context(
+    ctx: &Context,
+    project_root: std::path::PathBuf,
+    project_id: String,
+    index_scope: config::ProjectIndexScope,
+) -> Context {
     config::Context {
         database_url: ctx.database_url.clone(),
         project_root,
@@ -144,6 +161,7 @@ fn clone_context(ctx: &Context, project_root: std::path::PathBuf, project_id: St
         embedding: ctx.embedding.clone(),
         code_vectors: ctx.code_vectors.clone(),
         daemon_url: ctx.daemon_url.clone(),
+        index_scope,
     }
 }
 

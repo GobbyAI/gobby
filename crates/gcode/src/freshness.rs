@@ -4,6 +4,7 @@ use crate::config::Context;
 use crate::db;
 use crate::index::{api, hasher};
 use crate::models::Symbol;
+use crate::visibility;
 
 const INFLIGHT_ENV: &str = "GCODE_FRESHNESS_INFLIGHT";
 
@@ -62,13 +63,7 @@ pub fn ensure_symbol_fresh(ctx: &Context, id: &str) -> anyhow::Result<()> {
     }
 
     let mut conn = db::connect_readonly(&ctx.database_url)?;
-    let columns = db::symbol_select_columns("");
-    let sym = conn
-        .query_opt(
-            &format!("SELECT {columns} FROM code_symbols WHERE id = $1 AND project_id = $2"),
-            &[&id, &ctx.project_id],
-        )?
-        .and_then(|row| Symbol::from_row(&row).ok());
+    let sym = visibility::visible_symbol_by_id(&mut conn, ctx, id)?;
     drop(conn);
 
     let Some(sym) = sym else {
@@ -157,6 +152,7 @@ mod tests {
             embedding: None,
             code_vectors: crate::config::CodeVectorSettings::default(),
             daemon_url: None,
+            index_scope: crate::config::ProjectIndexScope::Single,
         }
     }
 
