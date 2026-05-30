@@ -7,6 +7,7 @@ use crate::db;
 use crate::models::{PagedResponse, SearchResult, Symbol};
 use crate::output::{self, Format};
 use crate::search::{fts, graph_boost, rrf, semantic};
+use crate::visibility;
 
 pub struct SearchOptions<'a> {
     pub limit: usize,
@@ -28,10 +29,10 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
     // Qdrant, and FalkorDB with deduplication, so source counts aren't additive.
     let fetch_limit = ((options.offset + options.limit) * 3).max(200);
 
-    let exact_results = fts::search_symbols_exact_first(
+    let exact_results = fts::search_symbols_exact_first_visible(
         &mut conn,
         query,
-        &ctx.project_id,
+        ctx,
         options.kind,
         options.language,
         &expanded_paths,
@@ -40,20 +41,20 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
     let exact_ids: Vec<String> = exact_results.iter().map(|s| s.id.clone()).collect();
 
     // Source 1: BM25 (with LIKE fallback)
-    let mut fts_results = fts::search_symbols_fts(
+    let mut fts_results = fts::search_symbols_fts_visible(
         &mut conn,
         query,
-        &ctx.project_id,
+        ctx,
         options.kind,
         options.language,
         &expanded_paths,
         fetch_limit,
     );
     if fts_results.is_empty() {
-        fts_results = fts::search_symbols_by_name(
+        fts_results = fts::search_symbols_by_name_visible(
             &mut conn,
             query,
-            &ctx.project_id,
+            ctx,
             options.kind,
             options.language,
             &expanded_paths,
@@ -112,14 +113,9 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
     let mut all_resolved: Vec<(Symbol, f64, Vec<String>)> = Vec::new();
     for (sym_id, score, source_names) in &merged {
         let sym = symbol_cache.get(sym_id).cloned().or_else(|| {
-            let columns = db::symbol_select_columns("");
-            conn.query_opt(
-                &format!("SELECT {columns} FROM code_symbols WHERE id = $1"),
-                &[sym_id],
-            )
-            .ok()
-            .flatten()
-            .and_then(|row| Symbol::from_row(&row).ok())
+            visibility::visible_symbol_by_id(&mut conn, ctx, sym_id)
+                .ok()
+                .flatten()
         });
 
         if let Some(s) = sym
@@ -190,10 +186,10 @@ pub fn search_symbol(ctx: &Context, query: &str, options: SearchOptions<'_>) -> 
     let expanded_paths = fts::expand_paths(options.paths);
     let path_patterns = fts::compile_patterns(&expanded_paths)?;
     let fetch_limit = ((options.offset + options.limit) * 3).max(200);
-    let exact_results = fts::search_symbols_exact_first(
+    let exact_results = fts::search_symbols_exact_first_visible(
         &mut conn,
         query,
-        &ctx.project_id,
+        ctx,
         options.kind,
         options.language,
         &expanded_paths,
@@ -299,7 +295,7 @@ fn search_symbol_with_graph(
     for (sym_id, rrf_score, source_names) in &merged {
         let sym = symbol_cache
             .remove(sym_id)
-            .or_else(|| fetch_symbol_by_id(conn, sym_id));
+            .or_else(|| fetch_symbol_by_id(conn, ctx, sym_id));
 
         if let Some(s) = sym
             && symbol_matches_filters(conn, ctx, &s, options.kind, options.language, path_patterns)
@@ -375,10 +371,10 @@ pub fn search_text(
     } else {
         ((offset + limit) * 3).max(200)
     };
-    let all_results = fts::search_text(
+    let all_results = fts::search_text_visible(
         &mut conn,
         query,
-        &ctx.project_id,
+        ctx,
         language,
         &expanded_paths,
         fetch_limit,
@@ -394,7 +390,7 @@ pub fn search_text(
     let total = if has_path_filters {
         all_results.len()
     } else {
-        fts::count_text(&mut conn, query, &ctx.project_id, language, &expanded_paths)
+        fts::count_text_visible(&mut conn, query, ctx, language, &expanded_paths)
     };
     let results: Vec<_> = all_results.into_iter().skip(offset).take(limit).collect();
 
@@ -469,10 +465,10 @@ pub fn search_content(
     } else {
         ((offset + limit) * 3).max(200)
     };
-    let all_results = fts::search_content(
+    let all_results = fts::search_content_visible(
         &mut conn,
         query,
-        &ctx.project_id,
+        ctx,
         language,
         &expanded_paths,
         fetch_limit,
@@ -492,7 +488,7 @@ pub fn search_content(
     let total = if has_path_filters {
         all_results.len()
     } else {
-        fts::count_content(&mut conn, query, &ctx.project_id, language, &expanded_paths)
+        fts::count_content_visible(&mut conn, query, ctx, language, &expanded_paths)
     };
     let results: Vec<_> = all_results.into_iter().skip(offset).take(limit).collect();
 
@@ -550,15 +546,14 @@ fn final_rank_score(query: &str, symbol: &Symbol, rrf_score: f64) -> f64 {
     exact_tier_score(query, symbol) + rrf_score
 }
 
-fn fetch_symbol_by_id(conn: &mut postgres::Client, symbol_id: &str) -> Option<Symbol> {
-    let columns = db::symbol_select_columns("");
-    conn.query_opt(
-        &format!("SELECT {columns} FROM code_symbols WHERE id = $1"),
-        &[&symbol_id],
-    )
-    .ok()
-    .flatten()
-    .and_then(|row| Symbol::from_row(&row).ok())
+fn fetch_symbol_by_id(
+    conn: &mut postgres::Client,
+    ctx: &Context,
+    symbol_id: &str,
+) -> Option<Symbol> {
+    visibility::visible_symbol_by_id(conn, ctx, symbol_id)
+        .ok()
+        .flatten()
 }
 
 fn symbol_matches_filters(

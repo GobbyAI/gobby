@@ -8,8 +8,10 @@ use std::collections::HashSet;
 use postgres::Client;
 use postgres::types::ToSql;
 
+use crate::config::Context;
 use crate::db;
 use crate::models::{ContentSearchHit, SearchResult, Symbol};
+use crate::visibility;
 
 type PgParam = Box<dyn ToSql + Sync>;
 
@@ -177,6 +179,24 @@ fn append_unique_symbols(
 ) {
     for symbol in symbols {
         if seen.insert(symbol.id.clone()) {
+            out.push(symbol);
+            if out.len() >= limit {
+                return;
+            }
+        }
+    }
+}
+
+fn append_visible_symbols(
+    conn: &mut Client,
+    ctx: &Context,
+    out: &mut Vec<Symbol>,
+    seen: &mut HashSet<String>,
+    symbols: Vec<Symbol>,
+    limit: usize,
+) {
+    for symbol in symbols {
+        if seen.insert(symbol.id.clone()) && visibility::symbol_is_visible(conn, ctx, &symbol) {
             out.push(symbol);
             if out.len() >= limit {
                 return;
@@ -410,6 +430,71 @@ pub fn search_symbols_exact_first(
     let fts = search_symbols_fts(conn, query, project_id, kind, language, paths, limit);
     append_unique_symbols(&mut results, &mut seen, fts, limit);
 
+    results
+}
+
+pub fn search_symbols_fts_visible(
+    conn: &mut Client,
+    query: &str,
+    ctx: &Context,
+    kind: Option<&str>,
+    language: Option<&str>,
+    paths: &[String],
+    limit: usize,
+) -> Vec<Symbol> {
+    let mut results = Vec::new();
+    let mut seen = HashSet::new();
+    for project_id in visibility::visible_project_ids(ctx) {
+        let symbols = search_symbols_fts(conn, query, &project_id, kind, language, paths, limit);
+        append_visible_symbols(conn, ctx, &mut results, &mut seen, symbols, limit);
+        if results.len() >= limit {
+            break;
+        }
+    }
+    results
+}
+
+pub fn search_symbols_by_name_visible(
+    conn: &mut Client,
+    query: &str,
+    ctx: &Context,
+    kind: Option<&str>,
+    language: Option<&str>,
+    paths: &[String],
+    limit: usize,
+) -> Vec<Symbol> {
+    let mut results = Vec::new();
+    let mut seen = HashSet::new();
+    for project_id in visibility::visible_project_ids(ctx) {
+        let symbols =
+            search_symbols_by_name(conn, query, &project_id, kind, language, paths, limit);
+        append_visible_symbols(conn, ctx, &mut results, &mut seen, symbols, limit);
+        if results.len() >= limit {
+            break;
+        }
+    }
+    results
+}
+
+pub fn search_symbols_exact_first_visible(
+    conn: &mut Client,
+    query: &str,
+    ctx: &Context,
+    kind: Option<&str>,
+    language: Option<&str>,
+    paths: &[String],
+    limit: usize,
+) -> Vec<Symbol> {
+    let mut results = Vec::new();
+    let mut seen = HashSet::new();
+    for project_id in visibility::visible_project_ids(ctx) {
+        let symbols =
+            search_symbols_exact_first(conn, query, &project_id, kind, language, paths, limit);
+        append_visible_symbols(conn, ctx, &mut results, &mut seen, symbols, limit);
+        if results.len() >= limit {
+            break;
+        }
+    }
     results
 }
 
@@ -698,6 +783,26 @@ fn count_content_like(
         .unwrap_or(0) as usize
 }
 
+pub fn count_text_visible(
+    conn: &mut Client,
+    query: &str,
+    ctx: &Context,
+    language: Option<&str>,
+    paths: &[String],
+) -> usize {
+    search_text_visible(conn, query, ctx, language, paths, FILTERED_FETCH_CAP).len()
+}
+
+pub fn count_content_visible(
+    conn: &mut Client,
+    query: &str,
+    ctx: &Context,
+    language: Option<&str>,
+    paths: &[String],
+) -> usize {
+    search_content_visible(conn, query, ctx, language, paths, FILTERED_FETCH_CAP).len()
+}
+
 /// Full-text search for symbols: BM25 with LIKE fallback.
 pub fn search_text(
     conn: &mut Client,
@@ -710,6 +815,21 @@ pub fn search_text(
     let mut results = search_symbols_fts(conn, query, project_id, None, language, paths, limit);
     if results.is_empty() {
         results = search_symbols_by_name(conn, query, project_id, None, language, paths, limit);
+    }
+    results.into_iter().map(|s| s.to_brief()).collect()
+}
+
+pub fn search_text_visible(
+    conn: &mut Client,
+    query: &str,
+    ctx: &Context,
+    language: Option<&str>,
+    paths: &[String],
+    limit: usize,
+) -> Vec<SearchResult> {
+    let mut results = search_symbols_fts_visible(conn, query, ctx, None, language, paths, limit);
+    if results.is_empty() {
+        results = search_symbols_by_name_visible(conn, query, ctx, None, language, paths, limit);
     }
     results.into_iter().map(|s| s.to_brief()).collect()
 }
@@ -784,6 +904,33 @@ pub fn search_content(
     }
 
     search_content_like(conn, query, project_id, language, paths, limit)
+}
+
+pub fn search_content_visible(
+    conn: &mut Client,
+    query: &str,
+    ctx: &Context,
+    language: Option<&str>,
+    paths: &[String],
+    limit: usize,
+) -> Vec<ContentSearchHit> {
+    let mut results = Vec::new();
+    let mut seen = HashSet::new();
+    for project_id in visibility::visible_project_ids(ctx) {
+        let hits = search_content(conn, query, &project_id, language, paths, limit);
+        for hit in hits {
+            let key = format!("{}:{}:{}", project_id, hit.file_path, hit.line_start);
+            if seen.insert(key)
+                && visibility::project_path_is_visible(conn, ctx, &project_id, &hit.file_path)
+            {
+                results.push(hit);
+                if results.len() >= limit {
+                    return results;
+                }
+            }
+        }
+    }
+    results
 }
 
 fn search_content_like(

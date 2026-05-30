@@ -1228,6 +1228,7 @@ mod tests {
             embedding: None,
             code_vectors: CodeVectorSettings::default(),
             daemon_url: None,
+            index_scope: crate::config::ProjectIndexScope::Single,
         };
         let err = generate_report(&ctx).expect_err("missing graph service is required");
         assert_eq!(err, ProjectGraphReportError::GraphServiceNotConfigured);

@@ -1899,6 +1899,7 @@ mod tests {
             embedding: None,
             code_vectors: CodeVectorSettings::default(),
             daemon_url: None,
+            index_scope: crate::config::ProjectIndexScope::Single,
         }
     }
 

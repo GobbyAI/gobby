@@ -11,6 +11,7 @@ use crate::config::Context;
 use crate::db;
 use crate::graph::code_graph;
 use crate::search::fts;
+use crate::visibility;
 
 /// Get symbol IDs related to query via the call/import graph.
 ///
@@ -25,13 +26,16 @@ pub fn graph_boost(ctx: &Context, query: &str) -> Vec<String> {
         Ok(conn) => conn,
         Err(_) => return vec![],
     };
-    let (resolved, _) = fts::resolve_graph_symbol(&mut conn, query, &ctx.project_id);
-    let Some(symbol) = resolved else {
+    let empty_paths: Vec<String> = Vec::new();
+    let mut resolved =
+        fts::search_symbols_exact_first_visible(&mut conn, query, ctx, None, None, &empty_paths, 1);
+    let Some(symbol) = resolved.pop() else {
         return vec![];
     };
+    let graph_ctx = visibility::context_for_source_project(ctx, &symbol.project_id);
 
-    let callers = code_graph::find_callers(ctx, &symbol.id, 0, 10).unwrap_or_default();
-    let usages = code_graph::find_usages(ctx, &symbol.id, 0, 10).unwrap_or_default();
+    let callers = code_graph::find_callers(&graph_ctx, &symbol.id, 0, 10).unwrap_or_default();
+    let usages = code_graph::find_usages(&graph_ctx, &symbol.id, 0, 10).unwrap_or_default();
 
     let mut ids = Vec::new();
     let mut seen = HashSet::new();
@@ -54,16 +58,37 @@ pub fn graph_expand(ctx: &Context, seed_ids: &[String]) -> Vec<String> {
         return vec![];
     }
 
-    // Callees first — "what do these symbols call?" surfaces implementation details
-    let callees = code_graph::find_callees_batch(ctx, seed_ids, 30).unwrap_or_default();
-    // Callers second — "who calls these symbols?" surfaces broader context
-    let callers = code_graph::find_callers_batch(ctx, seed_ids, 30).unwrap_or_default();
-
     let mut ids = Vec::new();
     let mut seen = HashSet::new();
-    for r in callees.iter().chain(callers.iter()) {
-        if !r.id.is_empty() && seen.insert(r.id.clone()) {
-            ids.push(r.id.clone());
+    let mut conn = db::connect_readonly(&ctx.database_url).ok();
+    let mut by_project: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    if let Some(conn) = conn.as_mut()
+        && let Ok(symbols) = visibility::visible_symbols_by_ids(conn, ctx, seed_ids)
+    {
+        for symbol in symbols {
+            by_project
+                .entry(symbol.project_id)
+                .or_default()
+                .push(symbol.id);
+        }
+    }
+    if by_project.is_empty() {
+        by_project.insert(ctx.project_id.clone(), seed_ids.to_vec());
+    }
+
+    for (project_id, ids_for_project) in by_project {
+        let graph_ctx = visibility::context_for_source_project(ctx, &project_id);
+        // Callees first — "what do these symbols call?" surfaces implementation details.
+        let callees =
+            code_graph::find_callees_batch(&graph_ctx, &ids_for_project, 30).unwrap_or_default();
+        // Callers second — "who calls these symbols?" surfaces broader context.
+        let callers =
+            code_graph::find_callers_batch(&graph_ctx, &ids_for_project, 30).unwrap_or_default();
+        for r in callees.iter().chain(callers.iter()) {
+            if !r.id.is_empty() && seen.insert(r.id.clone()) {
+                ids.push(r.id.clone());
+            }
         }
     }
     ids
@@ -85,6 +110,7 @@ mod tests {
             embedding: None,
             code_vectors: crate::config::CodeVectorSettings::default(),
             daemon_url: None,
+            index_scope: crate::config::ProjectIndexScope::Single,
         }
     }
 

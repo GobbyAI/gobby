@@ -756,6 +756,7 @@ mod tests {
             embedding: None,
             code_vectors: crate::config::CodeVectorSettings::default(),
             daemon_url: None,
+            index_scope: crate::config::ProjectIndexScope::Single,
         }
     }
 

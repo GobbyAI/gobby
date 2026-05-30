@@ -147,6 +147,7 @@ mod tests {
             embedding: None,
             code_vectors: crate::config::CodeVectorSettings { vector_dim: None },
             daemon_url: None,
+            index_scope: crate::config::ProjectIndexScope::Single,
         }
     }
 

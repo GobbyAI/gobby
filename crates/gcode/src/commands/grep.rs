@@ -9,6 +9,7 @@ use crate::config::Context;
 use crate::db;
 use crate::output::{self, Format};
 use crate::search::fts;
+use crate::visibility;
 
 pub struct GrepOptions<'a> {
     pub pattern: &'a str,
@@ -77,7 +78,7 @@ struct GrepResult {
 
 pub fn run(ctx: &Context, options: GrepOptions<'_>) -> anyhow::Result<()> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
-    let chunks = load_indexed_chunks(&mut conn, &ctx.project_id)?;
+    let chunks = load_indexed_chunks(&mut conn, ctx)?;
     let result = grep_chunks(&chunks, &options)?;
 
     match options.format {
@@ -107,30 +108,41 @@ pub fn run(ctx: &Context, options: GrepOptions<'_>) -> anyhow::Result<()> {
 
 fn load_indexed_chunks(
     conn: &mut Client,
-    project_id: &str,
+    ctx: &Context,
 ) -> anyhow::Result<Vec<IndexedContentChunk>> {
-    let rows = conn.query(
-        "SELECT c.file_path,
-                c.line_start::BIGINT AS line_start,
-                c.content
-         FROM code_content_chunks c
-         JOIN code_indexed_files cf
-           ON cf.project_id = c.project_id AND cf.file_path = c.file_path
-         WHERE c.project_id = $1
-         ORDER BY c.file_path ASC, c.line_start ASC, c.chunk_index ASC",
-        &[&project_id],
-    )?;
-
-    rows.into_iter()
-        .map(|row| {
+    let mut chunks = Vec::new();
+    for project_id in visibility::visible_project_ids(ctx) {
+        let rows = conn.query(
+            "SELECT c.file_path,
+                    c.line_start::BIGINT AS line_start,
+                    c.content
+             FROM code_content_chunks c
+             JOIN code_indexed_files cf
+               ON cf.project_id = c.project_id AND cf.file_path = c.file_path
+             WHERE c.project_id = $1
+               AND cf.language != $2
+             ORDER BY c.file_path ASC, c.line_start ASC, c.chunk_index ASC",
+            &[&project_id, &visibility::TOMBSTONE_LANGUAGE],
+        )?;
+        for row in rows {
+            let file_path: String = row.try_get("file_path")?;
+            if !visibility::project_path_is_visible(conn, ctx, &project_id, &file_path) {
+                continue;
+            }
             let line_start = i64_to_usize(row.try_get("line_start")?, "line_start")?;
-            Ok(IndexedContentChunk {
-                file_path: row.try_get("file_path")?,
+            chunks.push(IndexedContentChunk {
+                file_path,
                 line_start,
                 content: row.try_get("content")?,
-            })
-        })
-        .collect()
+            });
+        }
+    }
+    chunks.sort_by(|a, b| {
+        a.file_path
+            .cmp(&b.file_path)
+            .then_with(|| a.line_start.cmp(&b.line_start))
+    });
+    Ok(chunks)
 }
 
 fn grep_chunks(

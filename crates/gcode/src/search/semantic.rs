@@ -5,6 +5,7 @@
 pub use crate::vector::code_symbols::{embed_query, vector_search};
 
 use crate::config::{CODE_SYMBOL_COLLECTION_PREFIX, Context};
+use crate::visibility;
 use gobby_core::qdrant::{CollectionScope, SearchRequest};
 
 pub fn semantic_search(ctx: &Context, query: &str, limit: usize) -> Vec<(String, f64)> {
@@ -15,30 +16,31 @@ pub fn semantic_search(ctx: &Context, query: &str, limit: usize) -> Vec<(String,
         return vec![];
     };
 
-    let collection = gobby_core::qdrant::collection_name(
-        "gcode",
-        CollectionScope::Custom(&format!(
-            "{CODE_SYMBOL_COLLECTION_PREFIX}{}",
-            ctx.project_id
-        )),
-    );
-    let request = SearchRequest {
-        vector: query_vector,
-        limit,
-        filter: None,
-    };
+    let mut results = Vec::new();
+    for project_id in visibility::visible_project_ids(ctx) {
+        let collection = gobby_core::qdrant::collection_name(
+            "gcode",
+            CollectionScope::Custom(&format!("{CODE_SYMBOL_COLLECTION_PREFIX}{project_id}")),
+        );
+        let request = SearchRequest {
+            vector: query_vector.clone(),
+            limit,
+            filter: None,
+        };
 
-    let Ok((hits, _state)) =
-        gobby_core::qdrant::with_qdrant(ctx.qdrant.as_ref(), Vec::new(), |config| {
-            gobby_core::qdrant::search(config, &collection, request)
-        })
-    else {
-        return vec![];
-    };
+        let Ok((hits, _state)) =
+            gobby_core::qdrant::with_qdrant(ctx.qdrant.as_ref(), Vec::new(), |config| {
+                gobby_core::qdrant::search(config, &collection, request)
+            })
+        else {
+            continue;
+        };
 
-    hits.into_iter()
-        .map(|hit| (hit.id, f64::from(hit.score)))
-        .collect()
+        results.extend(hits.into_iter().map(|hit| (hit.id, f64::from(hit.score))));
+    }
+    results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    results.truncate(limit);
+    results
 }
 
 #[cfg(test)]
@@ -58,6 +60,7 @@ mod tests {
             embedding: None,
             code_vectors: crate::config::CodeVectorSettings::default(),
             daemon_url: None,
+            index_scope: crate::config::ProjectIndexScope::Single,
         }
     }
 
