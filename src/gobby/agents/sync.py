@@ -6,7 +6,6 @@ directly. Installed rows are overwritten when the template changes
 when a managed bundled definition reappears with different content.
 """
 
-import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -39,17 +38,6 @@ def _is_legacy_discovery_placeholder(name: str, definition_json: str, enabled: b
     if name not in _DISCOVERY_PLACEHOLDER_AGENTS or enabled:
         return False
     return "PLACEHOLDER" in definition_json or "placeholder_agent:" in definition_json
-
-
-def _is_deprecated_bundled_agent(definition_json: str, enabled: bool) -> bool:
-    """Return True for old disabled tombstone definitions that became active again."""
-    if enabled:
-        return False
-    try:
-        parsed = json.loads(definition_json)
-    except (json.JSONDecodeError, TypeError):
-        return False
-    return isinstance(parsed, dict) and parsed.get("deprecated") is True
 
 
 def _is_sync_managed_bundled_agent(existing: WorkflowDefinitionRow) -> bool:
@@ -111,7 +99,7 @@ def sync_bundled_agents(db: HubDatabase) -> dict[str, Any]:
     Creates installed rows directly from template files. Installed rows are
     overwritten when the template changes (preserving the user's enabled toggle,
     except for legacy disabled discovery placeholders that are upgraded to real
-    enabled agents, and old bundled tombstones that become active again).
+    enabled agents).
 
     Args:
         db: Database connection
@@ -191,9 +179,6 @@ def sync_bundled_agents(db: HubDatabase) -> dict[str, Any]:
 
                 force_enable = _is_legacy_discovery_placeholder(
                     name,
-                    existing.definition_json,
-                    existing.enabled,
-                ) or _is_deprecated_bundled_agent(
                     existing.definition_json,
                     existing.enabled,
                 )

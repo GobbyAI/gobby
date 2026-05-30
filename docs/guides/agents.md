@@ -36,9 +36,8 @@ src/gobby/install/shared/workflows/agents/
 
 The bundled directory includes enabled definitions for planning, review,
 writing, analysis, image generation, maintenance, merge work, and default
-interactive use. It also includes disabled deprecated tombstones under
-`deprecated/`; those files preserve migration history and should not be used as
-current agent names.
+interactive use. Retired bundled agents are removed from this tree; sync
+soft-deletes existing installed bundled rows when their YAML no longer exists.
 
 Use these tools to inspect or change definitions:
 
@@ -77,7 +76,7 @@ The current `AgentDefinitionBody` schema accepts these primary fields:
 | `steps` | Optional inline step workflow |
 | `step_variables` | Initial variables for inline steps |
 | `exit_condition` | Workflow-level completion condition |
-| `enabled` / `deprecated` / `deprecated_reason` | Definition lifecycle metadata |
+| `enabled` | Whether the definition is active |
 
 Older YAML may contain a `mode` field. The schema ignores extra fields for
 compatibility, but new definitions should use `surfaces` plus the runtime tool
@@ -296,7 +295,7 @@ provides the concrete worktree or clone context.
   implement, review handoff, finish.
 - Use `end_agent_run` as the explicit successful termination path for spawned
   workflows.
-- Treat deprecated tombstones as migration records, not runnable definitions.
+- Treat removed bundled agent YAML as retired; sync prunes the existing installed row.
 
 ## Related Guides
 

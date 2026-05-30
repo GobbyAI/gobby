@@ -365,12 +365,12 @@ The dispatcher enforces a global agent-slot cap (`max_active_agents`, default 10
 the cap is full, no persistent queue is needed; the next heartbeat re-evaluates task
 manifest state.
 
-Retired orchestration templates live under `workflows/*/deprecated/` as archival
-tombstones. Active bundled sync reads only top-level YAML and soft-deletes installed rows
-for retired definitions, so `orchestrator.yaml`, `front-half-orchestrator.yaml`,
-`dev-orchestrator.yaml`, `delivery-orchestrator.yaml`, the conductor pipeline, and the
-retired `conductor`, `developer`, and `pipeline-worker` agents must stay out of active
-install roots. Real PR creation and richer merge/conflict handling are tracked in task
+Retired orchestration templates are removed from bundled workflow and agent roots. Active
+bundled sync reads only top-level YAML and soft-deletes installed rows for definitions
+missing from disk, so `orchestrator.yaml`, `front-half-orchestrator.yaml`,
+`dev-orchestrator.yaml`, `delivery-orchestrator.yaml`, the conductor pipeline, and retired
+`conductor`, `developer`, and `pipeline-worker` agents must stay out of bundled install
+roots. Real PR creation and richer merge/conflict handling are tracked in task
 #13552; this dispatcher only reaches the PR/merge boundary and uses existing merge tools
 where they are already available.
 

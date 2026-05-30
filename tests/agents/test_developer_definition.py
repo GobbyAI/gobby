@@ -1,36 +1,21 @@
-"""Contract tests for the retired developer agent definition."""
+"""Contract tests for retired bundled agent definitions."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 import pytest
-import yaml
-
-from gobby.workflows.definitions import AgentDefinitionBody
 
 pytestmark = pytest.mark.unit
 
-
-def test_developer_yaml_is_not_active() -> None:
-    path = (
-        Path(__file__).resolve().parents[2]
-        / "src/gobby/install/shared/workflows/agents/developer.yaml"
-    )
-
-    assert not path.exists()
+AGENTS_DIR = Path(__file__).resolve().parents[2] / "src/gobby/install/shared/workflows/agents"
+RETIRED_AGENTS = ("developer", "pipeline-worker")
 
 
-def test_deprecated_developer_definition_left_in_place() -> None:
-    path = (
-        Path(__file__).resolve().parents[2]
-        / "src/gobby/install/shared/workflows/agents/deprecated/developer.yaml"
-    )
+@pytest.mark.parametrize("name", RETIRED_AGENTS)
+def test_retired_agent_yaml_is_absent_from_active_and_deprecated_bundles(name: str) -> None:
+    active_path = AGENTS_DIR / f"{name}.yaml"
+    deprecated_path = AGENTS_DIR / "deprecated" / f"{name}.yaml"
 
-    assert path.exists()
-    agent = yaml.safe_load(path.read_text(encoding="utf-8"))
-
-    assert agent["name"] == "developer"
-    assert agent["enabled"] is False
-    assert agent["deprecated"] is True
-    AgentDefinitionBody.model_validate(agent)
+    assert not active_path.exists(), f"retired agent remains active: {active_path}"
+    assert not deprecated_path.exists(), f"retired agent deprecated YAML remains: {deprecated_path}"

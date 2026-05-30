@@ -89,11 +89,9 @@ Pipeline definitions are YAML workflow definitions with `type: pipeline`.
 | `description` | Human-readable summary |
 | `enabled` | Whether the definition is active |
 | `priority` | Definition priority for discovery and ordering |
-| `deprecated` | Marks a definition as deprecated |
-| `deprecated_reason` | Explains why a deprecated definition remains installed |
 | `inputs` | Default input values or input metadata |
 | `outputs` | Output expressions built from final execution context |
-| `steps` | Ordered list of pipeline steps |
+| `steps` | Required ordered list of pipeline steps |
 | `webhooks` | Optional notifications for approval, completion, and failure |
 | `expose_as_tool` | Register the pipeline as a dynamic MCP tool named `pipeline:<name>` |
 | `resume_on_restart` | Re-queue a running execution after daemon restart |

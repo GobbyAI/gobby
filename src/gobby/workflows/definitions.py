@@ -357,8 +357,6 @@ class AgentDefinitionBody(BaseModel):
     # Orchestration
     workflows: AgentWorkflows = Field(default_factory=AgentWorkflows)
     enabled: bool = True
-    deprecated: bool = False
-    deprecated_reason: str | None = None
     skills: dict[str, list[str]] = Field(default_factory=dict)
     # Agent-level tool restrictions (applied regardless of step workflow)
     blocked_tools: list[str] = Field(default_factory=list)
@@ -624,8 +622,6 @@ class PipelineDefinition(BaseModel):
     type: Literal["pipeline"] = "pipeline"
     enabled: bool = True
     priority: int = 100
-    deprecated: bool = False
-    deprecated_reason: str | None = None
 
     @field_validator("version", mode="before")
     @classmethod
@@ -662,14 +658,10 @@ class PipelineDefinition(BaseModel):
 
     @model_validator(mode="after")
     def validate_active_pipeline_has_steps(self) -> PipelineDefinition:
-        """Allow empty steps only for disabled deprecated tombstones."""
-        if self.steps:
-            return self
-        if self.enabled is False and self.deprecated is True:
-            if self.deprecated_reason is not None and self.deprecated_reason.strip():
-                return self
-            raise ValueError("Deprecated pipelines must include a non-empty deprecated_reason")
-        raise ValueError("Pipeline requires at least one step")
+        """Require every pipeline definition to include executable steps."""
+        if not self.steps:
+            raise ValueError("Pipeline requires at least one step")
+        return self
 
     def get_step(self, step_id: str) -> PipelineStep | None:
         """Get a step by its ID."""

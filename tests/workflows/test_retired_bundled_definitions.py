@@ -1,4 +1,4 @@
-"""Tests for retired workflow and agent deprecated definitions."""
+"""Tests for retired bundled workflow and agent definitions."""
 
 from __future__ import annotations
 
@@ -7,12 +7,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-import yaml
 
 from gobby.agents.sync import sync_bundled_agents
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.workflows.definitions import AgentDefinitionBody, PipelineDefinition
 from gobby.workflows.sync_pipelines import sync_bundled_pipelines
 
 pytestmark = pytest.mark.unit
@@ -20,8 +18,6 @@ pytestmark = pytest.mark.unit
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PIPELINES_DIR = REPO_ROOT / "src/gobby/install/shared/workflows/pipelines"
 AGENTS_DIR = REPO_ROOT / "src/gobby/install/shared/workflows/agents"
-DEPRECATED_PIPELINES_DIR = PIPELINES_DIR / "deprecated"
-DEPRECATED_AGENTS_DIR = AGENTS_DIR / "deprecated"
 
 RETIRED_PIPELINES = (
     "orchestrator",
@@ -30,12 +26,6 @@ RETIRED_PIPELINES = (
     "delivery-orchestrator",
 )
 RETIRED_AGENTS = ("developer", "pipeline-worker")
-
-
-def _load_yaml(path: Path) -> dict[str, object]:
-    data = yaml.safe_load(path.read_text())
-    assert isinstance(data, dict)
-    return data
 
 
 def test_no_external_conductor_imports_remain() -> None:
@@ -52,49 +42,28 @@ def test_no_external_conductor_imports_remain() -> None:
 
 
 @pytest.mark.parametrize("name", RETIRED_PIPELINES)
-def test_retired_pipeline_yaml_is_disabled_deprecated_definition(name: str) -> None:
+def test_retired_pipeline_yaml_is_absent_from_active_and_deprecated_bundles(
+    name: str,
+) -> None:
     active_path = PIPELINES_DIR / f"{name}.yaml"
-    deprecated_path = DEPRECATED_PIPELINES_DIR / f"{name}.yaml"
+    deprecated_path = PIPELINES_DIR / "deprecated" / f"{name}.yaml"
+
     assert not active_path.exists(), f"retired pipeline remains active: {active_path}"
-    assert deprecated_path.exists(), f"missing deprecated pipeline file: {deprecated_path}"
-
-    data = _load_yaml(deprecated_path)
-
-    assert data["name"] == name
-    assert data["version"] == "2.1"
-    assert data["enabled"] is False
-    assert data["deprecated"] is True
-    assert isinstance(data["deprecated_reason"], str)
-    assert "state-driven dispatcher" in data["deprecated_reason"]
-    assert str(data["description"]).startswith("[DEPRECATED]")
-    assert data["steps"] == []
-
-    definition = PipelineDefinition.model_validate(data)
-    assert definition.deprecated is True
-    assert definition.deprecated_reason == data["deprecated_reason"]
+    assert not deprecated_path.exists(), (
+        f"retired pipeline deprecated YAML remains: {deprecated_path}"
+    )
 
 
 @pytest.mark.parametrize("name", RETIRED_AGENTS)
-def test_retired_agent_yaml_is_disabled_deprecated_definition(name: str) -> None:
+def test_retired_agent_yaml_is_absent_from_active_and_deprecated_bundles(name: str) -> None:
     active_path = AGENTS_DIR / f"{name}.yaml"
-    deprecated_path = DEPRECATED_AGENTS_DIR / f"{name}.yaml"
+    deprecated_path = AGENTS_DIR / "deprecated" / f"{name}.yaml"
+
     assert not active_path.exists(), f"retired agent remains active: {active_path}"
-    assert deprecated_path.exists(), f"missing deprecated agent file: {deprecated_path}"
-
-    data = _load_yaml(deprecated_path)
-
-    assert data["name"] == name
-    assert data["enabled"] is False
-    assert data["deprecated"] is True
-    assert isinstance(data["deprecated_reason"], str)
-    assert data["deprecated_reason"]
-
-    body = AgentDefinitionBody.model_validate(data)
-    assert body.deprecated is True
-    assert body.deprecated_reason == data["deprecated_reason"]
+    assert not deprecated_path.exists(), f"retired agent deprecated YAML remains: {deprecated_path}"
 
 
-def test_deprecated_pipeline_sync_soft_deletes_installed_row(
+def test_removed_bundled_pipeline_sync_soft_deletes_installed_row(
     tmp_path: Path, temp_db: HubDatabase
 ) -> None:
     db = temp_db
@@ -116,20 +85,7 @@ def test_deprecated_pipeline_sync_soft_deletes_installed_row(
     )
 
     pipelines_dir = tmp_path / "pipelines"
-    deprecated_dir = pipelines_dir / "deprecated"
-    deprecated_dir.mkdir(parents=True)
-    (deprecated_dir / "orchestrator.yaml").write_text(
-        """
-name: orchestrator
-type: pipeline
-version: "2.1"
-enabled: false
-deprecated: true
-deprecated_reason: "Replaced by the state-driven dispatcher."
-description: "[DEPRECATED] Replaced by the state-driven dispatcher."
-steps: []
-"""
-    )
+    pipelines_dir.mkdir()
 
     with patch(
         "gobby.workflows.sync_pipelines.get_bundled_pipelines_path", return_value=pipelines_dir
@@ -147,7 +103,7 @@ steps: []
     assert "deprecated" not in json.loads(row.definition_json)
 
 
-def test_deprecated_agent_sync_soft_deletes_installed_row_without_metadata_update(
+def test_removed_bundled_agent_sync_soft_deletes_installed_row(
     tmp_path: Path, temp_db: HubDatabase
 ) -> None:
     db = temp_db
@@ -168,17 +124,7 @@ def test_deprecated_agent_sync_soft_deletes_installed_row_without_metadata_updat
     )
 
     agents_dir = tmp_path / "agents"
-    deprecated_dir = agents_dir / "deprecated"
-    deprecated_dir.mkdir(parents=True)
-    (deprecated_dir / "developer.yaml").write_text(
-        """
-name: developer
-description: "[DEPRECATED] Replaced by frontend-developer and backend-developer."
-enabled: false
-deprecated: true
-deprecated_reason: "Replaced by frontend-developer and backend-developer."
-"""
-    )
+    agents_dir.mkdir()
 
     with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
         result = sync_bundled_agents(db)

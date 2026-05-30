@@ -291,9 +291,9 @@ class TestSyncBundledAgents:
 
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
-        (agents_dir / "developer.yaml").write_text(
-            "name: developer\n"
-            "description: Active developer\n"
+        (agents_dir / "sample-agent.yaml").write_text(
+            "name: sample-agent\n"
+            "description: Active sample agent\n"
             "enabled: true\n"
             "provider: codex\n"
             "mode: interactive\n"
@@ -302,16 +302,15 @@ class TestSyncBundledAgents:
 
         mgr = LocalWorkflowDefinitionManager(db)
         mgr.create(
-            name="developer",
+            name="sample-agent",
             definition_json=json.dumps(
                 {
-                    "name": "developer",
-                    "description": "Deprecated developer",
+                    "name": "sample-agent",
+                    "description": "Old sample agent",
                     "enabled": False,
-                    "deprecated": True,
                     "provider": "codex",
                     "mode": "interactive",
-                    "instructions": "Deprecated",
+                    "instructions": "Old implementation",
                 }
             ),
             workflow_type="agent",
@@ -324,7 +323,7 @@ class TestSyncBundledAgents:
             result = sync_bundled_agents(db)
 
         assert result["updated"] == 1
-        row = mgr.get_by_name("developer")
+        row = mgr.get_by_name("sample-agent")
         assert row is not None
         assert row.source == "installed"
         assert row.enabled is True
@@ -340,9 +339,9 @@ class TestSyncBundledAgents:
 
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
-        (agents_dir / "developer.yaml").write_text(
-            "name: developer\n"
-            "description: Active developer\n"
+        (agents_dir / "sample-agent.yaml").write_text(
+            "name: sample-agent\n"
+            "description: Active sample agent\n"
             "enabled: true\n"
             "provider: codex\n"
             "mode: interactive\n"
@@ -351,16 +350,15 @@ class TestSyncBundledAgents:
 
         mgr = LocalWorkflowDefinitionManager(db)
         row = mgr.create(
-            name="developer",
+            name="sample-agent",
             definition_json=json.dumps(
                 {
-                    "name": "developer",
-                    "description": "Deprecated developer",
+                    "name": "sample-agent",
+                    "description": "Old sample agent",
                     "enabled": False,
-                    "deprecated": True,
                     "provider": "codex",
                     "mode": "interactive",
-                    "instructions": "Deprecated",
+                    "instructions": "Old implementation",
                 }
             ),
             workflow_type="agent",
@@ -374,11 +372,11 @@ class TestSyncBundledAgents:
             result = sync_bundled_agents(db)
 
         assert result["updated"] == 1
-        restored = mgr.get_by_name("developer")
+        restored = mgr.get_by_name("sample-agent")
         assert restored is not None
         assert restored.enabled is True
         body = AgentDefinitionBody.model_validate_json(restored.definition_json)
-        assert body.description == "Active developer"
+        assert body.description == "Active sample agent"
 
     @pytest.mark.unit
     def test_sync_multiple_agents(self, tmp_path: Path, temp_db: HubDatabase) -> None:

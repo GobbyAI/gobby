@@ -228,13 +228,12 @@ def _agent_definition_view(row: WorkflowDefinitionRow) -> SimpleNamespace:
         )
 
     spawn_capable = "spawn" in body.surfaces
-    enabled = bool(row.enabled and body.enabled and spawn_capable and not body.deprecated)
+    enabled = bool(row.enabled and body.enabled and spawn_capable)
     return SimpleNamespace(
         name=row.name,
         enabled=enabled,
         row_enabled=row.enabled,
         body_enabled=body.enabled,
-        deprecated=body.deprecated,
         surfaces=tuple(body.surfaces),
         spawn_capable=spawn_capable,
         source=row.source,
