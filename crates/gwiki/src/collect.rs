@@ -6,9 +6,11 @@ use serde_json::json;
 
 use crate::WikiError;
 use crate::ingest::{
-    markdown_metadata, markdown_title, text_from_utf8_lossy, write_asset, write_raw_markdown,
+    index_after_ingest, markdown_metadata, markdown_title, text_from_utf8_lossy, write_asset,
+    write_raw_markdown,
 };
 use crate::sources::{CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest};
+use crate::store::WikiIndexStore;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CollectReport {
@@ -99,6 +101,18 @@ pub fn collect_inbox(vault_root: &Path, fetched_at: &str) -> Result<CollectRepor
     }
 
     append_log(vault_root, fetched_at, &report)?;
+    Ok(report)
+}
+
+pub fn collect_inbox_and_index(
+    vault_root: &Path,
+    store: &mut impl WikiIndexStore,
+    fetched_at: &str,
+) -> Result<CollectReport, WikiError> {
+    let report = collect_inbox(vault_root, fetched_at)?;
+    if !report.accepted.is_empty() {
+        index_after_ingest(vault_root, store)?;
+    }
     Ok(report)
 }
 
@@ -436,10 +450,11 @@ fn io_error(action: &'static str, path: &Path, error: std::io::Error) -> WikiErr
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     use super::*;
     use crate::sources::{SourceKind, SourceManifest};
+    use crate::store::{MemoryWikiStore, WikiDocumentKind, WikiIngestionEvent};
 
     fn write_file(root: &Path, relative: &str, contents: &[u8]) {
         let path = root.join(relative);
@@ -503,6 +518,38 @@ mod tests {
                 entry.location
             );
         }
+    }
+
+    #[test]
+    fn collect_indexes_accepted_sources() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_file(temp.path(), "inbox/note.txt", b"accepted source text\n");
+        let mut store = MemoryWikiStore::default();
+
+        let report = collect_inbox_and_index(temp.path(), &mut store, "2026-05-29T18:03:00Z")
+            .expect("collect and index inbox items");
+
+        assert_eq!(report.accepted.len(), 1);
+        let raw_path = PathBuf::from(
+            report.accepted[0]
+                .raw_path
+                .as_deref()
+                .expect("accepted raw path"),
+        );
+        assert!(temp.path().join(&raw_path).is_file());
+
+        let catalog_path = PathBuf::from("raw/INDEX.md");
+        let catalog = store
+            .documents
+            .get(&catalog_path)
+            .expect("raw source catalog indexed");
+        assert_eq!(catalog.kind, WikiDocumentKind::SourceCatalog);
+        assert!(catalog.body.contains("inbox/note.txt"));
+        assert!(catalog.body.contains("kind: `text`"));
+        assert!(store.sources.contains_key(&catalog_path));
+        assert!(store.ingestions.iter().any(|ingestion| {
+            ingestion.path == catalog_path && ingestion.event == WikiIngestionEvent::Added
+        }));
     }
 
     #[test]
