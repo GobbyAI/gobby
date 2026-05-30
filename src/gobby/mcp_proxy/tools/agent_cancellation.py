@@ -16,6 +16,9 @@ class _CancelledRunClassifier:
     def is_provider_error(self, error_string: str | None) -> bool:
         return False
 
+    def is_bootstrap_stall(self, error_string: str | None) -> bool:
+        return False
+
 
 async def recover_cancelled_agent_task_claim(
     *,

@@ -22,7 +22,8 @@ from gobby.agents.isolation import (
 from gobby.agents.reasoning import resolve_spawn_reasoning
 from gobby.agents.resume_metadata import build_resume_metadata
 from gobby.agents.sandbox import SandboxConfig, agent_sandbox_config
-from gobby.agents.spawn_executor import SpawnRequest, execute_spawn
+from gobby.agents.spawn_executor import execute_spawn
+from gobby.agents.spawn_models import SpawnRequest
 from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_actionable
 from gobby.utils.machine_id import get_machine_id
