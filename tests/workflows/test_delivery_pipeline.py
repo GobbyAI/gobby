@@ -11,7 +11,6 @@ from typing import Any
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleEvent
@@ -68,40 +67,6 @@ def _variables(**overrides: Any) -> dict[str, Any]:
     variables = {"parent_turn_seq": 5, "memory_recall_helper_enabled": True}
     variables.update(overrides)
     return variables
-
-
-def _create_run(
-    db: HubDatabase,
-    *,
-    parent: str,
-    child: str,
-    agent_name: str,
-    status: str = "pending",
-) -> str:
-    _ensure_session(db, parent)
-    _ensure_session(db, child)
-    manager = LocalAgentRunManager(db)
-    run = manager.create(
-        parent_session_id=parent,
-        provider="codex",
-        prompt="test prompt",
-        agent_name=agent_name,
-        child_session_id=child,
-    )
-    if status == "running":
-        manager.start(run.id)
-    elif status == "cancelled":
-        manager.cancel(run.id)
-    return run.id
-
-
-def _ensure_session(db: HubDatabase, session_id: str) -> None:
-    db.execute(
-        "INSERT INTO sessions (id, external_id, machine_id, source, project_id, "
-        "created_at, updated_at) VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
-        "ON CONFLICT (id) DO NOTHING",
-        (session_id, f"ext-{session_id}", "machine-delivery", "codex", "proj-delivery"),
-    )
 
 
 def _event(session_id: str = "ext-X", platform_session_id: str = "plat-Y") -> HookEvent:
@@ -221,27 +186,15 @@ async def test_concurrent_append_race_safe(db: HubDatabase) -> None:
     assert _vars(db, "plat-Y")["injected_memory_ids"] == ["m1", "m2"]
 
 
-def test_freshness_guard_a_helper_scoped(engine: RuleEngine, db: HubDatabase) -> None:
-    _create_run(
-        db,
-        parent="plat-Y",
-        child="cancelled-helper",
-        agent_name="memory-recall-helper",
-        status="cancelled",
-    )
-    _create_run(
-        db,
-        parent="plat-Y",
-        child="cancelled-worker",
-        agent_name="backend-developer",
-        status="cancelled",
-    )
-
+def test_memory_recall_delivery_does_not_depend_on_child_session_state(
+    engine: RuleEngine,
+    db: HubDatabase,
+) -> None:
     result = engine._format_delivery_result(
         {
             "messages": [
-                _memory_recall_message([_memory("m-cancelled")], from_session="cancelled-helper"),
-                _plain_message("plain-cancelled-sentinel", from_session="cancelled-worker"),
+                _memory_recall_message([_memory("m-recall")], from_session="old-helper-name"),
+                _plain_message("plain-sentinel", from_session="old-worker-name"),
             ],
             "count": 2,
         },
@@ -250,9 +203,9 @@ def test_freshness_guard_a_helper_scoped(engine: RuleEngine, db: HubDatabase) ->
     )
 
     assert result is not None
-    assert "content-sentinel-m-cancelled" not in result
-    assert "plain-cancelled-sentinel" in result
-    assert "injected_memory_ids" not in _vars(db, "plat-Y")
+    assert "content-sentinel-m-recall" in result
+    assert "plain-sentinel" in result
+    assert _vars(db, "plat-Y")["injected_memory_ids"] == ["m-recall"]
 
 
 @pytest.mark.asyncio
@@ -406,7 +359,7 @@ def test_hard_cap_truncates_excess_helper_memories(
     assert "content-sentinel-m4" not in result
     assert "content-sentinel-m5" not in result
     assert _vars(db, "plat-Y")["injected_memory_ids"] == ["m1", "m2", "m3"]
-    assert "Capping helper memories from 5 to 3" in caplog.text
+    assert "Capping recall memories from 5 to 3" in caplog.text
 
 
 def test_cap_applies_after_merging_all_memory_recall_messages(
@@ -433,101 +386,6 @@ def test_cap_applies_after_merging_all_memory_recall_messages(
     assert "content-sentinel-m5" not in result
     assert "content-sentinel-m6" not in result
     assert _vars(db, "plat-Y")["injected_memory_ids"] == ["m1", "m2", "m3"]
-
-
-def test_fail_closed_on_cancelled_lookup_failure(
-    engine: RuleEngine,
-    db: HubDatabase,
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    def fail_lookup(self: LocalAgentRunManager, agent_name: str | None = None) -> set[str]:
-        raise RuntimeError("db unavailable")
-
-    monkeypatch.setattr(LocalAgentRunManager, "get_cancelled_session_ids", fail_lookup)
-
-    result = engine._format_delivery_result(
-        {
-            "messages": [
-                _memory_recall_message([_memory("lookup-fail")]),
-                _plain_message("plain-msg-lookup-fail-sentinel"),
-            ],
-            "count": 2,
-        },
-        "plat-Y",
-        _variables(),
-    )
-
-    assert result is not None
-    assert "content-sentinel-lookup-fail" not in result
-    assert "plain-msg-lookup-fail-sentinel" in result
-    assert "injected_memory_ids" not in _vars(db, "plat-Y")
-    assert "cancelled-session lookup failed" in caplog.text
-    assert "dropping all memory_recall payloads" in caplog.text
-
-
-def test_cancel_incomplete_drops_memory_recall_payloads(
-    engine: RuleEngine,
-    db: HubDatabase,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    _create_run(
-        db,
-        parent="plat-Y",
-        child="child-still-running",
-        agent_name="memory-recall-helper",
-        status="running",
-    )
-
-    result = engine._format_delivery_result(
-        {
-            "messages": [
-                _memory_recall_message(
-                    [_memory("cancel-fail")], from_session="child-still-running"
-                ),
-                _plain_message("plain-msg-cancel-fail-sentinel"),
-            ],
-            "count": 2,
-        },
-        "plat-Y",
-        _variables(),
-    )
-
-    assert result is not None
-    assert "content-sentinel-cancel-fail" not in result
-    assert "plain-msg-cancel-fail-sentinel" in result
-    assert "injected_memory_ids" not in _vars(db, "plat-Y")
-    assert "stale helper still running after cancel attempt" in caplog.text
-
-
-def test_cancel_incomplete_check_failure_fail_closed(
-    engine: RuleEngine,
-    db: HubDatabase,
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    def fail_list(self: LocalAgentRunManager, parent_session_id: str, limit: int = 100) -> list:
-        raise RuntimeError("db unavailable")
-
-    monkeypatch.setattr(LocalAgentRunManager, "list_by_parent", fail_list)
-
-    result = engine._format_delivery_result(
-        {
-            "messages": [
-                _memory_recall_message([_memory("list-fail")]),
-                _plain_message("plain-msg-list-fail-sentinel"),
-            ],
-            "count": 2,
-        },
-        "plat-Y",
-        _variables(),
-    )
-
-    assert result is not None
-    assert "content-sentinel-list-fail" not in result
-    assert "plain-msg-list-fail-sentinel" in result
-    assert "injected_memory_ids" not in _vars(db, "plat-Y")
-    assert "Failed to check for still-running helpers" in caplog.text
 
 
 @pytest.mark.asyncio

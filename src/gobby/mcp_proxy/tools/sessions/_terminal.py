@@ -1,8 +1,8 @@
 """Terminal interaction tools for tmux-backed sessions.
 
 Exposes send_keys, capture_output, and compact_self as MCP tools on
-gobby-sessions, enabling orchestration (conductor, heartbeat, pipelines,
-other agents) to interact with running terminal sessions.
+gobby-sessions, enabling orchestration (heartbeat, pipelines, other agents)
+to interact with running terminal sessions.
 """
 
 from __future__ import annotations

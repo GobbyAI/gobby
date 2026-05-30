@@ -151,7 +151,7 @@ instructions: |
     APPROVED: round 13, no blocking findings
 
   CRITICAL RULES:
-  - Do NOT call close_task. The conductor closes approved stage tasks.
+  - Do NOT call close_task. Stage automation closes approved stage tasks.
   - Do NOT call reopen_task or de_escalate_task.
   - Do NOT call submit_for_review.
   - Do NOT spawn other agents.

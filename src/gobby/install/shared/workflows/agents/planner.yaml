@@ -95,7 +95,7 @@ instructions: |
     clears it atomically with the resubmission.
 
   CRITICAL RULES:
-  - Do NOT call close_task. The conductor closes approved stage tasks.
+  - Do NOT call close_task. Stage automation closes approved stage tasks.
   - Do NOT call reopen_task or de_escalate_task.
   - Do NOT call approve_review or reject_review.
   - Do NOT spawn other agents.

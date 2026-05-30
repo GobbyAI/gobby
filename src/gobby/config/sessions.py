@@ -5,7 +5,7 @@ Contains session-related Pydantic config models:
 - ContextInjectionConfig: Subagent context injection settings
 - SessionSummaryConfig: Session summary generation settings
 - DigestConfig: Rolling digest and title generation settings
-- MemoryRecallHelperConfig: Background memory recall helper settings
+- MemoryRecallHelperConfig: Daemon-owned memory recall settings
 - MessageTrackingConfig: Session message tracking settings
 - SessionLifecycleConfig: Session lifecycle management settings
 
@@ -153,12 +153,37 @@ class DigestConfig(FeatureDefaultConfig):
     )
 
 
-class MemoryRecallHelperConfig(BaseModel):
-    """Backgrounded Haiku memory-recall helper agent runtime toggle."""
+class MemoryRecallHelperConfig(FeatureDefaultConfig):
+    """Daemon-owned memory recall runner configuration."""
 
     enabled: bool = Field(
         default=True,
-        description="Enable the backgrounded LLM-driven memory recall helper agent.",
+        description="Enable the LLM-driven memory recall runner.",
+    )
+    tier: ModelTier = Field(
+        default=ModelTier.LOW,
+        description="Complexity tier for memory recall model fallback.",
+    )
+    timeout: int = Field(
+        default=60,
+        gt=0,
+        description="Timeout in seconds for memory recall LLM calls.",
+    )
+    candidate_limit: int = Field(
+        default=8,
+        gt=0,
+        description="Maximum candidate memories to pass to the recall selector.",
+    )
+    selected_limit: int = Field(
+        default=3,
+        gt=0,
+        description="Maximum memories to surface from daemon-owned recall.",
+    )
+    min_score: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description="Minimum candidate relevance score for memory recall.",
     )
 
 

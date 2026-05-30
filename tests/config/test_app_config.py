@@ -384,6 +384,8 @@ class TestDaemonConfig:
         assert config.daemon_port == 60887
         assert config.daemon_health_check_interval == 10.0
         assert isinstance(config.bin_freshness, BinFreshnessConfig)
+        assert "conductor" not in DaemonConfig.model_fields
+        assert not hasattr(config, "conductor")
 
     def test_port_validation(self) -> None:
         """Test daemon port validation."""
@@ -416,6 +418,11 @@ class TestDaemonConfig:
         from gobby.config.features import ProjectVerificationConfig
 
         assert isinstance(verification_config, ProjectVerificationConfig)
+
+    def test_rejects_removed_conductor_section(self) -> None:
+        """Stale top-level conductor config should fail loudly."""
+        with pytest.raises(ValidationError, match="conductor config has been removed"):
+            DaemonConfig(conductor={"enabled": False})
 
 
 class TestLoadYaml:

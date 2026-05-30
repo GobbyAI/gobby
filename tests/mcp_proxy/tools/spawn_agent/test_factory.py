@@ -220,7 +220,7 @@ class TestSpawnAgentDefaults:
         session_manager.resolve_session_reference.return_value = "parent-uuid"
         session_manager.get.return_value = SimpleNamespace(project_id=project.id)
         agent_body = AgentDefinitionBody(
-            name="spawn-memory-recall-helper",
+            name="spawn-reviewer-agent",
             provider="claude",
         )
         registry = create_spawn_agent_registry(
@@ -247,8 +247,8 @@ class TestSpawnAgentDefaults:
             result = await registry.call(
                 "spawn_agent",
                 {
-                    "prompt": "Recall relevant memory",
-                    "agent": "spawn-memory-recall-helper",
+                    "prompt": "Review the implementation",
+                    "agent": "spawn-reviewer-agent",
                     "parent_session_id": "parent-ref",
                 },
             )

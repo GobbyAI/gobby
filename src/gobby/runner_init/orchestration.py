@@ -14,6 +14,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+RETIRED_SYSTEM_CRON_JOBS = ("gobby:conductor-tick",)
+
 
 def init_orchestration(runner: GobbyRunner) -> None:
     """Initialize workflows, pipelines, agents, cron, and communications."""
@@ -180,13 +182,18 @@ def init_orchestration(runner: GobbyRunner) -> None:
             run_db=runner.db_executor.run,
         )
 
-        try:
-            conductor_job = runner.cron_storage.get_job_by_name("gobby:conductor-tick")
-            if conductor_job and conductor_job.enabled:
-                runner.cron_storage.update_job(conductor_job.id, enabled=False, next_run_at=None)
-                logger.info("Disabled retired system cron job: gobby:conductor-tick")
-        except Exception as e:
-            logger.warning(f"Failed to disable retired conductor cron job: {e}")
+        for job_name in RETIRED_SYSTEM_CRON_JOBS:
+            try:
+                retired_job = runner.cron_storage.get_job_by_name(job_name)
+                if retired_job and retired_job.enabled:
+                    runner.cron_storage.update_job(
+                        retired_job.id,
+                        enabled=False,
+                        next_run_at=None,
+                    )
+                    logger.info("Disabled retired system cron job: %s", job_name)
+            except Exception as e:
+                logger.warning("Failed to disable retired system cron job %s: %s", job_name, e)
 
         from gobby.storage.projects import LocalProjectManager
 

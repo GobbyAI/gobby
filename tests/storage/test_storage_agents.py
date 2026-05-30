@@ -737,7 +737,7 @@ class TestLocalAgentRunManager:
             sample_session,
             sample_project,
             "helper-cancelled-child",
-            agent_name="memory-recall-helper",
+            agent_name="status-helper",
         )
         other_run, other_child_id = self._create_run_with_child(
             agent_manager,
@@ -759,7 +759,7 @@ class TestLocalAgentRunManager:
         agent_manager.cancel(other_run.id)
         agent_manager.cancel(unscoped_run.id)
 
-        assert agent_manager.get_cancelled_session_ids(agent_name="memory-recall-helper") == {
+        assert agent_manager.get_cancelled_session_ids(agent_name="status-helper") == {
             helper_child_id
         }
         assert agent_manager.get_cancelled_session_ids() == {

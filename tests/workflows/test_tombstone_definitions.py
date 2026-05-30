@@ -26,11 +26,10 @@ DEPRECATED_AGENTS_DIR = AGENTS_DIR / "deprecated"
 RETIRED_PIPELINES = (
     "orchestrator",
     "front-half-orchestrator",
-    "conductor",
     "dev-orchestrator",
     "delivery-orchestrator",
 )
-RETIRED_AGENTS = ("conductor", "developer", "pipeline-worker")
+RETIRED_AGENTS = ("developer", "pipeline-worker")
 
 
 def _load_yaml(path: Path) -> dict[str, object]:

@@ -23,7 +23,7 @@ def _make_agent_run(
     run_id: str,
     *,
     status: str = "running",
-    agent_name: str = "memory-recall-helper",
+    agent_name: str = "status-helper",
     parent_session_id: str = "parent-session",
 ) -> MagicMock:
     run = MagicMock()
@@ -44,7 +44,7 @@ async def test_cancel_stale_helpers_requires_parent_session_id() -> None:
 
     result = await cancel_stale_helpers(
         parent_session_id="",
-        agent_name="memory-recall-helper",
+        agent_name="status-helper",
     )
 
     assert result == {"success": False, "error": "parent_session_id is required"}
@@ -69,7 +69,7 @@ async def test_cancel_stale_helpers_returns_empty_when_no_helpers_running() -> N
 
     result = await cancel_stale_helpers(
         parent_session_id="parent-session",
-        agent_name="memory-recall-helper",
+        agent_name="status-helper",
     )
 
     assert result == {"success": True, "cancelled": [], "errors": [], "count": 0}
@@ -112,7 +112,7 @@ async def test_best_effort_continues_on_per_run_failure() -> None:
     ):
         result = await cancel_stale_helpers(
             parent_session_id="parent-session",
-            agent_name="memory-recall-helper",
+            agent_name="status-helper",
         )
 
     assert result == {
@@ -164,7 +164,7 @@ async def test_cleanup_step_order_parity_with_stop_agent() -> None:
     ):
         result = await cancel_stale_helpers(
             parent_session_id="parent-session",
-            agent_name="memory-recall-helper",
+            agent_name="status-helper",
         )
 
     assert result == {"success": True, "cancelled": ["run-123"], "errors": [], "count": 1}
@@ -202,7 +202,7 @@ async def test_db_less_registry_uses_runner_run_storage() -> None:
     ):
         result = await cancel_stale_helpers(
             parent_session_id="parent-session",
-            agent_name="memory-recall-helper",
+            agent_name="status-helper",
         )
 
     assert result == {"success": True, "cancelled": ["run-123"], "errors": [], "count": 1}

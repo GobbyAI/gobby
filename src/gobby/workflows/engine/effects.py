@@ -313,53 +313,19 @@ class EffectsMixin:
     ) -> str | None:
         """Inline delivery-time pipeline for deliver_pending_messages results."""
         from gobby.hooks.dispatchers.mcp import format_discovery_result
-        from gobby.storage.agents import LocalAgentRunManager
 
         if _is_empty_inject_payload(result):
             return None
 
         messages = result.get("messages") or []
-        helper_memories: dict[str, dict[str, Any]] = {}
+        recall_memories: dict[str, dict[str, Any]] = {}
         other_messages: list[Any] = []
-
-        run_storage = LocalAgentRunManager(self.db)
-        helper_cancelled_sessions: set[str] = set()
-        cancelled_lookup_failed = False
-        cancel_incomplete = False
-        if messages:
-            try:
-                helper_cancelled_sessions = run_storage.get_cancelled_session_ids(
-                    agent_name="memory-recall-helper",
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "cancelled-session lookup failed: %s; dropping all memory_recall payloads",
-                    exc,
-                )
-                cancelled_lookup_failed = True
-
-            if not cancelled_lookup_failed and platform_session_id:
-                try:
-                    still_running = [
-                        run
-                        for run in run_storage.list_by_parent(platform_session_id)
-                        if run.agent_name == "memory-recall-helper"
-                        and run.status in ("pending", "running")
-                    ]
-                    cancel_incomplete = bool(still_running)
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "Failed to check for still-running helpers: %s; "
-                        "dropping all memory_recall payloads",
-                        exc,
-                    )
-                    cancel_incomplete = True
 
         current_turn_seq = variables.get("parent_turn_seq")
         expected_origin_turn_seq = (
             current_turn_seq - 1 if isinstance(current_turn_seq, int) else None
         )
-        helper_enabled = variables.get("memory_recall_helper_enabled", True)
+        recall_enabled = variables.get("memory_recall_helper_enabled", True)
 
         for msg in messages:
             if not isinstance(msg, dict):
@@ -380,27 +346,8 @@ class EffectsMixin:
                 other_messages.append(msg)
                 continue
 
-            if not helper_enabled:
+            if not recall_enabled:
                 logger.debug("Dropping memory_recall: memory_recall_helper_enabled is False")
-                continue
-            if cancelled_lookup_failed:
-                logger.warning(
-                    "Dropping memory_recall: cancelled-session lookup failed (from_session=%r)",
-                    msg.get("from_session"),
-                )
-                continue
-            if cancel_incomplete:
-                logger.warning(
-                    "Dropping memory_recall: stale helper still running after cancel attempt "
-                    "(from_session=%r)",
-                    msg.get("from_session"),
-                )
-                continue
-            if msg.get("from_session") in helper_cancelled_sessions:
-                logger.debug(
-                    "Dropping memory_recall from cancelled helper session %r",
-                    msg.get("from_session"),
-                )
                 continue
             if expected_origin_turn_seq is None:
                 logger.warning(
@@ -420,10 +367,10 @@ class EffectsMixin:
             for mem in parsed.get("memories") or []:
                 mid = mem.get("id") if isinstance(mem, dict) else None
                 if isinstance(mid, str) and mid:
-                    helper_memories[mid] = mem
+                    recall_memories[mid] = mem
 
         new_memories = self._filter_and_track_new_memories(
-            list(helper_memories.values()),
+            list(recall_memories.values()),
             platform_session_id,
             max_memories=3,
         )
@@ -507,7 +454,7 @@ class EffectsMixin:
 
         if max_memories is not None and len(new_memories) > max_memories:
             logger.debug(
-                "Capping helper memories from %d to %d",
+                "Capping recall memories from %d to %d",
                 len(new_memories),
                 max_memories,
             )

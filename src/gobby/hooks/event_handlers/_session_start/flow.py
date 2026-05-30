@@ -9,7 +9,7 @@ from gobby.hooks.events import HookEvent, HookResponse
 from gobby.hooks.project_context import resolve_hook_project_context
 from gobby.hooks.terminal_context import enrich_terminal_context_with_cwd, hook_cwd
 
-from .agents import _seed_memory_recall_helper_vars
+from .agents import _seed_memory_recall_vars
 from .context import classify_session_start_context, mark_startup_context_injected
 from .handoff import find_parent_session, populate_handoff_session_variables
 from .types import AgentActivationResult
@@ -252,9 +252,9 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
 
     if session_id and handler._session_manager is not None:
         try:
-            _seed_memory_recall_helper_vars(handler, session_id)
+            _seed_memory_recall_vars(handler, session_id)
         except Exception as e:
-            handler.logger.warning(f"Failed to seed memory-recall-helper vars: {e}")
+            handler.logger.warning(f"Failed to seed memory recall vars: {e}")
 
     session_obj = None
     if session_id and handler._session_manager:
@@ -463,9 +463,9 @@ def handle_pre_created_session(
 
     if handler._session_manager is not None:
         try:
-            _seed_memory_recall_helper_vars(handler, session_id)
+            _seed_memory_recall_vars(handler, session_id)
         except Exception as e:
-            handler.logger.warning(f"Failed to seed memory-recall-helper vars: {e}")
+            handler.logger.warning(f"Failed to seed memory recall vars: {e}")
 
     agent_result: AgentActivationResult | None = None
     input_data = event.data if event else {}

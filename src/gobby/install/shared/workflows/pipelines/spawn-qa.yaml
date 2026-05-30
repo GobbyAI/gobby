@@ -2,7 +2,7 @@ name: spawn-qa
 type: pipeline
 description: |
   Thin dispatch pipeline: spawns a QA reviewer agent for a given task.
-  The conductor can invoke this via run_pipeline for tracked dispatch,
+  Dispatch automation can invoke this via run_pipeline for tracked dispatch,
   or call spawn_agent directly for untracked dispatch.
 
 version: "1.0"

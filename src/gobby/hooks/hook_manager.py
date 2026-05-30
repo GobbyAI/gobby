@@ -348,6 +348,8 @@ class HookManager:
             workflow_context, blocking_response = self._evaluate_workflow_rules(event)
             if blocking_response:
                 return blocking_response
+            if event.event_type == HookEventType.BEFORE_AGENT:
+                workflow_context = self._append_memory_recall_context(event, workflow_context)
 
             webhook_block = self._evaluate_blocking_webhooks(event)
             if webhook_block:
@@ -442,6 +444,53 @@ class HookManager:
     def _evaluate_workflow_rules(self, event: HookEvent) -> tuple[str | None, HookResponse | None]:
         """Evaluate workflow rules and dispatch mcp_call effects."""
         return self._create_rule_evaluator().evaluate(event)
+
+    def _append_memory_recall_context(
+        self,
+        event: HookEvent,
+        workflow_context: str | None,
+    ) -> str | None:
+        """Run daemon-owned memory recall and append selected memories to context."""
+        session_id = event.metadata.get("_platform_session_id")
+        if not isinstance(session_id, str) or not session_id:
+            return workflow_context
+        config = getattr(self._config, "memory_recall_helper", None)
+        if config is None or self._memory_manager is None or self._database is None:
+            return workflow_context
+
+        try:
+            from gobby.memory.recall import MemoryRecallRunner
+            from gobby.workflows.state_manager import SessionVariableManager
+
+            variables = SessionVariableManager(self._database).get_variables(session_id)
+            runner = MemoryRecallRunner(
+                db=self._database,
+                memory_manager=self._memory_manager,
+                llm_service=self._llm_service,
+                config=config,
+                log=self.logger,
+            )
+            payload = self._run_coro_blocking(runner.run(event, session_id, dict(variables)))
+            if payload is None:
+                return workflow_context
+
+            message = payload.to_message()
+            if message.get("type") != "memory_recall":
+                return workflow_context
+            result = self._dedup_memory_results(
+                {"success": True, "memories": message.get("memories") or []},
+                session_id,
+            )
+            if not result.get("memories"):
+                return workflow_context
+            formatted = self._format_discovery_result({"tool": "search_memories", "result": result})
+        except Exception as exc:  # noqa: BLE001 - recall must fail open at hook boundary
+            self.logger.warning("Daemon memory recall failed: %s", exc)
+            return workflow_context
+
+        if not formatted:
+            return workflow_context
+        return f"{workflow_context}\n\n{formatted}" if workflow_context else formatted
 
     def _create_rule_evaluator(self) -> WorkflowRuleEvaluator:
         """Create a rule evaluator bound to the manager's current dependencies."""

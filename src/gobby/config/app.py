@@ -22,7 +22,6 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from gobby.config.bin_freshness import BinFreshnessConfig
 from gobby.config.code_index import CodeIndexConfig
 from gobby.config.communications import CommunicationsConfig
-from gobby.config.conductor import ConductorConfig
 from gobby.config.cron import CronConfig
 from gobby.config.daemon_sandbox import DaemonOwnedSandboxConfig
 from gobby.config.extensions import HookExtensionsConfig
@@ -195,12 +194,17 @@ class DaemonConfig(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def reject_removed_session_title_config(cls, data: Any) -> Any:
-        """Reject the removed session_title config section explicitly."""
-        if isinstance(data, dict) and "session_title" in data:
-            raise ValueError(
-                "session_title config has been removed. Use digest.provider, digest.model, "
-                "and digest.timeout instead."
-            )
+        """Reject removed config sections explicitly."""
+        if isinstance(data, dict):
+            if "session_title" in data:
+                raise ValueError(
+                    "session_title config has been removed. Use digest.provider, digest.model, "
+                    "and digest.timeout instead."
+                )
+            if "conductor" in data:
+                raise ValueError(
+                    "conductor config has been removed. Remove the top-level conductor section."
+                )
         return data
 
     # Daemon settings
@@ -300,7 +304,7 @@ class DaemonConfig(BaseModel):
     )
     memory_recall_helper: MemoryRecallHelperConfig = Field(
         default_factory=MemoryRecallHelperConfig,
-        description="Backgrounded Haiku memory-recall helper agent configuration",
+        description="Daemon-owned memory recall runner configuration",
     )
     recommend_tools: RecommendToolsConfig = Field(
         default_factory=RecommendToolsConfig,
@@ -393,10 +397,6 @@ class DaemonConfig(BaseModel):
     system_loops: SystemLoopsConfig = Field(
         default_factory=SystemLoopsConfig,
         description="Daemon-owned system loop configuration",
-    )
-    conductor: ConductorConfig = Field(
-        default_factory=ConductorConfig,
-        description="Persistent conductor agent configuration",
     )
     pipelines: PipelineConfig = Field(
         default_factory=PipelineConfig,

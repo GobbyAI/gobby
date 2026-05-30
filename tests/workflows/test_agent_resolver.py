@@ -179,8 +179,8 @@ class TestProviderNormalization:
         assert result.provider == "gemini"
 
 
-def test_resolve_memory_recall_helper(db: HubDatabase) -> None:
-    """The resolver loads the bundled memory recall helper by name."""
+def test_memory_recall_helper_is_not_resolvable_agent(db: HubDatabase) -> None:
+    """Memory recall no longer has a bundled spawnable helper agent."""
     sync_result = sync_bundled_agents(db)
 
     assert sync_result["success"] is True
@@ -188,9 +188,4 @@ def test_resolve_memory_recall_helper(db: HubDatabase) -> None:
 
     result = resolve_agent("memory-recall-helper", db)
 
-    assert result is not None
-    assert result.model == "claude-haiku-4-5"
-    assert result.max_turns == 3
-    assert result.timeout == 60
-    assert "mcp__gobby__set_variable" in result.blocked_tools
-    assert result.blocked_mcp_tools == ["gobby-agents:kill_agent"]
+    assert result is None

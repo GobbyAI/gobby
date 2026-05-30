@@ -1,22 +1,21 @@
 ---
-description: Synthesize memory search results into concise context with ID refs
+description: Select directly useful candidate memories for current user turn
 required_variables:
-  - digest
+  - user_prompt
   - memories_json
+  - selected_limit
 ---
-You are synthesizing project memories into concise context for a coding session.
+You are selecting project memories to surface for the current user turn.
 
-## Current Session Digest
-{{ digest }}
+## User Prompt
+{{ user_prompt }}
 
-## Retrieved Memories
+## Candidate Memories
 {{ memories_json }}
 
-## Instructions
-Synthesize the most relevant memories into 3-5 concise sentences of actionable context. For each memory you reference, include `(ref: mem-XXXXX)` using the first 5 characters of its ID.
+Choose up to {{ selected_limit }} memory IDs that are directly useful for answering the user's prompt.
 
-Prioritize memories that are directly relevant to the current session digest. Skip memories that are generic or unrelated.
+Skip generic, weakly related, stale, or merely interesting memories. Prefer zero memories over noisy context.
 
-Output ONLY the synthesized context (no headers, no markdown formatting, no XML tags). Example:
-
-When closing gobby tasks that have file edits, commit SHAs are required even for duplicates (ref: mem-3e2f1). The web UI slash command aliases only appear when /mcp/tools returns matching tools (ref: mem-15157). Gobby-managed PreToolUse hooks enforce task-before-write checks (ref: mem-c6534).
+Output strict JSON only:
+{"memory_ids":["mem-id-1","mem-id-2"]}

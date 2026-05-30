@@ -1,8 +1,8 @@
-tags: [memory-lifecycle, memory, helper-agent, gobby, default]
+tags: [memory-lifecycle, memory, daemon-recall, gobby, default]
 
 rules:
   increment-parent-turn-seq:
-    description: "Increment per-parent monotonic turn counter on each turn_start (freshness guard B for memory-recall-helper)"
+    description: "Increment per-parent monotonic turn counter on each turn_start for memory recall freshness"
     event: turn_start
     enabled: true
     priority: 1

@@ -103,14 +103,6 @@ class TestFeatureConfigInheritance:
         assert cfg.tier == ModelTier.LOW
         assert cfg.model == "haiku"
 
-    def test_conductor_config(self) -> None:
-        from gobby.config.conductor import ConductorConfig
-
-        assert issubclass(ConductorConfig, FeatureDefaultConfig)
-        cfg = ConductorConfig()
-        assert cfg.tier == ModelTier.LOW
-        assert cfg.model == "haiku"
-
     def test_merge_resolution_config(self) -> None:
         from gobby.config.features import MergeResolutionConfig
 

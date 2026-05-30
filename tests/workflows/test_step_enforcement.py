@@ -41,7 +41,7 @@ def instance_mgr(db: "HubDatabase") -> WorkflowInstanceManager:
     return WorkflowInstanceManager(db)
 
 
-HELPER_BLOCKED_TOOLS = [
+AGENT_BLOCKED_TOOLS = [
     "Read",
     "Write",
     "Edit",
@@ -220,12 +220,11 @@ class TestAgentToolEnforcement:
 
         assert response is None
 
-    def test_blocked_tools_overrides_infra_exempt_for_helper(self) -> None:
-        """The memory-recall helper can deny set_variable while keeping get_variable usable."""
+    def test_blocked_tools_overrides_infra_exempt_for_agent(self) -> None:
+        """Agent-level blocked_tools can deny set_variable while get_variable stays usable."""
         variables: dict[str, Any] = {
-            # Mirrors the helper contract from plan section 1.4; that leaf owns YAML drift.
-            "_agent_blocked_tools": HELPER_BLOCKED_TOOLS,
-            "_agent_type": "memory-recall-helper",
+            "_agent_blocked_tools": AGENT_BLOCKED_TOOLS,
+            "_agent_type": "locked-down-agent",
         }
 
         denied = _check_agent_tool("mcp__gobby__set_variable", variables)
@@ -234,7 +233,7 @@ class TestAgentToolEnforcement:
         assert denied is not None
         assert denied.decision == "block"
         assert denied.reason is not None
-        assert "[agent-enforcement:memory-recall-helper]" in denied.reason
+        assert "[agent-enforcement:locked-down-agent]" in denied.reason
         assert "Tool 'mcp__gobby__set_variable' is blocked" in denied.reason
         assert allowed is None
 

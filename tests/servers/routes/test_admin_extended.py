@@ -126,12 +126,12 @@ class TestAdminRoutesExtended:
     def test_register_test_agent_with_agent_name_and_terminal_status(
         self, mock_arm_cls, client, mock_server
     ) -> None:
-        """Test POST /test/register-agent can seed terminal helper runs."""
+        """Test POST /test/register-agent can seed terminal agent runs."""
         mock_arm = MagicMock()
         mock_run = MagicMock()
         mock_run.to_dict.return_value = {
-            "run_id": "ar-memory",
-            "agent_name": "memory-recall-helper",
+            "run_id": "ar-terminal",
+            "agent_name": "terminal-test-agent",
             "status": "success",
         }
         mock_arm.get.return_value = mock_run
@@ -140,20 +140,20 @@ class TestAdminRoutesExtended:
         response = client.post(
             "/api/admin/test/register-agent",
             json={
-                "run_id": "ar-memory",
-                "session_id": "helper-session",
+                "run_id": "ar-terminal",
+                "session_id": "terminal-session",
                 "parent_session_id": "parent-session",
-                "agent_name": "memory-recall-helper",
+                "agent_name": "terminal-test-agent",
                 "status": "success",
             },
         )
         assert response.status_code == 200
 
         mock_arm.create.assert_called_once()
-        assert mock_arm.create.call_args.kwargs["agent_name"] == "memory-recall-helper"
-        mock_arm.start.assert_called_once_with("ar-memory")
-        mock_arm.update_child_session.assert_called_once_with("ar-memory", "helper-session")
-        mock_arm.complete.assert_called_once_with("ar-memory", result="test agent completed")
+        assert mock_arm.create.call_args.kwargs["agent_name"] == "terminal-test-agent"
+        mock_arm.start.assert_called_once_with("ar-terminal")
+        mock_arm.update_child_session.assert_called_once_with("ar-terminal", "terminal-session")
+        mock_arm.complete.assert_called_once_with("ar-terminal", result="test agent completed")
 
     def test_register_test_agent_rejects_unknown_status(self, client, mock_server) -> None:
         """Test POST /test/register-agent validates status."""

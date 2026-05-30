@@ -79,8 +79,8 @@ def setup_code_index(handler: Any, session_id: str | None, project_id: str | Non
         handler.logger.debug(f"Could not check code index availability: {e}")
 
 
-def _seed_memory_recall_helper_vars(handler: Any, session_id: str) -> None:
-    """Seed memory-recall-helper variables before activation guards run."""
+def _seed_memory_recall_vars(handler: Any, session_id: str) -> None:
+    """Seed daemon-owned memory recall variables before activation guards run."""
     from gobby.workflows.state_manager import SessionVariableManager
 
     sv_mgr = SessionVariableManager(handler._session_manager.db)

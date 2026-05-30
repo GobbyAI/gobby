@@ -547,21 +547,12 @@ class TestSyncBundledAgents:
 
 
 @pytest.mark.unit
-def test_memory_recall_helper_synced(temp_db: HubDatabase) -> None:
-    """The bundled memory recall helper syncs into workflow_definitions."""
+def test_memory_recall_helper_not_bundled(temp_db: HubDatabase) -> None:
+    """Memory recall is daemon-owned and no helper agent is bundled."""
     result = sync_bundled_agents(temp_db)
 
     assert result["success"] is True
     assert result["errors"] == []
 
     row = LocalWorkflowDefinitionManager(temp_db).get_by_name("memory-recall-helper")
-    assert row is not None
-    assert row.workflow_type == "agent"
-    assert row.enabled is True
-
-    body = AgentDefinitionBody.model_validate_json(row.definition_json)
-    assert body.model == "claude-haiku-4-5"
-    assert body.max_turns == 3
-    assert body.timeout == 60
-    assert "mcp__gobby__set_variable" in body.blocked_tools
-    assert body.blocked_mcp_tools == ["gobby-agents:kill_agent"]
+    assert row is None
