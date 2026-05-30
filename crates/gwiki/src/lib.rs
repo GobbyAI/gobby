@@ -1,6 +1,7 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+use gobby_core::config::{ConfigSource, resolve_embedding_config, resolve_qdrant_config};
 use gobby_core::degradation::{DegradationKind, ServiceState};
 use gobby_core::setup::{SetupContext, SetupError, StandaloneSetup};
 use serde_json::json;
@@ -438,14 +439,83 @@ fn run_search(
     selection: ScopeSelection,
     limit: usize,
 ) -> Result<CommandOutcome, WikiError> {
+    if let Some(database_url) = database_url_from_env() {
+        let scope = resolve_command_scope(&selection)?;
+        return run_search_attached(
+            &database_url,
+            resolved_scope_identity(&scope),
+            search_scope_for_resolved(&scope),
+            query,
+            limit,
+        );
+    }
+
     let (_, output_scope, search_scope, store) = indexed_store_for_selection(&selection)?;
     let mut bm25_backend = StoreBm25Backend {
         hits: store_search_hits(&store, &search_scope, &query),
     };
     let mut semantic_backend = UnavailableSemanticBackend;
-    let response = search::search(
+    run_search_with_backends(
         &mut bm25_backend,
         &mut semantic_backend,
+        output_scope,
+        search_scope,
+        query,
+        limit,
+    )
+}
+
+fn run_search_attached(
+    database_url: &str,
+    output_scope: ScopeIdentity,
+    search_scope: search::SearchScope,
+    query: String,
+    limit: usize,
+) -> Result<CommandOutcome, WikiError> {
+    let mut conn = gobby_core::postgres::connect_readonly(database_url).map_err(|error| {
+        WikiError::Config {
+            detail: format!("failed to connect to PostgreSQL for gwiki search: {error}"),
+        }
+    })?;
+    let (embedding, qdrant) = {
+        let mut source = PostgresConfigSource { conn: &mut conn };
+        (
+            resolve_embedding_config(&mut source),
+            resolve_qdrant_config(&mut source),
+        )
+    };
+    let mut bm25_backend = search::bm25::PostgresBm25Backend::new(&mut conn);
+    let mut semantic_backend = search::semantic::GobbySemanticBackend::new(
+        embedding,
+        qdrant,
+        search::semantic::OpenAiEmbeddingBackend,
+        search::semantic::GobbyQdrantBackend,
+    );
+    run_search_with_backends(
+        &mut bm25_backend,
+        &mut semantic_backend,
+        output_scope,
+        search_scope,
+        query,
+        limit,
+    )
+}
+
+fn run_search_with_backends<B, S>(
+    bm25_backend: &mut B,
+    semantic_backend: &mut S,
+    output_scope: ScopeIdentity,
+    search_scope: search::SearchScope,
+    query: String,
+    limit: usize,
+) -> Result<CommandOutcome, WikiError>
+where
+    B: search::bm25::Bm25SearchBackend,
+    S: search::semantic::SemanticSearchBackend,
+{
+    let response = search::search(
+        bm25_backend,
+        semantic_backend,
         search::SearchRequest {
             query: query.clone(),
             scope: search_scope,
@@ -764,6 +834,28 @@ impl search::semantic::SemanticSearchBackend for UnavailableSemanticBackend {
                 state: ServiceState::NotConfigured,
             }),
         })
+    }
+}
+
+struct PostgresConfigSource<'a> {
+    conn: &'a mut postgres::Client,
+}
+
+impl ConfigSource for PostgresConfigSource<'_> {
+    fn config_value(&mut self, key: &str) -> Option<String> {
+        gobby_core::postgres::read_config_value(self.conn, key)
+            .ok()
+            .flatten()
+            .and_then(|raw| gobby_core::config::decode_config_value(&raw))
+    }
+
+    fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
+        if value.contains("$secret:") {
+            anyhow::bail!("secret resolution is not available in gwiki search config");
+        }
+
+        gobby_core::config::resolve_env_pattern(value)?
+            .ok_or_else(|| anyhow::anyhow!("unresolved environment pattern in `{value}`"))
     }
 }
 
