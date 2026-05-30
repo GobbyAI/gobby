@@ -360,7 +360,23 @@ fn run_setup(selection: ScopeSelection) -> Result<CommandOutcome, WikiError> {
 }
 
 fn run_index(selection: ScopeSelection) -> Result<CommandOutcome, WikiError> {
-    let (scope, output_scope, _, store) = indexed_store_for_selection(&selection)?;
+    let scope = resolve_command_scope(&selection)?;
+    let output_scope = resolved_scope_identity(&scope);
+    let store = if let Some(database_url) = database_url_from_env() {
+        let mut conn = connect_gwiki_index(&database_url, "index")?;
+        let mut store = store::PostgresWikiStore::load(&mut conn, index_scope_for_resolved(&scope))
+            .map_err(postgres_index_error)?;
+        if scope.root().is_dir() {
+            indexer::index_vault(scope.root(), &mut store).map_err(index_error_to_wiki_error)?;
+        }
+        store.flush(&mut conn).map_err(postgres_index_error)?
+    } else {
+        let mut store = store::MemoryWikiStore::default();
+        if scope.root().is_dir() {
+            indexer::index_vault(scope.root(), &mut store).map_err(index_error_to_wiki_error)?;
+        }
+        store
+    };
     let counts = index_counts(&store);
     Ok(commands::index::run(output_scope, scope.root(), counts))
 }
@@ -369,8 +385,20 @@ fn run_ingest_file(path: PathBuf, selection: ScopeSelection) -> Result<CommandOu
     let scope = resolve_command_scope(&selection)?;
     vault::initialize(&scope)?;
     let output_scope = resolved_scope_identity(&scope);
-    let mut store = store::MemoryWikiStore::default();
-    let result = ingest::file::ingest_path(scope.root(), &mut store, &path, &collect_timestamp())?;
+    let (result, store) = if let Some(database_url) = database_url_from_env() {
+        let mut conn = connect_gwiki_index(&database_url, "ingest-file")?;
+        let mut store = store::PostgresWikiStore::load(&mut conn, index_scope_for_resolved(&scope))
+            .map_err(postgres_index_error)?;
+        let result =
+            ingest::file::ingest_path(scope.root(), &mut store, &path, &collect_timestamp())?;
+        let store = store.flush(&mut conn).map_err(postgres_index_error)?;
+        (result, store)
+    } else {
+        let mut store = store::MemoryWikiStore::default();
+        let result =
+            ingest::file::ingest_path(scope.root(), &mut store, &path, &collect_timestamp())?;
+        (result, store)
+    };
     let counts = index_counts(&store);
     Ok(commands::index::ingest_file(
         &path,
@@ -798,6 +826,16 @@ fn search_scope_for_resolved(scope: &scope::ResolvedScope) -> search::SearchScop
     search::SearchScope::project("current")
 }
 
+fn index_scope_for_resolved(scope: &scope::ResolvedScope) -> store::WikiIndexScope {
+    if let Some(topic) = scope.topic_name() {
+        return store::WikiIndexScope::topic(topic);
+    }
+    if let Some(project_id) = scope.project_id() {
+        return store::WikiIndexScope::project(project_id);
+    }
+    store::WikiIndexScope::project("current")
+}
+
 fn index_counts(store: &store::MemoryWikiStore) -> IndexCounts {
     IndexCounts {
         documents: store.documents.len(),
@@ -1079,6 +1117,12 @@ fn index_error_to_wiki_error(error: indexer::IndexError) -> WikiError {
     }
 }
 
+fn postgres_index_error(error: postgres::Error) -> WikiError {
+    WikiError::Config {
+        detail: format!("failed to write gwiki index to PostgreSQL: {error}"),
+    }
+}
+
 fn search_error_to_wiki_error(error: search::SearchError) -> WikiError {
     WikiError::InvalidInput {
         field: "query",
@@ -1098,6 +1142,15 @@ fn database_url_from_env() -> Option<String> {
             .ok()
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
+    })
+}
+
+fn connect_gwiki_index(
+    database_url: &str,
+    command: &'static str,
+) -> Result<postgres::Client, WikiError> {
+    gobby_core::postgres::connect_readwrite(database_url).map_err(|error| WikiError::Config {
+        detail: format!("failed to connect to PostgreSQL for gwiki {command}: {error}"),
     })
 }
 
