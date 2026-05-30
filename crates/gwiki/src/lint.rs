@@ -357,18 +357,20 @@ fn is_orphan_exempt(path: &Path) -> bool {
 }
 
 fn duplicate_aliases(pages: &[WikiPage]) -> Vec<DuplicateAlias> {
-    let mut aliases: BTreeMap<String, Vec<PathBuf>> = BTreeMap::new();
+    let mut aliases: BTreeMap<String, (String, Vec<PathBuf>)> = BTreeMap::new();
     for page in pages {
         for alias in &page.parsed.frontmatter.aliases {
+            let display_alias = alias.trim().to_string();
             aliases
-                .entry(alias.trim().to_ascii_lowercase())
-                .or_default()
+                .entry(display_alias.to_ascii_lowercase())
+                .or_insert_with(|| (display_alias, Vec::new()))
+                .1
                 .push(page.relative_path.clone());
         }
     }
     aliases
         .into_iter()
-        .filter_map(|(alias, mut paths)| {
+        .filter_map(|(_, (alias, mut paths))| {
             paths.sort();
             (paths.len() > 1).then_some(DuplicateAlias { alias, paths })
         })

@@ -1,5 +1,7 @@
 use std::path::Path;
 
+use serde::Serialize;
+
 use crate::WikiError;
 use crate::scope::ResolvedScope;
 
@@ -41,15 +43,27 @@ pub fn initialize(scope: &ResolvedScope) -> Result<(), WikiError> {
     ensure_file(root.join("raw/INDEX.md").as_path(), "# Raw Sources\n\n")?;
     ensure_file(root.join("_index.md").as_path(), "# Wiki Index\n\n")?;
     ensure_file(root.join("log.md").as_path(), "# Log\n\n")?;
+    let identity = scope.identity();
+    let root_path = root.display().to_string();
+    let scope_json = serde_json::to_string_pretty(&ScopeFile {
+        identity: &identity,
+        root: &root_path,
+    })
+    .map_err(|error| WikiError::Json {
+        action: "serialize scope file",
+        path: Some(root.join(".gwiki/scope.json")),
+        source: error.to_string(),
+    })?;
     ensure_file(
         root.join(".gwiki/scope.json").as_path(),
-        format!(
-            "{{\n  \"identity\": \"{}\",\n  \"root\": \"{}\"\n}}\n",
-            scope.identity(),
-            root.display()
-        )
-        .as_str(),
+        format!("{scope_json}\n").as_str(),
     )
+}
+
+#[derive(Serialize)]
+struct ScopeFile<'a> {
+    identity: &'a str,
+    root: &'a str,
 }
 
 fn create_dir(path: &Path) -> Result<(), WikiError> {

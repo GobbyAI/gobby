@@ -186,8 +186,18 @@ where
     }
 }
 
-#[derive(Debug, Default, Clone, Copy)]
-pub struct OpenAiEmbeddingBackend;
+#[derive(Debug, Clone)]
+pub struct OpenAiEmbeddingBackend {
+    client: reqwest::blocking::Client,
+}
+
+impl Default for OpenAiEmbeddingBackend {
+    fn default() -> Self {
+        Self {
+            client: reqwest::blocking::Client::new(),
+        }
+    }
+}
 
 impl QueryEmbedder for OpenAiEmbeddingBackend {
     fn embed_query(
@@ -196,8 +206,7 @@ impl QueryEmbedder for OpenAiEmbeddingBackend {
         query: &str,
     ) -> Result<Vec<f32>, SearchError> {
         let url = format!("{}/embeddings", config.api_base.trim_end_matches('/'));
-        let client = reqwest::blocking::Client::new();
-        let mut request = client.post(url).json(&json!({
+        let mut request = self.client.post(url).json(&json!({
             "model": config.model,
             "input": query,
         }));

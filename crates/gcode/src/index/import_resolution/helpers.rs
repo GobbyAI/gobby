@@ -109,8 +109,17 @@ pub(super) fn split_top_level(text: &str, delimiter: char) -> Vec<&str> {
     let mut bracket_depth = 0usize;
     let mut in_single = false;
     let mut in_double = false;
+    let mut escaped = false;
 
     for (idx, ch) in text.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if (in_single || in_double) && ch == '\\' {
+            escaped = true;
+            continue;
+        }
         match ch {
             '\'' if !in_double => in_single = !in_single,
             '"' if !in_single => in_double = !in_double,

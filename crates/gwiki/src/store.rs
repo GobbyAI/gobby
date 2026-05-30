@@ -349,11 +349,13 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
     fn replace_chunks(&mut self, path: &Path, chunks: Vec<WikiChunk>) -> Result<(), StoreError> {
         let document = self.document_meta(path)?;
         let path_string = display_path(path);
-        self.conn.execute(
+        let scope = self.scope.clone();
+        let mut tx = self.conn.transaction()?;
+        tx.execute(
             "DELETE FROM gwiki_chunks WHERE scope_kind = $1 AND scope_id = $2 AND path = $3",
             &[
-                &self.scope.scope_kind.as_str(),
-                &self.scope.scope_id.as_str(),
+                &scope.scope_kind.as_str(),
+                &scope.scope_id.as_str(),
                 &path_string,
             ],
         )?;
@@ -367,7 +369,7 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
             let chunk_path = display_path(&chunk.path);
             let id = scoped_id(
                 "chunk",
-                &self.scope,
+                &scope,
                 &chunk.path,
                 Some(&chunk.chunk_index.to_string()),
             );
@@ -384,9 +386,14 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
             })
             .to_string();
             let frontmatter = "{}";
-            let (scope_kind, scope_id, project_id, topic_name) = self.scope_params();
+            let (scope_kind, scope_id, project_id, topic_name) = (
+                scope.scope_kind.clone(),
+                scope.scope_id.clone(),
+                scope.project_id.clone(),
+                scope.topic_name.clone(),
+            );
 
-            self.conn.execute(
+            tx.execute(
                 "INSERT INTO gwiki_chunks (
                     id, document_id, scope_kind, scope_id, project_id, topic_name, path,
                     chunk_index, source_kind, content_hash, frontmatter, provenance,
@@ -416,16 +423,19 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
             )?;
         }
 
+        tx.commit()?;
         Ok(())
     }
 
     fn replace_links(&mut self, path: &Path, links: Vec<WikiLink>) -> Result<(), StoreError> {
         let path_string = display_path(path);
-        self.conn.execute(
+        let scope = self.scope.clone();
+        let mut tx = self.conn.transaction()?;
+        tx.execute(
             "DELETE FROM gwiki_links WHERE scope_kind = $1 AND scope_id = $2 AND path = $3",
             &[
-                &self.scope.scope_kind.as_str(),
-                &self.scope.scope_id.as_str(),
+                &scope.scope_kind.as_str(),
+                &scope.scope_id.as_str(),
                 &path_string,
             ],
         )?;
@@ -436,7 +446,7 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
             let link_kind = link_kind(&link.target);
             let id = scoped_text_id(
                 "link",
-                &self.scope,
+                &scope,
                 &link.path,
                 &[&target_path, &link_text, link_kind],
             );
@@ -447,9 +457,14 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
                 "alias": link.alias,
             })
             .to_string();
-            let (scope_kind, scope_id, project_id, topic_name) = self.scope_params();
+            let (scope_kind, scope_id, project_id, topic_name) = (
+                scope.scope_kind.clone(),
+                scope.scope_id.clone(),
+                scope.project_id.clone(),
+                scope.topic_name.clone(),
+            );
 
-            self.conn.execute(
+            tx.execute(
                 "INSERT INTO gwiki_links (
                     id, scope_kind, scope_id, project_id, topic_name, path,
                     target_path, link_text, link_kind, provenance, created_at
@@ -476,6 +491,7 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
             )?;
         }
 
+        tx.commit()?;
         Ok(())
     }
 
@@ -579,32 +595,35 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
         _path: PathBuf,
         _content_hash: String,
     ) -> Result<(), StoreError> {
+        // PostgreSQL stores file hashes on gwiki_documents via upsert_document.
         Ok(())
     }
 
     fn delete_derived_rows(&mut self, path: &Path) -> Result<(), StoreError> {
         let path = display_path(path);
+        let mut tx = self.conn.transaction()?;
         let params: [&(dyn postgres::types::ToSql + Sync); 3] = [
             &self.scope.scope_kind.as_str(),
             &self.scope.scope_id.as_str(),
             &path,
         ];
-        self.conn.execute(
+        tx.execute(
             "DELETE FROM gwiki_chunks WHERE scope_kind = $1 AND scope_id = $2 AND path = $3",
             &params,
         )?;
-        self.conn.execute(
+        tx.execute(
             "DELETE FROM gwiki_links WHERE scope_kind = $1 AND scope_id = $2 AND path = $3",
             &params,
         )?;
-        self.conn.execute(
+        tx.execute(
             "DELETE FROM gwiki_sources WHERE scope_kind = $1 AND scope_id = $2 AND path = $3",
             &params,
         )?;
-        self.conn.execute(
+        tx.execute(
             "DELETE FROM gwiki_documents WHERE scope_kind = $1 AND scope_id = $2 AND path = $3",
             &params,
         )?;
+        tx.commit()?;
         self.documents.remove(Path::new(&path));
         Ok(())
     }

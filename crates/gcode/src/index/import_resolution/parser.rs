@@ -32,6 +32,7 @@ pub(crate) fn parse_import_statement(
         "java" => parse_java_import_statement(text, rel_path, import_context, extracted),
         "csharp" => parse_csharp_import_statement(text, rel_path, import_context, extracted),
         "php" => parse_php_import_statement(text, rel_path, import_context, extracted),
+        "kotlin" => parse_kotlin_import_statement(text, rel_path, import_context, extracted),
         "swift" => parse_swift_import_statement(text, rel_path, extracted),
         "ruby" => parse_ruby_import_statement(text, rel_path, import_context, extracted),
         "dart" => parse_dart_import_statement(text, rel_path, import_context, extracted),
@@ -649,7 +650,10 @@ fn parse_php_import_statement(
         (PhpImportKind::ClassLike, rest.trim())
     };
 
-    if rest.contains('*') {
+    if split_top_level(rest, ',')
+        .into_iter()
+        .any(|item| item.trim() == "*")
+    {
         extracted.imports.push(ImportRelation {
             file_path: rel_path.to_string(),
             module_name: rest.to_string(),
@@ -684,6 +688,48 @@ enum PhpImportKind {
     ClassLike,
     Function,
     Const,
+}
+
+fn parse_kotlin_import_statement(
+    text: &str,
+    rel_path: &str,
+    import_context: &ImportResolutionContext,
+    extracted: &mut ExtractedImports,
+) {
+    let normalized = text.trim();
+    let Some(rest) = normalized.strip_prefix("import ") else {
+        extracted.imports.push(ImportRelation {
+            file_path: rel_path.to_string(),
+            module_name: normalized.to_string(),
+        });
+        return;
+    };
+
+    let target = rest
+        .split_once(" as ")
+        .map(|(target, _)| target.trim())
+        .unwrap_or_else(|| rest.trim())
+        .trim_end_matches(';')
+        .trim();
+
+    extracted.imports.push(ImportRelation {
+        file_path: rel_path.to_string(),
+        module_name: target.to_string(),
+    });
+
+    if target.ends_with(".*") || !is_external_java_class(target, import_context) {
+        return;
+    }
+
+    let class_alias = rest
+        .split_once(" as ")
+        .map(|(_, alias)| alias.trim())
+        .filter(|alias| !alias.is_empty())
+        .unwrap_or_else(|| target.rsplit('.').next().unwrap_or(target));
+    extracted
+        .bindings
+        .member
+        .insert(class_alias.to_string(), target.to_string());
 }
 
 fn register_php_import_item(

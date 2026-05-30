@@ -90,3 +90,4 @@ tempfile = "3"
 
 [dev-dependencies]
 serial_test = "3"
+temp-env = "0.3"

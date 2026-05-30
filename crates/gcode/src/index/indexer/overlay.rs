@@ -293,7 +293,12 @@ fn git_status_relative_paths(root_path: &Path) -> anyhow::Result<HashSet<String>
         if entry.len() < 4 || entry[2] != b' ' {
             continue;
         }
-        let path = String::from_utf8_lossy(&entry[3..]).replace('\\', "/");
+        let path = String::from_utf8_lossy(&entry[3..]);
+        let path = if cfg!(windows) {
+            path.replace('\\', "/")
+        } else {
+            path.into_owned()
+        };
         if !path.is_empty() {
             paths.insert(path);
         }
@@ -307,6 +312,9 @@ fn rel_matches_filter(root_path: &Path, path_filter: &Path, rel: &str) -> bool {
     } else {
         root_path.join(path_filter)
     };
+    // Deleted and newly-created overlay files may not canonicalize; compare the
+    // lexical absolute fallback so path filters still work before filesystem
+    // state and indexed state converge.
     let filter_abs = filter_abs.canonicalize().unwrap_or(filter_abs);
     let abs = root_path.join(rel);
     let abs = abs.canonicalize().unwrap_or(abs);

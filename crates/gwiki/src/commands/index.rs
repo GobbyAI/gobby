@@ -7,8 +7,8 @@ use crate::ingest::{self, IngestResult};
 use crate::support::counts::{IndexCounts, index_counts, postgres_index_counts};
 use crate::support::env::database_url_from_env;
 use crate::support::scope::{
-    indexed_store_for_selection, resolve_command_scope, resolved_scope_identity,
-    search_scope_for_resolved, store_scope_for_search,
+    resolve_command_scope, resolved_scope_identity, search_scope_for_resolved,
+    store_scope_for_search,
 };
 use crate::support::time::collect_timestamp;
 use crate::{CommandOutcome, ScopeIdentity, ScopeSelection, WikiError, indexer, store, vault};
@@ -32,7 +32,10 @@ pub(crate) fn execute(selection: ScopeSelection) -> Result<CommandOutcome, WikiE
         return Ok(render_index(output_scope, scope.root(), counts));
     }
 
-    let (scope, output_scope, _, store) = indexed_store_for_selection(&selection)?;
+    let mut store = store::MemoryWikiStore::default();
+    if scope.root().is_dir() {
+        indexer::index_vault(scope.root(), &mut store).map_err(index_error_to_wiki_error)?;
+    }
     let counts = index_counts(&store);
     Ok(render_index(output_scope, scope.root(), counts))
 }

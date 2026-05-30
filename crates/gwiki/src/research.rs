@@ -3,6 +3,8 @@ use std::io::Write;
 use std::path::Path;
 use std::time::Duration;
 
+use serde::Serialize;
+
 use crate::events::{EventMonitor, SessionEvent};
 use crate::scope::{self, ScopeKind};
 use crate::session::{AcceptedResearchNote, DaemonDispatch, ResearchScope, ResearchSession};
@@ -137,20 +139,39 @@ impl ResearchDispatcher for GobbyDaemonResearchDispatcher {
                 .timeout(Duration::from_secs(30))
                 .set("Content-Type", "application/json")
                 .send_string(&payload.to_string())
-                .map_err(|error| daemon_error(endpoint, error))?;
-            let response: AgentSpawnResponse =
-                serde_json::from_str(&response.into_string().map_err(|error| WikiError::Io {
-                    action: "read daemon agent dispatch response",
-                    path: None,
-                    source: error.to_string(),
-                })?)
-                .map_err(|error| WikiError::Json {
-                    action: "parse daemon agent dispatch response",
-                    path: None,
-                    source: error.to_string(),
-                })?;
+                .map_err(|error| daemon_error(endpoint, error));
+            let response = match response {
+                Ok(response) => response,
+                Err(error) => {
+                    stop_spawned_agents(&self.base_url, &agent_run_ids);
+                    return Err(error);
+                }
+            };
+            let response_body = match response.into_string() {
+                Ok(body) => body,
+                Err(error) => {
+                    stop_spawned_agents(&self.base_url, &agent_run_ids);
+                    return Err(WikiError::Io {
+                        action: "read daemon agent dispatch response",
+                        path: None,
+                        source: error.to_string(),
+                    });
+                }
+            };
+            let response: AgentSpawnResponse = match serde_json::from_str(&response_body) {
+                Ok(response) => response,
+                Err(error) => {
+                    stop_spawned_agents(&self.base_url, &agent_run_ids);
+                    return Err(WikiError::Json {
+                        action: "parse daemon agent dispatch response",
+                        path: None,
+                        source: error.to_string(),
+                    });
+                }
+            };
 
             if response.success == Some(false) {
+                stop_spawned_agents(&self.base_url, &agent_run_ids);
                 return Err(WikiError::Daemon {
                     endpoint,
                     message: response
@@ -159,14 +180,22 @@ impl ResearchDispatcher for GobbyDaemonResearchDispatcher {
                 });
             }
 
-            let run_id = response
+            let run_id = match response
                 .run_id
-                .or(response.child_session_id)
-                .or(response.conversation_id)
-                .ok_or_else(|| WikiError::Daemon {
-                    endpoint,
-                    message: "daemon dispatch response did not include a run id".to_string(),
-                })?;
+                .clone()
+                .or_else(|| response.child_session_id.clone())
+                .or_else(|| response.conversation_id.clone())
+            {
+                Some(run_id) => run_id,
+                None => {
+                    stop_spawned_agents(&self.base_url, &agent_run_ids);
+                    return Err(WikiError::Daemon {
+                        endpoint,
+                        message: "daemon dispatch response did not include a run id".to_string(),
+                    });
+                }
+            };
+
             dispatch_id.get_or_insert_with(|| {
                 response
                     .dispatch_id
@@ -181,6 +210,18 @@ impl ResearchDispatcher for GobbyDaemonResearchDispatcher {
             daemon_base_url: self.base_url.clone(),
             agent_run_ids,
         })
+    }
+}
+
+fn stop_spawned_agents(base_url: &str, run_ids: &[String]) {
+    let endpoint = "/api/mcp/gobby-agents/tools/stop_agent";
+    let url = format!("{}{}", base_url.trim_end_matches('/'), endpoint);
+    for run_id in run_ids {
+        let payload = serde_json::json!({ "run_id": run_id });
+        let _ = ureq::post(&url)
+            .timeout(Duration::from_secs(10))
+            .set("Content-Type", "application/json")
+            .send_string(&payload.to_string());
     }
 }
 
@@ -209,6 +250,15 @@ struct AgentSpawnResponse {
     child_session_id: Option<String>,
     conversation_id: Option<String>,
     error: Option<String>,
+}
+
+#[derive(Serialize)]
+struct AcceptedNoteFrontmatter<'a> {
+    title: &'a str,
+    research_session: &'a str,
+    indexable: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source: Option<&'a str>,
 }
 
 fn worker_prompt(session: &ResearchSession, worker_number: usize) -> String {
@@ -252,20 +302,20 @@ fn write_accepted_note(
 
     let file_name = format!("{}.md", slugify(&note.title));
     let path = research_dir.join(file_name);
+    let frontmatter = serde_yaml::to_string(&AcceptedNoteFrontmatter {
+        title: &note.title,
+        research_session: session_id,
+        indexable: true,
+        source: note.source.as_deref(),
+    })
+    .map_err(|error| WikiError::Json {
+        action: "serialize accepted research note frontmatter",
+        path: Some(path.clone()),
+        source: error.to_string(),
+    })?;
     let mut body = String::new();
     body.push_str("---\n");
-    body.push_str("title: ");
-    body.push_str(&note.title);
-    body.push('\n');
-    body.push_str("research_session: ");
-    body.push_str(session_id);
-    body.push('\n');
-    body.push_str("indexable: true\n");
-    if let Some(source) = &note.source {
-        body.push_str("source: ");
-        body.push_str(source);
-        body.push('\n');
-    }
+    body.push_str(&frontmatter);
     body.push_str("---\n\n");
     body.push_str(note.body.trim());
     body.push('\n');

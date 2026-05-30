@@ -135,11 +135,7 @@ fn normalize_markdown_text(text: &str) -> String {
 }
 
 fn decode_html_entities(text: &str) -> String {
-    text.replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&#39;", "'")
+    html_escape::decode_html_entities(text).into_owned()
 }
 
 #[cfg(test)]

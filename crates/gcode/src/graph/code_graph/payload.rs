@@ -1,3 +1,8 @@
+use serde::{Deserialize, Serialize};
+
+use crate::models::{ProjectionMetadata, ProjectionProvenance};
+use gobby_core::falkor::Row;
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct GraphPayload {
     pub nodes: Vec<GraphNode>,
@@ -245,7 +250,3 @@ pub(super) fn add_prefixed_node_from_row(
         payload.push_node(node);
     }
 }
-use serde::{Deserialize, Serialize};
-
-use crate::models::{ProjectionMetadata, ProjectionProvenance};
-use gobby_core::falkor::Row;

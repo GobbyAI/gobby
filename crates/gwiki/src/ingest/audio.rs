@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use crate::ingest::{
-    IngestResult, index_after_ingest, markdown_metadata, markdown_title, write_asset,
-    write_raw_markdown,
+    IngestResult, index_after_ingest, markdown_metadata, markdown_title, path_to_string,
+    write_asset, write_raw_markdown,
 };
 use crate::sources::{CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest};
 use crate::store::WikiIndexStore;
@@ -135,10 +135,6 @@ fn render_raw_audio_markdown(
     markdown.push_str(&asset_path);
     markdown.push_str("`.\n");
     markdown
-}
-
-fn path_to_string(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
 }
 
 #[cfg(test)]

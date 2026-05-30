@@ -188,10 +188,17 @@ impl SourceManifest {
     }
 
     pub fn register(vault_root: &Path, draft: SourceDraft) -> Result<SourceRecord, WikiError> {
+        let content_hash = gobby_core::indexing::content_hash(&draft.content);
+        Self::register_with_content_hash(vault_root, draft, content_hash)
+    }
+
+    pub fn register_with_content_hash(
+        vault_root: &Path,
+        draft: SourceDraft,
+        content_hash: String,
+    ) -> Result<SourceRecord, WikiError> {
         let mut manifest = Self::read(vault_root)?;
         let canonical_location = canonicalize_location(&draft.location);
-        let content_hash = gobby_core::indexing::content_hash(&draft.content);
-
         if let Some(existing) = manifest.entries.iter().find(|entry| {
             entry.canonical_location == canonical_location && entry.content_hash == content_hash
         }) {

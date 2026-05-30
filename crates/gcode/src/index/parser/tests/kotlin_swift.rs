@@ -1,5 +1,6 @@
 use super::common::{parse_kotlin, parse_swift};
 
+#[test]
 fn extracts_kotlin_symbols_imports_and_calls_without_external_classification() {
     let parsed = parse_kotlin(
         r#"
@@ -33,7 +34,7 @@ class Runner {
         parsed
             .imports
             .iter()
-            .any(|import| import.module_name == "import kotlinx.coroutines.runBlocking")
+            .any(|import| import.module_name == "kotlinx.coroutines.runBlocking")
     );
     assert!(
         parsed
@@ -44,6 +45,7 @@ class Runner {
     );
 }
 
+#[test]
 fn classifies_external_swift_module_qualified_calls() {
     let parsed = parse_swift(
         r#"

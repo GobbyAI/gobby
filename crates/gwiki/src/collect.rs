@@ -296,13 +296,15 @@ fn render_file_markdown(
             }
         }
         _ => {
-            markdown.push_str("Original artifact stored under `");
             if let Some(asset_path) = asset_path {
+                markdown.push_str("Original artifact stored under `");
                 markdown.push_str(&path_to_string(asset_path));
+                markdown.push_str("`.\n");
             } else {
-                markdown.push_str("raw/assets/");
+                markdown.push_str(
+                    "Original artifact was recorded in the source manifest; no raw asset was written.\n",
+                );
             }
-            markdown.push_str("`.\n");
         }
     }
 

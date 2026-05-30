@@ -44,7 +44,7 @@ fn print_graph_payload(payload: &GraphPayload, format: Format) -> anyhow::Result
 }
 
 pub(super) fn format_report_text(report: &ProjectGraphReport) -> anyhow::Result<String> {
-    Ok(serde_json::to_string_pretty(report)?)
+    Ok(report.markdown.clone())
 }
 
 pub fn report(ctx: &Context, top_n: usize, format: Format) -> anyhow::Result<()> {

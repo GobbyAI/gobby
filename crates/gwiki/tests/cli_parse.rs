@@ -43,7 +43,7 @@ fn core_commands_parse_scope_flags() {
         vec!["lint", "--topic", "rust"],
         vec!["health", "--topic", "rust"],
         vec!["status", "--topic", "rust"],
-        vec!["search", "--project", "ownership"],
+        vec!["--project", "search", "ownership"],
     ];
 
     for args in cases {

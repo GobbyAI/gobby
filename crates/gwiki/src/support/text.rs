@@ -26,11 +26,11 @@ pub(crate) fn snippet_from_text(text: &str) -> String {
         .find(|line| !line.trim().is_empty())
         .unwrap_or_default()
         .trim();
-    if snippet.len() <= 240 {
+    if snippet.chars().count() <= 240 {
         return snippet.to_string();
     }
 
-    format!("{}...", &snippet[..240])
+    format!("{}...", snippet.chars().take(240).collect::<String>())
 }
 
 pub(crate) fn degradation_label(degradation: &DegradationKind) -> String {

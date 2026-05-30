@@ -164,9 +164,7 @@ pub fn project_path_is_visible(
                 && project_file_is_visible(conn, &ctx.project_id, file_path)
         }
         ProjectIndexScope::Overlay {
-            overlay_project_id,
-            parent_project_id,
-            ..
+            overlay_project_id, ..
         } if project_id == overlay_project_id => {
             project_file_is_visible(conn, overlay_project_id, file_path)
         }

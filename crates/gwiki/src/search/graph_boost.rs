@@ -20,12 +20,14 @@ pub fn graph_boost_hits(
 
 fn graph_result(scope: &SearchScope, path: PathBuf, score: f64) -> WikiSearchResult {
     let id = format!("document:{}", path.to_string_lossy().replace('\\', "/"));
+    let document_path = path.clone();
+    let source_path = path.clone();
     WikiSearchResult {
         id,
         title: None,
         scope: scope.clone(),
-        path: path.clone(),
-        source_path: path.clone(),
+        path,
+        source_path: source_path.clone(),
         hit_kind: SearchHitKind::Document,
         snippet: String::new(),
         score,
@@ -33,8 +35,8 @@ fn graph_result(scope: &SearchScope, path: PathBuf, score: f64) -> WikiSearchRes
         explanations: Vec::new(),
         chunk: None,
         provenance: SearchProvenance {
-            document_path: path.clone(),
-            source_path: path,
+            document_path,
+            source_path,
             source_kind: "graph".to_string(),
             content_hash: None,
         },

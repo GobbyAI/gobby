@@ -1,5 +1,6 @@
 use super::common::{parse_csharp, parse_go, parse_java, parse_rust};
 
+#[test]
 fn classifies_external_go_import_alias_selector_calls() {
     let parsed = parse_go(
         r#"

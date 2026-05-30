@@ -1,7 +1,8 @@
 use super::contracts::DEFAULT_SCHEMA;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StandaloneSetupRequest {
     pub standalone: bool,
     pub database_url: Option<String>,
@@ -17,6 +18,30 @@ pub struct StandaloneSetupRequest {
     pub falkordb_port: Option<u16>,
     pub falkordb_password: Option<String>,
     pub qdrant_url: Option<String>,
+}
+
+impl fmt::Debug for StandaloneSetupRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("StandaloneSetupRequest")
+            .field("standalone", &self.standalone)
+            .field("database_url", &self.database_url)
+            .field("no_services", &self.no_services)
+            .field("overwrite_code_index", &self.overwrite_code_index)
+            .field("schema", &self.schema)
+            .field("embedding_provider", &self.embedding_provider)
+            .field("embedding_api_base", &self.embedding_api_base)
+            .field("embedding_model", &self.embedding_model)
+            .field("embedding_vector_dim", &self.embedding_vector_dim)
+            .field("embedding_api_key_env", &self.embedding_api_key_env)
+            .field("falkordb_host", &self.falkordb_host)
+            .field("falkordb_port", &self.falkordb_port)
+            .field(
+                "falkordb_password",
+                &self.falkordb_password.as_ref().map(|_| "<redacted>"),
+            )
+            .field("qdrant_url", &self.qdrant_url)
+            .finish()
+    }
 }
 
 impl StandaloneSetupRequest {

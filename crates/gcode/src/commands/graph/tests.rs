@@ -37,21 +37,14 @@ fn graph_reads_degrade_when_falkor_missing() {
 }
 
 #[test]
-fn report_text_structured_output() {
+fn report_text_uses_markdown_output() {
     let report = crate::graph::report::empty_report("project-123");
 
     let text = format_report_text(&report).expect("format report text");
-    let value: serde_json::Value = serde_json::from_str(&text).expect("structured JSON text");
 
-    assert_eq!(value["project_id"], "project-123");
-    assert_eq!(value["summary"]["node_count"], 0);
-    assert!(
-        value["markdown"]
-            .as_str()
-            .expect("markdown field")
-            .contains("# Project Graph Report")
-    );
-    assert!(!text.trim_start().starts_with('#'));
+    assert!(text.contains("# Project Graph Report"));
+    assert!(text.contains("Project: `project-123`"));
+    assert!(text.trim_start().starts_with('#'));
 }
 
 #[test]

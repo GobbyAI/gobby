@@ -1,5 +1,6 @@
 use super::common::{parse_dart, parse_elixir, parse_php, parse_ruby};
 
+#[test]
 fn classifies_external_php_namespace_and_fully_qualified_calls() {
     let parsed = parse_php(
         r#"

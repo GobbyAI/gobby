@@ -27,7 +27,7 @@ impl EventMonitor {
         }
     }
 
-    pub fn append_event(&self, _event: &SessionEvent) -> Result<(), WikiError> {
+    pub fn append_event(&self, event: &SessionEvent) -> Result<(), WikiError> {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent).map_err(|error| WikiError::Io {
                 action: "create session event directory",
@@ -36,7 +36,7 @@ impl EventMonitor {
             })?;
         }
 
-        let line = serde_json::to_string(_event).map_err(|error| WikiError::Json {
+        let line = serde_json::to_string(event).map_err(|error| WikiError::Json {
             action: "serialize session event",
             path: Some(self.path.clone()),
             source: error.to_string(),

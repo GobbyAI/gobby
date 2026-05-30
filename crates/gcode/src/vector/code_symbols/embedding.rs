@@ -72,7 +72,13 @@ pub fn embed_text(config: &EmbeddingConfig, text: &str) -> Result<Vec<f32>, Vect
 }
 
 pub fn embed_query(config: &EmbeddingConfig, text: &str) -> Option<Vec<f32>> {
-    embed_text(config, &format!("search_query: {text}")).ok()
+    match embed_text(config, &format!("search_query: {text}")) {
+        Ok(embedding) => Some(embedding),
+        Err(error) => {
+            eprintln!("gcode: query embedding failed: {error}");
+            None
+        }
+    }
 }
 
 pub fn vector_text_for_symbol(symbol: &Symbol) -> String {

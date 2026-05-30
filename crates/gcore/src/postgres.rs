@@ -76,18 +76,18 @@ fn connect(database_url: &str) -> anyhow::Result<Client> {
         SslMode::Disable => config
             .connect(NoTls)
             .context("failed to connect to the Gobby PostgreSQL hub"),
-        SslMode::Prefer | SslMode::Require => {
-            let connector = native_tls::TlsConnector::builder()
-                .build()
-                .context("failed to build PostgreSQL TLS connector")?;
-            config
-                .connect(MakeTlsConnector::new(connector))
-                .context("failed to connect to the Gobby PostgreSQL hub")
-        }
-        _ => config
-            .connect(NoTls)
-            .context("failed to connect to the Gobby PostgreSQL hub"),
+        SslMode::Prefer | SslMode::Require => connect_with_tls(&config),
+        _ => connect_with_tls(&config),
     }
+}
+
+fn connect_with_tls(config: &postgres::Config) -> anyhow::Result<Client> {
+    let connector = native_tls::TlsConnector::builder()
+        .build()
+        .context("failed to build PostgreSQL TLS connector")?;
+    config
+        .connect(MakeTlsConnector::new(connector))
+        .context("failed to connect to the Gobby PostgreSQL hub")
 }
 
 fn run_schema_validator<C>(

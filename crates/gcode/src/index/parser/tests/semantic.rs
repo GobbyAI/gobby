@@ -50,6 +50,7 @@ impl SemanticCallResolver for FakeSemanticResolver {
     }
 }
 
+#[test]
 fn semantic_resolver_can_classify_cpp_calls_as_external() {
     let tempdir = TempDir::new().expect("create tempdir");
     let root = tempdir.path();

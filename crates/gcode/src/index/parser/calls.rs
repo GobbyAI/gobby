@@ -870,8 +870,38 @@ fn local_binding_line_defines(line: &str, name: &str) -> bool {
 }
 
 fn split_assignment(line: &str) -> Option<(&str, &str)> {
-    for (idx, ch) in line.char_indices() {
-        if ch != '=' {
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut escaped = false;
+    let mut chars = line.char_indices().peekable();
+
+    while let Some((idx, ch)) = chars.next() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if (in_single || in_double) && ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if !in_single && !in_double && ch == '/' && chars.peek().is_some_and(|(_, ch)| *ch == '/') {
+            break;
+        }
+        if !in_single && !in_double && ch == '#' {
+            break;
+        }
+        match ch {
+            '\'' if !in_double => {
+                in_single = !in_single;
+                continue;
+            }
+            '"' if !in_single => {
+                in_double = !in_double;
+                continue;
+            }
+            _ => {}
+        }
+        if in_single || in_double || ch != '=' {
             continue;
         }
         let previous = line[..idx].chars().next_back();

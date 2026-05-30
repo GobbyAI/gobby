@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -66,11 +67,46 @@ pub fn register_scope(path: &Path, scope: &ResolvedScope) -> Result<(), WikiErro
         serde_json::to_string_pretty(&registry).map_err(|error| WikiError::Registry {
             detail: format!("failed to serialize {}: {error}", path.display()),
         })?;
-    std::fs::write(path, format!("{contents}\n")).map_err(|error| WikiError::Io {
-        action: "write registry",
+    write_registry_atomically(path, format!("{contents}\n").as_bytes())
+}
+
+fn write_registry_atomically(path: &Path, contents: &[u8]) -> Result<(), WikiError> {
+    let temp_path = temp_registry_path(path);
+    let mut file = std::fs::File::create(&temp_path).map_err(|error| WikiError::Io {
+        action: "create registry temp file",
+        path: Some(temp_path.clone()),
+        source: error.to_string(),
+    })?;
+    file.write_all(contents).map_err(|error| WikiError::Io {
+        action: "write registry temp file",
+        path: Some(temp_path.clone()),
+        source: error.to_string(),
+    })?;
+    file.sync_all().map_err(|error| WikiError::Io {
+        action: "sync registry temp file",
+        path: Some(temp_path.clone()),
+        source: error.to_string(),
+    })?;
+    drop(file);
+    std::fs::rename(&temp_path, path).map_err(|error| WikiError::Io {
+        action: "replace registry",
         path: Some(path.to_path_buf()),
         source: error.to_string(),
-    })
+    })?;
+    if let Some(parent) = path.parent()
+        && let Ok(directory) = std::fs::File::open(parent)
+    {
+        let _ = directory.sync_all();
+    }
+    Ok(())
+}
+
+fn temp_registry_path(path: &Path) -> PathBuf {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("wikis.json");
+    path.with_file_name(format!(".{file_name}.tmp"))
 }
 
 fn read_registry(path: &Path) -> Result<Registry, WikiError> {

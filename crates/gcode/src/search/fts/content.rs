@@ -1,13 +1,12 @@
-use std::collections::HashSet;
-
 use postgres::Client;
+use postgres::Row;
 
-use crate::config::Context;
+use crate::config::{Context, ProjectIndexScope};
 use crate::models::ContentSearchHit;
-use crate::visibility;
+use crate::visibility::TOMBSTONE_LANGUAGE;
 
 use super::common::{
-    escape_like, param_refs, push_param, push_path_filter, sanitize_pg_search_query,
+    PgParam, escape_like, param_refs, push_param, push_path_filter, sanitize_pg_search_query,
 };
 
 /// Full-text search across file content chunks.
@@ -56,24 +55,13 @@ pub fn search_content(
         conditions.join(" AND ")
     );
 
-    let hits: Vec<ContentSearchHit> = conn
-        .query(&sql, &refs)
-        .ok()
-        .map(|rows| {
-            rows.iter()
-                .filter_map(|row| {
-                    let content: String = row.try_get("content").ok()?;
-                    Some(ContentSearchHit {
-                        file_path: row.try_get("file_path").ok()?,
-                        line_start: row.try_get::<_, i64>("line_start").ok()? as usize,
-                        line_end: row.try_get::<_, i64>("line_end").ok()? as usize,
-                        snippet: make_snippet(&content, query),
-                        language: row.try_get("language").ok()?,
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+    let hits = match conn.query(&sql, &refs) {
+        Ok(rows) => content_hits_from_rows(&rows, query),
+        Err(error) => {
+            eprintln!("gcode: content BM25 search failed; falling back to LIKE: {error}");
+            Vec::new()
+        }
+    };
 
     if !hits.is_empty() {
         return hits;
@@ -90,23 +78,55 @@ pub fn search_content_visible(
     paths: &[String],
     limit: usize,
 ) -> Vec<ContentSearchHit> {
-    let mut results = Vec::new();
-    let mut seen = HashSet::new();
-    for project_id in visibility::visible_project_ids(ctx) {
-        let hits = search_content(conn, query, &project_id, language, paths, limit);
-        for hit in hits {
-            let key = format!("{}:{}:{}", project_id, hit.file_path, hit.line_start);
-            if seen.insert(key)
-                && visibility::project_path_is_visible(conn, ctx, &project_id, &hit.file_path)
-            {
-                results.push(hit);
-                if results.len() >= limit {
-                    return results;
-                }
-            }
-        }
+    if query.trim().is_empty() || limit == 0 {
+        return Vec::new();
     }
-    results
+
+    let bm25_query = sanitize_pg_search_query(query);
+    if bm25_query.is_empty() {
+        return search_content_visible_like(conn, query, ctx, language, paths, limit);
+    }
+
+    let mut params = Vec::new();
+    let visible_files_sql = visible_files_sql(ctx, &mut params);
+    let query_placeholder = push_param(&mut params, bm25_query);
+    let mut conditions = vec![format!("c.content @@@ {query_placeholder}")];
+    if let Some(lang) = language {
+        let placeholder = push_param(&mut params, lang.to_string());
+        conditions.push(format!("c.language = {placeholder}"));
+    }
+    push_path_filter(&mut conditions, &mut params, "c", paths);
+    let limit_placeholder = push_param(&mut params, limit as i64);
+    let refs = param_refs(&params);
+    let sql = format!(
+        "WITH visible_files AS ({visible_files_sql})
+         SELECT c.file_path,
+                c.line_start::BIGINT AS line_start,
+                c.line_end::BIGINT AS line_end,
+                c.language,
+                c.content
+         FROM code_content_chunks c
+         JOIN visible_files vf
+           ON vf.project_id = c.project_id AND vf.file_path = c.file_path
+         WHERE {}
+         ORDER BY pdb.score(c.id) DESC, c.project_id ASC, c.id ASC
+         LIMIT {limit_placeholder}",
+        conditions.join(" AND ")
+    );
+
+    let hits = match conn.query(&sql, &refs) {
+        Ok(rows) => content_hits_from_rows(&rows, query),
+        Err(error) => {
+            eprintln!("gcode: visible content BM25 search failed; falling back to LIKE: {error}");
+            Vec::new()
+        }
+    };
+
+    if !hits.is_empty() {
+        return hits;
+    }
+
+    search_content_visible_like(conn, query, ctx, language, paths, limit)
 }
 
 fn search_content_like(
@@ -148,23 +168,114 @@ fn search_content_like(
         conditions.join(" AND ")
     );
 
-    conn.query(&sql, &refs)
-        .ok()
-        .map(|rows| {
-            rows.iter()
-                .filter_map(|row| {
-                    let content: String = row.try_get("content").ok()?;
-                    Some(ContentSearchHit {
-                        file_path: row.try_get("file_path").ok()?,
-                        line_start: row.try_get::<_, i64>("line_start").ok()? as usize,
-                        line_end: row.try_get::<_, i64>("line_end").ok()? as usize,
-                        snippet: make_snippet(&content, query),
-                        language: row.try_get("language").ok()?,
-                    })
-                })
-                .collect()
+    match conn.query(&sql, &refs) {
+        Ok(rows) => content_hits_from_rows(&rows, query),
+        Err(error) => {
+            eprintln!("gcode: content LIKE search failed: {error}");
+            Vec::new()
+        }
+    }
+}
+
+fn search_content_visible_like(
+    conn: &mut Client,
+    query: &str,
+    ctx: &Context,
+    language: Option<&str>,
+    paths: &[String],
+    limit: usize,
+) -> Vec<ContentSearchHit> {
+    let escaped_query = escape_like(query);
+    let like_query = format!("%{escaped_query}%");
+    let mut params = Vec::new();
+    let visible_files_sql = visible_files_sql(ctx, &mut params);
+    let like_placeholder = push_param(&mut params, like_query);
+    let mut conditions = vec![format!("c.content LIKE {like_placeholder} ESCAPE '\\'")];
+    if let Some(lang) = language {
+        let placeholder = push_param(&mut params, lang.to_string());
+        conditions.push(format!("c.language = {placeholder}"));
+    }
+    push_path_filter(&mut conditions, &mut params, "c", paths);
+    let limit_placeholder = push_param(&mut params, limit as i64);
+    let refs = param_refs(&params);
+    let sql = format!(
+        "WITH visible_files AS ({visible_files_sql})
+         SELECT c.file_path,
+                c.line_start::BIGINT AS line_start,
+                c.line_end::BIGINT AS line_end,
+                c.language,
+                c.content
+         FROM code_content_chunks c
+         JOIN visible_files vf
+           ON vf.project_id = c.project_id AND vf.file_path = c.file_path
+         WHERE {}
+         ORDER BY c.file_path ASC, c.line_start ASC
+         LIMIT {limit_placeholder}",
+        conditions.join(" AND ")
+    );
+
+    match conn.query(&sql, &refs) {
+        Ok(rows) => content_hits_from_rows(&rows, query),
+        Err(error) => {
+            eprintln!("gcode: visible content LIKE search failed: {error}");
+            Vec::new()
+        }
+    }
+}
+
+fn visible_files_sql(ctx: &Context, params: &mut Vec<PgParam>) -> String {
+    match &ctx.index_scope {
+        ProjectIndexScope::Single => {
+            let project_placeholder = push_param(params, ctx.project_id.clone());
+            let tombstone_placeholder = push_param(params, TOMBSTONE_LANGUAGE.to_string());
+            format!(
+                "SELECT file_path, project_id
+                 FROM code_indexed_files
+                 WHERE project_id = {project_placeholder}
+                   AND language != {tombstone_placeholder}"
+            )
+        }
+        ProjectIndexScope::Overlay {
+            overlay_project_id,
+            parent_project_id,
+            ..
+        } => {
+            let overlay_placeholder = push_param(params, overlay_project_id.clone());
+            let parent_placeholder = push_param(params, parent_project_id.clone());
+            let tombstone_placeholder = push_param(params, TOMBSTONE_LANGUAGE.to_string());
+            format!(
+                "SELECT file_path, project_id
+                 FROM code_indexed_files
+                 WHERE project_id = {overlay_placeholder}
+                   AND language != {tombstone_placeholder}
+                 UNION ALL
+                 SELECT pf.file_path, pf.project_id
+                 FROM code_indexed_files pf
+                 WHERE pf.project_id = {parent_placeholder}
+                   AND pf.language != {tombstone_placeholder}
+                   AND NOT EXISTS (
+                       SELECT 1 FROM code_indexed_files of
+                       WHERE of.project_id = {overlay_placeholder}
+                         AND of.file_path = pf.file_path
+                   )"
+            )
+        }
+    }
+}
+
+fn content_hits_from_rows(rows: &[Row], query: &str) -> Vec<ContentSearchHit> {
+    rows.iter()
+        .filter_map(|row| {
+            let content: String = row.try_get("content").ok()?;
+            Some(ContentSearchHit {
+                file_path: row.try_get("file_path").ok()?,
+                line_start: row.try_get::<_, i64>("line_start").ok()? as usize,
+                line_end: row.try_get::<_, i64>("line_end").ok()? as usize,
+                snippet: make_snippet(&content, query),
+                language: row.try_get("language").ok()?,
+            })
         })
-        .unwrap_or_default()
+        .collect()
 }
 
 pub(super) fn make_snippet(content: &str, query: &str) -> String {

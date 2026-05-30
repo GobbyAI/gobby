@@ -104,6 +104,10 @@ pub(crate) fn text_from_utf8_lossy(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).replace("\r\n", "\n")
 }
 
+pub(crate) fn path_to_string(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
 fn write_immutable(vault_root: &Path, relative: &Path, bytes: &[u8]) -> Result<(), WikiError> {
     let path = vault_root.join(relative);
     if path.exists() {

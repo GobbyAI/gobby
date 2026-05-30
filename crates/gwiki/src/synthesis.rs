@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -125,9 +126,11 @@ pub fn synthesize_article(
     target_page: Option<PathBuf>,
 ) -> SynthesizedPage {
     let path = target_page.unwrap_or_else(|| {
-        vault_root
-            .join(input.target_kind.directory())
-            .join(format!("{}.md", slugify(&input.topic)))
+        let directory = vault_root.join(input.target_kind.directory());
+        let slug = slugify_unique(&input.topic, |slug| {
+            directory.join(format!("{slug}.md")).exists()
+        });
+        directory.join(format!("{slug}.md"))
     });
     let mut markdown = String::new();
     render_frontmatter(
@@ -145,7 +148,8 @@ pub fn synthesize_article(
     markdown.push_str(&input.topic);
     markdown.push_str("\n\n");
 
-    let source_links = source_links(vault_root, &input.accepted_sources);
+    let source_paths = source_page_paths(vault_root, &input.accepted_sources);
+    let source_links = source_links(vault_root, &input.accepted_sources, &source_paths);
     if !source_links.is_empty() {
         markdown.push_str("Sources: ");
         markdown.push_str(&source_links.join(", "));
@@ -188,13 +192,12 @@ pub fn synthesize_source_pages(
     article_path: &Path,
 ) -> Vec<SynthesizedPage> {
     let article_link = wiki_link(vault_root, article_path, &input.topic);
+    let source_paths = source_page_paths(vault_root, &input.accepted_sources);
     input
         .accepted_sources
         .iter()
-        .map(|source| {
-            let path = vault_root
-                .join(ArticleKind::Source.directory())
-                .join(format!("{}.md", slugify(&source.title)));
+        .zip(source_paths)
+        .map(|(source, path)| {
             let mut markdown = String::new();
             render_frontmatter(
                 &mut markdown,
@@ -302,6 +305,22 @@ pub fn slugify(title: &str) -> String {
     }
 }
 
+pub fn slugify_unique(title: &str, mut exists: impl FnMut(&str) -> bool) -> String {
+    let base = slugify(title);
+    if !exists(&base) {
+        return base;
+    }
+
+    for index in 2usize.. {
+        let candidate = format!("{base}-{index}");
+        if !exists(&candidate) {
+            return candidate;
+        }
+    }
+
+    unreachable!("unbounded slug suffix search should always return")
+}
+
 pub fn relative_path(root: &Path, path: &Path) -> String {
     path.strip_prefix(root)
         .unwrap_or(path)
@@ -309,15 +328,30 @@ pub fn relative_path(root: &Path, path: &Path) -> String {
         .replace('\\', "/")
 }
 
-fn source_links(vault_root: &Path, sources: &[SynthesisSource]) -> Vec<String> {
+fn source_page_paths(vault_root: &Path, sources: &[SynthesisSource]) -> Vec<PathBuf> {
+    let directory = vault_root.join(ArticleKind::Source.directory());
+    let mut reserved = HashSet::new();
     sources
         .iter()
         .map(|source| {
-            let path = vault_root
-                .join(ArticleKind::Source.directory())
-                .join(format!("{}.md", slugify(&source.title)));
-            wiki_link(vault_root, &path, &source.title)
+            let slug = slugify_unique(&source.title, |slug| {
+                reserved.contains(slug) || directory.join(format!("{slug}.md")).exists()
+            });
+            reserved.insert(slug.clone());
+            directory.join(format!("{slug}.md"))
         })
+        .collect()
+}
+
+fn source_links(
+    vault_root: &Path,
+    sources: &[SynthesisSource],
+    source_paths: &[PathBuf],
+) -> Vec<String> {
+    sources
+        .iter()
+        .zip(source_paths)
+        .map(|(source, path)| wiki_link(vault_root, path, &source.title))
         .collect()
 }
 

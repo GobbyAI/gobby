@@ -1,5 +1,6 @@
 use super::common::{parse_javascript, parse_python, parse_source, parse_typescript};
 
+#[test]
 fn classifies_external_python_from_import_calls() {
     let parsed = parse_python(
         r#"

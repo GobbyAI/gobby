@@ -1,6 +1,7 @@
 use super::super::{call_qualifier_path, line_terminator_len, split_qualified_callee};
 use super::common::parse_python;
 
+#[test]
 fn line_terminator_len_tracks_lf_crlf_and_eof() {
     let text = "import 'a';\r\nhttp.Client();\nlast()";
     assert_eq!(line_terminator_len(text, 0, "import 'a';".len()), 2);
@@ -15,6 +16,7 @@ fn line_terminator_len_tracks_lf_crlf_and_eof() {
     assert_eq!(line_terminator_len(text, last_start, "last()".len()), 0);
 }
 
+#[test]
 fn explicit_qualified_raw_callee_takes_precedence_over_member_prefix() {
     let mut inferred_called = false;
     let (_, qualifier_from_name) = split_qualified_callee("Vendor\\Pkg\\helper");

@@ -60,20 +60,28 @@ fn create_linked_worktree(tmp: &tempfile::TempDir) -> (PathBuf, PathBuf) {
     (repo, linked)
 }
 
-fn clear_service_env() {
-    for key in [
-        "GOBBY_FALKORDB_HOST",
-        "GOBBY_FALKORDB_PORT",
-        "GOBBY_FALKORDB_PASSWORD",
-        "GOBBY_QDRANT_URL",
-        "GOBBY_QDRANT_API_KEY",
-        "GOBBY_EMBEDDING_URL",
-        "GOBBY_EMBEDDING_MODEL",
-        "GOBBY_EMBEDDING_API_KEY",
-        "GOBBY_EMBEDDING_VECTOR_DIM",
-    ] {
-        unsafe { std::env::remove_var(key) };
-    }
+const SERVICE_ENV_KEYS: &[&str] = &[
+    "GOBBY_FALKORDB_HOST",
+    "GOBBY_FALKORDB_PORT",
+    "GOBBY_FALKORDB_PASSWORD",
+    "GOBBY_QDRANT_URL",
+    "GOBBY_QDRANT_API_KEY",
+    "GOBBY_EMBEDDING_URL",
+    "GOBBY_EMBEDDING_MODEL",
+    "GOBBY_EMBEDDING_API_KEY",
+    "GOBBY_EMBEDDING_VECTOR_DIM",
+];
+
+fn with_service_env<R>(
+    overrides: &[(&'static str, Option<&'static str>)],
+    closure: impl FnOnce() -> R,
+) -> R {
+    let mut vars = SERVICE_ENV_KEYS
+        .iter()
+        .map(|key| (*key, None))
+        .collect::<Vec<_>>();
+    vars.extend_from_slice(overrides);
+    temp_env::with_vars(vars, closure)
 }
 
 fn config_value_for<'a>(
@@ -85,138 +93,141 @@ fn config_value_for<'a>(
 #[test]
 #[serial_test::serial]
 fn adapter_env_precedence_and_json_decode() {
-    clear_service_env();
-    unsafe { std::env::set_var("GOBBY_FALKORDB_HOST", "env-falkor.local") };
-    let values = std::collections::HashMap::from([
-        ("databases.falkordb.host", r#""stored-falkor.local""#),
-        ("databases.falkordb.port", r#""16380""#),
-        ("databases.falkordb.requirepass", r#""stored-pass""#),
-        ("databases.qdrant.url", r#""http://qdrant.local:6333""#),
-        ("databases.qdrant.api_key", r#""qdrant-key""#),
-        ("embeddings.api_base", r#""http://embeddings.local:11434""#),
-        ("embeddings.model", r#""embed-model""#),
-        ("embeddings.api_key", "null"),
-    ]);
+    with_service_env(&[("GOBBY_FALKORDB_HOST", Some("env-falkor.local"))], || {
+        let values = std::collections::HashMap::from([
+            ("databases.falkordb.host", r#""stored-falkor.local""#),
+            ("databases.falkordb.port", r#""16380""#),
+            ("databases.falkordb.requirepass", r#""stored-pass""#),
+            ("databases.qdrant.url", r#""http://qdrant.local:6333""#),
+            ("databases.qdrant.api_key", r#""qdrant-key""#),
+            ("embeddings.api_base", r#""http://embeddings.local:11434""#),
+            ("embeddings.model", r#""embed-model""#),
+            ("embeddings.api_key", "null"),
+        ]);
 
-    let falkor = resolve_falkordb_config_from_values(config_value_for(&values), |value| {
-        Ok(value.to_string())
-    })
-    .expect("falkordb config");
-    let qdrant =
-        resolve_qdrant_config_from_values(config_value_for(&values), |value| Ok(value.to_string()))
-            .expect("qdrant config");
-    let embedding = resolve_embedding_config_from_values(config_value_for(&values), |value| {
-        Ok(value.to_string())
-    })
-    .expect("embedding config");
+        let falkor = resolve_falkordb_config_from_values(config_value_for(&values), |value| {
+            Ok(value.to_string())
+        })
+        .expect("falkordb config");
+        let qdrant = resolve_qdrant_config_from_values(config_value_for(&values), |value| {
+            Ok(value.to_string())
+        })
+        .expect("qdrant config");
+        let embedding = resolve_embedding_config_from_values(config_value_for(&values), |value| {
+            Ok(value.to_string())
+        })
+        .expect("embedding config");
 
-    assert_eq!(falkor.host, "env-falkor.local");
-    assert_eq!(falkor.port, 16380);
-    assert_eq!(falkor.password.as_deref(), Some("stored-pass"));
-    assert_eq!(falkor.graph_name, FALKORDB_GRAPH_NAME);
-    assert_eq!(qdrant.url.as_deref(), Some("http://qdrant.local:6333"));
-    assert_eq!(qdrant.api_key.as_deref(), Some("qdrant-key"));
-    assert_eq!(embedding.api_base, "http://embeddings.local:11434");
-    assert_eq!(embedding.model, "embed-model");
-    assert_eq!(embedding.api_key, None);
-    clear_service_env();
+        assert_eq!(falkor.host, "env-falkor.local");
+        assert_eq!(falkor.port, 16380);
+        assert_eq!(falkor.password.as_deref(), Some("stored-pass"));
+        assert_eq!(falkor.graph_name, FALKORDB_GRAPH_NAME);
+        assert_eq!(qdrant.url.as_deref(), Some("http://qdrant.local:6333"));
+        assert_eq!(qdrant.api_key.as_deref(), Some("qdrant-key"));
+        assert_eq!(embedding.api_base, "http://embeddings.local:11434");
+        assert_eq!(embedding.model, "embed-model");
+        assert_eq!(embedding.api_key, None);
+    });
 }
 
 #[test]
 #[serial_test::serial]
 fn adapter_resolves_config_store_secrets() {
-    clear_service_env();
-    let values = std::collections::HashMap::from([
-        ("databases.falkordb.host", "falkor.local"),
-        (
-            "databases.falkordb.requirepass",
-            "$secret:falkordb_password",
-        ),
-        ("databases.qdrant.url", "http://qdrant.local:6333"),
-        ("databases.qdrant.api_key", "$secret:qdrant_api_key"),
-        ("embeddings.api_base", "http://embeddings.local:11434"),
-        ("embeddings.api_key", "$secret:embedding_api_key"),
-    ]);
+    with_service_env(&[], || {
+        let values = std::collections::HashMap::from([
+            ("databases.falkordb.host", "falkor.local"),
+            (
+                "databases.falkordb.requirepass",
+                "$secret:falkordb_password",
+            ),
+            ("databases.qdrant.url", "http://qdrant.local:6333"),
+            ("databases.qdrant.api_key", "$secret:qdrant_api_key"),
+            ("embeddings.api_base", "http://embeddings.local:11434"),
+            ("embeddings.api_key", "$secret:embedding_api_key"),
+        ]);
 
-    fn resolve_secret_stub(value: &str) -> anyhow::Result<String> {
-        match value {
-            "$secret:falkordb_password" => Ok("resolved-falkor".to_string()),
-            "$secret:qdrant_api_key" => Ok("resolved-qdrant".to_string()),
-            "$secret:embedding_api_key" => Ok("resolved-embedding".to_string()),
-            value => Ok(value.to_string()),
+        fn resolve_secret_stub(value: &str) -> anyhow::Result<String> {
+            match value {
+                "$secret:falkordb_password" => Ok("resolved-falkor".to_string()),
+                "$secret:qdrant_api_key" => Ok("resolved-qdrant".to_string()),
+                "$secret:embedding_api_key" => Ok("resolved-embedding".to_string()),
+                value => Ok(value.to_string()),
+            }
         }
-    }
 
-    let falkor =
-        resolve_falkordb_config_from_values(config_value_for(&values), resolve_secret_stub)
-            .expect("falkordb config");
-    let qdrant = resolve_qdrant_config_from_values(config_value_for(&values), resolve_secret_stub)
-        .expect("qdrant config");
-    let embedding =
-        resolve_embedding_config_from_values(config_value_for(&values), resolve_secret_stub)
-            .expect("embedding config");
+        let falkor =
+            resolve_falkordb_config_from_values(config_value_for(&values), resolve_secret_stub)
+                .expect("falkordb config");
+        let qdrant =
+            resolve_qdrant_config_from_values(config_value_for(&values), resolve_secret_stub)
+                .expect("qdrant config");
+        let embedding =
+            resolve_embedding_config_from_values(config_value_for(&values), resolve_secret_stub)
+                .expect("embedding config");
 
-    assert_eq!(falkor.password.as_deref(), Some("resolved-falkor"));
-    assert_eq!(qdrant.api_key.as_deref(), Some("resolved-qdrant"));
-    assert_eq!(embedding.api_key.as_deref(), Some("resolved-embedding"));
+        assert_eq!(falkor.password.as_deref(), Some("resolved-falkor"));
+        assert_eq!(qdrant.api_key.as_deref(), Some("resolved-qdrant"));
+        assert_eq!(embedding.api_key.as_deref(), Some("resolved-embedding"));
+    });
 }
 
 #[test]
 #[serial_test::serial]
 fn vector_dim_setting_resolves_env_and_config_store() {
-    clear_service_env();
-    let values = std::collections::HashMap::from([("embeddings.vector_dim", "1536")]);
+    with_service_env(&[], || {
+        let values = std::collections::HashMap::from([("embeddings.vector_dim", "1536")]);
 
-    let settings = resolve_code_vector_settings_from_values(config_value_for(&values))
-        .expect("config-store vector settings");
-    assert_eq!(settings.vector_dim, Some(1536));
+        let settings = resolve_code_vector_settings_from_values(config_value_for(&values))
+            .expect("config-store vector settings");
+        assert_eq!(settings.vector_dim, Some(1536));
 
-    unsafe { std::env::set_var("GOBBY_EMBEDDING_VECTOR_DIM", "3072") };
-    let settings = resolve_code_vector_settings_from_values(config_value_for(&values))
-        .expect("env vector settings");
-    assert_eq!(settings.vector_dim, Some(3072));
+        temp_env::with_var("GOBBY_EMBEDDING_VECTOR_DIM", Some("3072"), || {
+            let settings = resolve_code_vector_settings_from_values(config_value_for(&values))
+                .expect("env vector settings");
+            assert_eq!(settings.vector_dim, Some(3072));
+        });
 
-    unsafe { std::env::remove_var("GOBBY_EMBEDDING_VECTOR_DIM") };
-    let null_values = std::collections::HashMap::from([("embeddings.vector_dim", "null")]);
-    let settings = resolve_code_vector_settings_from_values(config_value_for(&null_values))
-        .expect("null config-store vector settings");
-    assert_eq!(settings.vector_dim, None);
+        let null_values = std::collections::HashMap::from([("embeddings.vector_dim", "null")]);
+        let settings = resolve_code_vector_settings_from_values(config_value_for(&null_values))
+            .expect("null config-store vector settings");
+        assert_eq!(settings.vector_dim, None);
 
-    let invalid_values = std::collections::HashMap::from([("embeddings.vector_dim", r#""wide""#)]);
-    let err = resolve_code_vector_settings_from_values(config_value_for(&invalid_values))
-        .expect_err("invalid vector dim must error");
-    assert!(matches!(
-        err,
-        CodeVectorConfigError::InvalidVectorDim { .. }
-    ));
-    clear_service_env();
+        let invalid_values =
+            std::collections::HashMap::from([("embeddings.vector_dim", r#""wide""#)]);
+        let err = resolve_code_vector_settings_from_values(config_value_for(&invalid_values))
+            .expect_err("invalid vector dim must error");
+        assert!(matches!(
+            err,
+            CodeVectorConfigError::InvalidVectorDim { .. }
+        ));
+    });
 }
 
 #[test]
 #[serial_test::serial]
 fn phase7_config_resolution_returns_gcode_falkor_config_with_core_fields_and_graph_name() {
-    clear_service_env();
-    let values = std::collections::HashMap::from([
-        ("databases.falkordb.host", r#""stored-falkor.local""#),
-        ("databases.falkordb.port", r#""16380""#),
-        ("databases.falkordb.requirepass", r#""stored-pass""#),
-    ]);
+    with_service_env(&[], || {
+        let values = std::collections::HashMap::from([
+            ("databases.falkordb.host", r#""stored-falkor.local""#),
+            ("databases.falkordb.port", r#""16380""#),
+            ("databases.falkordb.requirepass", r#""stored-pass""#),
+        ]);
 
-    let falkor = resolve_falkordb_config_from_values(config_value_for(&values), |value| {
-        Ok(value.to_string())
-    })
-    .expect("falkordb config");
+        let falkor = resolve_falkordb_config_from_values(config_value_for(&values), |value| {
+            Ok(value.to_string())
+        })
+        .expect("falkordb config");
 
-    assert_eq!(falkor.host, "stored-falkor.local");
-    assert_eq!(falkor.port, 16380);
-    assert_eq!(falkor.password.as_deref(), Some("stored-pass"));
-    assert_eq!(falkor.graph_name, "gobby_code");
+        assert_eq!(falkor.host, "stored-falkor.local");
+        assert_eq!(falkor.port, 16380);
+        assert_eq!(falkor.password.as_deref(), Some("stored-pass"));
+        assert_eq!(falkor.graph_name, "gobby_code");
 
-    let connection = falkor.connection_config();
-    assert_eq!(connection.host, falkor.host);
-    assert_eq!(connection.port, falkor.port);
-    assert_eq!(connection.password, falkor.password);
-    clear_service_env();
+        let connection = falkor.connection_config();
+        assert_eq!(connection.host, falkor.host);
+        assert_eq!(connection.port, falkor.port);
+        assert_eq!(connection.password, falkor.password);
+    });
 }
 
 #[test]

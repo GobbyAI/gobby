@@ -59,6 +59,7 @@ pub fn build_bm25_sql(query: &str, scope: &SearchScope, limit: usize) -> Option<
     if query.is_empty() || limit == 0 {
         return None;
     }
+    let limit = i64::try_from(limit).ok()?;
 
     let chunk_searchable_path_predicate = searchable_path_predicate("c.path");
     let document_searchable_path_predicate = searchable_path_predicate("d.path");
@@ -131,7 +132,7 @@ LIMIT $4
             query,
             scope_kind: scope.scope_kind().to_string(),
             scope_value: scope.scope_value().to_string(),
-            limit: limit as i64,
+            limit,
         },
     })
 }

@@ -87,14 +87,33 @@ fn render_git_markdown(snapshot: &GitRepositorySnapshot, title: &str, source_has
         markdown.push_str("\n\n");
         markdown.push_str("file_path: ");
         markdown.push_str(&file.path);
-        markdown.push_str("\n\n```text\n");
-        markdown.push_str(&text_from_utf8_lossy(&file.bytes));
+        let file_text = text_from_utf8_lossy(&file.bytes);
+        let fence = markdown_code_fence(&file_text);
+        markdown.push_str("\n\n");
+        markdown.push_str(&fence);
+        markdown.push_str("text\n");
+        markdown.push_str(&file_text);
         if !markdown.ends_with('\n') {
             markdown.push('\n');
         }
-        markdown.push_str("```\n\n");
+        markdown.push_str(&fence);
+        markdown.push_str("\n\n");
     }
     markdown
+}
+
+fn markdown_code_fence(text: &str) -> String {
+    let mut max_run = 0usize;
+    let mut current_run = 0usize;
+    for ch in text.chars() {
+        if ch == '`' {
+            current_run += 1;
+            max_run = max_run.max(current_run);
+        } else {
+            current_run = 0;
+        }
+    }
+    "`".repeat(max_run.saturating_add(1).max(3))
 }
 
 #[cfg(test)]

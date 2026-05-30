@@ -237,7 +237,7 @@ fn degradation_for_observation(
 ) -> Option<DaemonDegradation> {
     match observation {
         ProbeObservation::HttpStatus(status) if (200..=299).contains(&status) => None,
-        ProbeObservation::HttpStatus(405 | 422) => None,
+        ProbeObservation::HttpStatus(405) => None,
         ProbeObservation::HttpStatus(status @ (401 | 403)) => Some(degradation(
             contract,
             DegradationReason::Unauthorized,

@@ -26,14 +26,16 @@ fn exact_symbol_matches(
          ORDER BY file_path ASC, line_start ASC
          LIMIT $3"
     );
-    conn.query(&sql, &[&project_id, &input, &(limit as i64)])
-        .ok()
-        .map(|rows| {
-            rows.iter()
-                .filter_map(|row| Symbol::from_row(row).ok())
-                .collect()
-        })
-        .unwrap_or_default()
+    match conn.query(&sql, &[&project_id, &input, &(limit as i64)]) {
+        Ok(rows) => rows
+            .iter()
+            .filter_map(|row| Symbol::from_row(row).ok())
+            .collect(),
+        Err(error) => {
+            eprintln!("gcode: exact graph symbol lookup failed for {column}: {error}");
+            Vec::new()
+        }
+    }
 }
 
 fn suggestion_label(symbol: &Symbol) -> String {
@@ -68,6 +70,13 @@ fn resolve_from_candidates(candidates: Vec<Symbol>) -> (Option<ResolvedGraphSymb
     }
 }
 
+fn decisive_resolution(
+    candidates: Vec<Symbol>,
+) -> Option<(Option<ResolvedGraphSymbol>, Vec<String>)> {
+    let (resolved, suggestions) = resolve_from_candidates(candidates);
+    (resolved.is_some() || !suggestions.is_empty()).then_some((resolved, suggestions))
+}
+
 /// Resolve user input to a canonical symbol id for graph queries.
 ///
 /// Resolution is fail-closed: ambiguous matches return `None` with suggestions.
@@ -76,28 +85,24 @@ pub fn resolve_graph_symbol(
     input: &str,
     project_id: &str,
 ) -> (Option<ResolvedGraphSymbol>, Vec<String>) {
-    let ids = exact_symbol_matches(conn, project_id, "id", input, 2);
-    let (resolved, suggestions) = resolve_from_candidates(ids);
-    if resolved.is_some() || !suggestions.is_empty() {
-        return (resolved, suggestions);
+    for (column, limit) in [("id", 2), ("qualified_name", 6), ("name", 6)] {
+        if let Some(result) =
+            decisive_resolution(exact_symbol_matches(conn, project_id, column, input, limit))
+        {
+            return result;
+        }
     }
 
-    let qualified = exact_symbol_matches(conn, project_id, "qualified_name", input, 6);
-    let (resolved, suggestions) = resolve_from_candidates(qualified);
-    if resolved.is_some() || !suggestions.is_empty() {
-        return (resolved, suggestions);
-    }
-
-    let exact = exact_symbol_matches(conn, project_id, "name", input, 6);
-    let (resolved, suggestions) = resolve_from_candidates(exact);
-    if resolved.is_some() || !suggestions.is_empty() {
-        return (resolved, suggestions);
-    }
-
-    let like_matches = search_symbols_by_name(conn, input, project_id, None, None, &[], 6);
-    let (resolved, suggestions) = resolve_from_candidates(like_matches);
-    if resolved.is_some() || !suggestions.is_empty() {
-        return (resolved, suggestions);
+    if let Some(result) = decisive_resolution(search_symbols_by_name(
+        conn,
+        input,
+        project_id,
+        None,
+        None,
+        &[],
+        6,
+    )) {
+        return result;
     }
 
     let fts_results = search_symbols_fts(conn, input, project_id, None, None, &[], 6);

@@ -2,7 +2,7 @@
 //!
 //! Mirrors the `CLIConfig` registry in `hook_dispatcher.py` — the set of
 //! host CLIs Gobby dispatches for and, per CLI, which hooks are "critical"
-//! (block on failure, exit 2).
+//! (block on failure).
 
 use std::collections::HashSet;
 
@@ -11,7 +11,7 @@ use std::collections::HashSet;
 pub struct CliConfig {
     /// Source identifier sent to the daemon.
     pub source: &'static str,
-    /// Hooks where failure should fail-closed (exit 2).
+    /// Hooks where failure should fail-closed.
     pub critical_hooks: HashSet<&'static str>,
     /// Exit code to use for malformed JSON input, matching the Python dispatcher.
     pub json_error_exit_code: u8,

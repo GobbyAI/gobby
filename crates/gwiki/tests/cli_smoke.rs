@@ -258,32 +258,32 @@ fn configured_postgres_index_feeds_configured_search_when_test_database_is_avail
         "{search_payload:#}"
     );
 
-    cleanup_postgres_topic(&database_url, &topic);
+    cleanup_postgres_topic(&database_url, &topic).expect("cleanup postgres topic");
 }
 
-fn cleanup_postgres_topic(database_url: &str, topic: &str) {
-    if let Ok(mut client) = postgres::Client::connect(database_url, postgres::NoTls) {
-        let _ = client.execute(
-            "DELETE FROM gwiki_ingestions WHERE scope_kind = 'topic' AND scope_id = $1",
-            &[&topic],
-        );
-        let _ = client.execute(
-            "DELETE FROM gwiki_links WHERE scope_kind = 'topic' AND scope_id = $1",
-            &[&topic],
-        );
-        let _ = client.execute(
-            "DELETE FROM gwiki_sources WHERE scope_kind = 'topic' AND scope_id = $1",
-            &[&topic],
-        );
-        let _ = client.execute(
-            "DELETE FROM gwiki_chunks WHERE scope_kind = 'topic' AND scope_id = $1",
-            &[&topic],
-        );
-        let _ = client.execute(
-            "DELETE FROM gwiki_documents WHERE scope_kind = 'topic' AND scope_id = $1",
-            &[&topic],
-        );
-    }
+fn cleanup_postgres_topic(database_url: &str, topic: &str) -> Result<(), postgres::Error> {
+    let mut client = postgres::Client::connect(database_url, postgres::NoTls)?;
+    client.execute(
+        "DELETE FROM gwiki_ingestions WHERE scope_kind = 'topic' AND scope_id = $1",
+        &[&topic],
+    )?;
+    client.execute(
+        "DELETE FROM gwiki_links WHERE scope_kind = 'topic' AND scope_id = $1",
+        &[&topic],
+    )?;
+    client.execute(
+        "DELETE FROM gwiki_sources WHERE scope_kind = 'topic' AND scope_id = $1",
+        &[&topic],
+    )?;
+    client.execute(
+        "DELETE FROM gwiki_chunks WHERE scope_kind = 'topic' AND scope_id = $1",
+        &[&topic],
+    )?;
+    client.execute(
+        "DELETE FROM gwiki_documents WHERE scope_kind = 'topic' AND scope_id = $1",
+        &[&topic],
+    )?;
+    Ok(())
 }
 
 #[test]

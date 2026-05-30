@@ -120,6 +120,8 @@ fn generate_report_from_snapshot_with_options(
         ),
     };
     let bridge_summary = summarize_bridge_edges(&bridge_edges);
+    degradation_details.sort_by(|left, right| left.input.cmp(&right.input));
+
     let suggested_investigation_questions = suggested_questions(
         &hotspots,
         &unresolved_targets,
@@ -138,8 +140,6 @@ fn generate_report_from_snapshot_with_options(
         degradation_details: &degradation_details,
         top_n: options.top_n,
     });
-
-    degradation_details.sort_by(|left, right| left.input.cmp(&right.input));
 
     ProjectGraphReport {
         project_id,

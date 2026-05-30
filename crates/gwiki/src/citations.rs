@@ -42,9 +42,7 @@ pub fn source_record_matches_path(entry: &SourceRecord, vault_root: &Path, path:
         .map(|path| normalize_path_text(&path.to_string_lossy()))
         .unwrap_or_else(|_| absolute.clone());
 
-    location == relative
-        || location == absolute
-        || Path::new(&entry.location).file_name() == path.file_name()
+    location == relative || location == absolute
 }
 
 fn render_source_citation(entry: &SourceRecord) -> String {
