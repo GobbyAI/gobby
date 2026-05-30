@@ -22,6 +22,7 @@ def search_rendered_messages(
     full_content: bool = False,
 ) -> list[dict[str, Any]]:
     """Return message matches for a case-insensitive substring query."""
+    # bool is an int subclass; reject it so limit=True does not mean one result.
     if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
         return []
     needle = query.casefold()

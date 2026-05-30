@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Literal
+from typing import Any, Literal
 
 import pytest
 from starlette.testclient import TestClient
@@ -370,6 +370,43 @@ class TestToggleRule:
     def test_not_found(self, client: TestClient) -> None:
         resp = client.put("/api/rules/nonexistent/toggle", json={"enabled": True})
         assert resp.status_code == 404
+
+
+class TestBulkToggleRules:
+    """PUT /api/rules/bulk-toggle updates matching rules best-effort."""
+
+    def test_continues_after_single_rule_update_failure(
+        self,
+        client: TestClient,
+        def_manager: LocalWorkflowDefinitionManager,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        failing_rule_id = _seed_rule(def_manager, name="installed-a", source="installed")
+        successful_rule_id = _seed_rule(def_manager, name="installed-b", source="installed")
+        project_rule_id = _seed_rule(def_manager, name="project-a", source="project")
+        original_update = LocalWorkflowDefinitionManager.update
+
+        def flaky_update(
+            manager: LocalWorkflowDefinitionManager,
+            definition_id: str,
+            **fields: Any,
+        ) -> Any:
+            if definition_id == failing_rule_id:
+                raise RuntimeError("row update failed")
+            return original_update(manager, definition_id, **fields)
+
+        monkeypatch.setattr(LocalWorkflowDefinitionManager, "update", flaky_update)
+
+        response = client.put(
+            "/api/rules/bulk-toggle",
+            json={"source": "installed", "enabled": False},
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {"status": "success", "count": 1}
+        assert def_manager.get(failing_rule_id).enabled is True
+        assert def_manager.get(successful_rule_id).enabled is False
+        assert def_manager.get(project_rule_id).enabled is True
 
 
 # ═══════════════════════════════════════════════════════════════════════

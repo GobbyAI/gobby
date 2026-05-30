@@ -470,7 +470,7 @@ class TestSetConfigSecret:
 
     @pytest.fixture
     def config_registry_with_db(
-        self,
+        self: "TestSetConfigSecret",
         temp_db: HubDatabase,
         config_store: ConfigStore,
         config_state: dict[str, DaemonConfig],
@@ -484,7 +484,10 @@ class TestSetConfigSecret:
         )
 
     def test_set_config_secret_encrypts(
-        self, config_registry_with_db, config_store: ConfigStore, temp_db: HubDatabase
+        self: "TestSetConfigSecret",
+        config_registry_with_db: InternalToolRegistry,
+        config_store: ConfigStore,
+        temp_db: HubDatabase,
     ) -> None:
         """set_config with is_secret=True encrypts the value."""
         with patch("gobby.utils.machine_id.get_machine_id", return_value="test-machine-12345"):
@@ -505,7 +508,9 @@ class TestSetConfigSecret:
             assert raw == "$secret:provider_api_key"
 
     def test_set_config_normal_unchanged(
-        self, config_registry_with_db, config_store: ConfigStore
+        self: "TestSetConfigSecret",
+        config_registry_with_db: InternalToolRegistry,
+        config_store: ConfigStore,
     ) -> None:
         """set_config without is_secret works as before."""
         tool = config_registry_with_db.get_tool("set_config")

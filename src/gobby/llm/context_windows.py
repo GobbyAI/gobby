@@ -225,7 +225,7 @@ def extract_context_length_candidate(
 
 def resolve_context_window(
     model: str | None,
-    _unused: Any = None,
+    provider_metadata: Any = None,
     overrides: dict[str, int] | None = None,
     *,
     provider: str | None = None,
@@ -235,7 +235,7 @@ def resolve_context_window(
     """Resolve context window using source-aware provider/registry precedence."""
     resolved = resolve_context_window_with_source(
         model,
-        _unused,
+        provider_metadata,
         overrides,
         provider=provider,
         catalog=catalog,
@@ -246,7 +246,7 @@ def resolve_context_window(
 
 def resolve_context_window_with_source(
     model: str | None,
-    _unused: Any = None,
+    provider_metadata: Any = None,
     overrides: dict[str, int] | None = None,
     *,
     provider: str | None = None,
@@ -264,9 +264,10 @@ def resolve_context_window_with_source(
             return ResolvedContextWindow(context_window, "override")
 
     reported = coerce_context_length(provider_reported_context_window)
-    if reported is None and isinstance(_unused, dict):
+    if reported is None and isinstance(provider_metadata, dict):
         reported = coerce_context_length(
-            _unused.get("model_context_window") or _unused.get("modelContextWindow")
+            provider_metadata.get("model_context_window")
+            or provider_metadata.get("modelContextWindow")
         )
     if reported is not None:
         return ResolvedContextWindow(reported, "provider_reported")

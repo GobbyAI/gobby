@@ -11,6 +11,7 @@ from gobby.agents.resume_executor import ResumeAgentResult
 from gobby.agents.session import ChildSessionManager
 from gobby.dispatch import daemon_resume
 from gobby.dispatch.actions import SpawnAgentAction
+from gobby.dispatch.mutex import RuntimeDispatchMutex
 from gobby.storage.agents import AgentRunTerminalReason, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
@@ -160,8 +161,8 @@ def _seed_daemon_stop_run(
 @pytest.mark.asyncio
 async def test_dirty_daemon_stop_workspace_resumes_before_fresh_spawn(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
     tmp_path: Path,
 ) -> None:
     from gobby.dispatch import daemon_resume, dispatcher
@@ -178,7 +179,7 @@ async def test_dirty_daemon_stop_workspace_resumes_before_fresh_spawn(
     )
     captured: dict[str, object] = {}
 
-    async def fake_resume_agent_run(original_run, **kwargs):
+    async def fake_resume_agent_run(original_run: Any, **kwargs: Any) -> ResumeAgentResult:
         captured["run_id"] = original_run.id
         captured["metadata"] = kwargs["resume_metadata"]
         return ResumeAgentResult(True, run_id="run-resumed")
@@ -207,8 +208,8 @@ async def test_dirty_daemon_stop_workspace_resumes_before_fresh_spawn(
 @pytest.mark.asyncio
 async def test_dirty_daemon_stop_resume_failure_escalates_without_attempt_increment(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
     tmp_path: Path,
 ) -> None:
     from gobby.dispatch import daemon_resume, dispatcher
@@ -224,7 +225,7 @@ async def test_dirty_daemon_stop_resume_failure_escalates_without_attempt_increm
         initial_variables={"stage_name": "development", "stage_state": "in_progress"},
     )
 
-    async def failed_resume(*_args, **_kwargs):
+    async def failed_resume(*_args: object, **_kwargs: object) -> ResumeAgentResult:
         return ResumeAgentResult(False, error="native resume failed")
 
     monkeypatch.setattr(daemon_resume, "resume_agent_run", failed_resume)
@@ -257,8 +258,8 @@ async def test_dirty_daemon_stop_resume_failure_escalates_without_attempt_increm
 @pytest.mark.asyncio
 async def test_dirty_daemon_stop_resume_failure_handles_escalation_error(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
     tmp_path: Path,
 ) -> None:
     from gobby.dispatch import daemon_resume, dispatcher
@@ -278,7 +279,7 @@ async def test_dirty_daemon_stop_resume_failure_handles_escalation_error(
         return ResumeAgentResult(False, error="native resume failed")
 
     def failed_escalation(*_args: object, **_kwargs: object) -> None:
-        raise RuntimeError("escalation failed")
+        raise ValueError("already escalated")
 
     monkeypatch.setattr(daemon_resume, "resume_agent_run", failed_resume)
     monkeypatch.setattr(daemon_resume, "escalate_task", failed_escalation)
@@ -303,10 +304,62 @@ async def test_dirty_daemon_stop_resume_failure_handles_escalation_error(
 
 
 @pytest.mark.asyncio
+async def test_dirty_daemon_stop_resume_failure_propagates_unexpected_escalation_error(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+) -> None:
+    from gobby.dispatch import daemon_resume
+
+    task = _task(temp_db, sample_project, work_attempt_count=2)
+    workspace = _workspace(tmp_path, dirty=True)
+    _seed_daemon_stop_run(temp_db, sample_project, task_id=task.id, workspace=workspace)
+    action = SpawnAgentAction(
+        task.id,
+        f"#{task.seq_num}",
+        "backend-developer",
+        "go",
+        initial_variables={"stage_name": "development", "stage_state": "in_progress"},
+    )
+
+    def failed_escalation(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("storage unavailable")
+
+    monkeypatch.setattr(daemon_resume, "escalate_task", failed_escalation)
+    storage = TaskDispatchMutexManager(temp_db)
+    storage.ensure_table()
+    mutex = RuntimeDispatchMutex(
+        storage,
+        task_id=task.id,
+        holder="dispatcher",
+        action_kind="heartbeat",
+        ttl_seconds=600,
+    )
+
+    candidate = daemon_resume._find_resume_candidate(action, db=temp_db, context=None)
+    assert candidate is not None
+
+    with mutex:
+        with pytest.raises(RuntimeError, match="storage unavailable"):
+            daemon_resume._handle_resume_failure(
+                action,
+                mutex,
+                temp_db,
+                candidate,
+                str(workspace),
+                True,
+                "native resume failed",
+            )
+
+    assert storage.get_mutex(task.id) is None
+
+
+@pytest.mark.asyncio
 async def test_clean_daemon_stop_resume_failure_allows_fresh_spawn(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
     tmp_path: Path,
 ) -> None:
     from gobby.dispatch import daemon_resume, dispatcher
@@ -323,7 +376,7 @@ async def test_clean_daemon_stop_resume_failure_allows_fresh_spawn(
     )
     spawned: list[str] = []
 
-    async def failed_resume(*_args, **_kwargs):
+    async def failed_resume(*_args: object, **_kwargs: object) -> ResumeAgentResult:
         return ResumeAgentResult(False, error="native resume failed")
 
     monkeypatch.setattr(daemon_resume, "resume_agent_run", failed_resume)
@@ -353,8 +406,8 @@ async def test_clean_daemon_stop_resume_failure_allows_fresh_spawn(
 @pytest.mark.asyncio
 async def test_non_daemon_stop_dirty_workspace_uses_existing_spawn_policy(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
     tmp_path: Path,
 ) -> None:
     from gobby.dispatch import daemon_resume, dispatcher
@@ -377,7 +430,7 @@ async def test_non_daemon_stop_dirty_workspace_uses_existing_spawn_policy(
     )
     spawned: list[str] = []
 
-    async def unexpected_resume(*_args, **_kwargs):
+    async def unexpected_resume(*_args: object, **_kwargs: object) -> ResumeAgentResult:
         raise AssertionError("non-daemon-stop run should not resume")
 
     monkeypatch.setattr(daemon_resume, "resume_agent_run", unexpected_resume)

@@ -44,6 +44,34 @@ export interface CreatedWebChatSession extends Record<string, unknown> {
   context_window?: number | null;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isNullableString(value: unknown): value is string | null | undefined {
+  return value === null || value === undefined || typeof value === "string";
+}
+
+function isNullableNumber(value: unknown): value is number | null | undefined {
+  return value === null || value === undefined || typeof value === "number";
+}
+
+function isCreatedWebChatSession(value: unknown): value is CreatedWebChatSession {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.id === "string" &&
+    typeof value.source === "string" &&
+    isNullableString(value.model) &&
+    isNullableString(value.chat_mode) &&
+    isNullableNumber(value.seq_num) &&
+    isNullableString(value.title) &&
+    isNullableString(value.status) &&
+    isNullableString(value.external_id) &&
+    isNullableString(value.git_branch) &&
+    isNullableNumber(value.context_window)
+  );
+}
+
 export interface ContinuationRollbackSnapshot {
   sourceSessionId: string;
   conversationId: string;
@@ -101,8 +129,12 @@ export async function createWebChatSession(params?: {
     throw new Error(`Failed to create web chat session: ${response.status}`);
   }
 
-  const data = await response.json();
-  return data.session as CreatedWebChatSession;
+  const data: unknown = await response.json();
+  const session = isRecord(data) ? data.session : null;
+  if (!isCreatedWebChatSession(session)) {
+    throw new Error("Invalid web chat session response");
+  }
+  return session;
 }
 
 export function isWebChatSessionRecord(

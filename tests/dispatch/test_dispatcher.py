@@ -6,6 +6,7 @@ import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -17,8 +18,9 @@ from gobby.dispatch.actions import (
     StartPipelineAction,
     StartStageAction,
 )
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.task_affected_files import TaskAffectedFileManager
-from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.tasks._artifacts import TaskArtifactManager
 from gobby.storage.tasks._crud import get_task, update_task
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
@@ -35,7 +37,12 @@ _LEGACY_STAGE_MAP = {
 }
 
 
-def _task(temp_db, sample_project, title: str = "Dispatch task", **fields):
+def _task(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    title: str = "Dispatch task",
+    **fields: Any,
+) -> Task:
     manager = LocalTaskManager(temp_db)
     task = manager.create_task(project_id=sample_project["id"], title=title)
     legacy_lifecycle = fields.pop("lifecycle", None)
@@ -66,12 +73,12 @@ def _task(temp_db, sample_project, title: str = "Dispatch task", **fields):
 
 
 def _parent_with_stage_order(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
     *,
     expansion_state: str,
     development_state: str = "ready",
-):
+) -> Task:
     manager = LocalTaskManager(temp_db)
     parent = manager.create_task(
         project_id=sample_project["id"],
@@ -96,13 +103,17 @@ def _parent_with_stage_order(
     return get_task(temp_db, parent.id)
 
 
-def _mutex_storage(temp_db) -> TaskDispatchMutexManager:
+def _mutex_storage(temp_db: HubDatabase) -> TaskDispatchMutexManager:
     storage = TaskDispatchMutexManager(temp_db)
     storage.ensure_table()
     return storage
 
 
-def _session(temp_db, sample_project, session_id: str = "session-1") -> str:
+def _session(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_id: str = "session-1",
+) -> str:
     temp_db.execute(
         """
         INSERT INTO sessions (id, external_id, machine_id, source, project_id)
@@ -117,7 +128,10 @@ def _audit_action(task_id: str) -> AppendAuditMarkerAction:
     return AppendAuditMarkerAction(task_id=task_id, heading="Dispatch", body="marker")
 
 
-def test_append_audit_marker_is_exact_marker_idempotent(temp_db, sample_project) -> None:
+def test_append_audit_marker_is_exact_marker_idempotent(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
     from gobby.dispatch import dispatcher
 
     task = _task(temp_db, sample_project)
@@ -131,8 +145,8 @@ def test_append_audit_marker_is_exact_marker_idempotent(temp_db, sample_project)
 
 
 def test_development_prompt_includes_persisted_holistic_failure_context(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     """Development prompt includes persisted holistic failure context."""
     from gobby.agents.sync import sync_bundled_agents
@@ -514,7 +528,9 @@ async def test_run_heartbeat_blocks_ready_task_behind_active_overlapping_write_s
 
 @pytest.mark.asyncio
 async def test_run_heartbeat_skips_spawn_when_daemon_not_ready(
-    monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     """Run heartbeat skips spawn when daemon not ready."""
     from gobby.dispatch import dispatcher
@@ -577,7 +593,11 @@ async def test_cancelled_spawn_releases_no_run_mutex(
 
 
 @pytest.mark.asyncio
-async def test_mutex_lifecycle(monkeypatch: pytest.MonkeyPatch, temp_db, sample_project) -> None:
+async def test_mutex_lifecycle(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
     """Mutex lifecycle."""
     from gobby.dispatch import dispatcher
 
@@ -2754,7 +2774,10 @@ async def test_dev_rule_fires_after_isolation_and_stage_start(
 
 
 @pytest.mark.asyncio
-async def test_startup_sweep_clears_expired_leases(temp_db, sample_project) -> None:
+async def test_startup_sweep_clears_expired_leases(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
     """Startup sweep clears expired leases."""
     from gobby.dispatch import dispatcher
 
@@ -2770,8 +2793,8 @@ async def test_startup_sweep_clears_expired_leases(temp_db, sample_project) -> N
 
 @pytest.mark.asyncio
 async def test_startup_sweep_preserves_expired_leases_for_active_runs(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     """Startup sweep preserves expired mutexes that still belong to active runs."""
     from gobby.dispatch import dispatcher
@@ -2813,8 +2836,8 @@ async def test_startup_sweep_preserves_expired_leases_for_active_runs(
 @pytest.mark.asyncio
 async def test_heartbeat_preserves_no_run_mutex_with_live_lease(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     """Heartbeat preserves no-run mutexes while their lease is still active."""
     from gobby.dispatch import dispatcher
@@ -2861,8 +2884,8 @@ async def test_heartbeat_preserves_no_run_mutex_with_live_lease(
 @pytest.mark.asyncio
 async def test_heartbeat_recovers_expired_no_run_mutex(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     """Heartbeat recovers no-run mutexes after their lease expires."""
     from gobby.dispatch import dispatcher
@@ -2908,8 +2931,8 @@ async def test_heartbeat_recovers_expired_no_run_mutex(
 @pytest.mark.asyncio
 async def test_heartbeat_preserves_fresh_no_run_mutex(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     """Heartbeat preserves fresh no run mutex."""
     from gobby.dispatch import dispatcher

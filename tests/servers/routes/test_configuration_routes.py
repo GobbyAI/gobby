@@ -960,6 +960,27 @@ class TestExportImport:
         assert "global/expansion/system.md" in data["prompts"]
         assert "# Custom" in data["prompts"]["global/expansion/system.md"]
 
+    def test_export_config_quotes_prompt_frontmatter_description(
+        self,
+        client: TestClient,
+        temp_db: Any,
+        mock_machine_id: Any,
+    ) -> None:
+        manager = LocalPromptManager(temp_db)
+        manager.create_prompt(
+            name="test/quoted",
+            content="# Body",
+            description="alpha: beta",
+            scope="global",
+        )
+
+        response = client.post("/api/config/export")
+
+        assert response.status_code == 200
+        content = response.json()["prompts"]["global/test/quoted.md"]
+        frontmatter = yaml.safe_load(content.split("---", maxsplit=2)[1])
+        assert frontmatter["description"] == "alpha: beta"
+
     def test_export_config_keeps_prompt_scope_keys_distinct(
         self,
         temp_db: Any,

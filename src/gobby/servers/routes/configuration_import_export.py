@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal, cast
 
 import psycopg
+import yaml
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
@@ -32,6 +33,7 @@ from gobby.storage.config_store import (
     is_secret_key_name,
     unflatten_config,
 )
+from gobby.storage.projects import LocalProjectManager
 from gobby.storage.secrets import SecretStore
 
 logger = logging.getLogger(__name__)
@@ -126,17 +128,22 @@ def _prompt_export_key(record: Any) -> str:
 
 def _build_exported_prompt_content(record: Any) -> str:
     content = cast(str, record.content)
-    fm_parts: list[str] = []
+    frontmatter: dict[str, Any] = {}
     if record.description:
-        fm_parts.append(f"description: {record.description}")
+        frontmatter["description"] = record.description
     if record.version and record.version != "1.0":
-        fm_parts.append(f'version: "{record.version}"')
+        frontmatter["version"] = str(record.version)
     if record.variables:
-        fm_parts.append(f"variables: {json.dumps(record.variables)}")
+        frontmatter["variables"] = record.variables
 
-    if not fm_parts:
+    if not frontmatter:
         return content
-    return "---\n" + "\n".join(fm_parts) + "\n---\n" + content
+    exported_frontmatter = yaml.safe_dump(
+        frontmatter,
+        default_flow_style=False,
+        sort_keys=False,
+    ).strip()
+    return "---\n" + exported_frontmatter + "\n---\n" + content
 
 
 def _parse_prompt_key(
@@ -225,6 +232,16 @@ def _existing_prompt_id(
             (name, scope, project_id),
         )
     return str(row["id"]) if row else None
+
+
+def _ensure_imported_project_exists(manager: Any, project_id: str | None) -> None:
+    if project_id is None:
+        return
+    LocalProjectManager(manager.db).ensure_exists(
+        project_id,
+        name=f"imported-{project_id}",
+        repo_path=None,
+    )
 
 
 def persist_imported_config(
@@ -380,6 +397,8 @@ def register_import_export_routes(
             if prompt_imports:
                 manager = context.get_prompt_manager()
                 for imported in prompt_imports:
+                    if imported.scope == "project":
+                        _ensure_imported_project_exists(manager, imported.project_id)
                     existing_id = _existing_prompt_id(
                         manager,
                         name=imported.name,

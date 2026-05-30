@@ -3,6 +3,8 @@
 import zipfile
 from collections.abc import Generator
 from pathlib import Path
+from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -71,7 +73,12 @@ class TestInstallSkillTool:
     """Tests for install_skill MCP tool."""
 
     @pytest.mark.asyncio
-    async def test_install_skill_from_local_path(self, db, storage, skill_dir):
+    async def test_install_skill_from_local_path(
+        self,
+        db: HubDatabase,
+        storage: LocalSkillManager,
+        skill_dir: Path,
+    ) -> None:
         """Test installing a skill from a local directory path."""
         from gobby.mcp_proxy.tools.skills import create_skills_registry
 
@@ -91,7 +98,12 @@ class TestInstallSkillTool:
         assert skill.source_type == "local"
 
     @pytest.mark.asyncio
-    async def test_install_skill_from_local_file(self, db, storage, skill_dir):
+    async def test_install_skill_from_local_file(
+        self,
+        db: HubDatabase,
+        storage: LocalSkillManager,
+        skill_dir: Path,
+    ) -> None:
         """Test installing a skill from a SKILL.md file path."""
         from gobby.mcp_proxy.tools.skills import create_skills_registry
 
@@ -105,7 +117,12 @@ class TestInstallSkillTool:
         assert result["skill_name"] == "test-skill"
 
     @pytest.mark.asyncio
-    async def test_install_skill_from_zip(self, db, storage, skill_zip):
+    async def test_install_skill_from_zip(
+        self,
+        db: HubDatabase,
+        storage: LocalSkillManager,
+        skill_zip: Path,
+    ) -> None:
         """Test installing a skill from a ZIP archive."""
         from gobby.mcp_proxy.tools.skills import create_skills_registry
 
@@ -124,7 +141,13 @@ class TestInstallSkillTool:
         assert skill is not None
 
     @pytest.mark.asyncio
-    async def test_install_skill_auto_detects_source_type(self, db, storage, skill_dir, skill_zip):
+    async def test_install_skill_auto_detects_source_type(
+        self,
+        db: HubDatabase,
+        storage: LocalSkillManager,
+        skill_dir: Path,
+        skill_zip: Path,
+    ) -> None:
         """Test that install_skill auto-detects the source type."""
         from gobby.mcp_proxy.tools.skills import create_skills_registry
 
@@ -140,7 +163,12 @@ class TestInstallSkillTool:
         assert result2["source_type"] == "zip"
 
     @pytest.mark.asyncio
-    async def test_install_skill_github_url(self, db, storage, mocker):
+    async def test_install_skill_github_url(
+        self,
+        db: HubDatabase,
+        storage: LocalSkillManager,
+        mocker: Any,
+    ) -> None:
         """Test installing a skill from a GitHub URL (mocked)."""
         from gobby.mcp_proxy.tools.skills import create_skills_registry
 
@@ -173,7 +201,12 @@ class TestInstallSkillTool:
         assert result["source_type"] == "github"
 
     @pytest.mark.asyncio
-    async def test_install_skill_returns_skill_id(self, db, storage, skill_dir):
+    async def test_install_skill_returns_skill_id(
+        self,
+        db: HubDatabase,
+        storage: LocalSkillManager,
+        skill_dir: Path,
+    ) -> None:
         """Test that install_skill returns the installed skill's ID."""
         from gobby.mcp_proxy.tools.skills import create_skills_registry
 
@@ -187,7 +220,12 @@ class TestInstallSkillTool:
         assert result["skill_id"] is not None
 
     @pytest.mark.asyncio
-    async def test_install_skill_project_scoped_param_accepted(self, db, storage, skill_dir):
+    async def test_install_skill_project_scoped_param_accepted(
+        self,
+        db: HubDatabase,
+        storage: LocalSkillManager,
+        skill_dir: Path,
+    ) -> None:
         """Test that project_scoped parameter is accepted (installs globally when False)."""
         from gobby.mcp_proxy.tools.skills import create_skills_registry
 
@@ -204,7 +242,11 @@ class TestInstallSkillTool:
         assert skill is not None
 
     @pytest.mark.asyncio
-    async def test_install_skill_source_not_found(self, db, tmp_path):
+    async def test_install_skill_source_not_found(
+        self,
+        db: HubDatabase,
+        tmp_path: Path,
+    ) -> None:
         """Test that install_skill returns error for non-existent source."""
         from gobby.mcp_proxy.tools.skills import create_skills_registry
 
@@ -217,7 +259,10 @@ class TestInstallSkillTool:
         assert "not found" in result["error"].lower()
 
     @pytest.mark.asyncio
-    async def test_install_skill_non_github_http_zip_is_unknown(self, db):
+    async def test_install_skill_non_github_http_zip_is_unknown(
+        self,
+        db: HubDatabase,
+    ) -> None:
         """Non-GitHub HTTP ZIP URLs are not treated as local zip paths."""
         from gobby.mcp_proxy.tools.skills import create_skills_registry
 
@@ -230,7 +275,11 @@ class TestInstallSkillTool:
         assert "Unknown skill source" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_install_skill_invalid_skill(self, db, tmp_path):
+    async def test_install_skill_invalid_skill(
+        self,
+        db: HubDatabase,
+        tmp_path: Path,
+    ) -> None:
         """Test that install_skill returns error for invalid skill."""
         from gobby.mcp_proxy.tools.skills import create_skills_registry
 
@@ -251,7 +300,7 @@ Content
         assert result["success"] is False
 
     @pytest.mark.asyncio
-    async def test_install_skill_requires_source(self, db):
+    async def test_install_skill_requires_source(self, db: HubDatabase) -> None:
         """Test that install_skill requires source parameter."""
         from gobby.mcp_proxy.tools.skills import create_skills_registry
 
@@ -264,7 +313,12 @@ Content
         assert "source" in result["error"].lower()
 
     @pytest.mark.asyncio
-    async def test_install_skill_updates_search_index(self, db, storage, skill_dir):
+    async def test_install_skill_updates_search_index(
+        self,
+        db: HubDatabase,
+        storage: LocalSkillManager,
+        skill_dir: Path,
+    ) -> None:
         """Test that installing a skill updates the search index."""
         from gobby.mcp_proxy.tools.skills import create_skills_registry
 
@@ -287,7 +341,7 @@ class TestInstallSkillFromHub:
     """Tests for install_skill with hub:slug syntax."""
 
     @pytest.fixture
-    def mock_hub_manager(self):
+    def mock_hub_manager(self) -> MagicMock:
         """Create a mock HubManager for hub installs."""
         from unittest.mock import AsyncMock, MagicMock
 
@@ -321,7 +375,12 @@ class TestInstallSkillFromHub:
         return manager
 
     @pytest.mark.asyncio
-    async def test_install_skill_hub_syntax_parsed(self, db, mock_hub_manager, tmp_path):
+    async def test_install_skill_hub_syntax_parsed(
+        self,
+        db: HubDatabase,
+        mock_hub_manager: MagicMock,
+        tmp_path: Path,
+    ) -> None:
         """Test that 'clawdhub:commit-message' is parsed as hub install."""
         from unittest.mock import AsyncMock
 
@@ -360,7 +419,12 @@ Content here.
         assert result["source_type"] == "hub"
 
     @pytest.mark.asyncio
-    async def test_install_skill_hub_calls_provider(self, db, mock_hub_manager, tmp_path):
+    async def test_install_skill_hub_calls_provider(
+        self,
+        db: HubDatabase,
+        mock_hub_manager: MagicMock,
+        tmp_path: Path,
+    ) -> None:
         """Test that hub install calls hub_manager.get_provider and download_skill."""
         from unittest.mock import AsyncMock
 
@@ -405,7 +469,11 @@ Content here.
         assert mock_provider.download_skill.call_args is not None
 
     @pytest.mark.asyncio
-    async def test_install_skill_hub_unknown_hub(self, db, mock_hub_manager):
+    async def test_install_skill_hub_unknown_hub(
+        self,
+        db: HubDatabase,
+        mock_hub_manager: MagicMock,
+    ) -> None:
         """Test that unknown hub returns error."""
         from gobby.mcp_proxy.tools.skills import create_skills_registry
 
@@ -418,7 +486,7 @@ Content here.
         assert "unknown" in result["error"].lower() or "hub" in result["error"].lower()
 
     @pytest.mark.asyncio
-    async def test_install_skill_hub_no_manager(self, db):
+    async def test_install_skill_hub_no_manager(self, db: HubDatabase) -> None:
         """Test that hub:slug syntax fails when no hub manager configured."""
         from gobby.mcp_proxy.tools.skills import create_skills_registry
 

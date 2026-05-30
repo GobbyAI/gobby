@@ -333,6 +333,7 @@ def _now_iso() -> str:
 
 
 def _coerce_nonnegative_int(value: Any) -> int | None:
+    # bool is an int subclass; token counters must ignore true/false flags.
     if value is None or isinstance(value, bool):
         return None
     return max(0, int(value))
@@ -341,6 +342,7 @@ def _coerce_nonnegative_int(value: Any) -> int | None:
 def _first_token_count(data: Mapping[str, Any], *keys: str) -> int | None:
     for key in keys:
         value = data.get(key)
+        # bool is an int subclass; token counters must ignore true/false flags.
         if value is None or isinstance(value, bool):
             continue
         try:

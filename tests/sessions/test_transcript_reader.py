@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.sessions.transcript_paths import _find_transcript_on_disk
+from gobby.sessions.transcript_paths import _find_transcript_on_disk, _is_recent_file
 from gobby.sessions.transcript_reader import TranscriptReader, _filter_messages, clear_archive_cache
 from gobby.sessions.transcript_renderer import RenderedMessage
 
@@ -141,6 +141,14 @@ def test_gemini_transcript_scan_requires_full_prefix(
     target.write_text("[]", encoding="utf-8")
 
     assert _find_transcript_on_disk("gemini", "short", max_days=1) is None
+
+
+def test_is_recent_file_rejects_non_positive_max_days(tmp_path: Path) -> None:
+    target = tmp_path / "session.jsonl"
+    target.write_text("{}\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="max_days must be positive"):
+        _is_recent_file(target, 0)
 
 
 def _write_gzip_archive(archive_dir: Path, external_id: str, lines: list[dict]) -> Path:

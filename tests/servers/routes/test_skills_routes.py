@@ -295,6 +295,19 @@ class TestImportSkill:
         mock_loader.load_skill.assert_called_once_with(str(local_skill.resolve()), validate=True)
 
     @patch("gobby.skills.loader.SkillLoader")
+    def test_import_rejects_owner_repo_path_as_implicit_github(
+        self,
+        MockLoader,
+        client: TestClient,
+    ) -> None:
+        mock_loader = MockLoader.return_value
+
+        response = client.post("/api/skills/import", json={"source": "owner/repo/path"})
+
+        assert response.status_code == 400
+        mock_loader.load_from_github.assert_not_called()
+
+    @patch("gobby.skills.loader.SkillLoader")
     def test_import_error(self, MockLoader, client: TestClient, skill_project) -> None:
         mock_loader = MockLoader.return_value
         mock_loader.load_skill.side_effect = Exception("Fail")

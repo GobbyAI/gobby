@@ -222,7 +222,19 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
             count = 0
             for row in rows:
                 if row.source == request.source:
-                    manager.update(row.id, enabled=request.enabled)
+                    try:
+                        manager.update(row.id, enabled=request.enabled)
+                    except Exception:
+                        logger.warning(
+                            "Failed to bulk-toggle rule",
+                            extra={
+                                "rule_id": row.id,
+                                "rule_name": row.name,
+                                "source": row.source,
+                            },
+                            exc_info=True,
+                        )
+                        continue
                     count += 1
             return {"status": "success", "count": count}
         except Exception as e:

@@ -42,6 +42,7 @@ export function consumePendingProxyMessage(
     }
   }
 
+  // Every queued id was already removed from the pending map; drop the stale queue.
   pendingQueues.delete(sessionId);
   return null;
 }

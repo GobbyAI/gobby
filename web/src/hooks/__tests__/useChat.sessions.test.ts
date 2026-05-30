@@ -6,6 +6,7 @@ import {
   loadUseChatModule,
   type UseChatTestContext,
 } from "./useChat.setup";
+import { createWebChatSession } from "../useChat/sessionRecords";
 
 let context: UseChatTestContext;
 let mockWs: UseChatTestContext["mockWs"];
@@ -41,6 +42,23 @@ function requestUrl(input: RequestInfo | URL): string {
 }
 
 describe("useChat viewed session state", () => {
+  it("rejects invalid created web-chat session responses", async () => {
+    mockFetch.mockJsonResponse("/api/sessions/web-chat", {
+      session: {
+        id: 123,
+        source: "claude",
+        model: null,
+        chat_mode: "plan",
+        seq_num: null,
+        title: null,
+      },
+    });
+
+    await expect(createWebChatSession()).rejects.toThrow(
+      "Invalid web chat session response",
+    );
+  });
+
   it("restores a watched session on mount without hydrating the parked main chat over it", async () => {
     localStorage.setItem("gobby-viewing-session-id", "sess-view");
     localStorage.setItem("gobby-viewing-session-mode", "observe");
@@ -242,6 +260,44 @@ describe("useChat viewed session state", () => {
 
     expect(result.current.messages).toHaveLength(1);
     expect(result.current.messages[0].content).toBe("Updated output");
+  });
+
+  it("keeps zero session sequence numbers in viewed metadata refs", async () => {
+    await loadModule();
+    mockFetch.mockJsonResponse(
+      "/api/sessions/sess-zero/messages?limit=100&offset=0",
+      { messages: [] },
+    );
+    mockFetch.mockJsonResponse("/api/sessions/sess-zero", {
+      session: {
+        id: "sess-zero",
+        seq_num: 0,
+        source: "codex",
+        title: "Zero sequence",
+        status: "active",
+        model: "gpt-5.4",
+        external_id: "codex-zero",
+        chat_mode: "bypass",
+        git_branch: "main",
+        context_window: 200000,
+        usage_input_tokens: 0,
+        usage_output_tokens: 0,
+        usage_cache_read_tokens: 0,
+        usage_cache_creation_tokens: 0,
+        session_type: "terminal",
+      },
+    });
+
+    const { result } = renderHook(() => useChat());
+    act(() => mockWs.instances[0].simulateOpen());
+
+    await act(async () => {
+      result.current.viewSession("sess-zero");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(result.current.viewingSessionMeta?.ref).toBe("#0");
   });
 
   it("reclassifies protocol-tagged session_message events as system while viewing a session", async () => {

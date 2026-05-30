@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
-from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.tasks._holistic_gate import (
     HOLISTIC_DESCENDANT_GATE_REASON,
+    HolisticDescendantGate,
     find_holistic_descendant_gate,
 )
 from tests.storage.tasks._stage_test_helpers import (
@@ -17,7 +21,10 @@ from tests.storage.tasks._stage_test_helpers import (
 pytestmark = pytest.mark.unit
 
 
-def test_holistic_descendant_gate_blocks_open_ready_descendant(temp_db, sample_project) -> None:
+def test_holistic_descendant_gate_blocks_open_ready_descendant(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
     root = _holistic_root(temp_db, sample_project)
     child = _child(temp_db, sample_project, root.id, stage_state="ready")
 
@@ -32,8 +39,8 @@ def test_holistic_descendant_gate_blocks_open_ready_descendant(temp_db, sample_p
 
 
 def test_holistic_descendant_gate_blocks_escalated_descendant_without_stage(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     root = _holistic_root(temp_db, sample_project)
     child = create_task(temp_db, sample_project, parent_task_id=root.id, title="Escalated child")
@@ -48,7 +55,10 @@ def test_holistic_descendant_gate_blocks_escalated_descendant_without_stage(
     assert gate.blockers[0].stage_state is None
 
 
-def test_holistic_descendant_gate_blocks_nested_descendant(temp_db, sample_project) -> None:
+def test_holistic_descendant_gate_blocks_nested_descendant(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
     root = _holistic_root(temp_db, sample_project)
     phase = create_task(temp_db, sample_project, parent_task_id=root.id, title="Integrated phase")
     child = _child(temp_db, sample_project, phase.id, stage_state="in_progress")
@@ -61,8 +71,8 @@ def test_holistic_descendant_gate_blocks_nested_descendant(temp_db, sample_proje
 
 
 def test_holistic_descendant_gate_allows_closed_or_terminal_descendants(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     root = _holistic_root(temp_db, sample_project)
     manager = LocalTaskManager(temp_db)
@@ -73,11 +83,16 @@ def test_holistic_descendant_gate_allows_closed_or_terminal_descendants(
 
     gate = _gate(temp_db, root.id)
 
-    assert terminal.id
+    assert manager.stage_states.current_stage(terminal.id) is None
     assert gate is None
 
 
-def _holistic_root(temp_db, sample_project, *, stage_state: str = "ready"):
+def _holistic_root(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    *,
+    stage_state: str = "ready",
+) -> Task:
     root = create_task(
         temp_db,
         sample_project,
@@ -97,13 +112,13 @@ def _holistic_root(temp_db, sample_project, *, stage_state: str = "ready"):
 
 
 def _child(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
     parent_task_id: str,
     *,
     title: str = "Descendant",
     stage_state: str,
-):
+) -> Task:
     child = create_task(
         temp_db,
         sample_project,
@@ -116,7 +131,7 @@ def _child(
     return child
 
 
-def _gate(temp_db, root_id: str):
+def _gate(temp_db: HubDatabase, root_id: str) -> HolisticDescendantGate | None:
     manager = LocalTaskManager(temp_db)
     root = manager.get_task(root_id)
     return find_holistic_descendant_gate(

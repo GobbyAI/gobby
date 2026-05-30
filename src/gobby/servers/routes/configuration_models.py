@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, ClassVar
 
 from pydantic import BaseModel, model_validator
 
@@ -37,6 +37,16 @@ class SavePromptOverrideRequest(BaseModel):
 class SaveUISettingsRequest(BaseModel):
     """Request body for PUT /api/config/ui-settings."""
 
+    UI_SETTING_FIELDS: ClassVar[tuple[str, ...]] = (
+        "fontSize",
+        "model",
+        "theme",
+        "defaultChatMode",
+        "postPlanChatMode",
+        "selectedProjectId",
+        "selectedProvider",
+    )
+
     fontSize: int | None = None
     model: str | None = None
     theme: str | None = None
@@ -48,7 +58,7 @@ class SaveUISettingsRequest(BaseModel):
     @model_validator(mode="after")
     def require_at_least_one_setting(self) -> SaveUISettingsRequest:
         """Reject empty payloads and all-null no-op updates."""
-        if all(value is None for value in self.model_dump().values()):
+        if all(getattr(self, field) is None for field in self.UI_SETTING_FIELDS):
             raise ValueError("At least one UI setting must be provided")
         return self
 

@@ -16,6 +16,7 @@ from gobby.dispatch.context import _field
 from gobby.dispatch.mutex import RuntimeDispatchMutex
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.tasks import TaskAlreadyEscalatedError
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._read import get_task
 from gobby.storage.tasks._transitions import escalate_task
@@ -137,7 +138,7 @@ def _handle_resume_failure(
     try:
         try:
             escalate_task(db, action.task_id, reason=_ESCALATION_REASON)
-        except Exception:
+        except (TaskAlreadyEscalatedError, ValueError):
             logger.warning(
                 "Failed to escalate task after daemon-stop resume failure",
                 extra={"task_id": action.task_id, "run_id": candidate.id},

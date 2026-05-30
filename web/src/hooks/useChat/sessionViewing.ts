@@ -157,7 +157,7 @@ const viewSession = useCallback(
       .then((data) => {
         const s = data?.session;
         if (!s || !isCurrentRequest()) return;
-        const ref = s.seq_num ? `#${s.seq_num}` : null;
+          const ref = typeof s.seq_num === "number" ? `#${s.seq_num}` : null;
         setSessionRef(ref);
         const nextMeta: SessionObservationMeta = {
           ref,

@@ -15,7 +15,7 @@ from gobby.llm.context_windows import resolve_context_window as _resolve_context
 
 def resolve_context_window(
     model: str | None,
-    _unused: Any = None,
+    provider_metadata: Any = None,
     overrides: dict[str, int] | None = None,
     *,
     provider: str | None = None,
@@ -25,7 +25,7 @@ def resolve_context_window(
     """Compatibility wrapper for source-aware context-window resolution."""
     return _resolve_context_window(
         model,
-        _unused,
+        provider_metadata,
         overrides,
         provider=provider,
         catalog=catalog,

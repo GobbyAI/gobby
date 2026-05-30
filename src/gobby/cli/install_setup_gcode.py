@@ -49,7 +49,7 @@ def probe_gcode_version(module: Any, gcode_path: Path) -> str | None:
             text=True,
             timeout=5,
         )
-    except Exception as e:
+    except (module.subprocess.SubprocessError, OSError) as e:
         module.logger.warning("gcode: failed running --version probe: %s", e)
         return None
 

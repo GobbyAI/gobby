@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  findPendingToolCall,
   looksLikeSystemBootstrapText,
   mapApiMessages,
   mapRenderedMessageToChatMessage,
@@ -152,7 +153,7 @@ Stay concise and direct.`
       {
         id: 'result-1',
         role: 'user',
-        content: '{"ok":true}',
+        content: '{"content":{"ok":true},"kind":"json","truncated":false}',
         content_type: 'tool_result',
         tool_use_id: 'tool-a',
         timestamp: '2026-05-30T00:00:02.000Z',
@@ -163,7 +164,86 @@ Stay concise and direct.`
       ['tool-a', 'completed'],
       ['tool-b', 'calling'],
     ])
-    expect(assistant.toolCalls?.[0].result).toEqual({ ok: true })
+    expect(assistant.toolCalls?.[0].result).toEqual({
+      content: { ok: true },
+      kind: 'json',
+      truncated: false,
+    })
+  })
+
+  it('marks invalid tool result payloads as errors', () => {
+    const [assistant] = mapApiMessages([
+      {
+        id: 'call-1',
+        role: 'assistant',
+        content: '',
+        content_type: 'tool_use',
+        tool_name: 'Read',
+        tool_use_id: 'tool-a',
+        timestamp: '2026-05-30T00:00:00.000Z',
+      },
+      {
+        id: 'result-1',
+        role: 'user',
+        content: '{"ok":true}',
+        content_type: 'tool_result',
+        tool_use_id: 'tool-a',
+        timestamp: '2026-05-30T00:00:01.000Z',
+      },
+    ])
+
+    expect(assistant.toolCalls?.[0]).toEqual(
+      expect.objectContaining({
+        error: 'Invalid tool result payload',
+        status: 'error',
+      }),
+    )
+    expect(assistant.toolCalls?.[0].result).toBeUndefined()
+  })
+
+  it('guards tool-use messages with invalid embedded tool result payloads', () => {
+    const [assistant] = mapApiMessages([
+      {
+        id: 'call-1',
+        role: 'assistant',
+        content: '',
+        content_type: 'tool_use',
+        tool_name: 'Read',
+        tool_input: '[]',
+        tool_result: '{"ok":true}',
+        tool_use_id: 'tool-a',
+        timestamp: '2026-05-30T00:00:00.000Z',
+      },
+    ])
+
+    expect(assistant.toolCalls?.[0]).toEqual(
+      expect.objectContaining({
+        arguments: undefined,
+        error: 'Invalid tool result payload',
+        status: 'error',
+      }),
+    )
+  })
+
+  it('does not treat errored tool calls as pending', () => {
+    expect(
+      findPendingToolCall({
+        id: 'assistant-1',
+        role: 'assistant',
+        content: '',
+        timestamp: new Date('2026-05-30T00:00:00.000Z'),
+        toolCalls: [
+          {
+            id: 'tool-a',
+            tool_name: 'Read',
+            server_name: 'builtin',
+            tool_type: 'read',
+            status: 'error',
+            error: 'blocked',
+          },
+        ],
+      }),
+    ).toBeUndefined()
   })
 
   it('keeps consecutive tool calls in separate tool chain blocks', () => {

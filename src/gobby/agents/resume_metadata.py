@@ -7,8 +7,10 @@ from collections.abc import Mapping
 from typing import Any, cast
 
 from gobby.agents.sandbox import SandboxConfig
+from gobby.agents.spawn_cache_policy import SPAWN_CACHE_ENV_VARS
 
 RESUME_METADATA_VERSION = 1
+_RESUME_METADATA_ENV_KEYS = frozenset(SPAWN_CACHE_ENV_VARS)
 
 
 def json_safe(value: Any) -> Any:
@@ -52,6 +54,18 @@ def dump_resume_metadata(value: Mapping[str, Any] | None) -> str | None:
     if value is None:
         return None
     return json.dumps(json_safe(dict(value)), sort_keys=True, separators=(",", ":"))
+
+
+def merge_resume_metadata_env(*sources: Any) -> dict[str, str]:
+    """Return non-secret env values needed to reproduce spawned-agent caches."""
+    final_env: dict[str, str] = {}
+    for source in sources:
+        if not isinstance(source, Mapping):
+            continue
+        for key, value in source.items():
+            if key in _RESUME_METADATA_ENV_KEYS:
+                final_env[str(key)] = str(value)
+    return final_env
 
 
 def build_resume_metadata(

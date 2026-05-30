@@ -26,6 +26,7 @@ def _find_transcript_on_disk(
         return None
     if max_days is not None:
         source_max_days = max_days
+    _validate_max_days(source_max_days)
     escaped_external_id = glob_escape(external_id)
 
     if source == "claude":
@@ -155,9 +156,13 @@ def _first_recent_file(paths: list[Path], max_days: int) -> Path | None:
 
 
 def _is_recent_file(path: Path, max_days: int) -> bool:
-    if max_days <= 0:
-        return False
+    _validate_max_days(max_days)
     try:
         return path.is_file() and path.stat().st_mtime >= time() - (max_days * _SECONDS_PER_DAY)
     except OSError:
         return False
+
+
+def _validate_max_days(max_days: int) -> None:
+    if max_days <= 0:
+        raise ValueError("max_days must be positive")

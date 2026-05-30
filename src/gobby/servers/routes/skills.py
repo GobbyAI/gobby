@@ -20,9 +20,7 @@ if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
 
 logger = logging.getLogger(__name__)
-_GITHUB_OWNER_REPO_PATTERN = re.compile(
-    r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_./-]+)?(?:#[A-Za-z0-9_./-]+)?$"
-)
+_GITHUB_OWNER_REPO_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:#[A-Za-z0-9_./-]+)?$")
 
 
 # =============================================================================

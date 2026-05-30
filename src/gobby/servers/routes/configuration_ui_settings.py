@@ -35,9 +35,10 @@ def register_ui_setting_routes(router: APIRouter, context: ConfigurationRouteCon
         """Return persisted UI settings."""
         try:
             config_store = context.get_config_store()
+            stored = config_store.get_all()
             result: dict[str, Any] = {}
             for key in UI_SETTINGS_KEYS:
-                value = config_store.get(f"{UI_SETTINGS_PREFIX}{key}")
+                value = stored.get(f"{UI_SETTINGS_PREFIX}{key}")
                 if value is not None:
                     result[key] = value
             return JSONResponse(content=result)
@@ -45,7 +46,7 @@ def register_ui_setting_routes(router: APIRouter, context: ConfigurationRouteCon
             raise
         except _UI_SETTING_STORAGE_ERRORS as e:
             logger.error("Failed to get UI settings: %s", e, exc_info=True)
-            raise HTTPException(status_code=500, detail="Failed to load UI settings") from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.put("/ui-settings")
     async def save_ui_settings(request: SaveUISettingsRequest) -> JSONResponse:
@@ -64,7 +65,7 @@ def register_ui_setting_routes(router: APIRouter, context: ConfigurationRouteCon
             raise
         except _UI_SETTING_STORAGE_ERRORS as e:
             logger.error("Failed to save UI settings: %s", e, exc_info=True)
-            raise HTTPException(status_code=500, detail="Failed to save UI settings") from e
+            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.delete("/ui-settings/{key}")
     async def delete_ui_setting(key: str) -> JSONResponse:

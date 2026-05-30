@@ -157,8 +157,8 @@ export interface ApiMessage {
   content: string
   content_type?: string
   tool_name?: string
-  tool_input?: string
-  tool_result?: string
+  tool_input?: unknown
+  tool_result?: unknown
   tool_use_id?: string
   timestamp: string
   message_index?: number
@@ -205,6 +205,42 @@ export function tryParseJSON(value: unknown): unknown {
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+const TOOL_RESULT_KINDS = new Set<ToolResult['kind']>([
+  'text',
+  'json',
+  'image',
+  'error',
+])
+
+function isToolResult(value: unknown): value is ToolResult {
+  if (!isRecord(value)) return false
+  const metadata = value.metadata
+  return (
+    Object.prototype.hasOwnProperty.call(value, 'content') &&
+    typeof value.kind === 'string' &&
+    TOOL_RESULT_KINDS.has(value.kind as ToolResult['kind']) &&
+    typeof value.truncated === 'boolean' &&
+    (metadata === undefined || isRecord(metadata))
+  )
+}
+
+function parseToolArguments(value: unknown): Record<string, unknown> | undefined {
+  const parsed = tryParseJSON(value)
+  return isRecord(parsed) ? parsed : undefined
+}
+
+function parseToolResultPayload(value: unknown): { result?: ToolResult; error?: string } {
+  if (value === undefined || value === null || value === '') return {}
+  if (typeof value !== 'string') return { error: 'Invalid tool result payload' }
+  const parsed = tryParseJSON(value)
+  if (isToolResult(parsed)) return { result: parsed }
+  return { error: 'Invalid tool result payload' }
+}
+
 export function appendTextBlock(msg: ChatMessage, text: string) {
   if (!msg.contentBlocks) msg.contentBlocks = []
   const last = msg.contentBlocks[msg.contentBlocks.length - 1]
@@ -242,13 +278,19 @@ export function findPendingToolCall(msg: ChatMessage): ToolCall | undefined {
       const block = msg.contentBlocks[i]
       if (block.type === 'tool_chain') {
         const pending = block.tool_calls.find(
-          (tc) => tc.status !== 'completed',
+          (tc) => tc.status === 'calling' ||
+            tc.status === 'pending' ||
+            tc.status === 'pending_approval',
         )
         if (pending) return pending
       }
     }
   }
-  return msg.toolCalls?.find((tc) => tc.status !== 'completed')
+  return msg.toolCalls?.find(
+    (tc) => tc.status === 'calling' ||
+      tc.status === 'pending' ||
+      tc.status === 'pending_approval',
+  )
 }
 
 export function extractServerName(toolName: string): string {
@@ -356,7 +398,15 @@ function completeToolCallFromMessage(assistant: ChatMessage, message: ApiMessage
     ? findToolCallById(assistant, message.tool_use_id)
     : findPendingToolCall(assistant)
   if (match) {
-    match.result = tryParseJSON(message.content) as ToolResult | undefined
+    const parsed = parseToolResultPayload(message.content)
+    if (parsed.error) {
+      match.result = undefined
+      match.error = parsed.error
+      match.status = 'error'
+      return
+    }
+    match.result = parsed.result
+    match.error = undefined
     match.status = 'completed'
   }
 }
@@ -452,16 +502,19 @@ function mapUserApiMessage(
 
 function toolCallFromApiMessage(message: ApiMessage, id: string): ToolCall {
   const toolName = message.tool_name || 'unknown'
+  const parsedResult = parseToolResultPayload(message.tool_result)
+  const hasResultPayload = message.tool_result !== undefined &&
+    message.tool_result !== null &&
+    message.tool_result !== ''
   return {
     id: message.tool_use_id || id,
     tool_name: toolName,
     server_name: extractServerName(toolName),
     tool_type: classifyTool(toolName),
-    status: message.tool_result ? 'completed' : 'calling',
-    arguments: tryParseJSON(message.tool_input) as Record<string, unknown> | undefined,
-    result: message.tool_result
-      ? (tryParseJSON(message.tool_result) as ToolResult)
-      : undefined,
+    status: parsedResult.error ? 'error' : hasResultPayload ? 'completed' : 'calling',
+    arguments: parseToolArguments(message.tool_input),
+    result: parsedResult.result,
+    error: parsedResult.error,
   }
 }
 

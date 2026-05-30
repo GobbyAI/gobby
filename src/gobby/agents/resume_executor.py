@@ -5,15 +5,14 @@ from __future__ import annotations
 import logging
 import shutil
 import uuid
-from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
 import psycopg
 
+from gobby.agents.resume_metadata import merge_resume_metadata_env
 from gobby.agents.spawn import prepare_terminal_spawn
-from gobby.agents.spawn_cache_policy import SPAWN_CACHE_ENV_VARS
 from gobby.agents.spawners.command_builder import build_cli_command
 from gobby.agents.tmux.spawner import TmuxSpawner
 from gobby.agents.trust import pre_approve_directory
@@ -28,7 +27,6 @@ DAEMON_STOP_CONTINUATION_PROMPT = (
     "Continue the interrupted task after the Gobby daemon stopped. Inspect the current "
     "workspace state, preserve any existing work, and continue from where the prior run left off."
 )
-_RESUME_METADATA_ENV_KEYS = frozenset(SPAWN_CACHE_ENV_VARS)
 
 
 class _RunStorage(Protocol):
@@ -173,11 +171,11 @@ async def resume_agent_run(
         command.extend(sandbox_args)
         command.append(prompt)
 
-    env = _safe_resume_metadata_env(resume_metadata.get("env"))
+    env = merge_resume_metadata_env(resume_metadata.get("env"))
     env.update(spawn_context.env_vars)
     env.update(_str_dict(resume_metadata.get("sandbox_env")))
     env["GOBBY_MACHINE_ID"] = _metadata_str(resume_metadata, "machine_id") or "unknown"
-    metadata["env"] = _safe_resume_metadata_env(env)
+    metadata["env"] = merge_resume_metadata_env(env)
     try:
         update_resume_metadata = getattr(runner.run_storage, "update_resume_metadata", None)
         if callable(update_resume_metadata):
@@ -316,12 +314,6 @@ def _fail_run(runner: Any, run_id: str, error: str) -> None:
         runner.run_storage.fail(run_id, error=error)
     except Exception as exc:
         logger.warning("Failed to mark resumed agent run %s failed: %s", run_id, exc)
-
-
-def _safe_resume_metadata_env(value: Any) -> dict[str, str]:
-    if not isinstance(value, Mapping):
-        return {}
-    return {str(key): str(item) for key, item in value.items() if key in _RESUME_METADATA_ENV_KEYS}
 
 
 def _tmux_spawner(daemon_config: Any | None, metadata: dict[str, Any]) -> TmuxSpawner:
