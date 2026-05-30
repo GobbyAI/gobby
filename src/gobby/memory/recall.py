@@ -99,7 +99,7 @@ class MemoryRecallRunner:
         """Return a fresh memory_recall payload for an eligible parent turn."""
         if not is_memory_recall_eligible(event, variables, self.config):
             return None
-        if self.llm_service is None or not hasattr(self.llm_service, "call_feature"):
+        if self.llm_service is None or not hasattr(self.llm_service, "call_json_feature"):
             self.logger.debug("Memory recall skipped: LLM service unavailable")
             return None
 
@@ -185,13 +185,7 @@ class MemoryRecallRunner:
         recall_prompt = self._render_prompt(prompt, candidates)
         try:
             response = await asyncio.wait_for(
-                self.llm_service.call_feature(
-                    self.config,
-                    recall_prompt,
-                    system_prompt=RECALL_SYSTEM_PROMPT,
-                    max_tokens=512,
-                    caller="memory.recall_helper",
-                ),
+                self._call_selection_feature(recall_prompt),
                 timeout=self.config.timeout,
             )
         except TimeoutError:
@@ -202,10 +196,26 @@ class MemoryRecallRunner:
             return []
 
         try:
-            return _parse_selected_memory_ids(str(response))
+            return _parse_selected_memory_ids(response)
         except ValueError as exc:
             self.logger.warning("Memory recall LLM returned invalid JSON: %s", exc)
             return []
+
+    async def _call_selection_feature(self, recall_prompt: str) -> Any:
+        llm_service = self.llm_service
+        if llm_service is None:
+            raise RuntimeError("LLM service unavailable")
+
+        call_json_feature = getattr(llm_service, "call_json_feature", None)
+        if not callable(call_json_feature):
+            raise RuntimeError("LLM service unavailable")
+
+        return await call_json_feature(
+            self.config,
+            recall_prompt,
+            system_prompt=RECALL_SYSTEM_PROMPT,
+            caller="memory.recall_helper",
+        )
 
     def _render_prompt(self, prompt: str, candidates: list[dict[str, Any]]) -> str:
         variables = {
@@ -279,14 +289,10 @@ def _memory_to_payload(memory: Memory) -> dict[str, Any]:
     return payload
 
 
-def _parse_selected_memory_ids(response: str) -> list[str]:
-    try:
-        parsed = json.loads(response)
-    except json.JSONDecodeError as exc:
-        raise ValueError(str(exc)) from exc
-    if not isinstance(parsed, dict):
+def _parse_selected_memory_ids(response: Any) -> list[str]:
+    if not isinstance(response, dict):
         raise ValueError("top-level JSON value must be an object")
-    raw_ids = parsed.get("memory_ids")
+    raw_ids = response.get("memory_ids")
     if raw_ids is None:
         raise ValueError("missing memory_ids")
     if not isinstance(raw_ids, list):

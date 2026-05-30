@@ -34,10 +34,36 @@ class FakeMemoryManager:
 
 
 class FakeLLMService:
-    def __init__(self, response: str = '{"memory_ids":[]}'):
-        self.response = response
+    def __init__(self, response: Any | None = None):
+        self.response = {"memory_ids": []} if response is None else response
         self.calls: list[dict[str, Any]] = []
         self.error: Exception | None = None
+
+    async def call_json_feature(
+        self,
+        feature_config: Any,
+        prompt: str,
+        system_prompt: str | None = None,
+        *,
+        caller: str | None = None,
+    ) -> Any:
+        self.calls.append(
+            {
+                "feature_config": feature_config,
+                "prompt": prompt,
+                "system_prompt": system_prompt,
+                "caller": caller,
+            }
+        )
+        if self.error is not None:
+            raise self.error
+        return self.response
+
+
+class LegacyLLMService:
+    def __init__(self, response: str = '{"memory_ids":["mem-1"]}'):
+        self.response = response
+        self.calls: list[dict[str, Any]] = []
 
     async def call_feature(
         self,
@@ -57,8 +83,6 @@ class FakeLLMService:
                 "caller": caller,
             }
         )
-        if self.error is not None:
-            raise self.error
         return self.response
 
 
@@ -135,7 +159,7 @@ def test_recall_eligibility_only_accepts_real_parent_user_turns(
 
 
 @pytest.mark.asyncio
-async def test_runner_selects_memory_with_feature_call_and_no_child_session(
+async def test_runner_selects_memory_with_json_feature_call_and_no_child_session(
     temp_db: HubDatabase,
 ) -> None:
     SessionVariableManager(temp_db).set_variable(SESSION_ID, "parent_turn_seq", 3)
@@ -145,7 +169,7 @@ async def test_runner_selects_memory_with_feature_call_and_no_child_session(
             _memory("mem-2", "Unrelated but plausible."),
         ]
     )
-    llm = FakeLLMService('{"memory_ids":["mem-1","mem-1","mem-2"]}')
+    llm = FakeLLMService({"memory_ids": ["mem-1", "mem-1", "mem-2"]})
     config = MemoryRecallHelperConfig(candidate_limit=8, selected_limit=1, min_score=0.5)
     runner = MemoryRecallRunner(
         db=temp_db,
@@ -190,7 +214,7 @@ async def test_runner_filters_already_injected_duplicates_before_llm(temp_db: Hu
     sv_mgr = SessionVariableManager(temp_db)
     sv_mgr.set_variable(SESSION_ID, "parent_turn_seq", 3)
     sv_mgr.set_variable(SESSION_ID, "injected_memory_ids", ["mem-1"])
-    llm = FakeLLMService('{"memory_ids":["mem-2"]}')
+    llm = FakeLLMService({"memory_ids": ["mem-2"]})
     runner = MemoryRecallRunner(
         db=temp_db,
         memory_manager=FakeMemoryManager([_memory("mem-1"), _memory("mem-2")]),  # type: ignore[arg-type]
@@ -207,12 +231,29 @@ async def test_runner_filters_already_injected_duplicates_before_llm(temp_db: Hu
 
 
 @pytest.mark.asyncio
+async def test_runner_skips_legacy_feature_only_service(temp_db: HubDatabase) -> None:
+    SessionVariableManager(temp_db).set_variable(SESSION_ID, "parent_turn_seq", 3)
+    llm = LegacyLLMService()
+    runner = MemoryRecallRunner(
+        db=temp_db,
+        memory_manager=FakeMemoryManager([_memory("mem-1")]),  # type: ignore[arg-type]
+        llm_service=llm,
+        config=MemoryRecallHelperConfig(),
+    )
+
+    payload = await runner.run(_event(), SESSION_ID, _variables())
+
+    assert payload is None
+    assert llm.calls == []
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("memory_manager", "llm", "expected_llm_calls"),
     [
-        (FakeMemoryManager([]), FakeLLMService('{"memory_ids":["mem-1"]}'), 0),
+        (FakeMemoryManager([]), FakeLLMService({"memory_ids": ["mem-1"]}), 0),
         (FakeMemoryManager([_memory("mem-1")]), FakeLLMService("not-json"), 1),
-        (FakeMemoryManager([_memory("mem-1")]), FakeLLMService('{"memory_ids":"mem-1"}'), 1),
+        (FakeMemoryManager([_memory("mem-1")]), FakeLLMService({"memory_ids": "mem-1"}), 1),
     ],
 )
 async def test_runner_safe_empty_candidates_and_invalid_json(
@@ -257,7 +298,7 @@ async def test_runner_drops_stale_turn_result(temp_db: HubDatabase) -> None:
     runner = MemoryRecallRunner(
         db=temp_db,
         memory_manager=FakeMemoryManager([_memory("mem-1")]),  # type: ignore[arg-type]
-        llm_service=FakeLLMService('{"memory_ids":["mem-1"]}'),
+        llm_service=FakeLLMService({"memory_ids": ["mem-1"]}),
         config=MemoryRecallHelperConfig(),
     )
 
