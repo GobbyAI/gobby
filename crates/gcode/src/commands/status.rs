@@ -10,6 +10,7 @@ use crate::models::IndexedProject;
 use crate::output::{self, Format};
 use crate::utils::short_id;
 use crate::vector::code_symbols;
+use crate::visibility;
 
 /// Format a `last_indexed_at` value for display.
 /// Handles both epoch seconds ("1774970556") and ISO 8601 ("2026-03-29T18:52:25.750230+00:00").
@@ -76,7 +77,13 @@ pub fn run(ctx: &Context, format: Format) -> anyhow::Result<()> {
 
     match stats {
         Some(s) => match format {
-            Format::Json => output::print_json(&s),
+            Format::Json => {
+                let mut value = serde_json::to_value(&s)?;
+                if let Some(overlay) = overlay_status_json(ctx, &mut conn) {
+                    value["overlay"] = overlay;
+                }
+                output::print_json(&value)
+            }
             Format::Text => {
                 let name = Path::new(&s.root_path)
                     .file_name()
@@ -91,6 +98,22 @@ pub fn run(ctx: &Context, format: Format) -> anyhow::Result<()> {
                 println!("  Symbols:  {}", s.total_symbols);
                 println!("  Indexed:  {}", format_timestamp(&s.last_indexed_at));
                 println!("  Duration: {}ms", s.index_duration_ms);
+                if let crate::config::ProjectIndexScope::Overlay {
+                    parent_project_id,
+                    parent_root,
+                    ..
+                } = &ctx.index_scope
+                {
+                    println!(
+                        "  Overlay:  parent {} ({})",
+                        parent_root.display(),
+                        short_id(parent_project_id)
+                    );
+                    let tombstones = visibility::tombstone_count(&mut conn, ctx);
+                    if tombstones > 0 {
+                        println!("  Deletes:  {tombstones}");
+                    }
+                }
                 Ok(())
             }
         },
@@ -102,6 +125,30 @@ pub fn run(ctx: &Context, format: Format) -> anyhow::Result<()> {
             Ok(())
         }
     }
+}
+
+fn overlay_status_json(ctx: &Context, conn: &mut postgres::Client) -> Option<serde_json::Value> {
+    let crate::config::ProjectIndexScope::Overlay {
+        overlay_project_id,
+        overlay_root,
+        parent_project_id,
+        parent_root,
+    } = &ctx.index_scope
+    else {
+        return None;
+    };
+
+    let tombstones = visibility::tombstone_count(conn, ctx);
+    let mut overlay = serde_json::json!({
+        "overlay_project_id": overlay_project_id,
+        "overlay_root": overlay_root,
+        "parent_project_id": parent_project_id,
+        "parent_root": parent_root,
+    });
+    if tombstones > 0 {
+        overlay["tombstones"] = serde_json::json!(tombstones);
+    }
+    Some(overlay)
 }
 
 pub fn invalidate(ctx: &Context, force: bool) -> anyhow::Result<()> {
@@ -366,20 +413,14 @@ pub fn repo_outline(ctx: &Context, format: Format) -> anyhow::Result<()> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
 
     // Group files by directory with symbol counts.
-    let files: Vec<serde_json::Value> = conn
-        .query(
-            "SELECT file_path, language, symbol_count::BIGINT AS symbol_count
-             FROM code_indexed_files
-             WHERE project_id = $1 ORDER BY file_path",
-            &[&ctx.project_id],
-        )?
-        .iter()
-        .filter_map(|row| {
-            Some(serde_json::json!({
-                "file_path": row.try_get::<_, String>("file_path").ok()?,
-                "language": row.try_get::<_, String>("language").ok()?,
-                "symbol_count": row.try_get::<_, i64>("symbol_count").ok()?,
-            }))
+    let files: Vec<serde_json::Value> = visibility::visible_tree(&mut conn, ctx)?
+        .into_iter()
+        .map(|file| {
+            serde_json::json!({
+                "file_path": file.file_path,
+                "language": file.language,
+                "symbol_count": file.symbol_count,
+            })
         })
         .collect();
 
