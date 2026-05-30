@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from gobby.storage.tasks import _automation
 from gobby.storage.tasks._crud import list_automation_candidates
 from gobby.storage.tasks._models import Isolation
 from gobby.tasks.state_semantics import ACTIVE_STAGE_STATES
@@ -71,3 +72,31 @@ def test_list_automation_candidates_excludes_done_and_null_current_stage(
 
     assert done.id not in candidate_ids
     assert no_manifest.id not in candidate_ids
+
+
+def test_list_automation_candidates_precomputes_holistic_gate_once_per_task(
+    temp_db,
+    sample_project,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = _task_at_stage(temp_db, sample_project, "ready")
+    second = _task_at_stage(temp_db, sample_project, "ready")
+    calls: list[str] = []
+
+    def fake_find_holistic_descendant_gate(db, task):
+        calls.append(task.id)
+        return None
+
+    monkeypatch.setattr(
+        _automation,
+        "find_holistic_descendant_gate",
+        fake_find_holistic_descendant_gate,
+    )
+
+    candidate_ids = {
+        task.id for task in list_automation_candidates(temp_db, project_id=sample_project["id"])
+    }
+
+    assert {first.id, second.id} <= candidate_ids
+    assert calls.count(first.id) == 1
+    assert calls.count(second.id) == 1

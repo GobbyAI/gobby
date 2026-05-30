@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, cast
 
@@ -15,6 +16,7 @@ if TYPE_CHECKING:
 _SOURCES: frozenset[str] = frozenset(
     {"claude", "codex", "gemini", "qwen", "droid", "agy", "grok", "web_chat"}
 )
+logger = logging.getLogger(__name__)
 
 
 def normalize_context_usage_source(source: str | None) -> ContextUsageSource | None:
@@ -147,7 +149,15 @@ def _latest_token_event_context_window(
         from gobby.storage.token_events import TokenEventStore
 
         events = TokenEventStore(db).list_session_events(session_id, limit=20)
+    except ImportError:
+        logger.debug("Token event store is unavailable", exc_info=True)
+        return None
     except Exception:
+        logger.warning(
+            "Failed to load token event context window",
+            extra={"session_id": session_id},
+            exc_info=True,
+        )
         return None
     if not isinstance(events, list):
         return None
@@ -174,6 +184,11 @@ def _reported_session_context_window(session: Any, db: HubDatabase | None) -> in
             (session_id,),
         )
     except Exception:
+        logger.warning(
+            "Failed to load reported session context window",
+            extra={"session_id": session_id},
+            exc_info=True,
+        )
         return None
     if not isinstance(row, Mapping) or row.get("context_usage_confidence") != "reported":
         return None
@@ -218,7 +233,11 @@ def _coerce_positive_int(value: object) -> int | None:
     try:
         if isinstance(value, int):
             coerced = value
-        elif isinstance(value, float | str | bytes | bytearray):
+        elif isinstance(value, float):
+            if not value.is_integer():
+                return None
+            coerced = int(value)
+        elif isinstance(value, str | bytes | bytearray):
             coerced = int(value)
         else:
             return None

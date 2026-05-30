@@ -92,7 +92,16 @@ class TestParseGithubUrl:
 
     @pytest.mark.parametrize(
         "source",
-        ["/tmp/skill", "./skills/local", "../skills/local", "owner/repo/path"],
+        [
+            "/tmp/skill",
+            "./skills/local",
+            "../skills/local",
+            "owner/repo/path",
+            "owner/.",
+            "owner/..",
+            "./repo",
+            "../repo",
+        ],
     )
     def test_parse_rejects_local_paths_and_slash_paths(self, source: str) -> None:
         from gobby.skills.loader import parse_github_url

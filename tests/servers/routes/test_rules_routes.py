@@ -403,7 +403,19 @@ class TestBulkToggleRules:
         )
 
         assert response.status_code == 200
-        assert response.json() == {"status": "success", "count": 1}
+        assert response.json() == {
+            "status": "success",
+            "count": 1,
+            "failures": [
+                {
+                    "rule_id": failing_rule_id,
+                    "rule_name": "installed-a",
+                    "source": "installed",
+                    "error": "row update failed",
+                }
+            ],
+            "partial": True,
+        }
         assert def_manager.get(failing_rule_id).enabled is True
         assert def_manager.get(successful_rule_id).enabled is False
         assert def_manager.get(project_rule_id).enabled is True

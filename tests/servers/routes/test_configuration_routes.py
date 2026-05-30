@@ -1067,6 +1067,24 @@ class TestExportImport:
         assert "1 prompt override(s) restored" in data["summary"]
         assert data["requires_restart"] is False
 
+    def test_import_frontmatter_only_prompt_uses_empty_body(
+        self, client: TestClient, temp_db: Any
+    ) -> None:
+        response = client.post(
+            "/api/config/import",
+            json={
+                "prompts": {
+                    "frontmatter-only.md": "---\ndescription: metadata only\n---\n",
+                },
+            },
+        )
+
+        assert response.status_code == 200
+        override = LocalPromptManager(temp_db).get_override("frontmatter-only")
+        assert override is not None
+        assert override.content == ""
+        assert override.description == "metadata only"
+
     def test_import_prompts_uses_project_scope(
         self,
         temp_db: Any,

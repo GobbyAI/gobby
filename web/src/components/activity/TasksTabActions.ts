@@ -89,9 +89,6 @@ export async function patchTaskFields(
 export function taskActionRef(task: GobbyTask): string {
   const ref = typeof task.ref === "string" ? task.ref.trim() : "";
   if (ref) return ref;
-  if (typeof task.seq_num === "number" && Number.isFinite(task.seq_num)) {
-    return `#${task.seq_num}`;
-  }
   return task.id;
 }
 

@@ -14,6 +14,7 @@ import yaml
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
+from starlette.concurrency import run_in_threadpool
 
 from gobby.config.app import DaemonConfig
 from gobby.prompts.models import parse_frontmatter
@@ -198,12 +199,11 @@ def _parse_imported_prompts(
                     status_code=422,
                     detail=f"Prompt variables for {key} must be JSON serializable",
                 ) from e
-        stripped_body = body.strip()
         parsed.append(
             _ImportedPrompt(
                 key=key,
                 name=name,
-                content=stripped_body if stripped_body else content,
+                content=body,
                 description=description,
                 version=version,
                 variables=variables,
@@ -300,9 +300,7 @@ def register_import_export_routes(
 ) -> None:
     """Register configuration export/import routes."""
 
-    @router.post("/export")
-    def export_config() -> JSONResponse:
-        """Bundle config_store + prompt overrides + secret names (not values)."""
+    def _export_config_sync() -> JSONResponse:
         try:
             config_store = context.get_config_store()
             flat_config = config_store.get_all()
@@ -336,9 +334,12 @@ def register_import_export_routes(
             logger.error("Config export failed: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
-    @router.post("/import")
-    def import_config(request: ImportConfigRequest) -> JSONResponse:
-        """Import config bundle; secret values must be re-entered."""
+    @router.post("/export")
+    async def export_config() -> JSONResponse:
+        """Bundle config_store + prompt overrides + secret names (not values)."""
+        return await run_in_threadpool(_export_config_sync)
+
+    def _import_config_sync(request: ImportConfigRequest) -> JSONResponse:
         summary_parts: list[str] = []
         config_imported = False
         restart_touched_keys: set[str] = set()
@@ -440,3 +441,8 @@ def register_import_export_routes(
         except Exception as e:
             logger.error("Unexpected config import failure", exc_info=True)
             raise HTTPException(status_code=500, detail="Failed to import configuration") from e
+
+    @router.post("/import")
+    async def import_config(request: ImportConfigRequest) -> JSONResponse:
+        """Import config bundle; secret values must be re-entered."""
+        return await run_in_threadpool(_import_config_sync, request)

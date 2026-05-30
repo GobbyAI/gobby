@@ -125,7 +125,7 @@ def coerce_context_length(value: Any) -> int | None:
     if isinstance(value, int):
         return value if value > 0 else None
     if isinstance(value, float):
-        return int(value) if value > 0 else None
+        return int(value) if value > 0 and value.is_integer() else None
     if isinstance(value, str):
         try:
             parsed = int(value.replace("_", ""))

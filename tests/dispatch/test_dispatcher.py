@@ -144,6 +144,22 @@ def test_append_audit_marker_is_exact_marker_idempotent(
     assert description.count("### Dispatch") == 2
 
 
+def test_append_audit_marker_only_dedupes_trailing_marker(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    from gobby.dispatch import dispatcher
+    from gobby.dispatch.audit import audit_marker_text
+
+    task = _task(temp_db, sample_project)
+    marker = audit_marker_text("Dispatch", "marker")
+    update_task(temp_db, task.id, description=f"Earlier note{marker}\n\nLater note")
+
+    assert dispatcher.append_audit_marker(temp_db, task.id, "Dispatch", "marker") is True
+    description = get_task(temp_db, task.id).description or ""
+    assert description.count(marker) == 2
+
+
 def test_development_prompt_includes_persisted_holistic_failure_context(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],

@@ -15,7 +15,7 @@ def append_audit_marker(db: HubDatabase, task_id: str, heading: str, body: str) 
     task = get_task(db, task_id)
     description = task.description or ""
     marker = audit_marker_text(heading, body)
-    if marker in description:
+    if description.rstrip().endswith(marker):
         return False
     update_task(db, task_id, description=f"{description}{marker}")
     return True

@@ -6,6 +6,7 @@ import pytest
 
 from gobby.sessions.context_usage import (
     context_window_for_source_model,
+    context_window_from_raw_message,
     effective_context_window_for_session,
     snapshot_from_window_metadata,
 )
@@ -102,3 +103,8 @@ def test_effective_context_window_prefers_latest_token_event_window() -> None:
     )
 
     assert effective_context_window_for_session(session, db=FakeDb()) == 258_400
+
+
+def test_context_window_from_raw_message_rejects_fractional_windows() -> None:
+    assert context_window_from_raw_message({"context_window": 1.5}) is None
+    assert context_window_from_raw_message({"context_window": 2.0}) == 2

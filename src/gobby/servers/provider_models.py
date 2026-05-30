@@ -22,11 +22,9 @@ from gobby.llm.context_windows import (
     ContextLengthSource,
     ResolvedContextWindow,
     extract_context_length_candidate,
+    normalize_model_lookup_id,
     provider_catalog_context_length_for_model,
     static_context_length_for_model,
-)
-from gobby.llm.context_windows import (
-    normalize_model_lookup_id as _normalize_model_lookup_id,
 )
 from gobby.providers import provider_metadata
 from gobby.servers.provider_model_defaults import DROID_MODEL_CATALOG as _DROID_MODEL_CATALOG
@@ -377,7 +375,7 @@ class ProviderModelCatalog:
     def _get_provider_context_window(
         self, provider: str, model: str, *, include_static: bool = True
     ) -> ResolvedContextWindow | None:
-        target = _normalize_model_lookup_id(model)
+        target = normalize_model_lookup_id(model)
         entry = self._providers.get(provider, {})
         models = entry.get("models")
         best_len = 0
@@ -429,7 +427,7 @@ class ProviderModelCatalog:
         candidates = {
             normalized
             for identifier in _model_identifiers(model)
-            if (normalized := _normalize_model_lookup_id(identifier))
+            if (normalized := normalize_model_lookup_id(identifier))
         }
         if provider == "claude":
             for candidate in tuple(candidates):
@@ -447,7 +445,7 @@ class ProviderModelCatalog:
 
     @staticmethod
     def _droid_underlying_providers(model: str) -> tuple[str, ...]:
-        normalized = _normalize_model_lookup_id(model)
+        normalized = normalize_model_lookup_id(model)
         if normalized.startswith("claude-") or any(
             family in normalized for family in ("opus", "sonnet", "haiku")
         ):

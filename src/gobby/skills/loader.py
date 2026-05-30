@@ -257,6 +257,8 @@ def _looks_like_bare_github_ref(url: str) -> bool:
     if len(parts) != 2:
         return False
     owner, repo = parts
+    if owner in {".", ".."} or repo in {".", ".."}:
+        return False
     safe_name_pattern = re.compile(r"^[A-Za-z0-9_.-]+$")
     return bool(
         owner and repo and safe_name_pattern.fullmatch(owner) and safe_name_pattern.fullmatch(repo)

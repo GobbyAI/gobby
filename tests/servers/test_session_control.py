@@ -18,6 +18,8 @@ from gobby.sessions.terminal_kill import kill_terminal_session
 
 pytestmark = pytest.mark.unit
 
+CODEX_GPT_5_4_CONTEXT_WINDOW = 258_400
+
 
 def test_summary_fallback_context_uses_digest_when_summary_missing() -> None:
     """Explicit summary fallback should use digest markdown when summary is absent."""
@@ -1281,7 +1283,7 @@ class TestContinueInChatTerminalKill:
         payload = ws.send.await_args_list[0].args[0]
         response = json.loads(payload)
         assert response["type"] == "attach_to_session_result"
-        assert response["context_window"] == 258400
+        assert response["context_window"] == CODEX_GPT_5_4_CONTEXT_WINDOW
 
     @pytest.mark.asyncio
     async def test_attach_to_session_keeps_live_handoff_tmux_proxy_attachable(self) -> None:

@@ -220,11 +220,12 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
             manager = _get_manager()
             rows = manager.list_all(workflow_type="rule", include_deleted=False)
             count = 0
+            failures: list[dict[str, str]] = []
             for row in rows:
                 if row.source == request.source:
                     try:
                         manager.update(row.id, enabled=request.enabled)
-                    except Exception:
+                    except Exception as e:
                         logger.warning(
                             "Failed to bulk-toggle rule",
                             extra={
@@ -234,9 +235,22 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
                             },
                             exc_info=True,
                         )
+                        failures.append(
+                            {
+                                "rule_id": row.id,
+                                "rule_name": row.name,
+                                "source": row.source,
+                                "error": str(e),
+                            }
+                        )
                         continue
                     count += 1
-            return {"status": "success", "count": count}
+            return {
+                "status": "success",
+                "count": count,
+                "failures": failures,
+                "partial": bool(failures),
+            }
         except Exception as e:
             logger.exception("Error in bulk toggle")
             raise HTTPException(status_code=500, detail="Internal server error") from e

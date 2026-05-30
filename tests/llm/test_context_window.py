@@ -17,6 +17,7 @@ from unittest.mock import patch
 import pytest
 
 from gobby.llm.claude_models import resolve_context_window
+from gobby.llm.context_windows import coerce_context_length
 from gobby.servers.provider_models import ProviderModelCatalog
 
 pytestmark = pytest.mark.unit
@@ -46,6 +47,22 @@ def _mock_lookup(model: str) -> int | None:
             best_len = len(key)
             best_val = val
     return best_val
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (1.0, 1),
+        (0.5, None),
+        (1.5, None),
+        (0.0, None),
+    ],
+)
+def test_coerce_context_length_requires_whole_positive_floats(
+    value: float,
+    expected: int | None,
+) -> None:
+    assert coerce_context_length(value) == expected
 
 
 class _FakeCatalog:

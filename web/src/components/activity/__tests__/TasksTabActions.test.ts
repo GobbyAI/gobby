@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import type { GobbyTask } from '../../../hooks/useTasks'
 import {
   claimTaskForSession,
   extractResponseErrorMessage,
+  taskActionRef,
 } from '../TasksTabActions'
 
 afterEach(() => {
@@ -35,5 +37,17 @@ describe('TasksTabActions', () => {
     )
 
     await expect(claimTaskForSession('', 'task-1', 'sess-1')).rejects.toThrow('claim denied')
+  })
+
+  it('uses the trimmed task ref when present', () => {
+    const task = { id: 'task-id', ref: '  #15356  ', seq_num: 15356 } as GobbyTask
+
+    expect(taskActionRef(task)).toBe('#15356')
+  })
+
+  it('falls back to the task id instead of reconstructing refs from seq_num', () => {
+    const task = { id: 'task-id', ref: '  ', seq_num: 15356 } as GobbyTask
+
+    expect(taskActionRef(task)).toBe('task-id')
   })
 })

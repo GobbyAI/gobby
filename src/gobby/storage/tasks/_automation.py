@@ -76,10 +76,13 @@ def list_automation_candidates(
         for task in tasks
         if not is_blocked_by_deps(task) and find_child_development_ancestor_gate(db, task) is None
     ]
+    holistic_gate_by_task_id = {
+        task.id: find_holistic_descendant_gate(db, task) for task in ready_tasks
+    }
     return sorted(
         ready_tasks,
         key=lambda task: (
-            find_holistic_descendant_gate(db, task) is not None,
+            holistic_gate_by_task_id[task.id] is not None,
             task.priority,
             task.seq_num if task.seq_num is not None else 2**31,
             task.created_at,
