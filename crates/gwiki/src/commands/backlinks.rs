@@ -1,9 +1,37 @@
+use std::path::PathBuf;
+
 use serde_json::json;
 
 use crate::graph::{LinkSuggestion, WikiBacklink};
-use crate::{CommandOutcome, ScopeIdentity};
+use crate::support::graph::memory_graph_from_store;
+use crate::support::scope::indexed_store_for_selection;
+use crate::{CommandOutcome, ScopeIdentity, ScopeSelection, WikiError};
 
-pub(crate) fn run(page: &str, scope: ScopeIdentity, backlinks: &[WikiBacklink]) -> CommandOutcome {
+pub(crate) fn execute(
+    page: String,
+    selection: ScopeSelection,
+) -> Result<CommandOutcome, WikiError> {
+    let (_, output_scope, search_scope, store) = indexed_store_for_selection(&selection)?;
+    let graph = memory_graph_from_store(&store, &search_scope);
+    let backlinks = graph.backlinks(&search_scope, PathBuf::from(&page));
+    Ok(render_backlinks(&page, output_scope, &backlinks))
+}
+
+pub(crate) fn execute_link_suggest(
+    selection: ScopeSelection,
+    limit: usize,
+) -> Result<CommandOutcome, WikiError> {
+    let (_, output_scope, search_scope, store) = indexed_store_for_selection(&selection)?;
+    let graph = memory_graph_from_store(&store, &search_scope);
+    let suggestions = graph.link_suggestions(&search_scope, limit);
+    Ok(render_link_suggest(output_scope, limit, &suggestions))
+}
+
+fn render_backlinks(
+    page: &str,
+    scope: ScopeIdentity,
+    backlinks: &[WikiBacklink],
+) -> CommandOutcome {
     let backlink_payloads = backlinks
         .iter()
         .map(|backlink| {
@@ -24,7 +52,7 @@ pub(crate) fn run(page: &str, scope: ScopeIdentity, backlinks: &[WikiBacklink]) 
     super::scoped_outcome("backlinks", &scope, payload, text)
 }
 
-pub(crate) fn link_suggest(
+fn render_link_suggest(
     scope: ScopeIdentity,
     limit: usize,
     suggestions: &[LinkSuggestion],
@@ -50,7 +78,11 @@ pub(crate) fn link_suggest(
 }
 
 fn render_backlinks_text(page: &str, scope: &ScopeIdentity, backlinks: &[WikiBacklink]) -> String {
-    let mut text = format!("Backlinks for {page}\nScope: {scope}\n");
+    let mut text = format!(
+        "Backlinks for {page}
+Scope: {scope}
+"
+    );
     if backlinks.is_empty() {
         text.push_str("No backlinks");
         return text;
@@ -67,7 +99,11 @@ fn render_backlinks_text(page: &str, scope: &ScopeIdentity, backlinks: &[WikiBac
 }
 
 fn render_link_suggest_text(scope: &ScopeIdentity, suggestions: &[LinkSuggestion]) -> String {
-    let mut text = format!("Link suggestions\nScope: {scope}\n");
+    let mut text = format!(
+        "Link suggestions
+Scope: {scope}
+"
+    );
     if suggestions.is_empty() {
         text.push_str("No suggestions");
         return text;
@@ -78,7 +114,10 @@ fn render_link_suggest_text(scope: &ScopeIdentity, suggestions: &[LinkSuggestion
         text.push_str(&suggestion.target);
         text.push_str(" (");
         text.push_str(&suggestion.mention_count.to_string());
-        text.push_str(" mentions)\n");
+        text.push_str(
+            " mentions)
+",
+        );
     }
     text
 }

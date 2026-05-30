@@ -97,11 +97,11 @@ pub fn resolve_with_source(
     cwd: &Path,
     source: &mut impl ConfigSource,
 ) -> Result<ResolvedScope, WikiError> {
-    if let Some(topic) = selection.topic.as_deref() {
+    if let Some(topic) = selection.topic_name() {
         return resolve_topic(topic, source);
     }
 
-    if selection.project {
+    if selection.is_project() {
         return resolve_project(cwd);
     }
 
