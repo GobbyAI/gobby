@@ -22,6 +22,7 @@ from gobby.servers.websocket.chat_attachments import (
     prepare_message_attachments,
 )
 from gobby.servers.websocket.db import run_db
+from gobby.sessions.context_usage import effective_context_window_for_session
 from gobby.sessions.terminal_kill import kill_terminal_session
 from gobby.sessions.tmux_context import get_tmux_manager_for_context
 from gobby.sessions.transcript_archive import restore_transcript
@@ -79,16 +80,8 @@ def _is_nonempty_str(value: Any) -> TypeGuard[str]:
     return isinstance(value, str) and bool(value.strip())
 
 
-def _is_nonbool_int(value: Any) -> TypeGuard[int]:
-    return isinstance(value, int) and not isinstance(value, bool)
-
-
 def _variable_str(variables: dict[str, Any], *names: str) -> str | None:
     return _variable_value(variables, _is_nonempty_str, *names)
-
-
-def _variable_int(variables: dict[str, Any], *names: str) -> int | None:
-    return _variable_value(variables, _is_nonbool_int, *names)
 
 
 def _read_session_variables(db: Any, session_id: str) -> dict[str, Any]:
@@ -157,6 +150,7 @@ def _session_meta_payload(
     agent_name: str | None,
     workflow_name: str | None,
     agent_run_id: str | None,
+    context_window: int | None = None,
 ) -> dict[str, Any]:
     seq_num = _as_int(getattr(session, "seq_num", None))
     live_chat_mode = (
@@ -176,12 +170,7 @@ def _session_meta_payload(
         "model_id",
         "modelId",
     ) or _as_str(getattr(session, "model", None))
-    live_context_window = _variable_int(
-        variables,
-        "context_window",
-        "model_context_window",
-        "modelContextWindow",
-    ) or _as_int(getattr(session, "context_window", None))
+    live_context_window = context_window
 
     return {
         "external_id": _as_str(getattr(session, "external_id", None)),
@@ -690,6 +679,12 @@ async def handle_attach_to_session(
         agent_run_id,
     )
     live_variables = await _load_live_session_variables(mixin, session_manager, session_id)
+    db = getattr(session_manager, "db", None) or getattr(mixin, "db", None)
+    context_window = effective_context_window_for_session(
+        session,
+        variables=live_variables,
+        db=db,
+    )
 
     # Message loading via message_manager removed (session_messages table dropped)
     messages: list[dict[str, Any]] = []
@@ -713,6 +708,7 @@ async def handle_attach_to_session(
         agent_name=agent_name,
         workflow_name=workflow_name,
         agent_run_id=agent_run_id,
+        context_window=context_window,
     )
     await websocket.send(
         json.dumps(

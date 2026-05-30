@@ -7,12 +7,15 @@ import json
 from pathlib import Path
 from typing import Any
 
+from gobby.llm.context_windows import CONTEXT_LENGTH_SOURCE_KEY
+
 GROK_STATIC_MODEL_CATALOG: list[dict[str, Any]] = [
     {
         "value": "grok-build",
         "label": "Grok Build",
         "description": "Best for advanced coding tasks",
         "context_length": 512_000,
+        "context_length_source": "static_default",
         "reasoning": {"supported_efforts": ["low", "medium", "high"]},
     }
 ]
@@ -22,7 +25,11 @@ def _grok_home() -> Path:
     return Path.home() / ".grok"
 
 
-def _entry_from_model(model: dict[str, Any]) -> dict[str, Any] | None:
+def _entry_from_model(
+    model: dict[str, Any],
+    *,
+    context_source: str,
+) -> dict[str, Any] | None:
     model_id = str(model.get("modelId") or model.get("id") or model.get("model") or "").strip()
     if not model_id:
         return None
@@ -38,6 +45,7 @@ def _entry_from_model(model: dict[str, Any]) -> dict[str, Any] | None:
         context = meta.get("totalContextTokens") or meta.get("context_length")
         if isinstance(context, int) and context > 0:
             entry["context_length"] = context
+            entry[CONTEXT_LENGTH_SOURCE_KEY] = context_source
     return entry
 
 
@@ -59,7 +67,7 @@ def models_from_acp_session(session_info: dict[str, Any]) -> list[dict[str, Any]
     for item in raw_models:
         if not isinstance(item, dict):
             continue
-        entry = _entry_from_model(item)
+        entry = _entry_from_model(item, context_source="provider_reported")
         if entry:
             entries.append(entry)
     return entries
@@ -78,7 +86,7 @@ def models_from_cache(cache_path: Path | None = None) -> list[dict[str, Any]]:
     for item in raw_models:
         if not isinstance(item, dict):
             continue
-        entry = _entry_from_model(item)
+        entry = _entry_from_model(item, context_source="provider_catalog")
         if entry:
             entries.append(entry)
     return entries

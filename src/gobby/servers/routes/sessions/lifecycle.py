@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Request
 
+from gobby.sessions.context_usage import effective_context_window_for_session
 from gobby.sessions.terminal_kill import kill_terminal_session
 
 if TYPE_CHECKING:
@@ -159,6 +160,22 @@ def register_lifecycle_routes(
                 raise HTTPException(status_code=404, detail="Session not found")
 
             session_data = session.to_dict()
+            variables: dict[str, Any] = {}
+            try:
+                from gobby.workflows.state_manager import SessionVariableManager
+
+                loaded_variables = SessionVariableManager(server.session_manager.db).get_variables(
+                    session_id
+                )
+                if isinstance(loaded_variables, dict):
+                    variables = loaded_variables
+            except Exception as e:
+                logger.debug("Failed to load session variables for %s: %s", session_id, e)
+            session_data["context_window"] = effective_context_window_for_session(
+                session,
+                variables=variables,
+                db=server.session_manager.db,
+            )
 
             # Enrich with activity stats
             try:

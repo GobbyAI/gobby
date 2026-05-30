@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, cast
 
-from gobby.servers.provider_models import context_length_for_model
+from gobby.llm.context_windows import resolve_context_window
 from gobby.storage.context_usage_snapshot import ContextUsageSnapshot, ContextUsageSource
 
 if TYPE_CHECKING:
     from gobby.sessions.transcripts.base import TokenUsage
+    from gobby.storage.hub.protocol import HubDatabase
 
 _SOURCES: frozenset[str] = frozenset(
     {"claude", "codex", "gemini", "qwen", "droid", "agy", "grok", "web_chat"}
@@ -75,10 +77,107 @@ def context_window_for_source_model(
     source: ContextUsageSource | str | None,
     model: str | None,
 ) -> int | None:
-    """Resolve static context-window metadata for a provider/model pair."""
+    """Resolve context-window metadata for a provider/model pair."""
     snapshot_source = normalize_context_usage_source(source) if isinstance(source, str) else source
     provider = "gemini" if snapshot_source == "agy" else snapshot_source
-    return context_length_for_model(provider, model)
+    return resolve_context_window(model, provider=provider)
+
+
+def effective_context_window_for_session(
+    session: Any,
+    *,
+    variables: dict[str, Any] | None = None,
+    db: HubDatabase | None = None,
+    catalog: Any | None = None,
+) -> int | None:
+    """Return the best context window for session hydration payloads."""
+    live_window = _context_window_from_variables(variables or {})
+    if live_window is not None:
+        return live_window
+
+    event_window = _latest_token_event_context_window(db, getattr(session, "id", None))
+    if event_window is not None:
+        return event_window
+
+    reported_session_window = _reported_session_context_window(session, db)
+    if reported_session_window is not None:
+        return reported_session_window
+
+    model = _effective_session_model(session, variables or {})
+    provider = _provider_for_session(session)
+    resolved = resolve_context_window(model, provider=provider, catalog=catalog)
+    if resolved is not None:
+        return resolved
+
+    return _coerce_positive_int(getattr(session, "context_window", None))
+
+
+def _context_window_from_variables(variables: dict[str, Any]) -> int | None:
+    for name in ("context_window", "model_context_window", "modelContextWindow"):
+        window = _coerce_positive_int(variables.get(name))
+        if window is not None:
+            return window
+    return None
+
+
+def _effective_session_model(session: Any, variables: dict[str, Any]) -> str | None:
+    for name in ("model", "model_id", "modelId"):
+        value = variables.get(name)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    model = getattr(session, "model", None)
+    return model.strip() if isinstance(model, str) and model.strip() else None
+
+
+def _provider_for_session(session: Any) -> str | None:
+    source = getattr(session, "source", None)
+    snapshot_source = normalize_context_usage_source(source if isinstance(source, str) else None)
+    if snapshot_source == "agy":
+        return "gemini"
+    return snapshot_source
+
+
+def _latest_token_event_context_window(
+    db: HubDatabase | None,
+    session_id: Any,
+) -> int | None:
+    if db is None or not isinstance(session_id, str) or not session_id:
+        return None
+    try:
+        from gobby.storage.token_events import TokenEventStore
+
+        events = TokenEventStore(db).list_session_events(session_id, limit=20)
+    except Exception:
+        return None
+    if not isinstance(events, list):
+        return None
+    for event in events:
+        if isinstance(event, Mapping):
+            window = _coerce_positive_int(event.get("context_window"))
+            if window is not None:
+                return window
+    return None
+
+
+def _reported_session_context_window(session: Any, db: HubDatabase | None) -> int | None:
+    session_window = _coerce_positive_int(getattr(session, "context_window", None))
+    confidence = getattr(session, "context_usage_confidence", None)
+    if session_window is not None and confidence == "reported":
+        return session_window
+
+    session_id = getattr(session, "id", None)
+    if db is None or not isinstance(session_id, str) or not session_id:
+        return None
+    try:
+        row = db.fetchone(
+            "SELECT context_window, context_usage_confidence FROM sessions WHERE id = %s",
+            (session_id,),
+        )
+    except Exception:
+        return None
+    if not isinstance(row, Mapping) or row.get("context_usage_confidence") != "reported":
+        return None
+    return _coerce_positive_int(row.get("context_window"))
 
 
 def context_window_from_raw_message(raw_json: object) -> int | None:

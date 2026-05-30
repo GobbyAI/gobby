@@ -51,6 +51,7 @@ class TestProviderModelCatalog:
             "label": "Sonnet",
             "canonical_id": "claude-sonnet-4-6-20260410",
             "context_length": 200_000,
+            "context_length_source": "static_default",
             "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh", "max"]},
         }
 
@@ -140,9 +141,12 @@ class TestProviderModelCatalog:
         assert status["codex"]["error"] == "codex probe failed"
 
         payload = json.loads(cache_path.read_text(encoding="utf-8"))
-        assert payload["version"] == 4
+        assert payload["version"] == 5
         assert payload["providers"]["codex"]["source"] == "cache"
-        assert payload["providers"]["codex"]["models"][0]["context_length"] == 200_000
+        assert payload["providers"]["codex"]["models"][0]["context_length"] == 258_400
+        assert (
+            payload["providers"]["codex"]["models"][0]["context_length_source"] == "static_default"
+        )
 
     def test_load_cache_preserves_and_enriches_context_lengths(self, temp_dir: Path) -> None:
         """Cache loading should preserve known lengths and fill missing defaults."""
@@ -176,8 +180,10 @@ class TestProviderModelCatalog:
 
         codex = catalog.get_provider_snapshot("codex")["models"][0]
         gemini = catalog.get_provider_snapshot("gemini")["models"][0]
-        assert codex["context_length"] == 200_000
+        assert codex["context_length"] == 258_400
+        assert codex["context_length_source"] == "static_default"
         assert gemini["context_length"] == 123_456
+        assert gemini["context_length_source"] == "static_default"
 
     def test_load_cache_accepts_version_none(self, temp_dir: Path) -> None:
         """Cache loading should accept legacy payloads with null version."""
@@ -207,6 +213,7 @@ class TestProviderModelCatalog:
 
         model = catalog.get_provider_snapshot("codex")["models"][0]
         assert model["context_length"] == 123_000
+        assert model["context_length_source"] == "static_default"
 
     def test_get_context_window_matches_aliases_suffixes_and_droid_core(
         self, temp_dir: Path
@@ -654,6 +661,7 @@ class TestProviderModelCatalog:
                 "value": "grok-cache",
                 "label": "Grok Cache",
                 "context_length": 123456,
+                "context_length_source": "provider_catalog",
             }
         ]
 
@@ -669,6 +677,7 @@ class TestProviderModelCatalog:
         assert source_models == static_models
         assert static_models[0]["value"] == "grok-build"
         assert static_models[0]["context_length"] == 512_000
+        assert static_models[0]["context_length_source"] == "static_default"
 
     @pytest.mark.asyncio
     async def test_refresh_marks_agy_unsupported(self, temp_dir: Path) -> None:

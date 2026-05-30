@@ -10,6 +10,11 @@ export interface ProviderModelOption {
   is_default?: boolean;
   canonical_id?: string;
   context_length?: number | null;
+  context_length_source?:
+    | "provider_reported"
+    | "provider_catalog"
+    | "registry"
+    | "static_default";
   reasoning?: ProviderModelReasoning;
 }
 

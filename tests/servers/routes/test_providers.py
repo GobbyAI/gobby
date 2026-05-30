@@ -193,13 +193,14 @@ class TestProviderModelsRoute:
         ]
         assert codex[0]["reasoning"] == {"supported_efforts": ["low", "medium", "high", "xhigh"]}
         assert [m["context_length"] for m in codex] == [
-            200_000,
-            200_000,
-            200_000,
-            200_000,
-            200_000,
-            200_000,
+            258_400,
+            258_400,
+            258_400,
+            258_400,
+            258_400,
+            258_400,
         ]
+        assert {m["context_length_source"] for m in codex} == {"static_default"}
 
         droid_values = [m["value"] for m in providers["droid"]["models"]]
         assert len(droid_values) == 24
@@ -319,7 +320,8 @@ class TestProviderModelsRoute:
         assert providers["gemini"]["models"][0]["value"] == "gemini-model"
         assert providers["qwen"]["models"][0]["value"] == "qwen-model"
         assert providers["codex"]["models"][0]["value"] == "gpt-5.4"
-        assert providers["codex"]["models"][0]["context_length"] == 200_000
+        assert providers["codex"]["models"][0]["context_length"] == 258_400
+        assert providers["codex"]["models"][0]["context_length_source"] == "static_default"
         assert providers["droid"]["models"][0]["value"] == "droid-model"
         assert providers["agy"]["models"] == []
         assert providers["agy"]["source"] == "unsupported"

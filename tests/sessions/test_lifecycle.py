@@ -798,13 +798,17 @@ class TestProcessSessionTranscriptParsers:
         assert event.context_window == 258400
         manager.session_manager.update_usage.assert_called_once_with(
             session_id="s1",
-            input_tokens=104960,
+            input_tokens=11392,
             output_tokens=498,
             cache_creation_tokens=0,
             cache_read_tokens=93568,
             context_window=258400,
             model=None,
         )
+        manager.session_manager.update_context_usage.assert_called_once()
+        snapshot = manager.session_manager.update_context_usage.call_args.args[1]
+        assert snapshot.context_used_tokens == 104960
+        assert snapshot.context_usage_ratio == pytest.approx(104960 / 258400)
 
     @pytest.mark.asyncio
     async def test_session_not_found_returns_early(self, tmp_path, manager):

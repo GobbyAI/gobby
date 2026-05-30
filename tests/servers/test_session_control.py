@@ -1234,6 +1234,56 @@ class TestContinueInChatTerminalKill:
         assert response["context_window"] == 200000
 
     @pytest.mark.asyncio
+    async def test_attach_to_session_repairs_stale_codex_context_window(self) -> None:
+        """Attach payload should not trust stale stored Codex static windows."""
+        from gobby.servers.websocket.session_control import SessionControlMixin
+
+        ws = MagicMock()
+        ws.send = AsyncMock()
+        ws.subscriptions = set()
+
+        source_session = MagicMock()
+        source_session.id = "source-uuid"
+        source_session.external_id = "cli-session-123"
+        source_session.seq_num = 42
+        source_session.source = "codex"
+        source_session.title = "Observed Session"
+        source_session.status = "active"
+        source_session.model = "gpt-5.4"
+        source_session.reasoning_effort = "high"
+        source_session.chat_mode = "plan"
+        source_session.git_branch = "main"
+        source_session.context_window = 200000
+        source_session.session_type = "terminal"
+        source_session.terminal_context = {"tmux_pane": "%8"}
+        source_session.workflow_name = None
+        source_session.agent_run_id = None
+
+        session_manager = MagicMock()
+        session_manager.get = MagicMock(return_value=source_session)
+        session_manager.db = MagicMock()
+
+        host = self._make_host()
+        host.session_manager = session_manager
+        host.clients = {ws: {}}
+        host._send_error = AsyncMock()
+
+        with patch(
+            "gobby.workflows.state_manager.SessionVariableManager.get_variables",
+            return_value={},
+        ):
+            await SessionControlMixin._handle_attach_to_session(
+                host,
+                ws,
+                {"session_id": "source-uuid"},
+            )
+
+        payload = ws.send.await_args_list[0].args[0]
+        response = json.loads(payload)
+        assert response["type"] == "attach_to_session_result"
+        assert response["context_window"] == 258400
+
+    @pytest.mark.asyncio
     async def test_attach_to_session_keeps_live_handoff_tmux_proxy_attachable(self) -> None:
         """Live tmux metadata should keep resume-only terminal rows attachable."""
         from gobby.servers.websocket.session_control import SessionControlMixin

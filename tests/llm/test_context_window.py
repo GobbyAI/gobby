@@ -2,8 +2,10 @@
 
 Verifies the priority order:
 1. Config overrides (model substring -> context window)
-2. Provider model catalog metadata
-3. Registry lookup (OpenRouter data via model_costs cache)
+2. Provider-reported runtime metadata
+3. Provider-reported/provider-owned catalog metadata
+4. Registry lookup (OpenRouter data via model_costs cache)
+5. Static fallback defaults
 
 Note: SDK-reported contextWindow (2nd arg) is deprecated and ignored.
 """
@@ -15,6 +17,7 @@ from unittest.mock import patch
 import pytest
 
 from gobby.llm.claude_models import resolve_context_window
+from gobby.servers.provider_models import ProviderModelCatalog
 
 pytestmark = pytest.mark.unit
 
@@ -26,6 +29,7 @@ def _mock_lookup(model: str) -> int | None:
         "claude-sonnet-4-6": 200_000,
         "claude-haiku-4-5": 200_000,
         "gpt-4o": 128_000,
+        "gpt-5.4": 300_000,
         "qwen3-coder": 262_144,
     }
     # Strip provider prefix
@@ -49,6 +53,18 @@ class _FakeCatalog:
         self.values = values
 
     def get_context_window(self, provider: str | None, model: str) -> int | None:
+        return self.values.get((provider, model))
+
+
+class _SourceCatalog:
+    def __init__(self, values: dict[tuple[str | None, str], tuple[int, str]]) -> None:
+        self.values = values
+
+    def get_context_window_with_source(
+        self,
+        provider: str | None,
+        model: str,
+    ) -> tuple[int, str] | None:
         return self.values.get((provider, model))
 
 
@@ -125,6 +141,19 @@ class TestResolveContextWindow:
 
         assert result == 500_000
 
+    def test_provider_reported_runtime_metadata_wins(self) -> None:
+        """Provider-reported runtime metadata wins over catalog and registry data."""
+        catalog = _SourceCatalog({("codex", "gpt-5.4"): (200_000, "static_default")})
+        with patch("gobby.llm.model_registry.lookup_context_window", side_effect=_mock_lookup):
+            result = resolve_context_window(
+                "gpt-5.4",
+                {"model_context_window": 258_400},
+                provider="codex",
+                catalog=catalog,
+            )
+
+        assert result == 258_400
+
     def test_catalog_wins_over_registry(self) -> None:
         """Provider catalog data takes precedence over OpenRouter/model_costs."""
         catalog = _FakeCatalog({("codex", "gpt-4o"): 256_000})
@@ -132,6 +161,22 @@ class TestResolveContextWindow:
             result = resolve_context_window("gpt-4o", None, provider="codex", catalog=catalog)
 
         assert result == 256_000
+
+    def test_static_catalog_source_defers_to_registry(self) -> None:
+        """Static catalog values are fallbacks, not authoritative provider metadata."""
+        catalog = _SourceCatalog({("codex", "gpt-4o"): (200_000, "static_default")})
+        with patch("gobby.llm.model_registry.lookup_context_window", side_effect=_mock_lookup):
+            result = resolve_context_window("gpt-4o", None, provider="codex", catalog=catalog)
+
+        assert result == 128_000
+
+    def test_provider_catalog_source_wins_over_registry(self) -> None:
+        """Provider-owned catalog values outrank generic registry data."""
+        catalog = _SourceCatalog({("droid", "gpt-5.4"): (200_000, "provider_catalog")})
+        with patch("gobby.llm.model_registry.lookup_context_window", side_effect=_mock_lookup):
+            result = resolve_context_window("gpt-5.4", None, provider="droid", catalog=catalog)
+
+        assert result == 200_000
 
     def test_registry_fills_catalog_gap(self) -> None:
         """OpenRouter/model_costs fills gaps when catalog data is absent."""
@@ -166,3 +211,32 @@ class TestResolveContextWindow:
         with patch("gobby.llm.model_registry.lookup_context_window", side_effect=_mock_lookup):
             result = resolve_context_window("qwen3-coder(openai)", None, provider="qwen")
         assert result == 262_144
+
+    def test_legacy_cached_codex_static_value_does_not_block_registry(
+        self,
+        temp_dir,
+    ) -> None:
+        """Legacy source-less cached Codex 200k is treated as a static fallback."""
+        cache_path = temp_dir / "provider-model-catalog.json"
+        cache_path.write_text(
+            """
+            {
+              "version": 4,
+              "providers": {
+                "codex": {
+                  "source": "cache",
+                  "models": [
+                    {"value": "gpt-5.4", "label": "GPT-5.4", "context_length": 200000}
+                  ]
+                }
+              }
+            }
+            """,
+            encoding="utf-8",
+        )
+        catalog = ProviderModelCatalog(config=None, cache_path=cache_path)
+
+        with patch("gobby.llm.model_registry.lookup_context_window", side_effect=_mock_lookup):
+            result = resolve_context_window("gpt-5.4", None, provider="codex", catalog=catalog)
+
+        assert result == 300_000

@@ -16,6 +16,18 @@ from typing import TYPE_CHECKING, Any
 from gobby.adapters.acp_client import ACPClient
 from gobby.agents.trust import authorize_model_discovery_trust
 from gobby.config.app import deep_merge
+from gobby.llm.context_windows import (
+    CONTEXT_LENGTH_SOURCE_KEY,
+    ContextLengthCandidate,
+    ContextLengthSource,
+    ResolvedContextWindow,
+    extract_context_length_candidate,
+    provider_catalog_context_length_for_model,
+    static_context_length_for_model,
+)
+from gobby.llm.context_windows import (
+    normalize_model_lookup_id as _normalize_model_lookup_id,
+)
 from gobby.providers import provider_metadata
 from gobby.servers.provider_model_defaults import DROID_MODEL_CATALOG as _DROID_MODEL_CATALOG
 from gobby.servers.provider_models_grok import models_from_acp_session as grok_models_from_acp
@@ -30,140 +42,18 @@ logger = logging.getLogger(__name__)
 
 _PROVIDER_METADATA = {entry.provider: entry for entry in provider_metadata()}
 _PROVIDERS = tuple(_PROVIDER_METADATA)
-_CACHE_VERSION = 4
+_CACHE_VERSION = 5
 _DEFAULT_CACHE_FILE = "provider-model-catalog.json"
 _MODEL_DISCOVERY_CWD_NAME = "provider-model-discovery"
 _MODEL_DISCOVERY_REQUEST_TIMEOUT_SECONDS = 90.0
 _CLAUDE_ALIASES = (("haiku", "Haiku"), ("sonnet", "Sonnet"), ("opus", "Opus"))
 _CLAUDE_REASONING_EFFORTS = ("low", "medium", "high", "xhigh", "max")
 _QWEN_AUTH_TYPES = frozenset({"qwen-oauth", "openai", "anthropic", "gemini", "vertex-ai"})
-_KNOWN_PROVIDER_PREFIXES = (
-    "anthropic/",
-    "openai/",
-    "google/",
-    "qwen/",
-    "z-ai/",
-    "moonshotai/",
-    "minimax/",
-)
-_STATIC_CONTEXT_LENGTHS: dict[str, int] = {
-    "opus": 1_000_000,
-    "sonnet": 200_000,
-    "haiku": 200_000,
-    "claude-opus-4-7": 1_000_000,
-    "claude-opus-4-6": 1_000_000,
-    "claude-opus-4-6-fast": 1_000_000,
-    "claude-opus-4-5": 1_000_000,
-    "claude-sonnet-4-6": 200_000,
-    "claude-sonnet-4-5": 200_000,
-    "claude-haiku-4-5": 200_000,
-    "gpt-5.5": 200_000,
-    "gpt-5.4": 200_000,
-    "gpt-5.4-fast": 200_000,
-    "gpt-5.4-mini": 200_000,
-    "gpt-5.3-codex": 200_000,
-    "gpt-5.3-codex-fast": 200_000,
-    "gpt-5.3-codex-spark": 200_000,
-    "gpt-5.2": 200_000,
-    "gpt-5.2-codex": 200_000,
-    "gpt-5.1-codex-max": 200_000,
-    "gemini-3.1-pro-preview": 1_000_000,
-    "gemini-3-flash-preview": 1_000_000,
-    "gemini-2.5-pro": 1_000_000,
-    "grok-build": 512_000,
-    "qwen3-coder": 262_144,
-    "qwen3-coder-plus": 262_144,
-    "qwen3-coder-flash": 262_144,
-}
-
-
-def _coerce_context_length(value: Any) -> int | None:
-    if isinstance(value, bool) or value is None:
-        return None
-    if isinstance(value, int):
-        return value if value > 0 else None
-    if isinstance(value, str):
-        try:
-            parsed = int(value.replace("_", ""))
-        except ValueError:
-            return None
-        return parsed if parsed > 0 else None
-    return None
-
-
-def _strip_known_provider_prefix(value: str) -> str:
-    normalized = value.strip()
-    lower = normalized.lower()
-    for prefix in _KNOWN_PROVIDER_PREFIXES:
-        if lower.startswith(prefix):
-            return normalized.split("/", 1)[1]
-    return normalized
-
-
-def _strip_qwen_auth_suffix(value: str) -> str:
-    trimmed = value.strip()
-    close_idx = trimmed.rfind(")")
-    open_idx = trimmed.rfind("(")
-    if open_idx >= 0 and close_idx == len(trimmed) - 1 and open_idx < close_idx:
-        model_id = trimmed[:open_idx].strip()
-        auth_type = trimmed[open_idx + 1 : close_idx].strip()
-        if model_id and auth_type in _QWEN_AUTH_TYPES:
-            return model_id
-    return trimmed
-
-
-def _normalize_model_lookup_id(value: str) -> str:
-    return _strip_qwen_auth_suffix(_strip_known_provider_prefix(value)).lower()
-
-
-def _context_key_allowed_for_provider(provider: str | None, key: str) -> bool:
-    if key in {"opus", "sonnet", "haiku"}:
-        return provider in {None, "claude", "droid"}
-    if key.startswith("qwen3-coder"):
-        return provider in {None, "qwen"}
-    return True
 
 
 def context_length_for_model(provider: str | None, model: str | None) -> int | None:
     """Return a static catalog context length for known shipped models."""
-    if not model:
-        return None
-
-    normalized_provider = provider.strip().lower() if isinstance(provider, str) else None
-    normalized_model = _normalize_model_lookup_id(model)
-    exact = _STATIC_CONTEXT_LENGTHS.get(normalized_model)
-    if exact is not None and _context_key_allowed_for_provider(
-        normalized_provider, normalized_model
-    ):
-        return exact
-
-    best_len = 0
-    best_value: int | None = None
-    for key, value in _STATIC_CONTEXT_LENGTHS.items():
-        if not _context_key_allowed_for_provider(normalized_provider, key):
-            continue
-        if normalized_model.startswith(key) and len(key) > best_len:
-            best_len = len(key)
-            best_value = value
-    return best_value
-
-
-def _extract_context_length(model: dict[str, Any]) -> int | None:
-    for key in (
-        "context_length",
-        "contextLength",
-        "contextWindow",
-        "inputTokenLimit",
-        "maxInputTokens",
-    ):
-        context_length = _coerce_context_length(model.get(key))
-        if context_length is not None:
-            return context_length
-
-    top_provider = model.get("top_provider")
-    if isinstance(top_provider, dict):
-        return _coerce_context_length(top_provider.get("context_length"))
-    return None
+    return static_context_length_for_model(provider, model)
 
 
 def _model_identifiers(model: dict[str, Any]) -> list[str]:
@@ -178,33 +68,59 @@ def _model_identifiers(model: dict[str, Any]) -> list[str]:
     return identifiers
 
 
-def _normalize_model_entry(provider: str, model: dict[str, Any]) -> dict[str, Any]:
+def _fallback_context_candidate(
+    provider: str,
+    identifier: str,
+) -> ContextLengthCandidate | None:
+    provider_catalog = provider_catalog_context_length_for_model(provider, identifier)
+    if provider_catalog is not None:
+        return ContextLengthCandidate(provider_catalog, "provider_catalog")
+    static_default = static_context_length_for_model(provider, identifier)
+    if static_default is not None:
+        return ContextLengthCandidate(static_default, "static_default")
+    return None
+
+
+def _normalize_model_entry(
+    provider: str,
+    model: dict[str, Any],
+    *,
+    source_if_missing: ContextLengthSource | None = None,
+) -> dict[str, Any]:
     entry = copy.deepcopy(model)
-    context_length = _extract_context_length(entry)
-    if context_length is None:
+    candidate = extract_context_length_candidate(entry, source_if_missing=source_if_missing)
+    if candidate is None:
         for identifier in _model_identifiers(entry):
-            context_length = context_length_for_model(provider, identifier)
-            if context_length is not None:
+            candidate = _fallback_context_candidate(provider, identifier)
+            if candidate is not None:
                 break
-    if context_length is not None:
-        entry["context_length"] = context_length
+    if candidate is not None:
+        entry["context_length"] = candidate.value
+        entry[CONTEXT_LENGTH_SOURCE_KEY] = candidate.source
     return entry
 
 
-def with_context_lengths(provider: str, models: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def with_context_lengths(
+    provider: str,
+    models: list[dict[str, Any]],
+    *,
+    source_if_missing: ContextLengthSource | None = None,
+) -> list[dict[str, Any]]:
     """Return provider model entries enriched with known context lengths."""
-    return [_normalize_model_entry(provider, model) for model in models if isinstance(model, dict)]
+    return [
+        _normalize_model_entry(provider, model, source_if_missing=source_if_missing)
+        for model in models
+        if isinstance(model, dict)
+    ]
 
 
 def _cached_models(provider: str, models: Any) -> list[dict[str, Any]]:
     if not isinstance(models, list):
         return []
-    # _cached_models keeps cached lists consistent: if every entry already has
-    # _extract_context_length metadata, return it; otherwise enrich all entries
-    # with with_context_lengths.
-    if all(isinstance(model, dict) and _extract_context_length(model) for model in models):
-        return copy.deepcopy(models)
-    return with_context_lengths(provider, models)
+    legacy_source: ContextLengthSource = (
+        "provider_catalog" if provider == "droid" else "static_default"
+    )
+    return with_context_lengths(provider, models, source_if_missing=legacy_source)
 
 
 DROID_MODEL_CATALOG: list[dict[str, Any]] = with_context_lengths("droid", _DROID_MODEL_CATALOG)
@@ -357,7 +273,7 @@ class ProviderModelCatalog:
 
         if not isinstance(payload, dict):
             return
-        if payload.get("version") not in (None, 2, 3, _CACHE_VERSION):
+        if payload.get("version") not in (None, 2, 3, 4, _CACHE_VERSION):
             logger.warning(
                 "Ignoring unsupported provider model cache version: %s", payload.get("version")
             )
@@ -424,39 +340,48 @@ class ProviderModelCatalog:
 
     def get_context_window(self, provider: str | None, model: str | None) -> int | None:
         """Resolve context length from provider catalog metadata."""
+        resolved = self.get_context_window_with_source(provider, model)
+        return resolved.value if resolved else None
+
+    def get_context_window_with_source(
+        self,
+        provider: str | None,
+        model: str | None,
+    ) -> ResolvedContextWindow | None:
+        """Resolve context length and source from provider catalog metadata."""
         if not model:
             return None
 
         normalized_provider = provider.strip().lower() if isinstance(provider, str) else None
         if not normalized_provider:
             for candidate_provider in _PROVIDERS:
-                context_length = self._get_provider_context_window(candidate_provider, model)
-                if context_length is not None:
-                    return context_length
+                resolved = self._get_provider_context_window(candidate_provider, model)
+                if resolved is not None:
+                    return resolved
             return None
 
         if normalized_provider == "droid":
-            context_length = self._get_provider_context_window(
+            resolved = self._get_provider_context_window(
                 normalized_provider, model, include_static=False
             )
-            if context_length is not None:
-                return context_length
+            if resolved is not None:
+                return resolved
             for underlying_provider in self._droid_underlying_providers(model):
-                context_length = self._get_provider_context_window(underlying_provider, model)
-                if context_length is not None:
-                    return context_length
+                resolved = self._get_provider_context_window(underlying_provider, model)
+                if resolved is not None:
+                    return resolved
             return self._get_provider_context_window(normalized_provider, model)
 
         return self._get_provider_context_window(normalized_provider, model)
 
     def _get_provider_context_window(
         self, provider: str, model: str, *, include_static: bool = True
-    ) -> int | None:
+    ) -> ResolvedContextWindow | None:
         target = _normalize_model_lookup_id(model)
         entry = self._providers.get(provider, {})
         models = entry.get("models")
         best_len = 0
-        best_context: int | None = None
+        best_context: ContextLengthCandidate | None = None
 
         if isinstance(models, list):
             for item in models:
@@ -471,16 +396,19 @@ class ProviderModelCatalog:
                     best_context = context_length
 
         if best_context is not None:
-            return best_context
-        return context_length_for_model(provider, model) if include_static else None
+            return ResolvedContextWindow(best_context.value, best_context.source)
+        if not include_static:
+            return None
+        fallback = _fallback_context_candidate(provider, model)
+        return ResolvedContextWindow(fallback.value, fallback.source) if fallback else None
 
     def _match_candidate_and_context(
         self, provider: str, item: dict[str, Any], target: str
-    ) -> tuple[int, int] | None:
-        context_length = _extract_context_length(item)
+    ) -> tuple[int, ContextLengthCandidate] | None:
+        context_length = extract_context_length_candidate(item)
         if context_length is None:
             for identifier in _model_identifiers(item):
-                context_length = context_length_for_model(provider, identifier)
+                context_length = _fallback_context_candidate(provider, identifier)
                 if context_length is not None:
                     break
         if context_length is None:
@@ -667,9 +595,10 @@ class ProviderModelCatalog:
                 "hidden": bool(item.get("hidden", False)),
                 "is_default": bool(item.get("isDefault", False)),
             }
-            context_length = _extract_context_length(item)
-            if context_length is not None:
-                entry["context_length"] = context_length
+            context = extract_context_length_candidate(item, source_if_missing="provider_reported")
+            if context is not None:
+                entry["context_length"] = context.value
+                entry[CONTEXT_LENGTH_SOURCE_KEY] = context.source
             reasoning = _extract_reasoning(item)
             if reasoning:
                 entry["reasoning"] = reasoning
@@ -866,9 +795,10 @@ class ProviderModelCatalog:
                 "value": model_id,
                 "label": str(item.get("name") or model_id),
             }
-            context_length = _extract_context_length(item)
-            if context_length is not None:
-                entry["context_length"] = context_length
+            context = extract_context_length_candidate(item, source_if_missing="provider_reported")
+            if context is not None:
+                entry["context_length"] = context.value
+                entry[CONTEXT_LENGTH_SOURCE_KEY] = context.source
             reasoning = _extract_reasoning(item)
             if reasoning:
                 entry["reasoning"] = reasoning
@@ -939,6 +869,7 @@ class ProviderModelCatalog:
             "label": label,
             "canonical_id": str(canonical_id),
             "context_length": context_length_for_model("claude", str(canonical_id)),
+            "context_length_source": "static_default",
             "reasoning": {"supported_efforts": list(_CLAUDE_REASONING_EFFORTS)},
         }
 

@@ -30,4 +30,17 @@ describe('computeContextUsageFromSessionData', () => {
     expect(usage.contextUsageSource).toBe('codex')
     expect(usage.contextUsageConfidence).toBe('reported')
   })
+
+  it('recomputes context ratio from corrected session context window', () => {
+    const usage = computeContextUsageFromSessionData({
+      context_window: 258_400,
+      usage_input_tokens: 129_200,
+      usage_output_tokens: 400,
+      usage_cache_read_tokens: 0,
+      usage_cache_creation_tokens: 0,
+    })
+
+    expect(usage.contextWindow).toBe(258_400)
+    expect(usage.contextUsageRatio).toBe(0.5)
+  })
 })

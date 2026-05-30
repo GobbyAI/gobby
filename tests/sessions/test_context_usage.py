@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from gobby.sessions.context_usage import (
     context_window_for_source_model,
+    effective_context_window_for_session,
     snapshot_from_window_metadata,
 )
 
@@ -42,3 +45,60 @@ def test_agy_window_only_snapshot_has_unknown_pressure() -> None:
     assert snapshot.context_window == 1_000_000
     assert snapshot.context_used_tokens is None
     assert snapshot.context_usage_ratio is None
+
+
+def test_effective_context_window_repairs_stale_codex_static_value() -> None:
+    session = SimpleNamespace(
+        id="session-1",
+        source="codex",
+        model="gpt-5.4",
+        context_window=200_000,
+    )
+
+    assert effective_context_window_for_session(session) == 258_400
+
+
+def test_effective_context_window_preserves_reported_session_value() -> None:
+    session = SimpleNamespace(
+        id="session-1",
+        source="codex",
+        model="gpt-5.4",
+        context_window=200_000,
+        context_usage_confidence="reported",
+    )
+
+    assert effective_context_window_for_session(session) == 200_000
+
+
+def test_effective_context_window_prefers_latest_token_event_window() -> None:
+    class FakeDb:
+        def fetchall(self, *_args: object, **_kwargs: object) -> list[dict[str, object]]:
+            return [
+                {
+                    "id": 1,
+                    "session_id": "session-1",
+                    "project_id": "proj-1",
+                    "message_id": "msg-1",
+                    "source": "codex",
+                    "origin": "transcript",
+                    "model": "gpt-5.4",
+                    "model_family": "gpt-5.4",
+                    "input_tokens": 100,
+                    "output_tokens": 0,
+                    "cache_creation_tokens": 0,
+                    "cache_read_tokens": 0,
+                    "context_window": 258_400,
+                    "event_at": "2026-05-27T21:50:28Z",
+                    "created_at": "2026-05-27T21:50:29Z",
+                    "metadata": None,
+                }
+            ]
+
+    session = SimpleNamespace(
+        id="session-1",
+        source="codex",
+        model="gpt-5.4",
+        context_window=200_000,
+    )
+
+    assert effective_context_window_for_session(session, db=FakeDb()) == 258_400

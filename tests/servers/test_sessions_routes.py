@@ -288,6 +288,30 @@ class TestListSessionsEdgeCases:
 class TestGetSessionEdgeCases:
     """Tests for sessions_get edge cases and error paths."""
 
+    def test_get_session_repairs_stale_codex_context_window(
+        self,
+        client: TestClient,
+        session_storage: SessionManager,
+        test_project: dict[str, Any],
+    ) -> None:
+        """Session detail payload should use effective context-window resolution."""
+        session = session_storage.register(
+            external_id="codex-stale-context",
+            machine_id="machine-1",
+            source="codex",
+            project_id=test_project["id"],
+            title="Codex stale context",
+        )
+        session_storage.db.execute(
+            "UPDATE sessions SET context_window = %s, model = %s WHERE id = %s",
+            (200_000, "gpt-5.4", session.id),
+        )
+
+        response = client.get(f"/api/sessions/{session.id}")
+
+        assert response.status_code == 200
+        assert response.json()["session"]["context_window"] == 258_400
+
     def test_get_session_internal_error(
         self,
         session_storage: SessionManager,
