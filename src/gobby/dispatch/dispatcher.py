@@ -26,6 +26,7 @@ from gobby.dispatch.actions import (
     StartPipelineAction,
     StartStageAction,
 )
+from gobby.dispatch.audit import append_audit_marker
 from gobby.dispatch.context import _field, build_context, reload_candidate
 from gobby.dispatch.daemon_resume import try_resume_daemon_stop_run
 from gobby.dispatch.mutex import (
@@ -925,14 +926,6 @@ def set_artifacts_atomic(
     **fields: str | int | None,
 ) -> TaskArtifacts:
     return _set_artifacts_atomic(db, task_id, **fields)
-
-
-def append_audit_marker(db: HubDatabase, task_id: str, heading: str, body: str) -> bool:
-    task = get_task(db, task_id)
-    description = task.description or ""
-    marker = f"\n\n### {heading}\n\n{body}"
-    update_task(db, task_id, description=f"{description}{marker}")
-    return True
 
 
 def escalate_task(*, db: HubDatabase, task_id: str, reason: str) -> bool:

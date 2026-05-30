@@ -11,6 +11,7 @@ from gobby.dispatch import rules as dispatch_rules
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._artifacts import TaskArtifactManager
 from gobby.storage.tasks._blocking import hydrate_task_blocking_state
+from gobby.storage.tasks._holistic_gate import find_holistic_descendant_gate
 from gobby.storage.tasks._models import Task
 from gobby.storage.tasks._stage_hydration import hydrate_task_stage_state
 from gobby.storage.tasks._stage_registry import StageRegistryEntry, StageRegistryManager
@@ -75,6 +76,7 @@ def build_context(
 ) -> object:
     artifacts = TaskArtifactManager(db).get_artifacts(task.id)
     children = _children(db, task.id)
+    current_stage = dispatch_rules.current_stage(task)
     build_config = getattr(services, "config", None) if services is not None else None
     stage_registry = _stage_registry(db)
     agent_definitions = _agent_definitions(db, project_id=task.project_id)
@@ -84,9 +86,14 @@ def build_context(
         artifacts=artifacts,
         children=children,
         build_config=build_config,
-        current_stage=dispatch_rules.current_stage(task),
+        current_stage=current_stage,
         db=db,
         failure_context=_latest_failure_context(db, task.id),
+        holistic_descendant_gate=find_holistic_descendant_gate(
+            db,
+            task,
+            current_stage=current_stage,
+        ),
         project_id=task.project_id,
         services=services,
         stage_registry=stage_registry,

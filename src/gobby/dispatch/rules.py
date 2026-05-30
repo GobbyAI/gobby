@@ -10,12 +10,14 @@ from typing import Any, cast
 from gobby.dispatch.actions import (
     Action,
     AdvanceStageAction,
+    AppendAuditMarkerAction,
     EscalateAction,
     MergeWorkspaceAction,
     SpawnAgentAction,
     StartPipelineAction,
     StartStageAction,
 )
+from gobby.dispatch.audit import audit_marker_text
 from gobby.dispatch.discovery_artifacts import discovery_artifact_ready
 from gobby.dispatch.merge_recovery import WORKSPACE_MERGE_CONFLICT_LABEL
 from gobby.dispatch.prompts import PROMPT_BUILDERS
@@ -51,6 +53,7 @@ DISABLED_DISCOVERY_AGENT_ESCALATION_REASONS = {
 
 _AUTO_ADVANCE_NON_AGENT_STAGES = {"expansion", "pr"}
 _AUTO_ADVANCE_DEDICATED_STAGES = {"development", "holistic_qa"}
+_HOLISTIC_DESCENDANT_GATE_HEADING = "Holistic QA deferred"
 _DISABLED_AGENT_EXCLUDED_STAGES = {
     "expansion",
     "pr",
@@ -123,9 +126,30 @@ def development_isolation_rule(task: object, context: object) -> Action | None:
     return StartStageAction(task_id=_task_id(task), stage_name=_stage_name(stage))
 
 
+def holistic_descendant_gate_rule(task: object, context: object) -> Action | None:
+    gate = _holistic_descendant_gate(context)
+    if gate is None:
+        return None
+    stage = _current_stage(task, context)
+    if _stage_name(stage) != "holistic_qa" or _stage_state(stage) not in {"ready", "in_progress"}:
+        return None
+    body = _holistic_descendant_gate_body(gate)
+    if audit_marker_text(_HOLISTIC_DESCENDANT_GATE_HEADING, body) in (
+        _field(task, "description", "") or ""
+    ):
+        return None
+    return AppendAuditMarkerAction(
+        task_id=_task_id(task),
+        heading=_HOLISTIC_DESCENDANT_GATE_HEADING,
+        body=body,
+    )
+
+
 def all_leaves_holistic_rule(task: object, context: object) -> Action | None:
     stage = _matching_current_stage(task, context, "holistic_qa", "ready")
     if stage is None or not _is_epic(task):
+        return None
+    if _holistic_descendant_gate(context) is not None:
         return None
     children = list(_children(task, context))
     if not children:
@@ -259,6 +283,8 @@ def development_advance_rule(task: object, context: object) -> Action | None:
 def holistic_qa_rule(task: object, context: object) -> Action | None:
     stage = _matching_current_stage(task, context, "holistic_qa", "in_progress")
     if stage is None:
+        return None
+    if _holistic_descendant_gate(context) is not None:
         return None
     if _stage_work_exhausted(stage, context):
         return EscalateAction(task_id=_task_id(task), reason="holistic_qa_max_work_attempts")
@@ -444,6 +470,7 @@ BASE_RULES: list[Rule] = [
     auto_advance_ready_rule,
     disabled_agent_escalation_rule,
     development_isolation_rule,
+    holistic_descendant_gate_rule,
     all_leaves_holistic_rule,
     epic_development_start_rule,
     epic_development_complete_rule,
@@ -751,6 +778,26 @@ def _artifacts(task: object, context: object) -> object:
     return _field(context, "artifacts", _field(task, "artifacts", {}))
 
 
+def _holistic_descendant_gate(context: object) -> object | None:
+    return cast(object | None, _field(context, "holistic_descendant_gate", None))
+
+
+def _holistic_descendant_gate_body(gate: object) -> str:
+    blockers = tuple(_field(gate, "blockers", ()) or ())
+    lines = ["Holistic QA is waiting for nonterminal descendants:"]
+    for blocker in blockers:
+        ref = _field(blocker, "task_ref", _field(blocker, "task_id", "unknown"))
+        path = _field(blocker, "task_path", "no-path") or "no-path"
+        title = _field(blocker, "title", "")
+        stage_name = _field(blocker, "stage_name", "none") or "none"
+        stage_state = _field(blocker, "stage_state", "none") or "none"
+        escalated = str(bool(_field(blocker, "is_escalated", False))).lower()
+        lines.append(
+            f"- {ref} ({path}): {title} [stage={stage_name}:{stage_state}, escalated={escalated}]"
+        )
+    return "\n".join(lines)
+
+
 def _children(task: object, context: object) -> Sequence[object]:
     return tuple(_field(context, "children", _field(task, "children", ())) or ())
 
@@ -866,6 +913,7 @@ __all__ = [
     "expansion_advance_rule",
     "expansion_review_rule",
     "expansion_work_rule",
+    "holistic_descendant_gate_rule",
     "holistic_qa_advance_rule",
     "holistic_qa_review_rule",
     "holistic_qa_rule",

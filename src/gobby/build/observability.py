@@ -29,6 +29,10 @@ from gobby.storage.tasks._ancestor_gate import (
     find_child_development_ancestor_gate,
 )
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+from gobby.storage.tasks._holistic_gate import (
+    HolisticDescendantGate,
+    find_holistic_descendant_gate,
+)
 
 MAX_ACTIVE_AGENTS = 10
 
@@ -96,6 +100,11 @@ def explain_dispatch(
         candidate,
         current_stage=current_stage,
     )
+    holistic_descendant_gate = find_holistic_descendant_gate(
+        db,
+        candidate,
+        current_stage=current_stage,
+    )
 
     reason = _dispatch_block_reason(
         candidate,
@@ -103,6 +112,7 @@ def explain_dispatch(
         mutex,
         active_agents,
         ancestor_gate,
+        holistic_descendant_gate,
     )
     action = None
     if reason is None:
@@ -119,6 +129,9 @@ def explain_dispatch(
         "inputs": _dispatch_inputs(candidate),
         "current_stage": _stage_summary(current_stage),
         "ancestor_gate": ancestor_gate.to_dict() if ancestor_gate is not None else None,
+        "holistic_descendant_gate": (
+            holistic_descendant_gate.to_dict() if holistic_descendant_gate is not None else None
+        ),
         "mutex": mutex,
         "active_agents": active_agents,
         "proposed_action": _action_summary(action),
@@ -439,6 +452,7 @@ def _dispatch_block_reason(
     mutex: Mapping[str, Any],
     active_agents: Mapping[str, Any],
     ancestor_gate: AncestorStageGate | None,
+    holistic_descendant_gate: HolisticDescendantGate | None,
 ) -> str | None:
     if task.closed_at is not None:
         return "closed"
@@ -454,6 +468,8 @@ def _dispatch_block_reason(
         return "dependency_block"
     if ancestor_gate is not None:
         return ancestor_gate.reason
+    if holistic_descendant_gate is not None:
+        return holistic_descendant_gate.reason
     if current_stage is None:
         return "no_current_stage"
     if _field(current_stage, "state") not in {

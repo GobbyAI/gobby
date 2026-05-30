@@ -117,6 +117,19 @@ def _audit_action(task_id: str) -> AppendAuditMarkerAction:
     return AppendAuditMarkerAction(task_id=task_id, heading="Dispatch", body="marker")
 
 
+def test_append_audit_marker_is_exact_marker_idempotent(temp_db, sample_project) -> None:
+    from gobby.dispatch import dispatcher
+
+    task = _task(temp_db, sample_project)
+
+    assert dispatcher.append_audit_marker(temp_db, task.id, "Dispatch", "marker") is True
+    assert dispatcher.append_audit_marker(temp_db, task.id, "Dispatch", "marker") is False
+    assert dispatcher.append_audit_marker(temp_db, task.id, "Dispatch", "other") is True
+    description = get_task(temp_db, task.id).description or ""
+    assert description.count("### Dispatch\n\nmarker") == 1
+    assert description.count("### Dispatch") == 2
+
+
 def test_development_prompt_includes_persisted_holistic_failure_context(
     temp_db,
     sample_project,
@@ -299,6 +312,53 @@ async def test_heartbeat_allows_child_development_after_parent_expansion_done(
     assert LocalTaskManager(temp_db).stage_states.get(child.id, "development").state == (
         "in_progress"
     )
+
+
+async def test_heartbeat_routes_reopened_descendant_before_gated_holistic_root(
+    temp_db,
+    sample_project,
+) -> None:
+    from gobby.dispatch import dispatcher
+
+    manager = LocalTaskManager(temp_db)
+    root = manager.create_task(
+        project_id=sample_project["id"],
+        title="Holistic root",
+        task_type="epic",
+    )
+    update_task(temp_db, root.id, allow_automation=True, isolation="none", task_type="epic")
+    initialize_manifest(
+        temp_db,
+        root.id,
+        [spec("development", 0), spec("holistic_qa", 1), spec("merge", 2)],
+    )
+    set_stage_state(temp_db, root.id, "development", "done")
+    set_stage_state(temp_db, root.id, "holistic_qa", "ready")
+    phase = manager.create_task(
+        project_id=sample_project["id"],
+        title="Integrated phase",
+        parent_task_id=root.id,
+    )
+    child = _task(
+        temp_db,
+        sample_project,
+        title="Reopened child",
+        parent_task_id=phase.id,
+        stage_name="development",
+        stage_state="ready",
+    )
+
+    result = await dispatcher.run_heartbeat(
+        db=temp_db,
+        project_id=sample_project["id"],
+        max_actions=1,
+    )
+
+    assert result.executed == 1
+    assert LocalTaskManager(temp_db).stage_states.get(child.id, "development").state == (
+        "in_progress"
+    )
+    assert LocalTaskManager(temp_db).stage_states.get(root.id, "holistic_qa").state == "ready"
 
 
 def test_count_active_agents_scopes_by_parent_session_project(temp_db, sample_project) -> None:

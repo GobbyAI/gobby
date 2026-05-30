@@ -283,3 +283,44 @@ def test_explain_dispatch_reports_block_reasons_and_would_dispatch(temp_db) -> N
     assert blocked_explanation["ancestor_gate"]["ancestor_ref"] == f"#{parent.seq_num}"
     assert blocked_explanation["ancestor_gate"]["stage_name"] == "expansion"
     assert blocked_explanation["ancestor_gate"]["stage_state"] == "needs_review"
+
+
+def test_explain_dispatch_reports_holistic_descendant_gate(temp_db) -> None:
+    from gobby.build.observability import explain_dispatch
+    from gobby.storage.tasks import LocalTaskManager
+
+    project_id = _project(temp_db, "observability-holistic-gate")
+    manager = LocalTaskManager(temp_db)
+    root = manager.create_task(project_id=project_id, title="Root", task_type="epic")
+    manager.update_task(root.id, allow_automation=True, isolation="none")
+    manager.initialize_task_manifest(root.id, stage_names=["development", "holistic_qa", "merge"])
+    temp_db.execute(
+        "UPDATE task_stage_states SET state = 'done' WHERE task_id = %s AND stage_name = 'development'",
+        (root.id,),
+    )
+    temp_db.execute(
+        "UPDATE task_stage_states SET state = 'ready' WHERE task_id = %s AND stage_name = 'holistic_qa'",
+        (root.id,),
+    )
+    phase = manager.create_task(
+        project_id=project_id, title="Integrated phase", parent_task_id=root.id
+    )
+    child = manager.create_task(
+        project_id=project_id,
+        title="Reopened child",
+        category="code",
+        parent_task_id=phase.id,
+    )
+    manager.initialize_task_manifest(child.id, stage_names=["development"])
+
+    explanation = explain_dispatch(root.id, db=temp_db, project_id=project_id)
+
+    assert explanation["eligible"] is False
+    assert explanation["reason"] == "holistic_descendants_nonterminal"
+    gate = explanation["holistic_descendant_gate"]
+    assert gate["reason"] == "holistic_descendants_nonterminal"
+    assert gate["blockers"][0]["task_id"] == child.id
+    assert gate["blockers"][0]["task_ref"] == f"#{child.seq_num}"
+    assert gate["blockers"][0]["stage_name"] == "development"
+    assert gate["blockers"][0]["stage_state"] == "ready"
+    assert explanation["proposed_action"] is None

@@ -606,6 +606,44 @@ def test_all_leaves_holistic_rule_holds_while_leaves_in_flight() -> None:
     )
 
 
+def test_holistic_descendant_gate_rule_appends_marker_once() -> None:
+    from gobby.dispatch.actions import AppendAuditMarkerAction
+
+    gate = SimpleNamespace(
+        blockers=(
+            SimpleNamespace(
+                task_id="child-1",
+                task_ref="#2",
+                task_path="1.2",
+                title="Reopened child",
+                stage_name="development",
+                stage_state="ready",
+                is_escalated=False,
+            ),
+        )
+    )
+    context = _context(
+        children=[_task(stages=[])],
+        holistic_descendant_gate=gate,
+    )
+    task = _task_at("holistic_qa", "ready", task_type="epic")
+
+    action = _evaluate(task, context)
+
+    assert isinstance(action, AppendAuditMarkerAction)
+    assert action.heading == "Holistic QA deferred"
+    assert "#2" in action.body
+    assert "stage=development:ready" in action.body
+
+    repeated_task = _task_at(
+        "holistic_qa",
+        "ready",
+        task_type="epic",
+        description=f"\n\n### {action.heading}\n\n{action.body}",
+    )
+    assert _evaluate(repeated_task, context) is None
+
+
 def test_all_leaves_holistic_rule_never_targets_merging_directly() -> None:
     action = _evaluate(
         _task_at("holistic_qa", "ready", task_type="epic"),
@@ -741,6 +779,7 @@ def test_base_rules_order_excludes_merge_rule() -> None:
         "auto_advance_ready_rule",
         "disabled_agent_escalation_rule",
         "development_isolation_rule",
+        "holistic_descendant_gate_rule",
         "all_leaves_holistic_rule",
         "epic_development_start_rule",
         "epic_development_complete_rule",
@@ -772,7 +811,7 @@ def test_final_rules_is_base_rules_plus_merge_rule_at_final_position() -> None:
     from gobby.dispatch.rules import BASE_RULES, RULES, merge_rule
 
     assert RULES == [*BASE_RULES, merge_rule]
-    assert len(RULES) == 27
+    assert len(RULES) == 28
     assert RULES[-1] is merge_rule
 
 

@@ -6,6 +6,7 @@ from typing import Any
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._ancestor_gate import find_child_development_ancestor_gate
 from gobby.storage.tasks._blocking import hydrate_task_blocking_state
+from gobby.storage.tasks._holistic_gate import find_holistic_descendant_gate
 from gobby.storage.tasks._models import Task
 from gobby.storage.tasks._stage_hydration import hydrate_task_stage_state
 
@@ -70,11 +71,20 @@ def list_automation_candidates(
     tasks = [Task.from_row(row) for row in rows]
     hydrate_task_stage_state(db, tasks)
     hydrate_task_blocking_state(db, tasks)
-    return [
+    ready_tasks = [
         task
         for task in tasks
         if not is_blocked_by_deps(task) and find_child_development_ancestor_gate(db, task) is None
     ]
+    return sorted(
+        ready_tasks,
+        key=lambda task: (
+            find_holistic_descendant_gate(db, task) is not None,
+            task.priority,
+            task.seq_num if task.seq_num is not None else 2**31,
+            task.created_at,
+        ),
+    )
 
 
 def sweep_stale_claims(
