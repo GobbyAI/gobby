@@ -18,6 +18,7 @@ from gobby.agents.sandbox import (
     ResolvedSandboxPaths,
     SandboxConfig,
     SandboxResolver,
+    _normalize_sandbox_path,
     coerce_sandbox_config,
     compute_sandbox_paths,
     get_sandbox_resolver,
@@ -1024,6 +1025,19 @@ class TestComputeSandboxPaths:
         )
 
         assert "/my/workspace" in paths.write_paths
+
+    def test_normalize_sandbox_path_tolerates_value_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Path resolution can raise ValueError for malformed local paths."""
+
+        def fail_resolve(self: Path, strict: bool = False) -> Path:
+            _ = strict
+            raise ValueError("bad path")
+
+        monkeypatch.setattr(Path, "resolve", fail_resolve)
+
+        assert _normalize_sandbox_path("/bad/path") == Path("/bad/path")
 
     def test_custom_daemon_port(self) -> None:
         """Test custom daemon port is set."""

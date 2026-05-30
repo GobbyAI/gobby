@@ -529,6 +529,18 @@ class TestSearchSessionMessages:
         assert "TranscriptReader not configured" in result["error"]
 
     @pytest.mark.asyncio
+    async def test_search_session_messages_rejects_non_positive_limit(self) -> None:
+        """Search limits must be positive so callers do not get success-shaped no-ops."""
+        transcript_reader = AsyncMock()
+        registry = create_test_registry(transcript_reader=transcript_reader)
+        search = registry.get_tool("search_session_messages")
+
+        result = await search(query="match", session_id="sess-123", limit=0)
+
+        assert result == {"success": False, "error": "limit must be positive"}
+        transcript_reader.get_rendered_messages.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_search_session_messages_scans_filtered_sessions(self) -> None:
         """Test multi-session search uses session filters."""
         session_one = MagicMock()

@@ -117,10 +117,17 @@ async def resume_agent_run(
         reasoning_effort=_metadata_str(resume_metadata, "effective_reasoning_effort"),
         config_overrides=_str_list(resume_metadata.get("config_overrides")),
     )
-    env = spawn_context.env_vars.copy()
+    env = _str_dict(resume_metadata.get("env"))
+    env.update(spawn_context.env_vars)
     env.update(_str_dict(resume_metadata.get("sandbox_env")))
-    env.update(_str_dict(resume_metadata.get("env")))
     env["GOBBY_MACHINE_ID"] = _metadata_str(resume_metadata, "machine_id") or "unknown"
+    metadata["env"] = dict(env)
+    try:
+        update_resume_metadata = getattr(runner.run_storage, "update_resume_metadata", None)
+        if callable(update_resume_metadata):
+            update_resume_metadata(run_id, metadata)
+    except Exception:
+        logger.warning("Failed to persist resumed launch metadata for %s", run_id, exc_info=True)
 
     pre_approve_directory(provider, cwd)
     terminal_result = _tmux_spawner(daemon_config, resume_metadata).spawn(

@@ -52,7 +52,7 @@ class CodeIndexContext:
         if self._gcode_gateway is None and self._config.graph_enabled:
             try:
                 self._gcode_gateway = GcodeGateway()
-            except Exception as e:
+            except GcodeGatewayError as e:
                 logger.warning("Code graph gateway unavailable during context init: %s", e)
         self._run_db = run_db
 

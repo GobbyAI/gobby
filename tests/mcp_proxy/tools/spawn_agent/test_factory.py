@@ -258,6 +258,48 @@ class TestSpawnAgentDefaults:
         assert mock_spawn_impl.call_args.kwargs["parent_session_id"] == "parent-uuid"
         assert mock_spawn_impl.call_args.kwargs["project_path"] == str(tmp_path)
 
+    def test_parent_session_project_context_preserves_isolation_parent_fields(
+        self,
+        db: HubDatabase,
+        tmp_path: Path,
+    ) -> None:
+        from gobby.mcp_proxy.tools.spawn_agent._factory import _parent_session_project_context
+
+        project_dir = tmp_path / "worktree"
+        project_dir.mkdir()
+        (project_dir / ".gobby").mkdir()
+        (project_dir / ".gobby" / "project.json").write_text(
+            json.dumps(
+                {
+                    "id": "isolated-project",
+                    "name": "isolated",
+                    "parent_project_id": "parent-project",
+                    "parent_project_path": "/repo/main",
+                }
+            ),
+            encoding="utf-8",
+        )
+        project = LocalProjectManager(db).create(
+            "spawn-parent-project",
+            repo_path=str(project_dir),
+        )
+        session_manager = MagicMock()
+        session_manager.get.return_value = SimpleNamespace(project_id=project.id)
+
+        context = _parent_session_project_context(
+            parent_session_id="parent-session",
+            session_manager=session_manager,
+            db=db,
+        )
+
+        assert context == {
+            "id": project.id,
+            "name": project.name,
+            "project_path": str(project_dir),
+            "parent_project_id": "parent-project",
+            "parent_project_path": "/repo/main",
+        }
+
     @pytest.mark.asyncio
     async def test_explicit_project_path_does_not_fall_back_to_current_context(
         self,

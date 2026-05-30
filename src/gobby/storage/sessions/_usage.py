@@ -149,6 +149,11 @@ class _UsageMixin:
             context_usage_source = %s,
             context_usage_confidence = %s,
             context_usage_updated_at = %s,
+            last_prompt_input_tokens = %s,
+            last_prompt_uncached_input_tokens = %s,
+            last_prompt_cache_read_tokens = %s,
+            last_prompt_cache_creation_tokens = %s,
+            last_completion_output_tokens = %s,
             model = COALESCE(%s, model),
             updated_at = CURRENT_TIMESTAMP
         WHERE id = %s
@@ -164,6 +169,11 @@ class _UsageMixin:
                         snapshot.source,
                         snapshot.confidence,
                         snapshot.timestamp,
+                        snapshot.raw_prompt_footprint,
+                        snapshot.uncached_prompt_tokens,
+                        snapshot.cache_read_tokens,
+                        snapshot.cache_creation_tokens,
+                        snapshot.output_tokens,
                         snapshot.model,
                         session_id,
                     ),

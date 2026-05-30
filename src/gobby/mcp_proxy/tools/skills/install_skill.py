@@ -129,6 +129,10 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                     is_implicit_github_pattern and not Path(source).exists()
                 )
 
+            is_http_url = source.startswith(("http://", "https://"))
+            if parsed_skill is None and is_http_url and not is_github_ref:
+                return {"success": False, "error": f"Unknown skill source: {source}"}
+
             if parsed_skill is None and is_github_ref:
                 # GitHub URL
                 try:

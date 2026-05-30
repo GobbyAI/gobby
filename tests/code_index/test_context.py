@@ -13,6 +13,7 @@ from gobby.code_index.context import (
     CodeIndexGraphUnavailable,
     CodeIndexProjectNotFound,
 )
+from gobby.code_index.gcode_gateway import GcodeGatewayError
 from gobby.code_index.models import IndexedProject
 from gobby.config.code_index import CodeIndexConfig
 
@@ -104,7 +105,7 @@ def test_context_does_not_create_gateway_when_graph_disabled() -> None:
     assert context.gcode_gateway is None
 
 
-def test_context_continues_when_gateway_init_fails(caplog: pytest.LogCaptureFixture) -> None:
+def test_context_continues_when_gateway_unavailable(caplog: pytest.LogCaptureFixture) -> None:
     storage = MagicMock()
 
     with (
@@ -113,9 +114,21 @@ def test_context_continues_when_gateway_init_fails(caplog: pytest.LogCaptureFixt
     ):
         monkeypatch.setattr(
             "gobby.code_index.context.GcodeGateway",
-            MagicMock(side_effect=RuntimeError("missing binary")),
+            MagicMock(side_effect=GcodeGatewayError("missing binary")),
         )
         context = CodeIndexContext(storage=storage, config=CodeIndexConfig(graph_enabled=True))
 
     assert context.gcode_gateway is None
     assert "Code graph gateway unavailable" in caplog.text
+
+
+def test_context_propagates_unexpected_gateway_init_errors() -> None:
+    storage = MagicMock()
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(
+            "gobby.code_index.context.GcodeGateway",
+            MagicMock(side_effect=RuntimeError("boom")),
+        )
+        with pytest.raises(RuntimeError, match="boom"):
+            CodeIndexContext(storage=storage, config=CodeIndexConfig(graph_enabled=True))

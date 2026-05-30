@@ -46,7 +46,8 @@ def test_record_resume_launch_details_uses_resolved_agent_run_id(
         project_id="proj",
         agent_run_id="original-run",
         session_manager=session_manager,
-        resume_metadata_json={"provider": "codex"},
+        extra_env={"REQUEST_ONLY": "request", "FINAL": "request"},
+        resume_metadata_json={"provider": "codex", "env": {"PERSISTED": "old", "FINAL": "old"}},
     )
     calls: list[tuple[object, str, dict[str, object]]] = []
 
@@ -63,6 +64,7 @@ def test_record_resume_launch_details_uses_resolved_agent_run_id(
         request,
         agent_run_id="resolved-run",
         sandbox_args=["--sandbox"],
+        env={"FINAL": "launch", "LAUNCH_ONLY": "yes"},
     )
 
     assert calls == [
@@ -73,7 +75,12 @@ def test_record_resume_launch_details_uses_resolved_agent_run_id(
                 "provider": "codex",
                 "sandbox_args": ["--sandbox"],
                 "sandbox_env": {},
-                "env": {},
+                "env": {
+                    "PERSISTED": "old",
+                    "REQUEST_ONLY": "request",
+                    "FINAL": "launch",
+                    "LAUNCH_ONLY": "yes",
+                },
                 "config_overrides": [],
             },
         )

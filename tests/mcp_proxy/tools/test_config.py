@@ -236,6 +236,10 @@ class TestSetConfig:
             assert SecretStore(temp_db).get("requirepass") == "Valid-123"
             assert config_state["config"].databases.falkordb.requirepass == "Valid-123"
 
+            unchanged = tool(key="databases.falkordb.requirepass", value="Valid-123")
+            assert unchanged["success"] is True
+            assert "requires_restart" not in unchanged
+
     def test_set_config_validates_requirepass_before_persisting(
         self,
         config_registry_with_db: InternalToolRegistry,
@@ -841,6 +845,29 @@ class TestDeleteConfig:
             assert "embeddings.api_key" not in config_store.list_keys()
             assert secret_store.get("api_key") is None
             assert config_state["config"].embeddings.api_key is None
+
+    def test_delete_config_marks_requirepass_restart_required(
+        self,
+        config_registry_with_db,
+        config_store: ConfigStore,
+        temp_db: HubDatabase,
+    ) -> None:
+        """Deleting the FalkorDB password override changes runtime container credentials."""
+        with patch("gobby.utils.machine_id.get_machine_id", return_value="test-machine-12345"):
+            set_tool = config_registry_with_db.get_tool("set_config")
+            delete_tool = config_registry_with_db.get_tool("delete_config")
+
+            assert (
+                set_tool(key="databases.falkordb.requirepass", value="Valid-123")["success"] is True
+            )
+
+            result = delete_tool(key="databases.falkordb.requirepass")
+
+            assert result["success"] is True
+            assert result["requires_restart"] is True
+            assert "FalkorDB password" in result["restart_hint"]
+            assert "databases.falkordb.requirepass" not in config_store.list_keys()
+            assert SecretStore(temp_db).get("requirepass") is None
 
     def test_delete_config_requires_db_for_secrets(
         self,

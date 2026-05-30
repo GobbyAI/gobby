@@ -14,7 +14,7 @@ Exposes functionality for:
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -55,8 +55,17 @@ def _validate_falkordb_secret(key: str, value: Any) -> None:
     validate_falkordb_password(str(value))
 
 
-def _add_restart_metadata(result: dict[str, Any], touched_keys: Iterable[str]) -> None:
-    if _FALKOR_REQUIREPASS_KEY in set(touched_keys):
+def _falkor_requirepass_value(config: DaemonConfig) -> str | None:
+    value = config.databases.falkordb.requirepass
+    return str(value) if value is not None else None
+
+
+def _add_restart_metadata(
+    result: dict[str, Any],
+    before_config: DaemonConfig,
+    after_config: DaemonConfig,
+) -> None:
+    if _falkor_requirepass_value(before_config) != _falkor_requirepass_value(after_config):
         result["requires_restart"] = True
         result["restart_hint"] = _FALKOR_RESTART_HINT
 
@@ -155,6 +164,7 @@ def create_config_registry(
         from gobby.config.app import deep_merge
 
         try:
+            before_config = _current_config()
             effective_is_secret = is_secret or is_secret_key_name(key)
             if effective_is_secret and db is None:
                 return {
@@ -176,7 +186,7 @@ def create_config_registry(
             update_nested = unflatten_config({key: validation_value})
 
             # Deep-merge into current config dict
-            current_dict = _current_config().model_dump(mode="json")
+            current_dict = before_config.model_dump(mode="json")
             deep_merge(current_dict, update_nested)
 
             # Validate by constructing a new DaemonConfig
@@ -184,7 +194,7 @@ def create_config_registry(
 
             if effective_is_secret:
                 actual_nested = unflatten_config({key: value})
-                actual_dict = _current_config().model_dump(mode="json")
+                actual_dict = before_config.model_dump(mode="json")
                 deep_merge(actual_dict, actual_nested)
                 new_config = DaemonConfigCls(**actual_dict)
 
@@ -205,7 +215,7 @@ def create_config_registry(
                 result["stored_as"] = "encrypted_secret"
             else:
                 result["value"] = value
-            _add_restart_metadata(result, [key])
+            _add_restart_metadata(result, before_config, new_config)
             return result
         except ValueError as e:
             return {"success": False, "error": str(e)}
@@ -236,6 +246,7 @@ def create_config_registry(
         from gobby.config.app import deep_merge
 
         try:
+            before_config = _current_config()
             # Collect and validate entry shapes
             flat_updates: dict[str, Any] = {}
             explicit_secret_keys: set[str] = set()
@@ -277,13 +288,13 @@ def create_config_registry(
             for key in secret_keys:
                 validation_updates[key] = f"$secret:{config_key_to_secret_name(key)}"
             update_nested = unflatten_config(validation_updates)
-            current_dict = _current_config().model_dump(mode="json")
+            current_dict = before_config.model_dump(mode="json")
             deep_merge(current_dict, update_nested)
 
             # Validate by constructing a new DaemonConfig
             DaemonConfigCls(**current_dict)
 
-            actual_dict = _current_config().model_dump(mode="json")
+            actual_dict = before_config.model_dump(mode="json")
             deep_merge(actual_dict, unflatten_config(flat_updates))
             new_config = DaemonConfigCls(**actual_dict)
 
@@ -309,7 +320,7 @@ def create_config_registry(
                 "keys_set": sorted(flat_updates.keys()),
                 "count": len(flat_updates),
             }
-            _add_restart_metadata(result, secret_keys)
+            _add_restart_metadata(result, before_config, new_config)
             return result
         except ValueError as e:
             return {"success": False, "error": str(e)}
@@ -332,6 +343,7 @@ def create_config_registry(
         from gobby.config.app import DaemonConfig as DaemonConfigCls
 
         try:
+            before_config = _current_config()
             override_keys = set(config_store.list_keys())
             if key not in override_keys:
                 return {
@@ -375,12 +387,14 @@ def create_config_registry(
             _state["config"] = new_config
             config_setter(new_config)
 
-            return {
+            result = {
                 "success": True,
                 "key": key,
                 "deleted": True,
                 "had_secret": had_secret,
             }
+            _add_restart_metadata(result, before_config, new_config)
+            return result
         except Exception as e:
             logger.exception(f"Failed to delete config key '{key}'")
             return {"success": False, "error": str(e)}

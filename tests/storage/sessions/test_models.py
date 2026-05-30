@@ -2,6 +2,7 @@
 
 import pytest
 
+from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 
@@ -24,6 +25,18 @@ class TestSession:
             project_id=sample_project["id"],
         )
         session_manager.update(session.id, title_source="manual")
+        session_manager.update_context_usage(
+            session.id,
+            ContextUsageSnapshot.from_token_breakdown(
+                source="codex",
+                context_window=100_000,
+                uncached_prompt_tokens=1_000,
+                cache_read_tokens=2_000,
+                cache_creation_tokens=300,
+                output_tokens=50,
+                model="gpt-5-codex",
+            ),
+        )
 
         row = session_manager.db.fetchone("SELECT * FROM sessions WHERE id = %s", (session.id,))
         assert row is not None
@@ -33,6 +46,12 @@ class TestSession:
         assert session_from_row.external_id == "test-cli-key"
         assert session_from_row.source == "claude"
         assert session_from_row.title_source == "manual"
+        assert session_from_row.context_used_tokens == 3300
+        assert session_from_row.last_prompt_uncached_input_tokens == 1000
+        assert session_from_row.last_prompt_cache_read_tokens == 2000
+        assert session_from_row.last_prompt_cache_creation_tokens == 300
+        assert session_from_row.last_completion_output_tokens == 50
+        assert session_from_row.to_dict()["context_usage_source"] == "codex"
 
     def test_to_dict(
         self,

@@ -14,6 +14,14 @@ from gobby.storage.sessions import SessionManager
 pytestmark = pytest.mark.unit
 
 
+class StreamableSessionManagerDouble:
+    def __init__(self, instances: dict[str, Any]) -> None:
+        self._server_instances = instances
+
+    def active_sessions(self) -> dict[str, Any]:
+        return dict(self._server_instances)
+
+
 class TestAdminEndpoints:
     """Tests for admin endpoints."""
 
@@ -58,7 +66,8 @@ class TestStreamableHttpShutdown:
         transport.mcp_session_id = "sess-timeout"
         transport.terminate = AsyncMock()
         http_server._mcp_server = MagicMock()
-        http_server._mcp_server.session_manager = MagicMock(_server_instances={"one": transport})
+        session_manager = StreamableSessionManagerDouble({"one": transport})
+        http_server._mcp_server.session_manager = session_manager
 
         with patch("gobby.servers.http.asyncio.wait_for", side_effect=TimeoutError):
             await http_server._terminate_streamable_http_sessions()
@@ -68,7 +77,7 @@ class TestStreamableHttpShutdown:
             for record in caplog.records
         )
         assert transport.terminate.await_count == 1
-        assert http_server._mcp_server.session_manager._server_instances == {"one": transport}
+        assert session_manager.active_sessions() == {"one": transport}
 
     @pytest.mark.asyncio
     async def test_terminate_streamable_http_sessions_uses_wait_for(
@@ -78,7 +87,8 @@ class TestStreamableHttpShutdown:
         transport.mcp_session_id = "sess-ok"
         transport.terminate = AsyncMock()
         http_server._mcp_server = MagicMock()
-        http_server._mcp_server.session_manager = MagicMock(_server_instances={"one": transport})
+        session_manager = StreamableSessionManagerDouble({"one": transport})
+        http_server._mcp_server.session_manager = session_manager
 
         async def _wait_for(awaitable, timeout):
             await awaitable
@@ -93,7 +103,7 @@ class TestStreamableHttpShutdown:
         mock_wait_for.assert_awaited_once()
         assert mock_wait_for.await_args.kwargs["timeout"] == 2.0
         assert transport.terminate.await_count == 1
-        assert http_server._mcp_server.session_manager._server_instances == {}
+        assert session_manager.active_sessions() == {}
 
 
 class TestHooksEndpoint:

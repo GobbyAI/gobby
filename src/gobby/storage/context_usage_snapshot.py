@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -17,6 +18,7 @@ ContextUsageSource = Literal[
     "web_chat",
 ]
 ContextUsageConfidence = Literal["reported", "estimated", "unknown"]
+CodexTokenUsage = Mapping[str, Any]
 
 
 @dataclass(frozen=True)
@@ -134,8 +136,8 @@ class ContextUsageSnapshot:
     def from_codex(
         cls,
         context_window: int | None,
-        last_token_usage: dict[str, Any] | None,
-        total_token_usage: dict[str, Any] | None,
+        last_token_usage: CodexTokenUsage | None,
+        total_token_usage: CodexTokenUsage | None,
         char_fallback: str | None,
         model: str | None = None,
     ) -> ContextUsageSnapshot:
@@ -336,7 +338,7 @@ def _coerce_nonnegative_int(value: int | None) -> int | None:
     return max(0, int(value))
 
 
-def _first_token_count(data: dict[str, Any], *keys: str) -> int | None:
+def _first_token_count(data: Mapping[str, Any], *keys: str) -> int | None:
     for key in keys:
         value = data.get(key)
         if value is None or isinstance(value, bool):

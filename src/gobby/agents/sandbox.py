@@ -601,7 +601,7 @@ def _normalize_sandbox_path(raw_path: str, *, base: Path | None = None) -> Path:
         path = base / path
     try:
         return path.resolve(strict=False)
-    except OSError:
+    except (OSError, RuntimeError, ValueError):
         return path
 
 

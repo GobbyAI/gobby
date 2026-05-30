@@ -57,6 +57,17 @@ def _workspace(tmp_path: Path, *, dirty: bool) -> Path:
     return path
 
 
+@pytest.mark.asyncio
+async def test_workspace_dirty_canonicalizes_symlink_paths(tmp_path: Path) -> None:
+    from gobby.dispatch.daemon_resume import _workspace_dirty
+
+    workspace = _workspace(tmp_path, dirty=True)
+    link = tmp_path / "workspace-link"
+    link.symlink_to(workspace, target_is_directory=True)
+
+    assert await _workspace_dirty(str(link)) is True
+
+
 def _services(temp_db: HubDatabase) -> SimpleNamespace:
     session_manager = SessionManager(temp_db)
     run_storage = LocalAgentRunManager(temp_db)

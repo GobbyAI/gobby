@@ -217,6 +217,19 @@ class TestInstallSkillTool:
         assert "not found" in result["error"].lower()
 
     @pytest.mark.asyncio
+    async def test_install_skill_non_github_http_zip_is_unknown(self, db):
+        """Non-GitHub HTTP ZIP URLs are not treated as local zip paths."""
+        from gobby.mcp_proxy.tools.skills import create_skills_registry
+
+        registry = create_skills_registry(db)
+        tool = registry.get_tool("install_skill")
+
+        result = await tool(source="https://example.com/skills/demo.zip")
+
+        assert result["success"] is False
+        assert "Unknown skill source" in result["error"]
+
+    @pytest.mark.asyncio
     async def test_install_skill_invalid_skill(self, db, tmp_path):
         """Test that install_skill returns error for invalid skill."""
         from gobby.mcp_proxy.tools.skills import create_skills_registry

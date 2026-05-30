@@ -50,6 +50,16 @@ class Session:
     usage_cache_creation_tokens: int = 0
     usage_cache_read_tokens: int = 0
     context_window: int | None = None
+    context_used_tokens: int | None = None
+    context_usage_ratio: float | None = None
+    context_usage_source: str | None = None
+    context_usage_confidence: str | None = None
+    context_usage_updated_at: str | None = None
+    last_prompt_input_tokens: int | None = None
+    last_prompt_uncached_input_tokens: int | None = None
+    last_prompt_cache_read_tokens: int | None = None
+    last_prompt_cache_creation_tokens: int | None = None
+    last_completion_output_tokens: int | None = None
     model: str | None = None  # LLM model used (e.g., "claude-3-5-sonnet-20241022")
     is_local: bool = False
     # Terminal context (JSON blob with tty, parent_pid, tmux_pane, term_program)
@@ -120,6 +130,36 @@ class Session:
             usage_cache_creation_tokens=row["usage_cache_creation_tokens"] or 0,
             usage_cache_read_tokens=row["usage_cache_read_tokens"] or 0,
             context_window=row["context_window"] if "context_window" in row.keys() else None,
+            context_used_tokens=row["context_used_tokens"]
+            if "context_used_tokens" in row.keys()
+            else None,
+            context_usage_ratio=row["context_usage_ratio"]
+            if "context_usage_ratio" in row.keys()
+            else None,
+            context_usage_source=row["context_usage_source"]
+            if "context_usage_source" in row.keys()
+            else None,
+            context_usage_confidence=row["context_usage_confidence"]
+            if "context_usage_confidence" in row.keys()
+            else None,
+            context_usage_updated_at=row["context_usage_updated_at"]
+            if "context_usage_updated_at" in row.keys()
+            else None,
+            last_prompt_input_tokens=row["last_prompt_input_tokens"]
+            if "last_prompt_input_tokens" in row.keys()
+            else None,
+            last_prompt_uncached_input_tokens=row["last_prompt_uncached_input_tokens"]
+            if "last_prompt_uncached_input_tokens" in row.keys()
+            else None,
+            last_prompt_cache_read_tokens=row["last_prompt_cache_read_tokens"]
+            if "last_prompt_cache_read_tokens" in row.keys()
+            else None,
+            last_prompt_cache_creation_tokens=row["last_prompt_cache_creation_tokens"]
+            if "last_prompt_cache_creation_tokens" in row.keys()
+            else None,
+            last_completion_output_tokens=row["last_completion_output_tokens"]
+            if "last_completion_output_tokens" in row.keys()
+            else None,
             model=row["model"] if "model" in row.keys() else None,
             is_local=is_local,
             terminal_context=cls._parse_terminal_context(row["terminal_context"]),
@@ -240,6 +280,16 @@ class Session:
             "usage_cache_creation_tokens": self.usage_cache_creation_tokens,
             "usage_cache_read_tokens": self.usage_cache_read_tokens,
             "context_window": self.context_window,
+            "context_used_tokens": self.context_used_tokens,
+            "context_usage_ratio": self.context_usage_ratio,
+            "context_usage_source": self.context_usage_source,
+            "context_usage_confidence": self.context_usage_confidence,
+            "context_usage_updated_at": self.context_usage_updated_at,
+            "last_prompt_input_tokens": self.last_prompt_input_tokens,
+            "last_prompt_uncached_input_tokens": self.last_prompt_uncached_input_tokens,
+            "last_prompt_cache_read_tokens": self.last_prompt_cache_read_tokens,
+            "last_prompt_cache_creation_tokens": self.last_prompt_cache_creation_tokens,
+            "last_completion_output_tokens": self.last_completion_output_tokens,
             "model": self.model,
             "is_local": self.is_local,
             "terminal_context": self.terminal_context,

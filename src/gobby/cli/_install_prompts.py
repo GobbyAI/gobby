@@ -264,7 +264,7 @@ def _prompt_hub_api_keys(
                             category="integration",
                             description=f"API key for {hub_name} skill hub",
                         )
-                        click.echo(f"    Stored credential for {hub_name} ({auth_key_name})")
+                        click.echo(f"    Stored credential for {hub_name}")
                         result["stored"] += 1
                     except Exception as e:
                         logger.warning("Failed to store hub credential", exc_info=e)

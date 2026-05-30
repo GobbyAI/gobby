@@ -88,6 +88,7 @@ def create_webhooks_router() -> APIRouter:
         except (ValueError, Exception):
             raise HTTPException(status_code=400, detail="Invalid JSON body") from None
 
+        webhook_name = None
         try:
             webhook_name = body.get("name")
             event_type = body.get("event_type", "notification")
@@ -149,7 +150,12 @@ def create_webhooks_router() -> APIRouter:
         except httpx.TimeoutException:
             return {"success": False, "error": "Request timed out"}
         except httpx.RequestError as e:
-            logger.warning("Webhook test request failed: %s", e, exc_info=True)
+            logger.warning(
+                "Webhook test request failed for %s: %s",
+                webhook_name,
+                e,
+                exc_info=True,
+            )
             return {"success": False, "error": "Request failed"}
         except HTTPException:
             raise

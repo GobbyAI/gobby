@@ -8,6 +8,7 @@ and clones.py into a single executor. All agents spawn via tmux.
 import json
 import logging
 import shutil
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, cast
 
 from gobby.agents.constants import ALL_TERMINAL_ENV_VARS
@@ -82,6 +83,7 @@ def _record_resume_launch_details(
     agent_run_id: str,
     sandbox_args: list[str] | None = None,
     sandbox_env: dict[str, str] | None = None,
+    env: Mapping[str, str] | None = None,
     config_overrides: list[str] | None = None,
 ) -> None:
     """Persist post-resolution CLI launch details for daemon-stop resume."""
@@ -94,7 +96,17 @@ def _record_resume_launch_details(
     metadata = dict(request.resume_metadata_json)
     metadata["sandbox_args"] = list(sandbox_args or [])
     metadata["sandbox_env"] = dict(sandbox_env or {})
-    metadata["env"] = dict(request.extra_env or {})
+    final_env = {
+        str(key): str(value)
+        for source in (
+            metadata.get("env") if isinstance(metadata.get("env"), Mapping) else None,
+            request.extra_env,
+            env,
+        )
+        if source is not None
+        for key, value in source.items()
+    }
+    metadata["env"] = final_env
     metadata["config_overrides"] = list(config_overrides or [])
     tmux_config = getattr(request.daemon_config, "tmux", None)
     if isinstance(tmux_config, TmuxConfig):
@@ -270,6 +282,7 @@ async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
         agent_run_id=spawn_context.agent_run_id,
         sandbox_args=sandbox_args,
         sandbox_env=sandbox_env,
+        env=env,
     )
 
     # Pre-approve workspace trust so the CLI doesn't show an interactive prompt
@@ -396,6 +409,7 @@ async def _spawn_gemini_terminal(request: SpawnRequest) -> SpawnResult:
         agent_run_id=spawn_context.agent_run_id,
         sandbox_args=sandbox_args,
         sandbox_env=sandbox_env,
+        env=env,
     )
 
     # Pre-approve workspace trust so the CLI doesn't show an interactive prompt
@@ -516,6 +530,7 @@ async def _spawn_qwen_terminal(request: SpawnRequest) -> SpawnResult:
         agent_run_id=spawn_context.agent_run_id,
         sandbox_args=sandbox_args,
         sandbox_env=sandbox_env,
+        env=env,
     )
 
     pre_approve_directory("qwen", request.cwd)
@@ -622,6 +637,7 @@ async def _spawn_grok_terminal(request: SpawnRequest) -> SpawnResult:
         agent_run_id=spawn_context.agent_run_id,
         sandbox_args=sandbox_args,
         sandbox_env=sandbox_env,
+        env=env,
     )
 
     pre_approve_directory("grok", request.cwd)
@@ -735,6 +751,7 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
         request,
         agent_run_id=spawn_context.agent_run_id,
         sandbox_args=sandbox_args,
+        env=env,
         config_overrides=config_overrides,
     )
 
@@ -850,7 +867,7 @@ async def _spawn_droid_terminal(request: SpawnRequest) -> SpawnResult:
     if request.machine_id:
         env["GOBBY_MACHINE_ID"] = request.machine_id
 
-    _record_resume_launch_details(request, agent_run_id=spawn_context.agent_run_id)
+    _record_resume_launch_details(request, agent_run_id=spawn_context.agent_run_id, env=env)
 
     pre_approve_directory("droid", request.cwd)
 

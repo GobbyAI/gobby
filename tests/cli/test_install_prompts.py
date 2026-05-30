@@ -77,7 +77,9 @@ class TestPromptHubApiKeys:
         assert result["already_configured"] == 0
         assert result["skipped"] == 0
         assert result["unresolved"] == []
-        assert "Stored credential for skillsmp (SKILLSMP_API_KEY)" in capsys.readouterr().out
+        output = capsys.readouterr().out
+        assert "Stored credential for skillsmp" in output
+        assert "SKILLSMP_API_KEY" not in output
 
     def test_skips_when_secret_exists(self, patched_deps) -> None:
         patched_deps["load"].return_value = _config_with_hubs(

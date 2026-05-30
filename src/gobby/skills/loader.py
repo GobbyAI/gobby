@@ -197,11 +197,11 @@ def _is_binary_file(file_path: Path) -> bool:
 
 
 def _resolve_within_directory(base: Path, relative_path: str) -> Path:
-    resolved_base = base.resolve()
-    resolved = (resolved_base / relative_path).resolve()
     try:
+        resolved_base = base.resolve()
+        resolved = (resolved_base / relative_path).resolve()
         resolved.relative_to(resolved_base)
-    except ValueError:
+    except (OSError, RuntimeError, ValueError):
         raise SkillLoadError("Path would escape extracted ZIP", base) from None
     return resolved
 
@@ -610,11 +610,14 @@ class SkillLoader:
             return None
 
         # Resolve skill_dir once for security checks
-        skill_dir_resolved = skill_dir.resolve()
+        try:
+            skill_dir_resolved = skill_dir.resolve()
+        except (OSError, RuntimeError, ValueError):
+            return None
 
         files: list[str] = []
         for file_path in subdir.rglob("*"):
-            # Skip symlinks to prevent traversal attacks
+            # Path.is_file() follows symlinks, so reject links before file checks.
             if file_path.is_symlink():
                 continue
 
@@ -624,7 +627,7 @@ class SkillLoader:
                     resolved = file_path.resolve()
                     # Check that resolved path is under skill_dir
                     resolved.relative_to(skill_dir_resolved)
-                except (OSError, ValueError):
+                except (OSError, RuntimeError, ValueError):
                     # Skip files that can't be resolved or are outside skill_dir
                     continue
 
@@ -653,14 +656,17 @@ class SkillLoader:
         Returns:
             List of LoadedSkillFile with content and hashes
         """
-        skill_dir_resolved = skill_dir.resolve()
+        try:
+            skill_dir_resolved = skill_dir.resolve()
+        except (OSError, RuntimeError, ValueError):
+            return []
         files: list[LoadedSkillFile] = []
 
         for file_path in skill_dir.rglob("*"):
             if not file_path.is_file():
                 continue
 
-            # Skip symlinks
+            # Path.is_file() follows symlinks, so reject links before reading content.
             if file_path.is_symlink():
                 continue
 
@@ -681,7 +687,7 @@ class SkillLoader:
             try:
                 resolved = file_path.resolve()
                 resolved.relative_to(skill_dir_resolved)
-            except (OSError, ValueError):
+            except (OSError, RuntimeError, ValueError):
                 continue
 
             # Skip binary files

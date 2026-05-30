@@ -214,6 +214,7 @@ async def remove_server(
 
     del manager._configs[name]
     manager.health.pop(name, None)
+    manager._lazy_connector.unregister_server(name)
 
     if manager.mcp_db_manager and effective_project_id:
         manager.mcp_db_manager.remove_server(name, effective_project_id)

@@ -45,6 +45,26 @@ def test_mcp_proxy_source_does_not_register_legacy_gobby_code_server() -> None:
     assert matches == []
 
 
+@pytest.mark.asyncio
+async def test_remove_server_unregisters_lazy_connection_state() -> None:
+    manager = MCPClientManager(
+        server_configs=[
+            MCPServerConfig(
+                name="lazy-server",
+                transport="http",
+                url="http://localhost:8001",
+                project_id="proj-1",
+            )
+        ],
+    )
+    assert "lazy-server" in manager.get_lazy_connection_states()
+
+    result = await manager.remove_server("lazy-server")
+
+    assert result == {"success": True, "name": "lazy-server"}
+    assert "lazy-server" not in manager.get_lazy_connection_states()
+
+
 class MockDBServer:
     """Mock database server object for testing."""
 

@@ -531,11 +531,14 @@ class SessionMessageProcessor:
             transcript_path=transcript_path,
         )
         if os.path.exists(transcript_path):
-            logger.debug(f"Registered session {session_id} for processing ({source})")
+            logger.debug("Registered session %s for processing (%s)", session_id, source)
         else:
             logger.debug(
-                f"Registered session {session_id} for processing ({source}); "
-                f"transcript not yet on disk, poll loop will catch it: {transcript_path}"
+                "Registered session %s for processing (%s); "
+                "transcript not yet on disk, poll loop will catch it: %s",
+                session_id,
+                source,
+                transcript_path,
             )
 
     async def flush_session(self, session_id: str) -> None:

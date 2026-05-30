@@ -106,9 +106,10 @@ class TmuxOutputReader:
             fifo_dir = tempfile.gettempdir()
             socket_prefix = _safe_fifo_component(self._config.socket_name or "default")
             session_component = _safe_fifo_component(session_name)
+            run_component = _safe_fifo_component(run_id)
             fifo_path = os.path.join(
                 fifo_dir,
-                f"gobby-tmux-{socket_prefix}-{session_component}.pipe",
+                f"gobby-tmux-{socket_prefix}-{session_component}-{run_component}.pipe",
             )
 
             # Clean up stale FIFO from previous run

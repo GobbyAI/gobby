@@ -12,6 +12,14 @@ from tests._timing import drain_asyncio_tasks, wait_forever
 pytestmark = pytest.mark.unit
 
 
+class StreamableSessionManagerDouble:
+    def __init__(self, instances: dict[str, object]) -> None:
+        self._server_instances = instances
+
+    def active_sessions(self) -> dict[str, object]:
+        return dict(self._server_instances)
+
+
 class TestProcessShutdown:
     """Tests for _process_shutdown method."""
 
@@ -46,11 +54,12 @@ class TestProcessShutdown:
         transport_two = AsyncMock()
         transport_two.mcp_session_id = "sess-2"
 
-        session_manager = MagicMock()
-        session_manager._server_instances = {
-            "sess-1": transport_one,
-            "sess-2": transport_two,
-        }
+        session_manager = StreamableSessionManagerDouble(
+            {
+                "sess-1": transport_one,
+                "sess-2": transport_two,
+            }
+        )
 
         server._mcp_server = MagicMock()
         server._mcp_server.session_manager = session_manager
@@ -63,7 +72,7 @@ class TestProcessShutdown:
         transport_two.terminate.assert_awaited_once()
         assert transport_two.terminate.await_count == 1
         assert transport_two.terminate.await_args is not None
-        assert session_manager._server_instances == {}
+        assert session_manager.active_sessions() == {}
 
     @pytest.mark.asyncio
     async def test_terminate_streamable_http_sessions_logs_and_continues_on_error(
@@ -85,11 +94,12 @@ class TestProcessShutdown:
         healthy_transport = AsyncMock()
         healthy_transport.mcp_session_id = "sess-ok"
 
-        session_manager = MagicMock()
-        session_manager._server_instances = {
-            "sess-fail": failing_transport,
-            "sess-ok": healthy_transport,
-        }
+        session_manager = StreamableSessionManagerDouble(
+            {
+                "sess-fail": failing_transport,
+                "sess-ok": healthy_transport,
+            }
+        )
 
         server._mcp_server = MagicMock()
         server._mcp_server.session_manager = session_manager
@@ -101,7 +111,7 @@ class TestProcessShutdown:
         assert healthy_transport.terminate.await_count == 1
         assert healthy_transport.terminate.await_args is not None
         assert "Failed to terminate Streamable HTTP session sess-fail" in caplog.text
-        assert session_manager._server_instances == {"sess-fail": failing_transport}
+        assert session_manager.active_sessions() == {"sess-fail": failing_transport}
 
     @pytest.mark.asyncio
     async def test_shutdown_no_pending_tasks(self) -> None:

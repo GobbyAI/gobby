@@ -164,7 +164,12 @@ def _append_resume_failure_marker(
 async def _workspace_dirty(workspace_path: str | None) -> bool:
     if not workspace_path:
         return False
-    path = Path(workspace_path)
+    path = Path(workspace_path).expanduser()
+    try:
+        path = path.resolve(strict=False)
+    except (OSError, RuntimeError, ValueError):
+        logger.debug("Failed to canonicalize workspace path %s", workspace_path, exc_info=True)
+        return True
     if not path.is_dir():
         return False
     try:

@@ -9,12 +9,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections import deque
+import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-
-import aiofiles
 
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
@@ -35,6 +33,23 @@ if TYPE_CHECKING:
     from gobby.storage.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
+_TRANSCRIPT_TAIL_MAX_BYTES = 256 * 1024
+
+
+def _read_transcript_tail_lines(path: Path, max_lines: int) -> list[str]:
+    with path.open("rb") as handle:
+        handle.seek(0, os.SEEK_END)
+        size = handle.tell()
+        start = max(0, size - _TRANSCRIPT_TAIL_MAX_BYTES)
+        handle.seek(start)
+        data = handle.read()
+
+    text = data.decode("utf-8", errors="replace")
+    lines = text.splitlines()
+    if start > 0 and len(lines) > 1:
+        lines = lines[1:]
+    return lines[-max_lines:]
+
 
 # Maps session.source (CLI provider name) to the slash command that triggers
 # context compaction in the running CLI subprocess.
@@ -413,11 +428,8 @@ async def _capture_transcript_tail(
         return None, "transcript_not_found"
 
     max_lines = max(1, lines)
-    tail: deque[str] = deque(maxlen=max_lines)
     try:
-        async with aiofiles.open(path, encoding="utf-8", errors="replace") as handle:
-            async for raw_line in handle:
-                tail.append(raw_line.rstrip("\n"))
+        tail = await asyncio.to_thread(_read_transcript_tail_lines, path, max_lines)
     except OSError as exc:
         detail = str(exc) or type(exc).__name__
         return None, f"transcript_read_failed: {detail}"

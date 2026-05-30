@@ -128,9 +128,9 @@ def register_message_tools(
         if not query:
             return {"success": False, "error": "query must not be empty"}
 
-        result_limit = max(0, limit)
-        if result_limit == 0:
-            return _search_response(query, [], 0, result_limit, full_content)
+        if limit <= 0:
+            return {"success": False, "error": "limit must be positive"}
+        result_limit = limit
 
         try:
             if session_id:

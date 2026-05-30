@@ -4,6 +4,7 @@ Tests for Isolation Handlers.
 Tests the isolation abstraction layer for spawn_agent unified API.
 """
 
+import asyncio
 import json
 import subprocess
 from pathlib import Path
@@ -11,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.agents.code_index import _run_gcode
 from gobby.agents.isolation import (
     CloneIsolationHandler,
     IsolationContext,
@@ -165,6 +167,48 @@ class TestEnsureIsolationCodeIndex:
         ):
             with pytest.raises(RuntimeError, match="gcode_index_failed:2:parse failed"):
                 await ensure_isolation_code_index(str(tmp_path))
+
+    @pytest.mark.asyncio
+    async def test_cancelling_gcode_run_kills_child_process(self, tmp_path: Path) -> None:
+        communicate_started = asyncio.Event()
+
+        class HangingProcess:
+            returncode: int | None = None
+            killed = False
+
+            async def communicate(self) -> tuple[bytes, bytes]:
+                communicate_started.set()
+                await asyncio.Future()
+                return b"", b""
+
+            def kill(self) -> None:
+                self.killed = True
+                self.returncode = -9
+
+            async def wait(self) -> int:
+                self.returncode = -9
+                return -9
+
+        proc = HangingProcess()
+        with patch(
+            "gobby.agents.code_index.asyncio.create_subprocess_exec",
+            new=AsyncMock(return_value=proc),
+        ):
+            task = asyncio.create_task(
+                _run_gcode(
+                    ["/tmp/gcode", "index"],
+                    cwd=tmp_path,
+                    timeout=60,
+                    timeout_code="timeout",
+                    failure_code="failure",
+                )
+            )
+            await communicate_started.wait()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        assert proc.killed is True
 
 
 class TestRepairIsolationEnvironment:

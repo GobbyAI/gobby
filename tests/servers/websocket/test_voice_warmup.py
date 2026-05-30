@@ -33,6 +33,26 @@ class DummyVoiceMixin(VoiceMixin):
         return True
 
 
+def _sent_payloads(websocket: SimpleNamespace | MagicMock) -> list[dict[str, object]]:
+    return [json.loads(call.args[0]) for call in websocket.send.await_args_list]
+
+
+def _last_payload(websocket: SimpleNamespace | MagicMock) -> dict[str, object]:
+    payloads = _sent_payloads(websocket)
+    assert payloads
+    return payloads[-1]
+
+
+def _payload_with_status(
+    websocket: SimpleNamespace | MagicMock,
+    status: str,
+) -> dict[str, object]:
+    for payload in reversed(_sent_payloads(websocket)):
+        if payload.get("status") == status:
+            return payload
+    pytest.fail(f"voice_status frame not sent: {status}")
+
+
 class TestVoiceWarmup:
     @pytest.mark.asyncio
     async def test_start_voice_warmup_is_single_flight(self) -> None:
@@ -207,7 +227,7 @@ class TestVoiceWarmup:
 
         assert mixin._voice_enabled["conv-1"] is True
         assert mixin._voice_warmup_task is not None
-        payload = json.loads(websocket.send.await_args.args[0])
+        payload = _payload_with_status(websocket, "voice_mode_on")
         assert payload["status"] == "voice_mode_on"
         assert payload["tts_warmup_status"] == "loading"
         assert payload["voice_loading"] is True
@@ -235,7 +255,7 @@ class TestVoiceWarmup:
         )
 
         assert mixin._voice_enabled["conv-1"] is True
-        payload = json.loads(websocket.send.await_args.args[0])
+        payload = _payload_with_status(websocket, "preparing")
         assert payload["status"] == "preparing"
         assert payload["voice_loading"] is True
 
@@ -264,7 +284,7 @@ class TestVoiceWarmup:
         )
 
         assert "conv-1" not in mixin._voice_enabled
-        payload = json.loads(websocket.send.await_args.args[0])
+        payload = _payload_with_status(websocket, "preparing")
         assert payload["status"] == "preparing"
         assert payload["voice_loading"] is True
         assert payload["tts_warmup_status"] == "idle"
@@ -650,7 +670,7 @@ class TestVoiceWarmup:
             },
         )
 
-        payload = json.loads(websocket.send.await_args.args[0])
+        payload = _last_payload(websocket)
         assert payload == {
             "type": "voice_status",
             "conversation_id": "conv-empty-audio",
@@ -676,7 +696,7 @@ class TestVoiceWarmup:
             },
         )
 
-        payload = json.loads(websocket.send.await_args.args[0])
+        payload = _last_payload(websocket)
         assert payload["type"] == "voice_status"
         assert payload["conversation_id"] == "conv-no-stt"
         assert payload["status"] == "error"

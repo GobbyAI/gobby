@@ -138,11 +138,20 @@ def _parent_session_project_context(
     if project is None:
         return {"id": project_id}
 
-    return {
+    repo_path = _non_empty_string(project.repo_path)
+    context = {
         "id": project.id,
         "name": project.name,
-        "project_path": _non_empty_string(project.repo_path),
+        "project_path": repo_path,
     }
+    if repo_path:
+        project_file_context = _context_from_project_path(repo_path)
+        if project_file_context:
+            for key in ("parent_project_path", "parent_project_id"):
+                value = _non_empty_string(project_file_context.get(key))
+                if value:
+                    context[key] = value
+    return context
 
 
 def _resolve_spawn_project_context(
