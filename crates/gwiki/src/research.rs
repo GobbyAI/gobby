@@ -1,11 +1,11 @@
 use std::fs::{self, OpenOptions};
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 
+use crate::WikiError;
 use crate::events::{EventMonitor, SessionEvent};
 use crate::session::{AcceptedResearchNote, DaemonDispatch, ResearchScope, ResearchSession};
-use crate::{ScopeSelection, WikiError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AcceptedNoteDraft {
@@ -181,29 +181,6 @@ impl ResearchDispatcher for GobbyDaemonResearchDispatcher {
             agent_run_ids,
         })
     }
-}
-
-pub fn resolve_scope(selection: &ScopeSelection) -> Result<ResearchScope, WikiError> {
-    if let Some(topic) = &selection.topic {
-        let home =
-            std::env::var_os("HOME")
-                .map(PathBuf::from)
-                .ok_or_else(|| WikiError::InvalidInput {
-                    field: "topic",
-                    message: "HOME is required for topic wiki resolution".to_string(),
-                })?;
-        return Ok(ResearchScope::topic(
-            topic.clone(),
-            home.join("wiki").join("topics").join(topic),
-        ));
-    }
-
-    let cwd = std::env::current_dir().map_err(|error| WikiError::Io {
-        action: "resolve current directory",
-        path: None,
-        source: error.to_string(),
-    })?;
-    Ok(ResearchScope::project(cwd.join(".gobby").join("wiki")))
 }
 
 #[derive(Debug, serde::Deserialize)]
