@@ -1,4 +1,5 @@
 pub mod graph;
+pub mod grep;
 pub mod index;
 pub mod init;
 pub(crate) mod scope;

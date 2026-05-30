@@ -290,6 +290,18 @@ pub fn list_indexed_file_paths(
         .collect()
 }
 
+pub fn indexed_project_exists(
+    conn: &mut impl GenericClient,
+    project_id: &str,
+) -> anyhow::Result<bool> {
+    Ok(conn
+        .query_opt(
+            "SELECT 1 FROM code_indexed_projects WHERE id = $1",
+            &[&project_id],
+        )?
+        .is_some())
+}
+
 pub fn read_graph_file_facts(
     conn: &mut impl GenericClient,
     project_id: &str,

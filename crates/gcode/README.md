@@ -126,6 +126,8 @@ gcode search-symbol "outline" --kind function --language rust
 gcode search-symbol "Context" crates/gcode/src
 gcode search-text "query"                 # BM25 on symbol names/signatures
 gcode search-text "query" crates/gcode/src
+gcode grep "pattern"                      # Exact indexed content grep
+gcode grep "pattern" src -m 50            # Cap matching lines globally
 gcode search-content "query"              # BM25 on source, comments, skill files, docs/Markdown, configs, CSS, SQL, and extensionless text
 gcode search-content "query" docs/**/*.md crates/gcode/src
 
@@ -145,6 +147,7 @@ gcode blast-radius "handleAuth" --depth 3 # Transitive impact analysis
 # Graph lifecycle (requires FalkorDB)
 gcode graph clear                         # Clear current project's graph projection
 gcode graph clear --project-id <id>       # Clear graph projection by explicit project id
+gcode graph sync-file --file src/lib.rs   # Sync one indexed file into the graph projection
 gcode graph rebuild                       # Rebuild current project's graph projection
 
 # Project management
@@ -245,6 +248,9 @@ lifecycle depends on Qdrant plus embeddings for sync/rebuild. All code-index
 projection lifecycle paths are Rust-owned and scoped to code projection state:
 graph clears target code-index FalkorDB labels only, and vector clears target
 only `code_symbols_{project_id}` rather than memory vector collections.
+`gcode graph sync-file --allow-missing-indexed-file` is reserved for daemon and
+background-worker stale work; humans should let the default strict missing-file
+error surface stale or incorrect sync requests.
 
 ## Language Support
 

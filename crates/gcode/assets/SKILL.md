@@ -16,9 +16,10 @@ This project is indexed. Use `gcode` via Bash for fast code search and navigatio
 - `gcode search "query" [PATH ...]` — hybrid search: pg_search BM25 + semantic + graph boost (best for fuzzy or natural-language queries)
 - `gcode search-symbol "name" [PATH ...]` — exact-first symbol lookup with deterministic ranking; add `--with-graph` to include FalkorDB graph neighbors when available
 - `gcode search-text "query" [PATH ...]` — pg_search BM25 search on symbol names, signatures, and docstrings
+- `gcode grep "pattern" [PATH ...]` — exact indexed content grep over `code_content_chunks`; use `gcode grep "pattern" src -m 50` to cap matching lines
 - `gcode search-content "query" [PATH ...]` — full-text search across repo text chunks: source, comments, docs/Markdown, skill files, configs, scripts, CSS, SQL, and extensionless text
 
-Search filters compose: `search` and `search-symbol` accept `--kind <kind>`; use `gcode kinds` to discover values. All search commands accept positional path filters after the query (paths or globs, OR semantics), plus `--language <lang>`, `--limit N`, and `--offset N` for scoped or paginated results. Hybrid JSON results include final display `score`, raw `rrf_score`, and deterministic `sources`; path globs that require post-filter fallback surface a hint/warning.
+Search filters compose: `search` and `search-symbol` accept `--kind <kind>`; use `gcode kinds` to discover values. Ranked search commands accept positional path filters after the query (paths or globs, OR semantics), plus `--language <lang>`, `--limit N`, and `--offset N` for scoped or paginated results. `gcode grep` accepts positional paths, `-g/--glob`, `-i`, `-F`, `-C/-A/-B`, and `-m/--max-count`; it rejects `--limit`. Hybrid JSON results include final display `score`, raw `rrf_score`, and deterministic `sources`; path globs that require post-filter fallback surface a hint/warning.
 
 ## Retrieval
 
@@ -32,7 +33,7 @@ Symbol IDs must be full stored UUIDs from `gcode search`, `gcode search-symbol`,
 
 When navigating code for context or understanding:
 
-1. **Locate with gcode**: `gcode search "concept"`, `gcode search-symbol "name"`, or `gcode search-content "text"` to find relevant hits.
+1. **Locate with gcode**: `gcode grep "exact string"` for exact line matches, `gcode search "concept"`, `gcode search-symbol "name"`, or `gcode search-content "text"` for ranked/fuzzy hits.
 2. **Survey file structure**: `gcode outline path/to/file` to see the symbol hierarchy without reading the whole file.
 3. **Retrieve exact code**: `gcode symbol <full-uuid>` or `gcode symbols <full-uuid> <full-uuid> ...` using IDs from search or outline.
 4. **Fetch tight neighboring context only when needed**: use `sed`/`awk` only for tight neighboring context (1-3 lines) after symbol retrieval.
@@ -64,6 +65,7 @@ Use `gcode` directly for the code-index graph projection via the Gobby daemon.
 for the UI, but graph sync/read/lifecycle behavior lives in `gcode`.
 
 - `gcode graph sync-file --file <file>` — sync one indexed file into the graph projection
+- `gcode graph sync-file --file <file> --allow-missing-indexed-file` — daemon/background-worker stale-work tolerance only
 - `gcode graph clear` — clear the current project's graph projection
 - `gcode graph clear --project-id <id>` — clear a projection without resolving a project root
 - `gcode graph rebuild` — rebuild it (cheaper than `gcode invalidate` + reindex; doesn't touch PostgreSQL symbol/content rows)
@@ -74,7 +76,8 @@ for the UI, but graph sync/read/lifecycle behavior lives in `gcode`.
 |---|---|
 | A function or class by concept (fuzzy) | `gcode search "concept"` |
 | A symbol you know the exact name of | `gcode search-symbol "name"` |
-| A string literal, doc phrase, config value, comment, script line, CSS rule | `gcode search-content "text"` |
+| An exact string literal, doc phrase, config value, comment, script line, CSS rule | `gcode grep "pattern" [PATH ...]` |
+| Ranked content search across comments/docs/config/source text | `gcode search-content "query" [PATH ...]` |
 | Structure of a file without reading it | `gcode outline path/to/file` |
 | Source code of a specific symbol | `gcode symbol <full-uuid>` |
 | What breaks if I change X | `gcode blast-radius <name>` |

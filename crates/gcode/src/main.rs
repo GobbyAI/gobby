@@ -184,6 +184,44 @@ enum Command {
         #[arg(long)]
         language: Option<String>,
     },
+    /// Indexed grep: exact pattern search on content chunks
+    #[command(
+        after_help = "gcode grep is indexed search over code_content_chunks. Unsupported grep/rg flags are intentionally rejected; use raw `rg` for filesystem grep."
+    )]
+    Grep {
+        /// Pattern to search for (regex or fixed string)
+        pattern: String,
+        /// Optional file paths or globs to filter results
+        #[arg(value_name = "PATH", allow_hyphen_values = true)]
+        paths: Vec<String>,
+        /// Treat pattern as fixed string, not regex
+        #[arg(short = 'F', long)]
+        fixed_strings: bool,
+        /// Match case-insensitively
+        #[arg(short = 'i', long)]
+        ignore_case: bool,
+        /// Show N context lines before match
+        #[arg(short = 'B', long)]
+        before_context: Option<usize>,
+        /// Show N context lines after match
+        #[arg(short = 'A', long)]
+        after_context: Option<usize>,
+        /// Show N context lines before and after match
+        #[arg(short = 'C', long)]
+        context: Option<usize>,
+        /// Glob pattern to filter files (can be specified multiple times)
+        #[arg(short = 'g', long)]
+        glob: Vec<String>,
+        /// Maximum matching lines to include
+        #[arg(short = 'm', long)]
+        max_count: Option<usize>,
+        /// Show line numbers (always shown, deprecated flag for compatibility)
+        #[arg(short = 'n', long)]
+        line_number: bool,
+        /// Unsupported: use -m/--max-count for indexed grep caps
+        #[arg(long = "limit", hide = true, value_parser = reject_grep_limit)]
+        _unsupported_limit: Option<String>,
+    },
 
     // ── Symbol Retrieval (works in all modes) ────────────────────────
     /// Hierarchical symbol tree for a file
@@ -246,6 +284,9 @@ enum GraphCommand {
         /// Indexed file path to sync
         #[arg(long)]
         file: String,
+        /// Skip sync if indexed file not found (daemon/background-worker only)
+        #[arg(long)]
+        allow_missing_indexed_file: bool,
     },
     /// Clear the current project's code-index graph projection
     Clear {
@@ -340,6 +381,29 @@ fn ensure_symbol_fresh(ctx: &config::Context, disabled: bool, id: &str) -> anyho
     Ok(())
 }
 
+fn reject_grep_limit(_value: &str) -> Result<String, String> {
+    Err(
+        "gcode grep is indexed search; --limit is unsupported. Use -m/--max-count, or run raw `rg` for filesystem grep."
+            .to_string(),
+    )
+}
+
+fn reject_unsupported_grep_flags(command: &Command) -> anyhow::Result<()> {
+    if let Command::Grep { paths, .. } = command
+        && let Some(flag) = paths.iter().find(|path| path.starts_with('-'))
+    {
+        if flag == "--limit" {
+            anyhow::bail!(
+                "gcode grep is indexed search; --limit is unsupported. Use -m/--max-count, or run raw `rg` for filesystem grep."
+            );
+        }
+        anyhow::bail!(
+            "gcode grep is indexed search; unsupported grep/rg flag `{flag}`. Use raw `rg` for filesystem grep."
+        );
+    }
+    Ok(())
+}
+
 fn dispatch_early_command<F>(cli: &Cli, setup_runner: F) -> anyhow::Result<bool>
 where
     F: FnOnce(setup::StandaloneSetupRequest, output::Format, bool) -> anyhow::Result<()>,
@@ -410,13 +474,33 @@ where
     }
 }
 
-fn main() -> anyhow::Result<()> {
+fn main() -> std::process::ExitCode {
+    match run() {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            if let Some(contract_error) =
+                error.downcast_ref::<commands::graph::GraphSyncContractError>()
+            {
+                if let Err(print_error) = contract_error.print() {
+                    eprintln!("Error: {print_error:?}");
+                    return std::process::ExitCode::FAILURE;
+                }
+                return std::process::ExitCode::from(contract_error.exit_code());
+            }
+            eprintln!("Error: {error:?}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     // Commands that must run before Context::resolve() (work on uninitialized projects)
     if dispatch_early_command(&cli, commands::setup::run)? {
         return Ok(());
     }
+    reject_unsupported_grep_flags(&cli.command)?;
 
     let ctx = config::Context::resolve(cli.project.as_deref(), cli.quiet)?;
 
@@ -445,15 +529,12 @@ fn main() -> anyhow::Result<()> {
         }
         Command::Invalidate { force } => commands::status::invalidate(&ctx, force),
         Command::Graph {
-            command: GraphCommand::SyncFile { file },
-        } => {
-            ensure_files_fresh(
-                &ctx,
-                cli.no_freshness,
-                vec![std::path::PathBuf::from(&file)],
-            )?;
-            commands::graph::sync_file(&ctx, &file, cli.format)
-        }
+            command:
+                GraphCommand::SyncFile {
+                    file,
+                    allow_missing_indexed_file,
+                },
+        } => commands::graph::sync_file(&ctx, &file, allow_missing_indexed_file, cli.format),
         Command::Graph {
             command: GraphCommand::Clear { project_id: None },
         } => commands::graph::clear(&ctx, cli.format),
@@ -618,6 +699,36 @@ fn main() -> anyhow::Result<()> {
                 cli.format,
             )
         }
+        Command::Grep {
+            pattern,
+            paths,
+            fixed_strings,
+            ignore_case,
+            before_context,
+            after_context,
+            context,
+            glob,
+            max_count,
+            line_number: _,
+            _unsupported_limit: _,
+        } => {
+            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            commands::grep::run(
+                &ctx,
+                commands::grep::GrepOptions {
+                    pattern: &pattern,
+                    paths: &paths,
+                    globs: &glob,
+                    fixed_strings,
+                    ignore_case,
+                    context,
+                    before_context,
+                    after_context,
+                    max_count,
+                    format: cli.format,
+                },
+            )
+        }
 
         Command::Outline { file } => {
             ensure_files_fresh(
@@ -696,8 +807,15 @@ mod tests {
         assert!(matches!(cli.format, output::Format::Text));
         match cli.command {
             Command::Graph {
-                command: GraphCommand::SyncFile { file },
-            } => assert_eq!(file, "src/lib.rs"),
+                command:
+                    GraphCommand::SyncFile {
+                        file,
+                        allow_missing_indexed_file,
+                    },
+            } => {
+                assert_eq!(file, "src/lib.rs");
+                assert!(!allow_missing_indexed_file);
+            }
             _ => panic!("expected graph sync-file command"),
         }
 
@@ -1250,5 +1368,157 @@ mod tests {
 
         assert!(dispatched);
         assert!(called);
+    }
+
+    #[test]
+    fn parse_grep_basic() {
+        let cli =
+            Cli::try_parse_from(["gcode", "grep", "needle", "src"]).expect("grep basic parses");
+        match cli.command {
+            Command::Grep {
+                pattern,
+                paths,
+                fixed_strings,
+                ignore_case,
+                ..
+            } => {
+                assert_eq!(pattern, "needle");
+                assert_eq!(paths, vec!["src"]);
+                assert!(!fixed_strings);
+                assert!(!ignore_case);
+            }
+            _ => panic!("expected grep command"),
+        }
+    }
+
+    #[test]
+    fn parse_grep_ignore_case() {
+        let cli = Cli::try_parse_from(["gcode", "grep", "needle", "--ignore-case"])
+            .expect("grep ignore-case parses");
+        match cli.command {
+            Command::Grep { ignore_case, .. } => assert!(ignore_case),
+            _ => panic!("expected grep command"),
+        }
+    }
+
+    #[test]
+    fn parse_grep_with_flags() {
+        let cli = Cli::try_parse_from([
+            "gcode",
+            "grep",
+            "needle",
+            "-F",
+            "-C",
+            "2",
+            "-g",
+            "*.py",
+            "src/gobby",
+        ])
+        .expect("grep with flags parses");
+        match cli.command {
+            Command::Grep {
+                pattern,
+                paths,
+                fixed_strings,
+                context,
+                glob,
+                ..
+            } => {
+                assert_eq!(pattern, "needle");
+                assert_eq!(paths, vec!["src/gobby"]);
+                assert!(fixed_strings);
+                assert_eq!(context, Some(2));
+                assert_eq!(glob, vec!["*.py"]);
+            }
+            _ => panic!("expected grep command"),
+        }
+    }
+
+    #[test]
+    fn parse_grep_max_count() {
+        let cli = Cli::try_parse_from(["gcode", "grep", "needle", "-m", "5", "src"])
+            .expect("grep with -m parses");
+        match cli.command {
+            Command::Grep { max_count, .. } => assert_eq!(max_count, Some(5)),
+            _ => panic!("expected grep command"),
+        }
+
+        let cli = Cli::try_parse_from(["gcode", "grep", "needle", "--max-count", "5", "src"])
+            .expect("grep with --max-count parses");
+        match cli.command {
+            Command::Grep { max_count, .. } => assert_eq!(max_count, Some(5)),
+            _ => panic!("expected grep command"),
+        }
+    }
+
+    #[test]
+    fn parse_grep_rejects_limit() {
+        let cli = Cli::try_parse_from(["gcode", "grep", "needle", "src", "--limit", "5"])
+            .expect("--limit is captured for custom rejection");
+        let err =
+            reject_unsupported_grep_flags(&cli.command).expect_err("--limit should be rejected");
+        assert!(
+            err.to_string().contains("gcode grep is indexed search"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            err.to_string().contains("-m/--max-count"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_grep_unsupported_flag_fails_before_context_resolution() {
+        let cli = Cli::try_parse_from(["gcode", "grep", "needle", "--files-with-matches"])
+            .expect("unsupported grep flag is captured for custom rejection");
+
+        let err = reject_unsupported_grep_flags(&cli.command)
+            .expect_err("unsupported grep flag should fail");
+
+        assert!(
+            err.to_string().contains("gcode grep is indexed search"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            err.to_string().contains("raw `rg`"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_graph_sync_file_with_flag() {
+        let cli = Cli::try_parse_from([
+            "gcode",
+            "graph",
+            "sync-file",
+            "--file",
+            "src/lib.rs",
+            "--allow-missing-indexed-file",
+        ])
+        .expect("graph sync-file with flag parses");
+        match cli.command {
+            Command::Graph {
+                command:
+                    GraphCommand::SyncFile {
+                        file,
+                        allow_missing_indexed_file,
+                    },
+            } => {
+                assert_eq!(file, "src/lib.rs");
+                assert!(allow_missing_indexed_file);
+            }
+            _ => panic!("expected graph sync-file command"),
+        }
+    }
+
+    #[test]
+    fn parse_grep_with_global_format() {
+        let cli = Cli::try_parse_from(["gcode", "--format", "text", "grep", "needle", "src"])
+            .expect("grep with global format parses");
+        assert!(matches!(cli.format, output::Format::Text));
+        match cli.command {
+            Command::Grep { pattern, .. } => assert_eq!(pattern, "needle"),
+            _ => panic!("expected grep command"),
+        }
     }
 }

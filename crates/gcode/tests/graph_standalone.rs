@@ -43,6 +43,36 @@ fn graph_commands_run_without_daemon_when_services_are_available() {
     let _cleanup = ProjectCleanup::new(&env.database_url, TEST_PROJECT_ID);
     seed_project(&mut conn);
 
+    let missing = run_gcode(
+        &env,
+        project.path(),
+        &["graph", "sync-file", "--file", "src/missing.rs"],
+    );
+    assert_eq!(
+        missing.status.code(),
+        Some(2),
+        "missing indexed file should exit 2\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&missing.stdout),
+        String::from_utf8_lossy(&missing.stderr)
+    );
+    let missing_json: Value =
+        serde_json::from_slice(&missing.stdout).expect("missing file emits JSON");
+    assert_eq!(missing_json["reason"], "indexed_file_not_found");
+
+    let skipped = json_command(
+        &env,
+        project.path(),
+        &[
+            "graph",
+            "sync-file",
+            "--file",
+            "src/missing.rs",
+            "--allow-missing-indexed-file",
+        ],
+    );
+    assert_eq!(skipped["status"], "skipped");
+    assert_eq!(skipped["reason"], "indexed_file_not_found");
+
     let sync = run_gcode(
         &env,
         project.path(),
@@ -125,6 +155,47 @@ fn graph_commands_run_without_daemon_when_services_are_available() {
     assert_eq!(rebuild["success"], true);
     assert_eq!(rebuild["files_processed"], 1);
     assert_eq!(rebuild["files_synced"], 1);
+}
+
+#[test]
+fn graph_sync_file_classifies_missing_project_before_graph_access() {
+    let Some(env) = StandaloneEnv::from_env() else {
+        eprintln!(
+            "skipping graph sync-file missing-project contract; set GCODE_GRAPH_STANDALONE_DATABASE_URL, GCODE_GRAPH_STANDALONE_FALKOR_HOST, and GCODE_GRAPH_STANDALONE_FALKOR_PORT"
+        );
+        return;
+    };
+
+    let project = tempfile::tempdir().expect("temp project");
+    fs::create_dir_all(project.path().join(".gobby")).expect("create .gobby");
+    fs::create_dir_all(project.path().join("src")).expect("create src");
+    fs::write(project.path().join("src/lib.rs"), "pub fn orphan() {}\n").expect("write source");
+    fs::write(
+        project.path().join(".gobby/gcode.json"),
+        serde_json::json!({
+            "id": "graph-missing-indexed-project",
+            "name": "graph-missing-indexed-project",
+            "created_at": "2026-05-28T00:00:00Z"
+        })
+        .to_string(),
+    )
+    .expect("write gcode identity");
+
+    let _cleanup = ProjectCleanup::new(&env.database_url, "graph-missing-indexed-project");
+    let output = run_gcode(
+        &env,
+        project.path(),
+        &["graph", "sync-file", "--file", TEST_FILE],
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "missing indexed project should exit 2\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let payload: Value = serde_json::from_slice(&output.stdout).expect("missing project JSON");
+    assert_eq!(payload["reason"], "project_not_indexed");
 }
 
 struct StandaloneEnv {
