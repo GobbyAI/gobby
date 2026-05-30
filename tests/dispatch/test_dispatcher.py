@@ -128,7 +128,8 @@ def _audit_action(task_id: str) -> AppendAuditMarkerAction:
     return AppendAuditMarkerAction(task_id=task_id, heading="Dispatch", body="marker")
 
 
-def test_append_audit_marker_is_exact_marker_idempotent(
+@pytest.mark.asyncio
+async def test_append_audit_marker_is_exact_marker_idempotent(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
@@ -136,15 +137,16 @@ def test_append_audit_marker_is_exact_marker_idempotent(
 
     task = _task(temp_db, sample_project)
 
-    assert dispatcher.append_audit_marker(temp_db, task.id, "Dispatch", "marker") is True
-    assert dispatcher.append_audit_marker(temp_db, task.id, "Dispatch", "marker") is False
-    assert dispatcher.append_audit_marker(temp_db, task.id, "Dispatch", "other") is True
+    assert await dispatcher.append_audit_marker(temp_db, task.id, "Dispatch", "marker") is True
+    assert await dispatcher.append_audit_marker(temp_db, task.id, "Dispatch", "marker") is False
+    assert await dispatcher.append_audit_marker(temp_db, task.id, "Dispatch", "other") is True
     description = get_task(temp_db, task.id).description or ""
     assert description.count("### Dispatch\n\nmarker") == 1
     assert description.count("### Dispatch") == 2
 
 
-def test_append_audit_marker_only_dedupes_trailing_marker(
+@pytest.mark.asyncio
+async def test_append_audit_marker_only_dedupes_trailing_marker(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
@@ -155,7 +157,7 @@ def test_append_audit_marker_only_dedupes_trailing_marker(
     marker = audit_marker_text("Dispatch", "marker")
     update_task(temp_db, task.id, description=f"Earlier note{marker}\n\nLater note")
 
-    assert dispatcher.append_audit_marker(temp_db, task.id, "Dispatch", "marker") is True
+    assert await dispatcher.append_audit_marker(temp_db, task.id, "Dispatch", "marker") is True
     description = get_task(temp_db, task.id).description or ""
     assert description.count(marker) == 2
 
@@ -2117,11 +2119,11 @@ async def test_bad_candidate_is_skipped_and_next_candidate_executes(
     def action_for(task, *_args):
         return _audit_action(task.id)
 
-    def flaky_execute(action, **kwargs):
+    async def flaky_execute(action, **kwargs):
         if action.task_id == first.id:
             raise RuntimeError("bad candidate")
         executed.append(action.task_id)
-        return dispatcher.append_audit_marker(
+        return await dispatcher.append_audit_marker(
             kwargs["db"],
             action.task_id,
             action.heading,

@@ -148,6 +148,7 @@ def _latest_token_event_context_window(
     try:
         from gobby.storage.token_events import TokenEventStore
 
+        # list_session_events returns newest-first rows; first context_window wins.
         events = TokenEventStore(db).list_session_events(session_id, limit=20)
     except ImportError:
         logger.debug("Token event store is unavailable", exc_info=True)

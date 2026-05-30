@@ -85,9 +85,37 @@ async def test_workspace_dirty_treats_missing_git_as_dirty(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    monkeypatch.setattr(daemon_resume.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(daemon_resume.shutil, "which", lambda *_args, **_kwargs: None)
 
     assert await daemon_resume._workspace_dirty(str(workspace)) is True
+
+
+@pytest.mark.asyncio
+async def test_workspace_dirty_uses_git_subprocess_env_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    fallback_env = {"PATH": "/fallback/bin"}
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def fake_which(name: str, *, path: str | None = None) -> str | None:
+        assert name == "git"
+        return "/fallback/bin/git" if path == fallback_env["PATH"] else None
+
+    def fake_run(command: list[str], **kwargs: object) -> SimpleNamespace:
+        calls.append((command, kwargs))
+        stdout = "true\n" if "rev-parse" in command else ""
+        return SimpleNamespace(returncode=0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(daemon_resume, "git_subprocess_env", lambda: fallback_env)
+    monkeypatch.setattr(daemon_resume.shutil, "which", fake_which)
+    monkeypatch.setattr(daemon_resume.subprocess, "run", fake_run)
+
+    assert await daemon_resume._workspace_dirty(str(workspace)) is False
+    assert [call[0][0] for call in calls] == ["/fallback/bin/git", "/fallback/bin/git"]
+    assert [call[1]["env"] for call in calls] == [fallback_env, fallback_env]
 
 
 def _services(temp_db: HubDatabase) -> SimpleNamespace:

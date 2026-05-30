@@ -88,6 +88,18 @@ class _SourceCatalog:
 class TestResolveContextWindow:
     """Tests for resolve_context_window()."""
 
+    def test_claude_models_wrapper_emits_deprecation_warning(self) -> None:
+        with pytest.warns(DeprecationWarning):
+            assert resolve_context_window(None) is None
+
+    def test_claude_models_wrapper_rejects_invalid_model(self) -> None:
+        with pytest.raises(TypeError, match="model must be a string or None"):
+            resolve_context_window(123)  # type: ignore[arg-type]
+
+    def test_claude_models_wrapper_rejects_invalid_overrides(self) -> None:
+        with pytest.raises(TypeError, match="overrides must be a dict or None"):
+            resolve_context_window(None, overrides=[])  # type: ignore[arg-type]
+
     def test_sdk_context_window_ignored(self) -> None:
         """SDK-reported contextWindow (2nd arg) is deprecated and ignored."""
         model_usage = {"contextWindow": 180_000}

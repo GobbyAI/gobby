@@ -12,7 +12,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.agents.code_index import _run_gcode
 from gobby.agents.isolation import (
     CloneIsolationHandler,
     IsolationContext,
@@ -190,19 +189,14 @@ class TestEnsureIsolationCodeIndex:
                 return -9
 
         proc = HangingProcess()
-        with patch(
-            "gobby.agents.code_index.asyncio.create_subprocess_exec",
-            new=AsyncMock(return_value=proc),
+        with (
+            patch("gobby.agents.code_index.resolve_native_bin", return_value="/tmp/gcode"),
+            patch(
+                "gobby.agents.code_index.asyncio.create_subprocess_exec",
+                new=AsyncMock(return_value=proc),
+            ),
         ):
-            task = asyncio.create_task(
-                _run_gcode(
-                    ["/tmp/gcode", "index"],
-                    cwd=tmp_path,
-                    timeout=60,
-                    timeout_code="timeout",
-                    failure_code="failure",
-                )
-            )
+            task = asyncio.create_task(ensure_isolation_code_index(str(tmp_path)))
             await communicate_started.wait()
             task.cancel()
             with pytest.raises(asyncio.CancelledError):

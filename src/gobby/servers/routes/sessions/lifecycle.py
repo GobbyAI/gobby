@@ -7,6 +7,7 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
+import psycopg
 from fastapi import APIRouter, HTTPException, Request
 
 from gobby.sessions.context_usage import effective_context_window_for_session
@@ -169,8 +170,15 @@ def register_lifecycle_routes(
                 )
                 if isinstance(loaded_variables, dict):
                     variables = loaded_variables
-            except Exception as e:
+            except (psycopg.Error, ValueError, KeyError) as e:
                 logger.debug("Failed to load session variables for %s: %s", session_id, e)
+            except Exception:
+                logger.warning(
+                    "Unexpected error loading session variables for %s",
+                    session_id,
+                    exc_info=True,
+                )
+                raise
             session_data["context_window"] = effective_context_window_for_session(
                 session,
                 variables=variables,

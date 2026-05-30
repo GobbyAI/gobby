@@ -5,6 +5,7 @@ Provides CRUD, search, stats, import/export, safety scanning,
 and hub browsing/install endpoints for the skill system.
 """
 
+import asyncio
 import logging
 import re
 from functools import partial
@@ -309,19 +310,17 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
 
             # Detect source type and load
             if _is_github_source(source, local_path_exists=local_import_path is not None):
-                parsed = loader.load_from_github(source, validate=True)
+                parsed = await asyncio.to_thread(loader.load_from_github, source, validate=True)
             elif source.endswith(".zip"):
-                parsed = loader.load_from_zip(
-                    local_import_path
-                    or await _resolve_project_import_path(source, request_data.project_id),
-                    validate=True,
+                zip_source = local_import_path or await _resolve_project_import_path(
+                    source, request_data.project_id
                 )
+                parsed = await asyncio.to_thread(loader.load_from_zip, zip_source, validate=True)
             else:
-                parsed = loader.load_skill(
-                    local_import_path
-                    or await _resolve_project_import_path(source, request_data.project_id),
-                    validate=True,
+                skill_source = local_import_path or await _resolve_project_import_path(
+                    source, request_data.project_id
                 )
+                parsed = await asyncio.to_thread(loader.load_skill, skill_source, validate=True)
 
             # Handle single skill or list
             skills_list = parsed if isinstance(parsed, list) else [parsed]

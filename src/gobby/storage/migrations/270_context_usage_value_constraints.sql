@@ -1,5 +1,45 @@
 -- Enforce normalized context usage token and confidence values on existing installs.
 
+UPDATE sessions
+SET usage_input_tokens = CASE WHEN usage_input_tokens < 0 THEN 0 ELSE usage_input_tokens END,
+    usage_output_tokens = CASE WHEN usage_output_tokens < 0 THEN 0 ELSE usage_output_tokens END,
+    usage_cache_creation_tokens = CASE
+        WHEN usage_cache_creation_tokens < 0 THEN 0
+        ELSE usage_cache_creation_tokens
+    END,
+    usage_cache_read_tokens = CASE
+        WHEN usage_cache_read_tokens < 0 THEN 0
+        ELSE usage_cache_read_tokens
+    END,
+    context_window = CASE WHEN context_window < 0 THEN 0 ELSE context_window END,
+    context_used_tokens = CASE WHEN context_used_tokens < 0 THEN 0 ELSE context_used_tokens END,
+    last_prompt_input_tokens = CASE
+        WHEN last_prompt_input_tokens < 0 THEN 0
+        ELSE last_prompt_input_tokens
+    END,
+    last_prompt_uncached_input_tokens = CASE
+        WHEN last_prompt_uncached_input_tokens < 0 THEN 0
+        ELSE last_prompt_uncached_input_tokens
+    END,
+    last_prompt_cache_read_tokens = CASE
+        WHEN last_prompt_cache_read_tokens < 0 THEN 0
+        ELSE last_prompt_cache_read_tokens
+    END,
+    last_prompt_cache_creation_tokens = CASE
+        WHEN last_prompt_cache_creation_tokens < 0 THEN 0
+        ELSE last_prompt_cache_creation_tokens
+    END,
+    last_completion_output_tokens = CASE
+        WHEN last_completion_output_tokens < 0 THEN 0
+        ELSE last_completion_output_tokens
+    END,
+    context_usage_confidence = CASE
+        WHEN context_usage_confidence IS NULL
+            OR context_usage_confidence IN ('reported', 'estimated', 'unknown')
+            THEN context_usage_confidence
+        ELSE 'unknown'
+    END;
+
 DO $$
 BEGIN
     IF NOT EXISTS (

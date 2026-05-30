@@ -225,6 +225,28 @@ Stay concise and direct.`
     )
   })
 
+  it('accepts structured embedded tool result payloads', () => {
+    const [assistant] = mapApiMessages([
+      {
+        id: 'call-1',
+        role: 'assistant',
+        content: '',
+        content_type: 'tool_use',
+        tool_name: 'Read',
+        tool_result: { content: 'done', kind: 'text', truncated: false },
+        tool_use_id: 'tool-a',
+        timestamp: '2026-05-30T00:00:00.000Z',
+      },
+    ])
+
+    expect(assistant.toolCalls?.[0]).toEqual(
+      expect.objectContaining({
+        result: { content: 'done', kind: 'text', truncated: false },
+        status: 'completed',
+      }),
+    )
+  })
+
   it('does not treat errored tool calls as pending', () => {
     expect(
       findPendingToolCall({

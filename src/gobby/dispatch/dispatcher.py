@@ -249,7 +249,7 @@ async def run_heartbeat(
         except Exception as exc:
             logger.exception("Dispatcher heartbeat candidate failed: task_id=%s", candidate.id)
             try:
-                append_audit_marker(
+                await append_audit_marker(
                     resolved_db,
                     candidate.id,
                     "Dispatch failed",
@@ -435,7 +435,7 @@ async def _execute_spawn_action(
         mutex.release()
         raise
     except DispatchSpawnFailed as exc:
-        _handle_spawn_failure(
+        await _handle_spawn_failure(
             action,
             mutex=mutex,
             db=db,
@@ -451,7 +451,7 @@ async def _execute_spawn_action(
     if raw_run_id:
         mutex.attach(str(raw_run_id))
         return str(raw_run_id)
-    _handle_spawn_failure(action, mutex=mutex, db=db, context=context, error="missing run_id")
+    await _handle_spawn_failure(action, mutex=mutex, db=db, context=context, error="missing run_id")
     return None
 
 
@@ -511,13 +511,13 @@ async def execute_action(
                     ),
                 )
         if isinstance(action, AppendAuditMarkerAction):
-            return append_audit_marker(db, action.task_id, action.heading, action.body)
+            return await append_audit_marker(db, action.task_id, action.heading, action.body)
         if isinstance(action, EscalateAction):
             return escalate_task(db=db, task_id=action.task_id, reason=action.reason)
         if isinstance(action, MergeWorkspaceAction):
             return cast(object, await execute_merge_workspace(action, db=db, services=services))
         if isinstance(action, CreateIsolationAction):
-            return cast(object | None, create_isolation(action, db=db, context=context))
+            return cast(object | None, await create_isolation(action, db=db, context=context))
         raise TypeError(f"Unsupported dispatcher action: {type(action).__name__}")
     finally:
         mutex.release()
@@ -788,7 +788,7 @@ def count_active_agents(db: HubDatabase | None, project_id: str | None = None) -
     return int(row["count"]) if row else 0
 
 
-def _handle_spawn_failure(
+async def _handle_spawn_failure(
     action: SpawnAgentAction,
     *,
     mutex: RuntimeDispatchMutex,
@@ -798,7 +798,7 @@ def _handle_spawn_failure(
     cited_subtasks: Sequence[str] | None = None,
 ) -> None:
     try:
-        append_audit_marker(db, action.task_id, "Dispatch spawn failed", error)
+        await append_audit_marker(db, action.task_id, "Dispatch spawn failed", error)
         cited_subtask_ids = tuple(cited_subtasks or ())
         failure_count = 0
         if not cited_subtask_ids:
@@ -877,7 +877,7 @@ def sweep_expired_leases(storage: TaskDispatchMutexManager) -> int:
     return cleared
 
 
-def create_isolation(
+async def create_isolation(
     action: CreateIsolationAction,
     *,
     db: HubDatabase,
@@ -886,7 +886,7 @@ def create_isolation(
     artifacts = getattr(context, "artifacts", None)
     target_branch = action.base_branch or getattr(artifacts, "target_branch", None)
     if not target_branch:
-        append_audit_marker(
+        await append_audit_marker(
             db,
             action.task_id,
             "Dispatcher isolation failed",

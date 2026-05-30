@@ -57,8 +57,8 @@ def _tree(task_manager: LocalTaskManager, project_id: str) -> tuple[Task, list[T
 
 @pytest.mark.asyncio
 async def test_stop_disables_leaf_automation_and_cancels_active_agent(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     from gobby.build.controls import build_stop_target
 
@@ -106,8 +106,8 @@ async def test_stop_disables_leaf_automation_and_cancels_active_agent(
 
 @pytest.mark.asyncio
 async def test_stop_clears_runtime_claim_and_resets_current_stage(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     from gobby.build.controls import build_stop_target
     from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
@@ -184,8 +184,8 @@ async def test_stop_clears_runtime_claim_and_resets_current_stage(
 @pytest.mark.asyncio
 async def test_stop_prevents_dispatcher_respawn_on_next_heartbeat(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     from gobby.build.controls import build_stop_target
     from gobby.dispatch import dispatcher
@@ -368,8 +368,8 @@ async def test_clean_dry_run_reports_blockers_and_artifacts(
 
 @pytest.mark.asyncio
 async def test_clean_force_deletes_clone_and_clears_artifact_pair(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
     tmp_path: Path,
 ) -> None:
     from gobby.build.controls import build_clean_target
@@ -1261,8 +1261,8 @@ async def test_restart_no_resume_resets_epic_tree_without_dispatch(
 
 @pytest.mark.asyncio
 async def test_restart_clears_build_owned_dispatch_escalations(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
     tmp_path: Path,
 ) -> None:
     from gobby.build.controls import build_restart_target
@@ -1336,8 +1336,8 @@ async def test_restart_clears_build_owned_dispatch_escalations(
 
 @pytest.mark.asyncio
 async def test_restart_resets_stale_dispatch_failure_count_without_escalation(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
     tmp_path: Path,
 ) -> None:
     from gobby.build.controls import build_restart_target

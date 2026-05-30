@@ -908,6 +908,30 @@ class TestLocalAgentRunManager:
         result = agent_manager.update_child_session("nonexistent-id", "child-123")
         assert result is None
 
+    def test_update_sdk_session_id(
+        self,
+        agent_manager: LocalAgentRunManager,
+        sample_session: dict,
+    ) -> None:
+        """Test updating SDK session ID after creation."""
+        agent_run = agent_manager.create(
+            parent_session_id=sample_session["id"],
+            provider="claude",
+            prompt="Update SDK session test",
+        )
+
+        updated = agent_manager.update_sdk_session_id(agent_run.id, "sdk-123")
+
+        assert updated is not None
+        assert updated.sdk_session_id == "sdk-123"
+
+    def test_update_sdk_session_id_nonexistent_returns_none(
+        self, agent_manager: LocalAgentRunManager
+    ) -> None:
+        """Test updating SDK session ID on nonexistent run returns None."""
+        result = agent_manager.update_sdk_session_id("nonexistent-id", "sdk-123")
+        assert result is None
+
     def test_list_by_session(
         self,
         agent_manager: LocalAgentRunManager,

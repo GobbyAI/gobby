@@ -4,7 +4,6 @@ import {
   type ChatThinkingMessage,
   type ModelSwitchedMessage,
   type ToolStatusMessage,
-  type WebSocketMessage,
 } from "./transportEventTypes";
 import {
   handleArtifactTransportEvent,
@@ -112,7 +111,7 @@ export function routeTransportMessage(
   if (!isRecord(parsed) || typeof parsed.type !== "string") {
     return;
   }
-  const data = parsed as WebSocketMessage;
+  const data = parsed as Record<string, unknown> & { type: string };
   if (import.meta.env.DEV) {
     console.debug("WebSocket message:", data.type, data);
   }

@@ -85,6 +85,8 @@ def sed_line_count(parts: list[str], positional_args: list[str]) -> int | None:
 
 
 def count_option_line_count(parts: list[str]) -> int | None:
+    if not parts or shell_command_name(parts[0]) not in {"head", "tail"}:
+        return None
     for index, part in enumerate(parts[1:], start=1):
         if part in {"-n", "--lines"}:
             if index + 1 < len(parts):

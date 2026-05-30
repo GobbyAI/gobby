@@ -307,11 +307,23 @@ class TestGetSessionEdgeCases:
             "UPDATE sessions SET context_window = %s, model = %s WHERE id = %s",
             (200_000, "gpt-5.4", session.id),
         )
+        stored_before = session_storage.db.fetchone(
+            "SELECT context_window FROM sessions WHERE id = %s",
+            (session.id,),
+        )
+        assert stored_before is not None
+        assert stored_before["context_window"] == 200_000
 
         response = client.get(f"/api/sessions/{session.id}")
 
         assert response.status_code == 200
         assert response.json()["session"]["context_window"] == 258_400
+        stored_after = session_storage.db.fetchone(
+            "SELECT context_window FROM sessions WHERE id = %s",
+            (session.id,),
+        )
+        assert stored_after is not None
+        assert stored_after["context_window"] == 200_000
 
     def test_get_session_internal_error(
         self,

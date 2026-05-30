@@ -203,6 +203,9 @@ def test_context_usage_value_constraints_migration_and_baseline_define_invariant
     confidence_invariant = "context_usage_confidence IN ('reported', 'estimated', 'unknown')"
 
     assert "sessions_context_usage_tokens_nonnegative" in migration
+    assert "UPDATE sessions" in migration
+    assert "WHEN context_window < 0 THEN 0" in migration
+    assert "ELSE 'unknown'" in migration
     assert token_invariant in migration
     assert "sessions_context_usage_confidence_valid" in migration
     assert confidence_invariant in migration

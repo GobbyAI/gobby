@@ -336,7 +336,10 @@ def _coerce_nonnegative_int(value: Any) -> int | None:
     # bool is an int subclass; token counters must ignore true/false flags.
     if value is None or isinstance(value, bool):
         return None
-    return max(0, int(value))
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return None
 
 
 def _first_token_count(data: Mapping[str, Any], *keys: str) -> int | None:

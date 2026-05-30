@@ -254,14 +254,17 @@ async def _run_gcode(
         if proc is not None and proc.returncode is None:
             with contextlib.suppress(ProcessLookupError):
                 proc.kill()
-            await proc.wait()
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(proc.wait(), timeout=2.0)
         raise
     except TimeoutError as exc:
         if proc is not None:
             try:
                 proc.kill()
-                await proc.wait()
+                await asyncio.wait_for(proc.wait(), timeout=2.0)
             except ProcessLookupError:
+                pass
+            except TimeoutError:
                 pass
         raise RuntimeError(f"{timeout_code}:{timeout:g}s") from exc
     except OSError as exc:

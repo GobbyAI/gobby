@@ -2,20 +2,38 @@
 
 from __future__ import annotations
 
+import asyncio
+import re
+
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._read import get_task
 from gobby.storage.tasks._updates import update_task
 
 
 def audit_marker_text(heading: str, body: str) -> str:
+    """Build the Markdown audit marker appended to a task description.
+
+    Args:
+        heading: Marker heading without the leading ``###``.
+        body: Marker body text. Callers should pass text without relying on a
+            trailing newline.
+
+    Returns:
+        A marker string that starts with two newlines and formats as
+        ``### {heading}``, a blank line, then ``body``.
+
+    Example:
+        ``audit_marker_text("Dispatch", "failed")`` returns
+        ``"\n\n### Dispatch\n\nfailed"``.
+    """
     return f"\n\n### {heading}\n\n{body}"
 
 
-def append_audit_marker(db: HubDatabase, task_id: str, heading: str, body: str) -> bool:
-    task = get_task(db, task_id)
+async def append_audit_marker(db: HubDatabase, task_id: str, heading: str, body: str) -> bool:
+    task = await asyncio.to_thread(get_task, db, task_id)
     description = task.description or ""
     marker = audit_marker_text(heading, body)
-    if description.rstrip().endswith(marker):
+    if re.search(rf"{re.escape(marker)}\s*$", description):
         return False
-    update_task(db, task_id, description=f"{description}{marker}")
+    await asyncio.to_thread(update_task, db, task_id, description=f"{description}{marker}")
     return True

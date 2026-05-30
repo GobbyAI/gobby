@@ -110,3 +110,19 @@ def test_token_breakdown_ignores_bool_token_values() -> None:
     assert snapshot.cache_creation_tokens is None
     assert snapshot.output_tokens is None
     assert snapshot.confidence == "unknown"
+
+
+def test_token_breakdown_ignores_malformed_token_values() -> None:
+    snapshot = ContextUsageSnapshot.from_token_breakdown(
+        source="web_chat",
+        context_window=200_000,
+        uncached_prompt_tokens="not-a-number",  # type: ignore[arg-type]
+        cache_read_tokens=object(),  # type: ignore[arg-type]
+        cache_creation_tokens="5",
+        output_tokens=-3,
+    )
+
+    assert snapshot.uncached_prompt_tokens is None
+    assert snapshot.cache_read_tokens is None
+    assert snapshot.cache_creation_tokens == 5
+    assert snapshot.output_tokens == 0

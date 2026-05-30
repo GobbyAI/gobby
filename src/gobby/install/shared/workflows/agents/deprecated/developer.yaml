@@ -1,0 +1,5 @@
+name: developer
+description: Deprecated tombstone for the retired catch-all developer agent.
+deprecated: true
+deprecated_reason: "Replaced by backend-developer, frontend-developer, and fullstack-developer."
+enabled: false

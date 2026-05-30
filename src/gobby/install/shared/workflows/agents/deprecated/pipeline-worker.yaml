@@ -1,0 +1,5 @@
+name: pipeline-worker
+description: Deprecated tombstone for the retired pipeline worker agent.
+deprecated: true
+deprecated_reason: "Replaced by stage-specific bundled agents."
+enabled: false

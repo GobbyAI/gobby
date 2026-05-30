@@ -7,6 +7,7 @@ backed by a real temp_db.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -16,6 +17,7 @@ import yaml
 from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
+from gobby.servers.routes.configuration_import_export import _prompt_export_key
 from gobby.servers.routes.configuration_prompts import _normalize_variable_spec
 from gobby.servers.routes.configuration_secrets import MASKED_SECRET
 from gobby.servers.tool_approvals import DEFAULT_GLOBAL_APPROVAL_RULES
@@ -1014,6 +1016,12 @@ class TestExportImport:
         prompts = response.json()["prompts"]
         assert prompts["global/test/shared.md"] == "# Global"
         assert prompts[f"project/{project_id}/test/shared.md"] == "# Project"
+
+    def test_prompt_export_key_rejects_project_prompt_without_project_id(self) -> None:
+        record = SimpleNamespace(name="test/missing-project", scope="project", project_id=None)
+
+        with pytest.raises(ValueError, match="test/missing-project"):
+            _prompt_export_key(record)
 
     def test_import_config_store(self, client: TestClient, temp_db: Any) -> None:
         """Import flat config_store dict writes to DB."""

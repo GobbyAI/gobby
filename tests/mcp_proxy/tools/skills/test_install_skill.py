@@ -272,7 +272,8 @@ class TestInstallSkillTool:
         result = await tool(source="https://example.com/skills/demo.zip")
 
         assert result["success"] is False
-        assert "Unknown skill source" in result["error"]
+        assert "Unsupported skill source URL" in result["error"]
+        assert "GitHub URLs" in result["error"]
 
     @pytest.mark.asyncio
     async def test_install_skill_invalid_skill(

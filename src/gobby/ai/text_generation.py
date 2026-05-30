@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
+import shlex
 import shutil
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
@@ -150,10 +152,20 @@ class DroidCLITextGenerateAdapter:
             cwd=request.cwd,
             env=env,
         )
-        stdout, stderr = await asyncio.wait_for(
-            process.communicate(),
-            timeout=self._timeout_seconds,
-        )
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(),
+                timeout=self._timeout_seconds,
+            )
+        except TimeoutError as exc:
+            if process.returncode is None:
+                with contextlib.suppress(ProcessLookupError):
+                    process.kill()
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(process.wait(), timeout=2.0)
+            raise RuntimeError(
+                f"Droid exec timed out after {self._timeout_seconds:g}s: {shlex.join(command)}"
+            ) from exc
         returncode = process.returncode
         if returncode:
             message = _decode(stderr).strip() or _decode(stdout).strip()

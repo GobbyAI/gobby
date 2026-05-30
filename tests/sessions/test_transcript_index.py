@@ -10,6 +10,9 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -21,7 +24,7 @@ from gobby.sessions.transcript_index import (
     get_or_build_index,
 )
 from gobby.sessions.transcript_io import _count_nonempty_lines
-from gobby.sessions.transcript_renderer import render_transcript
+from gobby.sessions.transcript_renderer import RenderedMessage, render_transcript
 from gobby.sessions.transcripts.base import ParsedMessage
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
@@ -146,14 +149,14 @@ def _gemini_lines() -> list[str]:
     return [line("user", "hi"), line("assistant", "hello"), line("user", "more")]
 
 
-PARSERS = {
+PARSERS: dict[str, tuple[type[Any], Callable[[], list[str]], str]] = {
     "codex": (CodexTranscriptParser, _codex_lines, "codex"),
     "claude": (ClaudeTranscriptParser, _claude_lines, "claude"),
     "gemini": (GeminiTranscriptParser, _gemini_lines, "gemini"),
 }
 
 
-def _write(tmp_path, name: str, lines: list[str]) -> str:
+def _write(tmp_path: Path, name: str, lines: list[str]) -> str:
     path = tmp_path / f"{name}.jsonl"
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return str(path)
@@ -164,14 +167,16 @@ def _group_start_index(group_id: str) -> int:
     return int(group_id.rsplit("-", 1)[-1])
 
 
-def _full_groups(parser_cls, lines: list[str]):
+def _full_groups(
+    parser_cls: type[Any], lines: list[str]
+) -> tuple[list[RenderedMessage], list[ParsedMessage]]:
     parsed = parser_cls(session_id=SESSION).parse_lines(lines)
     msgs = [m for m in parsed if isinstance(m, ParsedMessage)]
     return render_transcript(msgs, session_id=SESSION), msgs
 
 
 @pytest.mark.parametrize("name", list(PARSERS))
-def test_index_boundaries_match_full_render(tmp_path, name: str) -> None:
+def test_index_boundaries_match_full_render(tmp_path: Path, name: str) -> None:
     parser_cls, lines_fn, source = PARSERS[name]
     lines = lines_fn()
     path = _write(tmp_path, name, lines)
@@ -190,7 +195,7 @@ def test_index_boundaries_match_full_render(tmp_path, name: str) -> None:
         assert boundary.parsed_index_start == _group_start_index(group.id)
 
 
-def test_byte_offsets_seek_to_group_start(tmp_path) -> None:
+def test_byte_offsets_seek_to_group_start(tmp_path: Path) -> None:
     """Each boundary's byte_start points at the raw line that opens the group."""
     lines = _codex_lines()
     path = _write(tmp_path, "codex", lines)
@@ -208,7 +213,7 @@ def test_byte_offsets_seek_to_group_start(tmp_path) -> None:
             assert record.get("type") == "response_item"
 
 
-def test_tool_first_open_captures_tool_use(tmp_path) -> None:
+def test_tool_first_open_captures_tool_use(tmp_path: Path) -> None:
     lines = _codex_lines()
     path = _write(tmp_path, "codex", lines)
     st = os.stat(path)
@@ -224,7 +229,7 @@ def test_tool_first_open_captures_tool_use(tmp_path) -> None:
     assert index.tool_first_open == {"call_1": tool_use.index}
 
 
-def test_multimessage_line_second_group_not_resume_safe(tmp_path) -> None:
+def test_multimessage_line_second_group_not_resume_safe(tmp_path: Path) -> None:
     """A user line that expands to text + orphan tool_result opens two groups.
 
     The second group starts at the *2nd* parsed message of the same event, so its
@@ -259,7 +264,7 @@ def test_multimessage_line_second_group_not_resume_safe(tmp_path) -> None:
     assert second.resume_safe is False
 
 
-def test_droid_sidecar_usage_is_post_pass_adjustment(tmp_path) -> None:
+def test_droid_sidecar_usage_is_post_pass_adjustment(tmp_path: Path) -> None:
     transcript = tmp_path / "droid-abc.jsonl"
     settings = tmp_path / "droid-abc.settings.json"
     lines = [
@@ -299,7 +304,7 @@ def test_droid_sidecar_usage_is_post_pass_adjustment(tmp_path) -> None:
     assert adjustment.group_index == index.total_groups - 1
 
 
-def test_detect_source_bounded_prefers_path(tmp_path) -> None:
+def test_detect_source_bounded_prefers_path(tmp_path: Path) -> None:
     codex_dir = tmp_path / ".codex" / "sessions"
     codex_dir.mkdir(parents=True)
     path = codex_dir / "rollout-x.jsonl"
@@ -307,14 +312,14 @@ def test_detect_source_bounded_prefers_path(tmp_path) -> None:
     assert detect_source_bounded(str(path)) == "codex"
 
 
-def test_detect_source_bounded_samples_content(tmp_path) -> None:
+def test_detect_source_bounded_samples_content(tmp_path: Path) -> None:
     path = tmp_path / "unknown.log"
     path.write_text("\n".join(_codex_lines()) + "\n", encoding="utf-8")
     assert detect_source_bounded(str(path), session_source="claude") == "codex"
 
 
 @pytest.mark.asyncio
-async def test_get_or_build_index_caches_and_invalidates(tmp_path) -> None:
+async def test_get_or_build_index_caches_and_invalidates(tmp_path: Path) -> None:
     clear_index_cache()
     lines = _codex_lines()
     path = _write(tmp_path, "codex", lines)
@@ -354,7 +359,7 @@ async def test_get_or_build_index_caches_and_invalidates(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_index_cache_evicts_beyond_capacity(tmp_path) -> None:
+async def test_index_cache_evicts_beyond_capacity(tmp_path: Path) -> None:
     clear_index_cache()
     # Build more distinct snapshots than the cache holds; the first must evict.
     paths = []

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from typing import Any, cast
 
@@ -67,7 +68,7 @@ def _reset_agent_context_injection(handler: Any, session_id: str | None) -> None
             session_id,
             {"_agent_context_injected": False},
         )
-    except Exception as e:
+    except (psycopg.Error, json.JSONDecodeError) as e:
         handler.logger.warning(f"Failed to reset agent context injection flag: {e}")
 
 

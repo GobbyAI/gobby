@@ -235,13 +235,14 @@ function parseToolArguments(value: unknown): Record<string, unknown> | undefined
 
 function parseToolResultPayload(value: unknown): { result?: ToolResult; error?: string } {
   if (value === undefined || value === null || value === '') return {}
+  if (isToolResult(value)) return { result: value }
   if (typeof value !== 'string') return { error: 'Invalid tool result payload' }
   const parsed = tryParseJSON(value)
   if (isToolResult(parsed)) return { result: parsed }
   return { error: 'Invalid tool result payload' }
 }
 
-export function appendTextBlock(msg: ChatMessage, text: string) {
+export function appendTextBlock(msg: ChatMessage, text: string): void {
   if (!msg.contentBlocks) msg.contentBlocks = []
   const last = msg.contentBlocks[msg.contentBlocks.length - 1]
   if (last?.type === 'text') {
@@ -252,7 +253,7 @@ export function appendTextBlock(msg: ChatMessage, text: string) {
   }
 }
 
-export function appendToolBlock(msg: ChatMessage, tc: ToolCall) {
+export function appendToolBlock(msg: ChatMessage, tc: ToolCall): void {
   if (!msg.contentBlocks) msg.contentBlocks = []
   msg.contentBlocks.push({ type: 'tool_chain', tool_calls: [tc] })
 }
@@ -339,7 +340,7 @@ type ApiMappingState = {
   currentAssistant: ChatMessage | null
 }
 
-function flushAssistant(state: ApiMappingState) {
+function flushAssistant(state: ApiMappingState): void {
   if (state.currentAssistant) {
     state.result.push(state.currentAssistant)
     state.currentAssistant = null
@@ -369,7 +370,7 @@ function appendAssistantText(
   id: string,
   timestamp: Date,
   text: string,
-) {
+): void {
   if (state.currentAssistant) {
     if (text) {
       if (
@@ -393,7 +394,7 @@ function appendAssistantText(
   }
 }
 
-function completeToolCallFromMessage(assistant: ChatMessage, message: ApiMessage) {
+function completeToolCallFromMessage(assistant: ChatMessage, message: ApiMessage): void {
   const match = message.tool_use_id
     ? findToolCallById(assistant, message.tool_use_id)
     : findPendingToolCall(assistant)
@@ -411,7 +412,7 @@ function completeToolCallFromMessage(assistant: ChatMessage, message: ApiMessage
   }
 }
 
-function markLatestToolCallError(assistant: ChatMessage, content: string) {
+function markLatestToolCallError(assistant: ChatMessage, content: string): boolean {
   if (!assistant.toolCalls?.length) return false
 
   const lastTc = assistant.toolCalls[assistant.toolCalls.length - 1]
@@ -436,7 +437,7 @@ function mapContentBlockMessage(
   message: ApiMessage,
   id: string,
   timestamp: Date,
-) {
+): void {
   flushAssistant(state)
 
   const chatMsg: ChatMessage = {
@@ -464,7 +465,7 @@ function mapUserApiMessage(
   id: string,
   timestamp: Date,
   content: string,
-) {
+): void {
   if (message.content_type === 'tool_result' || message.tool_use_id) {
     if (state.currentAssistant) {
       completeToolCallFromMessage(state.currentAssistant, message)
@@ -553,7 +554,7 @@ function appendProtocolToolCalls(
   id: string,
   timestamp: Date,
   toolCalls: ToolCall[],
-) {
+): void {
   if (!state.currentAssistant) {
     state.currentAssistant = {
       id,
@@ -579,7 +580,7 @@ function mapAssistantApiMessage(
   id: string,
   timestamp: Date,
   content: string,
-) {
+): void {
   if (message.content_type === 'tool_use' || message.tool_name) {
     const assistant = ensureAssistant(state, id, timestamp, {
       toolCalls: [],
@@ -610,7 +611,7 @@ function mapAssistantApiMessage(
   appendAssistantText(state, id, timestamp, message.content || '')
 }
 
-function mapToolApiMessage(state: ApiMappingState, message: ApiMessage) {
+function mapToolApiMessage(state: ApiMappingState, message: ApiMessage): void {
   if (state.currentAssistant) {
     completeToolCallFromMessage(state.currentAssistant, message)
   }

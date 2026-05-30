@@ -98,6 +98,13 @@ class TestSingleUnderscoreNormalization:
         result = normalize_mcp_fields(data)
         assert result["tool_name"] == "mcp__context7__get_docs"
 
+    def test_single_underscore_hyphenated_server(self) -> None:
+        data = {"tool_name": "mcp_gobby-tasks_claim_task"}
+        result = normalize_mcp_fields(data)
+        assert result["tool_name"] == "mcp__gobby-tasks__claim_task"
+        assert result["mcp_server"] == "gobby-tasks"
+        assert result["mcp_tool"] == "claim_task"
+
     def test_single_underscore_call_tool_inner_extraction(self) -> None:
         """Single-underscore call_tool should still extract inner server/tool."""
         data = {
@@ -159,6 +166,13 @@ class TestTripleUnderscoreNormalization:
         assert result["mcp_server"] == "gobby_tasks"
         assert result["mcp_tool"] == "claim_task"
 
+    def test_server_names_with_hyphen_split_on_triple_separator(self) -> None:
+        data = {"tool_name": "gobby-tasks___claim_task"}
+        result = normalize_mcp_fields(data)
+        assert result["tool_name"] == "mcp__gobby-tasks__claim_task"
+        assert result["mcp_server"] == "gobby-tasks"
+        assert result["mcp_tool"] == "claim_task"
+
 
 class TestCallToolExtraction:
     """Tests for call_tool / mcp__gobby__call_tool inner extraction (Step 1b)."""
@@ -170,6 +184,7 @@ class TestCallToolExtraction:
         }
         result = normalize_mcp_fields(data)
         # Inner values override prefix-parsed "gobby" / "call_tool"
+        assert result["tool_name"] == "mcp__gobby__call_tool"
         assert result["mcp_server"] == "gobby-memory"
         assert result["mcp_tool"] == "add_memory"
 

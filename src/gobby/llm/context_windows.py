@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 
@@ -43,6 +44,7 @@ _VALID_CONTEXT_LENGTH_SOURCES: frozenset[str] = frozenset(
 _AUTHORITATIVE_CATALOG_SOURCES: frozenset[str] = frozenset(
     {"provider_reported", "provider_catalog"}
 )
+logger = logging.getLogger(__name__)
 
 # Generic fallback defaults. These are intentionally last-resort values.
 _STATIC_CONTEXT_LENGTHS: dict[str, int] = {
@@ -387,8 +389,15 @@ def _get_provider_model_catalog() -> Any | None:
 
         ctx = get_app_context()
     except (ImportError, AttributeError):
+        logger.debug("Provider model catalog lookup failed", exc_info=True)
         return None
-    return getattr(ctx, "provider_model_catalog", None) if ctx else None
+    if not ctx:
+        logger.debug("Provider model catalog unavailable: app context is not initialized")
+        return None
+    catalog = getattr(ctx, "provider_model_catalog", None)
+    if not catalog:
+        logger.debug("Provider model catalog unavailable: context has no catalog")
+    return catalog
 
 
 __all__ = [

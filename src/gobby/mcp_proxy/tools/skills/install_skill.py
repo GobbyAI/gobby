@@ -131,7 +131,14 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
 
             is_http_url = source.startswith(("http://", "https://"))
             if parsed_skill is None and is_http_url and not is_github_ref:
-                return {"success": False, "error": f"Unknown skill source: {source}"}
+                return {
+                    "success": False,
+                    "error": (
+                        f"Unsupported skill source URL: {source}. Supported sources are "
+                        "local skill paths, GitHub URLs, local ZIP files, and hub:skill "
+                        "references."
+                    ),
+                }
 
             if parsed_skill is None and is_github_ref:
                 # GitHub URL

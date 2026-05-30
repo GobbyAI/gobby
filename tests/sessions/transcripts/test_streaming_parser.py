@@ -16,6 +16,7 @@ tests assert that:
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 
 import pytest
 
@@ -172,9 +173,7 @@ def _claude_lines() -> list[str]:
 
 def _gemini_lines() -> list[str]:
     def line(role: str, text: str) -> str:
-        return json.dumps(
-            {"type": role, "content": text, "timestamp": "2024-01-01T12:00:00Z"}
-        )
+        return json.dumps({"type": role, "content": text, "timestamp": "2024-01-01T12:00:00Z"})
 
     return [line("user", "hi"), line("assistant", "hello"), line("user", "more")]
 
@@ -190,6 +189,7 @@ def _msg_key(m: ParsedMessage) -> tuple:
     return (m.index, m.role, m.content_type, m.content, m.tool_use_id)
 
 
+@pytest.mark.unit
 @pytest.mark.parametrize("name", list(PARSERS))
 def test_streaming_matches_batch(name: str) -> None:
     parser_cls, lines_fn = PARSERS[name]
@@ -202,6 +202,7 @@ def test_streaming_matches_batch(name: str) -> None:
     assert [_msg_key(m) for m in streamed] == [_msg_key(m) for m in batch]
 
 
+@pytest.mark.unit
 @pytest.mark.parametrize("name", list(PARSERS))
 def test_event_offsets_echoed(name: str) -> None:
     parser_cls, lines_fn = PARSERS[name]
@@ -216,6 +217,7 @@ def test_event_offsets_echoed(name: str) -> None:
         assert ev.records[0].index == ev.parsed_index
 
 
+@pytest.mark.unit
 @pytest.mark.parametrize("name", list(PARSERS))
 def test_resume_from_every_event_matches_tail(name: str) -> None:
     """Resuming from any event boundary reproduces the full-parse tail exactly."""
@@ -252,7 +254,7 @@ def test_base_default_indexing_preserves_blank_gaps() -> None:
                 tool_name=None,
                 tool_input=None,
                 tool_result=None,
-                timestamp=__import__("datetime").datetime.now(__import__("datetime").UTC),
+                timestamp=datetime.now(UTC),
                 raw_json={},
             )
 

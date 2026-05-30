@@ -21,6 +21,7 @@ from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._read import get_task
 from gobby.storage.tasks._transitions import escalate_task
 from gobby.storage.tasks._updates import update_task
+from gobby.utils.git import git_subprocess_env
 
 logger = logging.getLogger(__name__)
 
@@ -181,17 +182,20 @@ async def _workspace_dirty(workspace_path: str | None) -> bool:
         return True
     if not path.is_dir():
         return False
-    if shutil.which("git") is None:
+    git_env = git_subprocess_env()
+    git_executable = shutil.which("git", path=git_env.get("PATH") if git_env else None)
+    if git_executable is None:
         logger.debug("Cannot inspect workspace dirty state for %s: git executable not found", path)
         return True
     try:
         repo_result = await asyncio.to_thread(
             subprocess.run,
-            ["git", "-C", str(path), "rev-parse", "--is-inside-work-tree"],
+            [git_executable, "-C", str(path), "rev-parse", "--is-inside-work-tree"],
             capture_output=True,
             text=True,
             timeout=_WORKSPACE_DIRTY_CHECK_TIMEOUT_SECONDS,
             check=False,
+            env=git_env,
         )
     except subprocess.TimeoutExpired:
         logger.debug("Timed out probing workspace repository state for %s", path, exc_info=True)
@@ -210,11 +214,12 @@ async def _workspace_dirty(workspace_path: str | None) -> bool:
     try:
         result = await asyncio.to_thread(
             subprocess.run,
-            ["git", "-C", str(path), "status", "--porcelain"],
+            [git_executable, "-C", str(path), "status", "--porcelain"],
             capture_output=True,
             text=True,
             timeout=_WORKSPACE_DIRTY_CHECK_TIMEOUT_SECONDS,
             check=False,
+            env=git_env,
         )
     except subprocess.TimeoutExpired:
         logger.debug("Timed out inspecting workspace dirty state for %s", path, exc_info=True)

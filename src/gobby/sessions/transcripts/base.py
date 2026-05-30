@@ -292,9 +292,14 @@ def apply_adjustment(
 ) -> None:
     """Apply a finalize() post-pass mutation to the matching parsed message."""
     for msg in messages:
+        # Tool events do not carry mutable message fields, so only ParsedMessage can match.
         if isinstance(msg, ParsedMessage) and msg.index == adjustment.parsed_index:
             setattr(msg, adjustment.field, adjustment.value)
             return
+    logger.debug(
+        "Transcript adjustment target was not found",
+        extra={"parsed_index": adjustment.parsed_index, "field": adjustment.field},
+    )
 
 
 class BaseTranscriptParser:

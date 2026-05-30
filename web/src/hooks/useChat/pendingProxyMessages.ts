@@ -11,7 +11,7 @@ export function enqueuePendingProxyMessage(
   entry: PendingProxyMessage,
 ): void {
   const queue = pendingQueues.get(entry.sessionId) ?? [];
-  queue.push(entry.clientMessageId);
+  if (!queue.includes(entry.clientMessageId)) queue.push(entry.clientMessageId);
   pendingQueues.set(entry.sessionId, queue);
 }
 

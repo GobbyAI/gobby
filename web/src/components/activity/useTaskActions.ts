@@ -16,6 +16,28 @@ interface UseTaskActionsResult {
   handleCreateTask: (params: CreateTaskParams) => Promise<unknown>;
 }
 
+function describeCaughtError(err: unknown): string {
+  if (!(err instanceof Error)) return `message: ${String(err)}`;
+  const parts = [`message: ${err.message}`];
+  if (err.stack) parts.push(`stack: ${err.stack}`);
+  if ("cause" in err && err.cause !== undefined) {
+    parts.push(`cause: ${String(err.cause)}`);
+  }
+  return parts.join("\n");
+}
+
+function throwCreateTaskError(
+  message: string,
+  err: unknown,
+  setActionError: Dispatch<SetStateAction<string | null>>,
+): never {
+  const detailed = `${message}\n${describeCaughtError(err)}`;
+  setActionError(detailed);
+  const error = new Error(detailed) as Error & { cause?: unknown };
+  error.cause = err;
+  throw error;
+}
+
 export function useTaskActions({
   projectId,
   fetchTasks,
@@ -34,21 +56,19 @@ export function useTaskActions({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
         });
-      } catch {
+      } catch (err) {
         const message = "Failed to create task: request failed";
-        setActionError(message);
-        throw new Error(message);
+        throwCreateTaskError(message, err, setActionError);
       }
 
       let payload: unknown;
       try {
         payload = await response.json();
-      } catch {
+      } catch (err) {
         const message = response.ok
           ? "Failed to create task: invalid response"
           : `Failed to create task (${response.status})`;
-        setActionError(message);
-        throw new Error(message);
+        throwCreateTaskError(message, err, setActionError);
       }
 
       if (!response.ok) {

@@ -121,7 +121,9 @@ def _prompt_export_key(record: Any) -> str:
     """Return a non-colliding export key that preserves prompt scope."""
     prompt_path = f"{record.name}.md"
     if record.scope == "project":
-        return f"project/{record.project_id or 'unknown'}/{prompt_path}"
+        if not record.project_id:
+            raise ValueError(f"Project-scoped prompt {record.name!r} is missing project_id")
+        return f"project/{record.project_id}/{prompt_path}"
     if record.scope == "global":
         return f"global/{prompt_path}"
     return prompt_path

@@ -63,14 +63,17 @@ class _AgentRunRuntimeMixin:
             Updated AgentRun.
         """
         now = utc_now_iso()
-        self.db.execute(
-            """
-            UPDATE agent_runs
-            SET sdk_session_id = %s, updated_at = %s
-            WHERE id = %s
-            """,
-            (sdk_session_id, now, run_id),
-        )
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE agent_runs
+                SET sdk_session_id = %s, updated_at = %s
+                WHERE id = %s
+                """,
+                (sdk_session_id, now, run_id),
+            )
+        if not _positive_rowcount(cursor):
+            return None
         return self.get(run_id)
 
     def get_sdk_session_id_for_session(
@@ -167,12 +170,15 @@ class _AgentRunRuntimeMixin:
     ) -> AgentRun | None:
         """Update the child session ID for an agent run."""
         now = utc_now_iso()
-        self.db.execute(
-            """
-            UPDATE agent_runs
-            SET child_session_id = %s, updated_at = %s
-            WHERE id = %s
-            """,
-            (child_session_id, now, run_id),
-        )
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE agent_runs
+                SET child_session_id = %s, updated_at = %s
+                WHERE id = %s
+                """,
+                (child_session_id, now, run_id),
+            )
+        if not _positive_rowcount(cursor):
+            return None
         return self.get(run_id)

@@ -174,13 +174,33 @@ async def test_acp_text_generate_adapter_runs_one_shot_prompt_turn(provider: str
 
 
 class FakeProcess:
-    def __init__(self, stdout: bytes, stderr: bytes = b"", returncode: int = 0) -> None:
+    def __init__(self, stdout: bytes, stderr: bytes = b"", returncode: int | None = 0) -> None:
         self._stdout = stdout
         self._stderr = stderr
         self.returncode = returncode
 
     async def communicate(self) -> tuple[bytes, bytes]:
         return self._stdout, self._stderr
+
+    def kill(self) -> None:
+        self.returncode = -9
+
+    async def wait(self) -> int | None:
+        return self.returncode
+
+
+class HangingProcess(FakeProcess):
+    def __init__(self) -> None:
+        super().__init__(b"", returncode=None)
+        self.killed = False
+
+    async def communicate(self) -> tuple[bytes, bytes]:
+        await asyncio.sleep(10)
+        return b"", b""
+
+    def kill(self) -> None:
+        self.killed = True
+        super().kill()
 
 
 @pytest.mark.asyncio
@@ -251,3 +271,32 @@ async def test_droid_cli_text_generate_adapter_reports_exec_failure(
 
     with pytest.raises(RuntimeError, match="Droid exec failed with exit code 2: bad auth"):
         await adapter.generate(TextGenerationRequest(prompt="hello"))
+
+
+@pytest.mark.asyncio
+async def test_droid_cli_text_generate_adapter_reports_timeout_with_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = HangingProcess()
+
+    async def fake_create_subprocess_exec(
+        *_command: str,
+        stdout: int,
+        stderr: int,
+        cwd: str | None,
+        env: dict[str, str],
+    ) -> FakeProcess:
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    adapter = DroidCLITextGenerateAdapter(
+        command_path="/usr/local/bin/droid",
+        timeout_seconds=0.01,
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        await adapter.generate(TextGenerationRequest(prompt="hello world"))
+
+    assert process.killed is True
+    assert "Droid exec timed out after 0.01s" in str(exc_info.value)
+    assert "/usr/local/bin/droid exec --output-format text 'hello world'" in str(exc_info.value)
