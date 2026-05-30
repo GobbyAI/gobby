@@ -559,7 +559,8 @@ fn collect(selection: ScopeSelection) -> Result<CommandOutcome, WikiError> {
 
     vault::initialize(&scope)?;
     let output_scope = resolved_scope_identity(&scope);
-    let report = collect::collect_inbox(scope.root(), &collect_timestamp())?;
+    let mut store = store::MemoryWikiStore::default();
+    let report = collect::collect_inbox_and_index(scope.root(), &mut store, &collect_timestamp())?;
     Ok(commands::collect::run(output_scope, scope.root(), report))
 }
 
