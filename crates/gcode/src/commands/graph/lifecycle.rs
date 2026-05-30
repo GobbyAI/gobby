@@ -279,7 +279,13 @@ pub fn sync_file(
         let payload = skipped_missing_indexed_file_payload(ctx, file_path);
         return match format {
             Format::Json => output::print_json(&payload),
-            Format::Text => output::print_json_compact(&payload),
+            Format::Text => {
+                output::print_text(&format!(
+                    "Skipped code-index graph sync for project {}: indexed file `{file_path}` was not found",
+                    ctx.project_id
+                ))?;
+                output::print_json_compact(&payload)
+            }
         };
     };
     let report = ProjectionSyncReport::ok(1, symbols_synced);

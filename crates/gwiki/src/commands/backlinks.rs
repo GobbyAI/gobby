@@ -114,10 +114,13 @@ Scope: {scope}
         text.push_str(&suggestion.target);
         text.push_str(" (");
         text.push_str(&suggestion.mention_count.to_string());
-        text.push_str(
-            " mentions)
-",
-        );
+        text.push(' ');
+        text.push_str(if suggestion.mention_count == 1 {
+            "mention"
+        } else {
+            "mentions"
+        });
+        text.push_str(")\n");
     }
     text
 }

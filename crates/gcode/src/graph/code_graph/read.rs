@@ -110,6 +110,9 @@ pub(crate) fn count_usages_query(
     project_id: &str,
     symbol_id: &str,
 ) -> (String, HashMap<String, String>) {
+    // Keep this separate from count_callers_query even though both currently
+    // count CALLS edges; callers is the direct-caller API, usages is the wider
+    // command surface that can grow to imports/references.
     (
         format!(
             "MATCH (source:CodeSymbol {{project: $project}})-[r:CALLS]->(target {{id: $id, project: $project}}) \

@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
 
@@ -102,11 +103,22 @@ fn write_registry_atomically(path: &Path, contents: &[u8]) -> Result<(), WikiErr
 }
 
 fn temp_registry_path(path: &Path) -> PathBuf {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
     let file_name = path
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("wikis.json");
-    path.with_file_name(format!(".{file_name}.tmp"))
+    let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    path.with_file_name(format!(
+        ".{file_name}.{}.{}.{}.tmp",
+        std::process::id(),
+        counter,
+        nanos
+    ))
 }
 
 fn read_registry(path: &Path) -> Result<Registry, WikiError> {
@@ -194,5 +206,16 @@ mod tests {
                 .map(|project| project.project_root.as_str()),
             Some(tmp.path().join("project-2").display().to_string().as_str())
         );
+    }
+
+    #[test]
+    fn temp_registry_paths_are_unique_in_registry_directory() {
+        let path = Path::new("/tmp/wiki/wikis.json");
+        let first = temp_registry_path(path);
+        let second = temp_registry_path(path);
+
+        assert_ne!(first, second);
+        assert_eq!(first.parent(), path.parent());
+        assert_eq!(second.parent(), path.parent());
     }
 }

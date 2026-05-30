@@ -101,7 +101,7 @@ impl ResearchSession {
 
         let question = question.into();
         Ok(Self {
-            session_id: new_session_id(),
+            session_id: new_session_id()?,
             prompt: research_prompt(&question, &source_constraints, agent_count),
             question,
             scope,
@@ -160,15 +160,19 @@ impl ResearchSession {
     }
 }
 
-fn new_session_id() -> String {
-    format!("research-{}", unix_timestamp_ms())
+fn new_session_id() -> Result<String, WikiError> {
+    Ok(format!("research-{}", unix_timestamp_ms()?))
 }
 
-fn unix_timestamp_ms() -> u128 {
-    std::time::SystemTime::now()
+fn unix_timestamp_ms() -> Result<u64, WikiError> {
+    let duration = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_millis())
-        .unwrap_or_default()
+        .map_err(|error| WikiError::Config {
+            detail: format!("system clock is before Unix epoch: {error}"),
+        })?;
+    u64::try_from(duration.as_millis()).map_err(|_| WikiError::Config {
+        detail: "system timestamp exceeds u64 milliseconds".to_string(),
+    })
 }
 
 fn research_prompt(question: &str, source_constraints: &[String], agent_count: usize) -> String {

@@ -908,7 +908,7 @@ fn split_assignment(line: &str) -> Option<(&str, &str)> {
         let next = line[idx + 1..].chars().next();
         if matches!(
             previous,
-            Some('=' | '!' | '<' | '>' | ':' | '+' | '-' | '*' | '/' | '%')
+            Some('=' | '!' | '<' | '>' | ':' | '+' | '-' | '*' | '/' | '%' | '&' | '|')
         ) || matches!(next, Some('=' | '>'))
         {
             continue;
@@ -1003,5 +1003,20 @@ fn should_ignore_call_name(language: &str, name: &str) -> bool {
             "if" | "for" | "while" | "when" | "catch" | "return" | "throw"
         ),
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::split_assignment;
+
+    #[test]
+    fn split_assignment_ignores_bitwise_compound_operators() {
+        assert_eq!(split_assignment("flags &= READ"), None);
+        assert_eq!(split_assignment("flags |= WRITE"), None);
+        assert_eq!(
+            split_assignment("flags = READ | WRITE"),
+            Some(("flags ", " READ | WRITE"))
+        );
     }
 }

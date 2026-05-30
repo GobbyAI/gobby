@@ -123,11 +123,16 @@ pub(crate) fn build_lifecycle_url(
     Ok(url)
 }
 
-fn compact_detail(body: &str) -> String {
+pub(crate) fn compact_detail(body: &str) -> String {
     let detail = body.split_whitespace().collect::<Vec<_>>().join(" ");
     let detail = detail.trim();
-    if detail.len() > 240 {
-        format!("{}...", &detail[..237])
+    const MAX_CHARS: usize = 240;
+    const TRUNCATED_CHARS: usize = MAX_CHARS - 3;
+    if detail.chars().count() > MAX_CHARS {
+        format!(
+            "{}...",
+            detail.chars().take(TRUNCATED_CHARS).collect::<String>()
+        )
     } else {
         detail.to_string()
     }

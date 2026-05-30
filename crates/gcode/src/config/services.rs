@@ -74,6 +74,8 @@ where
     }
 }
 
+/// Keep FalkorDB lookups behind a single alias hook so legacy key names can be
+/// mapped here without changing every config source.
 fn canonical_config_key(key: &str) -> &str {
     match key {
         FALKORDB_HOST_CONFIG_KEY => FALKORDB_HOST_CONFIG_KEY,

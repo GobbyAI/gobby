@@ -49,6 +49,7 @@ fn init_creates_vault_shape() {
 
     let project_status = Command::new(env!("CARGO_BIN_EXE_gwiki"))
         .args(["init", "--project"])
+        .env_remove("GOBBY_WIKI_HUB")
         .current_dir(&project)
         .status()
         .expect("run project init");

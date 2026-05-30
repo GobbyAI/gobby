@@ -1,6 +1,6 @@
 use super::contracts::{
-    CODE_INDEX_INDEXES, CODE_INDEX_TABLES, DEFAULT_SCHEMA, INDEX_CONTRACTS, IndexContract,
-    OVERWRITE_GUIDANCE, TABLE_CONTRACTS, TableContract,
+    DEFAULT_SCHEMA, INDEX_CONTRACTS, IndexContract, OVERWRITE_GUIDANCE, TABLE_CONTRACTS,
+    TableContract, code_index_index_names, code_index_table_names,
 };
 use super::ddl::GcodeStandaloneSetup;
 use super::identifiers::qualified_relation;
@@ -125,13 +125,13 @@ pub(crate) fn reset_postgres_code_index(
 
 pub(crate) fn postgres_overwrite_reset_sql(schema: &str) -> Result<String, SetupError> {
     let mut statements = Vec::new();
-    for index in CODE_INDEX_INDEXES {
+    for index in code_index_index_names() {
         statements.push(format!(
             "DROP INDEX IF EXISTS {};",
             qualified_relation(schema, index, "index")?
         ));
     }
-    for table in CODE_INDEX_TABLES.iter().rev() {
+    for table in code_index_table_names().rev() {
         statements.push(format!(
             "DROP TABLE IF EXISTS {};",
             qualified_relation(schema, table, "table")?

@@ -243,6 +243,7 @@ fn parse_wiki_document(
         links,
         source: WikiSource {
             path: path.to_path_buf(),
+            document_path: path.to_path_buf(),
             kind,
             content_hash,
         },
@@ -443,6 +444,7 @@ mod tests {
             path.clone(),
             WikiSource {
                 path: path.clone(),
+                document_path: path.clone(),
                 kind: WikiDocumentKind::Topic,
                 content_hash: "old".to_string(),
             },

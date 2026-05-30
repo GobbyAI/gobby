@@ -89,7 +89,7 @@ pub(super) fn parse_collection_schema(data: &Value) -> Option<ExistingVectorColl
     let size = vectors
         .get("size")
         .and_then(Value::as_u64)
-        .map(|size| size as usize);
+        .and_then(|size| usize::try_from(size).ok());
     let distance = vectors
         .get("distance")
         .and_then(Value::as_str)

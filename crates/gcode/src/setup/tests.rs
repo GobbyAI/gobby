@@ -1,4 +1,4 @@
-use super::contracts::{CODE_INDEX_INDEXES, CODE_INDEX_TABLES, OVERWRITE_GUIDANCE};
+use super::contracts::{OVERWRITE_GUIDANCE, code_index_index_names, code_index_table_names};
 use super::postgres::postgres_overwrite_reset_sql;
 use super::*;
 use gobby_core::setup::{StandaloneSetup, StoreKind};
@@ -93,13 +93,13 @@ fn standalone_setup_rejects_non_public_schema() {
 fn overwrite_reset_sql_is_allowlisted() {
     let sql = postgres_overwrite_reset_sql("public").expect("reset SQL");
 
-    for table in CODE_INDEX_TABLES {
+    for table in code_index_table_names() {
         assert!(
             sql.contains(&format!("DROP TABLE IF EXISTS \"public\".\"{table}\";")),
             "{sql}"
         );
     }
-    for index in CODE_INDEX_INDEXES {
+    for index in code_index_index_names() {
         assert!(
             sql.contains(&format!("DROP INDEX IF EXISTS \"public\".\"{index}\";")),
             "{sql}"
@@ -127,6 +127,17 @@ fn overwrite_guidance_names_flag() {
     let request = StandaloneSetupRequest::new(true, None, None);
     assert!(!request.overwrite_code_index);
     assert!(OVERWRITE_GUIDANCE.contains("--overwrite-code-index"));
+}
+
+#[test]
+fn standalone_setup_request_redacts_password_in_json() {
+    let mut request = StandaloneSetupRequest::new(true, None, None);
+    request.falkordb_password = Some("secret".to_string());
+
+    let encoded = serde_json::to_string(&request).expect("serialize request");
+
+    assert!(!encoded.contains("falkordb_password"));
+    assert!(!encoded.contains("secret"));
 }
 
 #[test]

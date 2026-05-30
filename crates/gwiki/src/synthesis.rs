@@ -6,6 +6,8 @@ use serde::Serialize;
 
 use crate::WikiError;
 
+const MAX_SLUG_TRIES: usize = 10_000;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ArticleKind {
@@ -311,14 +313,14 @@ pub fn slugify_unique(title: &str, mut exists: impl FnMut(&str) -> bool) -> Stri
         return base;
     }
 
-    for index in 2usize.. {
+    for index in 2usize..=MAX_SLUG_TRIES {
         let candidate = format!("{base}-{index}");
         if !exists(&candidate) {
             return candidate;
         }
     }
 
-    unreachable!("unbounded slug suffix search should always return")
+    format!("{base}-{}", uuid::Uuid::new_v4().simple())
 }
 
 pub fn relative_path(root: &Path, path: &Path) -> String {
@@ -430,7 +432,13 @@ fn yaml_scalar(value: &str) -> String {
     {
         value.to_string()
     } else {
-        format!("\"{}\"", value.replace('"', "\\\""))
+        let escaped = value
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('\n', "\\n")
+            .replace('\r', "\\r")
+            .replace('\t', "\\t");
+        format!("\"{escaped}\"")
     }
 }
 
@@ -464,6 +472,22 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(&page_path).expect("page retained"),
             "human-authored page"
+        );
+    }
+
+    #[test]
+    fn slugify_unique_falls_back_after_bounded_suffixes() {
+        let slug = slugify_unique("Collision", |_| true);
+
+        assert!(slug.starts_with("collision-"));
+        assert!(slug.len() > "collision-".len());
+    }
+
+    #[test]
+    fn yaml_scalar_escapes_quoted_control_characters() {
+        assert_eq!(
+            yaml_scalar("a\\b\"c\nd\re\tf"),
+            "\"a\\\\b\\\"c\\nd\\re\\tf\""
         );
     }
 }

@@ -43,6 +43,7 @@ pub struct WikiLink {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WikiSource {
     pub path: PathBuf,
+    pub document_path: PathBuf,
     pub kind: WikiDocumentKind,
     pub content_hash: String,
 }
@@ -498,8 +499,13 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
     fn upsert_source(&mut self, source: WikiSource) -> Result<(), StoreError> {
         let id = scoped_id("source", &self.scope, &source.path, None);
         let path = display_path(&source.path);
+        let document_path = display_path(&source.document_path);
         let source_kind = document_kind_name(source.kind);
-        let provenance = json!({ "source_path": path }).to_string();
+        let provenance = json!({
+            "source_path": &path,
+            "document_path": &document_path,
+        })
+        .to_string();
         let frontmatter = "{}";
         let (scope_kind, scope_id, project_id, topic_name) = self.scope_params();
 
@@ -624,13 +630,21 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
             &params,
         )?;
         tx.commit()?;
-        self.documents.remove(Path::new(&path));
+        self.documents.remove(&platform_path_from_display(&path));
         Ok(())
     }
 }
 
 fn display_path(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
+}
+
+fn platform_path_from_display(path: &str) -> PathBuf {
+    if std::path::MAIN_SEPARATOR == '/' {
+        PathBuf::from(path)
+    } else {
+        PathBuf::from(path.replace('/', std::path::MAIN_SEPARATOR_STR))
+    }
 }
 
 fn scoped_id(prefix: &str, scope: &WikiStoreScope, path: &Path, suffix: Option<&str>) -> String {

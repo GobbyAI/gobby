@@ -16,6 +16,8 @@ pub(super) fn now_iso8601() -> String {
     format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}.{micros:06}+00:00")
 }
 
+/// Convert days since Unix epoch to a UTC civil date using Howard Hinnant's
+/// Gregorian calendar algorithm.
 fn days_to_ymd(days: u64) -> (u64, u64, u64) {
     let z = days as i64 + 719468;
     let era = if z >= 0 { z } else { z - 146096 } / 146097;

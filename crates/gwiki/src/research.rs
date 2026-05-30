@@ -78,7 +78,7 @@ pub fn run_with_dispatcher(
             "research_dispatched".to_string()
         },
         message: "research session active".to_string(),
-        timestamp_ms: unix_timestamp_ms(),
+        timestamp_ms: unix_timestamp_ms()?,
     })?;
 
     for note in &options.accepted_notes {
@@ -91,7 +91,7 @@ pub fn run_with_dispatcher(
                 .map(|dispatch| dispatch.dispatch_id.clone()),
             kind: "note_accepted".to_string(),
             message: format!("accepted research note {}", accepted.title),
-            timestamp_ms: unix_timestamp_ms(),
+            timestamp_ms: unix_timestamp_ms()?,
         })?;
         session.accepted_notes.push(accepted);
     }
@@ -342,12 +342,28 @@ fn append_raw_index(vault_root: &Path, title: &str, note_path: &Path) -> Result<
         source: error.to_string(),
     })?;
     let index_path = raw_dir.join("INDEX.md");
-    if !index_path.exists() {
-        fs::write(&index_path, "# Raw sources\n\n").map_err(|error| WikiError::Io {
-            action: "initialize raw index",
-            path: Some(index_path.clone()),
-            source: error.to_string(),
-        })?;
+    match OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&index_path)
+    {
+        Ok(mut index) => {
+            index
+                .write_all(b"# Raw sources\n\n")
+                .map_err(|error| WikiError::Io {
+                    action: "initialize raw index",
+                    path: Some(index_path.clone()),
+                    source: error.to_string(),
+                })?;
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => {
+            return Err(WikiError::Io {
+                action: "initialize raw index",
+                path: Some(index_path.clone()),
+                source: error.to_string(),
+            });
+        }
     }
 
     let relative = note_path
@@ -394,11 +410,15 @@ fn slugify(title: &str) -> String {
     }
 }
 
-fn unix_timestamp_ms() -> u128 {
-    std::time::SystemTime::now()
+fn unix_timestamp_ms() -> Result<u64, WikiError> {
+    let duration = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_millis())
-        .unwrap_or_default()
+        .map_err(|error| WikiError::Config {
+            detail: format!("system clock is before Unix epoch: {error}"),
+        })?;
+    u64::try_from(duration.as_millis()).map_err(|_| WikiError::Config {
+        detail: "system timestamp exceeds u64 milliseconds".to_string(),
+    })
 }
 
 #[cfg(test)]

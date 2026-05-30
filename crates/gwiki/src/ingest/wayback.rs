@@ -70,6 +70,7 @@ fn render_wayback_markdown(
 
 fn html_to_text(bytes: &[u8]) -> String {
     let html = text_from_utf8_lossy(bytes);
+    let html = strip_script_style(&html);
     let mut output = String::new();
     let mut in_tag = false;
     for ch in html.chars() {
@@ -83,12 +84,53 @@ fn html_to_text(bytes: &[u8]) -> String {
             _ => {}
         }
     }
-    output
+    let decoded = html_escape::decode_html_entities(&output);
+    decoded
         .lines()
         .map(single_line)
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>()
         .join("\n\n")
+}
+
+fn strip_script_style(html: &str) -> String {
+    let lower = html.to_ascii_lowercase();
+    let mut output = String::new();
+    let mut cursor = 0usize;
+
+    while cursor < html.len() {
+        let rest = &lower[cursor..];
+        let script = rest.find("<script").map(|offset| (offset, "script"));
+        let style = rest.find("<style").map(|offset| (offset, "style"));
+        let Some((offset, tag)) = [script, style]
+            .into_iter()
+            .flatten()
+            .min_by_key(|(offset, _)| *offset)
+        else {
+            output.push_str(&html[cursor..]);
+            break;
+        };
+
+        let start = cursor + offset;
+        output.push_str(&html[cursor..start]);
+        let open_end = lower[start..]
+            .find('>')
+            .map(|offset| start + offset + 1)
+            .unwrap_or(html.len());
+        let close = format!("</{tag}");
+        let Some(close_start) = lower[open_end..]
+            .find(&close)
+            .map(|offset| open_end + offset)
+        else {
+            break;
+        };
+        cursor = lower[close_start..]
+            .find('>')
+            .map(|offset| close_start + offset + 1)
+            .unwrap_or(html.len());
+    }
+
+    output
 }
 
 #[cfg(test)]
@@ -100,7 +142,7 @@ mod tests {
     #[test]
     fn wayback_records_capture_metadata() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let body = b"<html><body><main>Archived page body.</main></body></html>".to_vec();
+        let body = b"<html><head><style>.hidden{display:none}</style><script>ignore()</script></head><body><main>Archived &amp; decoded page body.</main></body></html>".to_vec();
         let snapshot = WaybackCaptureSnapshot {
             original_url: "https://example.com/research".to_string(),
             capture_url: "https://web.archive.org/web/20260529123456/https://example.com/research"
@@ -124,7 +166,9 @@ mod tests {
         ));
         assert!(raw.contains("capture_timestamp: 20260529123456"));
         assert!(raw.contains("fetched_at: 2026-05-29T18:10:00Z"));
-        assert!(raw.contains("Archived page body."));
+        assert!(raw.contains("Archived & decoded page body."));
+        assert!(!raw.contains("ignore()"));
+        assert!(!raw.contains("display:none"));
 
         let manifest = SourceManifest::read(temp.path()).expect("read source manifest");
         assert_eq!(manifest.entries.len(), 1);

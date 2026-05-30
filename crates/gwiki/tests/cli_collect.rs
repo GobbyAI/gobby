@@ -28,17 +28,28 @@ fn gwiki(args: &[&str]) -> Output {
 #[test]
 fn collect_parses_scope_flags() {
     let cases = [
-        vec!["collect", "--topic", "rust"],
-        vec!["collect", "--project"],
+        vec!["--format", "text", "--quiet", "collect", "--topic", "rust"],
+        vec!["--format", "text", "--quiet", "collect", "--project"],
     ];
 
     for args in cases {
         let output = gwiki(&args);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
             output.status.success(),
             "{args:?} failed\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
+            stdout,
+            stderr
         );
+        assert!(stderr.is_empty(), "{args:?} wrote stderr:\n{stderr}");
+        assert!(stdout.contains("Collect ready"), "{stdout}");
+        assert!(stdout.contains("Accepted: 0"), "{stdout}");
+        assert!(stdout.contains("Skipped: 0"), "{stdout}");
+        if args.contains(&"--topic") {
+            assert!(stdout.contains("Scope: topic:rust"), "{stdout}");
+        } else {
+            assert!(stdout.contains("Scope: project:project-123"), "{stdout}");
+        }
     }
 }

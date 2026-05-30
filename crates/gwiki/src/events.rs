@@ -12,7 +12,7 @@ pub struct SessionEvent {
     pub dispatch_id: Option<String>,
     pub kind: String,
     pub message: String,
-    pub timestamp_ms: u128,
+    pub timestamp_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

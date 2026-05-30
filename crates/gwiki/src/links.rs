@@ -168,8 +168,9 @@ fn normalized_target_parts(target: &str) -> (String, Option<String>) {
             (path, non_empty(anchor.trim()))
         });
 
+    let url_like = is_url_like_target(path);
     let mut normalized = path.trim().replace('\\', "/");
-    if !normalized.contains("://") {
+    if !url_like {
         while let Some(rest) = normalized.strip_prefix("./") {
             normalized = rest.to_string();
         }
@@ -177,16 +178,20 @@ fn normalized_target_parts(target: &str) -> (String, Option<String>) {
             normalized = normalized.replace("//", "/");
         }
         normalized = normalized.trim_matches('/').to_string();
-    }
 
-    let lower = normalized.to_ascii_lowercase();
-    if lower.ends_with(".markdown") {
-        normalized.truncate(normalized.len() - ".markdown".len());
-    } else if lower.ends_with(".md") {
-        normalized.truncate(normalized.len() - ".md".len());
+        let lower = normalized.to_ascii_lowercase();
+        if lower.ends_with(".markdown") {
+            normalized.truncate(normalized.len() - ".markdown".len());
+        } else if lower.ends_with(".md") {
+            normalized.truncate(normalized.len() - ".md".len());
+        }
     }
 
     (normalized, anchor)
+}
+
+fn is_url_like_target(target: &str) -> bool {
+    target.contains("://") || target.starts_with("//") || target.starts_with("\\\\")
 }
 
 fn non_empty(value: &str) -> Option<String> {
@@ -198,7 +203,7 @@ fn non_empty(value: &str) -> Option<String> {
 }
 
 fn is_image_marker(markdown: &str, offset: usize) -> bool {
-    markdown[..offset].ends_with('!')
+    offset > 0 && markdown.as_bytes()[offset - 1] == b'!'
 }
 
 fn next_char_len(markdown: &str, offset: usize) -> usize {
@@ -246,5 +251,17 @@ mod tests {
         assert_eq!(links[3].normalized_target, "missing/page");
         assert_eq!(links[3].alias.as_deref(), Some("gone"));
         assert!(!links[3].resolved);
+    }
+
+    #[test]
+    fn url_like_targets_are_not_normalized_as_vault_paths() {
+        assert_eq!(
+            normalize_wiki_path("//cdn.example.test/docs/page.md"),
+            "//cdn.example.test/docs/page.md"
+        );
+        assert_eq!(
+            normalize_wiki_path(r"\\server\share\Page.md"),
+            "//server/share/Page.md"
+        );
     }
 }

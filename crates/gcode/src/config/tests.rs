@@ -19,13 +19,19 @@ fn write_project_json(root: &Path, json: serde_json::Value) {
 }
 
 fn run_git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
+    let output = Command::new("git")
         .arg("-C")
         .arg(dir)
         .args(args)
-        .status()
+        .output()
         .expect("run git");
-    assert!(status.success(), "git {:?} failed", args);
+    assert!(
+        output.status.success(),
+        "git {:?} failed\nstdout:\n{}\nstderr:\n{}",
+        args,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 fn create_linked_worktree(tmp: &tempfile::TempDir) -> (PathBuf, PathBuf) {

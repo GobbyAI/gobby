@@ -30,13 +30,26 @@ pub(super) fn filter_discovered_paths(
     } else {
         root_path.join(path_filter)
     };
-    let filter_abs = filter_abs.canonicalize().unwrap_or(filter_abs);
+    let filter_canonical = filter_abs.canonicalize().ok();
 
     paths
         .into_iter()
         .filter(|path| {
-            let path_abs = path.canonicalize().unwrap_or_else(|_| path.clone());
-            path_abs == filter_abs || path_abs.starts_with(&filter_abs)
+            let path_abs = if path.is_absolute() {
+                path.clone()
+            } else {
+                root_path.join(path)
+            };
+            if path_abs == filter_abs || path_abs.starts_with(&filter_abs) {
+                return true;
+            }
+
+            let Some(filter_canonical) = &filter_canonical else {
+                return false;
+            };
+            path_abs.canonicalize().is_ok_and(|path_canonical| {
+                path_canonical == *filter_canonical || path_canonical.starts_with(filter_canonical)
+            })
         })
         .collect()
 }
@@ -65,4 +78,22 @@ pub(super) fn epoch_secs_str() -> String {
         .unwrap_or_default()
         .as_secs();
     format!("{secs}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn filter_discovered_paths_uses_lexical_match_before_canonicalizing() {
+        let root = Path::new("/tmp/project");
+        let paths = vec![
+            PathBuf::from("/tmp/project/src/lib.rs"),
+            PathBuf::from("/tmp/project/tests/lib.rs"),
+        ];
+
+        let filtered = filter_discovered_paths(root, Path::new("src"), paths);
+
+        assert_eq!(filtered, vec![PathBuf::from("/tmp/project/src/lib.rs")]);
+    }
 }

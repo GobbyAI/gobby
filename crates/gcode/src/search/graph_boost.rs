@@ -86,9 +86,10 @@ pub fn graph_expand(ctx: &Context, seed_ids: &[String]) -> Vec<String> {
         let callers =
             code_graph::find_callers_batch(&graph_ctx, &ids_for_project, 30).unwrap_or_default();
         for r in callees.iter().chain(callers.iter()) {
-            if !r.id.is_empty() && seen.insert(r.id.clone()) {
-                ids.push(r.id.clone());
+            if r.id.is_empty() || !seen.insert(r.id.clone()) {
+                continue;
             }
+            ids.push(r.id.clone());
         }
     }
     ids

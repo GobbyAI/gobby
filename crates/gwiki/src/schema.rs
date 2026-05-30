@@ -7,6 +7,7 @@ use crate::setup::{GWIKI_POSTGRES_INDEXES, GWIKI_POSTGRES_TABLES};
 
 pub const MIGRATION_HINT: &str =
     "Run `gwiki setup` to create gwiki-owned PostgreSQL tables and indexes.";
+const DEFAULT_SCHEMA: &str = "public";
 
 #[derive(Debug, Default)]
 pub struct GwikiRuntimeSchema;
@@ -41,8 +42,9 @@ fn validate_relation(ctx: &mut ValidationContext<'_>, relation: &str) -> Result<
         ));
     };
 
+    let qualified = relation_regclass_name(relation);
     let row = pg
-        .query_one("SELECT to_regclass($1) IS NOT NULL", &[&relation])
+        .query_one("SELECT to_regclass($1) IS NOT NULL", &[&qualified])
         .map_err(|err| missing_relation_issue(relation, &err.to_string()))?;
     let exists: bool = row.get(0);
 
@@ -51,6 +53,10 @@ fn validate_relation(ctx: &mut ValidationContext<'_>, relation: &str) -> Result<
     } else {
         Err(missing_relation_issue(relation, "relation is missing"))
     }
+}
+
+fn relation_regclass_name(relation: &str) -> String {
+    format!("{DEFAULT_SCHEMA}.{relation}")
 }
 
 fn missing_relation_issue(relation: &str, detail: &str) -> SetupIssue {
@@ -108,5 +114,13 @@ mod tests {
         assert!(!source.contains("CREATE INDEX"));
         assert!(!source.contains("ALTER TABLE"));
         assert!(!source.contains("DROP TABLE"));
+    }
+
+    #[test]
+    fn relation_validation_qualifies_public_schema() {
+        assert_eq!(
+            relation_regclass_name("gwiki_documents"),
+            "public.gwiki_documents"
+        );
     }
 }

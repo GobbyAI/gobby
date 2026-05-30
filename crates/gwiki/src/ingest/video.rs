@@ -209,10 +209,7 @@ mod tests {
         )
         .expect("ingest video");
 
-        assert_eq!(
-            result.asset_path.parent(),
-            Some(PathBuf::from("raw/assets").as_path())
-        );
+        assert_eq!(result.asset_path.parent(), Some(Path::new("raw/assets")));
         assert_eq!(
             std::fs::read(temp.path().join(&result.asset_path)).expect("asset bytes"),
             snapshot.bytes

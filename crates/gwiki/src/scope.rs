@@ -179,21 +179,21 @@ fn validate_topic_name(topic: &str) -> Result<String, WikiError> {
 }
 
 fn default_hub_path() -> Result<PathBuf, WikiError> {
-    let home = std::env::var_os("HOME").ok_or_else(|| WikiError::Config {
+    let home = dirs::home_dir().ok_or_else(|| WikiError::Config {
         detail: "HOME is not set; configure GOBBY_WIKI_HUB or wiki.hub_path".to_string(),
     })?;
 
-    Ok(PathBuf::from(home).join("wiki"))
+    Ok(home.join("wiki"))
 }
 
 fn expand_home(path: &str) -> PathBuf {
     if path == "~" {
-        return std::env::var_os("HOME").map_or_else(|| PathBuf::from(path), PathBuf::from);
+        return dirs::home_dir().unwrap_or_else(|| PathBuf::from(path));
     }
 
     if let Some(rest) = path.strip_prefix("~/") {
-        return std::env::var_os("HOME")
-            .map(|home| PathBuf::from(home).join(rest))
+        return dirs::home_dir()
+            .map(|home| home.join(rest))
             .unwrap_or_else(|| PathBuf::from(path));
     }
 

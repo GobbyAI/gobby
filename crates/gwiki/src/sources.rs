@@ -305,11 +305,27 @@ fn render_entry(entry: &SourceRecord, index: &mut String) -> Result<(), WikiErro
 
 fn canonicalize_location(location: &str) -> String {
     let without_fragment = location.trim().split('#').next().unwrap_or("").trim();
-    let mut canonical = lower_url_scheme_and_authority(without_fragment);
-    while canonical.ends_with('/') && canonical != "/" && !canonical.ends_with("://") {
-        canonical.pop();
+    let canonical = lower_url_scheme_and_authority(without_fragment);
+    let (mut base, query) = split_sorted_query(&canonical);
+    while base.ends_with('/') && base != "/" && !base.ends_with("://") {
+        base.pop();
     }
-    canonical
+    match query {
+        Some(query) if !query.is_empty() => format!("{base}?{query}"),
+        _ => base,
+    }
+}
+
+fn split_sorted_query(location: &str) -> (String, Option<String>) {
+    let Some((base, query)) = location.split_once('?') else {
+        return (location.to_string(), None);
+    };
+    let mut params = query
+        .split('&')
+        .filter(|param| !param.is_empty())
+        .collect::<Vec<_>>();
+    params.sort_unstable();
+    (base.to_string(), Some(params.join("&")))
 }
 
 fn existing_index_without_manifest(index_path: &Path) -> Result<String, WikiError> {
@@ -452,5 +468,13 @@ mod tests {
         assert!(index.contains("license: Apache-2.0"));
         assert!(index.contains("ingestion_method: `manual`"));
         assert!(index.contains("compile_status: `pending`"));
+    }
+
+    #[test]
+    fn canonical_location_sorts_query_before_trimming_slash() {
+        assert_eq!(
+            canonicalize_location("https://Example.com/docs/?b=2&a=1#frag"),
+            "https://example.com/docs?a=1&b=2"
+        );
     }
 }

@@ -54,7 +54,7 @@ pub fn initialize(scope: &ResolvedScope) -> Result<(), WikiError> {
         path: Some(root.join(".gwiki/scope.json")),
         source: error.to_string(),
     })?;
-    ensure_file(
+    write_file(
         root.join(".gwiki/scope.json").as_path(),
         format!("{scope_json}\n").as_str(),
     )
@@ -89,6 +89,17 @@ fn ensure_file(path: &Path, contents: &str) -> Result<(), WikiError> {
     })
 }
 
+fn write_file(path: &Path, contents: &str) -> Result<(), WikiError> {
+    if let Some(parent) = path.parent() {
+        create_dir(parent)?;
+    }
+    std::fs::write(path, contents).map_err(|error| WikiError::Io {
+        action: "write file",
+        path: Some(path.to_path_buf()),
+        source: error.to_string(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -106,5 +117,25 @@ mod tests {
         assert!(paths.files.contains(&"raw/INDEX.md"));
         assert!(paths.files.contains(&"_index.md"));
         assert!(paths.files.contains(&"log.md"));
+    }
+
+    #[test]
+    fn initialize_overwrites_scope_file() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("wiki");
+        let scope = ResolvedScope::topic(
+            "rust".to_string(),
+            root.clone(),
+            temp.path().join("wikis.json"),
+        );
+        initialize(&scope).expect("initialize once");
+        let scope_file = root.join(".gwiki/scope.json");
+        std::fs::write(&scope_file, "stale").expect("write stale scope");
+
+        initialize(&scope).expect("initialize twice");
+
+        let contents = std::fs::read_to_string(scope_file).expect("read scope");
+        assert!(contents.contains("topic:rust"));
+        assert!(!contents.contains("stale"));
     }
 }

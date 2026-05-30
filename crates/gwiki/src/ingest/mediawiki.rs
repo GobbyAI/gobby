@@ -60,6 +60,10 @@ fn render_mediawiki_markdown(
         fields.push(("category", category.clone()));
     }
 
+    let fields = fields
+        .into_iter()
+        .map(|(key, value)| (key, single_line(&value)))
+        .collect::<Vec<_>>();
     let mut markdown = markdown_metadata(&fields);
     markdown.push_str("# ");
     markdown.push_str(title);
@@ -86,8 +90,8 @@ mod tests {
     fn mediawiki_records_revision_metadata() {
         let temp = tempfile::tempdir().expect("tempdir");
         let snapshot = MediaWikiPageSnapshot {
-            title: "Gobby".to_string(),
-            source_url: "https://wiki.example.test/wiki/Gobby".to_string(),
+            title: "Gobby\nEditor".to_string(),
+            source_url: "https://wiki.example.test/wiki/Gobby\nEditor".to_string(),
             revision_id: "123456".to_string(),
             revision_timestamp: Some("2026-05-29T12:00:00Z".to_string()),
             fetched_at: "2026-05-29T18:00:00Z".to_string(),
@@ -100,9 +104,10 @@ mod tests {
 
         let raw = std::fs::read_to_string(temp.path().join(&result.raw_path))
             .expect("raw markdown written");
-        assert!(raw.contains("# Gobby"));
+        assert!(raw.contains("# Gobby Editor"));
         assert!(raw.contains("source_kind: mediawiki"));
-        assert!(raw.contains("source_url: https://wiki.example.test/wiki/Gobby"));
+        assert!(raw.contains("source_url: https://wiki.example.test/wiki/Gobby Editor"));
+        assert!(!raw.contains("source_url: https://wiki.example.test/wiki/Gobby\nEditor"));
         assert!(raw.contains("revision_id: 123456"));
         assert!(raw.contains("revision_timestamp: 2026-05-29T12:00:00Z"));
         assert!(raw.contains("category: Software"));
@@ -112,10 +117,10 @@ mod tests {
         assert_eq!(manifest.entries.len(), 1);
         let entry = &manifest.entries[0];
         assert_eq!(entry.kind, SourceKind::MediaWiki);
-        assert_eq!(entry.title.as_deref(), Some("Gobby"));
+        assert_eq!(entry.title.as_deref(), Some("Gobby Editor"));
         assert_eq!(
             entry.citation.as_deref(),
-            Some("https://wiki.example.test/wiki/Gobby")
+            Some("https://wiki.example.test/wiki/Gobby\nEditor")
         );
         assert_eq!(entry.fetched_at, "2026-05-29T18:00:00Z");
     }

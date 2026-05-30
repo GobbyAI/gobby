@@ -149,6 +149,7 @@ pub(super) fn split_top_level(text: &str, delimiter: char) -> Vec<&str> {
 
     parts
 }
+
 pub(super) fn is_ruby_constant_name(name: &str) -> bool {
     name.chars()
         .next()
@@ -171,6 +172,7 @@ pub(super) fn dart_import_alias(text: &str) -> Option<String> {
         Some(alias.to_string())
     }
 }
+
 pub(super) fn is_elixir_alias(name: &str) -> bool {
     name.chars()
         .next()

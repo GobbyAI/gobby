@@ -263,26 +263,28 @@ fn configured_postgres_index_feeds_configured_search_when_test_database_is_avail
 
 fn cleanup_postgres_topic(database_url: &str, topic: &str) -> Result<(), postgres::Error> {
     let mut client = postgres::Client::connect(database_url, postgres::NoTls)?;
-    client.execute(
+    let mut tx = client.transaction()?;
+    tx.execute(
         "DELETE FROM gwiki_ingestions WHERE scope_kind = 'topic' AND scope_id = $1",
         &[&topic],
     )?;
-    client.execute(
+    tx.execute(
         "DELETE FROM gwiki_links WHERE scope_kind = 'topic' AND scope_id = $1",
         &[&topic],
     )?;
-    client.execute(
+    tx.execute(
         "DELETE FROM gwiki_sources WHERE scope_kind = 'topic' AND scope_id = $1",
         &[&topic],
     )?;
-    client.execute(
+    tx.execute(
         "DELETE FROM gwiki_chunks WHERE scope_kind = 'topic' AND scope_id = $1",
         &[&topic],
     )?;
-    client.execute(
+    tx.execute(
         "DELETE FROM gwiki_documents WHERE scope_kind = 'topic' AND scope_id = $1",
         &[&topic],
     )?;
+    tx.commit()?;
     Ok(())
 }
 

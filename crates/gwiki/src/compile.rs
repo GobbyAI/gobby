@@ -1,6 +1,8 @@
 use std::fs;
+use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 
+use fs2::FileExt;
 use serde::Serialize;
 
 use crate::WikiError;
@@ -183,7 +185,7 @@ pub fn prepare_handoff(
     let handoff_id = format!(
         "compile-{}-{}",
         slugify(&request.topic),
-        unix_timestamp_ms()
+        unix_timestamp_ms()?
     );
     let bundle_path = session
         .scope
@@ -250,6 +252,31 @@ pub fn prepare_handoff(
 }
 
 fn update_wiki_index(vault_root: &Path, article: &SynthesizedPage) -> Result<(), WikiError> {
+    let lock_path = vault_root.join(".gwiki").join("index.lock");
+    if let Some(parent) = lock_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| WikiError::Io {
+            action: "create wiki index lock directory",
+            path: Some(parent.to_path_buf()),
+            source: error.to_string(),
+        })?;
+    }
+    let lock = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .map_err(|error| WikiError::Io {
+            action: "open wiki index lock",
+            path: Some(lock_path.clone()),
+            source: error.to_string(),
+        })?;
+    lock.lock_exclusive().map_err(|error| WikiError::Io {
+        action: "lock wiki index",
+        path: Some(lock_path.clone()),
+        source: error.to_string(),
+    })?;
+
     let index_path = vault_root.join("_index.md");
     let mut index = if index_path.exists() {
         fs::read_to_string(&index_path).map_err(|error| WikiError::Io {
@@ -288,7 +315,9 @@ fn update_wiki_index(vault_root: &Path, article: &SynthesizedPage) -> Result<(),
         action: "write wiki index",
         path: Some(index_path),
         source: error.to_string(),
-    })
+    })?;
+    drop(lock);
+    Ok(())
 }
 
 fn write_provenance(
@@ -585,11 +614,15 @@ fn slugify(topic: &str) -> String {
     }
 }
 
-fn unix_timestamp_ms() -> u128 {
-    std::time::SystemTime::now()
+fn unix_timestamp_ms() -> Result<u64, WikiError> {
+    let duration = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_millis())
-        .unwrap_or_default()
+        .map_err(|error| WikiError::Config {
+            detail: format!("system clock is before Unix epoch: {error}"),
+        })?;
+    u64::try_from(duration.as_millis()).map_err(|_| WikiError::Config {
+        detail: "system timestamp exceeds u64 milliseconds".to_string(),
+    })
 }
 
 #[cfg(test)]

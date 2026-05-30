@@ -124,14 +124,25 @@ pub(super) fn index_overlay_files(
     outcome.scanned_files = rels.len();
     outcome.durations.discovery_ms = discovery_start.elapsed().as_millis() as u64;
 
+    let mut hash_by_rel = HashMap::new();
+    for rel in &rels {
+        let abs = root_path.join(rel);
+        if abs.exists()
+            && let Ok(hash) = hasher::file_content_hash(&abs)
+        {
+            hash_by_rel.insert(rel.clone(), hash);
+        }
+    }
+
     let mut ast_reindex = Vec::new();
     for rel in &rels {
         let Some(path) = ast_by_rel.get(rel) else {
             continue;
         };
-        if parent_files.get(rel).is_none_or(|parent| {
-            hasher::file_content_hash(path).ok() != Some(parent.content_hash.clone())
-        }) {
+        if parent_files
+            .get(rel)
+            .is_none_or(|parent| hash_by_rel.get(rel) != Some(&parent.content_hash))
+        {
             ast_reindex.push(path.clone());
         }
     }
@@ -143,17 +154,10 @@ pub(super) fn index_overlay_files(
         let abs = root_path.join(&rel);
         let parent = parent_files.get(&rel);
         let overlay = overlay_files.get(&rel);
-        let current_hash = abs
-            .exists()
-            .then(|| hasher::file_content_hash(&abs).unwrap_or_default());
+        let current_hash = hash_by_rel.get(&rel).map(String::as_str);
         let indexable = ast_by_rel.contains_key(&rel) || content_by_rel.contains_key(&rel);
-        let action = overlay_reconcile_action(
-            abs.exists(),
-            current_hash.as_deref(),
-            parent,
-            overlay,
-            indexable,
-        );
+        let action =
+            overlay_reconcile_action(abs.exists(), current_hash, parent, overlay, indexable);
 
         match action {
             OverlayReconcileAction::Index if ast_by_rel.contains_key(&rel) => {
@@ -285,7 +289,14 @@ fn git_status_relative_paths(root_path: &Path) -> anyhow::Result<HashSet<String>
         .args(["status", "--porcelain=v1", "-z", "--untracked-files=all"])
         .output()?;
     if !output.status.success() {
-        anyhow::bail!("git status failed");
+        let stderr = String::from_utf8_lossy(&output.stderr)
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        if stderr.is_empty() {
+            anyhow::bail!("git status failed");
+        }
+        anyhow::bail!("git status failed: {stderr}");
     }
 
     let mut paths = HashSet::new();

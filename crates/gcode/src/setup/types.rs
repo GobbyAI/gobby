@@ -16,6 +16,7 @@ pub struct StandaloneSetupRequest {
     pub embedding_api_key_env: Option<String>,
     pub falkordb_host: Option<String>,
     pub falkordb_port: Option<u16>,
+    #[serde(skip_serializing)]
     pub falkordb_password: Option<String>,
     pub qdrant_url: Option<String>,
 }

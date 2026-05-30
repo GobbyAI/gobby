@@ -96,7 +96,11 @@ impl ScopeSelection {
             return ScopeIdentity::topic(topic.clone());
         }
 
-        ScopeIdentity::project("current")
+        if self.project {
+            ScopeIdentity::project("current")
+        } else {
+            ScopeIdentity::global()
+        }
     }
 
     pub fn is_project(&self) -> bool {
@@ -121,6 +125,13 @@ pub struct ScopeIdentity {
 }
 
 impl ScopeIdentity {
+    pub fn global() -> Self {
+        Self {
+            kind: "global".to_string(),
+            id: "default".to_string(),
+        }
+    }
+
     pub fn project(id: impl Into<String>) -> Self {
         Self {
             kind: "project".to_string(),
@@ -164,10 +175,12 @@ mod tests {
         assert!(!global.is_project());
         assert_eq!(global.topic_name(), None);
         assert_eq!(ScopeSelection::default(), global);
+        assert_eq!(global.identity(), crate::ScopeIdentity::global());
 
         let project = ScopeSelection::project();
         assert!(project.is_project());
         assert_eq!(project.topic_name(), None);
+        assert_eq!(project.identity(), crate::ScopeIdentity::project("current"));
 
         let topic = ScopeSelection::topic("ops");
         assert!(!topic.is_project());

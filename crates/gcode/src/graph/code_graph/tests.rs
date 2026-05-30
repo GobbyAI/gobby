@@ -79,6 +79,14 @@ fn phase7_graph_read_apis_surface_typed_unavailable_service() {
 }
 
 #[test]
+fn compact_detail_truncates_on_char_boundaries() {
+    let detail = compact_detail(&format!("{} tail", "é".repeat(300)));
+
+    assert!(detail.ends_with("..."));
+    assert_eq!(detail.chars().count(), 240);
+}
+
+#[test]
 fn file_blast_rows_are_deduped_and_limited_after_merge() {
     let rows = vec![
         Row::from([

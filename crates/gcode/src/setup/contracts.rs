@@ -1,35 +1,6 @@
-pub(super) const DEFAULT_SCHEMA: &str = "public";
+pub(crate) const DEFAULT_SCHEMA: &str = "public";
 pub(super) const NAMESPACE: &str = "gcode";
 pub(super) const OVERWRITE_GUIDANCE: &str = "Rerun with `gcode setup --standalone --overwrite-code-index` to replace only gcode-owned code-index relations.";
-
-pub(super) const CODE_INDEX_TABLES: &[&str] = &[
-    "code_indexed_projects",
-    "code_indexed_files",
-    "code_symbols",
-    "code_content_chunks",
-    "code_imports",
-    "code_calls",
-];
-
-pub(super) const CODE_INDEX_INDEXES: &[&str] = &[
-    "idx_cif_project",
-    "idx_cif_graph_synced",
-    "idx_cif_vectors_synced",
-    "idx_cs_project",
-    "idx_cs_file",
-    "idx_cs_name",
-    "idx_cs_qualified",
-    "idx_cs_kind",
-    "idx_cs_parent",
-    "idx_ccc_project",
-    "idx_ccc_file",
-    "idx_ci_file",
-    "idx_cc_file",
-    "idx_cc_caller",
-    "idx_cc_target",
-    "code_symbols_search_bm25",
-    "code_content_search_bm25",
-];
 
 pub(super) struct TableContract {
     pub(super) name: &'static str,
@@ -216,3 +187,11 @@ pub(super) const INDEX_CONTRACTS: &[IndexContract] = &[
         method: "bm25",
     },
 ];
+
+pub(super) fn code_index_table_names() -> impl DoubleEndedIterator<Item = &'static str> {
+    TABLE_CONTRACTS.iter().map(|contract| contract.name)
+}
+
+pub(super) fn code_index_index_names() -> impl DoubleEndedIterator<Item = &'static str> {
+    INDEX_CONTRACTS.iter().map(|contract| contract.name)
+}

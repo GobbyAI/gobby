@@ -1,6 +1,8 @@
 use anyhow::{Context as _, bail};
 use postgres::Client;
 
+use crate::setup::DEFAULT_SCHEMA;
+
 const REQUIRED_TABLES: &[&str] = &[
     "code_indexed_projects",
     "code_indexed_files",
@@ -56,8 +58,9 @@ fn extension_exists(client: &mut Client, extension: &str) -> anyhow::Result<bool
 fn missing_relations(client: &mut Client, relations: &[&str]) -> anyhow::Result<Vec<String>> {
     let mut missing = Vec::new();
     for relation in relations {
+        let qualified = format!("{DEFAULT_SCHEMA}.{relation}");
         let row = client
-            .query_one("SELECT to_regclass($1) IS NOT NULL", &[relation])
+            .query_one("SELECT to_regclass($1) IS NOT NULL", &[&qualified])
             .with_context(|| format!("failed to check PostgreSQL relation `{relation}`"))?;
         let exists: bool = row
             .try_get(0)
@@ -67,6 +70,11 @@ fn missing_relations(client: &mut Client, relations: &[&str]) -> anyhow::Result<
         }
     }
     Ok(missing)
+}
+
+#[cfg(test)]
+fn required_relation_regclass_name(relation: &str) -> String {
+    format!("{DEFAULT_SCHEMA}.{relation}")
 }
 
 #[cfg(test)]
@@ -98,6 +106,14 @@ mod tests {
         assert!(
             MIGRATION_HINT.contains("gcode setup --standalone"),
             "missing runtime schema guidance must point standalone users at explicit setup"
+        );
+    }
+
+    #[test]
+    fn relation_validation_qualifies_public_schema() {
+        assert_eq!(
+            required_relation_regclass_name("code_symbols"),
+            "public.code_symbols"
         );
     }
 }

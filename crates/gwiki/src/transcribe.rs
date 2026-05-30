@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::ingest::{markdown_metadata, markdown_title, single_line};
+use crate::ingest::{markdown_metadata, markdown_title, path_to_string, single_line};
 use crate::sources::SourceRecord;
 use crate::{ScopeIdentity, WikiError};
 
@@ -203,10 +203,6 @@ fn render_audio_transcript_markdown(
         markdown.push('\n');
     }
     markdown
-}
-
-fn path_to_string(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
 }
 
 #[cfg(test)]

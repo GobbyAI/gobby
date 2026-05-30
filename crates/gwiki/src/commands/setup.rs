@@ -39,11 +39,7 @@ pub(crate) fn execute(selection: ScopeSelection) -> Result<CommandOutcome, WikiE
             non_interactive: true,
         };
         let report = setup.create(&mut ctx).map_err(setup_error_to_wiki_error)?;
-        let status = if report.failed.is_empty() {
-            "created"
-        } else {
-            "failed"
-        };
+        let status = setup_status(&report.created, &report.skipped, &report.failed);
         (status, report.created, report.skipped, report.failed)
     } else {
         ("ready", Vec::new(), Vec::new(), Vec::new())
@@ -86,4 +82,36 @@ Scope: {scope}
 Objects: {object_count}"
     );
     super::scoped_outcome("setup", &scope, payload, text)
+}
+
+fn setup_status(
+    created: &[String],
+    skipped: &[String],
+    failed: &[(String, String)],
+) -> &'static str {
+    if !failed.is_empty() {
+        "failed"
+    } else if !created.is_empty() {
+        "created"
+    } else if !skipped.is_empty() {
+        "already_present"
+    } else {
+        "ready"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::setup_status;
+
+    #[test]
+    fn setup_status_reports_specific_outcome() {
+        assert_eq!(
+            setup_status(&[], &[], &[("x".into(), "bad".into())]),
+            "failed"
+        );
+        assert_eq!(setup_status(&["x".into()], &[], &[]), "created");
+        assert_eq!(setup_status(&[], &["x".into()], &[]), "already_present");
+        assert_eq!(setup_status(&[], &[], &[]), "ready");
+    }
 }

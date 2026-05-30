@@ -141,6 +141,11 @@ impl MemoryWikiGraph {
         self.facts = facts;
     }
 
+    #[cfg(test)]
+    pub(crate) fn graph_facts_for_tests(&self) -> &WikiGraphFacts {
+        &self.facts
+    }
+
     pub fn backlinks(
         &self,
         scope: &SearchScope,

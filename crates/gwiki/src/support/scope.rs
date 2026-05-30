@@ -14,15 +14,38 @@ pub(crate) fn indexed_store_for_selection(
     ),
     WikiError,
 > {
+    let resolved = resolve_selection_context(selection)?;
+    let mut store = store::MemoryWikiStore::default();
+    if resolved.scope.root().is_dir() {
+        indexer::index_vault(resolved.scope.root(), &mut store)
+            .map_err(index_error_to_wiki_error)?;
+    }
+
+    Ok((
+        resolved.scope,
+        resolved.output_scope,
+        resolved.search_scope,
+        store,
+    ))
+}
+
+pub(crate) struct ResolvedSelectionContext {
+    pub(crate) scope: wiki_scope::ResolvedScope,
+    pub(crate) output_scope: ScopeIdentity,
+    pub(crate) search_scope: search::SearchScope,
+}
+
+pub(crate) fn resolve_selection_context(
+    selection: &ScopeSelection,
+) -> Result<ResolvedSelectionContext, WikiError> {
     let scope = resolve_command_scope(selection)?;
     let output_scope = resolved_scope_identity(&scope);
     let search_scope = search_scope_for_resolved(&scope);
-    let mut store = store::MemoryWikiStore::default();
-    if scope.root().is_dir() {
-        indexer::index_vault(scope.root(), &mut store).map_err(index_error_to_wiki_error)?;
-    }
-
-    Ok((scope, output_scope, search_scope, store))
+    Ok(ResolvedSelectionContext {
+        scope,
+        output_scope,
+        search_scope,
+    })
 }
 
 pub(crate) fn search_scope_for_resolved(scope: &wiki_scope::ResolvedScope) -> search::SearchScope {

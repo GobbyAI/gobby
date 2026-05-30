@@ -76,7 +76,14 @@ fn connect(database_url: &str) -> anyhow::Result<Client> {
         SslMode::Disable => config
             .connect(NoTls)
             .context("failed to connect to the Gobby PostgreSQL hub"),
-        SslMode::Prefer | SslMode::Require => connect_with_tls(&config),
+        SslMode::Prefer => match connect_with_tls(&config) {
+            Ok(client) => Ok(client),
+            Err(error) if is_no_tls_server_error(&error) => config
+                .connect(NoTls)
+                .context("failed to connect to the Gobby PostgreSQL hub"),
+            Err(error) => Err(error),
+        },
+        SslMode::Require => connect_with_tls(&config),
         _ => connect_with_tls(&config),
     }
 }
@@ -88,6 +95,17 @@ fn connect_with_tls(config: &postgres::Config) -> anyhow::Result<Client> {
     config
         .connect(MakeTlsConnector::new(connector))
         .context("failed to connect to the Gobby PostgreSQL hub")
+}
+
+fn is_no_tls_server_error(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        let message = cause.to_string().to_ascii_lowercase();
+        message.contains("server does not support tls")
+            || message.contains("server does not support ssl")
+            || message.contains("the server does not support ssl")
+            || message.contains("tls not supported")
+            || message.contains("ssl is not enabled")
+    })
 }
 
 fn run_schema_validator<C>(
@@ -163,5 +181,15 @@ mod tests {
 
         assert_eq!(require.get_ssl_mode(), SslMode::Require);
         assert_eq!(disable.get_ssl_mode(), SslMode::Disable);
+    }
+
+    #[test]
+    fn prefer_mode_fallback_is_limited_to_no_tls_server_errors() {
+        assert!(is_no_tls_server_error(&anyhow::anyhow!(
+            "server does not support TLS"
+        )));
+        assert!(!is_no_tls_server_error(&anyhow::anyhow!(
+            "certificate verify failed"
+        )));
     }
 }

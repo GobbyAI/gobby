@@ -267,14 +267,16 @@ pub(super) fn query_symbols_by_conditions(
          LIMIT {limit_placeholder}"
     );
     let refs = param_refs(&params);
-    conn.query(&sql, &refs)
-        .ok()
-        .map(|rows| {
-            rows.iter()
-                .filter_map(|row| Symbol::from_row(row).ok())
-                .collect()
-        })
-        .unwrap_or_default()
+    match conn.query(&sql, &refs) {
+        Ok(rows) => rows
+            .iter()
+            .filter_map(|row| Symbol::from_row(row).ok())
+            .collect(),
+        Err(error) => {
+            log::error!("symbol query failed: {error}");
+            Vec::new()
+        }
+    }
 }
 
 /// Sanitize user input for pg_search's BM25 query DSL.

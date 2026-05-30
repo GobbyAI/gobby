@@ -31,7 +31,9 @@ pub(crate) use read::{
 };
 
 #[cfg(test)]
-pub(crate) use lifecycle::{build_lifecycle_url, format_http_error, parse_success_payload};
+pub(crate) use lifecycle::{
+    build_lifecycle_url, compact_detail, format_http_error, parse_success_payload,
+};
 #[cfg(test)]
 pub(crate) use read::row_to_graph_result;
 

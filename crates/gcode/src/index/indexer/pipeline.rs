@@ -158,7 +158,7 @@ fn index_explicit_files_with_connection(
     outcome.scanned_files = request.explicit_files.len();
 
     let excludes: Vec<String> = DEFAULT_EXCLUDES.iter().map(|s| s.to_string()).collect();
-    let (candidates, content_only) = walker::discover_files(root_path, &excludes);
+    let (candidates, _content_only) = walker::discover_files(root_path, &excludes);
     let import_context = parser::build_import_resolution_context(root_path, &candidates);
     let mut routed_files = Vec::new();
     let mut ast_files = Vec::new();
@@ -196,6 +196,7 @@ fn index_explicit_files_with_connection(
     outcome.durations.discovery_ms = discovery_start.elapsed().as_millis() as u64;
 
     let indexing_start = Instant::now();
+    let routed_file_count = routed_files.len();
     for (abs, route) in routed_files {
         match route {
             ExplicitFileRoute::Ast => {
@@ -230,7 +231,7 @@ fn index_explicit_files_with_connection(
         root_path,
         project_id,
         start.elapsed().as_millis() as u64,
-        Some(candidates.len() + content_only.len()),
+        Some(routed_file_count),
     );
     outcome.durations.stats_ms = stats_start.elapsed().as_millis() as u64;
     outcome.durations.total_ms = start.elapsed().as_millis() as u64;

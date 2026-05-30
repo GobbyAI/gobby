@@ -36,7 +36,7 @@ pub(crate) fn memory_graph_from_store(
         .map(|source| graph::WikiGraphSource {
             scope: scope.clone(),
             source_path: source.path.clone(),
-            document_path: source.path.clone(),
+            document_path: source.document_path.clone(),
         })
         .collect::<Vec<_>>();
 
@@ -54,11 +54,7 @@ fn resolve_graph_target(
     store: &store::MemoryWikiStore,
 ) -> Option<graph::WikiGraphLinkTarget> {
     let trimmed = raw_target.trim();
-    if trimmed.is_empty()
-        || trimmed.starts_with("http://")
-        || trimmed.starts_with("https://")
-        || trimmed.starts_with("mailto:")
-    {
+    if is_external_target(trimmed) {
         return None;
     }
 
@@ -94,4 +90,57 @@ fn resolve_graph_target(
     }
 
     Some(graph::WikiGraphLinkTarget::Unresolved(trimmed.to_string()))
+}
+
+fn is_external_target(target: &str) -> bool {
+    target.is_empty()
+        || target.contains("://")
+        || target.starts_with("//")
+        || target.starts_with("\\\\")
+        || target.starts_with("mailto:")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::{MemoryWikiStore, WikiDocument, WikiDocumentKind, WikiSource};
+
+    #[test]
+    fn graph_uses_distinct_source_document_paths() {
+        let mut store = MemoryWikiStore::default();
+        store.documents.insert(
+            PathBuf::from("wiki/topics/rust.md"),
+            WikiDocument {
+                path: PathBuf::from("wiki/topics/rust.md"),
+                kind: WikiDocumentKind::Topic,
+                title: Some("Rust".to_string()),
+                content_hash: "hash".to_string(),
+                body: "# Rust".to_string(),
+            },
+        );
+        store.sources.insert(
+            PathBuf::from("raw/source.md"),
+            WikiSource {
+                path: PathBuf::from("raw/source.md"),
+                document_path: PathBuf::from("wiki/topics/rust.md"),
+                kind: WikiDocumentKind::SourceNote,
+                content_hash: "hash".to_string(),
+            },
+        );
+
+        let graph = memory_graph_from_store(&store, &search::SearchScope::topic("rust"));
+        let source = &graph.graph_facts_for_tests().sources[0];
+
+        assert_eq!(source.source_path, PathBuf::from("raw/source.md"));
+        assert_eq!(source.document_path, PathBuf::from("wiki/topics/rust.md"));
+    }
+
+    #[test]
+    fn graph_rejects_url_like_external_targets() {
+        let store = MemoryWikiStore::default();
+
+        assert!(resolve_graph_target("//cdn.example.test/page", &store).is_none());
+        assert!(resolve_graph_target(r"\\server\share\page", &store).is_none());
+        assert!(resolve_graph_target("custom://example", &store).is_none());
+    }
 }
