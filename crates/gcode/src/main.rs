@@ -1486,8 +1486,10 @@ mod tests {
 
     #[test]
     fn parse_grep_rejects_limit() {
-        let err = Cli::try_parse_from(["gcode", "grep", "needle", "src", "--limit", "5"])
-            .expect_err("--limit should be rejected");
+        let err = match Cli::try_parse_from(["gcode", "grep", "needle", "src", "--limit", "5"]) {
+            Ok(_) => panic!("--limit should be rejected"),
+            Err(err) => err,
+        };
         assert!(
             err.to_string().contains("gcode grep is indexed search"),
             "unexpected error: {err}"
@@ -1500,8 +1502,10 @@ mod tests {
 
     #[test]
     fn parse_grep_unsupported_flag_fails_before_context_resolution() {
-        let err = Cli::try_parse_from(["gcode", "grep", "needle", "--files-with-matches"])
-            .expect_err("unsupported grep flag should fail");
+        let err = match Cli::try_parse_from(["gcode", "grep", "needle", "--files-with-matches"]) {
+            Ok(_) => panic!("unsupported grep flag should fail"),
+            Err(err) => err,
+        };
 
         assert!(
             err.to_string()
