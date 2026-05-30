@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
 
-use gobby_wiki::session::{AcceptedResearchNote, ResearchScope, ResearchSession};
+use gobby_wiki::session::{AcceptedResearchNote, DaemonDispatch, ResearchScope, ResearchSession};
 use gobby_wiki::sources::{
     CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest,
 };
@@ -11,7 +11,7 @@ fn gwiki(hub: &Path, cwd: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_gwiki"))
         .args(args)
         .env("GOBBY_WIKI_HUB", hub)
-        .env("HOME", cwd)
+        .env("HOME", cwd.join("home"))
         .env_remove("GWIKI_DATABASE_URL")
         .env_remove("GOBBY_POSTGRES_DSN")
         .env_remove("GCODE_DATABASE_URL")
@@ -336,4 +336,91 @@ fn public_cli_smoke_uses_gwiki_modules() {
     let audit_payload = json_output(&audit);
     assert_eq!(audit_payload["command"], "audit");
     assert_json_path(&audit_payload["root"], &vault);
+}
+
+#[test]
+fn public_cli_smoke_continues_research_compile_audit_in_topic_scope() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let hub = tmp.path().join("hub");
+
+    let init = gwiki(
+        &hub,
+        tmp.path(),
+        &["--format", "json", "init", "--topic", "rust"],
+    );
+    assert_success(&init, "init");
+
+    let vault = hub.join("topics").join("rust");
+    let note_path = vault.join("raw/research/session-scope.md");
+    fs::create_dir_all(note_path.parent().expect("note parent")).expect("create research dir");
+    fs::write(
+        &note_path,
+        "---\ntitle: Session scope\nindexable: true\n---\n\ncitation: Gobby wiki scope resolver\nTopic research should use the configured hub.\n",
+    )
+    .expect("write research note");
+
+    let mut session = ResearchSession::new(
+        "How should gwiki resolve topic research scope?",
+        ResearchScope::topic("rust", &vault),
+        vec!["Use local smoke fixture".to_string()],
+        1,
+        Some("#300".to_string()),
+    )
+    .expect("research session");
+    session.dispatch = Some(DaemonDispatch {
+        dispatch_id: "dispatch-smoke".to_string(),
+        daemon_base_url: "http://daemon.test".to_string(),
+        agent_run_ids: vec!["run-smoke".to_string()],
+    });
+    session.accepted_notes.push(AcceptedResearchNote {
+        title: "Session scope".to_string(),
+        path: note_path,
+    });
+    session.save_checkpoint().expect("save checkpoint");
+
+    let research = gwiki(
+        &hub,
+        tmp.path(),
+        &[
+            "--format",
+            "json",
+            "--topic",
+            "rust",
+            "research",
+            "--resume",
+            "ignored on resume",
+        ],
+    );
+    assert_success(&research, "research");
+    let research_payload = json_output(&research);
+    assert_eq!(research_payload["command"], "research");
+    assert_eq!(research_payload["scope"]["kind"], "topic");
+    assert_eq!(research_payload["scope"]["id"], "rust");
+    assert!(vault.join(".gwiki/session-events.jsonl").exists());
+
+    let compile = gwiki(
+        &hub,
+        tmp.path(),
+        &["--format", "json", "--topic", "rust", "compile"],
+    );
+    assert_success(&compile, "compile");
+    let compile_payload = json_output(&compile);
+    assert_eq!(compile_payload["command"], "compile");
+    assert!(
+        compile_payload["article_path"]
+            .as_str()
+            .is_some_and(|path| path.ends_with("wiki/topics/rust.md")),
+        "{compile_payload:#}"
+    );
+
+    let audit = gwiki(
+        &hub,
+        tmp.path(),
+        &["--format", "json", "--topic", "rust", "audit"],
+    );
+    assert_success(&audit, "audit");
+    let audit_payload = json_output(&audit);
+    assert_eq!(audit_payload["command"], "audit");
+    assert_eq!(audit_payload["scope"]["kind"], "topic");
+    assert_eq!(audit_payload["scope"]["id"], "rust");
 }

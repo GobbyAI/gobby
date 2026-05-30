@@ -299,6 +299,13 @@ pub fn run(command: Command) -> Result<CommandOutcome, WikiError> {
     }
 }
 
+pub fn resolve_research_scope(
+    selection: &ScopeSelection,
+) -> Result<session::ResearchScope, WikiError> {
+    let scope = resolve_command_scope(selection)?;
+    Ok(session::ResearchScope::from(&scope))
+}
+
 fn run_setup(selection: ScopeSelection) -> Result<CommandOutcome, WikiError> {
     let scope = resolve_command_scope(&selection)?;
     let output_scope = resolved_scope_identity(&scope);
@@ -563,7 +570,8 @@ fn run_compile(
     write_intent: bool,
     scope: ScopeSelection,
 ) -> Result<CommandOutcome, WikiError> {
-    let research_scope = research::resolve_scope(&scope)?;
+    let resolved_scope = resolve_command_scope(&scope)?;
+    let research_scope = session::ResearchScope::from(&resolved_scope);
     let mut session = session::ResearchSession::load_checkpoint(research_scope.root())?;
     let topic = topic.unwrap_or_else(|| {
         session
@@ -593,7 +601,7 @@ fn run_compile(
             daemon_synthesis_available: daemon_report.synthesis.available,
         },
     )?;
-    let output_scope = research_scope_identity(&session.scope);
+    let output_scope = resolved_scope_identity(&resolved_scope);
     let payload = serde_json::json!({
         "command": "compile",
         "scope": output_scope,
