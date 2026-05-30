@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from contextlib import suppress
 from typing import Any, Protocol, cast
 
 from gobby.mcp_proxy.bundled import normalize_bundled_server_config
@@ -254,10 +253,15 @@ async def set_server_enabled(
             try:
                 manager.mcp_db_manager.update_server(name, effective_project_id, enabled=True)
             except Exception:
-                with suppress(Exception):
+                try:
                     if name in manager._connections:
                         await manager._connections[name].disconnect()
                         del manager._connections[name]
+                except Exception:
+                    LOGGER.warning(
+                        "Failed to clean up MCP server connection after enable rollback",
+                        exc_info=True,
+                    )
                 manager.health.pop(name, None)
                 raise
         config.enabled = True

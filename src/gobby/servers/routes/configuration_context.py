@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from threading import Lock
 from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import HTTPException
@@ -22,24 +23,32 @@ class ConfigurationRouteContext:
 
     def __init__(self, server: HTTPServer) -> None:
         self.server = server
+        self._service_init_lock = Lock()
 
     def get_secret_store(self) -> SecretStore:
         return SecretStore(require_hub_database(self.server.services.database))
 
     def get_config_store(self) -> ConfigStore:
         store = getattr(self.server.services, "config_store", None)
-        if not isinstance(store, ConfigStore):
-            store = ConfigStore(require_hub_database(self.server.services.database))
-            self.server.services.config_store = store
+        if isinstance(store, ConfigStore):
+            return store
+        with self._service_init_lock:
+            store = getattr(self.server.services, "config_store", None)
+            if not isinstance(store, ConfigStore):
+                store = ConfigStore(require_hub_database(self.server.services.database))
+                self.server.services.config_store = store
         return store
 
     def get_prompt_manager(self) -> LocalPromptManager:
         manager = getattr(self.server.services, "prompt_manager", None)
         if isinstance(manager, LocalPromptManager):
             return manager
-        dev_mode = getattr(self.server.services, "dev_mode", False)
-        manager = LocalPromptManager(self.server.services.database, dev_mode=dev_mode)
-        self.server.services.prompt_manager = manager
+        with self._service_init_lock:
+            manager = getattr(self.server.services, "prompt_manager", None)
+            if not isinstance(manager, LocalPromptManager):
+                dev_mode = getattr(self.server.services, "dev_mode", False)
+                manager = LocalPromptManager(self.server.services.database, dev_mode=dev_mode)
+                self.server.services.prompt_manager = manager
         return manager
 
     def get_prompt_loader(self) -> PromptLoader:
@@ -52,9 +61,10 @@ class ConfigurationRouteContext:
         config = getattr(self.server.services, "config", None)
         if config is None:
             raise HTTPException(status_code=503, detail="Config not available")
-        if not hasattr(config, "model_dump"):
+        model_dump = getattr(config, "model_dump", None)
+        if not callable(model_dump):
             raise HTTPException(status_code=503, detail="Config model not available")
-        return cast(dict[str, Any], config.model_dump(mode="json", exclude_none=True))
+        return cast(dict[str, Any], model_dump(mode="json", exclude_none=True))
 
     def set_runtime_config(
         self,

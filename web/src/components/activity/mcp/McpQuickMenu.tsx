@@ -40,7 +40,7 @@ export function McpQuickMenu({
       '[role="menuitem"]:not(:disabled)',
     );
     first?.focus();
-  }, [menu.kind, menu.serverName, menu.toolName]);
+  }, [menu.kind, menu.serverName, menu.toolName, menu.x, menu.y]);
 
   const focusMenuItem = (index: number) => {
     const items = Array.from(
@@ -81,7 +81,12 @@ export function McpQuickMenu({
 
   return (
     <>
-      <div className="session-ctx-backdrop" onClick={onClose} />
+      <div
+        className="session-ctx-backdrop"
+        role="presentation"
+        tabIndex={-1}
+        onClick={onClose}
+      />
       <div
         ref={menuRef}
         className="session-ctx-menu"

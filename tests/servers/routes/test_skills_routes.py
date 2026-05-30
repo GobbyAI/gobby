@@ -270,6 +270,31 @@ class TestImportSkill:
         assert response.json()["imported"] == 0
 
     @patch("gobby.skills.loader.SkillLoader")
+    def test_import_prefers_existing_project_relative_path_over_github(
+        self, MockLoader, client: TestClient, skill_manager, skill_project
+    ) -> None:
+        local_skill = Path(skill_project.repo_path) / "foo" / "bar"
+        local_skill.mkdir(parents=True)
+        mock_loader = MockLoader.return_value
+        parsed_mock = MagicMock()
+        parsed_mock.name = "local-skill"
+        parsed_mock.source_type = "agent"
+        mock_loader.load_skill.return_value = parsed_mock
+
+        skill_mock = MagicMock()
+        skill_mock.to_dict.return_value = {"name": "local-skill"}
+        skill_manager.create_skill.return_value = skill_mock
+
+        response = client.post(
+            "/api/skills/import",
+            json={"source": "foo/bar", "project_id": skill_project.id},
+        )
+
+        assert response.status_code == 200
+        mock_loader.load_from_github.assert_not_called()
+        mock_loader.load_skill.assert_called_once_with(str(local_skill.resolve()), validate=True)
+
+    @patch("gobby.skills.loader.SkillLoader")
     def test_import_error(self, MockLoader, client: TestClient, skill_project) -> None:
         mock_loader = MockLoader.return_value
         mock_loader.load_skill.side_effect = Exception("Fail")

@@ -232,7 +232,7 @@ class TranscriptReader:
                 session_id=session_id,
                 transcript_path=transcript_path,
             )
-        except Exception as e:
+        except (json.JSONDecodeError, OSError, ValueError) as e:
             logger.warning(f"Failed to read transcript for session {session_id}: {e}")
             return []
 
@@ -320,7 +320,7 @@ class TranscriptReader:
                     session_id=session_id,
                     transcript_path=transcript_path,
                 )
-        except Exception as e:
+        except (json.JSONDecodeError, OSError, ValueError) as e:
             logger.warning(f"Failed to read transcript for session {session_id}: {e}")
             return []
 

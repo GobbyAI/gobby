@@ -161,6 +161,14 @@ def _resolve_spawn_project_context(
     session_manager: Any | None,
     db: HubDatabase | None,
 ) -> tuple[dict[str, Any] | None, str | None]:
+    """Resolve project context for a spawned agent.
+
+    Explicit ``project_path`` wins, then the parent session project when it has
+    a usable path, then the current process project context. If the parent
+    session has project metadata but no path, keep that identity and use the
+    current path only as a workspace fallback. Project context lookup failures
+    are debug-logged and return no context/path instead of blocking spawn.
+    """
     explicit_path = _non_empty_string(project_path)
     if explicit_path:
         explicit_ctx = _context_from_project_path(explicit_path)

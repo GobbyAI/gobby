@@ -96,6 +96,8 @@ def build_resume_metadata(
                 "reasoning_status": reasoning_status,
                 "reasoning_message": reasoning_message,
                 "sandbox_config": sandbox_config.model_dump(),
+                # Resumed autonomous runs must be able to continue without a
+                # provider approval prompt after daemon-triggered recovery.
                 "approval_mode": "auto",
                 "auto_approve": True,
                 "cwd": cwd,

@@ -336,7 +336,7 @@ class TestBuildCliCommand:
             ),
         ],
     )
-    def test_resume_commands_preserve_launch_settings(self, cli, expected) -> None:
+    def test_resume_commands_preserve_launch_settings(self, cli: str, expected: list[str]) -> None:
         cmd, _env = build_cli_command(
             cli,
             prompt="continue",

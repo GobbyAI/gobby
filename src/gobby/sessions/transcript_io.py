@@ -38,13 +38,13 @@ def _decompress_archive(archive_path: str) -> tuple[str, ...]:
 
 
 def _read_jsonl_lines(path: str) -> list[str]:
-    """Read lines from a JSONL file. Runs in a thread."""
+    """Read lines from a JSONL file."""
     with open(path, encoding="utf-8") as f:
         return f.readlines()
 
 
 def _read_json_file(path: str) -> dict[str, Any]:
-    """Read and parse a JSON file. Runs in a thread."""
+    """Read and parse a JSON file."""
     with open(path, encoding="utf-8") as f:
         result: dict[str, Any] = json.load(f)
         return result

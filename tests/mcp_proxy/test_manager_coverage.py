@@ -11,12 +11,11 @@ Focuses on MCP client management operations including:
 
 import asyncio
 from datetime import datetime
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.mcp_proxy.bundled import CHROME_DEVTOOLS_NPM_PACKAGE
+from gobby.mcp_proxy.bundled import CHROME_DEVTOOLS_NPM_PACKAGE, DEFAULT_EXTERNAL_MCP_SERVERS
 from gobby.mcp_proxy.lazy import CircuitBreakerOpen, CircuitState
 from gobby.mcp_proxy.manager import MCPClientManager, truncate_tool_brief
 from gobby.mcp_proxy.models import (
@@ -39,10 +38,20 @@ def test_truncate_tool_brief_handles_non_positive_lengths() -> None:
 
 
 def test_mcp_proxy_source_does_not_register_legacy_gobby_code_server() -> None:
-    active_sources = Path("src/gobby/mcp_proxy").rglob("*.py")
-    matches = [path for path in active_sources if "gobby-code" in path.read_text()]
+    configs = [
+        MCPServerConfig(
+            project_id="project-id",
+            name=server["name"],
+            transport=server["transport"],
+            command=server.get("command"),
+            args=server.get("args"),
+            description=server.get("description"),
+        )
+        for server in DEFAULT_EXTERNAL_MCP_SERVERS
+    ]
+    manager = MCPClientManager(server_configs=configs)
 
-    assert matches == []
+    assert "gobby-code" not in manager.get_available_servers()
 
 
 @pytest.mark.asyncio

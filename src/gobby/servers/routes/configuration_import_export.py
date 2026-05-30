@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal, cast
 
 import psycopg
 from fastapi import APIRouter, HTTPException
@@ -35,6 +36,8 @@ from gobby.storage.secrets import SecretStore
 
 logger = logging.getLogger(__name__)
 
+PromptImportScope = Literal["global", "project"]
+
 _CONFIG_IMPORT_ERRORS: tuple[type[Exception], ...] = (
     TypeError,
     ValueError,
@@ -48,6 +51,18 @@ _CONFIG_EXPORT_ERRORS: tuple[type[Exception], ...] = (
     ValueError,
     json.JSONDecodeError,
 )
+
+
+@dataclass(frozen=True)
+class _ImportedPrompt:
+    key: str
+    name: str
+    content: str
+    description: str
+    version: str
+    variables: dict[str, Any] | None
+    scope: PromptImportScope
+    project_id: str | None
 
 
 def _config_import_error_detail(error: Exception) -> str:
@@ -96,6 +111,119 @@ def _validate_legacy_imported_secrets(config: dict[str, Any]) -> None:
     present, value = _legacy_falkordb_requirepass(config)
     if present and value not in (None, ""):
         validate_falkordb_secret(FALKOR_REQUIREPASS_KEY, value)
+
+
+def _prompt_export_key(record: Any) -> str:
+    """Return a non-colliding export key that preserves prompt scope."""
+    prompt_path = f"{record.name}.md"
+    if record.scope == "project":
+        return f"project/{record.project_id or 'unknown'}/{prompt_path}"
+    if record.scope == "global":
+        return f"global/{prompt_path}"
+    return prompt_path
+
+
+def _build_exported_prompt_content(record: Any) -> str:
+    content = cast(str, record.content)
+    fm_parts: list[str] = []
+    if record.description:
+        fm_parts.append(f"description: {record.description}")
+    if record.version and record.version != "1.0":
+        fm_parts.append(f'version: "{record.version}"')
+    if record.variables:
+        fm_parts.append(f"variables: {json.dumps(record.variables)}")
+
+    if not fm_parts:
+        return content
+    return "---\n" + "\n".join(fm_parts) + "\n---\n" + content
+
+
+def _parse_prompt_key(
+    key: str,
+    *,
+    default_project_id: str | None,
+) -> tuple[str, PromptImportScope, str | None]:
+    """Parse scoped export keys while preserving legacy prompt import behavior."""
+    name = key[:-3] if key.endswith(".md") else key
+    if name.startswith("global/"):
+        scoped_name = name.removeprefix("global/")
+        if not scoped_name:
+            raise HTTPException(status_code=422, detail=f"Invalid prompt key: {key}")
+        return scoped_name, "global", None
+    if name.startswith("project/"):
+        parts = name.split("/", 2)
+        if len(parts) != 3:
+            raise HTTPException(status_code=422, detail=f"Invalid prompt key: {key}")
+        _, project_id, scoped_name = parts
+        if not project_id or not scoped_name:
+            raise HTTPException(status_code=422, detail=f"Invalid prompt key: {key}")
+        return scoped_name, "project", project_id
+    return name, "project" if default_project_id else "global", default_project_id
+
+
+def _parse_imported_prompts(
+    prompts: dict[str, str] | None,
+    *,
+    default_project_id: str | None,
+) -> list[_ImportedPrompt]:
+    if not prompts:
+        return []
+
+    parsed: list[_ImportedPrompt] = []
+    for key, content in prompts.items():
+        name, scope, project_id = _parse_prompt_key(key, default_project_id=default_project_id)
+        frontmatter, body = parse_frontmatter(content)
+        description = str(frontmatter.get("description", ""))
+        version = str(frontmatter.get("version", "1.0"))
+        variables_raw = frontmatter.get("variables")
+        if variables_raw is not None and not isinstance(variables_raw, dict):
+            raise HTTPException(
+                status_code=422,
+                detail=f"Prompt variables for {key} must be an object",
+            )
+        variables = cast(dict[str, Any] | None, variables_raw)
+        if variables is not None:
+            try:
+                json.dumps(variables)
+            except (TypeError, ValueError) as e:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Prompt variables for {key} must be JSON serializable",
+                ) from e
+        stripped_body = body.strip()
+        parsed.append(
+            _ImportedPrompt(
+                key=key,
+                name=name,
+                content=stripped_body if stripped_body else content,
+                description=description,
+                version=version,
+                variables=variables,
+                scope=scope,
+                project_id=project_id,
+            )
+        )
+    return parsed
+
+
+def _existing_prompt_id(
+    manager: Any,
+    *,
+    name: str,
+    scope: PromptImportScope,
+    project_id: str | None,
+) -> str | None:
+    if project_id is None:
+        row = manager.db.fetchone(
+            "SELECT id FROM prompts WHERE name = %s AND scope = %s AND project_id IS NULL",
+            (name, scope),
+        )
+    else:
+        row = manager.db.fetchone(
+            "SELECT id FROM prompts WHERE name = %s AND scope = %s AND project_id = %s",
+            (name, scope, project_id),
+        )
+    return str(row["id"]) if row else None
 
 
 def persist_imported_config(
@@ -166,21 +294,9 @@ def register_import_export_routes(
 
             prompt_overrides: dict[str, str] = {}
             for record in overrides:
-                fm_parts: list[str] = []
-                if record.description:
-                    fm_parts.append(f"description: {record.description}")
-                if record.version and record.version != "1.0":
-                    fm_parts.append(f'version: "{record.version}"')
-                if record.variables:
-                    fm_parts.append(f"variables: {json.dumps(record.variables)}")
-
-                if fm_parts:
-                    full_content = "---\n" + "\n".join(fm_parts) + "\n---\n" + record.content
-                else:
-                    full_content = record.content
-
-                key = f"{record.name}.md"
-                prompt_overrides[key] = full_content
+                prompt_overrides[_prompt_export_key(record)] = _build_exported_prompt_content(
+                    record
+                )
 
             store = context.get_secret_store()
             secret_names = [s.to_dict() for s in store.list()]
@@ -213,8 +329,12 @@ def register_import_export_routes(
             config_secret_keys = {
                 key for key in (request.config_secret_keys or []) if isinstance(key, str) and key
             }
+            prompt_imports = _parse_imported_prompts(
+                request.prompts,
+                default_project_id=context.server.services.project_id,
+            )
 
-            if request.config_store:
+            if request.config_store is not None:
                 count = persist_imported_config(
                     flat_config=request.config_store,
                     config_store=config_store,
@@ -256,40 +376,34 @@ def register_import_export_routes(
                 summary_parts.append(f"config restored ({count} keys)")
                 config_imported = True
 
-            if request.prompts:
+            if prompt_imports:
                 manager = context.get_prompt_manager()
-                project_id = context.server.services.project_id
-                for rel_path, content in request.prompts.items():
-                    name = rel_path
-                    if name.endswith(".md"):
-                        name = name[:-3]
-
-                    frontmatter, body = parse_frontmatter(content)
-                    description = frontmatter.get("description", "")
-                    version = str(frontmatter.get("version", "1.0"))
-                    variables = frontmatter.get("variables")
-                    stripped_body = body.strip()
-
-                    existing = manager.get_override(name, project_id=project_id)
-                    if existing:
+                for imported in prompt_imports:
+                    existing_id = _existing_prompt_id(
+                        manager,
+                        name=imported.name,
+                        scope=imported.scope,
+                        project_id=imported.project_id,
+                    )
+                    if existing_id:
                         manager.update_prompt(
-                            prompt_id=existing.id,
-                            description=description,
-                            content=stripped_body if stripped_body else content,
-                            version=version,
-                            variables=variables,
+                            prompt_id=existing_id,
+                            description=imported.description,
+                            content=imported.content,
+                            version=imported.version,
+                            variables=imported.variables,
                         )
                     else:
                         manager.create_prompt(
-                            name=name,
-                            description=description,
-                            content=stripped_body if stripped_body else content,
-                            version=version,
-                            variables=variables,
-                            scope="project" if project_id else "global",
-                            project_id=project_id,
+                            name=imported.name,
+                            description=imported.description,
+                            content=imported.content,
+                            version=imported.version,
+                            variables=imported.variables,
+                            scope=imported.scope,
+                            project_id=imported.project_id,
                         )
-                summary_parts.append(f"{len(request.prompts)} prompt override(s) restored")
+                summary_parts.append(f"{len(prompt_imports)} prompt override(s) restored")
 
             response: dict[str, Any] = {
                 "success": True,

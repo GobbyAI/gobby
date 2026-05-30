@@ -883,11 +883,11 @@ def install_default_mcp_servers() -> dict[str, Any]:
                         secret_store = SecretStore(
                             open_runtime_hub_database(apply_migrations=False)
                         )
-                    except (ImportError, OSError, RuntimeError, psycopg.Error) as exc:
+                    except (ImportError, OSError, RuntimeError, psycopg.Error):
                         secret_store_init_failed = True
                         logger.warning(
                             "Failed to initialize secret store for optional MCP args",
-                            exc_info=exc,
+                            exc_info=True,
                         )
                     except Exception:
                         logger.exception(
@@ -900,10 +900,10 @@ def install_default_mcp_servers() -> dict[str, Any]:
                             secret_value = secret_store.get(secret_name)
                             if secret_value:
                                 args.extend(extra_args + [secret_value])
-                    except (OSError, RuntimeError, psycopg.Error) as exc:
+                    except (OSError, RuntimeError, psycopg.Error):
                         logger.warning(
                             "Failed to read optional MCP secret",
-                            exc_info=exc,
+                            exc_info=True,
                         )
                     except Exception:
                         logger.exception("Unexpected error reading optional MCP secret")

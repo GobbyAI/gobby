@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 
 class SaveConfigRequest(BaseModel):
@@ -44,6 +44,13 @@ class SaveUISettingsRequest(BaseModel):
     postPlanChatMode: str | None = None
     selectedProjectId: str | None = None
     selectedProvider: str | None = None
+
+    @model_validator(mode="after")
+    def require_at_least_one_setting(self) -> SaveUISettingsRequest:
+        """Reject empty payloads and all-null no-op updates."""
+        if all(value is None for value in self.model_dump().values()):
+            raise ValueError("At least one UI setting must be provided")
+        return self
 
 
 class SaveApprovalRulesRequest(BaseModel):

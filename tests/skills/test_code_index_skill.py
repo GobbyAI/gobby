@@ -1,5 +1,6 @@
 """Tests for bundled code-index skill guidance."""
 
+import os
 from pathlib import Path
 
 import pytest
@@ -9,7 +10,14 @@ from gobby.skills.parser import parse_skill_file
 pytestmark = pytest.mark.unit
 
 SKILL_PATH = Path("src/gobby/install/shared/skills/code-index/SKILL.md")
-GOBBY_CLI_SKILL_PATH = Path("/Users/josh/Projects/gobby-cli/crates/gcode/assets/SKILL.md")
+GCODE_SKILL_PATH_ENV = "GOBBY_GCODE_SKILL_PATH"
+
+
+def _gcode_bundled_skill_path() -> Path:
+    configured_path = os.environ.get(GCODE_SKILL_PATH_ENV)
+    if configured_path:
+        return Path(configured_path)
+    return SKILL_PATH
 
 
 def test_code_index_skill_documents_positional_path_filters() -> None:
@@ -49,7 +57,4 @@ def test_code_index_skill_documents_gcode_first_retrieval_workflow() -> None:
 
 def test_code_index_skill_matches_gcode_bundled_asset_when_present() -> None:
     """Keep Gobby's install template byte-identical to gcode's bundled skill."""
-    if not GOBBY_CLI_SKILL_PATH.exists():
-        pytest.skip("gobby-cli checkout is not present")
-
-    assert SKILL_PATH.read_bytes() == GOBBY_CLI_SKILL_PATH.read_bytes()
+    assert SKILL_PATH.read_bytes() == _gcode_bundled_skill_path().read_bytes()

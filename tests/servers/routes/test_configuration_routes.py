@@ -957,8 +957,42 @@ class TestExportImport:
         )
         response = client.post("/api/config/export")
         data = response.json()
-        assert "expansion/system.md" in data["prompts"]
-        assert "# Custom" in data["prompts"]["expansion/system.md"]
+        assert "global/expansion/system.md" in data["prompts"]
+        assert "# Custom" in data["prompts"]["global/expansion/system.md"]
+
+    def test_export_config_keeps_prompt_scope_keys_distinct(
+        self,
+        temp_db: Any,
+        real_config: Any,
+        task_manager: Any,
+        sample_project: dict[str, Any],
+    ) -> None:
+        project_id = sample_project["id"]
+        manager = LocalPromptManager(temp_db)
+        manager.create_prompt(
+            name="test/shared",
+            content="# Global",
+            scope="global",
+        )
+        manager.create_prompt(
+            name="test/shared",
+            content="# Project",
+            scope="project",
+            project_id=project_id,
+        )
+        server = create_http_server(
+            config=real_config,
+            database=temp_db,
+            task_manager=task_manager,
+            project_id=project_id,
+        )
+
+        response = TestClient(server.app).post("/api/config/export")
+
+        assert response.status_code == 200
+        prompts = response.json()["prompts"]
+        assert prompts["global/test/shared.md"] == "# Global"
+        assert prompts[f"project/{project_id}/test/shared.md"] == "# Project"
 
     def test_import_config_store(self, client: TestClient, temp_db: Any) -> None:
         """Import flat config_store dict writes to DB."""
@@ -974,6 +1008,18 @@ class TestExportImport:
         # Verify DB
         store = ConfigStore(temp_db)
         assert store.get("daemon_port") == 9999
+
+    def test_import_empty_config_store_clears_existing_keys(
+        self, client: TestClient, temp_db: Any
+    ) -> None:
+        store = ConfigStore(temp_db)
+        store.set("daemon_port", 5555)
+
+        response = client.post("/api/config/import", json={"config_store": {}})
+
+        assert response.status_code == 200
+        assert response.json()["summary"] == "config restored (0 keys)"
+        assert store.get("daemon_port") is None
 
     def test_import_legacy_config(self, client: TestClient, temp_db: Any) -> None:
         """Legacy nested config dict is flattened and stored to DB."""
@@ -1026,6 +1072,54 @@ class TestExportImport:
         assert override is not None
         assert override.scope == "project"
         assert override.project_id == project_id
+
+    def test_import_prompts_preserves_exported_scope_and_project_id(
+        self,
+        client: TestClient,
+        temp_db: Any,
+    ) -> None:
+        project_id = "proj-original"
+
+        response = client.post(
+            "/api/config/import",
+            json={
+                "prompts": {
+                    "global/test/scoped.md": "# Global",
+                    f"project/{project_id}/test/scoped.md": "# Project",
+                }
+            },
+        )
+
+        assert response.status_code == 200
+        manager = LocalPromptManager(temp_db)
+        global_override = manager.get_override("test/scoped")
+        project_override = manager.get_override("test/scoped", project_id=project_id)
+        assert global_override is not None
+        assert global_override.scope == "global"
+        assert global_override.content == "# Global"
+        assert project_override is not None
+        assert project_override.scope == "project"
+        assert project_override.project_id == project_id
+        assert project_override.content == "# Project"
+
+    def test_import_validates_prompts_before_config_writes(
+        self, client: TestClient, temp_db: Any
+    ) -> None:
+        store = ConfigStore(temp_db)
+        store.set("daemon_port", 5555)
+
+        response = client.post(
+            "/api/config/import",
+            json={
+                "config_store": {"daemon_port": 9999},
+                "prompts": {
+                    "test/bad.md": "---\nvariables: [bad]\n---\n# Bad",
+                },
+            },
+        )
+
+        assert response.status_code == 422
+        assert store.get("daemon_port") == 5555
 
     def test_import_nothing(self, client: TestClient) -> None:
         response = client.post("/api/config/import", json={})
@@ -1454,10 +1548,14 @@ class TestUISettings:
         assert data["theme"] == "dark"
 
     def test_put_empty_body(self, client: TestClient) -> None:
-        """PUT with no fields is a no-op."""
+        """PUT with no fields is rejected."""
         response = client.put("/api/config/ui-settings", json={})
-        assert response.status_code == 200
-        assert response.json()["ok"] is True
+        assert response.status_code == 422
+
+    def test_put_all_null_body(self, client: TestClient) -> None:
+        """PUT with only null values is rejected."""
+        response = client.put("/api/config/ui-settings", json={"fontSize": None})
+        assert response.status_code == 422
 
     def test_get_backend_error_returns_500(self, client: TestClient) -> None:
         with patch.object(ConfigStore, "get_all", side_effect=RuntimeError("db down")):

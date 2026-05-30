@@ -15,6 +15,5 @@ export function detectSourceType(source: string): SourceType {
   if (s.endsWith('.zip')) return 'zip'
   if (s.startsWith('/') || s.startsWith('./') || s.startsWith('../') || s.startsWith('~')) return 'local'
   if (s.includes('://')) return 'unknown'
-  if (s.includes('/') && !s.startsWith('http')) return 'github'
   return 'unknown'
 }

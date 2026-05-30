@@ -6,6 +6,7 @@ and hub browsing/install endpoints for the skill system.
 """
 
 import logging
+import re
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -19,6 +20,9 @@ if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
 
 logger = logging.getLogger(__name__)
+_GITHUB_OWNER_REPO_PATTERN = re.compile(
+    r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_./-]+)?(?:#[A-Za-z0-9_./-]+)?$"
+)
 
 
 # =============================================================================
@@ -87,15 +91,28 @@ def _is_github_http_url(source: str) -> bool:
     return parsed.scheme in {"http", "https"} and parsed.hostname == "github.com"
 
 
-def _is_github_source(source: str) -> bool:
+def _is_explicit_github_source(source: str) -> bool:
     if source.startswith("github:") or _is_github_http_url(source):
         return True
-    return (
-        "/" in source
-        and not source.startswith("/")
-        and "://" not in source
-        and not source.endswith(".zip")
-    )
+    return False
+
+
+def _is_local_skill_source(source: str) -> bool:
+    return source in {".", ".."} or source.startswith(("/", "./", "../", "~"))
+
+
+def _is_implicit_github_source(source: str) -> bool:
+    if _is_local_skill_source(source) or "://" in source or source.endswith(".zip"):
+        return False
+    if ".." in Path(source).parts:
+        return False
+    return bool(_GITHUB_OWNER_REPO_PATTERN.fullmatch(source))
+
+
+def _is_github_source(source: str, *, local_path_exists: bool = False) -> bool:
+    if _is_explicit_github_source(source):
+        return True
+    return _is_implicit_github_source(source) and not local_path_exists
 
 
 # =============================================================================
@@ -281,18 +298,30 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
 
             loader = SkillLoader()
             source = request_data.source.strip()
+            local_import_path: str | None = None
+            if not _is_explicit_github_source(source):
+                try:
+                    resolved = await _resolve_project_import_path(source, request_data.project_id)
+                except HTTPException:
+                    if _is_local_skill_source(source) or source.endswith(".zip"):
+                        raise
+                else:
+                    if Path(resolved).exists():
+                        local_import_path = resolved
 
             # Detect source type and load
-            if _is_github_source(source):
+            if _is_github_source(source, local_path_exists=local_import_path is not None):
                 parsed = loader.load_from_github(source, validate=True)
             elif source.endswith(".zip"):
                 parsed = loader.load_from_zip(
-                    await _resolve_project_import_path(source, request_data.project_id),
+                    local_import_path
+                    or await _resolve_project_import_path(source, request_data.project_id),
                     validate=True,
                 )
             else:
                 parsed = loader.load_skill(
-                    await _resolve_project_import_path(source, request_data.project_id),
+                    local_import_path
+                    or await _resolve_project_import_path(source, request_data.project_id),
                     validate=True,
                 )
 

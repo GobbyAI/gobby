@@ -18,9 +18,10 @@ describe('detectSourceType', () => {
     expect(detectSourceType('foo://bar/baz')).toBe('unknown')
   })
 
-  it('detects bare owner/repo sources as GitHub imports', () => {
-    expect(detectSourceType('GobbyAI/gobby')).toBe('github')
-  })
+it('leaves bare slash sources ambiguous without filesystem context', () => {
+  expect(detectSourceType('GobbyAI/gobby')).toBe('unknown')
+  expect(detectSourceType('foo/bar')).toBe('unknown')
+})
 
   it('detects zip sources before local path fallback', () => {
     expect(detectSourceType('./skills.zip')).toBe('zip')

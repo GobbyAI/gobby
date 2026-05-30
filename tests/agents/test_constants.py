@@ -1,6 +1,8 @@
 """Tests for agent constants module."""
 
+import hashlib
 import os
+import re
 from pathlib import Path
 
 import pytest
@@ -25,6 +27,12 @@ from gobby.agents.constants import (
 from gobby.agents.spawn_cache_policy import PATH_ENV_VAR, managed_tool_bin_dir
 
 pytestmark = pytest.mark.unit
+_HASH_SUFFIX_RE = re.compile(r".+-[0-9a-f]{16}$")
+
+
+def _expected_cache_leaf(prefix: str, session_id: str) -> str:
+    digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:16]
+    return f"{prefix}-{digest}"
 
 
 class TestEnvironmentVariableConstants:
@@ -94,8 +102,12 @@ class TestGetTerminalEnvVars:
         cargo_home_parts = Path(result[CARGO_HOME]).parts
         assert uv_cache_parts[-3:-1] == ("gobby", "uv-cache")
         assert uv_cache_parts[-1].startswith("sess-child-")
+        assert _HASH_SUFFIX_RE.fullmatch(uv_cache_parts[-1])
+        assert uv_cache_parts[-1] == _expected_cache_leaf("sess-child", "sess-child")
         assert cargo_home_parts[-3:-1] == ("gobby", "cargo-home")
         assert cargo_home_parts[-1].startswith("sess-child-")
+        assert _HASH_SUFFIX_RE.fullmatch(cargo_home_parts[-1])
+        assert cargo_home_parts[-1] == _expected_cache_leaf("sess-child", "sess-child")
 
     def test_uv_cache_dir_sanitizes_session_id(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """uv cache paths are writable temp paths scoped to safe session IDs."""
@@ -106,6 +118,8 @@ class TestGetTerminalEnvVars:
         result_path = Path(result)
         assert result_path.parts[-3:-1] == ("gobby", "uv-cache")
         assert result_path.parts[-1].startswith("sess-child-one-")
+        assert _HASH_SUFFIX_RE.fullmatch(result_path.parts[-1])
+        assert result_path.parts[-1] == _expected_cache_leaf("sess-child-one", "sess/child:one")
 
     def test_cargo_home_sanitizes_session_id(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Cargo home paths are writable temp paths scoped to safe session IDs."""
@@ -116,6 +130,8 @@ class TestGetTerminalEnvVars:
         result_path = Path(result)
         assert result_path.parts[-3:-1] == ("gobby", "cargo-home")
         assert result_path.parts[-1].startswith("sess-child-one-")
+        assert _HASH_SUFFIX_RE.fullmatch(result_path.parts[-1])
+        assert result_path.parts[-1] == _expected_cache_leaf("sess-child-one", "sess/child:one")
 
     def test_includes_managed_tool_bin_on_path(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

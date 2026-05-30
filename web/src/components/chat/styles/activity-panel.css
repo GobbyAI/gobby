@@ -714,6 +714,8 @@
    the container supplies the bordered code well. */
 .activity-mcp-json-block {
   max-height: 14rem;
+  overflow: auto;
+  overflow-wrap: anywhere;
   border: 1px solid var(--border);
   border-radius: 0.375rem;
   background: var(--bg-deep);

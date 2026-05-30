@@ -84,7 +84,7 @@ def _make_snippet(text: str, match_index: int, query_length: int) -> str:
 
 
 def _truncate_message(message: dict[str, Any]) -> None:
-    """Apply message truncation used by MCP transcript tools."""
+    """Mutate message content and content_blocks in place for MCP transcript tools."""
     content = message.get("content")
     if isinstance(content, str) and len(content) > TRUNCATE_LIMIT:
         message["content"] = content[:TRUNCATE_LIMIT] + "... (truncated)"
