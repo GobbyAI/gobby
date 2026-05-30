@@ -533,6 +533,20 @@ where
             source_path: result.source_path,
             snippet: result.snippet,
             score: result.score,
+            sources: result
+                .sources
+                .iter()
+                .map(|source| source.as_str().to_string())
+                .collect(),
+            explanations: result
+                .explanations
+                .iter()
+                .map(|explanation| output::SearchSourceExplanationOutput {
+                    source: explanation.source.as_str().to_string(),
+                    rank: explanation.rank,
+                    score: explanation.score,
+                })
+                .collect(),
         })
         .collect::<Vec<_>>();
     let degradations = response

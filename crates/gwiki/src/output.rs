@@ -105,6 +105,15 @@ pub struct SearchResultOutput {
     pub source_path: PathBuf,
     pub snippet: String,
     pub score: f64,
+    pub sources: Vec<String>,
+    pub explanations: Vec<SearchSourceExplanationOutput>,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct SearchSourceExplanationOutput {
+    pub source: String,
+    pub rank: usize,
+    pub score: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -215,6 +224,12 @@ mod tests {
                 source_path: "raw/INDEX.md".into(),
                 snippet: "Ownership rules move values.".to_string(),
                 score: 0.91,
+                sources: vec!["bm25".to_string()],
+                explanations: vec![SearchSourceExplanationOutput {
+                    source: "bm25".to_string(),
+                    rank: 1,
+                    score: 0.016666666666666666,
+                }],
             }],
             vec!["semantic_unavailable".to_string()],
         );
@@ -248,7 +263,13 @@ mod tests {
                     "wiki_page": "wiki/topics/ownership.md",
                     "source_path": "raw/INDEX.md",
                     "snippet": "Ownership rules move values.",
-                    "score": 0.91
+                    "score": 0.91,
+                    "sources": ["bm25"],
+                    "explanations": [{
+                        "source": "bm25",
+                        "rank": 1,
+                        "score": 0.016666666666666666
+                    }]
                 }],
                 "degradations": ["semantic_unavailable"]
             })
