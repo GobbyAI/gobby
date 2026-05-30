@@ -11,9 +11,9 @@ from gobby.agents.kill import kill_agent
 from gobby.build.branch_cleanup import delete_orphan_build_branches
 from gobby.build.control_artifacts import (
     BuildArtifactSummary,
+    classify_dirty_descendant_worktree_artifacts,
     collect_clean_artifacts,
     defer_active_agent_artifacts,
-    defer_dirty_descendant_worktree_artifacts,
     delete_artifacts,
     get_project_path,
 )
@@ -262,9 +262,11 @@ def cleanup_successful_merge_artifacts(
 
     active_agents = _active_agents(db, [task.id for task in tasks])
     artifacts_to_delete = defer_active_agent_artifacts(artifacts, active_agents)
-    artifacts_to_delete = defer_dirty_descendant_worktree_artifacts(
+    artifacts_to_delete = classify_dirty_descendant_worktree_artifacts(
+        db,
         artifacts_to_delete,
-        root_task_id=root.id,
+        root=root,
+        tasks=tasks,
         project_path=get_project_path(db, cleanup_project_id),
     )
 

@@ -25,6 +25,10 @@ def _set_project_repo(temp_db, project_id: str, tmp_path: Path) -> Path:
     return repo_path
 
 
+def _git_result(returncode: int = 0, stdout: str = "", stderr: str = "") -> SimpleNamespace:
+    return SimpleNamespace(returncode=returncode, stdout=stdout, stderr=stderr)
+
+
 def _tree(task_manager: LocalTaskManager, project_id: str) -> tuple[Task, list[Task]]:
     epic = task_manager.create_task(
         project_id=project_id,
@@ -496,6 +500,7 @@ def test_successful_merge_cleanup_defers_active_agent_worktree(
 
     assert len(artifacts) == 1
     assert artifacts[0].deferred is True
+    assert artifacts[0].cleanup_reason == "active_agent_deferred"
     assert artifacts[0].deleted is False
     assert worktree_path.exists()
     assert LocalWorktreeManager(temp_db).get(worktree.id) is not None
@@ -640,6 +645,289 @@ def test_successful_merge_cleanup_force_deletes_dirty_inactive_worktree(
     assert artifacts[0].error is None
     assert not worktree_path.exists()
     assert LocalWorktreeManager(temp_db).get(worktree.id) is None
+
+
+def test_successful_merge_cleanup_deletes_integrated_dirty_closed_descendant(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+    tmp_path: Path,
+) -> None:
+    from gobby.build import control_artifacts, controls
+    from gobby.storage.tasks import TaskArtifactManager
+    from gobby.storage.worktrees import LocalWorktreeManager
+
+    monkeypatch.setattr(controls, "LocalTaskManager", LocalTaskManager)
+    _set_project_repo(temp_db, sample_project["id"], tmp_path)
+    task_manager = LocalTaskManager(temp_db)
+    root = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Root",
+        task_type="epic",
+    )
+    child = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Closed dirty child",
+        category="code",
+        parent_task_id=root.id,
+    )
+    task_manager.close_task(child.id, force=True, closed_commit_sha="child-head")
+    TaskArtifactManager(temp_db).set_artifacts_atomic(root.id, target_branch="main")
+    worktree_path = tmp_path / "dirty-closed-integrated"
+    worktree_path.mkdir()
+    (worktree_path / "scratch.txt").write_text("scratch\n")
+    worktree = LocalWorktreeManager(temp_db).create(
+        project_id=sample_project["id"],
+        branch_name="task-dirty-closed-integrated",
+        worktree_path=str(worktree_path),
+        base_branch="main",
+        task_id=child.id,
+    )
+    TaskArtifactManager(temp_db).set_artifacts_atomic(
+        child.id,
+        worktree_path=str(worktree_path),
+        worktree_id=worktree.id,
+        base_commit_sha="base",
+    )
+    delete_calls: list[tuple[Path, bool]] = []
+
+    class IntegratedDirtyWorktreeGitManager:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def get_worktree_status(self, _path: str) -> SimpleNamespace:
+            return SimpleNamespace(
+                has_uncommitted_changes=True,
+                has_staged_changes=True,
+                has_untracked_files=True,
+            )
+
+        def run_git_command(
+            self,
+            args: list[str],
+            *,
+            cwd: str | Path | None = None,
+            timeout: int = 30,
+            check: bool = False,
+        ) -> SimpleNamespace:
+            match args:
+                case ["rev-parse", "HEAD"]:
+                    return _git_result(stdout="child-head\n")
+                case ["merge-base", "--is-ancestor", "child-head", "main"]:
+                    return _git_result()
+                case ["branch", "--show-current"]:
+                    return _git_result(stdout="task-dirty-closed-integrated\n")
+                case ["status", "--porcelain"]:
+                    return _git_result(stdout=" M app.py\nA  cached.py\n?? scratch.txt\n")
+                case ["diff", "--cached", "--stat"]:
+                    return _git_result(stdout=" cached.py | 1 +\n")
+                case ["diff", "--stat"]:
+                    return _git_result(stdout=" app.py | 2 +-\n")
+            return _git_result(returncode=1, stderr=f"unexpected git command: {args}")
+
+        def delete_worktree(self, path: Path, *, force: bool = False) -> SimpleNamespace:
+            delete_calls.append((Path(path), force))
+            (Path(path) / "scratch.txt").unlink()
+            Path(path).rmdir()
+            return SimpleNamespace(success=True, error=None, message="deleted")
+
+    monkeypatch.setattr(
+        control_artifacts,
+        "WorktreeGitManager",
+        IntegratedDirtyWorktreeGitManager,
+    )
+    monkeypatch.setattr(controls, "delete_orphan_build_branches", lambda *_args: (0, []))
+
+    artifacts = controls.cleanup_successful_merge_artifacts(
+        temp_db,
+        root.id,
+        project_id=sample_project["id"],
+    )
+
+    assert len(artifacts) == 1
+    assert artifacts[0].deleted is True
+    assert artifacts[0].cleanup_reason == "dirty_closed_integrated_cleaned"
+    assert delete_calls == [(worktree_path, True)]
+    assert not worktree_path.exists()
+    assert LocalWorktreeManager(temp_db).get(worktree.id) is None
+    stored = TaskArtifactManager(temp_db).get_artifacts(child.id)
+    assert stored.worktree_id is None
+    assert stored.worktree_path is None
+    comments = temp_db.fetchall(
+        "SELECT body FROM task_comments WHERE task_id = %s ORDER BY created_at",
+        (child.id,),
+    )
+    assert len(comments) == 1
+    body = comments[0]["body"]
+    assert "Path: " in body
+    assert "Branch: task-dirty-closed-integrated" in body
+    assert "HEAD: child-head" in body
+    assert "Target: main" in body
+    assert "?? scratch.txt" in body
+    assert "cached.py | 1 +" in body
+    assert "app.py | 2 +-" in body
+    assert "scratch.txt" in body
+
+
+def test_successful_merge_cleanup_defers_open_dirty_descendant(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+    tmp_path: Path,
+) -> None:
+    from gobby.build import control_artifacts, controls
+    from gobby.storage.tasks import TaskArtifactManager
+    from gobby.storage.worktrees import LocalWorktreeManager
+
+    monkeypatch.setattr(controls, "LocalTaskManager", LocalTaskManager)
+    _set_project_repo(temp_db, sample_project["id"], tmp_path)
+    task_manager = LocalTaskManager(temp_db)
+    root = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Root",
+        task_type="epic",
+    )
+    child = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Open dirty child",
+        category="code",
+        parent_task_id=root.id,
+    )
+    TaskArtifactManager(temp_db).set_artifacts_atomic(root.id, target_branch="main")
+    worktree_path = tmp_path / "dirty-open"
+    worktree_path.mkdir()
+    worktree = LocalWorktreeManager(temp_db).create(
+        project_id=sample_project["id"],
+        branch_name="task-dirty-open",
+        worktree_path=str(worktree_path),
+        base_branch="main",
+        task_id=child.id,
+    )
+    TaskArtifactManager(temp_db).set_artifacts_atomic(
+        child.id,
+        worktree_path=str(worktree_path),
+        worktree_id=worktree.id,
+        base_commit_sha="base",
+    )
+
+    class DirtyOpenWorktreeGitManager:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def get_worktree_status(self, _path: str) -> SimpleNamespace:
+            return SimpleNamespace(
+                has_uncommitted_changes=True,
+                has_staged_changes=False,
+                has_untracked_files=False,
+            )
+
+        def delete_worktree(self, *_args: object, **_kwargs: object) -> None:
+            raise AssertionError("open dirty descendant worktree must be deferred")
+
+    monkeypatch.setattr(control_artifacts, "WorktreeGitManager", DirtyOpenWorktreeGitManager)
+
+    artifacts = controls.cleanup_successful_merge_artifacts(
+        temp_db,
+        root.id,
+        project_id=sample_project["id"],
+    )
+
+    assert len(artifacts) == 1
+    assert artifacts[0].deferred is True
+    assert artifacts[0].cleanup_reason == "dirty_open_task_deferred"
+    assert worktree_path.exists()
+    assert LocalWorktreeManager(temp_db).get(worktree.id) is not None
+
+
+def test_successful_merge_cleanup_defers_unintegrated_dirty_closed_descendant(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+    tmp_path: Path,
+) -> None:
+    from gobby.build import control_artifacts, controls
+    from gobby.storage.tasks import TaskArtifactManager
+    from gobby.storage.worktrees import LocalWorktreeManager
+
+    monkeypatch.setattr(controls, "LocalTaskManager", LocalTaskManager)
+    _set_project_repo(temp_db, sample_project["id"], tmp_path)
+    task_manager = LocalTaskManager(temp_db)
+    root = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Root",
+        task_type="epic",
+    )
+    child = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Closed unintegrated child",
+        category="code",
+        parent_task_id=root.id,
+    )
+    task_manager.close_task(child.id, force=True, closed_commit_sha="child-head")
+    TaskArtifactManager(temp_db).set_artifacts_atomic(root.id, target_branch="main")
+    worktree_path = tmp_path / "dirty-closed-unintegrated"
+    worktree_path.mkdir()
+    worktree = LocalWorktreeManager(temp_db).create(
+        project_id=sample_project["id"],
+        branch_name="task-dirty-closed-unintegrated",
+        worktree_path=str(worktree_path),
+        base_branch="main",
+        task_id=child.id,
+    )
+    TaskArtifactManager(temp_db).set_artifacts_atomic(
+        child.id,
+        worktree_path=str(worktree_path),
+        worktree_id=worktree.id,
+        base_commit_sha="base",
+    )
+
+    class UnintegratedDirtyWorktreeGitManager:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def get_worktree_status(self, _path: str) -> SimpleNamespace:
+            return SimpleNamespace(
+                has_uncommitted_changes=False,
+                has_staged_changes=True,
+                has_untracked_files=False,
+            )
+
+        def run_git_command(
+            self,
+            args: list[str],
+            *,
+            cwd: str | Path | None = None,
+            timeout: int = 30,
+            check: bool = False,
+        ) -> SimpleNamespace:
+            match args:
+                case ["rev-parse", "HEAD"]:
+                    return _git_result(stdout="child-head\n")
+                case ["merge-base", "--is-ancestor", "child-head", "main"]:
+                    return _git_result(returncode=1)
+            return _git_result(returncode=1, stderr=f"unexpected git command: {args}")
+
+        def delete_worktree(self, *_args: object, **_kwargs: object) -> None:
+            raise AssertionError("unintegrated dirty descendant worktree must be deferred")
+
+    monkeypatch.setattr(
+        control_artifacts,
+        "WorktreeGitManager",
+        UnintegratedDirtyWorktreeGitManager,
+    )
+
+    artifacts = controls.cleanup_successful_merge_artifacts(
+        temp_db,
+        root.id,
+        project_id=sample_project["id"],
+    )
+
+    assert len(artifacts) == 1
+    assert artifacts[0].deferred is True
+    assert artifacts[0].cleanup_reason == "dirty_closed_unintegrated_deferred"
+    assert worktree_path.exists()
+    assert LocalWorktreeManager(temp_db).get(worktree.id) is not None
+    assert not temp_db.fetchall("SELECT body FROM task_comments WHERE task_id = %s", (child.id,))
 
 
 @pytest.mark.asyncio

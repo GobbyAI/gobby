@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -32,6 +34,7 @@ class BuildArtifactSummary:
     exists: bool = False
     deleted: bool = False
     deferred: bool = False
+    cleanup_reason: str | None = None
     error: str | None = None
 
 
@@ -46,30 +49,34 @@ def defer_active_agent_artifacts(
     for artifact in artifacts:
         if artifact.family == "worktree" and artifact.artifact_id in active_worktree_ids:
             artifact.deferred = True
+            artifact.cleanup_reason = "active_agent_deferred"
             continue
         if artifact.family == "clone" and artifact.artifact_id in active_clone_ids:
             artifact.deferred = True
+            artifact.cleanup_reason = "active_agent_deferred"
             continue
         artifacts_to_delete.append(artifact)
 
     return artifacts_to_delete
 
 
-def defer_dirty_descendant_worktree_artifacts(
+def classify_dirty_descendant_worktree_artifacts(
+    db: HubDatabase,
     artifacts: list[BuildArtifactSummary],
     *,
-    root_task_id: str,
+    root: Task,
+    tasks: list[Task],
     project_path: Path,
 ) -> list[BuildArtifactSummary]:
     worktree_git = WorktreeGitManager(project_path)
+    task_manager = LocalTaskManager(db)
+    tasks_by_id = {task.id: task for task in tasks}
+    target_ref = _root_cleanup_target(root, task_manager.artifacts.get_artifacts(root.id))
     artifacts_to_delete: list[BuildArtifactSummary] = []
 
     for artifact in artifacts:
-        if (
-            artifact.family != "worktree"
-            or artifact.task_id in {None, root_task_id}
-            or artifact.deferred
-        ):
+        task_id = artifact.task_id
+        if artifact.family != "worktree" or task_id in {None, root.id} or artifact.deferred:
             artifacts_to_delete.append(artifact)
             continue
         if not Path(artifact.path).exists():
@@ -81,7 +88,28 @@ def defer_dirty_descendant_worktree_artifacts(
             or status.has_staged_changes
             or status.has_untracked_files
         ):
+            if task_id is None:
+                artifacts_to_delete.append(artifact)
+                continue
+            task = tasks_by_id.get(task_id)
+            if task is None or task.closed_at is None or task.is_escalated:
+                artifact.deferred = True
+                artifact.cleanup_reason = "dirty_open_task_deferred"
+                continue
+            head = _git_text(worktree_git, ["rev-parse", "HEAD"], cwd=artifact.path)
+            if target_ref and head and _is_ancestor(worktree_git, head, target_ref):
+                evidence = _dirty_worktree_evidence(
+                    worktree_git,
+                    artifact=artifact,
+                    head=head,
+                    target_ref=target_ref,
+                )
+                _append_system_task_comment_once(db, task.id, evidence)
+                artifact.cleanup_reason = "dirty_closed_integrated_cleaned"
+                artifacts_to_delete.append(artifact)
+                continue
             artifact.deferred = True
+            artifact.cleanup_reason = "dirty_closed_unintegrated_deferred"
             continue
         artifacts_to_delete.append(artifact)
 
@@ -204,6 +232,10 @@ def delete_artifacts(
         try:
             path = Path(artifact.path)
             if artifact.family == "worktree":
+                worktree_id = artifact.artifact_id
+                if worktree_id is None:
+                    worktree = worktrees.get_by_path(str(path))
+                    worktree_id = worktree.id if worktree is not None else None
                 if path.exists():
                     worktree_result = worktree_git.delete_worktree(path, force=force)
                     if not worktree_result.success and path.exists():
@@ -213,8 +245,9 @@ def delete_artifacts(
                         prune = getattr(worktree_git, "prune_worktrees", None)
                         if callable(prune):
                             prune()
-                if artifact.artifact_id:
-                    worktrees.delete(artifact.artifact_id)
+                if worktree_id:
+                    worktrees.delete(worktree_id)
+                    task_manager.artifacts.clear_worktree_references(worktree_id)
             else:
                 if path.exists():
                     clone_result = clone_git.delete_clone(path, force=force)
@@ -289,6 +322,122 @@ def _expected_integration_path(
     return f"<missing-{family}-{artifact_id}>"
 
 
+def _root_cleanup_target(root: Task, artifacts: object) -> str | None:
+    for value in (
+        getattr(artifacts, "integration_branch", None),
+        getattr(artifacts, "target_branch", None),
+        root.closed_commit_sha,
+    ):
+        if value:
+            return str(value)
+    return None
+
+
+def _is_ancestor(worktree_git: WorktreeGitManager, head: str, target_ref: str) -> bool:
+    result = worktree_git.run_git_command(
+        ["merge-base", "--is-ancestor", head, target_ref],
+        timeout=10,
+    )
+    return result.returncode == 0
+
+
+def _dirty_worktree_evidence(
+    worktree_git: WorktreeGitManager,
+    *,
+    artifact: BuildArtifactSummary,
+    head: str,
+    target_ref: str,
+) -> str:
+    path = artifact.path
+    branch = _git_text(worktree_git, ["branch", "--show-current"], cwd=path) or "(detached)"
+    porcelain = _git_text(worktree_git, ["status", "--porcelain"], cwd=path)
+    cached_stat = _git_text(worktree_git, ["diff", "--cached", "--stat"], cwd=path)
+    unstaged_stat = _git_text(worktree_git, ["diff", "--stat"], cwd=path)
+    return "\n".join(
+        [
+            "## Closed Dirty Worktree Cleanup",
+            "",
+            "Closed task worktree was removed because its HEAD is already integrated.",
+            "",
+            f"Path: {path}",
+            f"Branch: {branch}",
+            f"HEAD: {head}",
+            f"Target: {target_ref}",
+            "",
+            "Porcelain status:",
+            _bounded_block(porcelain),
+            "",
+            "Cached diff stat:",
+            _bounded_block(cached_stat),
+            "",
+            "Unstaged diff stat:",
+            _bounded_block(unstaged_stat),
+            "",
+            "Untracked files:",
+            _bounded_block("\n".join(_untracked_names(porcelain))),
+        ]
+    )
+
+
+def _append_system_task_comment_once(db: HubDatabase, task_id: str, body: str) -> None:
+    existing = db.fetchone(
+        """
+        SELECT id
+          FROM task_comments
+         WHERE task_id = %s
+           AND author_type = 'system'
+           AND body = %s
+         LIMIT 1
+        """,
+        (task_id, body),
+    )
+    if existing is not None:
+        return
+    now = datetime.now(UTC).isoformat()
+    db.execute(
+        """
+        INSERT INTO task_comments (
+            id, task_id, parent_comment_id, author, author_type, body, created_at, updated_at
+        )
+        VALUES (%s, %s, NULL, 'build-cleanup', 'system', %s, %s, %s)
+        """,
+        (str(uuid.uuid4()), task_id, body, now, now),
+    )
+
+
+def _git_text(
+    worktree_git: WorktreeGitManager,
+    args: list[str],
+    *,
+    cwd: str | Path | None = None,
+    timeout: int = 10,
+) -> str:
+    result = worktree_git.run_git_command(args, cwd=cwd, timeout=timeout)
+    if result.returncode != 0:
+        return ""
+    return result.stdout.strip()
+
+
+def _bounded_block(value: str, *, max_lines: int = 40, max_chars: int = 2000) -> str:
+    if not value:
+        return "(none)"
+    lines = value.splitlines()
+    truncated = len(lines) > max_lines or len(value) > max_chars
+    bounded = "\n".join(lines[:max_lines])[:max_chars]
+    if truncated:
+        return f"{bounded}\n... truncated ..."
+    return bounded
+
+
+def _untracked_names(porcelain: str, *, limit: int = 20) -> list[str]:
+    names = [
+        line[3:] for line in porcelain.splitlines() if line.startswith("?? ") and len(line) > 3
+    ]
+    if len(names) > limit:
+        return [*names[:limit], "... truncated ..."]
+    return names
+
+
 def _detect_orphan_artifacts(
     db: HubDatabase,
     project_id: str,
@@ -333,9 +482,9 @@ def _detect_orphan_artifacts(
 
 __all__ = [
     "BuildArtifactSummary",
+    "classify_dirty_descendant_worktree_artifacts",
     "collect_clean_artifacts",
     "defer_active_agent_artifacts",
-    "defer_dirty_descendant_worktree_artifacts",
     "delete_artifacts",
     "get_project_path",
 ]
