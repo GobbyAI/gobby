@@ -85,6 +85,7 @@ class CronExecutor:
                 status="completed",
                 completed_at=completed_at,
                 output=output_text[:10000] if len(output_text) > 10000 else output_text,
+                error=None,
             )
             return updated or run
 

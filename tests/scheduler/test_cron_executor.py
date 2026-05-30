@@ -231,9 +231,10 @@ async def test_execute_unknown_action_type(
 async def test_execute_updates_run_status(
     cron_storage: CronJobStorage, executor: CronExecutor
 ) -> None:
-    """Execute updates run to 'running' then 'completed'."""
+    """Execute updates run to 'completed' and clears stale errors."""
     job = _make_job(cron_storage, "shell", {"command": "echo", "args": ["test"]})
     run = cron_storage.create_run(job.id)
+    cron_storage.update_run(run.id, error="Cron run exceeded running timeout (60s)")
     assert run.status == "pending"
 
     await executor.execute(job, run)
@@ -243,6 +244,7 @@ async def test_execute_updates_run_status(
     assert final.status == "completed"
     assert final.started_at is not None
     assert final.completed_at is not None
+    assert final.error is None
 
 
 @pytest.mark.asyncio
