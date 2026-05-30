@@ -39,6 +39,7 @@ _FALKOR_REQUIREPASS_KEY = "databases.falkordb.requirepass"
 _FALKOR_RESTART_HINT = (
     "Run `gobby restart` for the new FalkorDB password to take effect on the running container."
 )
+_UNEXPECTED_CONFIG_ERROR = "Internal config error"
 
 
 def _mask_secret_value(key: str, value: Any) -> Any:
@@ -219,9 +220,9 @@ def create_config_registry(
             return result
         except ValueError as e:
             return {"success": False, "error": str(e)}
-        except Exception as e:
-            logger.exception(f"Failed to set config key '{key}'")
-            return {"success": False, "error": str(e)}
+        except Exception:
+            logger.exception("Failed to set config key '%s'", key)
+            return {"success": False, "error": _UNEXPECTED_CONFIG_ERROR}
 
     @registry.tool(
         name="set_config_batch",
@@ -324,9 +325,9 @@ def create_config_registry(
             return result
         except ValueError as e:
             return {"success": False, "error": str(e)}
-        except Exception as e:
+        except Exception:
             logger.exception("Failed to set config batch")
-            return {"success": False, "error": str(e)}
+            return {"success": False, "error": _UNEXPECTED_CONFIG_ERROR}
 
     @registry.tool(
         name="delete_config",
@@ -395,9 +396,9 @@ def create_config_registry(
             }
             _add_restart_metadata(result, before_config, new_config)
             return result
-        except Exception as e:
-            logger.exception(f"Failed to delete config key '{key}'")
-            return {"success": False, "error": str(e)}
+        except Exception:
+            logger.exception("Failed to delete config key '%s'", key)
+            return {"success": False, "error": _UNEXPECTED_CONFIG_ERROR}
 
     @registry.tool(
         name="list_config_keys",
@@ -454,7 +455,8 @@ def create_config_registry(
                 "total_section_keys": len(section_defaults),
                 "keys_inserted": sorted(missing.keys()),
             }
-        except Exception as e:
-            return {"success": False, "error": str(e)}
+        except Exception:
+            logger.exception("Failed to ensure config defaults for section '%s'", section)
+            return {"success": False, "error": _UNEXPECTED_CONFIG_ERROR}
 
     return registry

@@ -35,14 +35,15 @@ class _AgentRunRuntimeMixin:
     ) -> AgentRun | None:
         """Replace the daemon-stop resume launch snapshot for a run."""
         now = utc_now_iso()
-        cursor = self.db.execute(
-            """
-            UPDATE agent_runs
-            SET resume_metadata_json = %s, updated_at = %s
-            WHERE id = %s
-            """,
-            (dump_resume_metadata(resume_metadata_json), now, run_id),
-        )
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE agent_runs
+                SET resume_metadata_json = %s, updated_at = %s
+                WHERE id = %s
+                """,
+                (dump_resume_metadata(resume_metadata_json), now, run_id),
+            )
         if not _positive_rowcount(cursor):
             return None
         return self.get(run_id)

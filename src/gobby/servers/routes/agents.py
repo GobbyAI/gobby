@@ -252,15 +252,21 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
         try:
             from gobby.workflows.definitions import AgentDefinitionBody
 
-            manager = _get_manager()
-            rows = manager.list_all(workflow_type="agent", project_id=project_id)
-            row = next((r for r in rows if r.name == name), None)
-            if not row:
-                raise HTTPException(status_code=404, detail=f"Agent definition '{name}' not found")
+            def build_export() -> str:
+                manager = _get_manager()
+                rows = manager.list_all(workflow_type="agent", project_id=project_id)
+                row = next((r for r in rows if r.name == name), None)
+                if not row:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Agent definition '{name}' not found",
+                    )
 
-            body = AgentDefinitionBody.model_validate_json(row.definition_json)
-            data = body.model_dump(exclude_none=True)
-            yaml_content = yaml.dump(data, default_flow_style=False, sort_keys=False)
+                body = AgentDefinitionBody.model_validate_json(row.definition_json)
+                data = body.model_dump(exclude_none=True)
+                return yaml.dump(data, default_flow_style=False, sort_keys=False)
+
+            yaml_content = await server.run_db(build_export)
 
             return Response(
                 content=yaml_content,

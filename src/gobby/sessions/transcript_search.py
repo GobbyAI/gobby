@@ -22,6 +22,8 @@ def search_rendered_messages(
     full_content: bool = False,
 ) -> list[dict[str, Any]]:
     """Return message matches for a case-insensitive substring query."""
+    if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
+        return []
     needle = query.casefold()
     if not needle:
         return []
@@ -42,7 +44,7 @@ def search_rendered_messages(
             {
                 "session_id": session_id,
                 "message": result_message,
-                "snippet": _make_snippet(search_text, match_index, len(query)),
+                "snippet": _make_snippet(search_text, match_index, len(needle)),
             }
         )
         if len(results) >= limit:

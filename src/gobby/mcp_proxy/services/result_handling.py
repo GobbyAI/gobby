@@ -105,7 +105,7 @@ async def apply_before_tool_enforcement(
         tool_name=tool_name,
         arguments=arguments,
     )
-    event_handlers = getattr(hook_manager, "_event_handlers", None)
+    event_handlers = getattr(hook_manager, "event_handlers", None)
     if event_handlers is not None:
         from gobby.hooks.session_activation import reconcile_session_activation
 

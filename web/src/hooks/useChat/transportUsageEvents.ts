@@ -20,6 +20,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function omitNullish<T extends object>(value: T): Partial<T> {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, entryValue]) => entryValue !== null && entryValue !== undefined),
+  ) as Partial<T>;
+}
+
 function isSessionUsageUpdatedMessage(
   data: unknown,
 ): data is SessionUsageUpdatedMessage {
@@ -111,7 +117,7 @@ export function handleSessionUsageUpdated(
         context_usage_ratio: prev.contextUsageRatio,
         context_usage_source: prev.contextUsageSource,
         context_usage_confidence: prev.contextUsageConfidence,
-        ...update,
+        ...omitNullish(update),
       }),
     );
   }

@@ -64,6 +64,7 @@ class _DirectToolService:
         self._hook_manager = SimpleNamespace(
             _workflow_handler=workflow_handler,
             _session_manager=session_manager,
+            event_handlers=event_handlers,
             _event_handlers=event_handlers,
             _database=db,
         )

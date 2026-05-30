@@ -96,6 +96,7 @@ def _validate_imported_secret_values(secret_values: dict[str, Any]) -> dict[str,
 
 
 def _legacy_falkordb_requirepass(config: dict[str, Any]) -> tuple[bool, Any]:
+    """Return whether a legacy FalkorDB password was present and its raw value."""
     if FALKOR_REQUIREPASS_KEY in config:
         return True, config[FALKOR_REQUIREPASS_KEY]
     databases = config.get("databases")

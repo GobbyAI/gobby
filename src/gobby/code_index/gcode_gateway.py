@@ -304,6 +304,7 @@ __all__ = [
     "GcodeCommandError",
     "GcodeGateway",
     "GcodeGatewayError",
+    "GcodeIndexedFileNotFoundError",
     "GcodeJsonError",
     "GcodeProjectNotFoundError",
     "GcodeTimeoutError",

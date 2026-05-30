@@ -92,11 +92,11 @@ def count_option_line_count(parts: list[str]) -> int | None:
             return None
         if part.startswith("--lines="):
             return _positive_int(part.split("=", maxsplit=1)[1])
-        if part.startswith("-n") and len(part) > 2:
-            return _positive_int(part[2:])
-        if re.fullmatch(r"-\d+", part):
-            return _positive_int(part[1:])
-    return 10
+    if part.startswith("-n") and len(part) > 2:
+        return _positive_int(part[2:])
+    if re.fullmatch(r"-\d+", part):
+        return _positive_int(part[1:])
+    return None
 
 
 def source_read_navigation_metadata(

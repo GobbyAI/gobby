@@ -315,7 +315,7 @@ export function ActivityMcpTab({
         )}
         style={selection ? { height: `${topHeight}%` } : undefined}
       >
-        <div className="activity-mcp-tree" role="tree" aria-label="MCP servers and tools">
+        <div className="activity-mcp-tree" role="list" aria-label="MCP servers and tools">
           {filteredServers.length === 0 ? (
             <ActivityPanelEmpty
               heading="MCP"
@@ -340,13 +340,7 @@ export function ActivityMcpTab({
               return (
                 <div className="activity-mcp-server-group" key={server.name}>
                   <div
-                    role="treeitem"
-                    aria-level={1}
-                    aria-expanded={expanded}
-                    aria-selected={
-                      selection?.kind === "server" &&
-                      selection.serverName === server.name
-                    }
+                    role="listitem"
                     className={cn(
                       "activity-mcp-row activity-mcp-server-row",
                       disabled && "activity-mcp-server-row--disabled",
@@ -358,6 +352,8 @@ export function ActivityMcpTab({
                     <button
                       type="button"
                       className="activity-mcp-row-main"
+                      aria-label={`Toggle ${server.name} server tools`}
+                      aria-expanded={expanded}
                       onClick={() => {
                         setSelection({ kind: "server", serverName: server.name });
                         toggleServer(server.name);
@@ -397,20 +393,14 @@ export function ActivityMcpTab({
                     </button>
                   </div>
                   {expanded && (
-                    <div role="group">
+                    <div role="list" aria-label={`${server.name} tools`}>
                       {visibleTools.length === 0 ? (
                         <div className="activity-mcp-empty-row">No tools available</div>
                       ) : (
                         visibleTools.map((tool) => (
                           <div
                             key={`${server.name}.${tool.name}`}
-                            role="treeitem"
-                            aria-level={2}
-                            aria-selected={
-                              selection?.kind === "tool" &&
-                              selection.serverName === server.name &&
-                              selection.toolName === tool.name
-                            }
+                            role="listitem"
                             className={cn(
                               "activity-mcp-row activity-mcp-tool-row",
                               selection?.kind === "tool" &&

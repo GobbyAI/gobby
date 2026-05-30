@@ -34,6 +34,7 @@ from gobby.utils.session_refs import try_resolve_session_field
 if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
     from gobby.events.completion_registry import CompletionEventRegistry
+    from gobby.hooks.event_handlers import EventHandlers
     from gobby.llm.service import LLMService
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.sessions import SessionManager
@@ -200,6 +201,11 @@ class HookManager:
     def _start_health_check_monitoring(self) -> None:
         """Start background daemon health check monitoring."""
         self._health_monitor.start()
+
+    @property
+    def event_handlers(self) -> "EventHandlers":
+        """Public access to hook event handlers for route and service integrations."""
+        return self._event_handlers
 
     def _get_cached_daemon_status(self) -> tuple[bool, str | None, str, str | None]:
         """Get cached daemon status without making an HTTP call."""

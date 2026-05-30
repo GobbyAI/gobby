@@ -5,7 +5,7 @@ indexing are handled by gcode (Rust CLI).
 """
 
 from gobby.code_index.context import CodeIndexContext
-from gobby.code_index.gcode_gateway import GcodeGateway
+from gobby.code_index.gcode_gateway import GcodeGateway, GcodeIndexedFileNotFoundError
 from gobby.code_index.models import (
     CallRelation,
     ImportRelation,
@@ -21,6 +21,7 @@ __all__ = [
     "CallRelation",
     "CodeIndexContext",
     "GcodeGateway",
+    "GcodeIndexedFileNotFoundError",
     "ImportRelation",
     "IndexedFile",
     "IndexedProject",

@@ -103,11 +103,11 @@ function renderMcp(props = makeProps()) {
   return render(<Harness props={props}><ActivityActionButtons /></Harness>);
 }
 
-function treeItemFor(text: string) {
-  const tree = screen.getByRole("tree", { name: "MCP servers and tools" });
-  return within(tree)
+function listItemFor(text: string) {
+  const list = screen.getByRole("list", { name: "MCP servers and tools" });
+  return within(list)
     .getAllByText(text)[0]
-    .closest('[role="treeitem"]') as HTMLElement;
+    .closest('[role="listitem"]') as HTMLElement;
 }
 
 describe("ActivityMcpTab", () => {
@@ -120,12 +120,20 @@ describe("ActivityMcpTab", () => {
     renderMcp();
 
     const serverRow = await screen.findByText("gobby-tasks");
-    expect(treeItemFor("gobby-tasks")).toHaveAttribute("aria-expanded", "false");
+    expect(
+      within(listItemFor("gobby-tasks")).getByRole("button", {
+        name: "Toggle gobby-tasks server tools",
+      }),
+    ).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByText("list_tasks")).toBeNull();
 
     await user.click(serverRow);
 
-    expect(treeItemFor("gobby-tasks")).toHaveAttribute("aria-expanded", "true");
+    expect(
+      within(listItemFor("gobby-tasks")).getByRole("button", {
+        name: "Toggle gobby-tasks server tools",
+      }),
+    ).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText("list_tasks")).toBeInTheDocument();
   });
 

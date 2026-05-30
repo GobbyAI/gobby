@@ -134,6 +134,11 @@ def prepare_terminal_spawn(
         claimed_session_id: Session that owned the task when the run was created.
         timeout_seconds: Optional timeout for the agent run in seconds.
         sandbox_enabled: Whether the spawned runtime should be recorded as sandboxed.
+        requested_reasoning_effort: Optional raw reasoning effort requested by the caller.
+        effective_reasoning_effort: Optional provider-normalized reasoning effort.
+        reasoning_required: Whether reasoning support was required by the caller.
+        reasoning_status: Resolution status for reasoning effort selection.
+        reasoning_message: Optional explanation of reasoning effort resolution.
         resume_metadata_json: Optional daemon-stop resume metadata snapshot to persist
             on the created agent run.
 

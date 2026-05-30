@@ -137,8 +137,8 @@ async def _call_github_mcp(server: HTTPServer, tool_name: str, arguments: dict[s
                         return item.text
         return result
     except Exception as e:
-        logger.warning(f"GitHub MCP call failed ({tool_name}): {e}", exc_info=True)
-        raise HTTPException(502, f"GitHub MCP call failed: {e}") from e
+        logger.warning("GitHub MCP call failed (%s): %s", tool_name, e, exc_info=True)
+        raise HTTPException(502, "GitHub MCP call failed") from e
 
 
 def _parse_github_repo(github_repo: str | None) -> tuple[str, str] | None:
@@ -343,7 +343,8 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
         except subprocess.TimeoutExpired:
             raise HTTPException(504, "Branch checkout timed out") from None
         except Exception as e:
-            raise HTTPException(500, f"Failed to checkout branch: {e}") from e
+            logger.warning("Failed to checkout branch: %s", e, exc_info=True)
+            raise HTTPException(500, "Failed to checkout branch") from e
 
         _delete_cached(f"branches:{project_id or 'default'}")
         return {
@@ -467,7 +468,8 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
         except subprocess.TimeoutExpired:
             raise HTTPException(504, "Diff computation timed out") from None
         except Exception as e:
-            raise HTTPException(500, f"Failed to compute diff: {e}") from e
+            logger.warning("Failed to compute diff: %s", e, exc_info=True)
+            raise HTTPException(500, "Failed to compute diff") from e
 
     @router.get("/prs")
     async def list_pull_requests(
@@ -521,11 +523,11 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
             raise
         except Exception as e:
             logger.warning("Failed to list PRs: %s", e, exc_info=True)
-            return {
-                "prs": [],
-                "github_available": True,
-                "error": f"Failed to list pull requests: {e}",
-            }
+        return {
+            "prs": [],
+            "github_available": True,
+            "error": "Failed to list pull requests",
+        }
 
     @router.get("/prs/{number}")
     async def get_pull_request(
@@ -578,11 +580,11 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
             return {"checks": checks if isinstance(checks, list) else [], "status": "ok"}
         except Exception as e:
             logger.warning("Failed to get PR checks: %s", e, exc_info=True)
-            return {
-                "checks": [],
-                "status": "error",
-                "error": f"Failed to get pull request checks: {e}",
-            }
+        return {
+            "checks": [],
+            "status": "error",
+            "error": "Failed to get pull request checks",
+        }
 
     @router.get("/issues")
     async def list_issues(
@@ -642,11 +644,11 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
             raise
         except Exception as e:
             logger.warning("Failed to list issues: %s", e, exc_info=True)
-            return {
-                "issues": [],
-                "github_available": True,
-                "error": f"Failed to list issues: {e}",
-            }
+        return {
+            "issues": [],
+            "github_available": True,
+            "error": "Failed to list issues",
+        }
 
     @router.get("/issues/{number}")
     async def get_issue(
@@ -724,11 +726,11 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
             return result
         except Exception as e:
             logger.warning("Failed to list CI/CD runs: %s", e, exc_info=True)
-            return {
-                "runs": [],
-                "github_available": True,
-                "error": f"Failed to list CI/CD runs: {e}",
-            }
+        return {
+            "runs": [],
+            "github_available": True,
+            "error": "Failed to list CI/CD runs",
+        }
 
     # --- Worktrees ---
 

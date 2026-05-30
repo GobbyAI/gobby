@@ -43,6 +43,19 @@ def _mcp_manager_is_connected(mcp_manager: Any, name: str) -> bool:
     return isinstance(connections, dict) and name in connections
 
 
+def _current_project_id() -> str | None:
+    from gobby.utils.project_context import get_project_context
+
+    try:
+        project_ctx = get_project_context()
+    except (LookupError, OSError, RuntimeError, ValueError):
+        return None
+    if not project_ctx:
+        return None
+    project_id = project_ctx.get("id")
+    return project_id if isinstance(project_id, str) and project_id else None
+
+
 async def list_mcp_servers(
     internal_manager: "InternalToolRegistryManager | None" = Depends(get_internal_manager),
     mcp_manager: "MCPClientManager | None" = Depends(get_mcp_manager),
@@ -322,7 +335,7 @@ async def remove_mcp_server(
                 "response_time_ms": response_time_ms,
             }
 
-        await server.mcp_manager.remove_server(name)
+        await server.mcp_manager.remove_server(name, project_id=_current_project_id())
 
         # Broadcast MCP server removed event
         ws = server.services.websocket_server
@@ -384,7 +397,11 @@ async def set_mcp_server_enabled(
                 "response_time_ms": response_time_ms,
             }
 
-        result = await server.mcp_manager.set_server_enabled(name, enabled)
+        result = await server.mcp_manager.set_server_enabled(
+            name,
+            enabled,
+            project_id=_current_project_id(),
+        )
 
         # Broadcast MCP server updated event
         ws = server.services.websocket_server

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 SOFT_CONTEXT_RATIO = 0.65
 STRONG_CONTEXT_RATIO = 0.80
@@ -82,7 +85,8 @@ def _load_session(session_manager: Any | None, session_id: str) -> Any | None:
         return None
     try:
         return session_manager.get(session_id)
-    except Exception:
+    except Exception as exc:
+        logger.debug("Failed to load session %s for context usage observer: %s", session_id, exc)
         return None
 
 

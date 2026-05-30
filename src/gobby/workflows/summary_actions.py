@@ -325,7 +325,7 @@ def schedule_tmux_window_rename(
         logger.debug("Failed to run tmux rename synchronously", exc_info=True)
 
 
-def _synthesize_fallback_title(session: Any, terminal_context: dict[str, Any]) -> str:
+def _synthesize_fallback_title(session: object, terminal_context: dict[str, Any]) -> str:
     """Synthesize a fallback title from terminal context when title is empty.
 
     Prefers basename from terminal context fields (cwd, project_path, workspace_path,

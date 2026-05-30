@@ -204,8 +204,13 @@ CREATE TABLE sessions (
     sandbox_policy_hash TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT sessions_parent_session_not_self
-        CHECK (parent_session_id IS NULL OR parent_session_id <> id)
+CONSTRAINT sessions_parent_session_not_self
+CHECK (parent_session_id IS NULL OR parent_session_id <> id),
+CONSTRAINT sessions_context_usage_ratio_range
+CHECK (
+    context_usage_ratio IS NULL
+    OR (context_usage_ratio >= 0 AND context_usage_ratio <= 1)
+)
 );
 
 CREATE INDEX idx_sessions_external_id ON sessions(external_id);

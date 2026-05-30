@@ -179,6 +179,19 @@ def test_self_parent_sessions_migration_and_baseline_define_invariant() -> None:
     assert invariant in baseline
 
 
+def test_context_usage_ratio_range_migration_and_baseline_define_invariant() -> None:
+    migration = (
+        SRC_ROOT / "storage" / "migrations" / "269_context_usage_ratio_range.sql"
+    ).read_text(encoding="utf-8")
+    baseline = (SRC_ROOT / "storage" / "postgres_baseline_schema.sql").read_text(encoding="utf-8")
+    invariant = "context_usage_ratio >= 0 AND context_usage_ratio <= 1"
+
+    assert "sessions_context_usage_ratio_range" in migration
+    assert invariant in migration
+    assert "sessions_context_usage_ratio_range" in baseline
+    assert invariant in baseline
+
+
 def test_migration_helpers_are_not_imported_by_runtime_storage_paths() -> None:
     violations: list[str] = []
 

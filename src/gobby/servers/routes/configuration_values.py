@@ -7,6 +7,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 
 from gobby.config.app import DaemonConfig, deep_merge
 from gobby.servers.routes.configuration_context import ConfigurationRouteContext
@@ -150,8 +151,11 @@ def register_value_routes(router: APIRouter, context: ConfigurationRouteContext)
             return JSONResponse(content={"valid": True, "errors": []})
         except HTTPException:
             raise
-        except Exception as e:
+        except (TypeError, ValueError, ValidationError) as e:
             return JSONResponse(content={"valid": False, "errors": [str(e)]})
+        except Exception as e:
+            logger.error("Unexpected config validation failure: %s", e, exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to validate configuration") from e
 
     @router.post("/values/reset")
     async def reset_config() -> JSONResponse:

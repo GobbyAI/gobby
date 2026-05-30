@@ -184,6 +184,7 @@ class FakeMCPManager:
         self.health: dict[str, FakeServerHealth] = {}
         self._configs: dict[str, FakeServerConfig] = {}
         self.project_id = "test-project"
+        self.last_project_id: str | None = None
         self._sessions: dict[str, FakeMCPSession] = {}
 
     def has_server(self, server_name: str) -> bool:
@@ -215,8 +216,9 @@ class FakeMCPManager:
         self._configs[config.name] = config
         self.server_configs.append(config)
 
-    async def remove_server(self, name: str) -> None:
+    async def remove_server(self, name: str, project_id: str | None = None) -> None:
         """Remove a server configuration."""
+        self.last_project_id = project_id
         if name not in self._configs:
             raise ValueError(f"Server not found: {name}")
         del self._configs[name]
@@ -226,6 +228,7 @@ class FakeMCPManager:
         self, name: str, enabled: bool, project_id: str | None = None
     ) -> dict[str, Any]:
         """Toggle a server's enabled flag, mirroring the real manager."""
+        self.last_project_id = project_id
         if name not in self._configs:
             raise ValueError(f"Server not found: {name}")
         self._configs[name].enabled = enabled
@@ -1389,12 +1392,22 @@ class TestRemoveMCPServer:
         mcp_manager.remove_server = AsyncMock()
         server.mcp_manager = mcp_manager
 
-        with TestClient(server.app) as client:
+        with (
+            TestClient(server.app) as client,
+            patch(
+                "gobby.utils.project_context.get_project_context",
+                return_value={"id": "route-project"},
+            ),
+        ):
             response = client.delete("/api/mcp/servers/test-server")
 
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
+        mcp_manager.remove_server.assert_awaited_once_with(
+            "test-server",
+            project_id="route-project",
+        )
 
     def test_remove_server_not_found(self, session_storage: SessionManager) -> None:
         """Test removing non-existent server."""
@@ -1463,17 +1476,25 @@ class TestSetMCPServerEnabled:
         mcp_manager._configs["github"] = config
         server.mcp_manager = mcp_manager
 
-        with TestClient(server.app) as client:
+        with (
+            TestClient(server.app) as client,
+            patch(
+                "gobby.utils.project_context.get_project_context",
+                return_value={"id": "route-project"},
+            ),
+        ):
             disable = client.patch("/api/mcp/servers/github", json={"enabled": False})
             assert disable.status_code == 200
             assert disable.json()["success"] is True
             assert disable.json()["enabled"] is False
             assert config.enabled is False
+            assert mcp_manager.last_project_id == "route-project"
 
             enable = client.patch("/api/mcp/servers/github", json={"enabled": True})
             assert enable.status_code == 200
             assert enable.json()["enabled"] is True
             assert config.enabled is True
+            assert mcp_manager.last_project_id == "route-project"
 
     def test_set_enabled_not_found(self, session_storage: SessionManager) -> None:
         """Test toggling a server that is not configured."""

@@ -10,16 +10,17 @@ from unittest.mock import MagicMock
 import pytest
 
 from gobby.agents import resume_executor
+from gobby.agents.constants import CARGO_HOME, UV_CACHE_DIR
 from gobby.storage.agents import AgentRun
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.mark.asyncio
-async def test_resume_agent_run_merges_persisted_env_with_new_session_env(
+async def test_resume_agent_run_persists_only_safe_cache_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Resume launch env should keep persisted provider env but use the new child session IDs."""
+    """Resume launch metadata should not retain provider/token-style env values."""
     original_run = AgentRun(
         id="run-old",
         parent_session_id="parent-old",
@@ -39,6 +40,7 @@ async def test_resume_agent_run_merges_persisted_env_with_new_session_env(
         "machine_id": "machine-1",
         "env": {
             "PERSISTED": "old",
+            CARGO_HOME: "/old/cargo",
             "GOBBY_SESSION_ID": "stale-child",
             "GOBBY_AGENT_RUN_ID": "stale-run",
         },
@@ -53,6 +55,7 @@ async def test_resume_agent_run_merges_persisted_env_with_new_session_env(
             env_vars={
                 "GOBBY_SESSION_ID": "child-new",
                 "GOBBY_AGENT_RUN_ID": agent_run_id,
+                UV_CACHE_DIR: "/new/uv",
             },
         )
 
@@ -97,14 +100,59 @@ async def test_resume_agent_run_merges_persisted_env_with_new_session_env(
     )
 
     assert result.success is True
-    assert spawner.env["PERSISTED"] == "old"
+    assert "PERSISTED" not in spawner.env
+    assert spawner.env[CARGO_HOME] == "/old/cargo"
+    assert spawner.env[UV_CACHE_DIR] == "/new/uv"
     assert spawner.env["SANDBOX"] == "enabled"
     assert spawner.env["GOBBY_SESSION_ID"] == "child-new"
     assert spawner.env["GOBBY_AGENT_RUN_ID"] == result.run_id
     assert spawner.env["GOBBY_MACHINE_ID"] == "machine-1"
     assert len(persisted_metadata) == 1
     assert persisted_metadata[0][0] == result.run_id
-    assert persisted_metadata[0][1]["env"] == spawner.env
+    assert persisted_metadata[0][1]["env"] == {
+        CARGO_HOME: "/old/cargo",
+        UV_CACHE_DIR: "/new/uv",
+    }
+
+
+@pytest.mark.asyncio
+async def test_resume_agent_run_rejects_relative_cwd_before_trust(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_run = AgentRun(
+        id="run-old",
+        parent_session_id="parent-old",
+        provider="codex",
+        prompt="Original prompt",
+        status="daemon_stopped",
+        created_at="2026-05-30T00:00:00Z",
+        updated_at="2026-05-30T00:00:00Z",
+        continuation_prompt="Continue",
+    )
+    resume_metadata: dict[str, Any] = {
+        "provider": "codex",
+        "provider_native_session_id": "native-123",
+        "cwd": "relative/repo",
+        "project_id": "proj-1",
+        "parent_session_id": "parent-1",
+    }
+    preapproved: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        resume_executor,
+        "pre_approve_directory",
+        lambda provider, cwd: preapproved.append((provider, cwd)),
+    )
+
+    result = await resume_executor.resume_agent_run(
+        original_run,
+        resume_metadata=resume_metadata,
+        runner=SimpleNamespace(child_session_manager=MagicMock(), run_storage=MagicMock()),
+        session_manager=MagicMock(),
+    )
+
+    assert result.success is False
+    assert result.error == "resume_cwd_not_absolute"
+    assert preapproved == []
 
 
 @pytest.mark.asyncio

@@ -300,6 +300,29 @@ class TestSpawnAgentDefaults:
             "parent_project_path": "/repo/main",
         }
 
+    def test_parent_session_project_context_uses_unresolved_project_sentinel(
+        self,
+        db: HubDatabase,
+    ) -> None:
+        from gobby.mcp_proxy.tools.spawn_agent._factory import (
+            _UNRESOLVED_PARENT_PROJECT,
+            _parent_session_project_context,
+        )
+
+        session_manager = MagicMock()
+        session_manager.get.return_value = SimpleNamespace(project_id="missing-project")
+
+        context = _parent_session_project_context(
+            parent_session_id="parent-session",
+            session_manager=session_manager,
+            db=db,
+        )
+
+        assert context == {
+            "project_id": "missing-project",
+            _UNRESOLVED_PARENT_PROJECT: True,
+        }
+
     @pytest.mark.asyncio
     async def test_explicit_project_path_does_not_fall_back_to_current_context(
         self,

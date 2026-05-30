@@ -152,9 +152,9 @@ def create_app(server: "HTTPServer") -> FastAPI:
         if (
             ws_server
             and hasattr(app.state, "hook_manager")
-            and hasattr(app.state.hook_manager, "_event_handlers")
+            and hasattr(app.state.hook_manager, "event_handlers")
         ):
-            ws_server.event_handlers = app.state.hook_manager._event_handlers
+            ws_server.event_handlers = app.state.hook_manager.event_handlers
             logger.debug("Event handlers connected to WebSocket server")
 
         # Wire webhook dispatcher for blocking webhook parity with CLI path
@@ -319,7 +319,7 @@ def create_app(server: "HTTPServer") -> FastAPI:
                 from gobby.agents.tmux.pane_monitor import TmuxPaneMonitor
 
                 monitor = TmuxPaneMonitor(
-                    session_end_callback=app.state.hook_manager._event_handlers.handle_session_end,
+                    session_end_callback=app.state.hook_manager.event_handlers.handle_session_end,
                     config=server.services.config.tmux,
                     session_manager=app.state.hook_manager._session_manager,
                 )

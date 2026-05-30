@@ -234,6 +234,54 @@ async def test_dirty_daemon_stop_resume_failure_escalates_without_attempt_increm
 
 
 @pytest.mark.asyncio
+async def test_dirty_daemon_stop_resume_failure_handles_escalation_error(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+    tmp_path: Path,
+) -> None:
+    from gobby.dispatch import daemon_resume, dispatcher
+
+    task = _task(temp_db, sample_project, work_attempt_count=2)
+    workspace = _workspace(tmp_path, dirty=True)
+    _seed_daemon_stop_run(temp_db, sample_project, task_id=task.id, workspace=workspace)
+    action = SpawnAgentAction(
+        task.id,
+        f"#{task.seq_num}",
+        "backend-developer",
+        "go",
+        initial_variables={"stage_name": "development", "stage_state": "in_progress"},
+    )
+
+    async def failed_resume(*_args: object, **_kwargs: object) -> ResumeAgentResult:
+        return ResumeAgentResult(False, error="native resume failed")
+
+    def failed_escalation(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("escalation failed")
+
+    monkeypatch.setattr(daemon_resume, "resume_agent_run", failed_resume)
+    monkeypatch.setattr(daemon_resume, "escalate_task", failed_escalation)
+    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    monkeypatch.setattr(
+        dispatcher,
+        "spawn_agent",
+        lambda *_args, **_kwargs: pytest.fail("fresh spawn should not run"),
+    )
+
+    result = await dispatcher.run_heartbeat(
+        db=temp_db,
+        project_id=sample_project["id"],
+        services=_services(temp_db),
+    )
+
+    updated = get_task(temp_db, task.id)
+    assert result.executed == 1
+    assert TaskDispatchMutexManager(temp_db).get_mutex(task.id) is None
+    assert updated.is_escalated is False
+    assert "### Agent resume after daemon restart failed" in updated.description
+
+
+@pytest.mark.asyncio
 async def test_clean_daemon_stop_resume_failure_allows_fresh_spawn(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,

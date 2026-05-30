@@ -134,7 +134,14 @@ def _handle_resume_failure(
         error=error,
     )
     try:
-        escalate_task(db, action.task_id, reason=_ESCALATION_REASON)
+        try:
+            escalate_task(db, action.task_id, reason=_ESCALATION_REASON)
+        except Exception:
+            logger.warning(
+                "Failed to escalate task after daemon-stop resume failure",
+                extra={"task_id": action.task_id, "run_id": candidate.id},
+                exc_info=True,
+            )
     finally:
         TaskDispatchMutexManager(db).clear_by_run_id(candidate.id)
         mutex.release()

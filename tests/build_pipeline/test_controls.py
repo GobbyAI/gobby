@@ -5,12 +5,14 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.clones import LocalCloneManager
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
@@ -18,7 +20,7 @@ from gobby.storage.tasks import LocalTaskManager, Task
 pytestmark = pytest.mark.unit
 
 
-def _set_project_repo(temp_db, project_id: str, tmp_path: Path) -> Path:
+def _set_project_repo(temp_db: HubDatabase, project_id: str, tmp_path: Path) -> Path:
     repo_path = tmp_path / "repo"
     repo_path.mkdir()
     LocalProjectManager(temp_db).update(project_id, repo_path=str(repo_path))
@@ -326,8 +328,8 @@ async def test_resume_preserves_no_run_dispatch_mutex_with_live_lease(
 
 @pytest.mark.asyncio
 async def test_clean_dry_run_reports_blockers_and_artifacts(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
     tmp_path: Path,
 ) -> None:
     from gobby.build.controls import build_clean_target
@@ -1002,8 +1004,8 @@ async def test_clean_force_resets_runtime_state_without_artifacts(
 
 @pytest.mark.asyncio
 async def test_restart_dry_run_reports_restart_without_mutating_task(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
     tmp_path: Path,
 ) -> None:
     from gobby.build.controls import build_restart_target

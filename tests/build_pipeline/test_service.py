@@ -706,7 +706,7 @@ async def test_build_plan_file_plan_adversary_spawn_uses_main_context_for_worktr
 @pytest.mark.asyncio
 async def test_build_plan_file_dry_run_rolls_back_preview_side_effects(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     from gobby.config.build import StageCapOverride
@@ -772,7 +772,7 @@ async def test_build_plan_file_dry_run_rolls_back_preview_side_effects(
 @pytest.mark.asyncio
 async def test_plan_file_dry_run_skip_pr_returns_full_manifest_chain(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
+    temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
     from gobby.config.build import StageCapOverride
@@ -1328,8 +1328,8 @@ async def test_build_existing_lifecycle_stage_caps_update_rows(
 @pytest.mark.asyncio
 async def test_build_task_ref_dry_run_rolls_back_existing_lifecycle_mutations(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     from gobby.config.build import StageCapOverride
 
@@ -1393,8 +1393,8 @@ async def test_build_task_ref_dry_run_rolls_back_existing_lifecycle_mutations(
 @pytest.mark.asyncio
 async def test_build_epic_dry_run_resume_skips_subtree_cascade_locking(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     task_manager = LocalTaskManager(temp_db)
     epic = task_manager.create_task(
@@ -1788,8 +1788,8 @@ async def test_build_epic_cascade_skips_busy_descendant_manifest_initialization(
 @pytest.mark.asyncio
 async def test_build_leaf_with_services_creates_agent_run_by_completion(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     from types import SimpleNamespace
 
@@ -1808,12 +1808,12 @@ async def test_build_leaf_with_services_creates_agent_run_by_completion(
         task_type="task",
     )
 
-    async def fake_spawn_agent_impl(**kwargs):
+    async def fake_spawn_agent_impl(**kwargs: object) -> dict[str, object]:
         run = LocalAgentRunManager(temp_db).create(
-            parent_session_id=kwargs["parent_session_id"],
+            parent_session_id=str(kwargs["parent_session_id"]),
             provider="codex",
-            prompt=kwargs["prompt"],
-            agent_name=kwargs["agent_lookup_name"],
+            prompt=str(kwargs["prompt"]),
+            agent_name=str(kwargs["agent_lookup_name"]),
             task_id=leaf.id,
             run_id="run-build-leaf",
         )

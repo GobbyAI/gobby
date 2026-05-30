@@ -146,6 +146,8 @@ def register_prompt_routes(router: APIRouter, context: ConfigurationRouteContext
             version = str(frontmatter.get("version", "1.0"))
             variables = frontmatter.get("variables")
             stripped_body = body.strip()
+            if not stripped_body:
+                raise HTTPException(status_code=400, detail="Prompt content must not be empty")
 
             existing_override = manager.get_override(path, project_id=project_id)
 
@@ -153,7 +155,7 @@ def register_prompt_routes(router: APIRouter, context: ConfigurationRouteContext
                 manager.update_prompt(
                     prompt_id=existing_override.id,
                     description=description,
-                    content=stripped_body if stripped_body else request.content,
+                    content=stripped_body,
                     version=version,
                     variables=variables,
                 )
@@ -161,7 +163,7 @@ def register_prompt_routes(router: APIRouter, context: ConfigurationRouteContext
                 manager.create_prompt(
                     name=path,
                     description=description,
-                    content=stripped_body if stripped_body else request.content,
+                    content=stripped_body,
                     version=version,
                     variables=variables,
                     scope="project" if project_id else "global",
@@ -172,6 +174,8 @@ def register_prompt_routes(router: APIRouter, context: ConfigurationRouteContext
             loader.clear_cache()
 
             return JSONResponse(content={"ok": True})
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error("Failed to save prompt override: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e

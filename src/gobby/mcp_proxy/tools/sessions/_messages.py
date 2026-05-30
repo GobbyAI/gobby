@@ -128,7 +128,7 @@ def register_message_tools(
         if not query:
             return {"success": False, "error": "query must not be empty"}
 
-        if limit <= 0:
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
             return {"success": False, "error": "limit must be positive"}
         result_limit = limit
 

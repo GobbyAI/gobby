@@ -87,8 +87,7 @@ export async function patchTaskFields(
 }
 
 export function taskActionRef(task: GobbyTask): string {
-  if (task.seq_num != null) return `#${task.seq_num}`;
-  return task.ref || task.id;
+  return task.ref;
 }
 
 export function currentStageName(task: GobbyTask): string | null {

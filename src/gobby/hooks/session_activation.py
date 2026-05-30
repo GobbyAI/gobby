@@ -246,6 +246,16 @@ def _marker_updates(variables: dict[str, Any]) -> dict[str, Any]:
     return updates
 
 
+def _bool_variable(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().casefold() in {"1", "true", "yes", "on"}
+    if isinstance(value, int | float):
+        return value != 0
+    return False
+
+
 def _fallback_agent_updates(variables: dict[str, Any], session: Any) -> dict[str, Any]:
     spawned = _session_is_spawned(session)
     defaults: dict[str, Any] = {
@@ -258,7 +268,7 @@ def _fallback_agent_updates(variables: dict[str, Any], session: Any) -> dict[str
         "is_spawned_agent": spawned,
     }
     updates = {key: value for key, value in defaults.items() if key not in variables}
-    if variables.get("is_spawned_agent") != spawned:
+    if _bool_variable(variables.get("is_spawned_agent")) != spawned:
         updates["is_spawned_agent"] = spawned
     return updates
 
@@ -454,7 +464,7 @@ def _terminal_context_value(event: HookEvent, *keys: str) -> str | None:
 def _needs_agent_run(session: Any, variables: dict[str, Any], event: HookEvent) -> bool:
     return bool(
         _session_is_spawned(session)
-        or variables.get("is_spawned_agent")
+        or _bool_variable(variables.get("is_spawned_agent"))
         or _terminal_context_value(event, "agent_run_id", "gobby_agent_run_id")
     )
 
@@ -528,7 +538,7 @@ def _missing_step_workflow(
     session: Any,
     agent_run: _AgentRunRecovery | None,
 ) -> list[str]:
-    spawned = bool(variables.get("is_spawned_agent") or _session_is_spawned(session))
+    spawned = _bool_variable(variables.get("is_spawned_agent")) or _session_is_spawned(session)
     if not spawned:
         return []
 

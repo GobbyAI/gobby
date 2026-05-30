@@ -10,7 +10,7 @@ import logging
 import shutil
 from collections.abc import Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from gobby.agents.constants import ALL_TERMINAL_ENV_VARS
 from gobby.agents.sandbox import (
@@ -45,6 +45,7 @@ logger = logging.getLogger(__name__)
 _RESERVED_EXTRA_ENV_KEYS = frozenset(
     (*ALL_TERMINAL_ENV_VARS, *SPAWN_CACHE_ENV_VARS, "GOBBY_MACHINE_ID")
 )
+_RESUME_METADATA_ENV_KEYS = frozenset(SPAWN_CACHE_ENV_VARS)
 
 # Spawned Codex agents must be able to use Gobby's progressive-discovery MCP flow without
 # interactive approval loops. Keep this allowlist narrow: these tools expose discovery,
@@ -97,16 +98,11 @@ def _record_resume_launch_details(
     metadata = dict(request.resume_metadata_json)
     metadata["sandbox_args"] = list(sandbox_args or [])
     metadata["sandbox_env"] = dict(sandbox_env or {})
-    final_env = {
-        str(key): str(value)
-        for source in (
-            metadata.get("env") if isinstance(metadata.get("env"), Mapping) else None,
-            request.extra_env,
-            env,
-        )
-        if source is not None
-        for key, value in source.items()
-    }
+    final_env = _safe_resume_metadata_env(
+        metadata.get("env") if isinstance(metadata.get("env"), Mapping) else None,
+        request.extra_env,
+        env,
+    )
     metadata["env"] = final_env
     metadata["config_overrides"] = list(config_overrides or [])
     tmux_config = getattr(request.daemon_config, "tmux", None)
@@ -118,6 +114,18 @@ def _record_resume_launch_details(
         LocalAgentRunManager(db).update_resume_metadata(agent_run_id, metadata)
     except Exception as exc:
         logger.warning("Failed to persist resume launch metadata: %s", exc)
+
+
+def _safe_resume_metadata_env(*sources: Mapping[str, Any] | None) -> dict[str, str]:
+    """Return only non-secret env values needed to reproduce spawned-agent caches."""
+    final_env: dict[str, str] = {}
+    for source in sources:
+        if source is None:
+            continue
+        for key, value in source.items():
+            if key in _RESUME_METADATA_ENV_KEYS:
+                final_env[str(key)] = str(value)
+    return final_env
 
 
 def _session_manager_validation_error(

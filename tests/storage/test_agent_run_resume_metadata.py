@@ -1,14 +1,20 @@
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
 
 
-def test_agent_run_persists_resume_metadata(temp_db, sample_project) -> None:
+def test_agent_run_persists_resume_metadata(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
     session = SessionManager(temp_db).register(
         external_id="parent-resume-metadata",
         machine_id="machine-1",
@@ -49,7 +55,10 @@ def test_agent_run_persists_resume_metadata(temp_db, sample_project) -> None:
     assert updated.to_brief()["resume_metadata_json"] == updated.resume_metadata_json
 
 
-def test_agent_run_accepts_none_resume_metadata(temp_db, sample_project) -> None:
+def test_agent_run_accepts_none_resume_metadata(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
     session = SessionManager(temp_db).register(
         external_id="parent-resume-metadata-none",
         machine_id="machine-1",
@@ -71,7 +80,7 @@ def test_agent_run_accepts_none_resume_metadata(temp_db, sample_project) -> None
     assert created.to_brief()["resume_metadata_json"] is None
 
 
-def test_update_resume_metadata_returns_none_for_missing_run(temp_db) -> None:
+def test_update_resume_metadata_returns_none_for_missing_run(temp_db: HubDatabase) -> None:
     manager = LocalAgentRunManager(temp_db)
 
     assert manager.update_resume_metadata("missing-run", {"provider": "codex"}) is None

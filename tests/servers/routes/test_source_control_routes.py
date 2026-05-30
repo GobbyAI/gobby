@@ -1235,7 +1235,7 @@ class TestGetPRChecks:
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "error"
-        assert "API down" in data["error"]
+        assert data["error"] == "Failed to get pull request checks"
 
 
 # ---------------------------------------------------------------------------

@@ -30,6 +30,7 @@ _PROJECT_CONTEXT_ERRORS: tuple[type[Exception], ...] = (
     RuntimeError,
     ValueError,
 )
+_UNRESOLVED_PARENT_PROJECT = "_unresolved_parent_project"
 
 
 def _non_empty_string(value: Any) -> str | None:
@@ -96,6 +97,10 @@ def _project_lookup_db(db: HubDatabase | None, session_manager: Any | None) -> A
     return db or getattr(session_manager, "db", None)
 
 
+def _unresolved_parent_project_context(project_id: str) -> dict[str, Any]:
+    return {"project_id": project_id, _UNRESOLVED_PARENT_PROJECT: True}
+
+
 def _context_from_project_path(project_path: str) -> dict[str, Any] | None:
     try:
         return get_project_context(Path(project_path).expanduser())
@@ -133,10 +138,10 @@ def _parent_session_project_context(
         project = LocalProjectManager(lookup_db).get(project_id)
     except _PROJECT_CONTEXT_ERRORS:
         logger.debug("Failed to load project %s for parent session", project_id, exc_info=True)
-        return {"id": project_id}
+        return _unresolved_parent_project_context(project_id)
 
     if project is None:
-        return {"id": project_id}
+        return _unresolved_parent_project_context(project_id)
 
     repo_path = _non_empty_string(project.repo_path)
     context = {

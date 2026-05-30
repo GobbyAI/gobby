@@ -145,8 +145,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
     async def export_workflow(definition_id: str) -> Response:
         """Export a workflow definition as YAML."""
         try:
-            manager = _get_manager()
-            yaml_content = manager.export_to_yaml(definition_id)
+            yaml_content = await server.run_db(lambda: _get_manager().export_to_yaml(definition_id))
             return Response(
                 content=yaml_content,
                 media_type="application/x-yaml",

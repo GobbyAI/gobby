@@ -90,6 +90,16 @@ class TestParseGithubUrl:
         with pytest.raises(ValueError, match="Invalid GitHub URL"):
             parse_github_url("not-a-valid-url")
 
+    @pytest.mark.parametrize(
+        "source",
+        ["/tmp/skill", "./skills/local", "../skills/local", "owner/repo/path"],
+    )
+    def test_parse_rejects_local_paths_and_slash_paths(self, source: str) -> None:
+        from gobby.skills.loader import parse_github_url
+
+        with pytest.raises(ValueError, match="Invalid GitHub URL"):
+            parse_github_url(source)
+
     def test_parse_empty_string_raises_error(self) -> None:
         """Test that empty string raises ValueError."""
         from gobby.skills.loader import parse_github_url

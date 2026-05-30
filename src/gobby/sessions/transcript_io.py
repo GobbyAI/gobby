@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import functools
 import gzip
 import json
 import logging
@@ -11,8 +10,6 @@ from collections.abc import Iterable
 from typing import Any
 
 logger = logging.getLogger(__name__)
-
-_ARCHIVE_CACHE_SIZE = 32
 
 
 class DecompressionError(RuntimeError):
@@ -24,7 +21,6 @@ def _count_nonempty_lines(lines: Iterable[str]) -> int:
     return sum(1 for line in lines if line.strip())
 
 
-@functools.lru_cache(maxsize=_ARCHIVE_CACHE_SIZE)
 def _decompress_archive(archive_path: str) -> tuple[str, ...]:
     """Decompress a gzip archive and return lines."""
     lines: list[str] = []
@@ -51,5 +47,4 @@ def _read_json_file(path: str) -> dict[str, Any]:
 
 
 def clear_archive_cache() -> None:
-    """Clear the LRU cache for decompressed archives."""
-    _decompress_archive.cache_clear()
+    """Backward-compatible no-op; archives are no longer retained in memory."""

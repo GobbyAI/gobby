@@ -243,10 +243,24 @@ def parse_github_url(url: str) -> GitHubRef:
         return _parse_full_github_url(url)
 
     # Format: owner/repo#branch
-    if "/" in url and not url.startswith("http"):
+    if _looks_like_bare_github_ref(url):
         return _parse_owner_repo_format(url)
 
     raise ValueError(f"Invalid GitHub URL: {url}")
+
+
+def _looks_like_bare_github_ref(url: str) -> bool:
+    candidate = url.split("#", maxsplit=1)[0]
+    if candidate.startswith(("/", "./", "../", "~")) or "\\" in candidate:
+        return False
+    parts = candidate.split("/")
+    if len(parts) != 2:
+        return False
+    owner, repo = parts
+    safe_name_pattern = re.compile(r"^[A-Za-z0-9_.-]+$")
+    return bool(
+        owner and repo and safe_name_pattern.fullmatch(owner) and safe_name_pattern.fullmatch(repo)
+    )
 
 
 def _parse_owner_repo_format(url: str) -> GitHubRef:
@@ -259,7 +273,7 @@ def _parse_owner_repo_format(url: str) -> GitHubRef:
 
     # Split owner/repo
     parts = url.split("/")
-    if len(parts) < 2:
+    if len(parts) != 2:
         raise ValueError(f"Invalid GitHub URL: {url}")
 
     owner = parts[0]

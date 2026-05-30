@@ -1,5 +1,6 @@
 """Tests for micro-skills (guardrail skills)."""
 
+from importlib.resources import files
 from pathlib import Path
 
 import pytest
@@ -20,9 +21,7 @@ class TestSourceControlSkill:
     @pytest.fixture
     def skills_dir(self) -> Path:
         """Path to bundled skills directory."""
-        return (
-            Path(__file__).parent.parent.parent / "src" / "gobby" / "install" / "shared" / "skills"
-        )
+        return Path(str(files("gobby").joinpath("install/shared/skills")))
 
     def test_source_control_skill_exists(self, skills_dir: Path) -> None:
         """Verify source-control skill directory exists."""

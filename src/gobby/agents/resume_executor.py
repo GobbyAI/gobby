@@ -5,11 +5,13 @@ from __future__ import annotations
 import logging
 import shutil
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from gobby.agents.spawn import prepare_terminal_spawn
+from gobby.agents.spawn_cache_policy import SPAWN_CACHE_ENV_VARS
 from gobby.agents.spawners.command_builder import build_cli_command
 from gobby.agents.tmux.spawner import TmuxSpawner
 from gobby.agents.trust import pre_approve_directory
@@ -24,6 +26,36 @@ DAEMON_STOP_CONTINUATION_PROMPT = (
     "Continue the interrupted task after the Gobby daemon stopped. Inspect the current "
     "workspace state, preserve any existing work, and continue from where the prior run left off."
 )
+_RESUME_METADATA_ENV_KEYS = frozenset(SPAWN_CACHE_ENV_VARS)
+
+
+class _RunStorage(Protocol):
+    def update_resume_metadata(self, run_id: str, metadata: dict[str, Any]) -> Any: ...
+
+    def update_child_session(self, run_id: str, child_session_id: str) -> Any: ...
+
+    def update_runtime(
+        self,
+        run_id: str,
+        *,
+        pid: int | None,
+        tmux_session_name: str | None,
+        worktree_id: str | None,
+        clone_id: str | None,
+    ) -> Any: ...
+
+    def start(self, run_id: str) -> Any: ...
+
+    def fail(self, run_id: str, *, error: str) -> Any: ...
+
+
+class _ResumeRunner(Protocol):
+    child_session_manager: Any
+    run_storage: _RunStorage
+
+
+class _SessionLookup(Protocol):
+    def get(self, session_id: str) -> Any: ...
 
 
 @dataclass(frozen=True)
@@ -38,12 +70,21 @@ async def resume_agent_run(
     original_run: AgentRun,
     *,
     resume_metadata: dict[str, Any],
-    runner: Any,
-    session_manager: Any,
+    runner: _ResumeRunner,
+    session_manager: _SessionLookup,
     task_manager: Any | None = None,
     daemon_config: Any | None = None,
 ) -> ResumeAgentResult:
-    """Start a provider-native resume process for a daemon-stop run."""
+    """Start a provider-native resume process for a daemon-stop run.
+
+    Args:
+        original_run: Cancelled daemon-stop agent run being resumed.
+        resume_metadata: Persisted launch snapshot from the original run.
+        runner: Agent runner exposing child session creation and run storage.
+        session_manager: Session lookup used to recover provider-native IDs.
+        task_manager: Optional task manager used to claim the resumed child session.
+        daemon_config: Optional daemon config used for tmux spawn settings.
+    """
     provider = _metadata_str(resume_metadata, "provider") or original_run.provider
     if provider not in SUPPORTED_RESUME_PROVIDERS:
         return ResumeAgentResult(False, error=f"resume_unsupported_provider:{provider}")
@@ -64,6 +105,10 @@ async def resume_agent_run(
     parent_session_id = _metadata_str(resume_metadata, "parent_session_id")
     if not cwd or not project_id or not parent_session_id:
         return ResumeAgentResult(False, error="resume_metadata_incomplete")
+    cwd_path = Path(cwd).expanduser()
+    if not cwd_path.is_absolute():
+        return ResumeAgentResult(False, error="resume_cwd_not_absolute")
+    cwd = str(cwd_path)
 
     prompt = original_run.continuation_prompt or _metadata_str(
         resume_metadata, "continuation_prompt"
@@ -126,11 +171,11 @@ async def resume_agent_run(
         command.extend(sandbox_args)
         command.append(prompt)
 
-    env = _str_dict(resume_metadata.get("env"))
+    env = _safe_resume_metadata_env(resume_metadata.get("env"))
     env.update(spawn_context.env_vars)
     env.update(_str_dict(resume_metadata.get("sandbox_env")))
     env["GOBBY_MACHINE_ID"] = _metadata_str(resume_metadata, "machine_id") or "unknown"
-    metadata["env"] = dict(env)
+    metadata["env"] = _safe_resume_metadata_env(env)
     try:
         update_resume_metadata = getattr(runner.run_storage, "update_resume_metadata", None)
         if callable(update_resume_metadata):
@@ -250,7 +295,7 @@ def _fire_resume_started(
             },
         )
     except Exception as exc:
-        logger.debug("Failed to fire resumed agent_started event for %s: %s", run_id, exc)
+        logger.warning("Failed to fire resumed agent_started event for %s: %s", run_id, exc)
 
 
 def _fail_run(runner: Any, run_id: str, error: str) -> None:
@@ -258,6 +303,12 @@ def _fail_run(runner: Any, run_id: str, error: str) -> None:
         runner.run_storage.fail(run_id, error=error)
     except Exception as exc:
         logger.warning("Failed to mark resumed agent run %s failed: %s", run_id, exc)
+
+
+def _safe_resume_metadata_env(value: Any) -> dict[str, str]:
+    if not isinstance(value, Mapping):
+        return {}
+    return {str(key): str(item) for key, item in value.items() if key in _RESUME_METADATA_ENV_KEYS}
 
 
 def _tmux_spawner(daemon_config: Any | None, metadata: dict[str, Any]) -> TmuxSpawner:

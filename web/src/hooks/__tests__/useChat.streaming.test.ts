@@ -478,7 +478,9 @@ describe("useChat streaming and event handling", () => {
       ws.simulateMessage({
         type: "session_usage_updated",
         session_id: "test-conversation-id",
+        usage_input_tokens: null,
         usage_output_tokens: 44,
+        context_window: null,
       });
     });
 

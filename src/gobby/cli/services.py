@@ -191,10 +191,11 @@ async def is_falkordb_healthy(
         return bool(result)
     except Exception as exc:
         logger.debug(
-            "FalkorDB health check failed: %s:%s unreachable (%s)",
+            "FalkorDB health check failed: %s:%s unreachable (%s: %s)",
             host,
             port,
             type(exc).__name__,
+            exc,
         )
         return False
     finally:

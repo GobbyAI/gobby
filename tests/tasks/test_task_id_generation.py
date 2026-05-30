@@ -13,6 +13,12 @@ from gobby.storage.tasks import LocalTaskManager, generate_task_id
 pytestmark = pytest.mark.unit
 
 
+def _assert_valid_uuid(value: str) -> uuid.UUID:
+    parsed = uuid.UUID(value)
+    assert str(parsed) == value
+    return parsed
+
+
 class TestGenerateTaskId:
     """Test the generate_task_id function returns UUID format."""
 
@@ -21,11 +27,7 @@ class TestGenerateTaskId:
         task_id = generate_task_id("test-project")
 
         # Should be valid UUID format (8-4-4-4-12 hex chars with dashes)
-        try:
-            parsed = uuid.UUID(task_id)
-            assert str(parsed) == task_id
-        except ValueError:
-            pytest.fail(f"Task ID '{task_id}' is not a valid UUID")
+        _assert_valid_uuid(task_id)
 
     def test_generate_task_id_is_unique(self) -> None:
         """Test that generate_task_id returns unique IDs."""
@@ -41,8 +43,8 @@ class TestGenerateTaskId:
         id2 = generate_task_id("project-b")
 
         # Both should be valid UUIDs
-        uuid.UUID(id1)
-        uuid.UUID(id2)
+        _assert_valid_uuid(id1)
+        _assert_valid_uuid(id2)
 
         # Should be different
         assert id1 != id2
@@ -54,9 +56,9 @@ class TestGenerateTaskId:
         id3 = generate_task_id("project", salt="salt2")
 
         # All should be valid UUIDs
-        uuid.UUID(id1)
-        uuid.UUID(id2)
-        uuid.UUID(id3)
+        _assert_valid_uuid(id1)
+        _assert_valid_uuid(id2)
+        _assert_valid_uuid(id3)
 
         # All should be different (with high probability)
         assert len({id1, id2, id3}) == 3
@@ -74,11 +76,7 @@ class TestTaskCreationUUID:
         )
 
         # ID should be valid UUID format
-        try:
-            parsed = uuid.UUID(task.id)
-            assert str(parsed) == task.id
-        except ValueError:
-            pytest.fail(f"Task ID '{task.id}' is not a valid UUID")
+        _assert_valid_uuid(task.id)
 
     def test_create_task_uuid_is_unique(self, task_manager, project_id) -> None:
         """Test that multiple tasks get unique UUID IDs."""
@@ -92,7 +90,7 @@ class TestTaskCreationUUID:
             ids.add(task.id)
 
             # Each should be valid UUID
-            uuid.UUID(task.id)
+            _assert_valid_uuid(task.id)
 
     def test_create_task_uuid_stored_and_retrieved(self, task_manager, project_id) -> None:
         """Test that UUID ID is properly stored and can be retrieved."""
@@ -103,7 +101,7 @@ class TestTaskCreationUUID:
         original_id = task.id
 
         # Validate UUID format
-        uuid.UUID(original_id)
+        _assert_valid_uuid(original_id)
 
         # Retrieve task by ID
         retrieved = task_manager.get_task(original_id)
@@ -117,7 +115,7 @@ class TestTaskCreationUUID:
             title="Test Task",
         )
 
-        parsed = uuid.UUID(task.id)
+        parsed = _assert_valid_uuid(task.id)
         # UUID version 4 has version field set to 4
         assert parsed.version == 4, f"UUID should be version 4, got version {parsed.version}"
 
@@ -134,8 +132,8 @@ class TestTaskCreationUUID:
         )
 
         # Both should be valid UUIDs
-        uuid.UUID(parent.id)
-        uuid.UUID(child.id)
+        _assert_valid_uuid(parent.id)
+        _assert_valid_uuid(child.id)
 
         # Should be different
         assert parent.id != child.id

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from glob import escape as glob_escape
 from pathlib import Path
 from time import time
 
@@ -11,7 +12,9 @@ _SECONDS_PER_DAY = 24 * 60 * 60
 def _find_transcript_on_disk(
     source: str,
     external_id: str,
-    max_days: int = 90,
+    source_max_days: int = 90,
+    *,
+    max_days: int | None = None,
 ) -> str | None:
     """Try to find a transcript file on disk by CLI source and external_id.
 
@@ -19,6 +22,11 @@ def _find_transcript_on_disk(
     """
     if not external_id:
         return None
+    if "/" in external_id or "\\" in external_id:
+        return None
+    if max_days is not None:
+        source_max_days = max_days
+    escaped_external_id = glob_escape(external_id)
 
     if source == "claude":
         projects_dir = Path.home() / ".claude" / "projects"
@@ -27,7 +35,7 @@ def _find_transcript_on_disk(
                 if not _safe_is_dir(proj_dir):
                     continue
                 candidate = proj_dir / f"{external_id}.jsonl"
-                if _is_recent_file(candidate, max_days):
+                if _is_recent_file(candidate, source_max_days):
                     return str(candidate)
 
     elif source == "codex":
@@ -44,18 +52,18 @@ def _find_transcript_on_disk(
                         if not _safe_is_dir(day_dir):
                             continue
                         inspected_days += 1
-                        if inspected_days > max_days:
+                        if inspected_days > source_max_days:
                             return None
                         match = _first_recent_file(
-                            _safe_glob(day_dir, f"*{external_id}*"),
-                            max_days,
+                            _safe_glob(day_dir, f"*{escaped_external_id}*"),
+                            source_max_days,
                         )
                         if match:
                             return str(match)
 
     elif source == "gemini":
         gemini_tmp = Path.home() / ".gemini" / "tmp"
-        prefix = external_id[:8] if external_id else ""
+        prefix = glob_escape(external_id[:8]) if len(external_id) >= 8 else ""
         if _safe_exists(gemini_tmp) and prefix:
             for proj_dir in _safe_iterdir(gemini_tmp):
                 chats_dir = proj_dir / "chats"
@@ -63,7 +71,7 @@ def _find_transcript_on_disk(
                     continue
                 match = _first_recent_file(
                     _safe_glob(chats_dir, f"session-*-{prefix}.json", reverse=True),
-                    max_days,
+                    source_max_days,
                 )
                 if match:
                     return str(match)
@@ -75,8 +83,8 @@ def _find_transcript_on_disk(
                 if not _safe_is_dir(chats_dir):
                     continue
                 match = _first_recent_file(
-                    _safe_glob(chats_dir, f"*{external_id}*.jsonl", reverse=True),
-                    max_days,
+                    _safe_glob(chats_dir, f"*{escaped_external_id}*.jsonl", reverse=True),
+                    source_max_days,
                 )
                 if match:
                     return str(match)
@@ -84,8 +92,8 @@ def _find_transcript_on_disk(
         grok_sessions = Path.home() / ".grok" / "sessions"
         if _safe_exists(grok_sessions):
             match = _first_recent_file(
-                _safe_glob(grok_sessions, f"*/{external_id}/updates.jsonl", reverse=True),
-                max_days,
+                _safe_glob(grok_sessions, f"*/{escaped_external_id}/updates.jsonl", reverse=True),
+                source_max_days,
             )
             if match:
                 return str(match)
@@ -96,7 +104,7 @@ def _find_transcript_on_disk(
                 if not _safe_is_dir(proj_dir):
                     continue
                 candidate = proj_dir / f"{external_id}.jsonl"
-                if _is_recent_file(candidate, max_days):
+                if _is_recent_file(candidate, source_max_days):
                     return str(candidate)
 
     return None

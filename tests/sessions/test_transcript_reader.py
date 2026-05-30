@@ -115,6 +115,34 @@ def test_transcript_scan_ignores_os_errors_during_traversal(
         assert _find_transcript_on_disk("claude", "ext-any", max_days=7) is None
 
 
+def test_codex_transcript_scan_treats_external_id_as_literal(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    day_dir = tmp_path / ".codex" / "sessions" / "2026" / "05" / "01"
+    day_dir.mkdir(parents=True)
+    literal = day_dir / "session-ext[abc].jsonl"
+    wildcard_match = day_dir / "session-exta.jsonl"
+    literal.write_text("{}\n", encoding="utf-8")
+    wildcard_match.write_text("{}\n", encoding="utf-8")
+
+    assert _find_transcript_on_disk("codex", "ext[abc]", max_days=1) == str(literal)
+
+
+def test_gemini_transcript_scan_requires_full_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    chats_dir = tmp_path / ".gemini" / "tmp" / "project" / "chats"
+    chats_dir.mkdir(parents=True)
+    target = chats_dir / "session-2026-short.json"
+    target.write_text("[]", encoding="utf-8")
+
+    assert _find_transcript_on_disk("gemini", "short", max_days=1) is None
+
+
 def _write_gzip_archive(archive_dir: Path, external_id: str, lines: list[dict]) -> Path:
     """Write JSONL lines to a gzip archive."""
     archive_dir.mkdir(parents=True, exist_ok=True)
