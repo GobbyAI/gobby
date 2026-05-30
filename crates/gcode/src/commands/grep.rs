@@ -396,7 +396,7 @@ fn push_grouped_grep_line<'a>(
         lines.push(path.to_string());
         *current_path = Some(path);
     }
-    lines.push(format!("{line}{marker}{text}"));
+    lines.push(format!("{line}{marker}{}", text.trim_start()));
 }
 
 fn i64_to_usize(value: i64, column: &str) -> anyhow::Result<usize> {
@@ -524,6 +524,27 @@ mod tests {
         assert_eq!(
             format_text_matches(&result.matches),
             "src/lib.rs\n2-two\n3:needle\n4-four\n5-five"
+        );
+    }
+
+    #[test]
+    fn text_output_trims_leading_whitespace_without_changing_matches() {
+        let chunks = vec![chunk(
+            "src/lib.rs",
+            1,
+            "    before\n        needle\n\t\tafter",
+        )];
+        let mut opts = options("needle");
+        opts.context = Some(1);
+        let result = grep_chunks(&chunks, &opts).expect("grep chunks");
+        let item = &result.matches[0];
+
+        assert_eq!(item.text, "        needle");
+        assert_eq!(item.before[0].text, "    before");
+        assert_eq!(item.after[0].text, "\t\tafter");
+        assert_eq!(
+            format_text_matches(&result.matches),
+            "src/lib.rs\n1-before\n2:needle\n3-after"
         );
     }
 

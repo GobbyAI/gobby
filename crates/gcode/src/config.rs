@@ -369,8 +369,7 @@ pub(crate) fn validate_parent_code_index(
             )",
             &[parent_project_id],
         )
-        .and_then(|row| row.try_get::<_, bool>(0))
-        .unwrap_or(false);
+        .and_then(|row| row.try_get::<_, bool>(0))?;
 
     if !exists {
         anyhow::bail!(

@@ -9,6 +9,10 @@ use crate::visibility;
 use gobby_core::qdrant::{CollectionScope, SearchRequest};
 
 pub fn semantic_search(ctx: &Context, query: &str, limit: usize) -> Vec<(String, f64)> {
+    let project_ids = visibility::visible_project_ids(ctx);
+    let Some(per_project_limit) = per_project_semantic_limit(limit, project_ids.len()) else {
+        return vec![];
+    };
     let Some(embedding_config) = ctx.embedding.as_ref() else {
         return vec![];
     };
@@ -17,14 +21,14 @@ pub fn semantic_search(ctx: &Context, query: &str, limit: usize) -> Vec<(String,
     };
 
     let mut results = Vec::new();
-    for project_id in visibility::visible_project_ids(ctx) {
+    for project_id in project_ids {
         let collection = gobby_core::qdrant::collection_name(
             "gcode",
             CollectionScope::Custom(&format!("{CODE_SYMBOL_COLLECTION_PREFIX}{project_id}")),
         );
         let request = SearchRequest {
             vector: query_vector.clone(),
-            limit,
+            limit: per_project_limit,
             filter: None,
         };
 
@@ -41,6 +45,13 @@ pub fn semantic_search(ctx: &Context, query: &str, limit: usize) -> Vec<(String,
     results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     results.truncate(limit);
     results
+}
+
+fn per_project_semantic_limit(limit: usize, project_count: usize) -> Option<usize> {
+    if limit == 0 || project_count == 0 {
+        return None;
+    }
+    Some(limit.div_ceil(project_count).max(1))
 }
 
 #[cfg(test)]
@@ -82,5 +93,18 @@ mod tests {
         };
         let result = semantic_search(&ctx, "test query", 10);
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn per_project_limit_divides_across_visible_projects() {
+        assert_eq!(per_project_semantic_limit(10, 2), Some(5));
+        assert_eq!(per_project_semantic_limit(11, 2), Some(6));
+        assert_eq!(per_project_semantic_limit(1, 2), Some(1));
+    }
+
+    #[test]
+    fn per_project_limit_handles_empty_work() {
+        assert_eq!(per_project_semantic_limit(0, 2), None);
+        assert_eq!(per_project_semantic_limit(10, 0), None);
     }
 }

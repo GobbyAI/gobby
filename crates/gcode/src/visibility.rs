@@ -260,7 +260,6 @@ pub fn visible_symbols_for_file(
     ctx: &Context,
     file_path: &str,
 ) -> anyhow::Result<Vec<Symbol>> {
-    let columns = db::symbol_select_columns("");
     match &ctx.index_scope {
         ProjectIndexScope::Single => query_symbols_for_file(conn, &ctx.project_id, file_path),
         ProjectIndexScope::Overlay {
@@ -271,6 +270,7 @@ pub fn visible_symbols_for_file(
             if overlay_has_row(conn, overlay_project_id, file_path) {
                 return query_symbols_for_file(conn, overlay_project_id, file_path);
             }
+            let columns = db::symbol_select_columns("");
             let sql = format!(
                 "SELECT {columns} FROM code_symbols
                  WHERE project_id = $1 AND file_path = $2
@@ -300,22 +300,50 @@ fn query_symbols_for_file(
 }
 
 pub fn visible_kinds(conn: &mut Client, ctx: &Context) -> anyhow::Result<Vec<String>> {
-    let mut kinds = HashSet::new();
-    for project_id in visible_project_ids(ctx) {
-        let columns = db::symbol_select_columns("");
-        for row in conn.query(
-            &format!("SELECT {columns} FROM code_symbols WHERE project_id = $1"),
-            &[&project_id],
-        )? {
-            let symbol = Symbol::from_row(&row)?;
-            if symbol_is_visible(conn, ctx, &symbol) {
-                kinds.insert(symbol.kind);
-            }
-        }
-    }
-    let mut kinds: Vec<_> = kinds.into_iter().collect();
-    kinds.sort();
-    Ok(kinds)
+    let rows = match &ctx.index_scope {
+        ProjectIndexScope::Single => conn.query(
+            "SELECT DISTINCT cs.kind
+             FROM code_symbols cs
+             JOIN code_indexed_files cf
+               ON cf.project_id = cs.project_id AND cf.file_path = cs.file_path
+             WHERE cs.project_id = $1
+               AND cf.language != $2
+             ORDER BY cs.kind",
+            &[&ctx.project_id, &TOMBSTONE_LANGUAGE],
+        )?,
+        ProjectIndexScope::Overlay {
+            overlay_project_id,
+            parent_project_id,
+            ..
+        } => conn.query(
+            "SELECT kind
+             FROM (
+                 SELECT cs.kind
+                 FROM code_symbols cs
+                 JOIN code_indexed_files cf
+                   ON cf.project_id = cs.project_id AND cf.file_path = cs.file_path
+                 WHERE cs.project_id = $1
+                   AND cf.language != $3
+                 UNION
+                 SELECT cs.kind
+                 FROM code_symbols cs
+                 JOIN code_indexed_files cf
+                   ON cf.project_id = cs.project_id AND cf.file_path = cs.file_path
+                 WHERE cs.project_id = $2
+                   AND cf.language != $3
+                   AND NOT EXISTS (
+                       SELECT 1 FROM code_indexed_files shadow
+                       WHERE shadow.project_id = $1 AND shadow.file_path = cs.file_path
+                   )
+             ) visible
+             ORDER BY kind",
+            &[overlay_project_id, parent_project_id, &TOMBSTONE_LANGUAGE],
+        )?,
+    };
+
+    rows.iter()
+        .map(|row| Ok(row.try_get::<_, String>("kind")?))
+        .collect()
 }
 
 pub fn visible_tree(conn: &mut Client, ctx: &Context) -> anyhow::Result<Vec<VisibleFile>> {

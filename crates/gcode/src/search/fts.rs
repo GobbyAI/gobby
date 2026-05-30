@@ -8,7 +8,7 @@ use std::collections::HashSet;
 use postgres::Client;
 use postgres::types::ToSql;
 
-use crate::config::Context;
+use crate::config::{Context, ProjectIndexScope};
 use crate::db;
 use crate::models::{ContentSearchHit, SearchResult, Symbol};
 use crate::visibility;
@@ -43,6 +43,51 @@ fn param_refs(params: &[PgParam]) -> Vec<&(dyn ToSql + Sync)> {
         .iter()
         .map(|param| param.as_ref() as &(dyn ToSql + Sync))
         .collect()
+}
+
+fn query_count(conn: &mut Client, sql: &str, params: &[PgParam]) -> usize {
+    let refs = param_refs(params);
+    conn.query_one(sql, &refs)
+        .ok()
+        .and_then(|row| row.try_get::<_, i64>("count").ok())
+        .unwrap_or(0) as usize
+}
+
+fn push_visible_project_file_filter(
+    conditions: &mut Vec<String>,
+    params: &mut Vec<PgParam>,
+    row_alias: &str,
+    indexed_file_alias: &str,
+    ctx: &Context,
+) {
+    let tombstone = push_param(params, visibility::TOMBSTONE_LANGUAGE.to_string());
+    conditions.push(format!("{indexed_file_alias}.language != {tombstone}"));
+
+    match &ctx.index_scope {
+        ProjectIndexScope::Single => {
+            let project = push_param(params, ctx.project_id.clone());
+            conditions.push(format!("{row_alias}.project_id = {project}"));
+        }
+        ProjectIndexScope::Overlay {
+            overlay_project_id,
+            parent_project_id,
+            ..
+        } => {
+            let overlay = push_param(params, overlay_project_id.clone());
+            let parent = push_param(params, parent_project_id.clone());
+            conditions.push(format!(
+                "({row_alias}.project_id = {overlay}
+                  OR (
+                      {row_alias}.project_id = {parent}
+                      AND NOT EXISTS (
+                          SELECT 1 FROM code_indexed_files shadow
+                          WHERE shadow.project_id = {overlay}
+                            AND shadow.file_path = {row_alias}.file_path
+                      )
+                  ))"
+            ));
+        }
+    }
 }
 
 /// Escape LIKE wildcards (`%`, `_`) and the backslash escape char itself.
@@ -783,6 +828,133 @@ fn count_content_like(
         .unwrap_or(0) as usize
 }
 
+fn count_visible_symbols_by_conditions(
+    conn: &mut Client,
+    ctx: &Context,
+    mut conditions: Vec<String>,
+    mut params: Vec<PgParam>,
+    language: Option<&str>,
+    paths: &[String],
+) -> usize {
+    push_symbol_filters(
+        &mut conditions,
+        &mut params,
+        "cs",
+        SymbolFilters {
+            kind: None,
+            language,
+            paths,
+        },
+    );
+    push_visible_project_file_filter(&mut conditions, &mut params, "cs", "cf", ctx);
+    let sql = format!(
+        "SELECT COUNT(*)::BIGINT AS count
+         FROM code_symbols cs
+         JOIN code_indexed_files cf
+           ON cf.project_id = cs.project_id AND cf.file_path = cs.file_path
+         WHERE {}",
+        conditions.join(" AND ")
+    );
+    query_count(conn, &sql, &params)
+}
+
+fn count_symbols_fts_visible(
+    conn: &mut Client,
+    bm25_query: &str,
+    ctx: &Context,
+    language: Option<&str>,
+    paths: &[String],
+) -> usize {
+    let mut params = Vec::new();
+    let query_placeholder = push_param(&mut params, bm25_query.to_string());
+    let conditions = vec![format!(
+        "(cs.name @@@ {q} OR cs.qualified_name @@@ {q} OR cs.signature @@@ {q} OR cs.docstring @@@ {q} OR cs.summary @@@ {q})",
+        q = query_placeholder
+    )];
+    count_visible_symbols_by_conditions(conn, ctx, conditions, params, language, paths)
+}
+
+fn count_symbols_by_name_like_visible(
+    conn: &mut Client,
+    query: &str,
+    ctx: &Context,
+    language: Option<&str>,
+    paths: &[String],
+) -> usize {
+    let escaped_query = escape_like(query);
+    let pattern = format!("%{escaped_query}%");
+    let mut params = Vec::new();
+    let name_placeholder = push_param(&mut params, pattern.clone());
+    let qualified_placeholder = push_param(&mut params, pattern);
+    let conditions = vec![format!(
+        "(cs.name LIKE {name_placeholder} ESCAPE '\\' OR cs.qualified_name LIKE {qualified_placeholder} ESCAPE '\\')"
+    )];
+    count_visible_symbols_by_conditions(conn, ctx, conditions, params, language, paths)
+}
+
+fn push_content_filters(
+    conditions: &mut Vec<String>,
+    params: &mut Vec<PgParam>,
+    alias: &str,
+    language: Option<&str>,
+    paths: &[String],
+) {
+    if let Some(lang) = language {
+        let placeholder = push_param(params, lang.to_string());
+        conditions.push(format!("{alias}.language = {placeholder}"));
+    }
+    push_path_filter(conditions, params, alias, paths);
+}
+
+fn count_visible_content_by_conditions(
+    conn: &mut Client,
+    ctx: &Context,
+    mut conditions: Vec<String>,
+    mut params: Vec<PgParam>,
+    language: Option<&str>,
+    paths: &[String],
+) -> usize {
+    push_content_filters(&mut conditions, &mut params, "c", language, paths);
+    push_visible_project_file_filter(&mut conditions, &mut params, "c", "cf", ctx);
+    let sql = format!(
+        "SELECT COUNT(*)::BIGINT AS count
+         FROM code_content_chunks c
+         JOIN code_indexed_files cf
+           ON cf.project_id = c.project_id AND cf.file_path = c.file_path
+         WHERE {}",
+        conditions.join(" AND ")
+    );
+    query_count(conn, &sql, &params)
+}
+
+fn count_content_bm25_visible(
+    conn: &mut Client,
+    bm25_query: &str,
+    ctx: &Context,
+    language: Option<&str>,
+    paths: &[String],
+) -> usize {
+    let mut params = Vec::new();
+    let query_placeholder = push_param(&mut params, bm25_query.to_string());
+    let conditions = vec![format!("c.content @@@ {query_placeholder}")];
+    count_visible_content_by_conditions(conn, ctx, conditions, params, language, paths)
+}
+
+fn count_content_like_visible(
+    conn: &mut Client,
+    query: &str,
+    ctx: &Context,
+    language: Option<&str>,
+    paths: &[String],
+) -> usize {
+    let escaped_query = escape_like(query);
+    let like_query = format!("%{escaped_query}%");
+    let mut params = Vec::new();
+    let like_placeholder = push_param(&mut params, like_query);
+    let conditions = vec![format!("c.content LIKE {like_placeholder} ESCAPE '\\'")];
+    count_visible_content_by_conditions(conn, ctx, conditions, params, language, paths)
+}
+
 pub fn count_text_visible(
     conn: &mut Client,
     query: &str,
@@ -790,7 +962,21 @@ pub fn count_text_visible(
     language: Option<&str>,
     paths: &[String],
 ) -> usize {
-    search_text_visible(conn, query, ctx, language, paths, FILTERED_FETCH_CAP).len()
+    if query.trim().is_empty() {
+        return 0;
+    }
+
+    let bm25_query = sanitize_pg_search_query(query);
+    if bm25_query.is_empty() {
+        return count_symbols_by_name_like_visible(conn, query, ctx, language, paths);
+    }
+
+    let count = count_symbols_fts_visible(conn, &bm25_query, ctx, language, paths);
+    if count > 0 {
+        return count;
+    }
+
+    count_symbols_by_name_like_visible(conn, query, ctx, language, paths)
 }
 
 pub fn count_content_visible(
@@ -800,7 +986,21 @@ pub fn count_content_visible(
     language: Option<&str>,
     paths: &[String],
 ) -> usize {
-    search_content_visible(conn, query, ctx, language, paths, FILTERED_FETCH_CAP).len()
+    if query.trim().is_empty() {
+        return 0;
+    }
+
+    let bm25_query = sanitize_pg_search_query(query);
+    if bm25_query.is_empty() {
+        return count_content_like_visible(conn, query, ctx, language, paths);
+    }
+
+    let count = count_content_bm25_visible(conn, &bm25_query, ctx, language, paths);
+    if count > 0 {
+        return count;
+    }
+
+    count_content_like_visible(conn, query, ctx, language, paths)
 }
 
 /// Full-text search for symbols: BM25 with LIKE fallback.
