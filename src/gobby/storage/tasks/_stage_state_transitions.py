@@ -177,6 +177,62 @@ class StageStateTransitions:
             self._wake_dispatcher(task_id, stage_name, verb)
             return updated
 
+    def recover_abandoned_stage(
+        self,
+        task_id: str,
+        stage_name: str,
+        *,
+        by_session_id: str | None,
+        reason: str = "abandoned_in_progress_recovered",
+    ) -> StageState:
+        holder = by_session_id or "system"
+        snapshot = self.rows.current_stage(task_id)
+        with self.mutexes.mutex(
+            task_id,
+            holder,
+            f"{stage_name}:recover_abandoned_stage",
+            expected_stage=snapshot,
+        ):
+            current = self.rows.current_stage(task_id)
+            row = self.rows.get(task_id, stage_name)
+            if row is None:
+                raise ValueError(f"Stage '{stage_name}' is not in task manifest")
+            if row.state != "in_progress" or current is None or row.position != current.position:
+                raise illegal(row, "recover_abandoned_stage")
+
+            now = _now()
+            with self.db.transaction() as conn:
+                conn.execute(
+                    """
+                    UPDATE task_stage_states
+                       SET state = 'ready',
+                           entered_at = NULL,
+                           entered_by_session_id = NULL,
+                           artifact_refs = NULL,
+                           notes = NULL,
+                           work_attempt_count = CASE
+                               WHEN work_attempt_count > 0 THEN work_attempt_count - 1
+                               ELSE 0
+                           END,
+                           updated_at = %s
+                     WHERE task_id = %s AND stage_name = %s
+                    """,
+                    (now, task_id, stage_name),
+                )
+                self.events.record_lifecycle_event(
+                    task_id,
+                    f"{stage_name}:in_progress",
+                    f"{stage_name}:ready",
+                    reason,
+                    by_actor=holder,
+                )
+
+            updated = self.rows.get(task_id, stage_name)
+            if updated is None:
+                raise RuntimeError(f"Stage '{stage_name}' disappeared after recovery")
+            self._wake_dispatcher(task_id, stage_name, "recover_abandoned_stage")
+            return updated
+
     @staticmethod
     def _is_retry_neutral_cited_holistic_failure(
         stage_name: str,

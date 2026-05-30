@@ -29,10 +29,10 @@ def test_heartbeat_in_progress_with_commits_calls_submit_for_review_not_status_n
     assert "status='needs_review'" not in source
 
 
-def test_heartbeat_in_progress_no_commits_calls_fail_stage_not_status_open() -> None:
+def test_heartbeat_in_progress_no_commits_recovers_abandoned_stage_not_status_open() -> None:
     source = _source()
 
-    assert "fail_stage(" in source
+    assert "recover_abandoned_stage(" in source
     assert "status='open'" not in source
 
 

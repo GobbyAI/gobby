@@ -231,6 +231,21 @@ class StageStatesManager:
             cited_subtasks=cited_subtasks,
         )
 
+    def recover_abandoned_stage(
+        self,
+        task_id: str,
+        stage_name: str,
+        *,
+        by_session_id: str | None,
+        reason: str = "abandoned_in_progress_recovered",
+    ) -> StageState:
+        return self._transitions.recover_abandoned_stage(
+            task_id,
+            stage_name,
+            by_session_id=by_session_id,
+            reason=reason,
+        )
+
     def move_to_stage(
         self,
         task_id: str,

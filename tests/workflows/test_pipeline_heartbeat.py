@@ -297,6 +297,7 @@ def _create_in_progress_task(
     task_manager: LocalTaskManager,
     project_id: str = PROJECT_ID,
     assignee: str = "agent-dead",
+    max_work_attempts: int | None = None,
 ) -> str:
     """Create a task with an in-progress current stage and an owner."""
     task = task_manager.create_task(
@@ -318,6 +319,15 @@ def _create_in_progress_task(
         current_stage.stage_name,
         by_session_id=None,
     )
+    if max_work_attempts is not None:
+        task_manager.db.execute(
+            """
+            UPDATE task_stage_states
+               SET max_work_attempts = %s
+             WHERE task_id = %s AND stage_name = %s
+            """,
+            (max_work_attempts, task.id, current_stage.stage_name),
+        )
     return task.id
 
 
@@ -330,7 +340,7 @@ async def test_stale_task_with_terminal_agent_run_recovered(
 ) -> None:
     """In-progress task with terminal agent run and no live agent moves back to ready."""
     _seed_db(temp_db)
-    task_id = _create_in_progress_task(task_manager)
+    task_id = _create_in_progress_task(task_manager, max_work_attempts=1)
 
     # Create a terminal (error) agent run for this task
     agent_run_manager.create(
@@ -353,6 +363,10 @@ async def test_stale_task_with_terminal_agent_run_recovered(
     assert projected_task_state(task) == "ready"
     assert task.assignee is None
     assert task.claimed_by_session_id is None
+    assert task.is_escalated is False
+    stage = task_manager.stage_states.get(task_id, "development")
+    assert stage is not None
+    assert stage.work_attempt_count == 0
 
 
 @pytest.mark.asyncio
@@ -508,7 +522,11 @@ async def test_expired_session_task_recovered(
     _seed_db(temp_db)
     # Mark the session as expired (simulates SessionLivenessMonitor detecting dead PID)
     temp_db.execute("UPDATE sessions SET status = 'expired' WHERE id = %s", (SESSION_ID,))
-    task_id = _create_in_progress_task(task_manager, assignee=SESSION_ID)
+    task_id = _create_in_progress_task(
+        task_manager,
+        assignee=SESSION_ID,
+        max_work_attempts=1,
+    )
 
     recovered = await heartbeat_with_tasks.check_stale_tasks()
     assert recovered == 1
@@ -518,6 +536,10 @@ async def test_expired_session_task_recovered(
     assert projected_task_state(task) == "ready"
     assert task.assignee is None
     assert task.claimed_by_session_id is None
+    assert task.is_escalated is False
+    stage = task_manager.stage_states.get(task_id, "development")
+    assert stage is not None
+    assert stage.work_attempt_count == 0
 
 
 @pytest.mark.asyncio

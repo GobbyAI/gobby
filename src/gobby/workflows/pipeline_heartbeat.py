@@ -87,12 +87,12 @@ def _submit_current_stage_for_review(
     )
 
 
-def _fail_current_stage(
+def _recover_abandoned_stage(
     task_manager: LocalTaskManager,
     task_id: str,
     stage_name: str,
 ) -> None:
-    task_manager.stage_states.fail_stage(
+    task_manager.stage_states.recover_abandoned_stage(
         task_id,
         stage_name,
         reason="stale_task_recovery",
@@ -292,14 +292,14 @@ class PipelineHeartbeat:
                     )
                 elif current_stage and current_stage.state == "in_progress":
                     await self._run_db(
-                        _fail_current_stage,
+                        _recover_abandoned_stage,
                         task_manager,
                         task.id,
                         current_stage.stage_name,
                     )
                     await self._run_db(task_manager.release_task_claim, task.id)
-                    logger.warning(
-                        "Heartbeat: failed stale task %s (#%s) for retry",
+                    logger.info(
+                        "Heartbeat: recovered abandoned task %s (#%s) for retry",
                         task.id,
                         task.seq_num,
                     )

@@ -70,6 +70,7 @@ def test_stage_states_manager_exposes_reads_writes_and_models(temp_db) -> None:
         "reject_review",
         "complete_stage",
         "fail_stage",
+        "recover_abandoned_stage",
         "move_to_stage",
     }:
         assert callable(getattr(manager, method_name))
@@ -278,6 +279,62 @@ def test_start_stage_increments_work_attempts_only_and_emits_event(
         "reason": "start_stage",
         "by_actor": "dev-session",
     }
+
+
+def test_recover_abandoned_stage_restores_attempt_without_escalating(
+    temp_db,
+    sample_project,
+) -> None:
+    task, manager = make_task_with_manifest(
+        temp_db,
+        sample_project,
+        [spec("development", 0, max_work_attempts=1)],
+    )
+    manager.start_stage(task.id, "development", by_session_id="dispatcher")
+
+    recovered = manager.recover_abandoned_stage(
+        task.id,
+        "development",
+        by_session_id="heartbeat",
+        reason="stale_task_recovery",
+    )
+
+    assert recovered.state == "ready"
+    assert recovered.work_attempt_count == 0
+    task_after = task_row(temp_db, task.id)
+    assert task_after["is_escalated"] is False
+    assert task_after["escalation_reason"] is None
+    assert lifecycle_events(temp_db, task.id)[-1] == {
+        "from_state": "development:in_progress",
+        "to_state": "development:ready",
+        "reason": "stale_task_recovery",
+        "by_actor": "heartbeat",
+    }
+
+
+def test_fail_stage_preserves_real_max_attempt_escalation(
+    temp_db,
+    sample_project,
+) -> None:
+    task, manager = make_task_with_manifest(
+        temp_db,
+        sample_project,
+        [spec("development", 0, max_work_attempts=1)],
+    )
+    manager.start_stage(task.id, "development", by_session_id="dispatcher")
+
+    failed = manager.fail_stage(
+        task.id,
+        "development",
+        reason="agent_run_failed",
+        by_session_id="agent-session",
+    )
+
+    assert failed.state == "ready"
+    assert failed.work_attempt_count == 1
+    task_after = task_row(temp_db, task.id)
+    assert task_after["is_escalated"] is True
+    assert task_after["escalation_reason"] == "development_work_failed:max"
 
 
 def test_invalid_transition_error_carries_full_payload(temp_db, sample_project) -> None:
