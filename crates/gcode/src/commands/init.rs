@@ -63,6 +63,7 @@ pub fn run(project_root: &Path, format: Format, quiet: bool) -> anyhow::Result<(
         embedding: None,
         code_vectors: config::CodeVectorSettings::default(),
         daemon_url: None,
+        index_scope: config::ProjectIndexScope::Single,
     };
     let index_result = api::index_files(
         api::IndexRequest {

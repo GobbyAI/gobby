@@ -167,6 +167,12 @@ gcode search --project /path/to/app "q"   # By path
 --no-freshness                            # Skip read-time index/source freshness checks
 ```
 
+`gcode grep` defaults to grouped text output: each matched file is printed once,
+followed by line-numbered matches and context. Other high-volume text outputs,
+including `tree`, `callers`, `usages`, and `blast-radius`, also group repeated
+paths for compact agent-readable output. JSON output keeps the stable structured
+shape.
+
 ## AI CLI Skill Installation
 
 For non-Gobby-managed projects, `gcode init` installs the bundled `gcode` skill

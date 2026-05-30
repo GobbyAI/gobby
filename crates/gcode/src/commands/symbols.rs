@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use crate::commands::scope;
 use crate::config::Context;
 use crate::db;
@@ -5,29 +7,18 @@ use crate::models::Symbol;
 use crate::output::{self, Format};
 use crate::savings;
 use crate::utils::short_id;
+use crate::visibility;
 
 pub fn outline(ctx: &Context, file: &str, format: Format, verbose: bool) -> anyhow::Result<()> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
     let file = scope::normalize_file_arg(ctx, file);
-    let columns = db::symbol_select_columns("");
-    let symbols: Vec<Symbol> = conn
-        .query(
-            &format!(
-                "SELECT {columns} FROM code_symbols
-                 WHERE project_id = $1 AND file_path = $2
-                 ORDER BY line_start"
-            ),
-            &[&ctx.project_id, &file],
-        )?
-        .iter()
-        .filter_map(|row| Symbol::from_row(row).ok())
-        .collect();
+    let symbols = visibility::visible_symbols_for_file(&mut conn, ctx, &file)?;
 
     if symbols.is_empty() && !ctx.quiet {
         eprintln!("{}", outline_missing_diagnostic(&mut conn, ctx, &file));
     }
 
-    // Record savings: outline bytes vs full file bytes
+    // Report savings: outline bytes vs full file bytes
     let file_path = ctx.project_root.join(&file);
     if let Ok(meta) = file_path.metadata() {
         let file_bytes = meta.len() as usize;
@@ -41,11 +32,11 @@ pub fn outline(ctx: &Context, file: &str, format: Format, verbose: bool) -> anyh
                     + 20 // line numbers, separators
             })
             .sum();
-        if outline_bytes > 0 && file_bytes > outline_bytes {
-            savings::print_savings(&format!("outline {file}"), file_bytes, outline_bytes);
-            if let Some(url) = savings::resolve_daemon_url(None) {
-                savings::report_savings(&url, file_bytes, outline_bytes);
-            }
+        if outline_bytes > 0
+            && file_bytes > outline_bytes
+            && let Some(url) = savings::resolve_daemon_url(None)
+        {
+            savings::report_savings(&url, file_bytes, outline_bytes);
         }
     }
 
@@ -74,7 +65,7 @@ pub fn outline(ctx: &Context, file: &str, format: Format, verbose: bool) -> anyh
 
 fn outline_missing_diagnostic(conn: &mut postgres::Client, ctx: &Context, file: &str) -> String {
     if scope::path_exists_in_current_project(ctx, file) {
-        if scope::indexed_file_exists(conn, &ctx.project_id, file) {
+        if scope::indexed_file_exists(conn, ctx, file) {
             return format!("file has no indexed symbols in current project: {file}");
         }
         return format!("file not indexed in current project: {file}");
@@ -89,9 +80,7 @@ fn outline_missing_diagnostic(conn: &mut postgres::Client, ctx: &Context, file: 
         );
     }
 
-    if scope::indexed_file_exists(conn, &ctx.project_id, file)
-        || scope::content_chunks_exist(conn, &ctx.project_id, file)
-    {
+    if scope::indexed_file_exists(conn, ctx, file) || scope::content_chunks_exist(conn, ctx, file) {
         return format!("indexed path missing from current checkout: {file}; run gcode index");
     }
 
@@ -117,15 +106,7 @@ fn format_outline_text_line(symbol: &Symbol) -> String {
 
 pub fn symbol(ctx: &Context, id: &str, format: Format) -> anyhow::Result<()> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
-    let columns = db::symbol_select_columns("");
-    let sym: Option<Symbol> = conn
-        .query_opt(
-            &format!("SELECT {columns} FROM code_symbols WHERE id = $1 AND project_id = $2"),
-            &[&id, &ctx.project_id],
-        )
-        .ok()
-        .flatten()
-        .and_then(|row| Symbol::from_row(&row).ok());
+    let sym = visibility::visible_symbol_by_id(&mut conn, ctx, id)?;
 
     match sym {
         Some(s) => {
@@ -138,16 +119,12 @@ pub fn symbol(ctx: &Context, id: &str, format: Format) -> anyhow::Result<()> {
                 let symbol_bytes = end - start;
                 let snippet = String::from_utf8_lossy(&source[start..end]);
 
-                // Record savings: symbol bytes vs full file bytes
-                if symbol_bytes > 0 && file_bytes > symbol_bytes {
-                    savings::print_savings(
-                        &format!("symbol {}", s.qualified_name),
-                        file_bytes,
-                        symbol_bytes,
-                    );
-                    if let Some(url) = savings::resolve_daemon_url(None) {
-                        savings::report_savings(&url, file_bytes, symbol_bytes);
-                    }
+                // Report savings: symbol bytes vs full file bytes
+                if symbol_bytes > 0
+                    && file_bytes > symbol_bytes
+                    && let Some(url) = savings::resolve_daemon_url(None)
+                {
+                    savings::report_savings(&url, file_bytes, symbol_bytes);
                 }
 
                 match format {
@@ -183,26 +160,9 @@ pub fn symbols(ctx: &Context, ids: &[String], format: Format) -> anyhow::Result<
             Format::Text => Ok(()),
         };
     }
-    let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("${i}")).collect();
-    let project_placeholder = format!("${}", ids.len() + 1);
-    let columns = db::symbol_select_columns("");
-    let sql = format!(
-        "SELECT {columns} FROM code_symbols
-         WHERE id IN ({}) AND project_id = {project_placeholder}",
-        placeholders.join(",")
-    );
-    let mut params: Vec<&(dyn postgres::types::ToSql + Sync)> = ids
-        .iter()
-        .map(|s| s as &(dyn postgres::types::ToSql + Sync))
-        .collect();
-    params.push(&ctx.project_id);
-    let results: Vec<Symbol> = conn
-        .query(&sql, &params)?
-        .iter()
-        .filter_map(|row| Symbol::from_row(row).ok())
-        .collect();
+    let results = visibility::visible_symbols_by_ids(&mut conn, ctx, ids)?;
 
-    // Aggregate savings across batch
+    // Report aggregate savings across batch
     let mut total_file_bytes = 0usize;
     let mut total_symbol_bytes = 0usize;
     for s in &results {
@@ -212,15 +172,11 @@ pub fn symbols(ctx: &Context, ids: &[String], format: Format) -> anyhow::Result<
             total_symbol_bytes += s.byte_end - s.byte_start;
         }
     }
-    if total_symbol_bytes > 0 && total_file_bytes > total_symbol_bytes {
-        savings::print_savings(
-            &format!("symbols ({})", results.len()),
-            total_file_bytes,
-            total_symbol_bytes,
-        );
-        if let Some(url) = savings::resolve_daemon_url(None) {
-            savings::report_savings(&url, total_file_bytes, total_symbol_bytes);
-        }
+    if total_symbol_bytes > 0
+        && total_file_bytes > total_symbol_bytes
+        && let Some(url) = savings::resolve_daemon_url(None)
+    {
+        savings::report_savings(&url, total_file_bytes, total_symbol_bytes);
     }
 
     match format {
@@ -239,14 +195,7 @@ pub fn symbols(ctx: &Context, ids: &[String], format: Format) -> anyhow::Result<
 
 pub fn kinds(ctx: &Context, format: Format) -> anyhow::Result<()> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
-    let kinds: Vec<String> = conn
-        .query(
-            "SELECT DISTINCT kind FROM code_symbols WHERE project_id = $1 ORDER BY kind",
-            &[&ctx.project_id],
-        )?
-        .iter()
-        .filter_map(|row| row.try_get(0).ok())
-        .collect();
+    let kinds = visibility::visible_kinds(&mut conn, ctx)?;
 
     match format {
         Format::Json => output::print_json(&kinds),
@@ -261,37 +210,53 @@ pub fn kinds(ctx: &Context, format: Format) -> anyhow::Result<()> {
 
 pub fn tree(ctx: &Context, format: Format) -> anyhow::Result<()> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
-    let files: Vec<serde_json::Value> = conn
-        .query(
-            "SELECT file_path, language, symbol_count::BIGINT AS symbol_count
-             FROM code_indexed_files
-             WHERE project_id = $1 ORDER BY file_path",
-            &[&ctx.project_id],
-        )?
-        .iter()
-        .filter_map(|row| {
-            Some(serde_json::json!({
-                "file_path": row.try_get::<_, String>("file_path").ok()?,
-                "language": row.try_get::<_, String>("language").ok()?,
-                "symbol_count": row.try_get::<_, i64>("symbol_count").ok()?,
-            }))
+    let files: Vec<serde_json::Value> = visibility::visible_tree(&mut conn, ctx)?
+        .into_iter()
+        .map(|file| {
+            serde_json::json!({
+                "file_path": file.file_path,
+                "language": file.language,
+                "symbol_count": file.symbol_count,
+            })
         })
         .collect();
 
     match format {
         Format::Json => output::print_json(&files),
         Format::Text => {
-            for f in &files {
-                println!(
-                    "{} [{}] ({} symbols)",
-                    f["file_path"].as_str().unwrap_or(""),
-                    f["language"].as_str().unwrap_or(""),
-                    f["symbol_count"].as_i64().unwrap_or(0),
-                );
+            let text = format_tree_text(&files);
+            if text.is_empty() {
+                Ok(())
+            } else {
+                output::print_text(&text)
             }
-            Ok(())
         }
     }
+}
+
+fn format_tree_text(files: &[serde_json::Value]) -> String {
+    let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
+
+    for file in files {
+        let file_path = file["file_path"].as_str().unwrap_or("");
+        let language = file["language"].as_str().unwrap_or("");
+        let symbol_count = file["symbol_count"].as_i64().unwrap_or(0);
+        let (dir, basename) = file_path
+            .rsplit_once('/')
+            .filter(|(dir, basename)| !dir.is_empty() && !basename.is_empty())
+            .unwrap_or((".", file_path));
+
+        groups.entry(dir.to_string()).or_default().push(format!(
+            "  {basename} [{language}] ({symbol_count} symbols)"
+        ));
+    }
+
+    let mut lines = Vec::new();
+    for (dir, entries) in groups {
+        lines.push(dir);
+        lines.extend(entries);
+    }
+    lines.join("\n")
 }
 
 #[cfg(test)]
@@ -328,5 +293,31 @@ mod tests {
         assert!(line.contains("src/commands.rs:7-63 [function] outline"));
         assert!(line.contains("id=12345678-1234-5678-1234-567812345678"));
         assert!(line.contains("sig=pub fn outline() -> anyhow::Result<()> {"));
+    }
+
+    #[test]
+    fn tree_text_groups_files_by_directory() {
+        let files = vec![
+            serde_json::json!({
+                "file_path": "README.md",
+                "language": "markdown",
+                "symbol_count": 0,
+            }),
+            serde_json::json!({
+                "file_path": "src/commands/grep.rs",
+                "language": "rust",
+                "symbol_count": 7,
+            }),
+            serde_json::json!({
+                "file_path": "src/lib.rs",
+                "language": "rust",
+                "symbol_count": 3,
+            }),
+        ];
+
+        assert_eq!(
+            format_tree_text(&files),
+            ".\n  README.md [markdown] (0 symbols)\nsrc\n  lib.rs [rust] (3 symbols)\nsrc/commands\n  grep.rs [rust] (7 symbols)"
+        );
     }
 }

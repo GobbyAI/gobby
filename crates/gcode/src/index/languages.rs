@@ -30,7 +30,7 @@ const PYTHON: LanguageSpec = LanguageSpec {
 };
 
 const JAVASCRIPT: LanguageSpec = LanguageSpec {
-    extensions: &[".js", ".jsx", ".mjs", ".cjs"],
+    extensions: &[".js", ".jsx", ".cjs"],
     symbol_query: r#"
         (function_declaration name: (identifier) @name) @definition.function
         (class_declaration name: (identifier) @name) @definition.class
@@ -262,16 +262,6 @@ const KOTLIN: LanguageSpec = LanguageSpec {
     "#,
 };
 
-const MARKDOWN: LanguageSpec = LanguageSpec {
-    extensions: &[".md", ".markdown"],
-    symbol_query: r#"
-        (atx_heading heading_content: (_) @name) @definition.section
-        (setext_heading heading_content: (_) @name) @definition.section
-    "#,
-    import_query: "",
-    call_query: "",
-};
-
 const YAML: LanguageSpec = LanguageSpec {
     extensions: &[".yaml", ".yml"],
     symbol_query: r#"
@@ -327,7 +317,6 @@ const SPECS: &[(&str, &LanguageSpec)] = &[
     ("ruby", &RUBY),
     ("kotlin", &KOTLIN),
     ("swift", &SWIFT),
-    ("markdown", &MARKDOWN),
     ("yaml", &YAML),
     ("json", &JSON_LANG),
 ];
@@ -375,8 +364,26 @@ pub fn get_ts_language(lang: &str) -> Option<Language> {
         "elixir" => tree_sitter_elixir::LANGUAGE,
         "json" => tree_sitter_json::LANGUAGE,
         "yaml" => tree_sitter_yaml::LANGUAGE,
-        "markdown" => tree_sitter_md::LANGUAGE,
         _ => return None,
     };
     Some(lang_fn.into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mjs_and_markdown_extensions_are_not_detected() {
+        assert_eq!(detect_language("src/generated.mjs"), None);
+        assert_eq!(detect_language("README.md"), None);
+        assert_eq!(detect_language("docs/guide.markdown"), None);
+    }
+
+    #[test]
+    fn javascript_extensions_still_detect() {
+        assert_eq!(detect_language("src/app.js"), Some("javascript"));
+        assert_eq!(detect_language("src/app.jsx"), Some("javascript"));
+        assert_eq!(detect_language("src/app.cjs"), Some("javascript"));
+    }
 }
