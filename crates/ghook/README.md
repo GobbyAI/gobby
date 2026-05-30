@@ -16,6 +16,13 @@ ghook --diagnose    --cli=<c> --type=<t>
 ghook --version
 ```
 
+## Terminal context
+
+When `TMUX` is set and `TMUX_PANE` matches `^%\d+$`, `ghook` injects
+`input_data.terminal_context.tmux_pane` into the envelope for any `--cli` value.
+The pane ID is passed through verbatim. If the pane variable is missing, empty,
+or invalid, `terminal_context` is omitted.
+
 Exit codes:
 
 - `0` — success, including non-Stop deny/block responses that are returned as JSON

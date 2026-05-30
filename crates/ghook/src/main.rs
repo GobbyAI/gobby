@@ -179,7 +179,7 @@ fn run_gobby_owned(args: &Args) -> ExitCode {
         )))
     };
 
-    let mut input_data = match parsed {
+    let input_data = match parsed {
         Ok(v) => v,
         Err(e) => {
             let _ = transport::quarantine_malformed(&stdin_raw, &e.to_string(), is_critical);
@@ -188,29 +188,7 @@ fn run_gobby_owned(args: &Args) -> ExitCode {
         }
     };
 
-    // Terminal-context enrichment, gated by per-CLI set.
-    if cfg.wants_terminal_context(hook_type) {
-        terminal_context::inject(&mut input_data);
-    }
-
-    // Headers: omit on missing (never empty string).
-    let mut headers: BTreeMap<String, String> = BTreeMap::new();
-    if let Some(pid) = project_id {
-        headers.insert("X-Gobby-Project-Id".into(), pid);
-    }
-    if let Some(sid) = input_data.get("session_id").and_then(|v| v.as_str())
-        && !sid.is_empty()
-    {
-        headers.insert("X-Gobby-Session-Id".into(), sid.to_string());
-    }
-
-    let env = Envelope::new(
-        is_critical,
-        hook_type.to_string(),
-        input_data,
-        detect_source(&cfg),
-        headers,
-    );
+    let env = build_dispatch_envelope(&cfg, hook_type, input_data, project_id.as_deref());
 
     // Enqueue first (atomic write to ~/.gobby/hooks/inbox/).
     let inbox = match transport::inbox_dir() {
@@ -295,6 +273,34 @@ fn continue_action() -> HookAction {
 
 fn hooks_disabled_by_env() -> bool {
     std::env::var_os("GOBBY_HOOKS_DISABLED").is_some_and(|v| v == "1")
+}
+
+fn build_dispatch_envelope(
+    cfg: &CliConfig,
+    hook_type: &str,
+    mut input_data: Value,
+    project_id: Option<&str>,
+) -> Envelope {
+    terminal_context::inject(&mut input_data);
+
+    // Headers: omit on missing (never empty string).
+    let mut headers: BTreeMap<String, String> = BTreeMap::new();
+    if let Some(pid) = project_id {
+        headers.insert("X-Gobby-Project-Id".into(), pid.to_string());
+    }
+    if let Some(sid) = input_data.get("session_id").and_then(|v| v.as_str())
+        && !sid.is_empty()
+    {
+        headers.insert("X-Gobby-Session-Id".into(), sid.to_string());
+    }
+
+    Envelope::new(
+        cfg.is_critical_hook(hook_type),
+        hook_type.to_string(),
+        input_data,
+        detect_source(cfg),
+        headers,
+    )
 }
 
 fn detect_source(cfg: &CliConfig) -> String {
@@ -571,6 +577,100 @@ mod tests {
     use super::*;
     use crate::transport::DeliveryFailureKind;
     use serde_json::json;
+    use std::ffi::OsString;
+    use std::sync::{Mutex, MutexGuard};
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn with_tmux_env<T>(tmux: Option<&str>, tmux_pane: Option<&str>, f: impl FnOnce() -> T) -> T {
+        let _env = TmuxEnv::set(tmux, tmux_pane);
+        f()
+    }
+
+    struct TmuxEnv {
+        _guard: MutexGuard<'static, ()>,
+        original_tmux: Option<OsString>,
+        original_tmux_pane: Option<OsString>,
+    }
+
+    impl TmuxEnv {
+        fn set(tmux: Option<&str>, tmux_pane: Option<&str>) -> Self {
+            let guard = ENV_LOCK.lock().unwrap();
+            let original_tmux = std::env::var_os("TMUX");
+            let original_tmux_pane = std::env::var_os("TMUX_PANE");
+
+            set_env_var("TMUX", tmux.map(OsString::from));
+            set_env_var("TMUX_PANE", tmux_pane.map(OsString::from));
+
+            Self {
+                _guard: guard,
+                original_tmux,
+                original_tmux_pane,
+            }
+        }
+    }
+
+    impl Drop for TmuxEnv {
+        fn drop(&mut self) {
+            set_env_var("TMUX", self.original_tmux.take());
+            set_env_var("TMUX_PANE", self.original_tmux_pane.take());
+        }
+    }
+
+    fn set_env_var(key: &str, value: Option<OsString>) {
+        // SAFETY: tests that mutate TMUX/TMUX_PANE serialize those mutations
+        // with ENV_LOCK and restore the original values before releasing it.
+        unsafe {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+    }
+
+    #[test]
+    fn dispatch_envelope_injects_valid_tmux_pane_for_any_cli() {
+        with_tmux_env(Some("/tmp/tmux-501/default,12345,0"), Some("%17"), || {
+            let cfg = CliConfig::for_dispatch("grok");
+            let envelope = build_dispatch_envelope(
+                &cfg,
+                "SessionStart",
+                json!({"session_id": "sess-1"}),
+                None,
+            );
+
+            assert_eq!(envelope.input_data["terminal_context"]["tmux_pane"], "%17");
+        });
+    }
+
+    #[test]
+    fn dispatch_envelope_omits_terminal_context_for_missing_or_invalid_tmux_pane() {
+        for pane in [None, Some(""), Some("17"), Some("%"), Some("%x")] {
+            with_tmux_env(Some("/tmp/tmux-501/default,12345,0"), pane, || {
+                let cfg = CliConfig::for_dispatch("gemini");
+                let envelope = build_dispatch_envelope(
+                    &cfg,
+                    "SessionStart",
+                    json!({"session_id": "sess-1"}),
+                    None,
+                );
+
+                assert!(envelope.input_data.get("terminal_context").is_none());
+            });
+        }
+
+        with_tmux_env(None, Some("%17"), || {
+            let cfg = CliConfig::for_dispatch("gemini");
+            let envelope = build_dispatch_envelope(
+                &cfg,
+                "SessionStart",
+                json!({"session_id": "sess-1"}),
+                None,
+            );
+
+            assert!(envelope.input_data.get("terminal_context").is_none());
+        });
+    }
 
     #[test]
     fn action_from_success_forwards_sessionstart_context_json() {

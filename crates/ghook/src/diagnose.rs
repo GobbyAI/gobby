@@ -85,13 +85,8 @@ pub fn diagnose(cli: &str, hook_type: &str) -> DiagnoseOutput {
     let (source, critical, terminal_context_enabled, terminal_context_preview) = match cfg {
         Some(c) => {
             let critical = c.critical_hooks.contains(hook_type);
-            let wants_ctx = c.wants_terminal_context(hook_type);
-            let preview = if wants_ctx {
-                Some(crate::terminal_context::capture())
-            } else {
-                None
-            };
-            (Some(c.source.to_string()), critical, wants_ctx, preview)
+            let preview = crate::terminal_context::capture();
+            (Some(c.source.to_string()), critical, true, preview)
         }
         None => (None, false, false, None),
     };
@@ -139,7 +134,6 @@ mod tests {
         assert_eq!(d.source.as_deref(), Some("claude"));
         assert!(d.critical);
         assert!(d.terminal_context_enabled);
-        assert!(d.terminal_context_preview.is_some());
     }
 
     #[test]
@@ -151,13 +145,12 @@ mod tests {
     }
 
     #[test]
-    fn droid_session_start_is_recognized_noncritical_without_terminal_context() {
+    fn droid_session_start_is_recognized_noncritical_with_terminal_context_enabled() {
         let d = diagnose("droid", "SessionStart");
         assert!(d.cli_recognized);
         assert_eq!(d.source.as_deref(), Some("droid"));
         assert!(!d.critical);
-        assert!(!d.terminal_context_enabled);
-        assert!(d.terminal_context_preview.is_none());
+        assert!(d.terminal_context_enabled);
     }
 
     fn compile_v2_schema() -> jsonschema::JSONSchema {
