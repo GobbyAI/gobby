@@ -5,7 +5,7 @@ from __future__ import annotations
 MANAGED_BIN_VERSION_PINS: dict[str, str] = {
     # ghook 0.4.2 includes native planned-shutdown Stop hook handling.
     "ghook": "0.4.2",
-    "gcode": "0.9.7",
+    "gcode": "0.9.9",
     "gsqz": "0.4.2",
     "gloc": "0.1.1",
 }
