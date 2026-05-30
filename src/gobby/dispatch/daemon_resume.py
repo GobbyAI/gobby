@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -178,6 +179,32 @@ async def _workspace_dirty(workspace_path: str | None) -> bool:
         logger.debug("Failed to canonicalize workspace path %s", workspace_path, exc_info=True)
         return True
     if not path.is_dir():
+        return False
+    if shutil.which("git") is None:
+        logger.debug("Cannot inspect workspace dirty state for %s: git executable not found", path)
+        return True
+    try:
+        repo_result = await asyncio.to_thread(
+            subprocess.run,
+            ["git", "-C", str(path), "rev-parse", "--is-inside-work-tree"],
+            capture_output=True,
+            text=True,
+            timeout=_WORKSPACE_DIRTY_CHECK_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        logger.debug("Timed out probing workspace repository state for %s", path, exc_info=True)
+        return True
+    except (OSError, subprocess.SubprocessError):
+        logger.debug("Failed to probe workspace repository state for %s", path, exc_info=True)
+        return True
+    if repo_result.returncode != 0 or repo_result.stdout.strip().lower() != "true":
+        logger.debug(
+            "Workspace path %s is not an inspectable git work tree: return code %s stderr=%r",
+            path,
+            repo_result.returncode,
+            repo_result.stderr,
+        )
         return False
     try:
         result = await asyncio.to_thread(

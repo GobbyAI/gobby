@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from uuid import UUID
 
 import pytest
 
@@ -93,9 +92,9 @@ def test_code_index_uses_gcode_navigation_before_line_readers() -> None:
         "respond",
     )
 
-    symbol_command = str(result.loaded.actions[2]["command"])
-    symbol_id = symbol_command.removeprefix("gcode symbol ")
-    assert symbol_command != symbol_id
-    assert UUID(symbol_id).version == 5
-    assert result.loaded.actions[3]["command"] == "sed -n '121,123p' src/gobby/skills/parser.py"
+    assert result.loaded.actions[2]["command"] == "gcode symbol <symbol-id-from-outline>"
+    assert (
+        result.loaded.actions[3]["command"]
+        == "sed -n '<1-3 adjacent lines>' src/gobby/skills/parser.py"
+    )
     assert result.has_behavioral_delta

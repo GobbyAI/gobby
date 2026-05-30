@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import psycopg
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 
@@ -23,6 +24,7 @@ UI_SETTINGS_KEYS = (
     "selectedProjectId",
     "selectedProvider",
 )
+_UI_SETTING_STORAGE_ERRORS = (OSError, RuntimeError, psycopg.Error)
 
 
 def register_ui_setting_routes(router: APIRouter, context: ConfigurationRouteContext) -> None:
@@ -34,17 +36,16 @@ def register_ui_setting_routes(router: APIRouter, context: ConfigurationRouteCon
         try:
             config_store = context.get_config_store()
             result: dict[str, Any] = {}
-            values = config_store.get_all()
-            for prefixed_key in (f"{UI_SETTINGS_PREFIX}{key}" for key in UI_SETTINGS_KEYS):
-                value = values.get(prefixed_key)
+            for key in UI_SETTINGS_KEYS:
+                value = config_store.get(f"{UI_SETTINGS_PREFIX}{key}")
                 if value is not None:
-                    result[prefixed_key.removeprefix(UI_SETTINGS_PREFIX)] = value
+                    result[key] = value
             return JSONResponse(content=result)
         except HTTPException:
             raise
-        except Exception as e:
+        except _UI_SETTING_STORAGE_ERRORS as e:
             logger.error("Failed to get UI settings: %s", e, exc_info=True)
-            raise HTTPException(status_code=500, detail="Internal server error") from e
+            raise HTTPException(status_code=500, detail="Failed to load UI settings") from e
 
     @router.put("/ui-settings")
     async def save_ui_settings(request: SaveUISettingsRequest) -> JSONResponse:
@@ -61,9 +62,9 @@ def register_ui_setting_routes(router: APIRouter, context: ConfigurationRouteCon
             return JSONResponse(content={"ok": True})
         except HTTPException:
             raise
-        except Exception as e:
+        except _UI_SETTING_STORAGE_ERRORS as e:
             logger.error("Failed to save UI settings: %s", e, exc_info=True)
-            raise HTTPException(status_code=500, detail="Internal server error") from e
+            raise HTTPException(status_code=500, detail="Failed to save UI settings") from e
 
     @router.delete("/ui-settings/{key}")
     async def delete_ui_setting(key: str) -> JSONResponse:
@@ -80,6 +81,6 @@ def register_ui_setting_routes(router: APIRouter, context: ConfigurationRouteCon
             return JSONResponse(content={"ok": True})
         except HTTPException:
             raise
-        except Exception as e:
+        except _UI_SETTING_STORAGE_ERRORS as e:
             logger.error("Failed to delete UI setting '%s': %s", key, e, exc_info=True)
-            raise HTTPException(status_code=500, detail="Internal server error") from e
+            raise HTTPException(status_code=500, detail="Failed to delete UI setting") from e

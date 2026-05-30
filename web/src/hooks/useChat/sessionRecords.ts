@@ -130,63 +130,99 @@ export function isRestorableSessionRecord(
   return !NON_RESTORABLE_SESSION_STATUSES.has(status);
 }
 
+function sessionMetaValue<K extends keyof SessionObservationMeta>(
+  overrides: Partial<SessionObservationMeta> | undefined,
+  key: K,
+  fallback: SessionObservationMeta[K],
+): SessionObservationMeta[K] {
+  return overrides?.[key] ?? fallback;
+}
+
+function sessionString(
+  session: Record<string, unknown>,
+  key: string,
+  fallback: string | null,
+): string | null {
+  const value = session[key];
+  return typeof value === "string" ? value : fallback;
+}
+
+function sessionBoolean(
+  session: Record<string, unknown>,
+  key: string,
+): boolean | undefined {
+  const value = session[key];
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function sessionNumber(
+  session: Record<string, unknown>,
+  key: string,
+): number | null {
+  const value = session[key];
+  return typeof value === "number" ? value : null;
+}
+
 export function toSessionObservationMeta(
   session: Record<string, unknown> | null,
   overrides?: Partial<SessionObservationMeta>,
 ): SessionObservationMeta | null {
   if (!session) return null;
   return {
-    ref:
-      overrides?.ref ??
-      (typeof session.seq_num === "number" ? `#${session.seq_num}` : null),
-    source:
-      overrides?.source ??
-      (typeof session.source === "string" ? session.source : "unknown"),
-    title:
-      overrides?.title ??
-      (typeof session.title === "string" ? session.title : null),
-    status:
-      overrides?.status ??
-      (typeof session.status === "string" ? session.status : "unknown"),
-    canProxyAttach:
-      overrides?.canProxyAttach ??
-      (typeof session.can_proxy_attach === "boolean"
-        ? session.can_proxy_attach
-        : undefined),
-    model:
-      overrides?.model ??
-      (typeof session.model === "string" ? session.model : null),
-    reasoningEffort:
-      overrides?.reasoningEffort ??
-      (typeof session.reasoning_effort === "string"
-        ? session.reasoning_effort
-        : null),
-    externalId:
-      overrides?.externalId ??
-      (typeof session.external_id === "string" ? session.external_id : ""),
-    chatMode:
-      overrides?.chatMode ??
-      (typeof session.chat_mode === "string" ? session.chat_mode : null),
-    gitBranch:
-      overrides?.gitBranch ??
-      (typeof session.git_branch === "string" ? session.git_branch : null),
-    contextWindow:
-      overrides?.contextWindow ??
-      (typeof session.context_window === "number"
-        ? session.context_window
-        : null),
-    agentRunId:
-      overrides?.agentRunId ??
-      (typeof session.agent_run_id === "string" ? session.agent_run_id : null),
-    workflowName:
-      overrides?.workflowName ??
-      (typeof session.workflow_name === "string"
-        ? session.workflow_name
-        : null),
-    agentName:
-      overrides?.agentName ??
-      (typeof session.agent_name === "string" ? session.agent_name : null),
-    sessionType:
-      overrides?.sessionType ?? normalizeSessionType(session.session_type),
+    ref: sessionMetaValue(
+      overrides,
+      "ref",
+      typeof session.seq_num === "number" ? `#${session.seq_num}` : null,
+    ),
+    source: sessionMetaValue(overrides, "source", sessionString(session, "source", "unknown")!),
+    title: sessionMetaValue(overrides, "title", sessionString(session, "title", null)),
+    status: sessionMetaValue(overrides, "status", sessionString(session, "status", "unknown")!),
+    canProxyAttach: sessionMetaValue(
+      overrides,
+      "canProxyAttach",
+      sessionBoolean(session, "can_proxy_attach"),
+    ),
+    model: sessionMetaValue(overrides, "model", sessionString(session, "model", null)),
+    reasoningEffort: sessionMetaValue(
+      overrides,
+      "reasoningEffort",
+      sessionString(session, "reasoning_effort", null),
+    ),
+    externalId: sessionMetaValue(
+      overrides,
+      "externalId",
+      sessionString(session, "external_id", "")!,
+    ),
+    chatMode: sessionMetaValue(overrides, "chatMode", sessionString(session, "chat_mode", null)),
+    gitBranch: sessionMetaValue(
+      overrides,
+      "gitBranch",
+      sessionString(session, "git_branch", null),
+    ),
+    contextWindow: sessionMetaValue(
+      overrides,
+      "contextWindow",
+      sessionNumber(session, "context_window"),
+    ),
+    agentRunId: sessionMetaValue(
+      overrides,
+      "agentRunId",
+      sessionString(session, "agent_run_id", null),
+    ),
+    workflowName: sessionMetaValue(
+      overrides,
+      "workflowName",
+      sessionString(session, "workflow_name", null),
+    ),
+    agentName: sessionMetaValue(
+      overrides,
+      "agentName",
+      sessionString(session, "agent_name", null),
+    ),
+    sessionType: sessionMetaValue(
+      overrides,
+      "sessionType",
+      normalizeSessionType(session.session_type),
+    ),
   };
 }

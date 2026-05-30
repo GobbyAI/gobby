@@ -13,8 +13,8 @@ from gobby.hooks._normalization_paths import (
 from gobby.hooks._normalization_shell import canonicalize_shell_tool_name, is_shell_tool
 
 # Pattern to detect non-zero exit codes in tool output text.
-# Matches: "Exit code: 1", "exit code 127", "Error: Exit code 2", etc.
-_EXIT_CODE_RE = _re.compile(r"[Ee]xit.?code[:\s]+(\d+)")
+# Matches bounded forms such as "Exit code: 1", "exit code 127", and "EXIT-CODE 2".
+_EXIT_CODE_RE = _re.compile(r"\bexit[ _-]?code\b[:\s]+([0-9]{1,3})\b", _re.IGNORECASE)
 
 
 def normalize_tool_fields(data: dict[str, Any]) -> dict[str, Any]:

@@ -853,6 +853,22 @@ class TestToolErrorDetection:
         normalize_tool_fields(data)
         assert data["is_error"] is True
 
+    def test_bash_exit_code_detection_is_case_insensitive_and_bounded(self) -> None:
+        """Exit code pattern matches bounded case variants only."""
+        data = {
+            "tool_name": "Bash",
+            "tool_result": "failed\nEXIT-CODE 2",
+        }
+        normalize_tool_fields(data)
+        assert data["is_error"] is True
+
+        ignored = {
+            "tool_name": "Bash",
+            "tool_result": "failed\nexit code 12345",
+        }
+        normalize_tool_fields(ignored)
+        assert "is_error" not in ignored
+
     def test_bash_zero_exit_code_no_is_error(self) -> None:
         """Bash tool_result with zero exit code → is_error not set."""
         data = {

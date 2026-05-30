@@ -9,6 +9,7 @@ import pytest
 
 from gobby.agents.resume_executor import ResumeAgentResult
 from gobby.agents.session import ChildSessionManager
+from gobby.dispatch import daemon_resume
 from gobby.dispatch.actions import SpawnAgentAction
 from gobby.storage.agents import AgentRunTerminalReason, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -16,7 +17,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.tasks._crud import get_task, update_task
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
-from tests.storage.tasks._stage_test_helpers import initialize_manifest, set_stage_state, spec
+from tests.storage.tasks.stage_test_helpers import initialize_manifest, set_stage_state, spec
 
 pytestmark = pytest.mark.unit
 
@@ -66,6 +67,26 @@ async def test_workspace_dirty_canonicalizes_symlink_paths(tmp_path: Path) -> No
     link.symlink_to(workspace, target_is_directory=True)
 
     assert await _workspace_dirty(str(link)) is True
+
+
+@pytest.mark.asyncio
+async def test_workspace_dirty_returns_false_for_non_git_directory(tmp_path: Path) -> None:
+    workspace = tmp_path / "plain"
+    workspace.mkdir()
+
+    assert await daemon_resume._workspace_dirty(str(workspace)) is False
+
+
+@pytest.mark.asyncio
+async def test_workspace_dirty_treats_missing_git_as_dirty(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setattr(daemon_resume.shutil, "which", lambda _name: None)
+
+    assert await daemon_resume._workspace_dirty(str(workspace)) is True
 
 
 def _services(temp_db: HubDatabase) -> SimpleNamespace:

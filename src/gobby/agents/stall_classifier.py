@@ -47,10 +47,6 @@ class _RunState:
 # contents). Patterns must be specific enough to avoid matching agents
 # working on code *about* rate limiting, error handling, etc.
 _PROVIDER_ERROR_PATTERNS: tuple[re.Pattern[str], ...] = (
-    # Gobby bootstrap/accounting failures: the terminal launched and may show
-    # model output, but hooks/transcript accounting never attached to the run.
-    re.compile(r"bootstrap/accounting stall", re.IGNORECASE),
-    re.compile(r"session accounting stayed at zero", re.IGNORECASE),
     # HTTP status codes with error context — specific enough as-is
     re.compile(r"\b429\b.*(?:rate|limit|too many|quota)", re.IGNORECASE),
     re.compile(r"\b503\b.*(?:service|unavailable|overloaded)", re.IGNORECASE),

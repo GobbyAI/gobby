@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Protocol
 
 logger = logging.getLogger(__name__)
 
@@ -13,10 +13,20 @@ STRONG_NUDGE_COOLDOWN_TURNS = 2
 UNKNOWN_USAGE_TURN_FALLBACK = 10
 
 
+class _SessionValue(Protocol):
+    context_usage_ratio: object
+    context_used_tokens: object
+    context_window: object
+
+
+class _SessionManager(Protocol):
+    def get(self, session_id: str) -> _SessionValue | None: ...
+
+
 def detect_context_compact_guidance(
     variables: dict[str, Any],
     session_id: str,
-    session_manager: Any | None,
+    session_manager: _SessionManager | None,
 ) -> None:
     """Populate compact guidance variables for non-plan turn_start evaluation."""
     variables["context_compact_guidance_kind"] = ""
@@ -80,7 +90,10 @@ def detect_context_compact_guidance(
         )
 
 
-def _load_session(session_manager: Any | None, session_id: str) -> Any | None:
+def _load_session(
+    session_manager: _SessionManager | None,
+    session_id: str,
+) -> _SessionValue | None:
     if session_manager is None or not session_id:
         return None
     try:
@@ -90,7 +103,7 @@ def _load_session(session_manager: Any | None, session_id: str) -> Any | None:
         return None
 
 
-def _ratio_from_session(session: Any | None) -> float | None:
+def _ratio_from_session(session: _SessionValue | None) -> float | None:
     if session is None:
         return None
     ratio = getattr(session, "context_usage_ratio", None)

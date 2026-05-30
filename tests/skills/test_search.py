@@ -2,6 +2,7 @@
 
 import json
 from datetime import UTC, datetime
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -148,8 +149,8 @@ class TestSkillSearch:
         assert not search._indexed
         assert search.search("query") == []
 
-    def test_preserves_daemon_embedding_config(self, db) -> None:
-        """SkillSearch forwards configured endpoint and dim into UnifiedSearcher."""
+    def test_preserves_daemon_embedding_config(self, db, sample_skills) -> None:
+        """SkillSearch forwards configured endpoint and dim to embedding generation."""
         search = SkillSearch(
             db=db,
             config=SearchConfig(mode="auto"),
@@ -159,12 +160,24 @@ class TestSkillSearch:
             embedding_dim=768,
         )
 
-        backend = search._searcher._get_embedding_backend()
+        generate_embeddings = AsyncMock(
+            return_value=[[0.0] * 768 for _skill in sample_skills],
+        )
+        with (
+            patch("gobby.search.embeddings.generate_embeddings", generate_embeddings),
+            patch("gobby.search.unified.is_embedding_reachable", AsyncMock(return_value=True)),
+        ):
+            search.index_skills(sample_skills)
 
-        assert backend._model == "text-embedding-nomic-embed-text-v1.5@f16"
-        assert backend._api_base == "http://localhost:1234/v1"
-        assert backend._api_key == "local-key"
-        assert backend._dim == 768
+        assert search.is_indexed
+        assert search.get_active_backend() == "embedding"
+        generate_embeddings.assert_awaited_once()
+        kwargs = generate_embeddings.await_args.kwargs
+        assert kwargs["model"] == "text-embedding-nomic-embed-text-v1.5@f16"
+        assert kwargs["api_base"] == "http://localhost:1234/v1"
+        assert kwargs["api_key"] == "local-key"
+        assert kwargs["expected_dim"] == 768
+        assert len(kwargs["texts"]) == len(sample_skills)
 
     def test_index_skills(self, db, sample_skills) -> None:
         """Test indexing skills."""

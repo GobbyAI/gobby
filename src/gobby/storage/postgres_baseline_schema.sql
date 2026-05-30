@@ -206,10 +206,29 @@ CREATE TABLE sessions (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 CONSTRAINT sessions_parent_session_not_self
 CHECK (parent_session_id IS NULL OR parent_session_id <> id),
+CONSTRAINT sessions_context_usage_tokens_nonnegative
+CHECK (
+    (usage_input_tokens IS NULL OR usage_input_tokens >= 0)
+    AND (usage_output_tokens IS NULL OR usage_output_tokens >= 0)
+    AND (usage_cache_creation_tokens IS NULL OR usage_cache_creation_tokens >= 0)
+    AND (usage_cache_read_tokens IS NULL OR usage_cache_read_tokens >= 0)
+    AND (context_window IS NULL OR context_window >= 0)
+    AND (context_used_tokens IS NULL OR context_used_tokens >= 0)
+    AND (last_prompt_input_tokens IS NULL OR last_prompt_input_tokens >= 0)
+    AND (last_prompt_uncached_input_tokens IS NULL OR last_prompt_uncached_input_tokens >= 0)
+    AND (last_prompt_cache_read_tokens IS NULL OR last_prompt_cache_read_tokens >= 0)
+    AND (last_prompt_cache_creation_tokens IS NULL OR last_prompt_cache_creation_tokens >= 0)
+    AND (last_completion_output_tokens IS NULL OR last_completion_output_tokens >= 0)
+),
 CONSTRAINT sessions_context_usage_ratio_range
 CHECK (
     context_usage_ratio IS NULL
     OR (context_usage_ratio >= 0 AND context_usage_ratio <= 1)
+),
+CONSTRAINT sessions_context_usage_confidence_valid
+CHECK (
+    context_usage_confidence IS NULL
+    OR context_usage_confidence IN ('reported', 'estimated', 'unknown')
 )
 );
 

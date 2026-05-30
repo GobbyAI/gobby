@@ -332,8 +332,8 @@ def _now_iso() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def _coerce_nonnegative_int(value: int | None) -> int | None:
-    if value is None:
+def _coerce_nonnegative_int(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
         return None
     return max(0, int(value))
 

@@ -140,7 +140,9 @@ def prepare_terminal_spawn(
         reasoning_status: Resolution status for reasoning effort selection.
         reasoning_message: Optional explanation of reasoning effort resolution.
         resume_metadata_json: Optional daemon-stop resume metadata snapshot to persist
-            on the created agent run.
+            on the created agent run. Must be a JSON-safe object with string keys
+            and JSON scalar/list/dict values. Defaults to None. When present, it is
+            stored as-is for later resume and is not used to build terminal env vars.
 
     Returns:
         PreparedSpawn with all necessary spawn configuration

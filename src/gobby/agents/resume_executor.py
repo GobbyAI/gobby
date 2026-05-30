@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+import psycopg
+
 from gobby.agents.spawn import prepare_terminal_spawn
 from gobby.agents.spawn_cache_policy import SPAWN_CACHE_ENV_VARS
 from gobby.agents.spawners.command_builder import build_cli_command
@@ -267,8 +269,19 @@ def _claim_task_for_resume(task_manager: Any | None, run: AgentRun, child_sessio
         prior_owners = {None, run.child_session_id, run.claimed_session_id}
         if current_owner in prior_owners:
             task_manager.claim_task(run.task_id, session_id=child_session_id)
-    except Exception as exc:
-        logger.warning("Failed to claim task for resumed agent %s: %s", run.id, exc)
+    except (ValueError, psycopg.Error) as exc:
+        logger.warning(
+            "Failed to claim task for resumed agent",
+            exc_info=True,
+            extra={
+                "run_id": run.id,
+                "task_id": run.task_id,
+                "child_session_id": child_session_id,
+                "claimed_session_id": run.claimed_session_id,
+                "previous_child_session_id": run.child_session_id,
+                "error": str(exc),
+            },
+        )
 
 
 def _fire_resume_started(

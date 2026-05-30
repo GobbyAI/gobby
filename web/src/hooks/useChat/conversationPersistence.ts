@@ -9,6 +9,30 @@ import {
 const CONVERSATION_ID_KEY = "gobby-conversation-id";
 const DB_SESSION_ID_KEY = "gobby-db-session-id";
 
+function readLocalStorage(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeLocalStorage(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Best-effort persistence only.
+  }
+}
+
+function removeLocalStorage(key: string): void {
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    // Best-effort persistence only.
+  }
+}
+
 /** crypto.randomUUID() requires a secure context (HTTPS/localhost). Fall back for HTTP access (e.g. Tailscale IP). */
 export function uuid(): string {
   if (
@@ -32,30 +56,26 @@ export function uuid(): string {
 }
 
 export function loadConversationId(): string {
-  return (
-    localStorage.getItem(CONVERSATION_ID_KEY) ||
-    localStorage.getItem(DB_SESSION_ID_KEY) ||
-    ""
-  );
+  return readLocalStorage(CONVERSATION_ID_KEY) || "";
 }
 
 export function saveConversationId(id: string): void {
   if (!id) {
-    localStorage.removeItem(CONVERSATION_ID_KEY);
+    removeLocalStorage(CONVERSATION_ID_KEY);
     return;
   }
-  localStorage.setItem(CONVERSATION_ID_KEY, id);
+  writeLocalStorage(CONVERSATION_ID_KEY, id);
 }
 
 export function loadDbSessionId(): string | null {
-  return localStorage.getItem(DB_SESSION_ID_KEY);
+  return readLocalStorage(DB_SESSION_ID_KEY);
 }
 
 export function saveDbSessionId(id: string | null): void {
   if (id) {
-    localStorage.setItem(DB_SESSION_ID_KEY, id);
+    writeLocalStorage(DB_SESSION_ID_KEY, id);
   } else {
-    localStorage.removeItem(DB_SESSION_ID_KEY);
+    removeLocalStorage(DB_SESSION_ID_KEY);
   }
 }
 

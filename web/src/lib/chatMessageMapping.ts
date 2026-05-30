@@ -292,267 +292,300 @@ export function extractUserText(content: string): string | null {
   return texts.length > 0 ? texts.join('\n\n') : ''
 }
 
-export function mapApiMessages(messages: ApiMessage[]): ChatMessage[] {
-  const result: ChatMessage[] = []
-  let currentAssistant: ChatMessage | null = null
+type ApiMappingState = {
+  result: ChatMessage[]
+  currentAssistant: ChatMessage | null
+}
 
-  function flushAssistant() {
-    if (currentAssistant) {
-      result.push(currentAssistant)
-      currentAssistant = null
+function flushAssistant(state: ApiMappingState) {
+  if (state.currentAssistant) {
+    state.result.push(state.currentAssistant)
+    state.currentAssistant = null
+  }
+}
+
+function ensureAssistant(
+  state: ApiMappingState,
+  id: string,
+  timestamp: Date,
+  initial?: Partial<ChatMessage>,
+): ChatMessage {
+  if (!state.currentAssistant) {
+    state.currentAssistant = {
+      id,
+      role: 'assistant',
+      content: '',
+      timestamp,
+      ...initial,
+    }
+  }
+  return state.currentAssistant
+}
+
+function appendAssistantText(
+  state: ApiMappingState,
+  id: string,
+  timestamp: Date,
+  text: string,
+) {
+  if (state.currentAssistant) {
+    if (text) {
+      if (
+        state.currentAssistant.content &&
+        !state.currentAssistant.content.endsWith('\n')
+      ) {
+        state.currentAssistant.content += '\n'
+      }
+      state.currentAssistant.content += text
+      appendTextBlock(state.currentAssistant, text)
+    }
+    return
+  }
+
+  state.currentAssistant = {
+    id,
+    role: 'assistant',
+    content: text || '',
+    timestamp,
+    contentBlocks: text ? [{ type: 'text', content: text }] : [],
+  }
+}
+
+function completeToolCallFromMessage(assistant: ChatMessage, message: ApiMessage) {
+  const match = message.tool_use_id
+    ? findToolCallById(assistant, message.tool_use_id)
+    : findPendingToolCall(assistant)
+  if (match) {
+    match.result = tryParseJSON(message.content) as ToolResult | undefined
+    match.status = 'completed'
+  }
+}
+
+function markLatestToolCallError(assistant: ChatMessage, content: string) {
+  if (!assistant.toolCalls?.length) return false
+
+  const lastTc = assistant.toolCalls[assistant.toolCalls.length - 1]
+  lastTc.error = content
+  lastTc.status = 'error'
+  if (assistant.contentBlocks) {
+    for (const block of assistant.contentBlocks) {
+      if (block.type === 'tool_chain') {
+        const tcMatch = block.tool_calls.find((toolCall) => toolCall.id === lastTc.id)
+        if (tcMatch) {
+          tcMatch.error = content
+          tcMatch.status = 'error'
+        }
+      }
+    }
+  }
+  return true
+}
+
+function mapContentBlockMessage(
+  state: ApiMappingState,
+  message: ApiMessage,
+  id: string,
+  timestamp: Date,
+) {
+  flushAssistant(state)
+
+  const chatMsg: ChatMessage = {
+    id,
+    role: normalizeChatRole(message.role, message.content, message.content_blocks),
+    content: message.content || '',
+    timestamp,
+    contentBlocks: message.content_blocks,
+  }
+
+  for (const block of message.content_blocks || []) {
+    if (block.type === 'tool_chain' && block.tool_calls) {
+      chatMsg.toolCalls = [...(chatMsg.toolCalls || []), ...block.tool_calls]
+    } else if (block.type === 'thinking') {
+      chatMsg.thinkingContent = (chatMsg.thinkingContent || '') + block.content
     }
   }
 
-  for (const m of messages) {
-    const id = m.id || `msg-${m.message_index ?? result.length}`
-    const timestamp = new Date(m.timestamp)
+  state.result.push(chatMsg)
+}
 
-    if (m.content_blocks && m.content_blocks.length > 0) {
-      flushAssistant()
+function mapUserApiMessage(
+  state: ApiMappingState,
+  message: ApiMessage,
+  id: string,
+  timestamp: Date,
+  content: string,
+) {
+  if (message.content_type === 'tool_result' || message.tool_use_id) {
+    if (state.currentAssistant) {
+      completeToolCallFromMessage(state.currentAssistant, message)
+    }
+    return
+  }
 
-      const chatMsg: ChatMessage = {
-        id,
-        role: normalizeChatRole(m.role, m.content, m.content_blocks),
-        content: m.content || '',
-        timestamp,
-        contentBlocks: m.content_blocks,
+  if (content.startsWith('[{') && content.includes('tool_result')) return
+
+  if (isHookFeedback(content)) {
+    if (
+      state.currentAssistant &&
+      markLatestToolCallError(state.currentAssistant, content)
+    ) {
+      return
+    }
+    flushAssistant(state)
+    state.result.push({ id, role: 'system', content, timestamp })
+    return
+  }
+
+  if (content.startsWith('[')) {
+    const extracted = extractUserText(content)
+    if (extracted !== null) {
+      if (!extracted.trim()) return
+      flushAssistant(state)
+      state.result.push({ id, role: 'user', content: extracted, timestamp })
+      return
+    }
+  }
+
+  flushAssistant(state)
+  state.result.push({ id, role: 'user', content: message.content || '', timestamp })
+}
+
+function toolCallFromApiMessage(message: ApiMessage, id: string): ToolCall {
+  const toolName = message.tool_name || 'unknown'
+  return {
+    id: message.tool_use_id || id,
+    tool_name: toolName,
+    server_name: extractServerName(toolName),
+    tool_type: classifyTool(toolName),
+    status: message.tool_result ? 'completed' : 'calling',
+    arguments: tryParseJSON(message.tool_input) as Record<string, unknown> | undefined,
+    result: message.tool_result
+      ? (tryParseJSON(message.tool_result) as ToolResult)
+      : undefined,
+  }
+}
+
+function protocolToolCallsFromContent(content: string, id: string): ToolCall[] | null {
+  try {
+    const calls = JSON.parse(content) as Array<{
+      type?: string
+      id?: string
+      name?: string
+      input?: unknown
+    }>
+    const tools = calls.filter((call) => call.type === 'tool_use')
+    if (tools.length === 0) return null
+
+    return tools.map((tool) => {
+      const toolName = tool.name || 'unknown'
+      return {
+        id: tool.id || `tool-${id}-${toolName}`,
+        tool_name: toolName,
+        server_name: extractServerName(toolName),
+        tool_type: classifyTool(toolName),
+        status: 'completed' as const,
+        arguments:
+          typeof tool.input === 'object' && tool.input !== null
+            ? (tool.input as Record<string, unknown>)
+            : undefined,
       }
+    })
+  } catch {
+    return null
+  }
+}
 
-      for (const block of m.content_blocks) {
-        if (block.type === 'tool_chain' && block.tool_calls) {
-          chatMsg.toolCalls = [
-            ...(chatMsg.toolCalls || []),
-            ...block.tool_calls,
-          ]
-        } else if (block.type === 'thinking') {
-          chatMsg.thinkingContent =
-            (chatMsg.thinkingContent || '') + block.content
-        }
-      }
+function appendProtocolToolCalls(
+  state: ApiMappingState,
+  id: string,
+  timestamp: Date,
+  toolCalls: ToolCall[],
+) {
+  if (!state.currentAssistant) {
+    state.currentAssistant = {
+      id,
+      role: 'assistant',
+      content: '',
+      timestamp,
+      toolCalls,
+      contentBlocks: [{ type: 'tool_chain', tool_calls: [...toolCalls] }],
+    }
+    return
+  }
 
-      result.push(chatMsg)
+  state.currentAssistant.toolCalls = [
+    ...(state.currentAssistant.toolCalls || []),
+    ...toolCalls,
+  ]
+  for (const toolCall of toolCalls) appendToolBlock(state.currentAssistant, toolCall)
+}
+
+function mapAssistantApiMessage(
+  state: ApiMappingState,
+  message: ApiMessage,
+  id: string,
+  timestamp: Date,
+  content: string,
+) {
+  if (message.content_type === 'tool_use' || message.tool_name) {
+    const assistant = ensureAssistant(state, id, timestamp, {
+      toolCalls: [],
+      contentBlocks: [],
+    })
+    const toolCall = toolCallFromApiMessage(message, id)
+    assistant.toolCalls = [...(assistant.toolCalls || []), toolCall]
+    appendToolBlock(assistant, toolCall)
+    return
+  }
+
+  if (message.content_type === 'thinking') {
+    const assistant = ensureAssistant(state, id, timestamp)
+    assistant.thinkingContent = (assistant.thinkingContent || '') + (message.content || '')
+    return
+  }
+
+  if (content.startsWith('[{') && content.includes('tool_use')) {
+    const toolCalls = protocolToolCallsFromContent(content, id)
+    if (toolCalls) {
+      appendProtocolToolCalls(state, id, timestamp, toolCalls)
+      return
+    }
+    appendAssistantText(state, id, timestamp, content)
+    return
+  }
+
+  appendAssistantText(state, id, timestamp, message.content || '')
+}
+
+function mapToolApiMessage(state: ApiMappingState, message: ApiMessage) {
+  if (state.currentAssistant) {
+    completeToolCallFromMessage(state.currentAssistant, message)
+  }
+}
+
+export function mapApiMessages(messages: ApiMessage[]): ChatMessage[] {
+  const state: ApiMappingState = { result: [], currentAssistant: null }
+
+  for (const message of messages) {
+    const id = message.id || `msg-${message.message_index ?? state.result.length}`
+    const timestamp = new Date(message.timestamp)
+
+    if (message.content_blocks && message.content_blocks.length > 0) {
+      mapContentBlockMessage(state, message, id, timestamp)
       continue
     }
 
-    const content = (m.content || '').trim()
+    const content = (message.content || '').trim()
 
-    if (m.role === 'user') {
-      if (m.content_type === 'tool_result' || m.tool_use_id) {
-        if (currentAssistant) {
-          const match = m.tool_use_id
-            ? findToolCallById(currentAssistant, m.tool_use_id)
-            : findPendingToolCall(currentAssistant)
-          if (match) {
-            match.result = tryParseJSON(m.content) as ToolResult | undefined
-            match.status = 'completed'
-          }
-        }
-        continue
-      }
-
-      if (content.startsWith('[{') && content.includes('tool_result')) {
-        continue
-      }
-
-      if (isHookFeedback(content)) {
-        if (currentAssistant?.toolCalls?.length) {
-          const lastTc =
-            currentAssistant.toolCalls[currentAssistant.toolCalls.length - 1]
-          lastTc.error = content
-          lastTc.status = 'error'
-          if (currentAssistant.contentBlocks) {
-            for (const block of currentAssistant.contentBlocks) {
-              if (block.type === 'tool_chain') {
-                const tcMatch = block.tool_calls.find(
-                  (toolCall) => toolCall.id === lastTc.id,
-                )
-                if (tcMatch) {
-                  tcMatch.error = content
-                  tcMatch.status = 'error'
-                }
-              }
-            }
-          }
-        } else {
-          flushAssistant()
-          result.push({
-            id,
-            role: 'system',
-            content,
-            timestamp: new Date(m.timestamp),
-          })
-        }
-        continue
-      }
-
-      if (content.startsWith('[')) {
-        const extracted = extractUserText(content)
-        if (extracted !== null) {
-          if (!extracted.trim()) continue
-          flushAssistant()
-          result.push({
-            id,
-            role: 'user',
-            content: extracted,
-            timestamp: new Date(m.timestamp),
-          })
-          continue
-        }
-      }
-
-      flushAssistant()
-      result.push({
-        id,
-        role: 'user',
-        content: m.content || '',
-        timestamp: new Date(m.timestamp),
-      })
-    } else if (m.role === 'assistant') {
-      if (m.content_type === 'tool_use' || m.tool_name) {
-        if (!currentAssistant) {
-          currentAssistant = {
-            id,
-            role: 'assistant',
-            content: '',
-            timestamp: new Date(m.timestamp),
-            toolCalls: [],
-            contentBlocks: [],
-          }
-        }
-        const toolName = m.tool_name || 'unknown'
-        const toolCall: ToolCall = {
-          id: m.tool_use_id || id,
-          tool_name: toolName,
-          server_name: extractServerName(toolName),
-          tool_type: classifyTool(toolName),
-          status: m.tool_result ? 'completed' : 'calling',
-          arguments: tryParseJSON(m.tool_input) as
-            | Record<string, unknown>
-            | undefined,
-          result: m.tool_result
-            ? (tryParseJSON(m.tool_result) as ToolResult)
-            : undefined,
-        }
-        currentAssistant.toolCalls = [
-          ...(currentAssistant.toolCalls || []),
-          toolCall,
-        ]
-        appendToolBlock(currentAssistant, toolCall)
-      } else if (m.content_type === 'thinking') {
-        if (!currentAssistant) {
-          currentAssistant = {
-            id,
-            role: 'assistant',
-            content: '',
-            timestamp: new Date(m.timestamp),
-          }
-        }
-        currentAssistant.thinkingContent =
-          (currentAssistant.thinkingContent || '') + (m.content || '')
-      } else if (content.startsWith('[{') && content.includes('tool_use')) {
-        try {
-          const calls = JSON.parse(content) as Array<{
-            type?: string
-            id?: string
-            name?: string
-            input?: unknown
-          }>
-          const tools = calls.filter((call) => call.type === 'tool_use')
-          if (tools.length > 0) {
-            const toolCalls: ToolCall[] = tools.map((tool) => {
-              const toolName = tool.name || 'unknown'
-              return {
-                id: tool.id || `tool-${id}-${toolName}`,
-                tool_name: toolName,
-                server_name: extractServerName(toolName),
-                tool_type: classifyTool(toolName),
-                status: 'completed' as const,
-                arguments:
-                  typeof tool.input === 'object' && tool.input !== null
-                    ? (tool.input as Record<string, unknown>)
-                    : undefined,
-              }
-            })
-            if (!currentAssistant) {
-              currentAssistant = {
-                id,
-                role: 'assistant',
-                content: '',
-                timestamp: new Date(m.timestamp),
-                toolCalls,
-                contentBlocks: [
-                  { type: 'tool_chain', tool_calls: [...toolCalls] },
-                ],
-              }
-            } else {
-              currentAssistant.toolCalls = [
-                ...(currentAssistant.toolCalls || []),
-                ...toolCalls,
-              ]
-              for (const toolCall of toolCalls) appendToolBlock(currentAssistant, toolCall)
-            }
-            continue
-          }
-        } catch {
-          // Fall through to normal text handling.
-        }
-        if (currentAssistant) {
-          if (content) {
-            if (
-              currentAssistant.content &&
-              !currentAssistant.content.endsWith('\n')
-            ) {
-              currentAssistant.content += '\n'
-            }
-            currentAssistant.content += content
-            appendTextBlock(currentAssistant, content)
-          }
-        } else {
-          currentAssistant = {
-            id,
-            role: 'assistant',
-            content: content || '',
-            timestamp: new Date(m.timestamp),
-            contentBlocks: content ? [{ type: 'text', content }] : [],
-          }
-        }
-      } else {
-        if (currentAssistant) {
-          if (m.content) {
-            if (
-              currentAssistant.content &&
-              !currentAssistant.content.endsWith('\n')
-            ) {
-              currentAssistant.content += '\n'
-            }
-            currentAssistant.content += m.content
-            appendTextBlock(currentAssistant, m.content)
-          }
-        } else {
-          currentAssistant = {
-            id,
-            role: 'assistant',
-            content: m.content || '',
-            timestamp: new Date(m.timestamp),
-            contentBlocks: m.content
-              ? [{ type: 'text', content: m.content }]
-              : [],
-          }
-        }
-      }
-    } else if (m.role === 'tool') {
-      if (currentAssistant) {
-        const match = m.tool_use_id
-          ? findToolCallById(currentAssistant, m.tool_use_id)
-          : findPendingToolCall(currentAssistant)
-        if (match) {
-          match.result = tryParseJSON(m.content) as ToolResult | undefined
-          match.status = 'completed'
-        }
-      }
+    if (message.role === 'user') {
+      mapUserApiMessage(state, message, id, timestamp, content)
+    } else if (message.role === 'assistant') {
+      mapAssistantApiMessage(state, message, id, timestamp, content)
+    } else if (message.role === 'tool') {
+      mapToolApiMessage(state, message)
     }
   }
 
-  flushAssistant()
-  return result
+  flushAssistant(state)
+  return state.result
 }

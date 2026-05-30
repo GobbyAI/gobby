@@ -11,13 +11,14 @@ pytestmark = pytest.mark.unit
 
 SKILL_PATH = Path("src/gobby/install/shared/skills/code-index/SKILL.md")
 GCODE_SKILL_PATH_ENV = "GOBBY_GCODE_SKILL_PATH"
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _gcode_bundled_skill_path() -> Path:
     configured_path = os.environ.get(GCODE_SKILL_PATH_ENV)
     if configured_path:
-        return Path(configured_path)
-    return SKILL_PATH
+        return Path(configured_path).expanduser()
+    return REPO_ROOT / SKILL_PATH
 
 
 def test_code_index_skill_documents_positional_path_filters() -> None:

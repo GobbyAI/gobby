@@ -91,6 +91,8 @@ def test_only_current_postgres_sql_migrations_exist_after_flattening() -> None:
         "266_agent_run_resume_metadata.sql",
         "267_context_usage_snapshot.sql",
         "268_prevent_self_parent_sessions.sql",
+        "269_context_usage_ratio_range.sql",
+        "270_context_usage_value_constraints.sql",
     ]
 
 
@@ -190,6 +192,24 @@ def test_context_usage_ratio_range_migration_and_baseline_define_invariant() -> 
     assert invariant in migration
     assert "sessions_context_usage_ratio_range" in baseline
     assert invariant in baseline
+
+
+def test_context_usage_value_constraints_migration_and_baseline_define_invariants() -> None:
+    migration = (
+        SRC_ROOT / "storage" / "migrations" / "270_context_usage_value_constraints.sql"
+    ).read_text(encoding="utf-8")
+    baseline = (SRC_ROOT / "storage" / "postgres_baseline_schema.sql").read_text(encoding="utf-8")
+    token_invariant = "context_used_tokens IS NULL OR context_used_tokens >= 0"
+    confidence_invariant = "context_usage_confidence IN ('reported', 'estimated', 'unknown')"
+
+    assert "sessions_context_usage_tokens_nonnegative" in migration
+    assert token_invariant in migration
+    assert "sessions_context_usage_confidence_valid" in migration
+    assert confidence_invariant in migration
+    assert "sessions_context_usage_tokens_nonnegative" in baseline
+    assert token_invariant in baseline
+    assert "sessions_context_usage_confidence_valid" in baseline
+    assert confidence_invariant in baseline
 
 
 def test_migration_helpers_are_not_imported_by_runtime_storage_paths() -> None:

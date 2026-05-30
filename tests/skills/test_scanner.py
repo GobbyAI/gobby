@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from gobby.skills import scanner as skill_scanner
-from gobby.skills.scanner import safe_temp_component, scan_skill_content
+from gobby.skills.scanner import _safe_temp_component, scan_skill_content
 
 if TYPE_CHECKING:
     from clawcare.models import Finding, Severity
@@ -57,19 +57,19 @@ def _scan(
 
 
 def test_safe_temp_component_removes_path_separators() -> None:
-    assert safe_temp_component("../bad/name") == "bad-name"
+    assert _safe_temp_component("../bad/name") == "bad-name"
 
 
 def test_safe_temp_component_falls_back_for_empty_cleaned_value() -> None:
-    assert safe_temp_component("---___...///") == "skill"
+    assert _safe_temp_component("---___...///") == "skill"
 
 
 def test_safe_temp_component_limits_component_length() -> None:
-    assert safe_temp_component("a" * 80) == "a" * 48
+    assert _safe_temp_component("a" * 80) == "a" * 48
 
 
 def test_safe_temp_component_preserves_safe_ascii_characters() -> None:
-    assert safe_temp_component("safe_Name-123") == "safe_Name-123"
+    assert _safe_temp_component("safe_Name-123") == "safe_Name-123"
 
 
 class TestNoFindings:

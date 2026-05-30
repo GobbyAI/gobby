@@ -91,3 +91,22 @@ def test_window_only_snapshot_keeps_pressure_unknown() -> None:
     assert snapshot.context_used_tokens is None
     assert snapshot.context_usage_ratio is None
     assert snapshot.confidence == "unknown"
+
+
+def test_token_breakdown_ignores_bool_token_values() -> None:
+    snapshot = ContextUsageSnapshot.from_token_breakdown(
+        source="web_chat",
+        context_window=200_000,
+        uncached_prompt_tokens=True,  # type: ignore[arg-type]
+        cache_read_tokens=False,  # type: ignore[arg-type]
+        cache_creation_tokens=True,  # type: ignore[arg-type]
+        output_tokens=False,  # type: ignore[arg-type]
+    )
+
+    assert snapshot.context_used_tokens is None
+    assert snapshot.raw_prompt_footprint is None
+    assert snapshot.uncached_prompt_tokens is None
+    assert snapshot.cache_read_tokens is None
+    assert snapshot.cache_creation_tokens is None
+    assert snapshot.output_tokens is None
+    assert snapshot.confidence == "unknown"

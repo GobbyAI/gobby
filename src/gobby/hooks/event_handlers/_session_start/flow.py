@@ -5,6 +5,8 @@ from __future__ import annotations
 import time
 from typing import Any, cast
 
+import psycopg
+
 from gobby.hooks.events import HookEvent, HookResponse
 from gobby.hooks.project_context import resolve_hook_project_context
 from gobby.hooks.terminal_context import enrich_terminal_context_with_cwd, hook_cwd
@@ -579,7 +581,7 @@ def _record_agent_run_native_session(handler: Any, run_id: str, external_id: str
             return
         metadata["provider_native_session_id"] = external_id
         manager.update_resume_metadata(run_id, metadata)
-    except Exception as exc:
+    except psycopg.Error as exc:
         handler.logger.debug(
             "Failed to persist provider-native session id for agent run %s: %s",
             run_id,

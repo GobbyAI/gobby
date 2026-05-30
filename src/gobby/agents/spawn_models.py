@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 from gobby.agents.sandbox import SandboxConfig
+
+if TYPE_CHECKING:
+    from gobby.agents.session import ChildSessionManager
+    from gobby.config.app import DaemonConfig
 
 
 @dataclass
@@ -32,7 +36,7 @@ class SpawnRequest:
     agent_name: str | None = None
     agent_depth: int = 0
     max_agent_depth: int = 5
-    session_manager: Any | None = None
+    session_manager: ChildSessionManager | None = None
     machine_id: str | None = None
     model: str | None = None
     is_local: bool = False
@@ -45,10 +49,10 @@ class SpawnRequest:
     reasoning_message: str | None = None
     sandbox_config: SandboxConfig | None = None
     sandbox_args: list[str] | None = None
-    sandbox_env: dict[str, str] | None = field(default=None)
-    extra_env: dict[str, str] | None = field(default=None)
+    sandbox_env: dict[str, str] | None = None
+    extra_env: dict[str, str] | None = None
     timeout_seconds: float | None = None
-    daemon_config: Any | None = None
+    daemon_config: DaemonConfig | None = None
     resume_metadata_json: dict[str, Any] | None = None
 
 

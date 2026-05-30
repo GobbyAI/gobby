@@ -146,7 +146,9 @@ const handleChatStream = useCallback((chunk: ChatStreamChunk) => {
         (u.input_tokens ?? 0) +
           (u.cache_read_input_tokens ?? 0) +
           (u.cache_creation_input_tokens ?? 0);
-      setContextUsage((prev) => ({
+      setContextUsage((prev) => {
+        const contextWindow = chunk.context_window ?? prev.contextWindow;
+        return {
         // Input tokens: REPLACE with latest turn's values (each turn sends
         // the full conversation, so the latest total IS the current context size)
         totalInputTokens: turnTotal,
@@ -155,14 +157,15 @@ const handleChatStream = useCallback((chunk: ChatStreamChunk) => {
         cacheCreationTokens: u.cache_creation_input_tokens ?? 0,
         // Output tokens: ACCUMULATE (genuinely incremental per turn)
         outputTokens: prev.outputTokens + (u.output_tokens ?? 0),
-        contextWindow: chunk.context_window ?? prev.contextWindow,
+        contextWindow: contextWindow ?? prev.contextWindow,
         contextUsageRatio:
-          chunk.context_window && turnTotal > 0
-            ? Math.min(Math.max(turnTotal / chunk.context_window, 0), 1)
+          contextWindow && contextWindow > 0
+            ? Math.min(Math.max(turnTotal / contextWindow, 0), 1)
             : prev.contextUsageRatio ?? null,
         contextUsageSource: prev.contextUsageSource ?? "web_chat",
         contextUsageConfidence: "reported",
-      }));
+        };
+      });
     } else if (chunk.context_window) {
       setContextUsage((prev) => ({
         ...prev,
