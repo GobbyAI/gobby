@@ -9,8 +9,8 @@ struct Cli {
     project: Option<String>,
 
     /// Output format
-    #[arg(long, global = true, default_value = "json")]
-    format: output::Format,
+    #[arg(long, global = true)]
+    format: Option<output::Format>,
 
     /// Suppress warnings
     #[arg(long, global = true)]
@@ -388,7 +388,18 @@ fn reject_grep_limit(_value: &str) -> Result<String, String> {
     )
 }
 
-fn dispatch_early_command<F>(cli: &Cli, setup_runner: F) -> anyhow::Result<bool>
+fn effective_format(explicit_format: Option<output::Format>, command: &Command) -> output::Format {
+    explicit_format.unwrap_or(match command {
+        Command::Grep { .. } => output::Format::Text,
+        _ => output::Format::Json,
+    })
+}
+
+fn dispatch_early_command<F>(
+    cli: &Cli,
+    format: output::Format,
+    setup_runner: F,
+) -> anyhow::Result<bool>
 where
     F: FnOnce(setup::StandaloneSetupRequest, output::Format, bool) -> anyhow::Result<()>,
 {
@@ -398,7 +409,7 @@ where
                 Some(p) => std::path::PathBuf::from(p).canonicalize()?,
                 None => config::detect_project_root()?,
             };
-            commands::init::run(&root, cli.format, cli.quiet)?;
+            commands::init::run(&root, format, cli.quiet)?;
             Ok(true)
         }
         Command::Setup {
@@ -433,11 +444,11 @@ where
             request.falkordb_port = *falkordb_port;
             request.falkordb_password = falkordb_password.clone();
             request.qdrant_url = qdrant_url.clone();
-            setup_runner(request, cli.format, cli.quiet)?;
+            setup_runner(request, format, cli.quiet)?;
             Ok(true)
         }
         Command::Projects => {
-            commands::status::projects(cli.format)?;
+            commands::status::projects(format)?;
             Ok(true)
         }
         Command::Prune { force } => {
@@ -451,7 +462,7 @@ where
                 },
         } => {
             let ctx = config::Context::resolve_for_project_id(project_id, cli.quiet)?;
-            commands::graph::clear(&ctx, cli.format)?;
+            commands::graph::clear(&ctx, format)?;
             Ok(true)
         }
         _ => Ok(false),
@@ -479,9 +490,10 @@ fn main() -> std::process::ExitCode {
 
 fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    let format = effective_format(cli.format, &cli.command);
 
     // Commands that must run before Context::resolve() (work on uninitialized projects)
-    if dispatch_early_command(&cli, commands::setup::run)? {
+    if dispatch_early_command(&cli, format, commands::setup::run)? {
         return Ok(());
     }
 
@@ -504,11 +516,11 @@ fn run() -> anyhow::Result<()> {
             full,
             require_cpp_semantics,
             sync_projections,
-            cli.format,
+            format,
         ),
         Command::Status => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
-            commands::status::run(&ctx, cli.format)
+            commands::status::run(&ctx, format)
         }
         Command::Invalidate { force } => commands::status::invalidate(&ctx, force),
         Command::Graph {
@@ -517,10 +529,10 @@ fn run() -> anyhow::Result<()> {
                     file,
                     allow_missing_indexed_file,
                 },
-        } => commands::graph::sync_file(&ctx, &file, allow_missing_indexed_file, cli.format),
+        } => commands::graph::sync_file(&ctx, &file, allow_missing_indexed_file, format),
         Command::Graph {
             command: GraphCommand::Clear { project_id: None },
-        } => commands::graph::clear(&ctx, cli.format),
+        } => commands::graph::clear(&ctx, format),
         Command::Graph {
             command: GraphCommand::Clear {
                 project_id: Some(_),
@@ -530,13 +542,13 @@ fn run() -> anyhow::Result<()> {
             command: GraphCommand::Rebuild,
         } => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
-            commands::graph::rebuild(&ctx, cli.format)
+            commands::graph::rebuild(&ctx, format)
         }
         Command::Graph {
             command: GraphCommand::Report { top_n },
         } => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
-            commands::graph::report(&ctx, top_n, cli.format)
+            commands::graph::report(&ctx, top_n, format)
         }
         Command::Vector {
             command: VectorCommand::SyncFile { file },
@@ -546,22 +558,22 @@ fn run() -> anyhow::Result<()> {
                 cli.no_freshness,
                 vec![std::path::PathBuf::from(&file)],
             )?;
-            commands::vector::sync_file(&ctx, &file, cli.format)
+            commands::vector::sync_file(&ctx, &file, format)
         }
         Command::Vector {
             command: VectorCommand::Clear,
-        } => commands::vector::clear(&ctx, cli.format),
+        } => commands::vector::clear(&ctx, format),
         Command::Vector {
             command: VectorCommand::Rebuild,
         } => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
-            commands::vector::rebuild(&ctx, cli.format)
+            commands::vector::rebuild(&ctx, format)
         }
         Command::Graph {
             command: GraphCommand::Overview { limit },
         } => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
-            commands::graph::overview(&ctx, limit, cli.format)
+            commands::graph::overview(&ctx, limit, format)
         }
         Command::Graph {
             command: GraphCommand::File { file },
@@ -571,13 +583,13 @@ fn run() -> anyhow::Result<()> {
                 cli.no_freshness,
                 vec![std::path::PathBuf::from(&file)],
             )?;
-            commands::graph::file(&ctx, &file, cli.format)
+            commands::graph::file(&ctx, &file, format)
         }
         Command::Graph {
             command: GraphCommand::Neighbors { symbol_id, limit },
         } => {
             ensure_symbol_fresh(&ctx, cli.no_freshness, &symbol_id)?;
-            commands::graph::neighbors(&ctx, &symbol_id, limit, cli.format)
+            commands::graph::neighbors(&ctx, &symbol_id, limit, format)
         }
         Command::Graph {
             command:
@@ -595,7 +607,7 @@ fn run() -> anyhow::Result<()> {
                 file.as_deref(),
                 depth,
                 limit,
-                cli.format,
+                format,
             )
         }
 
@@ -617,7 +629,7 @@ fn run() -> anyhow::Result<()> {
                     kind: kind.as_deref(),
                     language: language.as_deref(),
                     paths: &paths,
-                    format: cli.format,
+                    format,
                     with_graph: true,
                 },
             )
@@ -641,7 +653,7 @@ fn run() -> anyhow::Result<()> {
                     kind: kind.as_deref(),
                     language: language.as_deref(),
                     paths: &paths,
-                    format: cli.format,
+                    format,
                     with_graph,
                 },
             )
@@ -661,7 +673,7 @@ fn run() -> anyhow::Result<()> {
                 offset,
                 language.as_deref(),
                 &paths,
-                cli.format,
+                format,
             )
         }
         Command::SearchContent {
@@ -679,7 +691,7 @@ fn run() -> anyhow::Result<()> {
                 offset,
                 language.as_deref(),
                 &paths,
-                cli.format,
+                format,
             )
         }
         Command::Grep {
@@ -708,7 +720,7 @@ fn run() -> anyhow::Result<()> {
                     before_context,
                     after_context,
                     max_count,
-                    format: cli.format,
+                    format,
                 },
             )
         }
@@ -719,23 +731,23 @@ fn run() -> anyhow::Result<()> {
                 cli.no_freshness,
                 vec![std::path::PathBuf::from(&file)],
             )?;
-            commands::symbols::outline(&ctx, &file, cli.format, cli.verbose)
+            commands::symbols::outline(&ctx, &file, format, cli.verbose)
         }
         Command::Symbol { id } => {
             ensure_symbol_fresh(&ctx, cli.no_freshness, &id)?;
-            commands::symbols::symbol(&ctx, &id, cli.format)
+            commands::symbols::symbol(&ctx, &id, format)
         }
         Command::Symbols { ids } => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
-            commands::symbols::symbols(&ctx, &ids, cli.format)
+            commands::symbols::symbols(&ctx, &ids, format)
         }
         Command::Kinds => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
-            commands::symbols::kinds(&ctx, cli.format)
+            commands::symbols::kinds(&ctx, format)
         }
         Command::Tree => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
-            commands::symbols::tree(&ctx, cli.format)
+            commands::symbols::tree(&ctx, format)
         }
 
         Command::Callers {
@@ -744,7 +756,7 @@ fn run() -> anyhow::Result<()> {
             offset,
         } => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
-            commands::graph::callers(&ctx, &symbol_name, limit, offset, cli.format)
+            commands::graph::callers(&ctx, &symbol_name, limit, offset, format)
         }
         Command::Usages {
             symbol_name,
@@ -752,20 +764,20 @@ fn run() -> anyhow::Result<()> {
             offset,
         } => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
-            commands::graph::usages(&ctx, &symbol_name, limit, offset, cli.format)
+            commands::graph::usages(&ctx, &symbol_name, limit, offset, format)
         }
         Command::Imports { file } => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
-            commands::graph::imports(&ctx, &file, cli.format)
+            commands::graph::imports(&ctx, &file, format)
         }
         Command::BlastRadius { target, depth } => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
-            commands::graph::blast_radius(&ctx, &target, depth, cli.format)
+            commands::graph::blast_radius(&ctx, &target, depth, format)
         }
 
         Command::RepoOutline => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
-            commands::status::repo_outline(&ctx, cli.format)
+            commands::status::repo_outline(&ctx, format)
         }
     }
 }
@@ -787,7 +799,7 @@ mod tests {
             "src/lib.rs",
         ])
         .expect("graph sync-file parses");
-        assert!(matches!(cli.format, output::Format::Text));
+        assert!(matches!(cli.format, Some(output::Format::Text)));
         match cli.command {
             Command::Graph {
                 command:
@@ -812,7 +824,7 @@ mod tests {
             "src/lib.rs",
         ])
         .expect("vector sync-file parses");
-        assert!(matches!(cli.format, output::Format::Text));
+        assert!(matches!(cli.format, Some(output::Format::Text)));
         match cli.command {
             Command::Vector {
                 command: VectorCommand::SyncFile { file },
@@ -995,7 +1007,7 @@ mod tests {
             "gcode", "graph", "report", "--top-n", "5", "--format", "text",
         ])
         .expect("graph report parses");
-        assert!(matches!(cli.format, output::Format::Text));
+        assert!(matches!(cli.format, Some(output::Format::Text)));
         match cli.command {
             Command::Graph {
                 command: GraphCommand::Report { top_n },
@@ -1206,7 +1218,7 @@ mod tests {
         ])
         .expect("search-content parses");
 
-        assert!(matches!(cli.format, output::Format::Text));
+        assert!(matches!(cli.format, Some(output::Format::Text)));
         match cli.command {
             Command::SearchContent { paths, limit, .. } => {
                 assert_eq!(paths, vec!["src/gobby", "tests"]);
@@ -1332,21 +1344,25 @@ mod tests {
         .expect("setup parses");
 
         let mut called = false;
-        let dispatched = dispatch_early_command(&cli, |request, _format, _quiet| {
-            called = true;
-            assert!(request.standalone);
-            assert_eq!(
-                request.database_url.as_deref(),
-                Some("postgresql://localhost/gcode")
-            );
-            assert_eq!(request.schema, "public");
-            assert!(request.overwrite_code_index);
-            assert_eq!(
-                request.embedding_api_base.as_deref(),
-                Some("https://embeddings.example/v1")
-            );
-            Ok(())
-        })
+        let dispatched = dispatch_early_command(
+            &cli,
+            effective_format(cli.format, &cli.command),
+            |request, _format, _quiet| {
+                called = true;
+                assert!(request.standalone);
+                assert_eq!(
+                    request.database_url.as_deref(),
+                    Some("postgresql://localhost/gcode")
+                );
+                assert_eq!(request.schema, "public");
+                assert!(request.overwrite_code_index);
+                assert_eq!(
+                    request.embedding_api_base.as_deref(),
+                    Some("https://embeddings.example/v1")
+                );
+                Ok(())
+            },
+        )
         .expect("early dispatch succeeds without resolving project context");
 
         assert!(dispatched);
@@ -1524,10 +1540,48 @@ mod tests {
     fn parse_grep_with_global_format() {
         let cli = Cli::try_parse_from(["gcode", "--format", "text", "grep", "needle", "src"])
             .expect("grep with global format parses");
-        assert!(matches!(cli.format, output::Format::Text));
+        assert!(matches!(cli.format, Some(output::Format::Text)));
         match cli.command {
             Command::Grep { pattern, .. } => assert_eq!(pattern, "needle"),
             _ => panic!("expected grep command"),
         }
+    }
+
+    #[test]
+    fn effective_format_defaults_grep_to_text() {
+        let cli = Cli::try_parse_from(["gcode", "grep", "needle", "src", "-m", "50"])
+            .expect("grep parses");
+
+        assert!(cli.format.is_none());
+        assert!(matches!(
+            effective_format(cli.format, &cli.command),
+            output::Format::Text
+        ));
+    }
+
+    #[test]
+    fn effective_format_honors_explicit_grep_json() {
+        let cli = Cli::try_parse_from([
+            "gcode", "grep", "needle", "src", "-m", "50", "--format", "json",
+        ])
+        .expect("grep parses with explicit json format");
+
+        assert!(matches!(cli.format, Some(output::Format::Json)));
+        assert!(matches!(
+            effective_format(cli.format, &cli.command),
+            output::Format::Json
+        ));
+    }
+
+    #[test]
+    fn effective_format_keeps_other_commands_json_by_default() {
+        let cli =
+            Cli::try_parse_from(["gcode", "search-content", "needle"]).expect("search parses");
+
+        assert!(cli.format.is_none());
+        assert!(matches!(
+            effective_format(cli.format, &cli.command),
+            output::Format::Json
+        ));
     }
 }

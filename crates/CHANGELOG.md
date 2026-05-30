@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.9.6] — gcode
 
+### Changed
+
+#### gcode
+
+- **Indexed grep default output** — `gcode grep` now defaults to text output
+  when `--format` is omitted, while explicit `--format json` still returns the
+  JSON envelope. Other `gcode` commands keep their JSON default.
+
 ### Fixed
 
 #### gcode
