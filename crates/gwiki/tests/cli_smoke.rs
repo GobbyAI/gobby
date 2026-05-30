@@ -131,6 +131,19 @@ fn public_cli_smoke_uses_gwiki_modules() {
             .is_some_and(|results| !results.is_empty()),
         "{search_payload:#}"
     );
+    let first_result = &search_payload["results"][0];
+    assert!(
+        first_result["sources"]
+            .as_array()
+            .is_some_and(|sources| sources.iter().any(|source| source == "bm25")),
+        "{search_payload:#}"
+    );
+    assert!(
+        first_result["explanations"]
+            .as_array()
+            .is_some_and(|explanations| !explanations.is_empty()),
+        "{search_payload:#}"
+    );
 
     let backlinks = gwiki(
         &hub,
