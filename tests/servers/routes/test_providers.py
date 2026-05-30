@@ -344,12 +344,11 @@ class TestProviderModelsRoute:
         assert claude_models["local"] == "Local (qwen-coder-32b)"
 
     def test_current_catalog_prepends_partial_configured_lists(self) -> None:
-        """Configured model lists take precedence before static fallback entries."""
+        """Claude/Codex binding model lists take precedence before static fallbacks."""
         app = FastAPI()
         config = DaemonConfig(
             llm_providers=LLMProvidersConfig(
                 codex=LLMProviderConfig(models="gpt-5.4,gpt-5.3-codex"),
-                gemini=LLMProviderConfig(models="gemini-3.1-pro-preview,gemini-3-flash-preview"),
             )
         )
         server = SimpleNamespace(services=SimpleNamespace(config=config))
@@ -382,16 +381,10 @@ class TestProviderModelsRoute:
             "gpt-5.2",
         ]
 
-    def test_current_catalog_keeps_cli_supported_gemini_preview_models(self) -> None:
-        """Configured Gemini previews are honored before static picker fallbacks."""
+    def test_current_catalog_uses_static_gemini_preview_models(self) -> None:
+        """Gemini models come from current provider catalog, not llm_providers config."""
         app = FastAPI()
-        config = DaemonConfig(
-            llm_providers=LLMProvidersConfig(
-                gemini=LLMProviderConfig(
-                    models="gemini-3-pro-preview,gemini-3-flash-preview",
-                ),
-            )
-        )
+        config = DaemonConfig()
         server = SimpleNamespace(services=SimpleNamespace(config=config))
         app.include_router(create_providers_router(server))
         client = TestClient(app)
@@ -400,18 +393,16 @@ class TestProviderModelsRoute:
         providers = {p["provider"]: p for p in response.json()["providers"]}
 
         assert [m["value"] for m in providers["gemini"]["models"]] == [
-            "gemini-3-pro-preview",
-            "gemini-3-flash-preview",
             "gemini-3.1-pro-preview",
+            "gemini-3-flash-preview",
         ]
         assert [m["label"] for m in providers["gemini"]["models"]] == [
-            "pro-3",
-            "flash-3",
             "pro-3.1",
+            "flash-3",
         ]
 
-    def test_honors_legacy_codex_config_entries_before_fallbacks(self) -> None:
-        """Codex config models are first-class overrides before static fallbacks."""
+    def test_honors_codex_binding_models_before_fallbacks(self) -> None:
+        """Codex binding models are first-class overrides before static fallbacks."""
         app = FastAPI()
         config = DaemonConfig(
             llm_providers=LLMProvidersConfig(

@@ -347,7 +347,7 @@ def build_daemon_ai_capability_registry(
         text_binding = _text_generate_binding(config, entry, installed)
         if text_binding is not None:
             bindings.append(text_binding)
-        vision_binding = _vision_extract_binding(entry, installed)
+        vision_binding = _vision_extract_binding(config, entry, installed)
         if vision_binding is not None:
             bindings.append(vision_binding)
         bindings.append(_provider_binding(AICapability.AGENT_SPAWN, entry, installed))
@@ -511,11 +511,8 @@ def _text_generate_binding(
     entry: ProviderMetadata,
     provider_installed: Callable[[ProviderMetadata], bool],
 ) -> CapabilityBinding | None:
-    metadata = {
-        "display_name": entry.display_name,
-        "deprecated": entry.deprecated,
-        "deprecation_message": entry.deprecation_message,
-    }
+    metadata = _metadata_for_generation_binding(config, entry)
+    models = _models_for_generation_binding(config, entry.provider)
 
     adapter_style = _text_generate_adapter_style(entry.provider)
     if adapter_style is None:
@@ -527,6 +524,7 @@ def _text_generate_binding(
             provider=entry.provider,
             adapter_style=adapter_style,
             available=True,
+            models=models,
             metadata=metadata,
         )
 
@@ -535,6 +533,7 @@ def _text_generate_binding(
         entry.provider,
         adapter_style=adapter_style,
         reason=f"{entry.display_name} CLI is not installed.",
+        models=models,
         metadata=metadata,
     )
 
@@ -563,14 +562,12 @@ def _local_text_generate_binding(config: DaemonConfig | None) -> CapabilityBindi
 
 
 def _vision_extract_binding(
+    config: DaemonConfig | None,
     entry: ProviderMetadata,
     provider_installed: Callable[[ProviderMetadata], bool],
 ) -> CapabilityBinding | None:
-    metadata = {
-        "display_name": entry.display_name,
-        "deprecated": entry.deprecated,
-        "deprecation_message": entry.deprecation_message,
-    }
+    metadata = _metadata_for_generation_binding(config, entry)
+    models = _models_for_generation_binding(config, entry.provider)
 
     adapter_style = _vision_extract_adapter_style(entry.provider)
     if adapter_style is None:
@@ -585,6 +582,7 @@ def _vision_extract_binding(
                 "No daemon vision_extract adapter has proven image payload support for "
                 f"{entry.display_name}."
             ),
+            models=models,
             metadata=metadata,
         )
 
@@ -594,6 +592,7 @@ def _vision_extract_binding(
             provider=entry.provider,
             adapter_style=adapter_style,
             available=True,
+            models=models,
             metadata=metadata,
         )
 
@@ -602,6 +601,7 @@ def _vision_extract_binding(
         entry.provider,
         adapter_style=adapter_style,
         reason=f"{entry.display_name} CLI is not installed.",
+        models=models,
         metadata=metadata,
     )
 
@@ -627,6 +627,44 @@ def _local_vision_extract_binding(config: DaemonConfig | None) -> CapabilityBind
         reason="Local vision_extract binding is not configured.",
         metadata=metadata,
     )
+
+
+def _metadata_for_generation_binding(
+    config: DaemonConfig | None,
+    entry: ProviderMetadata,
+) -> dict[str, object]:
+    metadata: dict[str, object] = {
+        "display_name": entry.display_name,
+        "deprecated": entry.deprecated,
+        "deprecation_message": entry.deprecation_message,
+    }
+    binding_config = _generation_binding_config(config, entry.provider)
+    if binding_config is not None:
+        assert config is not None
+        metadata["auth_mode"] = binding_config.auth_mode
+        default_model = binding_config.default_model or config.llm_providers.default_model
+        if default_model:
+            metadata["default_model"] = default_model
+    return metadata
+
+
+def _models_for_generation_binding(
+    config: DaemonConfig | None,
+    provider: str,
+) -> tuple[str, ...]:
+    binding_config = _generation_binding_config(config, provider)
+    if binding_config is None:
+        return ()
+    return tuple(binding_config.get_models_list())
+
+
+def _generation_binding_config(config: DaemonConfig | None, provider: str) -> Any | None:
+    if config is None:
+        return None
+    providers = getattr(config, "llm_providers", None)
+    if providers is None or provider not in {"claude", "codex"}:
+        return None
+    return getattr(providers, provider, None)
 
 
 def _text_generate_adapter_style(provider: str) -> AIAdapterStyle | None:

@@ -285,10 +285,10 @@ class DaemonConfig(BaseModel):
         description="gobby-tasks internal MCP server configuration",
     )
 
-    # Multi-provider LLM configuration
+    # LLMProvider-backed generation capability binding configuration
     llm_providers: LLMProvidersConfig = Field(
         default_factory=LLMProvidersConfig,
-        description="Multi-provider LLM configuration",
+        description="Claude/Codex generation capability binding configuration",
     )
     web_chat_sandbox: DaemonOwnedSandboxConfig = Field(
         default_factory=DaemonOwnedSandboxConfig,

@@ -1,9 +1,9 @@
-"""
-Tests for config/llm_providers.py module.
+"""Tests for config/llm_providers.py module.
 
-RED PHASE: Tests initially import from llm_providers.py (should fail),
-then will pass once LLMProviderConfig and LLMProvidersConfig are extracted from app.py.
+These tests cover the 0.5.0 Claude/Codex generation capability binding config.
 """
+
+import json
 
 import pytest
 from pydantic import ValidationError
@@ -123,6 +123,17 @@ class TestLLMProvidersConfigDefaults:
         config = LLMProvidersConfig()
         assert config.get_enabled_providers() == ["claude"]
 
+    def test_schema_uses_capability_binding_wording(self) -> None:
+        """Generated config schema uses capability-binding terminology."""
+        from gobby.config.llm_providers import LLMProvidersConfig
+
+        schema_text = json.dumps(LLMProvidersConfig.model_json_schema())
+
+        assert "capability binding" in schema_text
+        assert "Gemini provider configuration" not in schema_text
+        assert "Grok provider configuration" not in schema_text
+        assert "Qwen provider configuration" not in schema_text
+
 
 class TestLLMProvidersConfigWithProviders:
     """Test LLMProvidersConfig with configured providers."""
@@ -172,17 +183,13 @@ class TestLLMProvidersConfigGetEnabledProviders:
         assert "codex" in providers
         assert len(providers) == 2
 
-    def test_get_enabled_providers_all(self) -> None:
-        """Test get_enabled_providers with all providers enabled."""
+    def test_rejects_removed_acp_provider_config_keys(self) -> None:
+        """Gemini/Grok/Qwen no longer use old LLMProvider config entries."""
         from gobby.config.llm_providers import LLMProviderConfig, LLMProvidersConfig
 
-        config = LLMProvidersConfig(
-            claude=LLMProviderConfig(models="c"),
-            codex=LLMProviderConfig(models="c"),
-            gemini=LLMProviderConfig(models="c"),
-        )
-        providers = config.get_enabled_providers()
-        assert providers == ["claude", "codex", "gemini"]
+        for provider in ("gemini", "grok", "qwen"):
+            with pytest.raises(ValidationError):
+                LLMProvidersConfig(**{provider: LLMProviderConfig(models="c")})
 
 
 class TestLLMProviderConfigFromAppPy:

@@ -1,34 +1,36 @@
-"""
-LLM providers configuration module.
+"""Generation capability binding configuration module.
 
-Contains LLM-related Pydantic config models:
-- LLMProviderConfig: Single provider config (models, auth_mode)
-- LLMProvidersConfig: Multi-provider config (claude, codex, gemini, grok, qwen)
-
-Extracted from app.py using Strangler Fig pattern for code decomposition.
+This module keeps the 0.5.0 Claude/Codex generation binding config that is
+migrated into the daemon AI capability registry. ACP/CLI-only providers do not
+have old LLMProvider config entries here.
 """
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 __all__ = ["LLMProviderConfig", "LLMProvidersConfig"]
 
 
 class LLMProviderConfig(BaseModel):
-    """Configuration for a single LLM provider."""
+    """Configuration for one LLMProvider-backed generation capability binding."""
+
+    model_config = ConfigDict(extra="forbid")
 
     models: str = Field(
-        description="Comma-separated list of available models for this provider",
+        description="Comma-separated models exposed by this generation capability binding",
     )
     default_model: str | None = Field(
         default=None,
-        description="Default model for this provider when callers don't specify one. "
+        description="Default model for this binding when callers do not specify one. "
         "Falls back to LLMProvidersConfig.default_model if not set.",
     )
     auth_mode: Literal["subscription", "api_key", "adc"] = Field(
         default="subscription",
-        description="Authentication mode: 'subscription' (CLI-based), 'api_key' (BYOK), 'adc' (Google ADC)",
+        description=(
+            "Authentication mode for the binding: 'subscription' (CLI-based), "
+            "'api_key' (BYOK), 'adc' (Google ADC)"
+        ),
     )
 
     def get_models_list(self) -> list[str]:
@@ -37,8 +39,7 @@ class LLMProviderConfig(BaseModel):
 
 
 class LLMProvidersConfig(BaseModel):
-    """
-    Configuration for multiple LLM providers.
+    """Configuration for LLMProvider-backed generation capability bindings.
 
     Example YAML:
     ```yaml
@@ -49,21 +50,14 @@ class LLMProvidersConfig(BaseModel):
       codex:
         models: gpt-5.4,gpt-5.4-mini,gpt-5.3-codex,gpt-5.3-codex-spark
         auth_mode: subscription
-      gemini:
-        models: gemini-3.1-pro-preview,gemini-3-flash-preview
-        auth_mode: subscription
-      grok:
-        models: grok-build
-        auth_mode: subscription
-      qwen:
-        models: qwen3-coder-plus,qwen3-coder-flash
-        auth_mode: subscription
     ```
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     default_model: str | None = Field(
         default="opus",
-        description="Default model for the web UI chat dropdown (e.g. 'opus', 'sonnet', 'haiku')",
+        description="Default model for LLMProvider-backed generation capability bindings.",
     )
     json_strict: bool = Field(
         default=True,
@@ -77,23 +71,11 @@ class LLMProvidersConfig(BaseModel):
             models="haiku,sonnet,opus",
             auth_mode="subscription",
         ),
-        description="Claude provider configuration",
+        description="Claude text_generate/vision_extract capability binding configuration",
     )
     codex: LLMProviderConfig | None = Field(
         default=None,
-        description="Codex (OpenAI) provider configuration",
-    )
-    gemini: LLMProviderConfig | None = Field(
-        default=None,
-        description="Gemini provider configuration (deprecated)",
-    )
-    grok: LLMProviderConfig | None = Field(
-        default=None,
-        description="Grok provider configuration",
-    )
-    qwen: LLMProviderConfig | None = Field(
-        default=None,
-        description="Qwen provider configuration",
+        description="Codex text_generate/vision_extract capability binding configuration",
     )
 
     def get_enabled_providers(self) -> list[str]:
@@ -103,10 +85,4 @@ class LLMProvidersConfig(BaseModel):
             providers.append("claude")
         if self.codex:
             providers.append("codex")
-        if self.gemini:
-            providers.append("gemini")
-        if self.grok:
-            providers.append("grok")
-        if self.qwen:
-            providers.append("qwen")
         return providers

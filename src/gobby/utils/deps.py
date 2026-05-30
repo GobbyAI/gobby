@@ -484,21 +484,6 @@ def check_config_mismatches(config: Any) -> list[dict[str, str]]:
                 "error": "provider configured but codex CLI not in PATH",
             }
         )
-    if providers.gemini and not shutil.which("gemini"):
-        issues.append(
-            {
-                "subsystem": "Gemini (deprecated)",
-                "error": "provider configured but gemini CLI not in PATH",
-            }
-        )
-    if getattr(providers, "grok", None) and not shutil.which("grok"):
-        issues.append(
-            {
-                "subsystem": "Grok",
-                "error": "provider configured but grok CLI not in PATH",
-            }
-        )
-
     # Embedding provider vs local tools
     emb = config.embeddings
     if emb.api_base:

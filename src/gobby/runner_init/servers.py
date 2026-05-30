@@ -96,17 +96,9 @@ def init_servers(runner: GobbyRunner) -> None:
         codex_client = CodexAppServerClient()
         logger.info("Codex app-server client created (will start in HTTP lifespan)")
 
-    gemini_default_model: str | None = None
-    gemini_config = getattr(runner.config.llm_providers, "gemini", None)
-    if gemini_config is not None:
-        gemini_default_model = gemini_config.default_model
-        if not gemini_default_model:
-            models = gemini_config.get_models_list()
-            gemini_default_model = models[0] if models else None
-
     services.web_chat_runtime_manager = WebChatRuntimeManager(
         codex_client=codex_client,
-        gemini_default_model=gemini_default_model,
+        gemini_default_model=None,
         daemon_config=runner.config,
     )
 

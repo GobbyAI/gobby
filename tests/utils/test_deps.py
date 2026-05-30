@@ -411,23 +411,20 @@ def test_check_config_mismatches() -> None:
     config = MagicMock()
     config.llm_providers.claude = True
     config.llm_providers.codex = True
-    config.llm_providers.gemini = True
-    config.llm_providers.grok = False
     config.embeddings.api_base = "http://localhost:1234/v1"
 
     with patch("shutil.which", return_value=False):
         issues = deps.check_config_mismatches(config)
-        assert len(issues) == 4
+        assert len(issues) == 3
         assert issues[0]["subsystem"] == "Claude Code"
         assert issues[1]["subsystem"] == "Codex"
-        assert issues[2]["subsystem"] == "Gemini (deprecated)"
-        assert issues[3]["subsystem"] == "LM Studio"
+        assert issues[2]["subsystem"] == "LM Studio"
 
     config.embeddings.api_base = "http://localhost:11434/v1"
     with patch("shutil.which", return_value=False):
         issues = deps.check_config_mismatches(config)
-        assert len(issues) == 4
-        assert issues[3]["subsystem"] == "Ollama"
+        assert len(issues) == 3
+        assert issues[2]["subsystem"] == "Ollama"
 
 
 def test_collect_all_deps() -> None:

@@ -362,17 +362,19 @@ class TestLLMProvidersConfig:
         assert config.get_enabled_providers() == ["claude"]
 
     def test_enabled_providers(self) -> None:
-        """Test listing enabled providers."""
+        """Test listing LLMProvider-backed generation bindings."""
         config = LLMProvidersConfig(
             claude=LLMProviderConfig(models="claude-haiku-4-5"),
             codex=LLMProviderConfig(models="gpt-4o-mini"),
-            gemini=LLMProviderConfig(models="gemini-3.1-pro"),
         )
         providers = config.get_enabled_providers()
-        assert "claude" in providers
-        assert "codex" in providers
-        assert "gemini" in providers
-        assert len(providers) == 3
+        assert providers == ["claude", "codex"]
+
+    def test_removed_acp_provider_configs_are_rejected(self) -> None:
+        """Gemini/Grok/Qwen do not have old LLMProvider config entries."""
+        for provider in ("gemini", "grok", "qwen"):
+            with pytest.raises(ValidationError):
+                LLMProvidersConfig(**{provider: LLMProviderConfig(models="removed")})
 
 
 class TestDaemonConfig:

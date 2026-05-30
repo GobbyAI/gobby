@@ -12,6 +12,7 @@ from gobby.ai import (
     build_daemon_ai_capability_registry,
 )
 from gobby.config.app import DaemonConfig
+from gobby.config.llm_providers import LLMProviderConfig, LLMProvidersConfig
 from gobby.config.local import LocalConfig
 from gobby.config.persistence import EmbeddingsConfig
 from gobby.config.voice import OpenAICompatibleAudioBindingConfig, VoiceConfig
@@ -101,7 +102,20 @@ def test_daemon_registry_keeps_web_chat_and_text_generate_separate() -> None:
 
 def test_daemon_registry_reports_text_generate_provider_bindings() -> None:
     registry = build_daemon_ai_capability_registry(
-        DaemonConfig(local=LocalConfig(url="http://localhost:1234/v1", model="llama")),
+        DaemonConfig(
+            local=LocalConfig(url="http://localhost:1234/v1", model="llama"),
+            llm_providers=LLMProvidersConfig(
+                claude=LLMProviderConfig(
+                    models="haiku,sonnet",
+                    default_model="sonnet",
+                ),
+                codex=LLMProviderConfig(
+                    models="gpt-5.4,gpt-5.3-codex",
+                    default_model="gpt-5.4",
+                    auth_mode="api_key",
+                ),
+            ),
+        ),
         provider_installed=lambda _entry: True,
     )
 
@@ -124,10 +138,26 @@ def test_daemon_registry_reports_text_generate_provider_bindings() -> None:
     assert local is not None
     assert local.models == ("llama",)
 
+    claude = registry.binding(AICapability.TEXT_GENERATE, "claude")
+    assert claude is not None
+    assert claude.models == ("haiku", "sonnet")
+    assert claude.metadata["default_model"] == "sonnet"
+
+    codex = registry.binding(AICapability.TEXT_GENERATE, "codex")
+    assert codex is not None
+    assert codex.models == ("gpt-5.4", "gpt-5.3-codex")
+    assert codex.metadata["default_model"] == "gpt-5.4"
+    assert codex.metadata["auth_mode"] == "api_key"
+
 
 def test_daemon_registry_reports_only_proven_vision_extract_bindings_available() -> None:
     registry = build_daemon_ai_capability_registry(
-        DaemonConfig(local=LocalConfig(url="http://localhost:1234/v1", model="llava")),
+        DaemonConfig(
+            local=LocalConfig(url="http://localhost:1234/v1", model="llava"),
+            llm_providers=LLMProvidersConfig(
+                codex=LLMProviderConfig(models="gpt-5-vision", default_model="gpt-5-vision")
+            ),
+        ),
         provider_installed=lambda _entry: True,
     )
 
@@ -140,6 +170,11 @@ def test_daemon_registry_reports_only_proven_vision_extract_bindings_available()
     assert local is not None
     assert local.adapter_style == AIAdapterStyle.OPENAI_COMPATIBLE
     assert local.models == ("llava",)
+
+    codex = registry.binding(AICapability.VISION_EXTRACT, "codex")
+    assert codex is not None
+    assert codex.models == ("gpt-5-vision",)
+    assert codex.metadata["default_model"] == "gpt-5-vision"
 
     for provider in ("droid", "gemini", "grok", "qwen"):
         binding = registry.binding(AICapability.VISION_EXTRACT, provider)
