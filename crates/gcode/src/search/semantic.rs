@@ -51,7 +51,7 @@ fn per_project_semantic_limit(limit: usize, project_count: usize) -> Option<usiz
     if limit == 0 || project_count == 0 {
         return None;
     }
-    Some(limit.div_ceil(project_count).max(1))
+    Some(limit.div_ceil(project_count))
 }
 
 #[cfg(test)]
