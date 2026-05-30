@@ -16,6 +16,7 @@ from gobby.storage.hub.protocol import (
 from gobby.storage.session_models import Session
 
 from ._constants import SYSTEM_SESSION_ID, ensure_system_session, get_logger
+from ._lineage_guard import repair_self_parent_session, sanitize_parent_session_id
 from ._upsert import is_session_unique_conflict, update_existing_session
 
 
@@ -152,6 +153,14 @@ class _SessionCRUDMixin:
                         existing = self.get(existing.id)
 
             if existing:
+                if existing.parent_session_id == existing.id:
+                    repair_self_parent_session(conn, session_id=existing.id, now=now)
+                sanitized_parent_session_id = sanitize_parent_session_id(
+                    conn,
+                    child_session_id=existing.id,
+                    parent_session_id=parent_session_id,
+                    context="session registration",
+                )
                 session = update_existing_session(
                     self,
                     conn,
@@ -159,7 +168,7 @@ class _SessionCRUDMixin:
                     title=title,
                     transcript_path=transcript_path,
                     git_branch=git_branch,
-                    parent_session_id=parent_session_id,
+                    parent_session_id=sanitized_parent_session_id,
                     terminal_context_json=terminal_context_json,
                     workflow_name=workflow_name,
                     is_local=True if is_local else None,
@@ -173,6 +182,12 @@ class _SessionCRUDMixin:
                 change_event = "session_updated"
             else:
                 session_id = str(uuid.uuid4())
+                sanitized_parent_session_id = sanitize_parent_session_id(
+                    conn,
+                    child_session_id=session_id,
+                    parent_session_id=parent_session_id,
+                    context="session registration",
+                )
                 max_seq_row = conn.execute(
                     "SELECT MAX(seq_num) as max_seq FROM sessions WHERE project_id = %s",
                     (project_id,),
@@ -206,7 +221,7 @@ class _SessionCRUDMixin:
                             title,
                             transcript_path,
                             git_branch,
-                            parent_session_id,
+                            sanitized_parent_session_id,
                             agent_depth,
                             spawned_by_agent_id,
                             terminal_context_json,
@@ -248,6 +263,14 @@ class _SessionCRUDMixin:
                         conflicting.id,
                         external_id,
                     )
+                    if conflicting.parent_session_id == conflicting.id:
+                        repair_self_parent_session(conn, session_id=conflicting.id, now=now)
+                    sanitized_parent_session_id = sanitize_parent_session_id(
+                        conn,
+                        child_session_id=conflicting.id,
+                        parent_session_id=parent_session_id,
+                        context="session registration",
+                    )
                     session = update_existing_session(
                         self,
                         conn,
@@ -255,7 +278,7 @@ class _SessionCRUDMixin:
                         title=title,
                         transcript_path=transcript_path,
                         git_branch=git_branch,
-                        parent_session_id=parent_session_id,
+                        parent_session_id=sanitized_parent_session_id,
                         terminal_context_json=terminal_context_json,
                         workflow_name=workflow_name,
                         is_local=True if is_local else None,

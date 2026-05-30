@@ -90,6 +90,7 @@ def test_only_current_postgres_sql_migrations_exist_after_flattening() -> None:
         "265_build_runs_project_root_started.sql",
         "266_agent_run_resume_metadata.sql",
         "267_context_usage_snapshot.sql",
+        "268_prevent_self_parent_sessions.sql",
     ]
 
 
@@ -160,6 +161,22 @@ def test_context_usage_snapshot_migration_and_baseline_define_session_snapshot_f
 
     assert "idx_sessions_context_usage_ratio" in migration
     assert "idx_sessions_context_usage_ratio" in baseline
+
+
+def test_self_parent_sessions_migration_and_baseline_define_invariant() -> None:
+    migration = (
+        SRC_ROOT / "storage" / "migrations" / "268_prevent_self_parent_sessions.sql"
+    ).read_text(encoding="utf-8")
+    baseline = (SRC_ROOT / "storage" / "postgres_baseline_schema.sql").read_text(encoding="utf-8")
+    invariant = "CHECK (parent_session_id IS NULL OR parent_session_id <> id)"
+
+    assert "UPDATE sessions" in migration
+    assert "SET parent_session_id = NULL" in migration
+    assert "WHERE parent_session_id = id" in migration
+    assert "sessions_parent_session_not_self" in migration
+    assert invariant in migration
+    assert "sessions_parent_session_not_self" in baseline
+    assert invariant in baseline
 
 
 def test_migration_helpers_are_not_imported_by_runtime_storage_paths() -> None:

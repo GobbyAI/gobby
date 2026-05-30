@@ -371,6 +371,131 @@ class TestSessionManagerRegistration:
         assert session2.id == session1.id
         assert session2.title == "Updated"
 
+    def test_register_existing_session_ignores_self_parent(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Existing session re-registration must not persist itself as parent."""
+        session = session_manager.register(
+            external_id="self-parent-update",
+            machine_id="machine-1",
+            source="codex",
+            project_id=sample_project["id"],
+        )
+
+        updated = session_manager.register(
+            external_id="self-parent-update",
+            machine_id="machine-1",
+            source="codex",
+            project_id=sample_project["id"],
+            parent_session_id=session.id,
+        )
+
+        assert updated.id == session.id
+        assert updated.parent_session_id is None
+        row = session_manager.db.fetchone(
+            "SELECT parent_session_id FROM sessions WHERE id = %s",
+            (session.id,),
+        )
+        assert row["parent_session_id"] is None
+
+    def test_register_repairs_existing_self_parent_row(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Legacy corrupt self-parent rows are repaired during registration."""
+        session = session_manager.register(
+            external_id="corrupt-self-parent",
+            machine_id="machine-1",
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        session_manager.db.execute(
+            "ALTER TABLE sessions DROP CONSTRAINT IF EXISTS sessions_parent_session_not_self"
+        )
+        session_manager.db.execute(
+            "UPDATE sessions SET parent_session_id = id WHERE id = %s",
+            (session.id,),
+        )
+
+        repaired = session_manager.register(
+            external_id="corrupt-self-parent",
+            machine_id="machine-1",
+            source="codex",
+            project_id=sample_project["id"],
+        )
+
+        assert repaired.id == session.id
+        assert repaired.parent_session_id is None
+        row = session_manager.db.fetchone(
+            "SELECT parent_session_id FROM sessions WHERE id = %s",
+            (session.id,),
+        )
+        assert row["parent_session_id"] is None
+
+    def test_register_existing_session_persists_valid_parent_update(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Valid parent updates still persist on existing sessions."""
+        child = session_manager.register(
+            external_id="valid-parent-child",
+            machine_id="machine-1",
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        parent = session_manager.register(
+            external_id="valid-parent",
+            machine_id="machine-1",
+            source="codex",
+            project_id=sample_project["id"],
+        )
+
+        updated = session_manager.register(
+            external_id="valid-parent-child",
+            machine_id="machine-1",
+            source="codex",
+            project_id=sample_project["id"],
+            parent_session_id=parent.id,
+        )
+
+        assert updated.id == child.id
+        assert updated.parent_session_id == parent.id
+
+    def test_register_existing_session_ignores_parent_chain_cycle(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Re-registration must ignore a parent update that would create a cycle."""
+        root = session_manager.register(
+            external_id="cycle-root",
+            machine_id="machine-1",
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        child = session_manager.register(
+            external_id="cycle-child",
+            machine_id="machine-1",
+            source="codex",
+            project_id=sample_project["id"],
+            parent_session_id=root.id,
+        )
+
+        updated = session_manager.register(
+            external_id="cycle-root",
+            machine_id="machine-1",
+            source="codex",
+            project_id=sample_project["id"],
+            parent_session_id=child.id,
+        )
+
+        assert updated.id == root.id
+        assert updated.parent_session_id is None
+
     def test_register_recovers_legacy_unique_conflict_across_session_types(
         self,
         session_manager: SessionManager,

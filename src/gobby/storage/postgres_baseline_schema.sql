@@ -203,7 +203,9 @@ CREATE TABLE sessions (
     sandbox_enabled BOOLEAN DEFAULT FALSE,
     sandbox_policy_hash TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT sessions_parent_session_not_self
+        CHECK (parent_session_id IS NULL OR parent_session_id <> id)
 );
 
 CREATE INDEX idx_sessions_external_id ON sessions(external_id);

@@ -207,55 +207,32 @@ class TestSessionManagerLifecycle:
         assert updated is not None
         assert updated.parent_session_id == parent.id
 
-    def test_storage_allows_self_parenting_without_guard(
+    def test_update_parent_session_id_ignores_self_parent(
         self,
         session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
-        """
-        Test that storage layer allows setting a session as its own parent.
-
-        This documents that the storage layer does NOT prevent self-parenting.
-        The prevention logic is handled at the hook_manager level by not looking
-        for parent sessions on 'compact' events, only on 'clear' events.
-
-        This test verifies the storage behavior so we know the guard must be
-        at a higher level.
-        """
-        # 1. Create a session
+        """Storage ignores direct updates that would self-parent a session."""
         session = session_manager.register(
             external_id="compact-session",
             machine_id="machine",
             source="claude",
             project_id=sample_project["id"],
         )
-
-        # 2. Mark it handoff_ready (simulating pre_compact)
         session_manager.update_status(session.id, "handoff_ready")
 
-        # 3. Find parent - this finds the same session since it matches criteria
         parent = session_manager.find_parent(
             machine_id="machine",
             project_id=sample_project["id"],
             source="claude",
             status="handoff_ready",
         )
-
-        # The storage layer finds the session as its own "parent"
         assert parent is not None
-        assert parent.id == session.id  # Storage layer returns itself
+        assert parent.id == session.id
 
-        # 4. Verify storage layer allows self-parenting (no guard at this level)
-        # This demonstrates that the hook_manager MUST prevent this case
         updated = session_manager.update_parent_session_id(session.id, session.id)
         assert updated is not None
-        assert updated.parent_session_id == session.id  # Storage allows it
-
-        # The fix for the self-parenting bug is in hook_manager.py:
-        # - On 'compact' events: don't look for parent sessions
-        # - On 'clear' events: look for handoff_ready sessions as parent
-        # This test proves the storage layer has no guard, validating the
-        # architecture decision to handle this at the hook_manager level.
+        assert updated.parent_session_id is None
 
     def test_find_children(
         self,

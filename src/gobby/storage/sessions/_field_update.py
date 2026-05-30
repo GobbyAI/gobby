@@ -9,6 +9,7 @@ from gobby.storage.session_models import Session
 
 from ._bootstrap import TitleChangeCallback
 from ._constants import SYSTEM_SESSION_ID, ensure_system_session, get_logger
+from ._lineage_guard import repair_self_parent_session, sanitize_parent_session_id
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -338,9 +339,19 @@ class _FieldUpdateMixin:
         if parent_session_id == SYSTEM_SESSION_ID:
             ensure_system_session(self.db)
         now = datetime.now(UTC).isoformat()
-        with self.db.transaction():
-            self.db.execute(
+        with self.db.transaction() as conn:
+            sanitized_parent_session_id = sanitize_parent_session_id(
+                conn,
+                child_session_id=session_id,
+                parent_session_id=parent_session_id,
+                context="parent session update",
+            )
+            if sanitized_parent_session_id is None:
+                repair_self_parent_session(conn, session_id=session_id, now=now)
+                return self.get(session_id)
+
+            conn.execute(
                 "UPDATE sessions SET parent_session_id = %s, updated_at = %s WHERE id = %s",
-                (parent_session_id, now, session_id),
+                (sanitized_parent_session_id, now, session_id),
             )
         return self.get(session_id)
