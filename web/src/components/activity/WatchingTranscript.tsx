@@ -1,6 +1,7 @@
 import {
   forwardRef,
   useCallback,
+  useLayoutEffect,
   useMemo,
   useRef,
   type ForwardedRef,
@@ -146,8 +147,64 @@ export function WatchingTranscript({
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const atBottomRef = useRef(true);
+  const anchoredSessionRef = useRef<string | null>(null);
+  const anchorFrameRef = useRef<number | null>(null);
 
   const chatMessages = useMemo(() => messages.map(toChatMessage), [messages]);
+
+  // Pin each session to its newest message the first time its page lands, then
+  // keep re-applying across frames until the scroll position actually reaches
+  // the bottom. Virtuoso measures row heights lazily as they scroll into view,
+  // so its total-height estimate starts far below the real height for tall
+  // transcript messages: a single scrollToIndex/scrollTop lands on the stale
+  // estimate and stops short (or at the very top when a cold transcript-index
+  // build delays the first page past mount). Each frame reveals and measures
+  // the next rows, growing the real height; the measured distance-to-bottom —
+  // ground truth the estimate isn't — gates continuation until growth stops or
+  // the frame budget is spent. Gated once per session so reverse-scroll
+  // prepends and live tail appends (followOutput handles those) never yank the
+  // view.
+  useLayoutEffect(() => {
+    if (!sessionId || chatMessages.length === 0) return;
+    if (anchoredSessionRef.current === sessionId) return;
+    anchoredSessionRef.current = sessionId;
+
+    let attempts = 0;
+    const step = () => {
+      const scroller = scrollerRef.current;
+      const distance = scroller
+        ? scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight
+        : Number.POSITIVE_INFINITY;
+      virtuosoRef.current?.scrollToIndex({
+        index: "LAST",
+        align: "end",
+        behavior: "auto",
+      });
+      if (scroller) {
+        scroller.scrollTop = scroller.scrollHeight;
+      }
+      attempts += 1;
+      if ((distance <= 4 && attempts > 1) || attempts >= 40) {
+        anchorFrameRef.current = null;
+        return;
+      }
+      anchorFrameRef.current = window.requestAnimationFrame(step);
+    };
+
+    if (anchorFrameRef.current !== null) {
+      window.cancelAnimationFrame(anchorFrameRef.current);
+    }
+    step();
+  }, [sessionId, chatMessages.length]);
+
+  useLayoutEffect(
+    () => () => {
+      if (anchorFrameRef.current !== null) {
+        window.cancelAnimationFrame(anchorFrameRef.current);
+      }
+    },
+    [],
+  );
 
   const setScrollerRef = useCallback(
     (node: HTMLDivElement | null, forwardedRef: ForwardedRef<HTMLDivElement>) => {
