@@ -2,10 +2,16 @@ use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
 
+use gobby_wiki::session::{AcceptedResearchNote, ResearchScope, ResearchSession};
+use gobby_wiki::sources::{
+    CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest,
+};
+
 fn gwiki(hub: &Path, cwd: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_gwiki"))
         .args(args)
         .env("GOBBY_WIKI_HUB", hub)
+        .env("HOME", cwd)
         .env_remove("GWIKI_DATABASE_URL")
         .env_remove("GOBBY_POSTGRES_DSN")
         .env_remove("GCODE_DATABASE_URL")
@@ -25,6 +31,60 @@ fn assert_success(output: &Output, label: &str) {
 
 fn json_output(output: &Output) -> serde_json::Value {
     serde_json::from_slice(&output.stdout).expect("stdout is JSON")
+}
+
+fn assert_json_path(value: &serde_json::Value, expected: &Path) {
+    assert_eq!(
+        value.as_str(),
+        Some(expected.to_str().expect("path utf8")),
+        "{value:#}"
+    );
+}
+
+fn seed_accepted_research_checkpoint(vault: &Path) {
+    let note_path = vault.join("raw/research/ownership-evidence.md");
+    fs::create_dir_all(note_path.parent().expect("note parent")).expect("create research dir");
+    fs::write(
+        &note_path,
+        r#"---
+title: Ownership evidence
+indexable: true
+---
+
+Ownership evidence is grounded in accepted research notes.
+citation: Rust Reference, Ownership
+"#,
+    )
+    .expect("write accepted research note");
+    SourceManifest::register(
+        vault,
+        SourceDraft {
+            location: "raw/research/ownership-evidence.md".to_string(),
+            kind: SourceKind::ResearchNote,
+            fetched_at: "2026-05-30T00:00:00Z".to_string(),
+            content: b"Ownership evidence is grounded in accepted research notes.".to_vec(),
+            title: Some("Ownership evidence".to_string()),
+            citation: Some("Rust Reference, Ownership".to_string()),
+            license: None,
+            ingestion_method: IngestionMethod::Research,
+            compile_status: CompileStatus::Pending,
+        },
+    )
+    .expect("register research source");
+
+    let mut session = ResearchSession::new(
+        "How should ownership evidence compile?",
+        ResearchScope::topic("rust", vault),
+        Vec::new(),
+        1,
+        Some("#306".to_string()),
+    )
+    .expect("research session");
+    session.accepted_notes.push(AcceptedResearchNote {
+        title: "Ownership evidence".to_string(),
+        path: note_path,
+    });
+    session.save_checkpoint().expect("save checkpoint");
 }
 
 #[test]
@@ -222,4 +282,58 @@ fn public_cli_smoke_uses_gwiki_modules() {
             .is_some_and(|suggestions| !suggestions.is_empty()),
         "{suggestions_payload:#}"
     );
+
+    seed_accepted_research_checkpoint(&vault);
+
+    let research = gwiki(
+        &hub,
+        tmp.path(),
+        &[
+            "--format",
+            "json",
+            "--topic",
+            "rust",
+            "research",
+            "--resume",
+            "How should ownership evidence compile?",
+        ],
+    );
+    assert_success(&research, "research");
+    let research_payload = json_output(&research);
+    assert_eq!(research_payload["command"], "research");
+    assert_json_path(&research_payload["session"]["scope"]["root"], &vault);
+
+    let compile = gwiki(
+        &hub,
+        tmp.path(),
+        &[
+            "--format",
+            "json",
+            "--topic",
+            "rust",
+            "compile",
+            "--outline",
+            "Overview",
+            "--target",
+            "wiki/topics/ownership-synthesis.md",
+        ],
+    );
+    assert_success(&compile, "compile");
+    let compile_payload = json_output(&compile);
+    assert_eq!(compile_payload["command"], "compile");
+    assert_json_path(
+        &compile_payload["article_path"],
+        &vault.join("wiki/topics/ownership-synthesis.md"),
+    );
+    assert!(vault.join("wiki/sources/ownership-evidence.md").is_file());
+
+    let audit = gwiki(
+        &hub,
+        tmp.path(),
+        &["--format", "json", "--topic", "rust", "audit"],
+    );
+    assert_success(&audit, "audit");
+    let audit_payload = json_output(&audit);
+    assert_eq!(audit_payload["command"], "audit");
+    assert_json_path(&audit_payload["root"], &vault);
 }
