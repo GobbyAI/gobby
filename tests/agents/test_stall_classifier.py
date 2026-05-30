@@ -54,11 +54,25 @@ class TestIsProviderError:
             "InternalServerError from provider",
             "anthropic.APIError: rate limit",
             "anthropic.RateLimitError: too many requests",
+            (
+                "Provider bootstrap/accounting stall: terminal output was visible "
+                "but Gobby session accounting stayed at zero"
+            ),
         ],
     )
     def test_matches_provider_errors(self, error: str) -> None:
         classifier = StallClassifier()
         assert classifier.is_provider_error(error) is True
+
+    def test_identifies_bootstrap_stall(self) -> None:
+        classifier = StallClassifier()
+        assert (
+            classifier.is_bootstrap_stall(
+                "Provider bootstrap/accounting stall: session accounting stayed at zero"
+            )
+            is True
+        )
+        assert classifier.is_bootstrap_stall("503 service unavailable") is False
 
     @pytest.mark.parametrize(
         "error",

@@ -57,6 +57,8 @@ class _AgentRunManager(Protocol):
 class _StallClassifier(Protocol):
     def is_provider_error(self, error_string: str | None) -> bool: ...
 
+    def is_bootstrap_stall(self, error_string: str | None) -> bool: ...
+
 
 class _Task(Protocol):
     id: str
@@ -177,6 +179,7 @@ class TaskRecoveryHandler:
                 return True
 
             is_provider = self._stall_classifier.is_provider_error(db_run.error)
+            is_bootstrap_stall = self._is_bootstrap_stall(db_run.error)
             if is_provider:
                 logger.info(
                     "Agent %s failed with provider error (provider=%s): %s",
@@ -198,14 +201,22 @@ class TaskRecoveryHandler:
 
             await self._release_dispatch_mutex_for_run(db_run)
             failure_count = task.dispatch_failure_count or 0
-            if not is_provider:
+            counts_dispatch_failure = (not is_provider) or is_bootstrap_stall
+            if counts_dispatch_failure:
                 failure_count += 1
 
-            if not is_provider and failure_count >= self._failure_threshold:
+            failure_reason = (
+                "bootstrap_accounting_stall"
+                if is_bootstrap_stall
+                else "provider_startup_failed"
+                if is_provider
+                else "agent_run_failed"
+            )
+            if counts_dispatch_failure and failure_count >= self._failure_threshold:
                 await self._fail_current_stage(
                     task_id,
                     task,
-                    reason="agent_run_failed",
+                    reason=failure_reason,
                     by_session_id=db_run.child_session_id or db_run.claimed_session_id,
                 )
                 await self._run_db(
@@ -213,7 +224,11 @@ class TaskRecoveryHandler:
                     task_id,
                     dispatch_failure_count=0,
                     escalated_at=datetime.now(UTC).isoformat(),
-                    escalation_reason=f"Failed {failure_count} dispatch attempts",
+                    escalation_reason=(
+                        f"Bootstrap/accounting stalled {failure_count} dispatch attempts"
+                        if is_bootstrap_stall
+                        else f"Failed {failure_count} dispatch attempts"
+                    ),
                 )
                 await self._run_db(self._clear_claim_session_variables, db_run, task_id)
                 logger.warning(
@@ -226,7 +241,7 @@ class TaskRecoveryHandler:
             await self._fail_current_stage(
                 task_id,
                 task,
-                reason="provider_startup_failed" if is_provider else "agent_run_failed",
+                reason=failure_reason,
                 by_session_id=db_run.child_session_id or db_run.claimed_session_id,
             )
             await self._run_db(
@@ -244,6 +259,12 @@ class TaskRecoveryHandler:
         except Exception as e:
             logger.warning("Failed to recover task for agent %s: %s", db_run.id, e)
             return False
+
+    def _is_bootstrap_stall(self, error_string: str | None) -> bool:
+        checker = getattr(self._stall_classifier, "is_bootstrap_stall", None)
+        if not callable(checker):
+            return False
+        return checker(error_string) is True
 
     async def recover_tasks_from_terminal_agents(self, *, limit_per_status: int = 100) -> int:
         """Sweep terminal non-success runs whose task ownership was not recovered."""

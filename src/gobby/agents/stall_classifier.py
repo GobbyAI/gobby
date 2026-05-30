@@ -47,6 +47,10 @@ class _RunState:
 # contents). Patterns must be specific enough to avoid matching agents
 # working on code *about* rate limiting, error handling, etc.
 _PROVIDER_ERROR_PATTERNS: tuple[re.Pattern[str], ...] = (
+    # Gobby bootstrap/accounting failures: the terminal launched and may show
+    # model output, but hooks/transcript accounting never attached to the run.
+    re.compile(r"bootstrap/accounting stall", re.IGNORECASE),
+    re.compile(r"session accounting stayed at zero", re.IGNORECASE),
     # HTTP status codes with error context — specific enough as-is
     re.compile(r"\b429\b.*(?:rate|limit|too many|quota)", re.IGNORECASE),
     re.compile(r"\b503\b.*(?:service|unavailable|overloaded)", re.IGNORECASE),
@@ -72,6 +76,11 @@ _PROVIDER_ERROR_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"APIStatusError", re.IGNORECASE),
     re.compile(r"InternalServerError", re.IGNORECASE),
     re.compile(r"anthropic\..*Error", re.IGNORECASE),
+)
+
+_BOOTSTRAP_STALL_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"bootstrap/accounting stall", re.IGNORECASE),
+    re.compile(r"session accounting stayed at zero", re.IGNORECASE),
 )
 
 # Minimum consecutive checks with provider errors before confirming stall
@@ -177,6 +186,12 @@ class StallClassifier:
         if not error_string:
             return False
         return self._match_provider_error(error_string) is not None
+
+    def is_bootstrap_stall(self, error_string: str | None) -> bool:
+        """Check if an error string is Gobby bootstrap/accounting containment."""
+        if not error_string:
+            return False
+        return any(pattern.search(error_string) for pattern in _BOOTSTRAP_STALL_PATTERNS)
 
     def clear(self, run_id: str) -> None:
         """Remove tracking state for an agent run."""

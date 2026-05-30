@@ -24,6 +24,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _session_counter(session: Any, name: str) -> int:
+    value = getattr(session, name, 0)
+    if isinstance(value, int) and not isinstance(value, bool):
+        return max(value, 0)
+    return 0
+
+
 class AgentHealthMonitor:
     """Handles periodic health checks for agents (unhealthy, init-timeout, stalls)."""
 
@@ -60,6 +67,68 @@ class AgentHealthMonitor:
                 run.tmux_session_name,
             )
 
+    async def _capture_pane_snapshot(self, run: AgentRun, *, lines: int = 50) -> str:
+        if not run.tmux_session_name:
+            return ""
+        try:
+            return await self._tmux.capture_pane(run.tmux_session_name, lines=lines) or ""
+        except Exception as e:
+            logger.debug(f"Failed to capture pane for agent {run.id}: {e}")
+            return ""
+
+    async def _bootstrap_accounting_stall_error(
+        self,
+        run: AgentRun,
+        *,
+        age_seconds: float,
+        pane_snapshot: str,
+    ) -> str | None:
+        if not run.child_session_id:
+            return None
+        if (run.tool_calls_count or 0) > 0 or (run.turns_used or 0) > 0:
+            return None
+        if not pane_snapshot.strip():
+            return None
+
+        session_manager = self._get_session_manager()
+        if session_manager is None:
+            return None
+
+        try:
+            session = await self._run_db(session_manager.get, run.child_session_id)
+        except Exception as e:
+            logger.debug("Failed to read child session for agent %s: %s", run.id, e)
+            return None
+        if session is None:
+            return None
+
+        message_count = _session_counter(session, "message_count")
+        turn_count = _session_counter(session, "turn_count")
+        tool_call_count = _session_counter(session, "tool_call_count")
+        if message_count or turn_count or tool_call_count:
+            return None
+
+        transcript_path = getattr(session, "transcript_path", None) or "missing"
+        transcript_processed = bool(getattr(session, "transcript_processed", False))
+        context_injected = bool(getattr(session, "context_injected", False))
+        session_updated_at = getattr(session, "updated_at", None) or "unknown"
+        session_created_at = getattr(session, "created_at", None) or "unknown"
+
+        return (
+            "Provider bootstrap/accounting stall: terminal output was visible but "
+            "Gobby session accounting stayed at zero "
+            f"after {age_seconds:.0f}s "
+            f"(provider={run.provider}, model={run.model or 'unknown'}, "
+            f"agent={run.agent_name or 'unknown'}, run_id={run.id}, "
+            f"child_session_id={run.child_session_id}, "
+            f"tmux_session={run.tmux_session_name or 'none'}, pid={run.pid or 'none'}, "
+            f"context_injected={context_injected}, message_count={message_count}, "
+            f"turn_count={turn_count}, tool_call_count={tool_call_count}, "
+            f"transcript_path={transcript_path}, "
+            f"transcript_processed={transcript_processed}, "
+            f"session_created_at={session_created_at}, session_updated_at={session_updated_at})"
+        )
+
     async def check_unhealthy_agents(self) -> int:
         """Detect and clean up dead or expired agents."""
         runs = await self._run_db(self._agent_run_manager.list_active)
@@ -70,6 +139,8 @@ class AgentHealthMonitor:
             try:
                 reason: str | None = None
                 is_timeout = False
+                timeout_age: float | None = None
+                pane_snapshot = ""
 
                 if run.timeout_seconds and run.started_at:
                     started = parse_stored_datetime(run.started_at)
@@ -79,6 +150,7 @@ class AgentHealthMonitor:
                     if age > run.timeout_seconds:
                         reason = f"Agent exceeded {run.timeout_seconds}s timeout"
                         is_timeout = True
+                        timeout_age = age
                         logger.info(
                             f"Agent {run.id} exceeded timeout ({age:.1f}s > {run.timeout_seconds}s)"
                         )
@@ -106,14 +178,22 @@ class AgentHealthMonitor:
                 if reason is None:
                     continue
 
-                pane_snapshot = ""
                 if run.tmux_session_name:
-                    try:
-                        pane_snapshot = (
-                            await self._tmux.capture_pane(run.tmux_session_name, lines=50) or ""
+                    pane_snapshot = await self._capture_pane_snapshot(run, lines=50)
+
+                if is_timeout and timeout_age is not None:
+                    bootstrap_error = await self._bootstrap_accounting_stall_error(
+                        run,
+                        age_seconds=timeout_age,
+                        pane_snapshot=pane_snapshot,
+                    )
+                    if bootstrap_error is not None:
+                        reason = bootstrap_error
+                        is_timeout = False
+                        logger.warning(
+                            "Agent %s hit bootstrap/accounting stall containment",
+                            run.id,
                         )
-                    except Exception as e:
-                        logger.debug(f"Failed to capture pane for agent {run.id}: {e}")
 
                 if run.tmux_session_name:
                     result = await kill_agent(

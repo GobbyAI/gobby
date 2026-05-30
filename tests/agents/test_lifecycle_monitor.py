@@ -1375,6 +1375,145 @@ class TestCheckExpiredAgents:
         assert "timeout" in (updated.error or "").lower()
 
     @pytest.mark.asyncio
+    async def test_zero_accounting_timeout_with_terminal_output_is_bootstrap_stall(
+        self,
+        agent_run_manager: LocalAgentRunManager,
+        sample_session: dict,
+        sample_project: dict,
+        session_manager: SessionManager,
+        temp_db: HubDatabase,
+    ) -> None:
+        """Visible terminal output with zero Gobby counters is containment, not work failure."""
+        child = session_manager.register(
+            external_id="child-zero-accounting",
+            machine_id="machine-1",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        task_manager = LocalTaskManager(temp_db)
+        task, run, mutexes = _make_dispatched_stage_run(
+            agent_run_manager=agent_run_manager,
+            task_manager=task_manager,
+            temp_db=temp_db,
+            sample_project=sample_project,
+            parent_session_id=sample_session["id"],
+            child_session_id=child.id,
+            run_id="run-zero-accounting",
+            tmux_session_name="gobby-zero-accounting",
+            provider="claude",
+        )
+        past = (datetime.now(UTC) - timedelta(seconds=180)).isoformat()
+        temp_db.execute(
+            "UPDATE agent_runs SET started_at = %s, timeout_seconds = %s, pid = %s WHERE id = %s",
+            (past, 120, 17069, run.id),
+        )
+
+        monitor = AgentLifecycleMonitor(
+            agent_run_manager=agent_run_manager,
+            db=temp_db,
+            session_manager=session_manager,
+            task_manager=task_manager,
+            check_interval_seconds=1.0,
+        )
+
+        with (
+            patch.object(
+                monitor._tmux,
+                "capture_pane",
+                new_callable=AsyncMock,
+                return_value="CANARY-OK\nQA verdict: APPROVED\n",
+            ),
+            patch(
+                "gobby.agents.agent_health.kill_agent",
+                new_callable=AsyncMock,
+                return_value={"success": True},
+            ),
+        ):
+            cleaned = await monitor.check_unhealthy_agents()
+
+        assert cleaned == 1
+        updated = agent_run_manager.get(run.id)
+        assert updated is not None
+        assert updated.status == "error"
+        assert "bootstrap/accounting stall" in (updated.error or "")
+        assert "message_count=0" in (updated.error or "")
+        assert "tool_call_count=0" in (updated.error or "")
+        assert "CANARY-OK" in (updated.error or "")
+
+        stage = task_manager.stage_states.get(task.id, "development")
+        assert stage is not None
+        assert stage.state == "ready"
+        assert mutexes.get_mutex(task.id) is None
+        recovered = task_manager.get_task(task.id)
+        assert recovered.claimed_by_session_id is None
+        assert recovered.dispatch_failure_count == 1
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_accounting_stalls_escalate_at_retry_cap(
+        self,
+        agent_run_manager: LocalAgentRunManager,
+        sample_session: dict,
+        sample_project: dict,
+        session_manager: SessionManager,
+        temp_db: HubDatabase,
+    ) -> None:
+        """Repeated bootstrap/accounting stalls stop redispatching the same reviewer."""
+        child = session_manager.register(
+            external_id="child-zero-accounting-cap",
+            machine_id="machine-1",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        task_manager = LocalTaskManager(temp_db)
+        task, run, _mutexes = _make_dispatched_stage_run(
+            agent_run_manager=agent_run_manager,
+            task_manager=task_manager,
+            temp_db=temp_db,
+            sample_project=sample_project,
+            parent_session_id=sample_session["id"],
+            child_session_id=child.id,
+            run_id="run-zero-accounting-cap",
+            tmux_session_name="gobby-zero-accounting-cap",
+            provider="claude",
+        )
+        task_manager.update_task(task.id, dispatch_failure_count=2)
+        past = (datetime.now(UTC) - timedelta(seconds=180)).isoformat()
+        temp_db.execute(
+            "UPDATE agent_runs SET started_at = %s, timeout_seconds = %s WHERE id = %s",
+            (past, 120, run.id),
+        )
+
+        monitor = AgentLifecycleMonitor(
+            agent_run_manager=agent_run_manager,
+            db=temp_db,
+            session_manager=session_manager,
+            task_manager=task_manager,
+            check_interval_seconds=1.0,
+        )
+
+        with (
+            patch.object(
+                monitor._tmux,
+                "capture_pane",
+                new_callable=AsyncMock,
+                return_value="QA verdict: PASS\n",
+            ),
+            patch(
+                "gobby.agents.agent_health.kill_agent",
+                new_callable=AsyncMock,
+                return_value={"success": True},
+            ),
+        ):
+            cleaned = await monitor.check_unhealthy_agents()
+
+        assert cleaned == 1
+        recovered = task_manager.get_task(task.id)
+        assert recovered.claimed_by_session_id is None
+        assert recovered.dispatch_failure_count == 0
+        assert recovered.escalated_at is not None
+        assert recovered.escalation_reason == "Bootstrap/accounting stalled 3 dispatch attempts"
+
+    @pytest.mark.asyncio
     async def test_expired_agent_expires_child_session(
         self,
         monitor: AgentLifecycleMonitor,
