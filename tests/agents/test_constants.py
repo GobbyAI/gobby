@@ -1,5 +1,6 @@
 """Tests for agent constants module."""
 
+import os
 from pathlib import Path
 
 import pytest
@@ -21,6 +22,7 @@ from gobby.agents.constants import (
     get_agent_uv_cache_dir,
     get_terminal_env_vars,
 )
+from gobby.agents.spawn_cache_policy import PATH_ENV_VAR, managed_tool_bin_dir
 
 pytestmark = pytest.mark.unit
 
@@ -88,8 +90,12 @@ class TestGetTerminalEnvVars:
         assert result[GOBBY_PARENT_SESSION_ID] == "sess-parent"
         assert result[GOBBY_AGENT_RUN_ID] == "run-123"
         assert result[GOBBY_PROJECT_ID] == "proj-abc"
-        assert Path(result[UV_CACHE_DIR]).parts[-3:] == ("gobby", "uv-cache", "sess-child")
-        assert Path(result[CARGO_HOME]).parts[-3:] == ("gobby", "cargo-home", "sess-child")
+        uv_cache_parts = Path(result[UV_CACHE_DIR]).parts
+        cargo_home_parts = Path(result[CARGO_HOME]).parts
+        assert uv_cache_parts[-3:-1] == ("gobby", "uv-cache")
+        assert uv_cache_parts[-1].startswith("sess-child-")
+        assert cargo_home_parts[-3:-1] == ("gobby", "cargo-home")
+        assert cargo_home_parts[-1].startswith("sess-child-")
 
     def test_uv_cache_dir_sanitizes_session_id(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """uv cache paths are writable temp paths scoped to safe session IDs."""
@@ -97,7 +103,9 @@ class TestGetTerminalEnvVars:
 
         result = get_agent_uv_cache_dir("sess/child:one")
 
-        assert Path(result) == Path("/tmp/test-tmp") / "gobby" / "uv-cache" / "sess-child-one"
+        result_path = Path(result)
+        assert result_path.parts[-3:-1] == ("gobby", "uv-cache")
+        assert result_path.parts[-1].startswith("sess-child-one-")
 
     def test_cargo_home_sanitizes_session_id(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Cargo home paths are writable temp paths scoped to safe session IDs."""
@@ -105,7 +113,29 @@ class TestGetTerminalEnvVars:
 
         result = get_agent_cargo_home_dir("sess/child:one")
 
-        assert Path(result) == Path("/tmp/test-tmp") / "gobby" / "cargo-home" / "sess-child-one"
+        result_path = Path(result)
+        assert result_path.parts[-3:-1] == ("gobby", "cargo-home")
+        assert result_path.parts[-1].startswith("sess-child-one-")
+
+    def test_includes_managed_tool_bin_on_path(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Spawned agents inherit access to all ~/.gobby/bin tools."""
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+        monkeypatch.setenv("PATH", os.pathsep.join(("/usr/bin", "/bin")))
+
+        result = get_terminal_env_vars(
+            session_id="sess-child",
+            parent_session_id="sess-parent",
+            agent_run_id="run-123",
+            project_id="proj-abc",
+        )
+
+        assert result[PATH_ENV_VAR].split(os.pathsep)[:3] == [
+            managed_tool_bin_dir(),
+            "/usr/bin",
+            "/bin",
+        ]
 
     def test_includes_workflow_when_provided(self) -> None:
         """Function includes workflow name when provided."""

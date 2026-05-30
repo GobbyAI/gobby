@@ -8,24 +8,25 @@ and clones.py into a single executor. All agents spawn via tmux.
 import json
 import logging
 import shutil
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
-from gobby.agents.constants import (
-    ALL_TERMINAL_ENV_VARS,
-    CARGO_HOME,
-    GOBBY_SESSION_ID,
-    UV_CACHE_DIR,
-    ensure_agent_cargo_home_dir,
-)
+from gobby.agents.constants import ALL_TERMINAL_ENV_VARS
 from gobby.agents.sandbox import (
     CodexSandboxResolver,
     GeminiSandboxResolver,
     GrokSandboxResolver,
     QwenSandboxResolver,
-    SandboxConfig,
     compute_sandbox_paths,
 )
+from gobby.agents.spawn_cache_policy import (
+    PATH_ENV_VAR,
+    SPAWN_CACHE_ENV_VARS,
+    merge_spawn_path_env,
+)
+from gobby.agents.spawn_cache_policy import (
+    sandbox_config_for_spawn as _sandbox_config_for_spawn,
+)
+from gobby.agents.spawn_models import SpawnRequest, SpawnResult
 from gobby.agents.trust import pre_approve_directory
 from gobby.providers import AGY_UNAVAILABLE_REASON
 
@@ -39,7 +40,9 @@ from gobby.agents.tmux.spawner import TmuxSpawner
 from gobby.config.tmux import TmuxConfig
 
 logger = logging.getLogger(__name__)
-_RESERVED_EXTRA_ENV_KEYS = frozenset((*ALL_TERMINAL_ENV_VARS, CARGO_HOME, "GOBBY_MACHINE_ID"))
+_RESERVED_EXTRA_ENV_KEYS = frozenset(
+    (*ALL_TERMINAL_ENV_VARS, *SPAWN_CACHE_ENV_VARS, "GOBBY_MACHINE_ID")
+)
 
 # Spawned Codex agents must be able to use Gobby's progressive-discovery MCP flow without
 # interactive approval loops. Keep this allowlist narrow: these tools expose discovery,
@@ -54,61 +57,6 @@ _CODEX_PREAPPROVED_GOBBY_TOOLS = [
 ]
 
 
-@dataclass
-class SpawnRequest:
-    """Request for spawning an agent."""
-
-    # Required fields
-    prompt: str
-    cwd: str
-    provider: str
-    session_id: str
-    run_id: str
-    parent_session_id: str
-    project_id: str
-    project_path: str | None = None
-
-    # Canonical agent_run_id from spawn_agent_impl (pre-generated)
-    agent_run_id: str | None = None
-
-    # Optional fields
-    workflow: str | None = None
-    initial_variables: dict[str, Any] | None = None  # Variables to write to session_variables
-    worktree_id: str | None = None
-    clone_id: str | None = None
-    branch_name: str | None = None  # Git branch for worktree/clone isolation
-    task_id: str | None = None  # Task being worked on (for dedup tracking)
-    claimed_session_id: str | None = None  # Original task owner before child-session claim
-    title: str | None = None  # Session title (derived from agent/task name)
-    agent_name: str | None = None  # Agent definition name for UI/status surfaces
-    agent_depth: int = 0
-    max_agent_depth: int = 5
-    session_manager: Any | None = (
-        None  # Required for child-session creation in prepare_terminal_spawn
-    )
-    machine_id: str | None = None
-    model: str | None = None  # Model override (e.g., gemini-3-pro-preview)
-    is_local: bool = False
-    api_base: str | None = None  # API base URL for local model endpoints
-    api_token: str | None = None  # Auth token for the endpoint
-    requested_reasoning_effort: str | None = None
-    effective_reasoning_effort: str | None = None
-    reasoning_required: bool = False
-    reasoning_status: str = "not_requested"
-    reasoning_message: str | None = None
-
-    # Sandbox configuration
-    sandbox_config: SandboxConfig | None = None
-    sandbox_args: list[str] | None = None
-    sandbox_env: dict[str, str] | None = field(default=None)
-    extra_env: dict[str, str] | None = field(default=None)
-
-    # Timeout
-    timeout_seconds: float | None = None  # Agent timeout (persisted to DB for restart survival)
-    daemon_config: Any | None = None
-    resume_metadata_json: dict[str, Any] | None = None
-
-
 def _tmux_spawner_for_request(request: SpawnRequest) -> TmuxSpawner:
     daemon_config = request.daemon_config
     tmux_config = getattr(daemon_config, "tmux", None)
@@ -116,39 +64,12 @@ def _tmux_spawner_for_request(request: SpawnRequest) -> TmuxSpawner:
     return TmuxSpawner(config=tmux_config if isinstance(tmux_config, TmuxConfig) else None)
 
 
-def _sandbox_config_for_spawn(
-    sandbox_config: SandboxConfig | None,
-    env_vars: dict[str, str],
-) -> SandboxConfig | None:
-    """Include spawned validation caches in sandbox writable paths."""
-    if sandbox_config is None:
-        return None
-    if not sandbox_config.enabled:
-        return sandbox_config
-
-    extra_write_paths = list(sandbox_config.extra_write_paths)
-
-    uv_cache_dir = env_vars.get(UV_CACHE_DIR)
-    if uv_cache_dir and uv_cache_dir not in extra_write_paths:
-        extra_write_paths.append(uv_cache_dir)
-
-    cargo_home = env_vars.get(CARGO_HOME)
-    if not cargo_home:
-        session_id = env_vars.get(GOBBY_SESSION_ID)
-        if session_id:
-            cargo_home = ensure_agent_cargo_home_dir(session_id)
-            # ``prepare_terminal_spawn`` gives each spawn a fresh env dict; mutate it here so
-            # sandbox args and child process env agree on the generated Cargo home.
-            env_vars[CARGO_HOME] = cargo_home
-    if cargo_home and cargo_home not in extra_write_paths:
-        extra_write_paths.append(cargo_home)
-
-    return sandbox_config.model_copy(update={"extra_write_paths": extra_write_paths})
-
-
 def _apply_extra_env(env: dict[str, str], request: SpawnRequest) -> None:
     if request.extra_env:
         for key, value in request.extra_env.items():
+            if key == PATH_ENV_VAR:
+                merge_spawn_path_env(env, value)
+                continue
             if key in _RESERVED_EXTRA_ENV_KEYS:
                 logger.warning("Ignoring reserved spawn environment override for %s", key)
                 continue
@@ -183,26 +104,6 @@ def _record_resume_launch_details(
         LocalAgentRunManager(db).update_resume_metadata(request.agent_run_id, metadata)
     except Exception as exc:
         logger.warning("Failed to persist resume launch metadata: %s", exc)
-
-
-@dataclass
-class SpawnResult:
-    """Result of a spawn operation."""
-
-    success: bool
-    run_id: str
-    child_session_id: str | None
-    status: str
-
-    # Optional result fields
-    pid: int | None = None
-    terminal_type: str | None = None
-    error: str | None = None
-    message: str | None = None
-    codex_session_id: str | None = None  # Codex external session ID
-    tmux_session_name: str | None = None  # Tmux session name for output streaming
-    tmux_socket_name: str | None = None  # Tmux socket name used for output/input routing
-    tmux_socket_path: str | None = None  # Explicit tmux socket path, if configured
 
 
 def _session_manager_validation_error(

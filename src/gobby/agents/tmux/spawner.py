@@ -16,13 +16,9 @@ import time
 import uuid
 from pathlib import Path
 
-from gobby.agents.constants import (
-    GOBBY_SESSION_ID,
-    UV_CACHE_DIR,
-    ensure_agent_uv_cache_dir,
-    get_terminal_env_vars,
-)
+from gobby.agents.constants import get_terminal_env_vars
 from gobby.agents.sandbox import SandboxConfig, compute_sandbox_paths, get_sandbox_resolver
+from gobby.agents.spawn_cache_policy import apply_spawn_cache_policy
 from gobby.agents.spawners.auth_env import terminal_env_passthrough
 from gobby.agents.spawners.base import (
     SpawnResult,
@@ -136,10 +132,7 @@ class TmuxSpawner(TerminalSpawnerBase):
         if cli := _infer_auth_cli(command):
             for key, value in terminal_env_passthrough(cli).items():
                 spawn_env.setdefault(key, value)
-        if not spawn_env.get(UV_CACHE_DIR):
-            spawn_env[UV_CACHE_DIR] = ensure_agent_uv_cache_dir(
-                spawn_env.get(GOBBY_SESSION_ID) or "unknown-session"
-            )
+        apply_spawn_cache_policy(spawn_env)
 
         # Merge env with a clean spawn env
         clean_env = make_spawn_env(spawn_env)

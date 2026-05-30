@@ -122,14 +122,15 @@ def get_terminal_env_vars(
     Returns:
         Dict of environment variable name to value.
     """
+    from gobby.agents.spawn_cache_policy import build_spawn_cache_env
+
     env = {
         GOBBY_SESSION_ID: session_id,
         GOBBY_AGENT_RUN_ID: agent_run_id,
         GOBBY_PROJECT_ID: project_id,
         GOBBY_AGENT_DEPTH: str(agent_depth),
         GOBBY_MAX_AGENT_DEPTH: str(max_agent_depth),
-        UV_CACHE_DIR: ensure_agent_uv_cache_dir(session_id),
-        CARGO_HOME: ensure_agent_cargo_home_dir(session_id),
+        **build_spawn_cache_env(session_id),
     }
 
     if parent_session_id:

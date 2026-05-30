@@ -1,7 +1,6 @@
-"""
-Tests for SpawnExecutor unified spawn dispatch.
-"""
+"""Tests for SpawnExecutor unified spawn dispatch."""
 
+import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -9,6 +8,7 @@ import pytest
 
 from gobby.agents.constants import CARGO_HOME, UV_CACHE_DIR
 from gobby.agents.sandbox import SandboxConfig
+from gobby.agents.spawn_cache_policy import PATH_ENV_VAR, managed_tool_bin_dir
 from gobby.agents.spawn_executor import (
     _CODEX_PREAPPROVED_GOBBY_TOOLS,
     SpawnRequest,
@@ -911,8 +911,11 @@ class TestExecuteSpawnSandbox:
             assert "--settings" in command
             assert result.success is True
 
-    def test_sandbox_config_for_spawn_adds_cargo_home_write_path(self) -> None:
-        """Sandboxed Rust validation gets a writable Cargo home without disabling sandboxing."""
+    def test_sandbox_config_for_spawn_adds_policy_write_paths(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Sandboxed agents get writable caches and access to managed native tools."""
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
         env_vars = {
             "GOBBY_SESSION_ID": "child/session:one",
             UV_CACHE_DIR: "/tmp/gobby/uv-cache/child-session-one",
@@ -930,6 +933,7 @@ class TestExecuteSpawnSandbox:
         assert "/already-allowed" in resolved.extra_write_paths
         assert "/tmp/gobby/uv-cache/child-session-one" in resolved.extra_write_paths
         assert env_vars[CARGO_HOME] in resolved.extra_write_paths
+        assert managed_tool_bin_dir() in resolved.extra_write_paths
         assert config.extra_write_paths == ["/already-allowed"]
 
     @pytest.mark.asyncio
@@ -1316,6 +1320,31 @@ class TestExecuteSpawnErrorPaths:
 
 
 class TestApplyExtraEnv:
+    def test_path_extra_env_is_merged_with_managed_bin(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+        request = SpawnRequest(
+            prompt="Test",
+            cwd="/path",
+            provider="codex",
+            session_id="sess",
+            run_id="run",
+            parent_session_id="parent",
+            project_id="proj",
+            extra_env={PATH_ENV_VAR: os.pathsep.join(("/work/.gobby/bin", "/usr/bin"))},
+        )
+        env = {PATH_ENV_VAR: "/bin"}
+
+        _apply_extra_env(env, request)
+
+        assert env[PATH_ENV_VAR].split(os.pathsep) == [
+            "/work/.gobby/bin",
+            managed_tool_bin_dir(),
+            "/usr/bin",
+            "/bin",
+        ]
+
     def test_reserved_env_overrides_are_ignored(self) -> None:
         request = SpawnRequest(
             prompt="Test",

@@ -5,6 +5,7 @@ Verifies that prepare_terminal_spawn persists agent_run_id via
 update_terminal_pickup_metadata.
 """
 
+import os
 import re
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -16,6 +17,7 @@ from gobby.agents.spawn import (
     PreparedSpawn,
     prepare_terminal_spawn,
 )
+from gobby.agents.spawn_cache_policy import PATH_ENV_VAR, managed_tool_bin_dir
 
 pytestmark = pytest.mark.unit
 
@@ -103,6 +105,27 @@ class TestPrepareTerminalSpawnMetadata:
             machine_id="machine-1",
         )
 
-        expected = tmp_path / "gobby" / "uv-cache" / "child-sess-1"
-        assert result.env_vars[UV_CACHE_DIR] == str(expected)
-        assert expected.is_dir()
+        uv_cache = Path(result.env_vars[UV_CACHE_DIR])
+        assert uv_cache.parts[-3:-1] == ("gobby", "uv-cache")
+        assert uv_cache.parts[-1].startswith("child-sess-1-")
+        assert uv_cache.is_dir()
+
+    def test_env_includes_managed_tool_bin_path(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """prepare_terminal_spawn forwards ~/.gobby/bin through the child env."""
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+        monkeypatch.setenv("PATH", "/usr/bin")
+        sm = _make_session_manager(child_session_id="child-sess-1")
+
+        result = prepare_terminal_spawn(
+            session_manager=sm,
+            parent_session_id="parent-1",
+            project_id="proj-1",
+            machine_id="machine-1",
+        )
+
+        assert result.env_vars[PATH_ENV_VAR].split(os.pathsep) == [
+            managed_tool_bin_dir(),
+            "/usr/bin",
+        ]

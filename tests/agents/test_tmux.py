@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Iterator
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -810,7 +811,39 @@ class TestTmuxSpawner:
             )
 
             env_arg = mock_create.call_args[1].get("env")
-            assert env_arg["UV_CACHE_DIR"] == "/tmp/test-tmp/gobby/uv-cache/sess-1"
+            uv_cache = Path(env_arg["UV_CACHE_DIR"])
+            assert uv_cache.parts[-3:-1] == ("gobby", "uv-cache")
+            assert uv_cache.parts[-1].startswith("sess-1-")
+
+    @pytest.mark.asyncio
+    async def test_managed_tool_bin_path_is_forwarded(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """tmux receives PATH explicitly so ~/.gobby/bin is visible in the child shell."""
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+        monkeypatch.setenv("PATH", "/usr/bin")
+        spawner = TmuxSpawner()
+        with (
+            patch.object(
+                spawner._session_manager, "create_session", new_callable=AsyncMock
+            ) as mock_create,
+            patch.object(
+                spawner._session_manager, "get_session", new_callable=AsyncMock
+            ) as mock_get,
+        ):
+            mock_create.return_value = TmuxSessionInfo(name="test-session", pane_pid=123)
+            mock_get.return_value = TmuxSessionInfo(name="test-session", pane_pid=123)
+            await spawner._async_spawn(
+                command=["echo", "hello"],
+                cwd="/tmp",
+                env={"GOBBY_SESSION_ID": "sess-1"},
+            )
+
+            env_arg = mock_create.call_args[1].get("env")
+            assert env_arg["PATH"].split(os.pathsep) == [
+                str(tmp_path / ".gobby" / "bin"),
+                "/usr/bin",
+            ]
 
     @pytest.mark.asyncio
     async def test_uv_cache_dir_explicit_value_preserved(self) -> None:
@@ -863,7 +896,9 @@ class TestTmuxSpawner:
             )
 
             env_arg = mock_create.call_args[1].get("env")
-            assert env_arg["UV_CACHE_DIR"] == "/tmp/test-tmp/gobby/uv-cache/sess-1"
+            uv_cache = Path(env_arg["UV_CACHE_DIR"])
+            assert uv_cache.parts[-3:-1] == ("gobby", "uv-cache")
+            assert uv_cache.parts[-1].startswith("sess-1-")
 
     @pytest.mark.asyncio
     async def test_unset_in_shell_command(self) -> None:
