@@ -1,9 +1,14 @@
-"""Transcript availability/status assembly."""
+"""Transcript availability/status assembly (index-backed counts).
+
+Counts come from the cached boundary index (shared with the windowed message
+path), so a status poll on a very large session does not trigger a second full
+parse. The *detected* (nullable) source is still resolved from a bounded prefix
+sample so ``source_mismatch`` / ``content_state`` semantics are preserved.
+"""
 
 from __future__ import annotations
 
 import asyncio
-import gzip
 import json
 import logging
 import os
@@ -12,19 +17,18 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.sessions.transcript_archive import get_archive_dir
+from gobby.sessions.transcript_index import SOURCE_SAMPLE_LINES, get_or_build_index
 from gobby.sessions.transcript_io import (
     DecompressionError,
-    _count_nonempty_lines,
-    _decompress_archive,
+    _iter_jsonl_lines,
+    _read_archive_lines,
     _read_json_file,
-    _read_jsonl_lines,
 )
-from gobby.sessions.transcript_parsing import _parse_json_session, _parse_lines
+from gobby.sessions.transcript_parsing import _parse_json_session
 from gobby.sessions.transcript_paths import _is_json_session_file
 from gobby.sessions.transcript_source import _resolve_effective_source
 
 if TYPE_CHECKING:
-    from gobby.sessions.transcripts.base import ParsedMessage
     from gobby.storage.session_models import Session
     from gobby.storage.sessions import SessionManager
 
@@ -44,6 +48,16 @@ def _missing_status(session_id: str) -> dict[str, Any]:
         "raw_record_count": 0,
         "parsed_message_count": 0,
     }
+
+
+def _read_sample_lines(path: str, max_lines: int) -> list[str]:
+    """Read a bounded prefix of JSONL lines for content source detection."""
+    out: list[str] = []
+    for line in _iter_jsonl_lines(path):
+        out.append(line)
+        if len(out) >= max_lines:
+            break
+    return out
 
 
 async def _json_transcript_counts(
@@ -80,24 +94,24 @@ async def _jsonl_transcript_counts(
     transcript_path: str,
 ) -> tuple[int, int, str | None, bool]:
     try:
-        lines = await asyncio.to_thread(_read_jsonl_lines, transcript_path)
-        raw_record_count = _count_nonempty_lines(lines)
+        st = await asyncio.to_thread(os.stat, transcript_path)
+        sample = await asyncio.to_thread(_read_sample_lines, transcript_path, SOURCE_SAMPLE_LINES)
         effective_source, detected_source = _resolve_effective_source(
             session,
             transcript_path=transcript_path,
-            lines=lines,
+            lines=sample,
             session_id=session_id,
         )
-        parsed_message_count = len(
-            _parse_lines(
-                lines,
-                effective_source,
-                session_id=session_id,
-                transcript_path=transcript_path,
-            )
+        index = await get_or_build_index(
+            transcript_path,
+            effective_source,
+            session_id,
+            seek_mode="byte",
+            mtime_ns=st.st_mtime_ns,
+            size=st.st_size,
         )
-        return raw_record_count, parsed_message_count, detected_source, False
-    except (json.JSONDecodeError, ValueError, OSError) as e:
+        return index.raw_record_count, index.parsed_message_count, detected_source, False
+    except (OSError, ValueError) as e:
         logger.warning(f"Failed to parse JSONL transcript for session {session_id}: {e}")
         return 0, 0, None, True
 
@@ -106,20 +120,27 @@ async def _archive_transcript_counts(
     session: Session,
     session_id: str,
     archive_path: Path,
-    get_parsed_messages_from_archive: Callable[[str], Awaitable[list[ParsedMessage]]],
 ) -> tuple[int, int, str | None, bool]:
     try:
-        lines = list(await asyncio.to_thread(_decompress_archive, str(archive_path)))
-        raw_record_count = _count_nonempty_lines(lines)
-        _, detected_source = _resolve_effective_source(
+        st = await asyncio.to_thread(os.stat, str(archive_path))
+        lines = await asyncio.to_thread(_read_archive_lines, str(archive_path))
+        effective_source, detected_source = _resolve_effective_source(
             session,
             transcript_path=None,
-            lines=lines,
+            lines=lines[:SOURCE_SAMPLE_LINES],
             session_id=session_id,
         )
-        parsed_message_count = len(await get_parsed_messages_from_archive(session_id))
-        return raw_record_count, parsed_message_count, detected_source, False
-    except (DecompressionError, json.JSONDecodeError, ValueError, OSError, gzip.BadGzipFile) as e:
+        index = await get_or_build_index(
+            str(archive_path),
+            effective_source,
+            session_id,
+            seek_mode="line",
+            lines=lines,
+            mtime_ns=st.st_mtime_ns,
+            size=st.st_size,
+        )
+        return index.raw_record_count, index.parsed_message_count, detected_source, False
+    except (DecompressionError, json.JSONDecodeError, ValueError, OSError) as e:
         logger.warning(f"Failed to read archive for session {session_id}: {e}")
         return 0, 0, None, True
 
@@ -192,7 +213,6 @@ async def get_transcript_status_for_session(
     archive_dir: str | None,
     session_id: str,
     get_live_transcript_path: Callable[[str, Session], Awaitable[str | None]],
-    get_parsed_messages_from_archive: Callable[[str], Awaitable[list[ParsedMessage]]],
 ) -> dict[str, Any]:
     """Report transcript availability and parseability for a session."""
     session = session_manager.get(session_id)
@@ -234,12 +254,7 @@ async def get_transcript_status_for_session(
             parsed_message_count,
             detected_source,
             parse_failed,
-        ) = await _archive_transcript_counts(
-            session,
-            session_id,
-            archive_path,
-            get_parsed_messages_from_archive,
-        )
+        ) = await _archive_transcript_counts(session, session_id, archive_path)
 
     return _final_status(
         session_id=session_id,

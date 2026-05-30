@@ -70,12 +70,15 @@ class WindowResult:
 
     ``returned_count`` is the authoritative page size — callers advance their
     offset by it, not by the requested ``limit`` (a degraded/short page is
-    shorter). ``total_groups`` is the rendered-group pagination total.
+    shorter). ``total_groups`` is the rendered-group pagination total, while
+    ``parsed_message_count`` is the parsed-message total used only for the
+    "N messages" display (different unit — never page on it).
     """
 
     groups: list[RenderedMessage]
     returned_count: int
     total_groups: int
+    parsed_message_count: int = 0
     degraded: bool = False
     degraded_reason: str | None = None
     boundaries_used: int = field(default=0, repr=False)
@@ -303,7 +306,12 @@ def render_window(
 
     g_start_req, g_end_req = _requested_range(total, limit, offset, order)
     if g_start_req >= g_end_req:
-        return WindowResult(groups=[], returned_count=0, total_groups=total)
+        return WindowResult(
+            groups=[],
+            returned_count=0,
+            total_groups=total,
+            parsed_message_count=index.parsed_message_count,
+        )
 
     g_start, g_end = _select_range(index, g_start_req, g_end_req, order, max_span)
     resume_group = _resume_group(index, g_start)
@@ -378,6 +386,7 @@ def render_window(
         groups=groups,
         returned_count=len(groups),
         total_groups=total,
+        parsed_message_count=index.parsed_message_count,
         degraded=degraded,
         degraded_reason="max_span_exceeded" if degraded else None,
     )

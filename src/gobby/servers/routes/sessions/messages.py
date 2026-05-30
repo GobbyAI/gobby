@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Any
 from fastapi import APIRouter, HTTPException, Query
 
 from gobby.sessions.transcript_archive import get_archive_dir, restore_transcript
+from gobby.sessions.transcript_io import TranscriptTooLargeError
+from gobby.sessions.transcript_limits import RENDERED_LIMIT_MAX
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -34,57 +36,60 @@ def register_message_routes(
         session_id: str,
         limit: int = 100,
         offset: int = 0,
-        role: str | None = None,
-        format: str = Query("rendered", pattern="^(rendered|legacy)$"),
+        order: str = Query("head", pattern="^(head|tail)$"),
     ) -> dict[str, Any]:
         """
-        Get messages for a session.
+        Get rendered (grouped) messages for a session as a bounded window.
 
         Args:
             session_id: Session ID
-            limit: Max messages to return (default 100)
-            offset: Pagination offset
-            role: Filter by role (user, assistant, tool)
-            format: Response format - 'rendered' (default) or 'legacy' (flat rows)
+            limit: Max groups to return (clamped to the rendered cap, never rejected)
+            offset: Pagination offset (advance by the response's ``returned_count``)
+            order: 'head' (oldest-first, default) or 'tail' (newest-first paging)
 
         Returns:
-            List of messages and total count key
+            Messages plus pagination metadata. ``total_count`` is the parsed
+            message count (display only); ``rendered_count`` is the group total
+            to page on; ``returned_count`` is this page's size.
         """
         start_time = time.perf_counter()
 
+        if server.transcript_reader is None:
+            raise HTTPException(status_code=503, detail="Transcript reader not available")
+
         try:
-            if format == "legacy":
-                if server.transcript_reader is None:
-                    raise HTTPException(status_code=503, detail="Transcript reader not available")
-
-                messages = await server.transcript_reader.get_messages(
-                    session_id=session_id, limit=limit, offset=offset, role=role
-                )
-                count = await server.transcript_reader.count_messages(session_id)
-            else:
-                if server.transcript_reader is None:
-                    raise HTTPException(status_code=503, detail="Transcript reader not available")
-
-                # Note: role filter not yet supported in rendered format (groups turns)
-                # If role filter is needed, legacy format must be used.
-                rendered = await server.transcript_reader.get_rendered_messages(
-                    session_id=session_id,
-                    limit=limit,
-                    offset=offset,
-                )
-                messages = [m.to_dict() for m in rendered]
-                count = await server.transcript_reader.count_messages(session_id)
-
+            # Clamp (never 422) so old clients sending limit=10000 are bounded.
+            clamped = min(max(int(limit), 1), RENDERED_LIMIT_MAX)
+            result = await server.transcript_reader.get_rendered_window(
+                session_id=session_id,
+                limit=clamped,
+                offset=offset,
+                order=order,
+            )
+            messages = [m.to_dict() for m in result.groups]
             response_time_ms = (time.perf_counter() - start_time) * 1000
-
             return {
                 "status": "success",
                 "messages": messages,
-                "total_count": count,
+                "total_count": result.parsed_message_count,
+                "rendered_count": result.total_groups,
+                "returned_count": result.returned_count,
+                "degraded": result.degraded,
+                "degraded_reason": result.degraded_reason,
+                "order": order,
                 "response_time_ms": response_time_ms,
-                "format": format,
+                "format": "rendered",
             }
 
+        except TranscriptTooLargeError as e:
+            size_mb = e.size_bytes // (1024 * 1024)
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"Transcript too large to render ({size_mb} MB); "
+                    "download via /transcript instead."
+                ),
+            ) from e
         except HTTPException:
             raise
         except Exception as e:
@@ -156,11 +161,12 @@ def register_message_routes(
 
     @router.get("/{session_id}/transcript")
     async def get_transcript(session_id: str) -> Any:
-        """Download raw transcript content from filesystem."""
+        """Download raw transcript content, streaming to bound daemon RAM."""
         try:
             import gzip
+            from collections.abc import Iterator
 
-            from fastapi.responses import Response
+            from fastapi.responses import FileResponse, StreamingResponse
 
             session_manager = get_session_manager()
             session: Session | None = session_manager.get(session_id)
@@ -169,29 +175,33 @@ def register_message_routes(
 
             transcript_path = session.transcript_path
             external_id = session.external_id
+            disposition = {"Content-Disposition": f'attachment; filename="{session_id}.jsonl"'}
 
-            # Try original JSONL path first
+            # Live JSONL: stream the file off disk (no full read into RAM).
             if transcript_path and os.path.isfile(transcript_path):
-                with open(transcript_path, "rb") as f:
-                    raw = f.read()
-                return Response(
-                    content=raw,
+                return FileResponse(
+                    path=transcript_path,
                     media_type="application/x-ndjson",
-                    headers={"Content-Disposition": f'attachment; filename="{session_id}.jsonl"'},
+                    headers=disposition,
                 )
 
-            # Fall back to gzip archive
+            # Archive: stream decompressed chunks instead of materializing it all.
             if external_id:
                 archive_path = get_archive_dir() / f"{external_id}.jsonl.gz"
                 if archive_path.is_file():
-                    with gzip.open(archive_path, "rb") as f:
-                        raw = f.read()
-                    return Response(
-                        content=raw,
+
+                    def _stream_archive(path: str) -> Iterator[bytes]:
+                        with gzip.open(path, "rb") as f:
+                            while True:
+                                chunk = f.read(65536)
+                                if not chunk:
+                                    break
+                                yield chunk
+
+                    return StreamingResponse(
+                        _stream_archive(str(archive_path)),
                         media_type="application/x-ndjson",
-                        headers={
-                            "Content-Disposition": f'attachment; filename="{session_id}.jsonl"'
-                        },
+                        headers=disposition,
                     )
 
             raise HTTPException(status_code=404, detail="No transcript found")

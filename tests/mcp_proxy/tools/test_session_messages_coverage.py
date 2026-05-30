@@ -18,10 +18,31 @@ import pytest
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.sessions import create_session_messages_registry
+from gobby.sessions.transcript_window import WindowResult
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.summary_actions import format_turns_for_llm as _format_turns_for_llm
 
 pytestmark = pytest.mark.unit
+
+
+def _window(groups: list[Any], *, parsed_message_count: int | None = None) -> WindowResult:
+    """Build a head-order WindowResult for the windowed get_session_messages path."""
+    return WindowResult(
+        groups=list(groups),
+        returned_count=len(groups),
+        total_groups=len(groups),
+        parsed_message_count=len(groups) if parsed_message_count is None else parsed_message_count,
+    )
+
+
+def _agen(pages: list[list[Any]]) -> Any:
+    """Return a fresh async generator yielding the given rendered-window pages."""
+
+    async def gen() -> Any:
+        for page in pages:
+            yield page
+
+    return gen()
 
 # ============================================================================
 # Custom Registry Class for Testing
@@ -303,8 +324,9 @@ class TestGetSessionMessages:
         mock_msg2 = MagicMock()
         mock_msg2.to_dict.return_value = {"id": 2, "content": "Hi", "role": "assistant"}
         transcript_reader = AsyncMock()
-        transcript_reader.get_rendered_messages.return_value = [mock_msg1, mock_msg2]
-        transcript_reader.count_messages.return_value = 2
+        transcript_reader.get_rendered_window.return_value = _window(
+            [mock_msg1, mock_msg2], parsed_message_count=2
+        )
 
         registry = create_test_registry(transcript_reader=transcript_reader)
         get_messages = registry.get_tool("get_session_messages")
@@ -323,8 +345,7 @@ class TestGetSessionMessages:
         mock_msg = MagicMock()
         mock_msg.to_dict.return_value = {"id": 1, "content": long_content, "role": "user"}
         transcript_reader = AsyncMock()
-        transcript_reader.get_rendered_messages.return_value = [mock_msg]
-        transcript_reader.count_messages.return_value = 1
+        transcript_reader.get_rendered_window.return_value = _window([mock_msg], parsed_message_count=1)
 
         registry = create_test_registry(transcript_reader=transcript_reader)
         get_messages = registry.get_tool("get_session_messages")
@@ -344,8 +365,7 @@ class TestGetSessionMessages:
         mock_msg = MagicMock()
         mock_msg.to_dict.return_value = {"id": 1, "content": long_content, "role": "user"}
         transcript_reader = AsyncMock()
-        transcript_reader.get_rendered_messages.return_value = [mock_msg]
-        transcript_reader.count_messages.return_value = 1
+        transcript_reader.get_rendered_window.return_value = _window([mock_msg], parsed_message_count=1)
 
         registry = create_test_registry(transcript_reader=transcript_reader)
         get_messages = registry.get_tool("get_session_messages")
@@ -368,8 +388,7 @@ class TestGetSessionMessages:
             "tool_calls": [{"name": "Edit", "input": long_input}],
         }
         transcript_reader = AsyncMock()
-        transcript_reader.get_rendered_messages.return_value = [mock_msg]
-        transcript_reader.count_messages.return_value = 1
+        transcript_reader.get_rendered_window.return_value = _window([mock_msg], parsed_message_count=1)
 
         registry = create_test_registry(transcript_reader=transcript_reader)
         get_messages = registry.get_tool("get_session_messages")
@@ -391,8 +410,7 @@ class TestGetSessionMessages:
             "tool_result": {"content": long_result},
         }
         transcript_reader = AsyncMock()
-        transcript_reader.get_rendered_messages.return_value = [mock_msg]
-        transcript_reader.count_messages.return_value = 1
+        transcript_reader.get_rendered_window.return_value = _window([mock_msg], parsed_message_count=1)
 
         registry = create_test_registry(transcript_reader=transcript_reader)
         get_messages = registry.get_tool("get_session_messages")
@@ -406,8 +424,7 @@ class TestGetSessionMessages:
     async def test_get_messages_with_pagination(self) -> None:
         """Test message retrieval with pagination."""
         transcript_reader = AsyncMock()
-        transcript_reader.get_rendered_messages.return_value = []
-        transcript_reader.count_messages.return_value = 100
+        transcript_reader.get_rendered_window.return_value = _window([], parsed_message_count=100)
 
         registry = create_test_registry(transcript_reader=transcript_reader)
         get_messages = registry.get_tool("get_session_messages")
@@ -421,7 +438,7 @@ class TestGetSessionMessages:
     async def test_get_messages_error(self) -> None:
         """Test error handling in get_session_messages."""
         transcript_reader = AsyncMock()
-        transcript_reader.get_rendered_messages.side_effect = Exception("Database error")
+        transcript_reader.get_rendered_window.side_effect = Exception("Database error")
 
         registry = create_test_registry(transcript_reader=transcript_reader)
         get_messages = registry.get_tool("get_session_messages")
@@ -447,7 +464,9 @@ class TestSearchSessionMessages:
         }
         transcript_reader = AsyncMock()
         transcript_reader.count_messages.return_value = 1
-        transcript_reader.get_rendered_messages.return_value = [mock_msg]
+        transcript_reader.iter_rendered_windows = MagicMock(
+            side_effect=lambda sid, *, order="head": _agen([[mock_msg]])
+        )
 
         registry = create_test_registry(transcript_reader=transcript_reader)
         search = registry.get_tool("search_session_messages")
@@ -460,11 +479,7 @@ class TestSearchSessionMessages:
         assert result["results"][0]["session_id"] == "sess-123"
         assert "needle" in result["results"][0]["snippet"]
         transcript_reader.count_messages.assert_not_called()
-        transcript_reader.get_rendered_messages.assert_awaited_once_with(
-            session_id="sess-123",
-            limit=None,
-            offset=0,
-        )
+        transcript_reader.iter_rendered_windows.assert_called_once_with("sess-123", order="head")
 
     @pytest.mark.asyncio
     async def test_search_session_messages_no_match(self) -> None:
@@ -478,7 +493,9 @@ class TestSearchSessionMessages:
         }
         transcript_reader = AsyncMock()
         transcript_reader.count_messages.return_value = 1
-        transcript_reader.get_rendered_messages.return_value = [mock_msg]
+        transcript_reader.iter_rendered_windows = MagicMock(
+            side_effect=lambda sid, *, order="head": _agen([[mock_msg]])
+        )
 
         registry = create_test_registry(transcript_reader=transcript_reader)
         search = registry.get_tool("search_session_messages")
@@ -503,7 +520,9 @@ class TestSearchSessionMessages:
         }
         transcript_reader = AsyncMock()
         transcript_reader.count_messages.return_value = 1
-        transcript_reader.get_rendered_messages.return_value = [mock_msg]
+        transcript_reader.iter_rendered_windows = MagicMock(
+            side_effect=lambda sid, *, order="head": _agen([[mock_msg]])
+        )
 
         registry = create_test_registry(transcript_reader=transcript_reader)
         search = registry.get_tool("search_session_messages")
@@ -538,7 +557,7 @@ class TestSearchSessionMessages:
         result = await search(query="match", session_id="sess-123", limit=0)
 
         assert result == {"success": False, "error": "limit must be positive"}
-        transcript_reader.get_rendered_messages.assert_not_awaited()
+        transcript_reader.iter_rendered_windows.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_search_session_messages_scans_filtered_sessions(self) -> None:
@@ -564,9 +583,12 @@ class TestSearchSessionMessages:
             "role": "assistant",
             "content_blocks": [],
         }
+        pages = {"sess-1": [[first_msg]], "sess-2": [[second_msg]]}
         transcript_reader = AsyncMock()
         transcript_reader.count_messages.return_value = 1
-        transcript_reader.get_rendered_messages.side_effect = [[first_msg], [second_msg]]
+        transcript_reader.iter_rendered_windows = MagicMock(
+            side_effect=lambda sid, *, order="head": _agen(pages[sid])
+        )
 
         registry = create_test_registry(
             session_manager=session_manager,
@@ -580,9 +602,9 @@ class TestSearchSessionMessages:
         assert result["searched_sessions"] == 2
         assert result["results"][0]["session_id"] == "sess-2"
         transcript_reader.count_messages.assert_not_called()
-        assert transcript_reader.get_rendered_messages.await_args_list == [
-            call(session_id="sess-1", limit=None, offset=0),
-            call(session_id="sess-2", limit=None, offset=0),
+        assert transcript_reader.iter_rendered_windows.call_args_list == [
+            call("sess-1", order="head"),
+            call("sess-2", order="head"),
         ]
         session_manager.list.assert_called_once_with(
             project_id="proj-1",
@@ -1235,8 +1257,9 @@ class TestEdgeCases:
         mock_msg2 = MagicMock()
         mock_msg2.to_dict.return_value = {"id": 2, "content": None, "role": "assistant"}
         transcript_reader = AsyncMock()
-        transcript_reader.get_rendered_messages.return_value = [mock_msg1, mock_msg2]
-        transcript_reader.count_messages.return_value = 2
+        transcript_reader.get_rendered_window.return_value = _window(
+            [mock_msg1, mock_msg2], parsed_message_count=2
+        )
 
         registry = create_test_registry(transcript_reader=transcript_reader)
         get_messages = registry.get_tool("get_session_messages")
@@ -1256,8 +1279,7 @@ class TestEdgeCases:
             "role": "assistant",
         }
         transcript_reader = AsyncMock()
-        transcript_reader.get_rendered_messages.return_value = [mock_msg]
-        transcript_reader.count_messages.return_value = 1
+        transcript_reader.get_rendered_window.return_value = _window([mock_msg], parsed_message_count=1)
 
         registry = create_test_registry(transcript_reader=transcript_reader)
         get_messages = registry.get_tool("get_session_messages")

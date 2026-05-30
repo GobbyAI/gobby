@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from gobby.sessions.transcript_limits import RENDERED_LIMIT_MAX
+
 if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
     from gobby.sessions.transcript_reader import TranscriptReader
@@ -62,15 +64,17 @@ def register_message_tools(
         try:
             resolved_id = _resolve_session_id(session_id)
 
-            # Use TranscriptReader (JSONL + gzip fallback)
+            # Use TranscriptReader (windowed; JSONL + gzip fallback)
             if transcript_reader:
-                rendered_messages = await transcript_reader.get_rendered_messages(
+                clamped = min(max(int(limit), 1), RENDERED_LIMIT_MAX)
+                result = await transcript_reader.get_rendered_window(
                     session_id=resolved_id,
-                    limit=limit,
+                    limit=clamped,
                     offset=offset,
+                    order="head",
                 )
-                messages = [m.to_dict() for m in rendered_messages]
-                session_total = await transcript_reader.count_messages(resolved_id)
+                messages = [m.to_dict() for m in result.groups]
+                session_total = result.parsed_message_count
             else:
                 return {
                     "success": False,
@@ -132,21 +136,34 @@ def register_message_tools(
             return {"success": False, "error": "limit must be positive"}
         result_limit = limit
 
+        async def _scan_session(sid: str, collected: list[dict[str, Any]]) -> None:
+            """Scan one session's rendered windows in chronological order.
+
+            Pages via ``iter_rendered_windows`` (``head`` order preserves search
+            ordering) and stops as soon as ``result_limit`` hits are collected, so
+            a full render is never held in memory.
+            """
+            async for window in transcript_reader.iter_rendered_windows(sid, order="head"):
+                remaining = result_limit - len(collected)
+                if remaining <= 0:
+                    return
+                collected.extend(
+                    search_rendered_messages(
+                        session_id=sid,
+                        messages=window,
+                        query=query,
+                        limit=remaining,
+                        full_content=full_content,
+                    )
+                )
+                if len(collected) >= result_limit:
+                    return
+
         try:
             if session_id:
                 resolved_id = _resolve_session_id(session_id)
-                rendered_messages = await transcript_reader.get_rendered_messages(
-                    session_id=resolved_id,
-                    limit=None,
-                    offset=0,
-                )
-                session_results = search_rendered_messages(
-                    session_id=resolved_id,
-                    messages=rendered_messages,
-                    query=query,
-                    limit=result_limit,
-                    full_content=full_content,
-                )
+                session_results: list[dict[str, Any]] = []
+                await _scan_session(resolved_id, session_results)
                 return _search_response(query, session_results, 1, result_limit, full_content)
 
             if session_manager is None:
@@ -168,21 +185,7 @@ def register_message_tools(
                 if len(results) >= result_limit:
                     break
                 searched_sessions += 1
-                current_limit = result_limit - len(results)
-                rendered_messages = await transcript_reader.get_rendered_messages(
-                    session_id=session.id,
-                    limit=None,
-                    offset=0,
-                )
-                results.extend(
-                    search_rendered_messages(
-                        session_id=session.id,
-                        messages=rendered_messages,
-                        query=query,
-                        limit=current_limit,
-                        full_content=full_content,
-                    )
-                )
+                await _scan_session(session.id, results)
 
             return _search_response(query, results, searched_sessions, result_limit, full_content)
         except Exception as e:

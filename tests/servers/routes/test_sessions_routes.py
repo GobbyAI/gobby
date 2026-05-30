@@ -22,6 +22,7 @@ from gobby.servers.routes.sessions import (
     _get_session_stats,
     create_sessions_router,
 )
+from gobby.sessions.transcript_window import WindowResult
 from tests._timing import wait_for_condition
 
 pytestmark = pytest.mark.unit
@@ -926,13 +927,17 @@ class TestGetMessages:
     """Test GET /sessions/{session_id}/messages endpoint."""
 
     def test_get_messages_success(self, client, mock_server) -> None:
-        """Returns rendered messages and total count."""
+        """Returns rendered groups, the parsed total_count, and rendered_count."""
         msg1 = MagicMock()
         msg1.to_dict.return_value = {"role": "user", "content": "Hello"}
         msg2 = MagicMock()
         msg2.to_dict.return_value = {"role": "assistant", "content": "Hi there"}
-        mock_server.transcript_reader.get_rendered_messages.return_value = [msg1, msg2]
-        mock_server.transcript_reader.count_messages.return_value = 2
+        mock_server.transcript_reader.get_rendered_window.return_value = WindowResult(
+            groups=[msg1, msg2],
+            returned_count=2,
+            total_groups=2,
+            parsed_message_count=5,
+        )
 
         response = client.get("/api/sessions/sess-abc123/messages")
 
@@ -940,23 +945,27 @@ class TestGetMessages:
         data = response.json()
         assert data["status"] == "success"
         assert len(data["messages"]) == 2
-        assert data["total_count"] == 2
+        # total_count is parsed messages; rendered_count is the group pagination total.
+        assert data["total_count"] == 5
+        assert data["rendered_count"] == 2
+        assert data["returned_count"] == 2
         assert "response_time_ms" in data
         assert data["format"] == "rendered"
 
-    def test_get_messages_legacy_with_params(self, client, mock_server) -> None:
-        """Passes limit, offset, role parameters in legacy format."""
-        mock_server.transcript_reader.get_messages.return_value = []
-        mock_server.transcript_reader.count_messages.return_value = 0
+    def test_get_messages_window_with_params(self, client, mock_server) -> None:
+        """Passes limit, offset, order through to the windowed reader."""
+        mock_server.transcript_reader.get_rendered_window.return_value = WindowResult(
+            groups=[], returned_count=0, total_groups=0, parsed_message_count=0
+        )
 
         response = client.get(
             "/api/sessions/sess-abc123/messages",
-            params={"limit": 50, "offset": 10, "role": "user", "format": "legacy"},
+            params={"limit": 50, "offset": 10, "order": "tail"},
         )
 
         assert response.status_code == 200
-        mock_server.transcript_reader.get_messages.assert_called_once_with(
-            session_id="sess-abc123", limit=50, offset=10, role="user"
+        mock_server.transcript_reader.get_rendered_window.assert_called_once_with(
+            session_id="sess-abc123", limit=50, offset=10, order="tail"
         )
 
     def test_get_messages_no_transcript_reader(self, client, mock_server) -> None:

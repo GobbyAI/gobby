@@ -109,8 +109,17 @@ async def test_session_message_truncation():
             return dict(self._data)
 
     class FakeTranscriptReader:
-        async def get_rendered_messages(self, *args, **kwargs):
-            return [FakeRenderedMessage({"role": "user", "content": "A" * 1000, "tool_calls": []})]
+        async def get_rendered_window(self, *args, **kwargs):
+            from gobby.sessions.transcript_window import WindowResult
+
+            return WindowResult(
+                groups=[
+                    FakeRenderedMessage({"role": "user", "content": "A" * 1000, "tool_calls": []})
+                ],
+                returned_count=1,
+                total_groups=1,
+                parsed_message_count=1,
+            )
 
         async def count_messages(self, *args, **kwargs):
             return 1

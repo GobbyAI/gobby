@@ -10,6 +10,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.sessions.transcript_index import clear_index_cache
+from gobby.sessions.transcript_io import TranscriptTooLargeError
 from gobby.sessions.transcript_paths import _find_transcript_on_disk, _is_recent_file
 from gobby.sessions.transcript_reader import TranscriptReader, _filter_messages, clear_archive_cache
 from gobby.sessions.transcript_renderer import RenderedMessage
@@ -43,10 +45,12 @@ pytestmark = pytest.mark.unit
 
 @pytest.fixture(autouse=True)
 def _clear_cache():
-    """Clear LRU cache before each test."""
+    """Clear LRU caches before/after each test."""
     clear_archive_cache()
+    clear_index_cache()
     yield
     clear_archive_cache()
+    clear_index_cache()
 
 
 def _make_msg_dict(index: int, role: str = "assistant", content: str = "hi") -> dict:
@@ -332,12 +336,9 @@ class TestTranscriptReaderGzipFallback:
         session_manager.get.return_value = session
 
         reader = TranscriptReader(session_manager, archive_dir=str(archive_dir))
-        with patch.object(
-            reader,
-            "_read_from_file",
-            new=AsyncMock(side_effect=AssertionError("live file should not be read")),
-        ):
-            result = await reader.get_messages("sess-1", limit=50)
+        # transcript_path points at a missing file, so the live read is skipped
+        # (path resolves to None) and the archive is read instead.
+        result = await reader.get_messages("sess-1", limit=50)
 
         assert len(result) == 1
         assert result[0]["content"] == "archive"
@@ -945,3 +946,103 @@ class TestTranscriptReaderGeminiJSON:
         assert len(result) == 2
         assert result[0]["role"] == "user"
         assert result[1]["role"] == "assistant"
+
+
+def _jsonl_reader_with_user_msgs(tmp_path: Path, count: int) -> TranscriptReader:
+    """A reader over a live JSONL transcript of ``count`` distinct user groups."""
+    transcript_path = tmp_path / "transcript.jsonl"
+    _write_jsonl_file(
+        transcript_path,
+        [{"type": "user", "message": {"role": "user", "content": f"msg {i}"}} for i in range(count)],
+    )
+    session = MagicMock()
+    session.external_id = "no-archive"
+    session.source = "claude"
+    session.transcript_path = str(transcript_path)
+    session_manager = MagicMock()
+    session_manager.get.return_value = session
+    return TranscriptReader(session_manager)
+
+
+class TestTranscriptReaderWindowed:
+    """Windowed rendered reads: tail/head ordering, paging, and native guard."""
+
+    @pytest.mark.asyncio
+    async def test_window_tail_returns_newest_slice(self, tmp_path: Path) -> None:
+        reader = _jsonl_reader_with_user_msgs(tmp_path, 5)
+
+        result = await reader.get_rendered_window("sess-1", limit=2, offset=0, order="tail")
+
+        # Oldest-first within the page, newest slice of the transcript.
+        assert result.returned_count == 2
+        assert result.total_groups == 5
+        assert result.parsed_message_count == 5
+        assert "msg 3" in result.groups[0].content
+        assert "msg 4" in result.groups[1].content
+
+    @pytest.mark.asyncio
+    async def test_window_tail_offset_pages_older(self, tmp_path: Path) -> None:
+        reader = _jsonl_reader_with_user_msgs(tmp_path, 5)
+
+        page0 = await reader.get_rendered_window("sess-1", limit=2, offset=0, order="tail")
+        page1 = await reader.get_rendered_window(
+            "sess-1", limit=2, offset=page0.returned_count, order="tail"
+        )
+
+        assert [g.content for g in page1.groups] == ["msg 1", "msg 2"]
+
+    @pytest.mark.asyncio
+    async def test_window_head_matches_chronological(self, tmp_path: Path) -> None:
+        reader = _jsonl_reader_with_user_msgs(tmp_path, 4)
+
+        result = await reader.get_rendered_window("sess-1", limit=3, offset=1, order="head")
+
+        assert [g.content for g in result.groups] == ["msg 1", "msg 2", "msg 3"]
+
+    @pytest.mark.asyncio
+    async def test_iter_rendered_windows_tiles_full_render(self, tmp_path: Path) -> None:
+        reader = _jsonl_reader_with_user_msgs(tmp_path, 5)
+
+        pages = [page async for page in reader.iter_rendered_windows("sess-1", page=2)]
+
+        flat = [g.content for page in pages for g in page]
+        assert flat == [f"msg {i}" for i in range(5)]
+        # Tiling composes without gaps/overlaps across page boundaries.
+        assert sum(len(p) for p in pages) == 5
+
+    @pytest.mark.asyncio
+    async def test_get_rendered_messages_clamps_unbounded_limit(self, tmp_path: Path) -> None:
+        reader = _jsonl_reader_with_user_msgs(tmp_path, 3)
+
+        # limit=None must not reintroduce a full unbounded render; it is clamped.
+        result = await reader.get_rendered_messages("sess-1", limit=None, offset=0)
+
+        assert [g.content for g in result] == ["msg 0", "msg 1", "msg 2"]
+
+    @pytest.mark.asyncio
+    async def test_native_json_size_guard_raises(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        json_path = tmp_path / "session-big.json"
+        json_path.write_text(
+            json.dumps(
+                {
+                    "sessionId": "big-uuid",
+                    "messages": [
+                        {"type": "user", "content": "hi", "timestamp": "2025-03-23T10:00:00Z"},
+                    ],
+                }
+            )
+        )
+        session = MagicMock()
+        session.source = "gemini"
+        session.transcript_path = str(json_path)
+        session.external_id = None
+        session_manager = MagicMock()
+        session_manager.get.return_value = session
+
+        monkeypatch.setattr("gobby.sessions.transcript_reader.NATIVE_JSON_MAX_BYTES", 1)
+        reader = TranscriptReader(session_manager)
+
+        with pytest.raises(TranscriptTooLargeError):
+            await reader.get_rendered_window("sess-1", limit=50, offset=0, order="tail")

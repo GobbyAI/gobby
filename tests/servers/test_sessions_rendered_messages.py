@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
+from gobby.sessions.transcript_window import WindowResult
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
@@ -60,8 +61,14 @@ class TestGetMessagesRendered:
         mock_rendered.to_dict.return_value = {"content_blocks": [{"type": "text", "text": "hello"}]}
 
         mock_reader = AsyncMock()
-        mock_reader.get_rendered_messages = AsyncMock(return_value=[mock_rendered])
-        mock_reader.count_messages = AsyncMock(return_value=1)
+        mock_reader.get_rendered_window = AsyncMock(
+            return_value=WindowResult(
+                groups=[mock_rendered],
+                returned_count=1,
+                total_groups=1,
+                parsed_message_count=3,
+            )
+        )
 
         server = create_http_server(
             port=60887,
@@ -77,30 +84,45 @@ class TestGetMessagesRendered:
         data = response.json()
         assert data["status"] == "success"
         assert data["format"] == "rendered"
+        assert data["order"] == "head"
         assert len(data["messages"]) == 1
         assert "content_blocks" in data["messages"][0]
-        assert data["total_count"] == 1
+        # total_count is the parsed-message count; rendered_count paginates groups.
+        assert data["total_count"] == 3
+        assert data["rendered_count"] == 1
+        assert data["returned_count"] == 1
+        assert data["degraded"] is False
 
-        mock_reader.get_rendered_messages.assert_called_once_with(
-            session_id=session.id, limit=100, offset=0
+        mock_reader.get_rendered_window.assert_called_once_with(
+            session_id=session.id, limit=100, offset=0, order="head"
         )
 
-    def test_get_messages_legacy_format(
+    def test_get_messages_tail_order(
         self,
         session_storage: SessionManager,
         test_project: dict[str, Any],
     ) -> None:
-        """Test that format=legacy uses transcript_reader."""
+        """order=tail is forwarded to the windowed reader."""
         session = session_storage.register(
-            external_id="legacy-test",
+            external_id="tail-test",
             machine_id="machine",
             source="claude",
             project_id=test_project["id"],
         )
 
+        mock_rendered = MagicMock()
+        mock_rendered.to_dict.return_value = {"content_blocks": []}
         mock_reader = AsyncMock()
-        mock_reader.get_messages = AsyncMock(return_value=[{"role": "user", "content": "hi"}])
-        mock_reader.count_messages = AsyncMock(return_value=1)
+        mock_reader.get_rendered_window = AsyncMock(
+            return_value=WindowResult(
+                groups=[mock_rendered],
+                returned_count=1,
+                total_groups=10,
+                parsed_message_count=20,
+                degraded=True,
+                degraded_reason="max_span_exceeded",
+            )
+        )
 
         server = create_http_server(
             port=60887,
@@ -110,18 +132,18 @@ class TestGetMessagesRendered:
         )
 
         test_client = TestClient(server.app)
-        response = test_client.get(f"/api/sessions/{session.id}/messages?format=legacy")
+        response = test_client.get(
+            f"/api/sessions/{session.id}/messages?limit=50&offset=0&order=tail"
+        )
 
         assert response.status_code == 200
         data = response.json()
-        assert data["status"] == "success"
-        assert data["format"] == "legacy"
-        assert len(data["messages"]) == 1
-        assert data["messages"][0]["content"] == "hi"
-        assert data["total_count"] == 1
-
-        mock_reader.get_messages.assert_called_once_with(
-            session_id=session.id, limit=100, offset=0, role=None
+        assert data["order"] == "tail"
+        assert data["rendered_count"] == 10
+        assert data["degraded"] is True
+        assert data["degraded_reason"] == "max_span_exceeded"
+        mock_reader.get_rendered_window.assert_called_once_with(
+            session_id=session.id, limit=50, offset=0, order="tail"
         )
 
     def test_get_messages_rendered_unavailable(

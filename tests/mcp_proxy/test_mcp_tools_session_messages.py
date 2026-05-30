@@ -8,6 +8,7 @@ from gobby.mcp_proxy.tools.sessions import create_session_messages_registry
 from gobby.mcp_proxy.tools.sessions._verification import register_verification_tools
 from gobby.sessions.transcript_reader import TranscriptReader
 from gobby.sessions.transcript_renderer import ContentBlock, RenderedMessage
+from gobby.sessions.transcript_window import WindowResult
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.workflows.state_manager import SessionVariableManager
@@ -27,9 +28,19 @@ def mock_session_manager():
 @pytest.fixture
 def mock_transcript_reader():
     reader = MagicMock(spec=TranscriptReader)
-    reader.get_rendered_messages = AsyncMock()
+    reader.get_rendered_window = AsyncMock()
     reader.count_messages = AsyncMock()
     return reader
+
+
+def _window(groups, *, parsed_message_count=None):
+    """Build a WindowResult for a head-order page of rendered groups."""
+    return WindowResult(
+        groups=list(groups),
+        returned_count=len(groups),
+        total_groups=len(groups),
+        parsed_message_count=len(groups) if parsed_message_count is None else parsed_message_count,
+    )
 
 
 @pytest.fixture
@@ -164,17 +175,17 @@ async def test_get_session_messages_renderer_path(mock_transcript_reader, render
         timestamp=datetime(2025, 1, 1, tzinfo=UTC),
         content_blocks=[ContentBlock(type="text", content="Hello world")],
     )
-    mock_transcript_reader.get_rendered_messages.return_value = [rendered]
-    mock_transcript_reader.count_messages.return_value = 1
+    mock_transcript_reader.get_rendered_window.return_value = _window(
+        [rendered], parsed_message_count=1
+    )
 
     result = await renderer_registry.call(
         "get_session_messages", {"session_id": "sess-123", "limit": 10, "offset": 0}
     )
 
-    mock_transcript_reader.get_rendered_messages.assert_called_with(
-        session_id="sess-123", limit=10, offset=0
+    mock_transcript_reader.get_rendered_window.assert_called_with(
+        session_id="sess-123", limit=10, offset=0, order="head"
     )
-    mock_transcript_reader.count_messages.assert_called_with("sess-123")
     assert result["success"] is True
     assert result["total_count"] == 1
     assert len(result["messages"]) == 1
@@ -197,8 +208,9 @@ async def test_get_session_messages_renderer_truncates_content_blocks(
         timestamp=datetime(2025, 1, 1, tzinfo=UTC),
         content_blocks=[ContentBlock(type="text", content=long_text)],
     )
-    mock_transcript_reader.get_rendered_messages.return_value = [rendered]
-    mock_transcript_reader.count_messages.return_value = 1
+    mock_transcript_reader.get_rendered_window.return_value = _window(
+        [rendered], parsed_message_count=1
+    )
 
     result = await renderer_registry.call(
         "get_session_messages",
@@ -229,8 +241,9 @@ async def test_get_session_messages_renderer_full_content(
         timestamp=datetime(2025, 1, 1, tzinfo=UTC),
         content_blocks=[ContentBlock(type="text", content=long_text)],
     )
-    mock_transcript_reader.get_rendered_messages.return_value = [rendered]
-    mock_transcript_reader.count_messages.return_value = 1
+    mock_transcript_reader.get_rendered_window.return_value = _window(
+        [rendered], parsed_message_count=1
+    )
 
     result = await renderer_registry.call(
         "get_session_messages",

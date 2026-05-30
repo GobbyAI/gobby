@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from gobby.app_context import ServiceContainer
 from gobby.servers.http import HTTPServer
+from gobby.sessions.transcript_window import WindowResult
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
@@ -356,7 +357,7 @@ class TestGetMessagesEdgeCases:
         session_storage: SessionManager,
         test_project: dict[str, Any],
     ) -> None:
-        """Test get_messages with all optional parameters."""
+        """Test get_messages forwards limit/offset/order to the windowed reader."""
         # Create a session
         session = session_storage.register(
             external_id="messages-test",
@@ -367,8 +368,11 @@ class TestGetMessagesEdgeCases:
 
         # Add a mock transcript_reader
         mock_reader = AsyncMock()
-        mock_reader.get_messages = AsyncMock(return_value=[])
-        mock_reader.count_messages = AsyncMock(return_value=0)
+        mock_reader.get_rendered_window = AsyncMock(
+            return_value=WindowResult(
+                groups=[], returned_count=0, total_groups=0, parsed_message_count=0
+            )
+        )
 
         server = create_http_server(
             port=60887,
@@ -380,7 +384,7 @@ class TestGetMessagesEdgeCases:
         test_client = TestClient(server.app)
 
         response = test_client.get(
-            f"/api/sessions/{session.id}/messages?limit=50&offset=10&role=user&format=legacy"
+            f"/api/sessions/{session.id}/messages?limit=50&offset=10&order=tail"
         )
 
         assert response.status_code == 200
@@ -391,26 +395,29 @@ class TestGetMessagesEdgeCases:
         assert "response_time_ms" in data
 
         # Verify the parameters were passed correctly
-        mock_reader.get_messages.assert_called_once_with(
-            session_id=session.id, limit=50, offset=10, role="user"
+        mock_reader.get_rendered_window.assert_called_once_with(
+            session_id=session.id, limit=50, offset=10, order="tail"
         )
 
-    def test_get_messages_internal_error(
+    def test_get_messages_clamps_oversized_limit(
         self,
         session_storage: SessionManager,
         test_project: dict[str, Any],
     ) -> None:
-        """Test that internal errors during get_messages return 500."""
+        """An oversized limit is clamped (never 422) to the rendered cap."""
         session = session_storage.register(
-            external_id="messages-error-test",
+            external_id="messages-clamp",
             machine_id="machine",
             source="claude",
             project_id=test_project["id"],
         )
 
-        # Add a failing transcript_reader
         mock_reader = AsyncMock()
-        mock_reader.get_messages = AsyncMock(side_effect=RuntimeError("Database error"))
+        mock_reader.get_rendered_window = AsyncMock(
+            return_value=WindowResult(
+                groups=[], returned_count=0, total_groups=0, parsed_message_count=0
+            )
+        )
 
         server = create_http_server(
             port=60887,
@@ -420,7 +427,39 @@ class TestGetMessagesEdgeCases:
         )
 
         test_client = TestClient(server.app)
-        response = test_client.get(f"/api/sessions/{session.id}/messages?format=legacy")
+        response = test_client.get(f"/api/sessions/{session.id}/messages?limit=10000")
+
+        assert response.status_code == 200
+        mock_reader.get_rendered_window.assert_called_once_with(
+            session_id=session.id, limit=200, offset=0, order="head"
+        )
+
+    def test_get_messages_internal_error(
+        self,
+        session_storage: SessionManager,
+        test_project: dict[str, Any],
+    ) -> None:
+        """Test that internal errors during a window render return 500."""
+        session = session_storage.register(
+            external_id="messages-error-test",
+            machine_id="machine",
+            source="claude",
+            project_id=test_project["id"],
+        )
+
+        # Add a failing transcript_reader
+        mock_reader = AsyncMock()
+        mock_reader.get_rendered_window = AsyncMock(side_effect=RuntimeError("Database error"))
+
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+            transcript_reader=mock_reader,
+        )
+
+        test_client = TestClient(server.app)
+        response = test_client.get(f"/api/sessions/{session.id}/messages")
 
         assert response.status_code == 500
 
