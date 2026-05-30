@@ -99,7 +99,7 @@ pub fn index_vault(
             IndexEvent::Skipped { path, .. } => {
                 store.record_ingestion(WikiIngestion {
                     path,
-                    event: WikiIngestionEvent::Unchanged,
+                    event: WikiIngestionEvent::Skipped,
                     content_hash: None,
                 })?;
             }

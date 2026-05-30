@@ -27,6 +27,11 @@ pub enum WikiError {
         path: Option<PathBuf>,
         source: String,
     },
+    Yaml {
+        action: &'static str,
+        path: Option<PathBuf>,
+        source: String,
+    },
     Registry {
         detail: String,
     },
@@ -48,6 +53,7 @@ impl WikiError {
             Self::Config { .. } => "config_error",
             Self::Io { .. } => "io_error",
             Self::Json { .. } => "json_error",
+            Self::Yaml { .. } => "yaml_error",
             Self::Registry { .. } => "registry_error",
             Self::Daemon { .. } => "daemon_error",
             Self::InvalidInput { .. } => "invalid_input",
@@ -70,6 +76,11 @@ impl fmt::Display for WikiError {
                 source,
             }
             | Self::Json {
+                action,
+                path,
+                source,
+            }
+            | Self::Yaml {
                 action,
                 path,
                 source,

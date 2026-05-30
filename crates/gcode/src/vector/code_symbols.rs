@@ -5,7 +5,7 @@ mod repository;
 mod search;
 mod types;
 
-pub use embedding::{embed_query, embed_text, vector_text_for_symbol};
+pub use embedding::{embed_query, embed_text, embedding_client, vector_text_for_symbol};
 pub use lifecycle::{CodeSymbolVectorLifecycle, lifecycle_status, resolve_lifecycle_qdrant_config};
 pub use qdrant::{
     VECTOR_DISTANCE_COSINE, collection_name, delete_code_symbol_collections_with_prefix,

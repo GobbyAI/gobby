@@ -308,7 +308,7 @@ fn write_accepted_note(
         indexable: true,
         source: note.source.as_deref(),
     })
-    .map_err(|error| WikiError::Json {
+    .map_err(|error| WikiError::Yaml {
         action: "serialize accepted research note frontmatter",
         path: Some(path.clone()),
         source: error.to_string(),
@@ -342,35 +342,12 @@ fn append_raw_index(vault_root: &Path, title: &str, note_path: &Path) -> Result<
         source: error.to_string(),
     })?;
     let index_path = raw_dir.join("INDEX.md");
-    match OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&index_path)
-    {
-        Ok(mut index) => {
-            index
-                .write_all(b"# Raw sources\n\n")
-                .map_err(|error| WikiError::Io {
-                    action: "initialize raw index",
-                    path: Some(index_path.clone()),
-                    source: error.to_string(),
-                })?;
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-        Err(error) => {
-            return Err(WikiError::Io {
-                action: "initialize raw index",
-                path: Some(index_path.clone()),
-                source: error.to_string(),
-            });
-        }
-    }
-
     let relative = note_path
         .strip_prefix(vault_root)
         .unwrap_or(note_path)
         .to_string_lossy();
     let mut index = OpenOptions::new()
+        .create(true)
         .append(true)
         .open(&index_path)
         .map_err(|error| WikiError::Io {
@@ -378,6 +355,23 @@ fn append_raw_index(vault_root: &Path, title: &str, note_path: &Path) -> Result<
             path: Some(index_path.clone()),
             source: error.to_string(),
         })?;
+    let is_empty = index
+        .metadata()
+        .map(|metadata| metadata.len() == 0)
+        .map_err(|error| WikiError::Io {
+            action: "read raw index metadata",
+            path: Some(index_path.clone()),
+            source: error.to_string(),
+        })?;
+    if is_empty {
+        index
+            .write_all(b"# Raw sources\n\n")
+            .map_err(|error| WikiError::Io {
+                action: "initialize raw index",
+                path: Some(index_path.clone()),
+                source: error.to_string(),
+            })?;
+    }
     writeln!(index, "- [{title}]({relative})").map_err(|error| WikiError::Io {
         action: "append raw index",
         path: Some(index_path),

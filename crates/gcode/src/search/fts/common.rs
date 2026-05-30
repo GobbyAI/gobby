@@ -40,12 +40,14 @@ pub(super) fn param_refs(params: &[PgParam]) -> Vec<&(dyn ToSql + Sync)> {
         .collect()
 }
 
-pub(super) fn query_count(conn: &mut Client, sql: &str, params: &[PgParam]) -> usize {
+pub(super) fn query_count(
+    conn: &mut Client,
+    sql: &str,
+    params: &[PgParam],
+) -> Result<usize, postgres::Error> {
     let refs = param_refs(params);
-    conn.query_one(sql, &refs)
-        .ok()
-        .and_then(|row| row.try_get::<_, i64>("count").ok())
-        .unwrap_or(0) as usize
+    let row = conn.query_one(sql, &refs)?;
+    Ok(row.try_get::<_, i64>("count").unwrap_or(0) as usize)
 }
 
 pub(super) fn push_visible_project_file_filter(

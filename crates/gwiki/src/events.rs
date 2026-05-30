@@ -36,11 +36,12 @@ impl EventMonitor {
             })?;
         }
 
-        let line = serde_json::to_string(event).map_err(|error| WikiError::Json {
+        let mut line = serde_json::to_vec(event).map_err(|error| WikiError::Json {
             action: "serialize session event",
             path: Some(self.path.clone()),
             source: error.to_string(),
         })?;
+        line.push(b'\n');
         let mut file = OpenOptions::new()
             .create(true)
             .append(true)
@@ -50,7 +51,7 @@ impl EventMonitor {
                 path: Some(self.path.clone()),
                 source: error.to_string(),
             })?;
-        writeln!(file, "{line}").map_err(|error| WikiError::Io {
+        file.write_all(&line).map_err(|error| WikiError::Io {
             action: "append session event",
             path: Some(self.path.clone()),
             source: error.to_string(),

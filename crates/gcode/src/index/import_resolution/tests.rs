@@ -6,7 +6,7 @@ use tempfile::TempDir;
 use super::context::{
     load_elixir_dependency_names, load_rust_external_crates, load_rust_self_crate_name,
 };
-use super::helpers::go_default_package_alias;
+use super::helpers::{go_default_package_alias, split_top_level};
 use super::predicates::{csharp_declared_types, elixir_dependency_roots, ruby_require_root};
 use super::*;
 
@@ -349,6 +349,22 @@ fn go_default_package_alias_uses_last_segment_before_version_suffix() {
     assert_eq!(
         go_default_package_alias("github.com/acme/api-client/"),
         "api_client"
+    );
+}
+
+#[test]
+fn split_top_level_ignores_delimiters_inside_quotes_and_groups() {
+    assert_eq!(
+        split_top_level(r#"one, call("two, three"), map[a, b], {c, d}"#, ','),
+        vec!["one", r#"call("two, three")"#, "map[a, b]", "{c, d}"]
+    );
+}
+
+#[test]
+fn split_top_level_preserves_escaped_quotes_inside_strings() {
+    assert_eq!(
+        split_top_level(r#"first, "two, \"still string\"", third"#, ','),
+        vec!["first", r#""two, \"still string\"""#, "third"]
     );
 }
 

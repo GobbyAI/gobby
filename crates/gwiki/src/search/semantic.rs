@@ -411,6 +411,7 @@ mod tests {
             api_base: "http://embeddings.local/v1".to_string(),
             model: "embed-model".to_string(),
             api_key: None,
+            query_prefix: None,
         };
         let qdrant = QdrantConfig {
             url: Some("http://qdrant.local".to_string()),

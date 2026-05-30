@@ -1,4 +1,7 @@
 use std::path::Path;
+use std::sync::OnceLock;
+
+use regex::Regex;
 
 use crate::WikiError;
 use crate::ingest::{
@@ -94,43 +97,20 @@ fn html_to_text(bytes: &[u8]) -> String {
 }
 
 fn strip_script_style(html: &str) -> String {
-    let lower = html.to_ascii_lowercase();
-    let mut output = String::new();
-    let mut cursor = 0usize;
+    static SCRIPT_RE: OnceLock<Regex> = OnceLock::new();
+    static STYLE_RE: OnceLock<Regex> = OnceLock::new();
 
-    while cursor < html.len() {
-        let rest = &lower[cursor..];
-        let script = rest.find("<script").map(|offset| (offset, "script"));
-        let style = rest.find("<style").map(|offset| (offset, "style"));
-        let Some((offset, tag)) = [script, style]
-            .into_iter()
-            .flatten()
-            .min_by_key(|(offset, _)| *offset)
-        else {
-            output.push_str(&html[cursor..]);
-            break;
-        };
+    let script_re = SCRIPT_RE.get_or_init(|| {
+        Regex::new(r"(?is)<script\b[^>]*>.*?</script\s*>")
+            .expect("script-stripping regex should compile")
+    });
+    let style_re = STYLE_RE.get_or_init(|| {
+        Regex::new(r"(?is)<style\b[^>]*>.*?</style\s*>")
+            .expect("style-stripping regex should compile")
+    });
 
-        let start = cursor + offset;
-        output.push_str(&html[cursor..start]);
-        let open_end = lower[start..]
-            .find('>')
-            .map(|offset| start + offset + 1)
-            .unwrap_or(html.len());
-        let close = format!("</{tag}");
-        let Some(close_start) = lower[open_end..]
-            .find(&close)
-            .map(|offset| open_end + offset)
-        else {
-            break;
-        };
-        cursor = lower[close_start..]
-            .find('>')
-            .map(|offset| close_start + offset + 1)
-            .unwrap_or(html.len());
-    }
-
-    output
+    let without_scripts = script_re.replace_all(html, " ");
+    style_re.replace_all(&without_scripts, " ").into_owned()
 }
 
 #[cfg(test)]

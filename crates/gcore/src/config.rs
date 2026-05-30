@@ -29,6 +29,7 @@ pub struct EmbeddingConfig {
     pub api_base: String,
     pub model: String,
     pub api_key: Option<String>,
+    pub query_prefix: Option<String>,
 }
 
 const FALKORDB_DEFAULT_PORT: u16 = 16379;
@@ -166,11 +167,17 @@ pub fn resolve_embedding_config(source: &mut impl ConfigSource) -> Option<Embedd
     let model = resolve_setting(source, "GOBBY_EMBEDDING_MODEL", "embeddings.model")
         .unwrap_or_else(|| EMBEDDING_DEFAULT_MODEL.to_string());
     let api_key = resolve_setting(source, "GOBBY_EMBEDDING_API_KEY", "embeddings.api_key");
+    let query_prefix = resolve_setting(
+        source,
+        "GOBBY_EMBEDDING_QUERY_PREFIX",
+        "embeddings.query_prefix",
+    );
 
     Some(EmbeddingConfig {
         api_base,
         model,
         api_key,
+        query_prefix,
     })
 }
 
@@ -245,6 +252,7 @@ mod tests {
                 "GOBBY_EMBEDDING_URL",
                 "GOBBY_EMBEDDING_MODEL",
                 "GOBBY_EMBEDDING_API_KEY",
+                "GOBBY_EMBEDDING_QUERY_PREFIX",
                 "GOBBY_TEST_PRESENT",
                 "GOBBY_TEST_MISSING",
             ] {
@@ -504,6 +512,7 @@ mod tests {
             let env = EnvGuard::new();
             env.set("GOBBY_QDRANT_API_KEY", "env-qdrant-key");
             env.set("GOBBY_EMBEDDING_MODEL", "env-embedding-model");
+            env.set("GOBBY_EMBEDDING_QUERY_PREFIX", "env-query-prefix:");
 
             let mut source = TestSource::with_values([
                 ("databases.qdrant.url", "http://stored-qdrant:6333"),
@@ -511,6 +520,7 @@ mod tests {
                 ("embeddings.api_base", "http://stored-embedding:11434/v1"),
                 ("embeddings.model", "stored-embedding-model"),
                 ("embeddings.api_key", "$secret:EMBEDDING_KEY"),
+                ("embeddings.query_prefix", "stored-query-prefix:"),
             ]);
 
             let qdrant = resolve_qdrant_config(&mut source).expect("qdrant config");
@@ -521,6 +531,7 @@ mod tests {
             assert_eq!(embedding.api_base, "http://stored-embedding:11434/v1");
             assert_eq!(embedding.model, "env-embedding-model");
             assert_eq!(embedding.api_key.as_deref(), Some("resolved-EMBEDDING_KEY"));
+            assert_eq!(embedding.query_prefix.as_deref(), Some("env-query-prefix:"));
         }
 
         let _env = EnvGuard::new();
@@ -530,6 +541,7 @@ mod tests {
             resolve_embedding_config(&mut default_source).expect("embedding config");
 
         assert_eq!(default_embedding.model, EMBEDDING_DEFAULT_MODEL);
+        assert!(default_embedding.query_prefix.is_none());
         assert!(resolve_qdrant_config(&mut TestSource::default()).is_none());
     }
 

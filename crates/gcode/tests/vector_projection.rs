@@ -60,6 +60,7 @@ fn ensure_creates_missing_and_reuses_compatible() {
             api_base: format!("{embedding_url}/v1"),
             model: "embed-small".to_string(),
             api_key: None,
+            query_prefix: None,
         },
         CodeVectorSettings {
             vector_dim: Some(3),
@@ -134,6 +135,7 @@ fn clear_and_rebuild_delete_project_and_upsert_current_symbols() {
             api_base: format!("{embedding_url}/v1"),
             model: "embed-small".to_string(),
             api_key: None,
+            query_prefix: None,
         },
         CodeVectorSettings {
             vector_dim: Some(3),
@@ -188,6 +190,7 @@ fn incompatible_existing_collection_errors_without_migration() {
             api_base: "http://127.0.0.1:9/v1".to_string(),
             model: "unused".to_string(),
             api_key: None,
+            query_prefix: None,
         },
         CodeVectorSettings {
             vector_dim: Some(3),

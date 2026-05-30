@@ -784,6 +784,7 @@ version = "0.9.9"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
+ "chrono",
  "clap",
  "dirs",
  "fernet",
@@ -908,6 +909,7 @@ dependencies = [
  "gobby-core",
  "html-escape",
  "postgres",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",

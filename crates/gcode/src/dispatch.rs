@@ -339,7 +339,7 @@ fn run() -> anyhow::Result<()> {
             glob,
             max_count,
             line_number: _,
-            _unsupported_limit: _,
+            unsupported_limit: _,
             unsupported_files_with_matches: _,
             unsupported_files_without_match: _,
             unsupported_count: _,

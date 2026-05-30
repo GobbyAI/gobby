@@ -32,10 +32,6 @@ pub fn search_code_symbols(
 }
 
 pub fn semantic_search(ctx: &Context, query: &str, limit: usize) -> Vec<(String, f64)> {
-    if ctx.qdrant.is_none() {
-        return vec![];
-    }
-
     let request = CodeSymbolVectorSearchRequest {
         project_id: ctx.project_id.clone(),
         query: query.to_string(),

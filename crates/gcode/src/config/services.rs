@@ -4,8 +4,7 @@ use postgres::Client;
 
 use super::{
     CodeVectorConfigError, CodeVectorSettings, EMBEDDING_VECTOR_DIM_CONFIG_KEY,
-    FALKORDB_GRAPH_NAME, FALKORDB_HOST_CONFIG_KEY, FALKORDB_PASSWORD_CONFIG_KEY,
-    FALKORDB_PORT_CONFIG_KEY, FalkorConfig, GOBBY_EMBEDDING_VECTOR_DIM_ENV, QdrantConfig,
+    FALKORDB_GRAPH_NAME, FalkorConfig, GOBBY_EMBEDDING_VECTOR_DIM_ENV, QdrantConfig,
 };
 use crate::{db, secrets};
 
@@ -15,7 +14,6 @@ struct PostgresConfigSource<'a> {
 
 impl ConfigSource for PostgresConfigSource<'_> {
     fn config_value(&mut self, key: &str) -> Option<String> {
-        let key = canonical_config_key(key);
         gobby_core::postgres::read_config_value(self.conn, key)
             .ok()
             .flatten()
@@ -71,17 +69,6 @@ where
 
     fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
         (self.resolve_value)(value)
-    }
-}
-
-/// Keep FalkorDB lookups behind a single alias hook so legacy key names can be
-/// mapped here without changing every config source.
-fn canonical_config_key(key: &str) -> &str {
-    match key {
-        FALKORDB_HOST_CONFIG_KEY => FALKORDB_HOST_CONFIG_KEY,
-        FALKORDB_PORT_CONFIG_KEY => FALKORDB_PORT_CONFIG_KEY,
-        FALKORDB_PASSWORD_CONFIG_KEY => FALKORDB_PASSWORD_CONFIG_KEY,
-        _ => key,
     }
 }
 

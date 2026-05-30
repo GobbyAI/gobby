@@ -165,7 +165,7 @@ pub fn callers(
         }),
         Format::Text => {
             if results.is_empty() && offset == 0 {
-                println!("No callers found for '{}'", symbol.display_name);
+                output::print_text(&format!("No callers found for '{}'", symbol.display_name))?;
                 print_graph_hint_text(ctx);
             } else if results.is_empty() {
                 eprintln!("No callers at offset {offset} (total {total})");
@@ -230,7 +230,7 @@ pub fn usages(
         }),
         Format::Text => {
             if results.is_empty() && offset == 0 {
-                println!("No usages found for '{}'", symbol.display_name);
+                output::print_text(&format!("No usages found for '{}'", symbol.display_name))?;
                 print_graph_hint_text(ctx);
             } else if results.is_empty() {
                 eprintln!("No usages at offset {offset} (total {total})");
@@ -279,7 +279,7 @@ pub fn imports(ctx: &Context, file: &str, format: Format) -> anyhow::Result<()> 
         }),
         Format::Text => {
             if results.is_empty() {
-                println!("No imports found for '{file}'");
+                output::print_text(&format!("No imports found for '{file}'"))?;
                 print_graph_hint_text(ctx);
             } else {
                 for r in &results {
@@ -325,7 +325,10 @@ pub fn blast_radius(
         }),
         Format::Text => {
             if results.is_empty() {
-                println!("No blast radius found for '{}'", symbol.display_name);
+                output::print_text(&format!(
+                    "No blast radius found for '{}'",
+                    symbol.display_name
+                ))?;
                 print_graph_hint_text(ctx);
             } else {
                 output::print_text(&format_grouped_graph_results(&results, |r| {

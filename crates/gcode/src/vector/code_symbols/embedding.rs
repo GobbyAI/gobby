@@ -13,12 +13,18 @@ pub(super) fn dimension_probe_text() -> &'static str {
     DIMENSION_PROBE_TEXT
 }
 
-pub fn embed_text(config: &EmbeddingConfig, text: &str) -> Result<Vec<f32>, VectorLifecycleError> {
-    let client = reqwest::blocking::Client::builder()
+pub fn embedding_client() -> Result<reqwest::blocking::Client, VectorLifecycleError> {
+    reqwest::blocking::Client::builder()
         .timeout(HTTP_TIMEOUT)
         .build()
-        .map_err(|err| VectorLifecycleError::EmbeddingResponse(err.to_string()))?;
+        .map_err(|err| VectorLifecycleError::EmbeddingResponse(err.to_string()))
+}
 
+pub fn embed_text(
+    client: &reqwest::blocking::Client,
+    config: &EmbeddingConfig,
+    text: &str,
+) -> Result<Vec<f32>, VectorLifecycleError> {
     let body = json!({
         "model": config.model,
         "input": text,
@@ -72,7 +78,19 @@ pub fn embed_text(config: &EmbeddingConfig, text: &str) -> Result<Vec<f32>, Vect
 }
 
 pub fn embed_query(config: &EmbeddingConfig, text: &str) -> Option<Vec<f32>> {
-    match embed_text(config, &format!("search_query: {text}")) {
+    let input = match config.query_prefix.as_deref() {
+        Some(prefix) if prefix.trim().is_empty() => text.to_string(),
+        Some(prefix) => format!("{prefix} {text}"),
+        None => format!("search_query: {text}"),
+    };
+    let client = match embedding_client() {
+        Ok(client) => client,
+        Err(error) => {
+            eprintln!("gcode: query embedding failed: {error}");
+            return None;
+        }
+    };
+    match embed_text(&client, config, &input) {
         Ok(embedding) => Some(embedding),
         Err(error) => {
             eprintln!("gcode: query embedding failed: {error}");

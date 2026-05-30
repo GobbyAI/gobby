@@ -76,20 +76,38 @@ fn connect(database_url: &str) -> anyhow::Result<Client> {
         SslMode::Disable => config
             .connect(NoTls)
             .context("failed to connect to the Gobby PostgreSQL hub"),
-        SslMode::Prefer => match connect_with_tls(&config) {
+        SslMode::Prefer => match connect_with_tls_unverified(&config) {
             Ok(client) => Ok(client),
-            Err(error) if is_no_tls_server_error(&error) => config
-                .connect(NoTls)
-                .context("failed to connect to the Gobby PostgreSQL hub"),
+            Err(error) if is_no_tls_server_error(&error) || is_tls_verification_error(&error) => {
+                config
+                    .connect(NoTls)
+                    .context("failed to connect to the Gobby PostgreSQL hub")
+            }
             Err(error) => Err(error),
         },
-        SslMode::Require => connect_with_tls(&config),
-        _ => connect_with_tls(&config),
+        SslMode::Require => connect_with_tls_unverified(&config),
+        _ => connect_with_tls_verified(&config),
     }
 }
 
-fn connect_with_tls(config: &postgres::Config) -> anyhow::Result<Client> {
-    let connector = native_tls::TlsConnector::builder()
+fn connect_with_tls_unverified(config: &postgres::Config) -> anyhow::Result<Client> {
+    connect_with_tls_verification(config, false)
+}
+
+fn connect_with_tls_verified(config: &postgres::Config) -> anyhow::Result<Client> {
+    connect_with_tls_verification(config, true)
+}
+
+fn connect_with_tls_verification(
+    config: &postgres::Config,
+    verify: bool,
+) -> anyhow::Result<Client> {
+    let mut builder = native_tls::TlsConnector::builder();
+    if !verify {
+        builder.danger_accept_invalid_certs(true);
+        builder.danger_accept_invalid_hostnames(true);
+    }
+    let connector = builder
         .build()
         .context("failed to build PostgreSQL TLS connector")?;
     config
@@ -105,6 +123,17 @@ fn is_no_tls_server_error(error: &anyhow::Error) -> bool {
             || message.contains("the server does not support ssl")
             || message.contains("tls not supported")
             || message.contains("ssl is not enabled")
+    })
+}
+
+fn is_tls_verification_error(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        let message = cause.to_string().to_ascii_lowercase();
+        message.contains("certificate verify failed")
+            || message.contains("certificate verification failed")
+            || message.contains("self-signed certificate")
+            || message.contains("invalid certificate")
+            || message.contains("unknown issuer")
     })
 }
 

@@ -54,6 +54,7 @@ pub enum WikiIngestionEvent {
     Changed,
     Deleted,
     Unchanged,
+    Skipped,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -542,16 +543,14 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
     }
 
     fn record_ingestion(&mut self, ingestion: WikiIngestion) -> Result<(), StoreError> {
-        let content_hash = ingestion
-            .content_hash
-            .clone()
-            .unwrap_or_else(|| "none".to_string());
+        let content_hash = ingestion.content_hash.clone();
+        let content_hash_suffix = content_hash.as_deref().unwrap_or("null");
         let status = ingestion_status(ingestion.event);
         let id = scoped_text_id(
             "ingestion",
             &self.scope,
             &ingestion.path,
-            &[status, &content_hash],
+            &[status, content_hash_suffix],
         );
         let path = display_path(&ingestion.path);
         let source_kind = self
@@ -683,6 +682,7 @@ fn ingestion_status(event: WikiIngestionEvent) -> &'static str {
         WikiIngestionEvent::Changed => "changed",
         WikiIngestionEvent::Deleted => "deleted",
         WikiIngestionEvent::Unchanged => "unchanged",
+        WikiIngestionEvent::Skipped => "skipped",
     }
 }
 

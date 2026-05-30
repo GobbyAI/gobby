@@ -5,7 +5,7 @@ use postgres::Client;
 use regex::Regex;
 use serde::Serialize;
 
-use crate::config::Context;
+use crate::config::{Context, ProjectIndexScope};
 use crate::db;
 use crate::output::{self, Format};
 use crate::search::fts;
@@ -111,8 +111,8 @@ fn load_indexed_chunks(
     ctx: &Context,
 ) -> anyhow::Result<Vec<IndexedContentChunk>> {
     let mut chunks = Vec::new();
-    for project_id in visibility::visible_project_ids(ctx) {
-        let rows = conn.query(
+    let rows = match &ctx.index_scope {
+        ProjectIndexScope::Single => conn.query(
             "SELECT c.file_path,
                     c.line_start::BIGINT AS line_start,
                     c.content
@@ -122,20 +122,47 @@ fn load_indexed_chunks(
              WHERE c.project_id = $1
                AND cf.language != $2
              ORDER BY c.file_path ASC, c.line_start ASC, c.chunk_index ASC",
-            &[&project_id, &visibility::TOMBSTONE_LANGUAGE],
-        )?;
-        for row in rows {
-            let file_path: String = row.try_get("file_path")?;
-            if !visibility::project_path_is_visible(conn, ctx, &project_id, &file_path) {
-                continue;
-            }
-            let line_start = i64_to_usize(row.try_get("line_start")?, "line_start")?;
-            chunks.push(IndexedContentChunk {
-                file_path,
-                line_start,
-                content: row.try_get("content")?,
-            });
-        }
+            &[&ctx.project_id, &visibility::TOMBSTONE_LANGUAGE],
+        )?,
+        ProjectIndexScope::Overlay {
+            overlay_project_id,
+            parent_project_id,
+            ..
+        } => conn.query(
+            "SELECT c.file_path,
+                    c.line_start::BIGINT AS line_start,
+                    c.content
+             FROM code_content_chunks c
+             JOIN code_indexed_files cf
+               ON cf.project_id = c.project_id AND cf.file_path = c.file_path
+             WHERE cf.language != $3
+               AND (
+                    c.project_id = $1
+                    OR (
+                        c.project_id = $2
+                        AND NOT EXISTS (
+                            SELECT 1 FROM code_indexed_files shadow
+                            WHERE shadow.project_id = $1
+                              AND shadow.file_path = c.file_path
+                        )
+                    )
+               )
+             ORDER BY c.file_path ASC, c.line_start ASC, c.chunk_index ASC",
+            &[
+                overlay_project_id,
+                parent_project_id,
+                &visibility::TOMBSTONE_LANGUAGE,
+            ],
+        )?,
+    };
+    for row in rows {
+        let file_path: String = row.try_get("file_path")?;
+        let line_start = i64_to_usize(row.try_get("line_start")?, "line_start")?;
+        chunks.push(IndexedContentChunk {
+            file_path,
+            line_start,
+            content: row.try_get("content")?,
+        });
     }
     chunks.sort_by(|a, b| {
         a.file_path

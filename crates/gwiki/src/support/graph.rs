@@ -89,7 +89,7 @@ fn resolve_graph_target(
         }
     }
 
-    Some(graph::WikiGraphLinkTarget::Unresolved(trimmed.to_string()))
+    Some(graph::WikiGraphLinkTarget::Unresolved(normalized))
 }
 
 fn is_external_target(target: &str) -> bool {

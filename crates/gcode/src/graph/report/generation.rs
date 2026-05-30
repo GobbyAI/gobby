@@ -70,7 +70,7 @@ pub(super) fn generate_report_from_snapshot(
         project_id,
         generated_at,
         snapshot,
-        ProjectGraphReportOptions::default(),
+        ProjectGraphReportOptions::default().normalized(),
     )
 }
 
@@ -80,7 +80,6 @@ fn generate_report_from_snapshot_with_options(
     snapshot: ReportGraphSnapshot,
     options: ProjectGraphReportOptions,
 ) -> ProjectGraphReport {
-    let options = options.normalized();
     let project_id = project_id.into();
     let generated_at = generated_at.into();
     let node_by_id = snapshot

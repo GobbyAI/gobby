@@ -257,7 +257,7 @@ fn render_entry(entry: &SourceRecord, index: &mut String) -> Result<(), WikiErro
     index.push_str("- [");
     index.push_str(&escape_markdown_text(title));
     index.push_str("](");
-    index.push_str(&entry.location);
+    index.push_str(&escape_markdown_destination(&entry.location));
     index.push_str(")\n");
     index.push_str("  - id: `");
     index.push_str(&entry.id);
@@ -415,6 +415,10 @@ fn source_id(canonical_location: &str, content_hash: &str) -> String {
 
 fn escape_markdown_text(text: &str) -> String {
     text.replace('[', "\\[").replace(']', "\\]")
+}
+
+fn escape_markdown_destination(destination: &str) -> String {
+    destination.replace('(', "\\(").replace(')', "\\)")
 }
 
 fn inline_text(text: &str) -> String {

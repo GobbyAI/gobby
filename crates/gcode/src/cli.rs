@@ -190,6 +190,7 @@ pub(crate) enum Command {
     )]
     Grep {
         /// Pattern to search for (regex or fixed string)
+        #[arg(value_parser = non_empty_grep_pattern)]
         pattern: String,
         /// Optional file paths or globs to filter results
         #[arg(value_name = "PATH")]
@@ -219,8 +220,8 @@ pub(crate) enum Command {
         #[arg(short = 'n', long)]
         line_number: bool,
         /// Unsupported: use -m/--max-count for indexed grep caps
-        #[arg(long = "limit", hide = true, value_parser = reject_grep_limit)]
-        _unsupported_limit: Option<String>,
+        #[arg(long = "limit", hide = true, action = ArgAction::SetTrue)]
+        unsupported_limit: bool,
         /// Unsupported: use raw rg for filesystem grep
         #[arg(short = 'l', long = "files-with-matches", hide = true, action = ArgAction::SetTrue)]
         unsupported_files_with_matches: bool,
@@ -395,11 +396,12 @@ pub(crate) enum VectorCommand {
     Rebuild,
 }
 
-fn reject_grep_limit(_value: &str) -> Result<String, String> {
-    Err(
-        "gcode grep is indexed search; --limit is unsupported. Use -m/--max-count, or run raw `rg` for filesystem grep."
-            .to_string(),
-    )
+fn non_empty_grep_pattern(value: &str) -> Result<String, String> {
+    if value.is_empty() {
+        Err("gcode grep pattern cannot be empty".to_string())
+    } else {
+        Ok(value.to_string())
+    }
 }
 
 pub(crate) fn effective_format(
@@ -414,6 +416,7 @@ pub(crate) fn effective_format(
 
 pub(crate) fn reject_unsupported_grep_flags(command: &Command) -> anyhow::Result<()> {
     let Command::Grep {
+        unsupported_limit,
         unsupported_files_with_matches,
         unsupported_files_without_match,
         unsupported_count,
@@ -434,6 +437,7 @@ pub(crate) fn reject_unsupported_grep_flags(command: &Command) -> anyhow::Result
     };
 
     let flag = [
+        (*unsupported_limit).then_some("--limit"),
         (*unsupported_files_with_matches).then_some("--files-with-matches"),
         (*unsupported_files_without_match).then_some("--files-without-match"),
         (*unsupported_count).then_some("--count"),

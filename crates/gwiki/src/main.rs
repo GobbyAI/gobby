@@ -176,12 +176,8 @@ fn main() -> ExitCode {
     match gobby_wiki::run(command) {
         Ok(outcome) => {
             if !quiet {
-                let mut stderr = std::io::stderr().lock();
                 for message in &outcome.status_messages {
-                    if let Err(error) = output::print_status(&mut stderr, message) {
-                        eprintln!("gwiki: failed to write status: {error}");
-                        return ExitCode::from(1);
-                    }
+                    output::print_status(message);
                 }
             }
 
@@ -294,6 +290,7 @@ fn exit_code_for_error(error: &WikiError) -> ExitCode {
         WikiError::Config { .. }
         | WikiError::Io { .. }
         | WikiError::Json { .. }
+        | WikiError::Yaml { .. }
         | WikiError::Registry { .. }
         | WikiError::Daemon { .. } => ExitCode::from(1),
     }

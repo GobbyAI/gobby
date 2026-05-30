@@ -54,16 +54,10 @@ pub fn count_text(
          WHERE {}",
         conditions.join(" AND ")
     );
-    let count = conn
-        .query_one(&sql, &refs)
-        .ok()
-        .and_then(|row| row.try_get::<_, i64>("count").ok())
-        .unwrap_or(0);
-    if count > 0 {
-        return count as usize;
+    match conn.query_one(&sql, &refs) {
+        Ok(row) => row.try_get::<_, i64>("count").unwrap_or(0) as usize,
+        Err(_) => count_symbols_by_name_like(conn, query, project_id, language, paths),
     }
-
-    count_symbols_by_name_like(conn, query, project_id, language, paths)
 }
 
 fn count_symbols_by_name_like(
@@ -147,16 +141,10 @@ pub fn count_content(
          WHERE {}",
         conditions.join(" AND ")
     );
-    let count = conn
-        .query_one(&sql, &refs)
-        .ok()
-        .and_then(|row| row.try_get::<_, i64>("count").ok())
-        .unwrap_or(0);
-    if count > 0 {
-        return count as usize;
+    match conn.query_one(&sql, &refs) {
+        Ok(row) => row.try_get::<_, i64>("count").unwrap_or(0) as usize,
+        Err(_) => count_content_like(conn, query, project_id, language, paths),
     }
-
-    count_content_like(conn, query, project_id, language, paths)
 }
 
 fn count_content_like(
@@ -202,7 +190,7 @@ fn count_visible_symbols_by_conditions(
     mut params: Vec<PgParam>,
     language: Option<&str>,
     paths: &[String],
-) -> usize {
+) -> Result<usize, postgres::Error> {
     push_symbol_filters(
         &mut conditions,
         &mut params,
@@ -231,7 +219,7 @@ fn count_symbols_fts_visible(
     ctx: &Context,
     language: Option<&str>,
     paths: &[String],
-) -> usize {
+) -> Result<usize, postgres::Error> {
     let mut params = Vec::new();
     let query_placeholder = push_param(&mut params, bm25_query.to_string());
     let conditions = vec![format!(
@@ -256,7 +244,7 @@ fn count_symbols_by_name_like_visible(
     let conditions = vec![format!(
         "(cs.name LIKE {name_placeholder} ESCAPE '\\' OR cs.qualified_name LIKE {qualified_placeholder} ESCAPE '\\')"
     )];
-    count_visible_symbols_by_conditions(conn, ctx, conditions, params, language, paths)
+    count_visible_symbols_by_conditions(conn, ctx, conditions, params, language, paths).unwrap_or(0)
 }
 
 fn push_content_filters(
@@ -280,7 +268,7 @@ fn count_visible_content_by_conditions(
     mut params: Vec<PgParam>,
     language: Option<&str>,
     paths: &[String],
-) -> usize {
+) -> Result<usize, postgres::Error> {
     push_content_filters(&mut conditions, &mut params, "c", language, paths);
     push_visible_project_file_filter(&mut conditions, &mut params, "c", "cf", ctx);
     let sql = format!(
@@ -300,7 +288,7 @@ fn count_content_bm25_visible(
     ctx: &Context,
     language: Option<&str>,
     paths: &[String],
-) -> usize {
+) -> Result<usize, postgres::Error> {
     let mut params = Vec::new();
     let query_placeholder = push_param(&mut params, bm25_query.to_string());
     let conditions = vec![format!("c.content @@@ {query_placeholder}")];
@@ -319,7 +307,7 @@ fn count_content_like_visible(
     let mut params = Vec::new();
     let like_placeholder = push_param(&mut params, like_query);
     let conditions = vec![format!("c.content LIKE {like_placeholder} ESCAPE '\\'")];
-    count_visible_content_by_conditions(conn, ctx, conditions, params, language, paths)
+    count_visible_content_by_conditions(conn, ctx, conditions, params, language, paths).unwrap_or(0)
 }
 
 pub fn count_text_visible(
@@ -338,12 +326,10 @@ pub fn count_text_visible(
         return count_symbols_by_name_like_visible(conn, query, ctx, language, paths);
     }
 
-    let count = count_symbols_fts_visible(conn, &bm25_query, ctx, language, paths);
-    if count > 0 {
-        return count;
+    match count_symbols_fts_visible(conn, &bm25_query, ctx, language, paths) {
+        Ok(count) => count,
+        Err(_) => count_symbols_by_name_like_visible(conn, query, ctx, language, paths),
     }
-
-    count_symbols_by_name_like_visible(conn, query, ctx, language, paths)
 }
 
 pub fn count_content_visible(
@@ -362,10 +348,8 @@ pub fn count_content_visible(
         return count_content_like_visible(conn, query, ctx, language, paths);
     }
 
-    let count = count_content_bm25_visible(conn, &bm25_query, ctx, language, paths);
-    if count > 0 {
-        return count;
+    match count_content_bm25_visible(conn, &bm25_query, ctx, language, paths) {
+        Ok(count) => count,
+        Err(_) => count_content_like_visible(conn, query, ctx, language, paths),
     }
-
-    count_content_like_visible(conn, query, ctx, language, paths)
 }

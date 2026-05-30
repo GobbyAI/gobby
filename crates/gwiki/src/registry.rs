@@ -78,22 +78,31 @@ fn write_registry_atomically(path: &Path, contents: &[u8]) -> Result<(), WikiErr
         path: Some(temp_path.clone()),
         source: error.to_string(),
     })?;
-    file.write_all(contents).map_err(|error| WikiError::Io {
-        action: "write registry temp file",
-        path: Some(temp_path.clone()),
-        source: error.to_string(),
-    })?;
-    file.sync_all().map_err(|error| WikiError::Io {
-        action: "sync registry temp file",
-        path: Some(temp_path.clone()),
-        source: error.to_string(),
-    })?;
+    if let Err(error) = file.write_all(contents) {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(WikiError::Io {
+            action: "write registry temp file",
+            path: Some(temp_path),
+            source: error.to_string(),
+        });
+    }
+    if let Err(error) = file.sync_all() {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(WikiError::Io {
+            action: "sync registry temp file",
+            path: Some(temp_path),
+            source: error.to_string(),
+        });
+    }
     drop(file);
-    std::fs::rename(&temp_path, path).map_err(|error| WikiError::Io {
-        action: "replace registry",
-        path: Some(path.to_path_buf()),
-        source: error.to_string(),
-    })?;
+    if let Err(error) = std::fs::rename(&temp_path, path) {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(WikiError::Io {
+            action: "replace registry",
+            path: Some(path.to_path_buf()),
+            source: error.to_string(),
+        });
+    }
     if let Some(parent) = path.parent()
         && let Ok(directory) = std::fs::File::open(parent)
     {

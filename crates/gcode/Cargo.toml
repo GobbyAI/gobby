@@ -75,6 +75,7 @@ sha2 = "0.10"
 uuid = { version = "1", features = ["v5"] }
 ignore = "0.4"
 dirs = "6"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 anyhow = "1"
 log = "0.4"
 ureq = { version = "2", features = ["json"] }

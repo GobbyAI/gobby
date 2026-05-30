@@ -111,7 +111,7 @@ fn parse_markdown_link(
     }
 
     let destination_start = open_paren + 1;
-    let destination_end = markdown[destination_start..].find(')')? + destination_start;
+    let destination_end = markdown_destination_end(markdown, destination_start)?;
     let byte_end = destination_end + 1;
     let target = markdown_destination(&markdown[destination_start..destination_end])?;
     if target.is_empty() {
@@ -158,6 +158,25 @@ fn markdown_destination(value: &str) -> Option<String> {
         .split_whitespace()
         .next()
         .and_then(|target| non_empty(target.trim()))
+}
+
+fn markdown_destination_end(markdown: &str, start: usize) -> Option<usize> {
+    let mut escaped = false;
+    let mut depth = 0usize;
+    for (offset, ch) in markdown[start..].char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' => escaped = true,
+            '(' => depth += 1,
+            ')' if depth == 0 => return Some(start + offset),
+            ')' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    None
 }
 
 fn normalized_target_parts(target: &str) -> (String, Option<String>) {
@@ -263,5 +282,13 @@ mod tests {
             normalize_wiki_path(r"\\server\share\Page.md"),
             "//server/share/Page.md"
         );
+    }
+
+    #[test]
+    fn markdown_links_accept_balanced_parentheses_in_destinations() {
+        let links = extract_links("[Spec](docs/Parser_(v2).md)", ["docs/Parser_(v2).md"]);
+        assert_eq!(links[0].target, "docs/Parser_(v2).md");
+        assert_eq!(links[0].normalized_target, "docs/Parser_(v2)");
+        assert!(links[0].resolved);
     }
 }

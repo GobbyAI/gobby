@@ -16,6 +16,10 @@ pub fn collection_name(collection_prefix: &str, project_id: &str) -> String {
     gobby_core::qdrant::collection_name("gcode", CollectionScope::Custom(&collection))
 }
 
+pub(super) fn collection_path(collection: &str) -> String {
+    format!("/collections/{}", urlencoding::encode(collection))
+}
+
 pub fn delete_project_collection(
     qdrant: &QdrantConfig,
     project_id: &str,
@@ -149,7 +153,7 @@ fn delete_qdrant_collection(
         client,
         qdrant,
         reqwest::Method::DELETE,
-        &format!("/collections/{collection}"),
+        &collection_path(collection),
     )?
     .send()
     .map_err(|err| VectorLifecycleError::QdrantOperation(err.to_string()))?;
@@ -205,7 +209,7 @@ pub(super) fn delete_vectors_for_filter_excluding_ids(
         client,
         qdrant,
         reqwest::Method::POST,
-        &format!("/collections/{collection}/points/delete"),
+        &format!("{}/points/delete", collection_path(collection)),
     )?
     .json(&body)
     .send()

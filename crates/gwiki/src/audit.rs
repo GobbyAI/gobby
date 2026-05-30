@@ -91,8 +91,8 @@ fn source_context(vault_root: &Path) -> Result<Vec<AuditSourceContext>, WikiErro
         .entries
         .into_iter()
         .map(|entry| AuditSourceContext {
+            path: Some(PathBuf::from("raw").join(format!("{}.md", entry.id))),
             source_id: entry.id,
-            path: Some(PathBuf::from("raw/INDEX.md")),
             citation: entry.citation,
             location: Some(entry.location),
         })

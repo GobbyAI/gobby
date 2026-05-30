@@ -147,6 +147,7 @@ fn clear_project_vectors_does_not_touch_memory_vector_collections() {
             api_base: "http://127.0.0.1:9/v1".to_string(),
             model: "unused".to_string(),
             api_key: None,
+            query_prefix: None,
         },
         CodeVectorSettings {
             vector_dim: Some(3),
@@ -232,9 +233,11 @@ fn embedding_request_response() {
         api_base: format!("{base_url}/v1"),
         model: "embed-small".to_string(),
         api_key: Some("embedding-key".to_string()),
+        query_prefix: None,
     };
 
-    let embedding = embed_text(&config, "dimension_probe").expect("embedding response");
+    let client = embedding_client().expect("embedding client");
+    let embedding = embed_text(&client, &config, "dimension_probe").expect("embedding response");
     let requests = handle.join().expect("server thread");
 
     assert_eq!(embedding, vec![0.25, 0.5, 0.75]);
@@ -269,6 +272,7 @@ fn ensure_collection_resolves_vector_size_and_distance() {
             api_base: format!("{embedding_url}/v1"),
             model: "embed-small".to_string(),
             api_key: None,
+            query_prefix: None,
         },
         CodeVectorSettings { vector_dim: None },
     )
@@ -301,6 +305,7 @@ fn ensure_collection_resolves_vector_size_and_distance() {
             api_base: "http://127.0.0.1:9/v1".to_string(),
             model: "unused".to_string(),
             api_key: None,
+            query_prefix: None,
         },
         CodeVectorSettings {
             vector_dim: Some(1536),

@@ -9,6 +9,8 @@ use crate::provenance::ProvenanceGraph;
 use crate::sources::{CompileStatus, SourceManifest, SourceRecord};
 use crate::{ScopeIdentity, WikiError};
 
+const AVERAGE_GREGORIAN_YEAR_SECONDS: u64 = 31_556_952;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct HealthReport {
     pub command: &'static str,
@@ -200,7 +202,7 @@ fn fetched_year(value: &str) -> Option<u64> {
 fn approximate_current_year() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| 1970 + duration.as_secs() / 31_556_952)
+        .map(|duration| 1970 + duration.as_secs() / AVERAGE_GREGORIAN_YEAR_SECONDS)
         .unwrap_or(1970)
 }
 
@@ -241,7 +243,7 @@ fn source_is_cited(
 fn source_issue(source: &SourceRecord) -> HealthSourceIssue {
     HealthSourceIssue {
         source_id: source.id.clone(),
-        path: Some(PathBuf::from("raw/INDEX.md")),
+        path: Some(PathBuf::from("raw").join(format!("{}.md", source.id))),
         location: source.location.clone(),
     }
 }

@@ -648,16 +648,30 @@ fn parse_grep_max_count() {
 
 #[test]
 fn parse_grep_rejects_limit() {
-    let err = match Cli::try_parse_from(["gcode", "grep", "needle", "src", "--limit", "5"]) {
-        Ok(_) => panic!("--limit should be rejected"),
-        Err(err) => err,
+    let cli = match Cli::try_parse_from(["gcode", "grep", "needle", "src", "--limit", "5"]) {
+        Ok(cli) => cli,
+        Err(err) => panic!("--limit should parse for dispatch-time rejection: {err}"),
     };
+    let err = reject_unsupported_grep_flags(&cli.command).expect_err("--limit should be rejected");
     assert!(
         err.to_string().contains("gcode grep is indexed search"),
         "unexpected error: {err}"
     );
     assert!(
         err.to_string().contains("-m/--max-count"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn parse_grep_rejects_empty_pattern() {
+    let err = match Cli::try_parse_from(["gcode", "grep", ""]) {
+        Ok(_) => panic!("empty pattern should be rejected"),
+        Err(err) => err,
+    };
+    assert!(
+        err.to_string()
+            .contains("gcode grep pattern cannot be empty"),
         "unexpected error: {err}"
     );
 }

@@ -23,7 +23,7 @@ fn cargo_features_define_public_boundary() {
         "default = []",
         r#"postgres = ["dep:postgres", "dep:postgres-types", "dep:postgres-native-tls", "dep:native-tls"]"#,
         r#"falkor = ["dep:falkordb", "dep:urlencoding"]"#,
-        r#"qdrant = ["dep:reqwest"]"#,
+        r#"qdrant = ["dep:reqwest", "dep:urlencoding"]"#,
         r#"indexing = ["dep:ignore", "dep:sha2"]"#,
         "search = []",
         r#"full = ["postgres", "falkor", "qdrant", "indexing", "search"]"#,

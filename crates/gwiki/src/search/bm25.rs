@@ -40,10 +40,6 @@ pub fn search_bm25<B>(
 where
     B: Bm25SearchBackend,
 {
-    let Some(_) = build_bm25_sql(&request.query, &request.scope, request.limit) else {
-        return Ok(Vec::new());
-    };
-
     let mut results = backend.search_bm25(&request)?;
     results.retain(|result| {
         result.scope == request.scope

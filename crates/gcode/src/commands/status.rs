@@ -89,32 +89,39 @@ pub fn run(ctx: &Context, format: Format) -> anyhow::Result<()> {
                     .file_name()
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_else(|| s.id.clone());
-                println!("{} ({})", name, &s.id[..8]);
-                println!("  Root:     {}", s.root_path);
-                println!(
+                let mut text = String::new();
+                text.push_str(&format!("{} ({})\n", name, &s.id[..8]));
+                text.push_str(&format!("  Root:     {}\n", s.root_path));
+                text.push_str(&format!(
                     "  Files:    {}",
                     format_coverage(s.total_files, s.total_eligible_files)
-                );
-                println!("  Symbols:  {}", s.total_symbols);
-                println!("  Indexed:  {}", format_timestamp(&s.last_indexed_at));
-                println!("  Duration: {}ms", s.index_duration_ms);
+                ));
+                text.push('\n');
+                text.push_str(&format!("  Symbols:  {}\n", s.total_symbols));
+                text.push_str(&format!(
+                    "  Indexed:  {}\n",
+                    format_timestamp(&s.last_indexed_at)
+                ));
+                text.push_str(&format!("  Duration: {}ms", s.index_duration_ms));
                 if let crate::config::ProjectIndexScope::Overlay {
                     parent_project_id,
                     parent_root,
                     ..
                 } = &ctx.index_scope
                 {
-                    println!(
+                    text.push('\n');
+                    text.push_str(&format!(
                         "  Overlay:  parent {} ({})",
                         parent_root.display(),
                         short_id(parent_project_id)
-                    );
+                    ));
                     let tombstones = visibility::tombstone_count(&mut conn, ctx);
                     if tombstones > 0 {
-                        println!("  Deletes:  {tombstones}");
+                        text.push('\n');
+                        text.push_str(&format!("  Deletes:  {tombstones}"));
                     }
                 }
-                Ok(())
+                output::print_text(&text)
             }
         },
         None => {

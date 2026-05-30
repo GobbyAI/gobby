@@ -116,7 +116,10 @@ fn index_discovered_files(
     }
 
     for path in &content_only {
-        let rel = relative_path(path, root_path).unwrap_or_default();
+        let rel = match relative_path(path, root_path) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
         if let Some(ref stale_map) = stale
             && !stale_map.contains_key(&rel)
         {

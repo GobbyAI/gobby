@@ -1,6 +1,14 @@
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+const GWIKI_SCOPE_TABLES: &[&str] = &[
+    "gwiki_ingestions",
+    "gwiki_links",
+    "gwiki_chunks",
+    "gwiki_sources",
+    "gwiki_documents",
+];
+
 #[test]
 fn search_json_includes_scope() {
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -226,13 +234,7 @@ fn cleanup_gwiki_scope(database_url: &str, scope_kind: &str, scope_id: &str) {
     let Ok(mut client) = postgres::Client::connect(database_url, postgres::NoTls) else {
         return;
     };
-    for table in [
-        "gwiki_ingestions",
-        "gwiki_links",
-        "gwiki_chunks",
-        "gwiki_sources",
-        "gwiki_documents",
-    ] {
+    for table in GWIKI_SCOPE_TABLES {
         let sql = format!("DELETE FROM {table} WHERE scope_kind = $1 AND scope_id = $2");
         let _ = client.execute(&sql, &[&scope_kind, &scope_id]);
     }

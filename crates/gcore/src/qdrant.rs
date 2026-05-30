@@ -105,7 +105,10 @@ pub fn search(
         .timeout(QDRANT_TIMEOUT)
         .build()?;
 
-    let mut req = client.post(format!("{url}/collections/{collection}/points/search"));
+    let mut req = client.post(format!(
+        "{url}/collections/{}/points/search",
+        encoded_collection(collection)
+    ));
     if let Some(key) = &config.api_key {
         req = req.header("api-key", key);
     }
@@ -172,7 +175,10 @@ pub fn upsert(
         .collect();
     let body = serde_json::json!({ "points": points });
 
-    let mut req = client.put(format!("{url}/collections/{collection}/points"));
+    let mut req = client.put(format!(
+        "{url}/collections/{}/points",
+        encoded_collection(collection)
+    ));
     if let Some(key) = &config.api_key {
         req = req.header("api-key", key);
     }
@@ -216,7 +222,9 @@ fn parse_point_id(id: &Value) -> Option<String> {
 
 fn is_qdrant_unreachable(error: &anyhow::Error) -> bool {
     error.chain().any(|cause| {
-        cause.downcast_ref::<reqwest::Error>().is_some()
+        cause
+            .downcast_ref::<reqwest::Error>()
+            .is_some_and(|error| error.is_connect() || error.is_timeout())
             || matches!(
                 cause.downcast_ref::<QdrantError>(),
                 // Qdrant 4xx responses are caller/configuration errors; only 5xx
@@ -224,6 +232,10 @@ fn is_qdrant_unreachable(error: &anyhow::Error) -> bool {
                 Some(QdrantError::HttpStatus { status, .. }) if status.is_server_error()
             )
     })
+}
+
+fn encoded_collection(collection: &str) -> String {
+    urlencoding::encode(collection).into_owned()
 }
 
 #[cfg(test)]

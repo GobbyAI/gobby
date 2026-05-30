@@ -1,6 +1,5 @@
 use reqwest::StatusCode;
 use serde_json::{Map, Value, json};
-use std::time::Duration;
 
 use crate::config::{
     CODE_SYMBOL_COLLECTION_PREFIX, CodeVectorSettings, EmbeddingConfig, QdrantConfig,
@@ -9,9 +8,11 @@ use crate::models::Symbol;
 use gobby_core::degradation::ServiceState;
 use gobby_core::qdrant::UpsertRequest;
 
-use super::embedding::{dimension_probe_text, embed_text, vector_text_for_symbol};
+use super::embedding::{
+    dimension_probe_text, embed_text, embedding_client, vector_text_for_symbol,
+};
 use super::qdrant::{
-    VECTOR_DISTANCE_COSINE, collection_name, delete_vectors_for_filter,
+    VECTOR_DISTANCE_COSINE, collection_name, collection_path, delete_vectors_for_filter,
     delete_vectors_for_filter_excluding_ids, parse_collection_schema, qdrant_http_error,
     qdrant_request_for_config,
 };
@@ -20,8 +21,6 @@ use super::types::{
     CodeSymbolVectorLifecycleStatus, CodeSymbolVectorPayload, ExistingVectorCollectionSchema,
     VectorCollectionSchema, VectorLifecycleError,
 };
-
-const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug)]
 pub struct CodeSymbolVectorLifecycle {
@@ -73,10 +72,7 @@ impl CodeSymbolVectorLifecycle {
         }
 
         let collection = collection_name(CODE_SYMBOL_COLLECTION_PREFIX, &project_id);
-        let client = reqwest::blocking::Client::builder()
-            .timeout(HTTP_TIMEOUT)
-            .build()
-            .map_err(|err| VectorLifecycleError::QdrantOperation(err.to_string()))?;
+        let client = embedding_client()?;
         Ok(Self {
             project_id,
             collection,
@@ -195,7 +191,8 @@ impl CodeSymbolVectorLifecycle {
             None => match self.probed_vector_size {
                 Some(size) => size,
                 None => {
-                    let size = embed_text(&self.embedding, dimension_probe_text())?.len();
+                    let size =
+                        embed_text(&self.client, &self.embedding, dimension_probe_text())?.len();
                     self.probed_vector_size = Some(size);
                     size
                 }
@@ -247,10 +244,7 @@ impl CodeSymbolVectorLifecycle {
         &self,
     ) -> Result<Option<ExistingVectorCollectionSchema>, VectorLifecycleError> {
         let resp = self
-            .qdrant_request(
-                reqwest::Method::GET,
-                &format!("/collections/{}", self.collection),
-            )?
+            .qdrant_request(reqwest::Method::GET, &collection_path(&self.collection))?
             .send()
             .map_err(|err| VectorLifecycleError::QdrantOperation(err.to_string()))?;
         let status = resp.status();
@@ -278,10 +272,7 @@ impl CodeSymbolVectorLifecycle {
             },
         });
         let resp = self
-            .qdrant_request(
-                reqwest::Method::PUT,
-                &format!("/collections/{}", self.collection),
-            )?
+            .qdrant_request(reqwest::Method::PUT, &collection_path(&self.collection))?
             .json(&body)
             .send()
             .map_err(|err| VectorLifecycleError::QdrantOperation(err.to_string()))?;
@@ -342,7 +333,11 @@ impl CodeSymbolVectorLifecycle {
         symbols
             .iter()
             .map(|symbol| {
-                let vector = embed_text(&self.embedding, &vector_text_for_symbol(symbol))?;
+                let vector = embed_text(
+                    &self.client,
+                    &self.embedding,
+                    &vector_text_for_symbol(symbol),
+                )?;
                 let payload = payload_map(CodeSymbolVectorPayload::from_symbol(symbol))?;
                 Ok(UpsertRequest {
                     id: symbol.id.clone(),

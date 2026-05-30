@@ -223,7 +223,7 @@ where
 }
 
 fn usize_value(value: usize) -> TypedValue {
-    TypedValue::Integer(value.min(i64::MAX as usize) as i64)
+    TypedValue::Integer(i64::try_from(value).unwrap_or(i64::MAX))
 }
 
 fn optional_string_value(value: Option<&str>) -> TypedValue {

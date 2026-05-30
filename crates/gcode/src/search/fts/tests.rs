@@ -4,6 +4,15 @@ use postgres::NoTls;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+const OVERLAY_VISIBILITY_CHILD_TABLES: &[&str] = &[
+    "code_calls",
+    "code_imports",
+    "code_symbols",
+    "code_content_chunks",
+    "code_indexed_files",
+];
+const OVERLAY_VISIBILITY_PROJECT_TABLE: &str = "code_indexed_projects";
+
 #[test]
 fn sanitize_pg_search_query_matches_gobby_rules() {
     assert_eq!(
@@ -184,40 +193,46 @@ struct OverlayFixtureCleanup {
 
 impl Drop for OverlayFixtureCleanup {
     fn drop(&mut self) {
-        let Ok(mut conn) = Client::connect(&self.database_url, NoTls) else {
-            return;
+        let mut conn = match Client::connect(&self.database_url, NoTls) {
+            Ok(conn) => conn,
+            Err(err) => {
+                eprintln!(
+                    "failed to connect to cleanup overlay visibility fixture at {}: {err}",
+                    self.database_url
+                );
+                return;
+            }
         };
-        cleanup_overlay_visibility_projects(
+        if let Err(err) = cleanup_overlay_visibility_projects(
             &mut conn,
             &self.parent_project_id,
             &self.overlay_project_id,
-        );
+        ) {
+            eprintln!(
+                "failed to cleanup overlay visibility fixture at {}: {err}",
+                self.database_url
+            );
+        }
     }
 }
 
 fn cleanup_overlay_visibility_fixture(conn: &mut Client, ids: &OverlayFixtureIds) {
-    cleanup_overlay_visibility_projects(conn, &ids.parent_project_id, &ids.overlay_project_id);
+    let _ =
+        cleanup_overlay_visibility_projects(conn, &ids.parent_project_id, &ids.overlay_project_id);
 }
 
 fn cleanup_overlay_visibility_projects(
     conn: &mut Client,
     parent_project_id: &str,
     overlay_project_id: &str,
-) {
-    for table in [
-        "code_calls",
-        "code_imports",
-        "code_symbols",
-        "code_content_chunks",
-        "code_indexed_files",
-    ] {
+) -> Result<(), postgres::Error> {
+    for table in OVERLAY_VISIBILITY_CHILD_TABLES {
         let sql = format!("DELETE FROM {table} WHERE project_id = $1 OR project_id = $2");
-        let _ = conn.execute(&sql, &[&parent_project_id, &overlay_project_id]);
+        conn.execute(&sql, &[&parent_project_id, &overlay_project_id])?;
     }
-    let _ = conn.execute(
-        "DELETE FROM code_indexed_projects WHERE id = $1 OR id = $2",
-        &[&parent_project_id, &overlay_project_id],
-    );
+    let sql = format!("DELETE FROM {OVERLAY_VISIBILITY_PROJECT_TABLE} WHERE id = $1 OR id = $2");
+    conn.execute(&sql, &[&parent_project_id, &overlay_project_id])?;
+    Ok(())
 }
 
 fn seed_overlay_visibility_fixture(conn: &mut Client, ids: &OverlayFixtureIds) {

@@ -42,7 +42,7 @@ pub fn ingest_pages(
     };
     let record = SourceManifest::register(vault_root, draft)?;
     let asset_path = write_asset(vault_root, &record, &snapshot.file_name, &snapshot.bytes)?;
-    let markdown = render_pdf_markdown(&snapshot, &record.content_hash, &asset_path);
+    let markdown = render_pdf_markdown(&snapshot, &title, &record.content_hash, &asset_path);
     let raw_path = write_raw_markdown(vault_root, &record, &markdown)?;
     index_after_ingest(vault_root, store)?;
 
@@ -53,8 +53,12 @@ pub fn ingest_pages(
     })
 }
 
-fn render_pdf_markdown(snapshot: &PdfSnapshot, source_hash: &str, asset_path: &Path) -> String {
-    let title = markdown_title(&snapshot.file_name);
+fn render_pdf_markdown(
+    snapshot: &PdfSnapshot,
+    title: &str,
+    source_hash: &str,
+    asset_path: &Path,
+) -> String {
     let mut markdown = markdown_metadata(&[
         ("source_kind", "pdf".to_string()),
         ("source_location", snapshot.location.clone()),
@@ -63,7 +67,7 @@ fn render_pdf_markdown(snapshot: &PdfSnapshot, source_hash: &str, asset_path: &P
         ("source_asset", asset_path.display().to_string()),
     ]);
     markdown.push_str("# ");
-    markdown.push_str(&title);
+    markdown.push_str(title);
     markdown.push_str("\n\n");
 
     if snapshot.pages.is_empty() {

@@ -67,7 +67,7 @@ pub(super) fn render_markdown(input: RenderMarkdownInput<'_>) -> String {
 
     if let Some(summary) = input.bridge_summary {
         lines.push(String::new());
-        lines.push("RELATES_TO_CODE bridges".to_string());
+        lines.push("## RELATES_TO_CODE bridges".to_string());
         lines.push(format!(
             "- {} inferred read-only edge(s)",
             summary.edge_count
@@ -79,7 +79,7 @@ pub(super) fn render_markdown(input: RenderMarkdownInput<'_>) -> String {
 
     if !input.degradation_details.is_empty() {
         lines.push(String::new());
-        lines.push("Degradation".to_string());
+        lines.push("## Degradation".to_string());
         for detail in input.degradation_details {
             lines.push(format!("- {}: {}", detail.input, detail.detail));
         }
@@ -98,7 +98,7 @@ fn append_hotspot_section(
         return;
     }
     lines.push(String::new());
-    lines.push(title.to_string());
+    lines.push(format!("## {title}"));
     for hotspot in hotspots.iter().take(top_n) {
         lines.push(format!(
             "- {} ({}, degree {})",
@@ -117,7 +117,7 @@ fn append_target_section(
         return;
     }
     lines.push(String::new());
-    lines.push(title.to_string());
+    lines.push(format!("## {title}"));
     for target in targets.iter().take(top_n) {
         lines.push(format!("- {} ({})", target.name, target.count));
     }

@@ -194,7 +194,10 @@ pub(super) fn index_overlay_files(
                 cleanup_deleted_file_projections(ctx, &rel, &mut outcome);
                 api::delete_file_facts(conn, overlay_project_id, &rel)?;
             }
-            OverlayReconcileAction::Index | OverlayReconcileAction::Skip => {
+            OverlayReconcileAction::Index => {
+                unreachable!("overlay index action requires an AST or content-only candidate")
+            }
+            OverlayReconcileAction::Skip => {
                 outcome.skipped_files += 1;
             }
         }

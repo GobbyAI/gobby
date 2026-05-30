@@ -101,12 +101,13 @@ pub fn resolve_with_source(
         return resolve_topic(topic, source);
     }
 
+    let project_root = gobby_core::project::find_project_root(cwd);
     if selection.is_project() {
-        return resolve_project(cwd);
+        return resolve_project(cwd, project_root);
     }
 
-    if gobby_core::project::find_project_root(cwd).is_some() {
-        return resolve_project(cwd);
+    if project_root.is_some() {
+        return resolve_project(cwd, project_root);
     }
 
     Err(WikiError::InvalidScope {
@@ -122,11 +123,10 @@ fn resolve_topic(topic: &str, source: &mut impl ConfigSource) -> Result<Resolved
     Ok(ResolvedScope::topic(topic, root, hub.join("wikis.json")))
 }
 
-fn resolve_project(cwd: &Path) -> Result<ResolvedScope, WikiError> {
-    let project_root =
-        gobby_core::project::find_project_root(cwd).ok_or_else(|| WikiError::InvalidScope {
-            detail: format!("no Gobby project found from {}", cwd.display()),
-        })?;
+fn resolve_project(cwd: &Path, project_root: Option<PathBuf>) -> Result<ResolvedScope, WikiError> {
+    let project_root = project_root.ok_or_else(|| WikiError::InvalidScope {
+        detail: format!("no Gobby project found from {}", cwd.display()),
+    })?;
     let project_id = gobby_core::project::read_project_id(&project_root).map_err(|error| {
         WikiError::InvalidScope {
             detail: format!(
@@ -142,7 +142,13 @@ fn resolve_project(cwd: &Path) -> Result<ResolvedScope, WikiError> {
 
 fn resolve_hub_path(source: &mut impl ConfigSource) -> Result<PathBuf, WikiError> {
     if let Some(path) = std::env::var_os(HUB_ENV).filter(|value| !value.is_empty()) {
-        return Ok(PathBuf::from(path));
+        let path = PathBuf::from(path);
+        if let Some(value) = path.to_str()
+            && (value == "~" || value.starts_with("~/"))
+        {
+            return expand_home(value);
+        }
+        return Ok(path);
     }
 
     for key in HUB_CONFIG_KEYS {
@@ -155,7 +161,7 @@ fn resolve_hub_path(source: &mut impl ConfigSource) -> Result<PathBuf, WikiError
                 detail: format!("failed to resolve {key}: {error}"),
             })?;
         if !value.trim().is_empty() {
-            return Ok(expand_home(value.trim()));
+            return expand_home(value.trim());
         }
     }
 
@@ -186,18 +192,22 @@ fn default_hub_path() -> Result<PathBuf, WikiError> {
     Ok(home.join("wiki"))
 }
 
-fn expand_home(path: &str) -> PathBuf {
+fn expand_home(path: &str) -> Result<PathBuf, WikiError> {
     if path == "~" {
-        return dirs::home_dir().unwrap_or_else(|| PathBuf::from(path));
+        return dirs::home_dir().ok_or_else(|| WikiError::Config {
+            detail: "HOME is not set; cannot expand `~` in wiki hub path".to_string(),
+        });
     }
 
     if let Some(rest) = path.strip_prefix("~/") {
         return dirs::home_dir()
             .map(|home| home.join(rest))
-            .unwrap_or_else(|| PathBuf::from(path));
+            .ok_or_else(|| WikiError::Config {
+                detail: format!("HOME is not set; cannot expand `{path}` in wiki hub path"),
+            });
     }
 
-    PathBuf::from(path)
+    Ok(PathBuf::from(path))
 }
 
 #[cfg(test)]

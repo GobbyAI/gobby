@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
@@ -250,12 +251,6 @@ pub fn write_synthesized_page(
     page: &SynthesizedPage,
     policy: WritePolicy,
 ) -> Result<PageWriteOutcome, WikiError> {
-    ensure_page_write_allowed(page, policy)?;
-    let kind = if page.path.exists() {
-        PageWriteKind::Overwritten
-    } else {
-        PageWriteKind::Created
-    };
     if let Some(parent) = page.path.parent() {
         fs::create_dir_all(parent).map_err(|error| WikiError::Io {
             action: "create synthesized page directory",
@@ -263,11 +258,52 @@ pub fn write_synthesized_page(
             source: error.to_string(),
         })?;
     }
-    fs::write(&page.path, &page.markdown).map_err(|error| WikiError::Io {
-        action: "write synthesized wiki page",
-        path: Some(page.path.clone()),
-        source: error.to_string(),
-    })?;
+
+    let kind = match policy {
+        WritePolicy::RequireMergeIntent => {
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&page.path)
+                .map_err(|error| {
+                    if error.kind() == std::io::ErrorKind::AlreadyExists {
+                        WikiError::InvalidInput {
+                            field: "write_intent",
+                            message: format!(
+                                "existing page {} requires merge/diff handling before overwrite",
+                                page.path.display()
+                            ),
+                        }
+                    } else {
+                        WikiError::Io {
+                            action: "create synthesized wiki page",
+                            path: Some(page.path.clone()),
+                            source: error.to_string(),
+                        }
+                    }
+                })?;
+            file.write_all(page.markdown.as_bytes())
+                .map_err(|error| WikiError::Io {
+                    action: "write synthesized wiki page",
+                    path: Some(page.path.clone()),
+                    source: error.to_string(),
+                })?;
+            PageWriteKind::Created
+        }
+        WritePolicy::AllowOverwriteAfterMerge => {
+            let kind = if page.path.exists() {
+                PageWriteKind::Overwritten
+            } else {
+                PageWriteKind::Created
+            };
+            fs::write(&page.path, &page.markdown).map_err(|error| WikiError::Io {
+                action: "write synthesized wiki page",
+                path: Some(page.path.clone()),
+                source: error.to_string(),
+            })?;
+            kind
+        }
+    };
     Ok(PageWriteOutcome {
         path: page.path.clone(),
         kind,

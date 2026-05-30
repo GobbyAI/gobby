@@ -65,8 +65,8 @@ pub fn print_text(writer: &mut impl Write, text: &str) -> Result<(), OutputError
     Ok(())
 }
 
-pub fn print_status(mut writer: impl Write, message: &str) -> std::io::Result<()> {
-    writeln!(writer, "gwiki: {message}")
+pub fn print_status(message: &str) {
+    eprintln!("gwiki: {message}");
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]

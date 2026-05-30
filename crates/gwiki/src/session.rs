@@ -161,7 +161,12 @@ impl ResearchSession {
 }
 
 fn new_session_id() -> Result<String, WikiError> {
-    Ok(format!("research-{}", unix_timestamp_ms()?))
+    let suffix = uuid::Uuid::new_v4().simple().to_string();
+    Ok(format!(
+        "research-{}-{}",
+        unix_timestamp_ms()?,
+        &suffix[..8]
+    ))
 }
 
 fn unix_timestamp_ms() -> Result<u64, WikiError> {
