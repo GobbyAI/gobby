@@ -35,8 +35,16 @@ export interface TranscriptStatus {
 interface MessageLoadResult {
   mapped: SessionMessage[]
   totalCount: number
+  renderedTotal: number
+  returnedCount: number
+  degradedReason: string | null
   ok: boolean
 }
+
+// Tail-first paging: load the newest page, then prepend older pages on scroll-up.
+const PAGE = 50
+// Virtuoso prepend anchor — large so it can decrement as older pages load.
+const START_INDEX = 1_000_000
 
 function getBaseUrl(): string {
   return import.meta.env.VITE_API_BASE_URL || ''
@@ -109,22 +117,35 @@ function mapWebChatRecordToSessionMessage(message: Record<string, unknown>): Ses
   }
 }
 
-async function fetchRenderedSessionMessages(sessionId: string): Promise<MessageLoadResult> {
+async function fetchRenderedSessionMessages(
+  sessionId: string,
+  offset: number,
+  order: 'head' | 'tail',
+): Promise<MessageLoadResult> {
   const baseUrl = getBaseUrl()
   const messagesRes = await fetch(
-    `${baseUrl}/api/sessions/${sessionId}/messages?limit=10000&offset=0`,
+    `${baseUrl}/api/sessions/${sessionId}/messages?limit=${PAGE}&offset=${offset}&order=${order}`,
   )
   if (!messagesRes.ok) {
     console.warn(`Messages fetch returned ${messagesRes.status}`)
-    return { mapped: [], totalCount: 0, ok: false }
+    return { mapped: [], totalCount: 0, renderedTotal: 0, returnedCount: 0, degradedReason: null, ok: false }
   }
   const messageData = await messagesRes.json()
   const rawMessages = Array.isArray(messageData?.messages) ? messageData.messages : []
+  const mapped = rawMessages.map((m: Record<string, unknown>) =>
+    mapRenderedRecordToSessionMessage(m),
+  )
+  const returnedCount =
+    typeof messageData.returned_count === 'number' ? messageData.returned_count : mapped.length
   return {
-    mapped: rawMessages.map((m: Record<string, unknown>) =>
-      mapRenderedRecordToSessionMessage(m),
-    ),
-    totalCount: messageData.total_count || rawMessages.length,
+    mapped,
+    totalCount: typeof messageData.total_count === 'number' ? messageData.total_count : mapped.length,
+    renderedTotal:
+      typeof messageData.rendered_count === 'number' ? messageData.rendered_count : mapped.length,
+    returnedCount,
+    degradedReason: messageData.degraded
+      ? ((messageData.degraded_reason as string) ?? 'max_span_exceeded')
+      : null,
     ok: true,
   }
 }
@@ -134,15 +155,19 @@ async function fetchChatSessionMessages(sessionId: string): Promise<MessageLoadR
   const chatRes = await fetch(`${baseUrl}/api/chat/${sessionId}/messages`)
   if (!chatRes.ok) {
     console.warn(`Web chat messages fetch returned ${chatRes.status}`)
-    return { mapped: [], totalCount: 0, ok: false }
+    return { mapped: [], totalCount: 0, renderedTotal: 0, returnedCount: 0, degradedReason: null, ok: false }
   }
   const chatData = await chatRes.json()
   const rawMessages = Array.isArray(chatData?.messages) ? chatData.messages : []
+  const mapped = rawMessages.map((m: Record<string, unknown>) =>
+    mapWebChatRecordToSessionMessage(m),
+  )
   return {
-    mapped: rawMessages.map((m: Record<string, unknown>) =>
-      mapWebChatRecordToSessionMessage(m),
-    ),
-    totalCount: rawMessages.length,
+    mapped,
+    totalCount: mapped.length,
+    renderedTotal: mapped.length,
+    returnedCount: mapped.length,
+    degradedReason: null,
     ok: true,
   }
 }
@@ -164,18 +189,53 @@ export function useSessionDetail(sessionId: string | null) {
   const [sessionError, setSessionError] = useState<string | null>(null)
   const [totalMessages, setTotalMessages] = useState(0)
   const [isLoading, setIsLoading] = useState(false)
+  // Rendered-group pagination state (group counts, not parsed-message counts).
+  const [loadedCount, setLoadedCount] = useState(0)
+  const [renderedTotal, setRenderedTotal] = useState(0)
+  const [isLoadingOlder, setIsLoadingOlder] = useState(false)
+  const [firstItemIndex, setFirstItemIndex] = useState(START_INDEX)
+  const [transcriptDegradedReason, setTranscriptDegradedReason] = useState<string | null>(null)
+
   const messageSourceRef = useRef<'session' | 'chat' | null>(null)
   const sessionIdRef = useRef(sessionId)
+  const sessionRef = useRef<GobbySession | null>(null)
   const detailPollCleanupRef = useRef<(() => void) | null>(null)
   const detailLoadVersionRef = useRef(0)
+  // Mirrors of paging state read synchronously by loadMore / live append.
+  const loadedCountRef = useRef(0)
+  const renderedTotalRef = useRef(0)
+  const loadingOlderRef = useRef(false)
 
   useEffect(() => {
     sessionIdRef.current = sessionId
   }, [sessionId])
 
+  useEffect(() => {
+    sessionRef.current = session
+  }, [session])
+
+  useEffect(() => {
+    loadedCountRef.current = loadedCount
+  }, [loadedCount])
+
+  useEffect(() => {
+    renderedTotalRef.current = renderedTotal
+  }, [renderedTotal])
+
   const clearDetailPolling = useCallback(() => {
     detailPollCleanupRef.current?.()
     detailPollCleanupRef.current = null
+  }, [])
+
+  const resetPaging = useCallback(() => {
+    setLoadedCount(0)
+    setRenderedTotal(0)
+    loadedCountRef.current = 0
+    renderedTotalRef.current = 0
+    loadingOlderRef.current = false
+    setIsLoadingOlder(false)
+    setFirstItemIndex(START_INDEX)
+    setTranscriptDegradedReason(null)
   }, [])
 
   const applyClearedDetail = useCallback((error: string | null) => {
@@ -186,7 +246,8 @@ export function useSessionDetail(sessionId: string | null) {
     setTotalMessages(0)
     setIsLoading(false)
     messageSourceRef.current = null
-  }, [])
+    resetPaging()
+  }, [resetPaging])
 
   const resetSessionDetail = useCallback((error: string | null) => {
     detailLoadVersionRef.current += 1
@@ -234,8 +295,10 @@ export function useSessionDetail(sessionId: string | null) {
       setSession(sessionData)
       setSessionError(null)
       setTranscriptStatus(null)
+      resetPaging()
 
-      const renderedResult = await fetchRenderedSessionMessages(activeSessionId)
+      // Tail-first: open at the newest page, page older on scroll-up.
+      const renderedResult = await fetchRenderedSessionMessages(activeSessionId, 0, 'tail')
       if (!isCurrent()) return
 
       const shouldUseChatMessages =
@@ -293,6 +356,11 @@ export function useSessionDetail(sessionId: string | null) {
       messageSourceRef.current = 'session'
       setMessages(renderedResult.mapped)
       setTotalMessages(renderedResult.totalCount)
+      setLoadedCount(renderedResult.returnedCount)
+      setRenderedTotal(renderedResult.renderedTotal)
+      loadedCountRef.current = renderedResult.returnedCount
+      renderedTotalRef.current = renderedResult.renderedTotal
+      setTranscriptDegradedReason(renderedResult.degradedReason)
       if (renderedResult.mapped.length === 0) {
         const nextTranscriptStatus = await fetchTranscriptStatus(activeSessionId)
         if (isCurrent()) {
@@ -313,9 +381,83 @@ export function useSessionDetail(sessionId: string | null) {
         setIsLoading(false)
       }
     }
-  }, [applyClearedDetail, clearDetailPolling])
+  }, [applyClearedDetail, clearDetailPolling, resetPaging])
 
-  // Fetch session detail and all messages
+  // Refresh only session metadata; reload the transcript only when its identity
+  // (path/source) changed, so a benign session_updated event doesn't discard
+  // loaded older pages and reset scroll.
+  const refreshSessionMetadata = useCallback(async (activeSessionId: string) => {
+    try {
+      const meta = await fetchSessionMetadata(activeSessionId)
+      if (sessionIdRef.current !== activeSessionId) return
+      if (!meta) {
+        resetSessionDetail(SESSION_METADATA_UNAVAILABLE_MESSAGE)
+        return
+      }
+      const current = sessionRef.current
+      const identityChanged =
+        current != null &&
+        (current.transcript_path !== meta.transcript_path || current.source !== meta.source)
+      if (identityChanged) {
+        void loadSessionDetail(activeSessionId, {
+          showLoading: false,
+          clearOnError: false,
+          errorMessage: 'Failed to refresh session metadata',
+        })
+      } else {
+        setSession(meta)
+      }
+    } catch (error) {
+      if (sessionIdRef.current !== activeSessionId) return
+      console.error('Failed to refresh session metadata:', error)
+      // Surface a non-clearing error; keep the loaded detail and scroll intact.
+      setSessionError('Failed to refresh session metadata')
+    }
+  }, [loadSessionDetail, resetSessionDetail])
+
+  // Load an older page (scroll-up). Prepends the oldest-first window above the
+  // current messages and decrements the Virtuoso anchor by the actual count.
+  const loadMore = useCallback(async () => {
+    const activeSessionId = sessionIdRef.current
+    if (!activeSessionId) return
+    if (messageSourceRef.current !== 'session') return
+    if (loadingOlderRef.current) return
+    if (loadedCountRef.current >= renderedTotalRef.current) return
+
+    const loadVersion = detailLoadVersionRef.current
+    loadingOlderRef.current = true
+    setIsLoadingOlder(true)
+    try {
+      const result = await fetchRenderedSessionMessages(
+        activeSessionId,
+        loadedCountRef.current,
+        'tail',
+      )
+      if (sessionIdRef.current !== activeSessionId || detailLoadVersionRef.current !== loadVersion) {
+        return
+      }
+      if (!result.ok || result.mapped.length === 0) return
+
+      setMessages((prev) => [...result.mapped, ...prev])
+      setFirstItemIndex((prev) => prev - result.returnedCount)
+      const nextLoaded = loadedCountRef.current + result.returnedCount
+      const nextTotal = Math.max(renderedTotalRef.current, result.renderedTotal)
+      loadedCountRef.current = nextLoaded
+      renderedTotalRef.current = nextTotal
+      setLoadedCount(nextLoaded)
+      setRenderedTotal(nextTotal)
+      if (result.degradedReason) {
+        setTranscriptDegradedReason(result.degradedReason)
+      }
+    } finally {
+      loadingOlderRef.current = false
+      if (sessionIdRef.current === activeSessionId) {
+        setIsLoadingOlder(false)
+      }
+    }
+  }, [])
+
+  // Fetch session detail and the newest page of messages
   useEffect(() => {
     if (!sessionId) {
       resetSessionDetail(null)
@@ -330,9 +472,10 @@ export function useSessionDetail(sessionId: string | null) {
     }
   }, [clearDetailPolling, loadSessionDetail, resetSessionDetail, sessionId])
 
-  // Subscribe to real-time session_message events via WebSocket
-  // Broadcasts are now RenderedMessage-shaped with content_blocks.
-  // Uses upsert semantics: replace existing message with same ID, append if new.
+  // Subscribe to real-time session_message events via WebSocket.
+  // Broadcasts are RenderedMessage-shaped with content_blocks. Upsert by id;
+  // a genuinely new group is appended at the tail and advances the loaded/total
+  // group counts so the next tail page request doesn't overlap.
   useWebSocketEvent('session_message', useCallback((data: Record<string, unknown>) => {
     const msgSessionId = data.session_id as string | undefined
     if (!msgSessionId || msgSessionId !== sessionIdRef.current) return
@@ -351,8 +494,18 @@ export function useSessionDetail(sessionId: string | null) {
         updated[existingIdx] = newMessage
         return updated
       }
-      // Only increment total for genuinely new messages, not upserts
+      // Genuinely new group: bump parsed total and the rendered-group counts.
       setTotalMessages((p) => p + 1)
+      setLoadedCount((p) => {
+        const next = p + 1
+        loadedCountRef.current = next
+        return next
+      })
+      setRenderedTotal((p) => {
+        const next = p + 1
+        renderedTotalRef.current = next
+        return next
+      })
       return [...prev, newMessage]
     })
   }, []))
@@ -455,16 +608,26 @@ export function useSessionDetail(sessionId: string | null) {
       return
     }
 
-    if (event === 'session_updated' || event === 'session_expired') {
+    if (event === 'session_expired') {
+      // Live -> archive transition can change the transcript backing store.
       void loadSessionDetail(updatedSessionId, {
         showLoading: false,
         clearOnError: false,
         errorMessage: 'Failed to refresh session metadata',
       })
+      return
     }
-  }, [loadSessionDetail, resetSessionDetail]))
 
-  const hasMore = false
+    if (event === 'session_updated') {
+      // Metadata-only refresh unless transcript identity changed — preserves
+      // loaded older pages and scroll position.
+      void refreshSessionMetadata(updatedSessionId)
+    }
+  }, [loadSessionDetail, refreshSessionMetadata, resetSessionDetail]))
+
+  // Chat-backed sessions never set these counts (they stay 0), so this is false
+  // for chat and true for transcript-backed sessions with older pages remaining.
+  const hasMore = loadedCount < renderedTotal
 
   const [isGeneratingSummary, setIsGeneratingSummary] = useState(false)
 
@@ -495,9 +658,6 @@ export function useSessionDetail(sessionId: string | null) {
     }
   }, [sessionId, isGeneratingSummary])
 
-  // loadMore kept as no-op for interface compatibility
-  const loadMore = useCallback(() => {}, [])
-
   return {
     session,
     sessionError,
@@ -508,6 +668,9 @@ export function useSessionDetail(sessionId: string | null) {
     totalMessages,
     hasMore,
     loadMore,
+    isLoadingOlder,
+    firstItemIndex,
+    transcriptDegradedReason,
     generateSummary,
     isGeneratingSummary,
   }

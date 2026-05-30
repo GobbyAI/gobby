@@ -40,7 +40,7 @@ describe('useSessionDetail', () => {
         status: 'paused',
       },
     })
-    mockFetch.mockJsonResponse('/api/sessions/sess-web/messages?limit=10000&offset=0', {
+    mockFetch.mockJsonResponse('/api/sessions/sess-web/messages?limit=50&offset=0&order=tail', {
       messages: [],
       total_count: 0,
     })
@@ -81,7 +81,7 @@ describe('useSessionDetail', () => {
 
   it('prefers rendered session messages for transcript-backed web chats', async () => {
     await loadModule()
-    mockFetch.mockJsonResponse('/api/sessions/sess-gemini/messages?limit=10000&offset=0', {
+    mockFetch.mockJsonResponse('/api/sessions/sess-gemini/messages?limit=50&offset=0&order=tail', {
       messages: [
         {
           id: 'sess-msg-1',
@@ -128,7 +128,7 @@ describe('useSessionDetail', () => {
         status: 'paused',
       },
     })
-    mockFetch.mockJsonResponse('/api/sessions/sess-empty/messages?limit=10000&offset=0', {
+    mockFetch.mockJsonResponse('/api/sessions/sess-empty/messages?limit=50&offset=0&order=tail', {
       messages: [],
       total_count: 941,
     })
@@ -165,7 +165,7 @@ describe('useSessionDetail', () => {
         status: 'active',
       },
     })
-    mockFetch.mockJsonResponse('/api/sessions/sess-cli/messages?limit=10000&offset=0', {
+    mockFetch.mockJsonResponse('/api/sessions/sess-cli/messages?limit=50&offset=0&order=tail', {
       messages: [
         {
           id: 'sess-msg-1',
@@ -233,7 +233,7 @@ describe('useSessionDetail', () => {
         )
       }
 
-      if (url.includes('/api/sessions/sess-cli/messages?limit=10000&offset=0')) {
+      if (url.includes('/api/sessions/sess-cli/messages?limit=50&offset=0&order=tail')) {
         const content = sessionFetchCount === 1 ? 'Initial output' : 'Updated output'
         return new Response(
           JSON.stringify({
@@ -275,8 +275,10 @@ describe('useSessionDetail', () => {
     await waitFor(() => {
       expect(result.current.session?.digest_markdown).toBe('## Updated digest')
       expect(result.current.session?.status).toBe('expired')
-      expect(result.current.messages[0].content).toBe('Updated output')
     })
+    // session_updated refreshes metadata only — loaded messages are preserved
+    // (no transcript identity change), so older pages and scroll survive.
+    expect(result.current.messages[0].content).toBe('Initial output')
   })
 
   it('shows an error and clears stale detail when selected session refresh disappears', async () => {
@@ -313,7 +315,7 @@ describe('useSessionDetail', () => {
         )
       }
 
-      if (url.includes('/api/sessions/sess-cli/messages?limit=10000&offset=0')) {
+      if (url.includes('/api/sessions/sess-cli/messages?limit=50&offset=0&order=tail')) {
         return new Response(
           JSON.stringify({
             messages: [
@@ -399,7 +401,7 @@ describe('useSessionDetail', () => {
         )
       }
 
-      if (url.includes('/api/sessions/sess-cli/messages?limit=10000&offset=0')) {
+      if (url.includes('/api/sessions/sess-cli/messages?limit=50&offset=0&order=tail')) {
         return new Response(
           JSON.stringify({
             messages: [
@@ -458,7 +460,7 @@ describe('useSessionDetail', () => {
         status: 'active',
       },
     })
-    mockFetch.mockJsonResponse('/api/sessions/sess-cli/messages?limit=10000&offset=0', {
+    mockFetch.mockJsonResponse('/api/sessions/sess-cli/messages?limit=50&offset=0&order=tail', {
       messages: [
         {
           id: 'sess-msg-1',
@@ -507,7 +509,7 @@ describe('useSessionDetail', () => {
             ? input.toString()
             : input.url
 
-      if (url.includes('/api/sessions/sess-web/messages?limit=10000&offset=0')) {
+      if (url.includes('/api/sessions/sess-web/messages?limit=50&offset=0&order=tail')) {
         return new Response(
           JSON.stringify({ messages: [], total_count: 0 }),
           { status: 200, headers: { 'Content-Type': 'application/json' } },

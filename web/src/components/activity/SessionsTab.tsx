@@ -457,6 +457,11 @@ export const SessionsTab = memo(function SessionsTab({
     messages,
     isLoading: isLoadingDetail,
     transcriptStatus,
+    hasMore: hasMoreMessages,
+    loadMore: loadMoreMessages,
+    isLoadingOlder,
+    firstItemIndex,
+    transcriptDegradedReason,
   } = useSessionDetail(selectedSessionId);
 
   const selectedEntry = useMemo(
@@ -872,6 +877,11 @@ export const SessionsTab = memo(function SessionsTab({
                 messages={messages}
                 isLoading={isLoadingDetail}
                 emptyStateMessage={transcriptEmptyStateMessage}
+                hasMore={hasMoreMessages}
+                loadMore={loadMoreMessages}
+                isLoadingOlder={isLoadingOlder}
+                firstItemIndex={firstItemIndex}
+                transcriptDegradedReason={transcriptDegradedReason}
               />
             )}
           </ArtifactContext.Provider>

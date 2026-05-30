@@ -1,8 +1,21 @@
-import { useCallback, useLayoutEffect, useMemo, useRef } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useMemo,
+  useRef,
+  type ForwardedRef,
+} from "react";
+import {
+  Virtuoso,
+  type Components,
+  type ScrollerProps,
+  type VirtuosoHandle,
+} from "react-virtuoso";
 
 import type { SessionMessage } from "../../hooks/useSessionDetail";
 import type { ChatMessage, ContentBlock, ToolCall } from "../../types/chat";
 import { MessageItem } from "../chat/MessageItem";
+import { MessageErrorBoundary } from "../chat/MessageErrorBoundary";
 import { ActivityPanelEmpty } from "./ActivityPanelEmpty";
 
 interface WatchingTranscriptProps {
@@ -10,6 +23,11 @@ interface WatchingTranscriptProps {
   messages: SessionMessage[];
   isLoading: boolean;
   emptyStateMessage: string;
+  hasMore: boolean;
+  loadMore: () => void;
+  isLoadingOlder: boolean;
+  firstItemIndex: number;
+  transcriptDegradedReason: string | null;
 }
 
 function normalizeRole(role: string): ChatMessage["role"] {
@@ -70,60 +88,48 @@ function toChatMessage(message: SessionMessage): ChatMessage {
   return chatMessage;
 }
 
-function toolCallScrollSignature(toolCall: ToolCall): string {
-  const resultContent = toolCall.result?.content;
-  const resultContentLength =
-    typeof resultContent === "string"
-      ? resultContent.length
-      : JSON.stringify(resultContent ?? "").length;
-
-  return [
-    toolCall.id,
-    toolCall.tool_name,
-    toolCall.status,
-    toolCall.error?.length ?? 0,
-    toolCall.result?.kind ?? "",
-    toolCall.result?.truncated ? "truncated" : "full",
-    resultContentLength,
-  ].join(":");
+function LoadingOlder() {
+  return (
+    <div className="flex items-center justify-center gap-2 py-3 text-xs text-muted-foreground">
+      <span
+        className="h-3 w-3 rounded-full border-2 border-accent border-t-transparent motion-safe:animate-spin"
+        aria-hidden="true"
+      />
+      Loading older messages…
+    </div>
+  );
 }
 
-function blockScrollSignature(block: ContentBlock): string {
-  if (block.type === "text" || block.type === "thinking") {
-    return `${block.type}:${block.content.length}`;
-  }
-  if (block.type === "tool_chain") {
-    return `tool_chain:${block.tool_calls.length}:${block.tool_calls
-      .map(toolCallScrollSignature)
-      .join(",")}`;
-  }
-  if (block.type === "tool_reference") {
-    return `tool_reference:${block.tool_name}:${block.server_name}`;
-  }
-  if (block.type === "document") {
-    return `document:${block.source?.name?.length ?? 0}`;
-  }
-  if (block.type === "unknown") {
-    return `unknown:${block.block_type}:${JSON.stringify(block.raw).length}`;
-  }
-  return block.type;
+function StartOfHistory() {
+  return (
+    <div className="py-3 text-center text-xs text-muted-foreground/70">
+      Beginning of transcript
+    </div>
+  );
 }
 
-function lastMessageScrollKey(message: ChatMessage | undefined): string {
-  if (!message) return "empty";
-
-  const contentBlockSignature =
-    message.contentBlocks?.map(blockScrollSignature).join("|") ?? "";
-  const toolCallSignature =
-    message.toolCalls?.map(toolCallScrollSignature).join("|") ?? "";
-
-  return [
-    message.id,
-    message.content.length,
-    message.thinkingContent?.length ?? 0,
-    contentBlockSignature,
-    toolCallSignature,
-  ].join("::");
+function DegradedNotice() {
+  return (
+    <div className="flex items-center justify-center gap-2 px-4 py-3 text-xs text-muted-foreground">
+      <svg
+        width="14"
+        height="14"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.75"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+        className="shrink-0 text-warning"
+      >
+        <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z" />
+        <line x1="12" y1="9" x2="12" y2="13" />
+        <line x1="12" y1="17" x2="12.01" y2="17" />
+      </svg>
+      Older content capped to keep this view fast — reload to fetch more.
+    </div>
+  );
 }
 
 export function WatchingTranscript({
@@ -131,84 +137,114 @@ export function WatchingTranscript({
   messages,
   isLoading,
   emptyStateMessage,
+  hasMore,
+  loadMore,
+  isLoadingOlder,
+  firstItemIndex,
+  transcriptDegradedReason,
 }: WatchingTranscriptProps) {
-  const scrollerRef = useRef<HTMLDivElement>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const pendingScrollFrameRef = useRef<number | null>(null);
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const atBottomRef = useRef(true);
+
   const chatMessages = useMemo(() => messages.map(toChatMessage), [messages]);
-  const scrollKey = lastMessageScrollKey(chatMessages[chatMessages.length - 1]);
 
-  const setScrollerToBottom = useCallback(() => {
-    const scroller = scrollerRef.current;
-    if (!scroller) return;
-    scroller.style.scrollBehavior = "auto";
-    scroller.scrollTop = scroller.scrollHeight;
-  }, []);
-
-  const scrollToBottom = useCallback(() => {
-    setScrollerToBottom();
-    const messagesEnd = messagesEndRef.current;
-    if (messagesEnd && typeof messagesEnd.scrollIntoView === "function") {
-      messagesEnd.scrollIntoView({ behavior: "auto", block: "end" });
-    }
-  }, [setScrollerToBottom]);
-
-  const scheduleSetScrollerToBottom = useCallback(() => {
-    if (
-      typeof window === "undefined" ||
-      typeof window.requestAnimationFrame !== "function"
-    ) {
-      setScrollerToBottom();
-      return;
-    }
-    if (pendingScrollFrameRef.current !== null) {
-      window.cancelAnimationFrame(pendingScrollFrameRef.current);
-    }
-    pendingScrollFrameRef.current = window.requestAnimationFrame(() => {
-      setScrollerToBottom();
-      pendingScrollFrameRef.current = window.requestAnimationFrame(() => {
-        pendingScrollFrameRef.current = null;
-        setScrollerToBottom();
-      });
-    });
-  }, [setScrollerToBottom]);
-
-  useLayoutEffect(
-    () => () => {
-      if (pendingScrollFrameRef.current !== null) {
-        window.cancelAnimationFrame(pendingScrollFrameRef.current);
+  const setScrollerRef = useCallback(
+    (node: HTMLDivElement | null, forwardedRef: ForwardedRef<HTMLDivElement>) => {
+      scrollerRef.current = node;
+      if (typeof forwardedRef === "function") {
+        forwardedRef(node);
+      } else if (forwardedRef) {
+        forwardedRef.current = node;
       }
     },
     [],
   );
 
-  useLayoutEffect(() => {
-    scrollToBottom();
-    scheduleSetScrollerToBottom();
-  }, [scheduleSetScrollerToBottom, scrollKey, scrollToBottom, sessionId]);
+  const handleAtBottomStateChange = useCallback((atBottom: boolean) => {
+    atBottomRef.current = atBottom;
+  }, []);
+
+  // Reverse infinite scroll: fetch the next older page when the top is reached.
+  const handleStartReached = useCallback(() => {
+    if (hasMore) {
+      loadMore();
+    }
+  }, [hasMore, loadMore]);
+
+  const itemContent = useCallback(
+    (_index: number, message: ChatMessage) => (
+      <MessageErrorBoundary key={message.id} messageId={message.id}>
+        <MessageItem message={message} />
+      </MessageErrorBoundary>
+    ),
+    [],
+  );
+
+  const computeItemKey = useCallback(
+    (_index: number, message: ChatMessage) => message.id,
+    [],
+  );
+
+  const Header = useCallback(() => {
+    if (isLoadingOlder) return <LoadingOlder />;
+    if (transcriptDegradedReason) return <DegradedNotice />;
+    if (!hasMore && chatMessages.length > 0) return <StartOfHistory />;
+    return null;
+  }, [isLoadingOlder, transcriptDegradedReason, hasMore, chatMessages.length]);
+
+  const Scroller = useMemo<NonNullable<Components<ChatMessage>["Scroller"]>>(
+    () =>
+      forwardRef<HTMLDivElement, ScrollerProps>(function TranscriptScroller(
+        { style, ...props },
+        forwardedRef,
+      ) {
+        return (
+          <div
+            {...props}
+            ref={(node) => setScrollerRef(node, forwardedRef)}
+            style={{
+              ...style,
+              scrollBehavior: "auto",
+              overflowAnchor: "none",
+              overscrollBehavior: "contain",
+            }}
+          />
+        );
+      }),
+    [setScrollerRef],
+  );
+
+  const components = useMemo<Components<ChatMessage>>(
+    () => ({ Header, Scroller }),
+    [Header, Scroller],
+  );
+
+  if (isLoading && chatMessages.length === 0) {
+    return <ActivityPanelEmpty body="Loading messages…" />;
+  }
+
+  if (chatMessages.length === 0) {
+    return <ActivityPanelEmpty body={emptyStateMessage} />;
+  }
 
   return (
-    <div
-      ref={scrollerRef}
-      className="flex-1 overflow-y-auto chat-scaled overscroll-contain [overflow-anchor:none]"
-      style={{
-        scrollBehavior: "auto",
-        overflowAnchor: "none",
-        overscrollBehavior: "contain",
-      }}
-    >
-      {isLoading ? (
-        <ActivityPanelEmpty body="Loading messages…" />
-      ) : chatMessages.length === 0 ? (
-        <ActivityPanelEmpty body={emptyStateMessage} />
-      ) : (
-        <>
-          {chatMessages.map((message) => (
-            <MessageItem key={message.id} message={message} />
-          ))}
-          <div ref={messagesEndRef} />
-        </>
-      )}
-    </div>
+    <Virtuoso
+      ref={virtuosoRef}
+      key={sessionId ?? "none"}
+      className="flex-1 min-h-0 overflow-x-hidden chat-scaled overscroll-contain [overflow-anchor:none] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border [scrollbar-width:thin] [scrollbar-color:var(--border)_transparent]"
+      data={chatMessages}
+      firstItemIndex={firstItemIndex}
+      initialTopMostItemIndex={Math.max(chatMessages.length - 1, 0)}
+      itemContent={itemContent}
+      computeItemKey={computeItemKey}
+      startReached={handleStartReached}
+      followOutput={(atBottom) => (atBottom ? "auto" : false)}
+      atBottomThreshold={400}
+      atBottomStateChange={handleAtBottomStateChange}
+      overscan={400}
+      increaseViewportBy={200}
+      components={components}
+    />
   );
 }
