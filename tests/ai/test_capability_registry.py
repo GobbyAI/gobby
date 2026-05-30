@@ -125,6 +125,30 @@ def test_daemon_registry_reports_text_generate_provider_bindings() -> None:
     assert local.models == ("llama",)
 
 
+def test_daemon_registry_reports_only_proven_vision_extract_bindings_available() -> None:
+    registry = build_daemon_ai_capability_registry(
+        DaemonConfig(local=LocalConfig(url="http://localhost:1234/v1", model="llava")),
+        provider_installed=lambda _entry: True,
+    )
+
+    status = registry.status(AICapability.VISION_EXTRACT)
+    available_providers = {binding.provider for binding in status.bindings if binding.available}
+
+    assert available_providers == {"claude", "codex", "local"}
+
+    local = registry.binding(AICapability.VISION_EXTRACT, "local")
+    assert local is not None
+    assert local.adapter_style == AIAdapterStyle.OPENAI_COMPATIBLE
+    assert local.models == ("llava",)
+
+    for provider in ("droid", "gemini", "grok", "qwen"):
+        binding = registry.binding(AICapability.VISION_EXTRACT, provider)
+        assert binding is not None
+        assert binding.available is False
+        assert binding.reason is not None
+        assert "proven image payload support" in binding.reason
+
+
 def test_daemon_registry_marks_agy_unavailable_even_when_provider_probe_succeeds() -> None:
     registry = build_daemon_ai_capability_registry(
         DaemonConfig(),

@@ -30,6 +30,14 @@ from gobby.ai.text_generation import (
     TextGenerationService,
     build_daemon_text_generation_service,
 )
+from gobby.ai.vision import (
+    LLMProviderVisionExtractAdapter,
+    VisionExtractAdapter,
+    VisionExtractRequest,
+    VisionExtractResult,
+    VisionExtractService,
+    build_daemon_vision_extract_service,
+)
 
 __all__ = [
     "ACPTextGenerateAdapter",
@@ -47,13 +55,19 @@ __all__ = [
     "CapabilityUnavailableError",
     "DroidCLITextGenerateAdapter",
     "LLMProviderTextGenerateAdapter",
+    "LLMProviderVisionExtractAdapter",
     "OpenAICompatibleAudioAdapter",
     "TextGenerateAdapter",
     "TextGenerationRequest",
     "TextGenerationService",
+    "VisionExtractAdapter",
+    "VisionExtractRequest",
+    "VisionExtractResult",
+    "VisionExtractService",
     "WhisperAudioAdapter",
     "build_daemon_ai_capability_registry",
     "build_daemon_audio_service",
     "build_daemon_text_generation_service",
+    "build_daemon_vision_extract_service",
     "normalize_capability",
 ]

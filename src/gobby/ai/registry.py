@@ -337,6 +337,7 @@ def build_daemon_ai_capability_registry(
     bindings: list[CapabilityBinding] = [
         _embedding_binding(config),
         _local_text_generate_binding(config),
+        _local_vision_extract_binding(config),
     ]
     bindings.extend(_audio_bindings(config))
 
@@ -346,6 +347,9 @@ def build_daemon_ai_capability_registry(
         text_binding = _text_generate_binding(config, entry, installed)
         if text_binding is not None:
             bindings.append(text_binding)
+        vision_binding = _vision_extract_binding(entry, installed)
+        if vision_binding is not None:
+            bindings.append(vision_binding)
         bindings.append(_provider_binding(AICapability.AGENT_SPAWN, entry, installed))
         bindings.append(_provider_binding(AICapability.WEB_CHAT, entry, installed))
 
@@ -558,7 +562,84 @@ def _local_text_generate_binding(config: DaemonConfig | None) -> CapabilityBindi
     )
 
 
+def _vision_extract_binding(
+    entry: ProviderMetadata,
+    provider_installed: Callable[[ProviderMetadata], bool],
+) -> CapabilityBinding | None:
+    metadata = {
+        "display_name": entry.display_name,
+        "deprecated": entry.deprecated,
+        "deprecation_message": entry.deprecation_message,
+    }
+
+    adapter_style = _vision_extract_adapter_style(entry.provider)
+    if adapter_style is None:
+        return None
+
+    if entry.provider not in {"claude", "codex"}:
+        return CapabilityBinding.unavailable(
+            AICapability.VISION_EXTRACT,
+            entry.provider,
+            adapter_style=adapter_style,
+            reason=(
+                "No daemon vision_extract adapter has proven image payload support for "
+                f"{entry.display_name}."
+            ),
+            metadata=metadata,
+        )
+
+    if provider_installed(entry):
+        return CapabilityBinding(
+            capability=AICapability.VISION_EXTRACT,
+            provider=entry.provider,
+            adapter_style=adapter_style,
+            available=True,
+            metadata=metadata,
+        )
+
+    return CapabilityBinding.unavailable(
+        AICapability.VISION_EXTRACT,
+        entry.provider,
+        adapter_style=adapter_style,
+        reason=f"{entry.display_name} CLI is not installed.",
+        metadata=metadata,
+    )
+
+
+def _local_vision_extract_binding(config: DaemonConfig | None) -> CapabilityBinding:
+    local_config = config.local if config and config.local else None
+    metadata: dict[str, object] = {"display_name": "Local"}
+    if local_config:
+        metadata["api_base"] = local_config.url
+        return CapabilityBinding(
+            capability=AICapability.VISION_EXTRACT,
+            provider="local",
+            adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+            available=True,
+            models=(local_config.model,),
+            metadata=metadata,
+        )
+
+    return CapabilityBinding.unavailable(
+        AICapability.VISION_EXTRACT,
+        "local",
+        adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+        reason="Local vision_extract binding is not configured.",
+        metadata=metadata,
+    )
+
+
 def _text_generate_adapter_style(provider: str) -> AIAdapterStyle | None:
+    if provider in {"claude", "codex"}:
+        return AIAdapterStyle.LLM_PROVIDER
+    if provider in {"gemini", "grok", "qwen"}:
+        return AIAdapterStyle.ACP
+    if provider == "droid":
+        return AIAdapterStyle.CLI
+    return None
+
+
+def _vision_extract_adapter_style(provider: str) -> AIAdapterStyle | None:
     if provider in {"claude", "codex"}:
         return AIAdapterStyle.LLM_PROVIDER
     if provider in {"gemini", "grok", "qwen"}:
