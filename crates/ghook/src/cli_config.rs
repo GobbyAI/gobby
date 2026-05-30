@@ -2,8 +2,7 @@
 //!
 //! Mirrors the `CLIConfig` registry in `hook_dispatcher.py` — the set of
 //! host CLIs Gobby dispatches for and, per CLI, which hooks are "critical"
-//! (block on failure, exit 2) and which should carry enriched terminal
-//! context.
+//! (block on failure, exit 2).
 
 use std::collections::HashSet;
 
@@ -14,8 +13,6 @@ pub struct CliConfig {
     pub source: &'static str,
     /// Hooks where failure should fail-closed (exit 2).
     pub critical_hooks: HashSet<&'static str>,
-    /// Hooks that should carry enriched terminal context in `input_data`.
-    pub terminal_context_hooks: HashSet<&'static str>,
     /// Exit code to use for malformed JSON input, matching the Python dispatcher.
     pub json_error_exit_code: u8,
 }
@@ -28,39 +25,26 @@ impl CliConfig {
                 critical_hooks: ["session-start", "session-end", "pre-compact"]
                     .into_iter()
                     .collect(),
-                terminal_context_hooks: ["session-start"].into_iter().collect(),
                 json_error_exit_code: 2,
             }),
             "gemini" => Some(Self {
                 source: "gemini",
                 critical_hooks: ["SessionStart"].into_iter().collect(),
-                terminal_context_hooks: ["SessionStart"].into_iter().collect(),
                 json_error_exit_code: 1,
             }),
             "qwen" => Some(Self {
                 source: "qwen",
                 critical_hooks: ["SessionStart"].into_iter().collect(),
-                terminal_context_hooks: ["SessionStart"].into_iter().collect(),
                 json_error_exit_code: 1,
             }),
             "codex" => Some(Self {
                 source: "codex",
                 critical_hooks: ["SessionStart", "Stop"].into_iter().collect(),
-                terminal_context_hooks: [
-                    "SessionStart",
-                    "UserPromptSubmit",
-                    "PreToolUse",
-                    "PostToolUse",
-                    "Stop",
-                ]
-                .into_iter()
-                .collect(),
                 json_error_exit_code: 2,
             }),
             "droid" => Some(Self {
                 source: "droid",
                 critical_hooks: HashSet::new(),
-                terminal_context_hooks: HashSet::new(),
                 json_error_exit_code: 1,
             }),
             _ => None,
@@ -69,10 +53,6 @@ impl CliConfig {
 
     pub fn for_dispatch(cli: &str) -> Self {
         Self::for_cli(cli).unwrap_or_else(|| Self::for_cli("claude").expect("claude config"))
-    }
-
-    pub fn wants_terminal_context(&self, hook_type: &str) -> bool {
-        self.terminal_context_hooks.contains(hook_type)
     }
 
     pub fn is_critical_hook(&self, hook_type: &str) -> bool {
@@ -94,18 +74,8 @@ mod tests {
     }
 
     #[test]
-    fn codex_terminal_context_broad() {
-        let c = CliConfig::for_cli("codex").unwrap();
-        assert!(c.wants_terminal_context("PreToolUse"));
-        assert!(c.wants_terminal_context("Stop"));
-        assert!(!c.wants_terminal_context("session-start"));
-    }
-
-    #[test]
-    fn gemini_session_only_terminal_context() {
+    fn gemini_json_parse_errors_exit_one() {
         let c = CliConfig::for_cli("gemini").unwrap();
-        assert!(c.wants_terminal_context("SessionStart"));
-        assert!(!c.wants_terminal_context("PreToolUse"));
         assert_eq!(c.json_error_exit_code, 1);
     }
 
@@ -118,12 +88,10 @@ mod tests {
     }
 
     #[test]
-    fn droid_recognized_with_no_terminal_context_or_critical_hooks() {
+    fn droid_recognized_with_no_critical_hooks() {
         let c = CliConfig::for_cli("droid").unwrap();
         assert_eq!(c.source, "droid");
         assert!(c.critical_hooks.is_empty());
-        assert!(!c.wants_terminal_context("SessionStart"));
-        assert!(!c.wants_terminal_context("PreToolUse"));
         assert_eq!(c.json_error_exit_code, 1);
     }
 

@@ -35,7 +35,7 @@
       "description": "Host-CLI-specific hook name (e.g. session-start, SessionStart, PreToolUse)."
     },
     "input_data": {
-      "description": "Original stdin payload from the host CLI, optionally enriched with a terminal_context object for hooks that request it."
+      "description": "Original stdin payload from the host CLI, optionally enriched with a terminal_context object when valid tmux pane context is available."
     },
     "source": {
       "type": "string",

@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.4] — gobby-hooks
+
+### Added
+
+#### gobby-hooks
+
+- **Tmux pane terminal context** — `ghook` now injects
+  `input_data.terminal_context.tmux_pane` for any dispatch path when `TMUX` is
+  set and `TMUX_PANE` matches the daemon's `^%\d+$` contract. Missing, empty,
+  or invalid pane IDs leave `terminal_context` absent, so the daemon only sees
+  pane metadata it can validate and use for tmux window titles.
+
 ## [0.9.4] — gcode
 
 ### Changed

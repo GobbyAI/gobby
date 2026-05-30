@@ -7,21 +7,33 @@
 //! Sharp edge (dispatcher `:205`): `TMUX_PANE` is inherited by children
 //! spawned into *other* terminals (e.g. Ghostty), so emitting it when
 //! `TMUX` is not set would point `kill_agent` at the *parent's* pane. We
-//! emit `tmux_pane`/`tmux_socket_path` only when `TMUX` is present in the
-//! environment.
+//! emit `terminal_context` only when `TMUX` is present and `TMUX_PANE`
+//! matches the daemon's `^%\d+$` tmux-pane contract.
 
 use serde_json::{Value, json};
 use std::env;
 
 /// Build a terminal-context object for injection under
 /// `input_data.terminal_context`.
-pub fn capture() -> Value {
+pub fn capture() -> Option<Value> {
+    let tmux = env::var("TMUX").ok()?;
+    let tmux_pane = env::var("TMUX_PANE").ok()?;
+    build_context(&tmux, &tmux_pane)
+}
+
+fn build_context(tmux: &str, tmux_pane: &str) -> Option<Value> {
+    if tmux.is_empty() || !is_valid_tmux_pane(tmux_pane) {
+        return None;
+    }
+
     let parent_pid = parent_pid_or_null();
     let tty = tty_name_or_null();
-    let (tmux_pane, tmux_socket_path) = tmux_fields();
+    let tmux_socket_path = parse_tmux_socket_path(tmux)
+        .map(Value::String)
+        .unwrap_or(Value::Null);
     let term_program = env_or_null("TERM_PROGRAM");
 
-    json!({
+    Some(json!({
         "parent_pid": parent_pid,
         "tty": tty,
         "tmux_pane": tmux_pane,
@@ -35,7 +47,7 @@ pub fn capture() -> Value {
         // Carried so the daemon's SESSION_START handler can recognize and
         // drop registrations from daemon-spawned ACP subprocesses.
         "gobby_acp_child": env_or_null("GOBBY_ACP_CHILD"),
-    })
+    }))
 }
 
 /// Inject terminal context into `input_data` when:
@@ -45,8 +57,9 @@ pub fn capture() -> Value {
 pub fn inject(input_data: &mut Value) {
     if let Some(obj) = input_data.as_object_mut()
         && !obj.contains_key("terminal_context")
+        && let Some(ctx) = capture()
     {
-        obj.insert("terminal_context".into(), capture());
+        obj.insert("terminal_context".into(), ctx);
     }
 }
 
@@ -99,18 +112,11 @@ fn tty_name_or_null() -> Value {
     }
 }
 
-fn tmux_fields() -> (Value, Value) {
-    // Per dispatcher :244 — only report tmux context when TMUX is set.
-    let Ok(tmux) = env::var("TMUX") else {
-        return (Value::Null, Value::Null);
+fn is_valid_tmux_pane(pane: &str) -> bool {
+    let Some(rest) = pane.strip_prefix('%') else {
+        return false;
     };
-    let pane = env::var("TMUX_PANE")
-        .map(Value::String)
-        .unwrap_or(Value::Null);
-    let socket = parse_tmux_socket_path(&tmux)
-        .map(Value::String)
-        .unwrap_or(Value::Null);
-    (pane, socket)
+    !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit())
 }
 
 /// Extract the socket path from the `TMUX` env var. Mirror of
@@ -145,10 +151,30 @@ mod tests {
     }
 
     #[test]
-    fn inject_sets_terminal_context_when_absent() {
-        let mut data = json!({"session_id": "s1"});
-        inject(&mut data);
-        assert!(data.get("terminal_context").is_some());
+    fn build_context_sets_tmux_pane_verbatim() {
+        let ctx = build_context("/private/tmp/tmux-501/default,12345,0", "%42").unwrap();
+        assert_eq!(ctx["tmux_pane"], "%42");
+        assert_eq!(ctx["tmux_socket_path"], "/private/tmp/tmux-501/default");
+    }
+
+    #[test]
+    fn build_context_rejects_missing_empty_or_invalid_pane() {
+        assert!(build_context("/tmp/tmux,1,0", "").is_none());
+        assert!(build_context("/tmp/tmux,1,0", "42").is_none());
+        assert!(build_context("/tmp/tmux,1,0", "%").is_none());
+        assert!(build_context("/tmp/tmux,1,0", "%abc").is_none());
+        assert!(build_context("", "%42").is_none());
+    }
+
+    #[test]
+    fn valid_tmux_pane_matches_daemon_contract() {
+        assert!(is_valid_tmux_pane("%1"));
+        assert!(is_valid_tmux_pane("%001"));
+        assert!(!is_valid_tmux_pane(""));
+        assert!(!is_valid_tmux_pane("%"));
+        assert!(!is_valid_tmux_pane(" %1"));
+        assert!(!is_valid_tmux_pane("%1 "));
+        assert!(!is_valid_tmux_pane("1"));
     }
 
     #[test]
@@ -171,7 +197,7 @@ mod tests {
 
     #[test]
     fn capture_emits_expected_keys() {
-        let ctx = capture();
+        let ctx = build_context("/tmp/tmux,1,0", "%9").unwrap();
         let obj = ctx.as_object().expect("object");
         for key in [
             "parent_pid",
@@ -187,19 +213,6 @@ mod tests {
             "gobby_acp_child",
         ] {
             assert!(obj.contains_key(key), "missing key: {key}");
-        }
-    }
-
-    #[test]
-    fn tmux_fields_null_without_tmux_env() {
-        // Dispatcher :244 — no TMUX means no tmux_pane / tmux_socket_path.
-        // We probe the pure function via capture() and assert that when
-        // TMUX is unset in this test process, both fields are null.
-        // (CI runs without TMUX; local devs might differ, so we guard.)
-        if std::env::var_os("TMUX").is_none() {
-            let ctx = capture();
-            assert_eq!(ctx["tmux_pane"], Value::Null);
-            assert_eq!(ctx["tmux_socket_path"], Value::Null);
         }
     }
 }
