@@ -192,7 +192,7 @@ enum Command {
         /// Pattern to search for (regex or fixed string)
         pattern: String,
         /// Optional file paths or globs to filter results
-        #[arg(value_name = "PATH", allow_hyphen_values = true)]
+        #[arg(value_name = "PATH")]
         paths: Vec<String>,
         /// Treat pattern as fixed string, not regex
         #[arg(short = 'F', long)]
@@ -388,22 +388,6 @@ fn reject_grep_limit(_value: &str) -> Result<String, String> {
     )
 }
 
-fn reject_unsupported_grep_flags(command: &Command) -> anyhow::Result<()> {
-    if let Command::Grep { paths, .. } = command
-        && let Some(flag) = paths.iter().find(|path| path.starts_with('-'))
-    {
-        if flag == "--limit" {
-            anyhow::bail!(
-                "gcode grep is indexed search; --limit is unsupported. Use -m/--max-count, or run raw `rg` for filesystem grep."
-            );
-        }
-        anyhow::bail!(
-            "gcode grep is indexed search; unsupported grep/rg flag `{flag}`. Use raw `rg` for filesystem grep."
-        );
-    }
-    Ok(())
-}
-
 fn dispatch_early_command<F>(cli: &Cli, setup_runner: F) -> anyhow::Result<bool>
 where
     F: FnOnce(setup::StandaloneSetupRequest, output::Format, bool) -> anyhow::Result<()>,
@@ -500,7 +484,6 @@ fn run() -> anyhow::Result<()> {
     if dispatch_early_command(&cli, commands::setup::run)? {
         return Ok(());
     }
-    reject_unsupported_grep_flags(&cli.command)?;
 
     let ctx = config::Context::resolve(cli.project.as_deref(), cli.quiet)?;
 
@@ -1439,24 +1422,56 @@ mod tests {
         let cli = Cli::try_parse_from(["gcode", "grep", "needle", "-m", "5", "src"])
             .expect("grep with -m parses");
         match cli.command {
-            Command::Grep { max_count, .. } => assert_eq!(max_count, Some(5)),
+            Command::Grep {
+                paths, max_count, ..
+            } => {
+                assert_eq!(paths, vec!["src"]);
+                assert_eq!(max_count, Some(5));
+            }
             _ => panic!("expected grep command"),
         }
 
         let cli = Cli::try_parse_from(["gcode", "grep", "needle", "--max-count", "5", "src"])
             .expect("grep with --max-count parses");
         match cli.command {
-            Command::Grep { max_count, .. } => assert_eq!(max_count, Some(5)),
+            Command::Grep {
+                paths, max_count, ..
+            } => {
+                assert_eq!(paths, vec!["src"]);
+                assert_eq!(max_count, Some(5));
+            }
+            _ => panic!("expected grep command"),
+        }
+
+        let cli = Cli::try_parse_from(["gcode", "grep", "needle", "src", "-m", "5"])
+            .expect("grep with -m after path parses");
+        match cli.command {
+            Command::Grep {
+                paths, max_count, ..
+            } => {
+                assert_eq!(paths, vec!["src"]);
+                assert_eq!(max_count, Some(5));
+            }
+            _ => panic!("expected grep command"),
+        }
+
+        let cli = Cli::try_parse_from(["gcode", "grep", "needle", "src", "--max-count", "5"])
+            .expect("grep with --max-count after path parses");
+        match cli.command {
+            Command::Grep {
+                paths, max_count, ..
+            } => {
+                assert_eq!(paths, vec!["src"]);
+                assert_eq!(max_count, Some(5));
+            }
             _ => panic!("expected grep command"),
         }
     }
 
     #[test]
     fn parse_grep_rejects_limit() {
-        let cli = Cli::try_parse_from(["gcode", "grep", "needle", "src", "--limit", "5"])
-            .expect("--limit is captured for custom rejection");
-        let err =
-            reject_unsupported_grep_flags(&cli.command).expect_err("--limit should be rejected");
+        let err = Cli::try_parse_from(["gcode", "grep", "needle", "src", "--limit", "5"])
+            .expect_err("--limit should be rejected");
         assert!(
             err.to_string().contains("gcode grep is indexed search"),
             "unexpected error: {err}"
@@ -1469,18 +1484,12 @@ mod tests {
 
     #[test]
     fn parse_grep_unsupported_flag_fails_before_context_resolution() {
-        let cli = Cli::try_parse_from(["gcode", "grep", "needle", "--files-with-matches"])
-            .expect("unsupported grep flag is captured for custom rejection");
-
-        let err = reject_unsupported_grep_flags(&cli.command)
+        let err = Cli::try_parse_from(["gcode", "grep", "needle", "--files-with-matches"])
             .expect_err("unsupported grep flag should fail");
 
         assert!(
-            err.to_string().contains("gcode grep is indexed search"),
-            "unexpected error: {err}"
-        );
-        assert!(
-            err.to_string().contains("raw `rg`"),
+            err.to_string()
+                .contains("unexpected argument '--files-with-matches'"),
             "unexpected error: {err}"
         );
     }

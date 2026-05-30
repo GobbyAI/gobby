@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.6] — gcode
+
+### Fixed
+
+#### gcode
+
+- **Indexed grep option ordering** — `gcode grep <pattern> PATH -m N` and
+  `gcode grep <pattern> PATH --max-count N` now parse `-m/--max-count`
+  correctly after positional path filters instead of treating the flag as an
+  unsupported path value.
+
 ## [0.9.5] — gcode
 
 ### Added
