@@ -725,7 +725,7 @@ class ChatSessionMixin:
                     )
                     if persona_context:
                         session.system_prompt_override = persona_context
-                else:
+                elif agent_name != "default":
                     context_parts: list[str] = []
                     if effective_provider in {"gemini", "grok", "qwen"}:
                         preamble = _build_agent_identity_preamble(agent_body)

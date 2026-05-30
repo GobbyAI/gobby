@@ -9,7 +9,7 @@ from dataclasses import dataclass
 class AgentActivationResult:
     """Result of activating the default agent for a session."""
 
-    context: str | None  # AI-only: identity preamble
+    context: str | None  # Legacy activation metadata; not injected at SessionStart.
     agent_name: str
     description: str | None
     role: str | None

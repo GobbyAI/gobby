@@ -348,7 +348,9 @@ class TestCreateChatSessionInner:
             assert mixin.session_manager.update_model.call_args is not None
 
     @pytest.mark.asyncio
-    async def test_create_gemini_chat_session_uses_identity_only_prompt(self, mixin: DummyMixin):
+    async def test_create_gemini_default_agent_defers_prompt_to_first_lifecycle(
+        self, mixin: DummyMixin
+    ):
         with (
             patch("gobby.servers.websocket.chat._session.get_machine_id", return_value="mach1"),
             patch("gobby.workflows.agent_resolver.resolve_agent") as mock_resolve_agent,
@@ -396,13 +398,8 @@ class TestCreateChatSessionInner:
                 model=None,
                 reasoning_effort=None,
             )
-            assert mock_session.system_prompt_override == (
-                "## Role\nYou are Gobby\n\n"
-                "## Goal\nFix the daemon\n\n"
-                "## Personality\nBlunt and technical"
-            )
+            assert mock_session.system_prompt_override is None
             agent_body.build_prompt_preamble.assert_not_called()
-            assert "<active_skills>" not in (mock_session.system_prompt_override or "")
 
     @pytest.mark.asyncio
     async def test_pending_persona_uses_next_session_provider_and_project_context(

@@ -147,7 +147,7 @@ class TestHandleBeforeAgent:
         result = handler.handle_before_agent(event)
         assert result.decision == "allow"
 
-    def test_default_agent_injects_instructions_without_active_skill_manifest(self) -> None:
+    def test_default_agent_injects_full_preamble_without_active_skill_manifest(self) -> None:
         handler = _TestHandler()
         event = _make_event(
             data={"prompt": "hello"},
@@ -177,6 +177,12 @@ class TestHandleBeforeAgent:
 
         assert result.decision == "allow"
         assert result.context is not None
+        assert "## Role" in result.context
+        assert default_agent.role is not None
+        assert default_agent.role in result.context
+        assert "## Personality" in result.context
+        assert default_agent.personality is not None
+        assert default_agent.personality in result.context
         assert "## Instructions" in result.context
         assert "Think out loud" not in result.context
         assert "Show your reasoning" not in result.context
@@ -188,6 +194,57 @@ class TestHandleBeforeAgent:
         )
         assert "<active_skills>" not in result.context
         assert "### brevity" not in result.context
+        mock_merge.assert_called_once_with(
+            "sess-1",
+            {
+                "_agent_context_injected": True,
+                "_agent_identity_reinject": False,
+            },
+        )
+
+    def test_agent_preamble_injected_once_on_first_prompt(self) -> None:
+        handler = _TestHandler()
+        handler._skill_manager = None
+        event = _make_event(
+            data={"prompt": "hello"},
+            metadata={"_platform_session_id": "sess-1"},
+        )
+        agent = AgentDefinitionBody(
+            name="default",
+            role="Act as the daemon.",
+            goal="Keep the session coherent.",
+            personality="Direct and technical.",
+            instructions="Use the session lifecycle correctly.",
+        )
+
+        with (
+            patch(
+                "gobby.workflows.state_manager.SessionVariableManager.get_variables",
+                side_effect=[
+                    {
+                        "_agent_type": "default",
+                        "_agent_context_injected": False,
+                    },
+                    {
+                        "_agent_type": "default",
+                        "_agent_context_injected": True,
+                    },
+                ],
+            ),
+            patch(
+                "gobby.workflows.state_manager.SessionVariableManager.merge_variables",
+            ) as mock_merge,
+            patch("gobby.workflows.agent_resolver.resolve_agent", return_value=agent),
+        ):
+            first = handler.handle_before_agent(event)
+            second = handler.handle_before_agent(event)
+
+        assert first.context is not None
+        assert first.context.count("## Role") == 1
+        assert "## Goal\nKeep the session coherent." in first.context
+        assert first.context.count("## Personality") == 1
+        assert first.context.count("## Instructions") == 1
+        assert second.context is None
         mock_merge.assert_called_once_with(
             "sess-1",
             {

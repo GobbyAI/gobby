@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -23,7 +23,11 @@ pytestmark = pytest.mark.unit
 
 def _agent_activation_context() -> AgentActivationResult:
     return AgentActivationResult(
-        context="## Role\nSenior engineer\n\n## Personality\nDirect and concise",
+        context=(
+            "## Role\nSenior engineer\n\n"
+            "## Personality\nDirect and concise\n\n"
+            "## Instructions\nUse lifecycle hooks correctly"
+        ),
         agent_name="default",
         description=None,
         role="Senior engineer",
@@ -532,16 +536,17 @@ class TestSessionStartPreCreatedSession:
         assert "Claimed task refs: #15237" in response.context
         assert "## Role" not in response.context
         assert "## Personality" not in response.context
+        assert "## Instructions" not in response.context
         assert "## Claimed Tasks (Persisted)" not in response.context
         mock_dependencies["session_manager"].update_terminal_pickup_metadata.assert_not_called()
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
-    def test_first_pre_created_pickup_gets_full_startup_persona(
+    def test_first_pre_created_pickup_defers_startup_persona_to_first_prompt(
         self,
         mock_svm_cls: MagicMock,
         mock_dependencies: dict,
     ) -> None:
-        """Pre-created sessions without prior context evidence get full startup context."""
+        """Pre-created sessions without prior context evidence reset first-prompt injection."""
         mock_session = MagicMock()
         mock_session.id = "sess-first-123"
         mock_session.project_id = "proj-123"
@@ -580,9 +585,17 @@ class TestSessionStartPreCreatedSession:
         ):
             response = handlers.handle_session_start(event)
 
-        assert response.context is not None
-        assert "## Role" in response.context
-        assert "## Personality" in response.context
+        context = response.context or ""
+        assert "## Role" not in context
+        assert "## Personality" not in context
+        assert "## Instructions" not in context
+        assert (
+            call(
+                "sess-first-123",
+                {"_agent_context_injected": False},
+            )
+            in mock_svm.merge_variables.call_args_list
+        )
         mock_dependencies[
             "session_manager"
         ].update_terminal_pickup_metadata.assert_called_once_with(
@@ -596,14 +609,14 @@ class TestSessionStartPreCreatedSession:
         [("clear", False), ("compact", False), ("resume", True)],
     )
     @patch("gobby.workflows.state_manager.SessionVariableManager")
-    def test_context_loss_sources_get_full_startup_context(
+    def test_context_loss_sources_reset_first_prompt_agent_context(
         self,
         mock_svm_cls: MagicMock,
         source: str,
         pending_reset: bool,
         mock_dependencies: dict,
     ) -> None:
-        """Explicit context-loss starts replay full startup context."""
+        """Explicit context-loss starts reset first-prompt injection."""
         mock_session = MagicMock()
         mock_session.id = f"sess-{source}-123"
         mock_session.project_id = "proj-123"
@@ -644,9 +657,17 @@ class TestSessionStartPreCreatedSession:
         ):
             response = handlers.handle_session_start(event)
 
-        assert response.context is not None
-        assert "## Role" in response.context
-        assert "## Personality" in response.context
+        context = response.context or ""
+        assert "## Role" not in context
+        assert "## Personality" not in context
+        assert "## Instructions" not in context
+        assert (
+            call(
+                mock_session.id,
+                {"_agent_context_injected": False},
+            )
+            in mock_svm.merge_variables.call_args_list
+        )
 
 
 class TestSessionStartNewSession:

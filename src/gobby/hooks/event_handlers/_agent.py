@@ -132,9 +132,8 @@ class AgentEventHandlerMixin(EventHandlersBase):
             context="\n\n".join(context_parts) if context_parts else None,
         )
 
-        # Inject agent instructions (instructions block + skills + code-index)
-        # on first before_agent. Identity (role + personality) was injected at
-        # SessionStart; this defers the heavier instructional content.
+        # Inject prompt-facing agent context on first before_agent. SessionStart
+        # only activates session variables and non-prompt metadata.
         if session_id:
             try:
                 self._inject_agent_instructions_if_needed(event, session_id, response)
@@ -147,7 +146,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
     def _inject_agent_instructions_if_needed(
         self, event: HookEvent, session_id: str, response: HookResponse
     ) -> None:
-        """Format agent identity and instructions on first before_agent.
+        """Format agent preamble on first before_agent.
 
         Everything needed is already in DB from SessionStart activation:
         - Agent name: _agent_type session variable
@@ -187,25 +186,12 @@ class AgentEventHandlerMixin(EventHandlersBase):
         if not agent_body:
             return
 
-        parts: list[str] = []
-
-        if identity_reinject:
-            if agent_body.role:
-                parts.append(f"## Role\n{agent_body.role}")
-            if agent_body.goal:
-                parts.append(f"## Goal\n{agent_body.goal}")
-            if agent_body.personality:
-                parts.append(f"## Personality\n{agent_body.personality}")
-
-        if agent_body.instructions:
-            parts.append(f"## Instructions\n{agent_body.instructions}")
-
-        if parts:
-            instructions_context = "\n\n".join(parts)
+        preamble = agent_body.build_prompt_preamble()
+        if preamble:
             if response.context:
-                response.context = f"{instructions_context}\n\n{response.context}"
+                response.context = f"{preamble}\n\n{response.context}"
             else:
-                response.context = instructions_context
+                response.context = preamble
 
         sv_mgr.merge_variables(
             session_id,

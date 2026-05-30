@@ -54,6 +54,21 @@ def _schedule_tmux_window_rename_for_session(handler: Any, session: Any) -> None
     )
 
 
+def _reset_agent_context_injection(handler: Any, session_id: str | None) -> None:
+    """Force the next before_agent hook to rehydrate prompt-facing agent context."""
+    if not session_id or not handler._session_manager:
+        return
+    try:
+        from gobby.workflows.state_manager import SessionVariableManager
+
+        SessionVariableManager(handler._session_manager.db).merge_variables(
+            session_id,
+            {"_agent_context_injected": False},
+        )
+    except Exception as e:
+        handler.logger.warning(f"Failed to reset agent context injection flag: {e}")
+
+
 def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     """Handle SESSION_START event."""
     _t0 = time.monotonic()
@@ -309,8 +324,8 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
 
     _t_handoff = time.monotonic()
     additional_context: list[str] = []
-    if context_decision.mode == "full" and agent_result and agent_result.context:
-        additional_context.append(agent_result.context)
+    if context_decision.mode == "full":
+        _reset_agent_context_injection(handler, session_id)
 
     populate_handoff_session_variables(handler, session_id, parent_session_id, session_source)
 
@@ -505,8 +520,8 @@ def handle_pre_created_session(
             handler.logger.warning(f"Failed to register with message processor: {e}")
 
     additional_context: list[str] = []
-    if context_decision.mode == "full" and agent_result and agent_result.context:
-        additional_context.append(agent_result.context)
+    if context_decision.mode == "full":
+        _reset_agent_context_injection(handler, session_id)
 
     if session_id and session_obj.project_id and not event.task_id:
         claimed_ctx = handler._build_claimed_task_context(
