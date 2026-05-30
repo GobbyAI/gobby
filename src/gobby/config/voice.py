@@ -5,6 +5,40 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 
+class OpenAICompatibleAudioBindingConfig(BaseModel):
+    """OpenAI-compatible audio capability binding."""
+
+    provider: str = Field(
+        description="Provider id exposed in the AI capability registry.",
+        min_length=1,
+    )
+    url: str = Field(
+        description="OpenAI-compatible API base URL, including the /v1 prefix.",
+        min_length=1,
+    )
+    model: str = Field(
+        description="Audio model name sent to the compatible endpoint.",
+        min_length=1,
+    )
+    api_key: str | None = Field(
+        default=None,
+        description="Optional bearer token for the compatible endpoint.",
+    )
+    transcription_enabled: bool = Field(
+        default=True,
+        description="Expose this binding for audio_transcribe.",
+    )
+    translation_enabled: bool = Field(
+        default=True,
+        description="Expose this binding for audio_translate.",
+    )
+    timeout_seconds: float = Field(
+        default=120.0,
+        gt=0,
+        description="Maximum seconds to wait for the compatible audio endpoint.",
+    )
+
+
 class VoiceConfig(BaseModel):
     """Configuration for voice chat (STT + TTS).
 
@@ -132,4 +166,10 @@ class VoiceConfig(BaseModel):
             "Vite",
         ],
         description="Custom vocabulary terms to bias Whisper STT recognition (proper nouns, technical terms). Pre-loaded with common dev terms.",
+    )
+    openai_compatible_audio: list[OpenAICompatibleAudioBindingConfig] = Field(
+        default_factory=list,
+        description=(
+            "OpenAI-compatible audio capability bindings for audio_transcribe and audio_translate."
+        ),
     )

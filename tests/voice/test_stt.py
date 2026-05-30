@@ -192,6 +192,22 @@ class TestTranscribeSuccess:
         assert result == "Hello world"
 
     @pytest.mark.asyncio
+    async def test_translate_uses_whisper_translate_task(self) -> None:
+        stt = _make_stt()
+        mock_model = MagicMock()
+        mock_model.transcribe.return_value = (
+            [_mock_segment("Hello world")],
+            _mock_info(1.5),
+        )
+        stt._model = mock_model
+
+        audio = b"\x00" * 1000
+        result = await stt.translate(audio, "audio/webm")
+
+        assert result == "Hello world"
+        assert mock_model.transcribe.call_args[1]["task"] == "translate"
+
+    @pytest.mark.asyncio
     async def test_multiple_segments_joined(self) -> None:
         stt = _make_stt()
         mock_model = MagicMock()

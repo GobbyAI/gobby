@@ -112,7 +112,7 @@ class WhisperSTT:
             return self._model
 
     async def transcribe(self, audio_bytes: bytes, mime_type: str = "audio/webm") -> str:
-        """Transcribe audio bytes to text.
+        """Transcribe audio bytes to source-language text.
 
         Args:
             audio_bytes: Raw audio data (WebM/Opus, WAV, etc.)
@@ -124,6 +124,19 @@ class WhisperSTT:
         Raises:
             ValueError: If the audio data is too small to be valid.
         """
+        return await self._transcribe_with_task(audio_bytes, mime_type, task="transcribe")
+
+    async def translate(self, audio_bytes: bytes, mime_type: str = "audio/webm") -> str:
+        """Translate audio bytes to English text."""
+        return await self._transcribe_with_task(audio_bytes, mime_type, task="translate")
+
+    async def _transcribe_with_task(
+        self,
+        audio_bytes: bytes,
+        mime_type: str,
+        *,
+        task: str,
+    ) -> str:
         # Minimum size varies by format: WAV has a 44-byte header so even
         # short speech produces ~1KB+, while WebM needs ~200 bytes for EBML
         # header + cluster.  Tiny blobs cause EOF errors in ffmpeg.
@@ -160,6 +173,7 @@ class WhisperSTT:
                     vad_filter=True,
                     vad_parameters={"min_silence_duration_ms": 500},
                     initial_prompt=self._build_initial_prompt(),
+                    task=task,
                 )
                 text = " ".join(seg.text.strip() for seg in segments)
                 logger.debug(

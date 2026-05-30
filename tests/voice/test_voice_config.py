@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from gobby.config.voice import VoiceConfig
+from gobby.config.voice import OpenAICompatibleAudioBindingConfig, VoiceConfig
 
 pytestmark = pytest.mark.unit
 
@@ -22,6 +22,7 @@ class TestVoiceConfig:
         assert config.whisper_device == "auto"
         assert config.whisper_compute_type == "int8"
         assert config.whisper_prompt == "Gobby"
+        assert config.openai_compatible_audio == []
 
     def test_custom_values(self):
         config = VoiceConfig(
@@ -68,6 +69,29 @@ class TestVoiceConfig:
         assert config.voice.whisper_model_size == "medium"
         assert config.voice.tts_chatterbox_max_generation_tokens == 144
         assert config.voice.tts_clause_max_chars == 220
+
+    def test_openai_compatible_audio_binding(self):
+        config = VoiceConfig(
+            openai_compatible_audio=[
+                OpenAICompatibleAudioBindingConfig(
+                    provider="remote-stt",
+                    url="http://localhost:8080/v1",
+                    model="whisper-large-v3",
+                    api_key="$secret:REMOTE_STT_API_KEY",
+                    translation_enabled=False,
+                    timeout_seconds=30.0,
+                )
+            ]
+        )
+
+        binding = config.openai_compatible_audio[0]
+        assert binding.provider == "remote-stt"
+        assert binding.url == "http://localhost:8080/v1"
+        assert binding.model == "whisper-large-v3"
+        assert binding.api_key == "$secret:REMOTE_STT_API_KEY"
+        assert binding.transcription_enabled is True
+        assert binding.translation_enabled is False
+        assert binding.timeout_seconds == 30.0
 
     @pytest.mark.parametrize("value", [0, 1001])
     def test_generation_token_bounds_validation(self, value: int):

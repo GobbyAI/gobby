@@ -336,10 +336,9 @@ def build_daemon_ai_capability_registry(
     installed = provider_installed or (lambda entry: entry.installed())
     bindings: list[CapabilityBinding] = [
         _embedding_binding(config),
-        _whisper_transcribe_binding(config),
-        _audio_translate_binding(),
         _local_text_generate_binding(config),
     ]
+    bindings.extend(_audio_bindings(config))
 
     for entry in provider_metadata():
         if entry.provider == "agy":
@@ -398,9 +397,20 @@ def _embedding_binding(config: DaemonConfig | None) -> CapabilityBinding:
 
 
 def _whisper_transcribe_binding(config: DaemonConfig | None) -> CapabilityBinding:
+    return _whisper_audio_binding(config, AICapability.AUDIO_TRANSCRIBE)
+
+
+def _whisper_translate_binding(config: DaemonConfig | None) -> CapabilityBinding:
+    return _whisper_audio_binding(config, AICapability.AUDIO_TRANSLATE)
+
+
+def _whisper_audio_binding(
+    config: DaemonConfig | None,
+    capability: AICapability,
+) -> CapabilityBinding:
     if config is None:
         return CapabilityBinding.unavailable(
-            AICapability.AUDIO_TRANSCRIBE,
+            capability,
             "whisper",
             adapter_style=AIAdapterStyle.LOCAL,
             reason="No daemon voice config supplied.",
@@ -417,7 +427,7 @@ def _whisper_transcribe_binding(config: DaemonConfig | None) -> CapabilityBindin
         reason = "voice.stt_enabled is false."
     else:
         return CapabilityBinding(
-            capability=AICapability.AUDIO_TRANSCRIBE,
+            capability=capability,
             provider="whisper",
             adapter_style=AIAdapterStyle.LOCAL,
             available=True,
@@ -426,7 +436,7 @@ def _whisper_transcribe_binding(config: DaemonConfig | None) -> CapabilityBindin
         )
 
     return CapabilityBinding.unavailable(
-        AICapability.AUDIO_TRANSCRIBE,
+        capability,
         "whisper",
         adapter_style=AIAdapterStyle.LOCAL,
         reason=reason,
@@ -435,12 +445,60 @@ def _whisper_transcribe_binding(config: DaemonConfig | None) -> CapabilityBindin
     )
 
 
-def _audio_translate_binding() -> CapabilityBinding:
+def _audio_bindings(config: DaemonConfig | None) -> tuple[CapabilityBinding, ...]:
+    bindings: list[CapabilityBinding] = [
+        _whisper_transcribe_binding(config),
+        _whisper_translate_binding(config),
+    ]
+    if config is None:
+        return tuple(bindings)
+
+    for binding_config in config.voice.openai_compatible_audio:
+        bindings.extend(_openai_compatible_audio_bindings(binding_config))
+    return tuple(bindings)
+
+
+def _openai_compatible_audio_bindings(binding_config: Any) -> tuple[CapabilityBinding, ...]:
+    return (
+        _openai_compatible_audio_binding(
+            binding_config,
+            AICapability.AUDIO_TRANSCRIBE,
+            enabled=binding_config.transcription_enabled,
+        ),
+        _openai_compatible_audio_binding(
+            binding_config,
+            AICapability.AUDIO_TRANSLATE,
+            enabled=binding_config.translation_enabled,
+        ),
+    )
+
+
+def _openai_compatible_audio_binding(
+    binding_config: Any,
+    capability: AICapability,
+    *,
+    enabled: bool,
+) -> CapabilityBinding:
+    metadata = {
+        "url": binding_config.url,
+        "timeout_seconds": binding_config.timeout_seconds,
+    }
+    if enabled:
+        return CapabilityBinding(
+            capability=capability,
+            provider=binding_config.provider,
+            adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+            available=True,
+            models=(binding_config.model,),
+            metadata=metadata,
+        )
     return CapabilityBinding.unavailable(
-        AICapability.AUDIO_TRANSLATE,
-        "whisper",
-        adapter_style=AIAdapterStyle.LOCAL,
-        reason="No audio_translate binding registered.",
+        capability,
+        binding_config.provider,
+        adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+        reason=f"{capability.value} is disabled for this OpenAI-compatible binding.",
+        models=(binding_config.model,),
+        metadata=metadata,
     )
 
 

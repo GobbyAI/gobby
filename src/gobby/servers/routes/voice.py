@@ -6,7 +6,14 @@ import importlib
 import logging
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, File, Query, UploadFile
+from fastapi import APIRouter, File, Form, Query, UploadFile
+
+from gobby.ai.audio import (
+    AudioCapabilityRequest,
+    AudioProviderUnavailableError,
+    build_daemon_audio_service,
+)
+from gobby.ai.registry import AICapability, CapabilityUnavailableError, normalize_capability
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -93,7 +100,14 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
         return result
 
     @router.post("/transcribe")
-    async def transcribe_audio(file: UploadFile = File(...)) -> dict[str, Any]:
+    async def transcribe_audio(
+        file: UploadFile = File(...),
+        capability: str = Form(default=AICapability.AUDIO_TRANSCRIBE.value),
+        provider: str | None = Form(default=None),
+        model: str | None = Form(default=None),
+        language: str | None = Form(default=None),
+        prompt: str | None = Form(default=None),
+    ) -> dict[str, Any]:
         """One-shot audio transcription (for testing).
 
         Upload an audio file to get transcription text.
@@ -105,33 +119,57 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
         if not config.voice.stt_enabled:
             return {"error": "STT disabled in config", "text": ""}
 
-        from gobby.voice.stt import WhisperSTT
-
-        stt = WhisperSTT(config.voice)
-        if not stt.is_available:
-            return {
-                "error": "faster-whisper not installed",
-                "text": "",
-            }
-
         audio_bytes = await file.read()
         content_type = file.content_type or "audio/webm"
+        selected_capability = capability or AICapability.AUDIO_TRANSCRIBE.value
+        failure_label = _audio_failure_label(selected_capability)
 
         try:
-            text = await stt.transcribe(audio_bytes, content_type)
+            service = build_daemon_audio_service(config)
+            result = await service.execute(
+                AudioCapabilityRequest(
+                    audio_bytes=audio_bytes,
+                    mime_type=content_type,
+                    filename=file.filename,
+                    capability=selected_capability,
+                    provider=provider or None,
+                    model=model or None,
+                    language=language or None,
+                    prompt=prompt or None,
+                    caller="voice-route",
+                )
+            )
             return {
-                "text": text,
+                "text": result.text,
                 "bytes": len(audio_bytes),
                 "content_type": content_type,
+                "capability": result.capability.value,
+                "provider": result.provider,
+                "model": result.model,
             }
+        except AudioProviderUnavailableError as e:
+            return {"error": str(e), "text": ""}
+        except CapabilityUnavailableError as e:
+            logger.info("Audio capability unavailable: %s", e)
+            return {"error": str(e), "text": ""}
         except ValueError as e:
-            logger.info("Transcription rejected: %s", e)
+            logger.info("%s rejected: %s", failure_label, e)
             return {"error": str(e), "text": ""}
         except TimeoutError:
-            logger.warning("Transcription timed out")
-            return {"error": "Transcription timed out", "text": ""}
+            logger.warning("%s timed out", failure_label)
+            return {"error": f"{failure_label} timed out", "text": ""}
         except Exception:
-            logger.error("Transcription error", exc_info=True)
-            return {"error": "Transcription failed", "text": ""}
+            logger.error("%s error", failure_label, exc_info=True)
+            return {"error": f"{failure_label} failed", "text": ""}
 
     return router
+
+
+def _audio_failure_label(capability: str) -> str:
+    try:
+        normalized = normalize_capability(capability)
+    except ValueError:
+        return "Audio processing"
+    if normalized == AICapability.AUDIO_TRANSLATE:
+        return "Translation"
+    return "Transcription"

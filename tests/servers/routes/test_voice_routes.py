@@ -9,7 +9,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from gobby.config.voice import VoiceConfig
+from gobby.config.app import DaemonConfig
+from gobby.config.voice import OpenAICompatibleAudioBindingConfig, VoiceConfig
 from gobby.servers.routes.voice import create_voice_router
 
 pytestmark = pytest.mark.unit
@@ -27,8 +28,7 @@ class TestVoiceRoutes:
     def server_with_voice(self, voice_config: VoiceConfig) -> MagicMock:
         """Server with real VoiceConfig attached."""
         server = MagicMock()
-        config = MagicMock()
-        config.voice = voice_config
+        config = DaemonConfig(voice=voice_config)
         server.config = config
         server.services.websocket_server = None
         server.websocket_server = None
@@ -331,6 +331,75 @@ class TestVoiceRoutes:
         assert data["text"] == "Hello world"
         assert data["bytes"] == len(b"audio data here")
         assert data["content_type"] == "audio/webm"
+        assert data["capability"] == "audio_transcribe"
+        assert data["provider"] == "whisper"
+        assert data["model"] == "base"
+
+    def test_transcribe_selects_openai_compatible_provider(
+        self, client: TestClient, server_with_voice: MagicMock
+    ) -> None:
+        server_with_voice.config.voice = VoiceConfig(
+            enabled=True,
+            openai_compatible_audio=[
+                OpenAICompatibleAudioBindingConfig(
+                    provider="remote-stt",
+                    url="http://localhost:8080/v1",
+                    model="whisper-large-v3",
+                )
+            ],
+        )
+
+        with patch(
+            "gobby.ai.audio.OpenAICompatibleAudioAdapter.transcribe",
+            new_callable=AsyncMock,
+            return_value="Remote transcript",
+        ) as transcribe:
+            response = client.post(
+                "/api/voice/transcribe",
+                data={"provider": "remote-stt"},
+                files={"file": ("test.webm", b"audio data here", "audio/webm")},
+            )
+
+        assert response.status_code == 200
+        transcribe.assert_awaited_once()
+        data = response.json()
+        assert data["text"] == "Remote transcript"
+        assert data["capability"] == "audio_transcribe"
+        assert data["provider"] == "remote-stt"
+        assert data["model"] == "whisper-large-v3"
+
+    def test_transcribe_endpoint_can_select_audio_translate(
+        self, client: TestClient, server_with_voice: MagicMock
+    ) -> None:
+        server_with_voice.config.voice = VoiceConfig(
+            enabled=True,
+            openai_compatible_audio=[
+                OpenAICompatibleAudioBindingConfig(
+                    provider="remote-stt",
+                    url="http://localhost:8080/v1",
+                    model="whisper-large-v3",
+                )
+            ],
+        )
+
+        with patch(
+            "gobby.ai.audio.OpenAICompatibleAudioAdapter.translate",
+            new_callable=AsyncMock,
+            return_value="Remote translation",
+        ) as translate:
+            response = client.post(
+                "/api/voice/transcribe",
+                data={"capability": "audio_translate", "provider": "remote-stt"},
+                files={"file": ("test.webm", b"audio data here", "audio/webm")},
+            )
+
+        assert response.status_code == 200
+        translate.assert_awaited_once()
+        data = response.json()
+        assert data["text"] == "Remote translation"
+        assert data["capability"] == "audio_translate"
+        assert data["provider"] == "remote-stt"
+        assert data["model"] == "whisper-large-v3"
 
     def test_transcribe_default_content_type(
         self, client: TestClient, server_with_voice: MagicMock

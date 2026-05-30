@@ -14,7 +14,7 @@ from gobby.ai import (
 from gobby.config.app import DaemonConfig
 from gobby.config.local import LocalConfig
 from gobby.config.persistence import EmbeddingsConfig
-from gobby.config.voice import VoiceConfig
+from gobby.config.voice import OpenAICompatibleAudioBindingConfig, VoiceConfig
 from gobby.providers import AGY_UNAVAILABLE_REASON, ProviderMetadata
 
 pytestmark = pytest.mark.unit
@@ -168,6 +168,59 @@ def test_daemon_registry_reports_voice_transcribe_configured_state() -> None:
     assert binding.provider == "whisper"
     assert binding.adapter_style == AIAdapterStyle.LOCAL
     assert binding.models == ("base",)
+
+    translate = registry.select(AICapability.AUDIO_TRANSLATE)
+    assert translate.provider == "whisper"
+    assert translate.adapter_style == AIAdapterStyle.LOCAL
+    assert translate.models == ("base",)
+
+
+def test_daemon_registry_reports_openai_compatible_audio_bindings() -> None:
+    registry = build_daemon_ai_capability_registry(
+        DaemonConfig(
+            voice=VoiceConfig(
+                enabled=True,
+                openai_compatible_audio=[
+                    OpenAICompatibleAudioBindingConfig(
+                        provider="remote-stt",
+                        url="http://localhost:8080/v1",
+                        model="whisper-large-v3",
+                    )
+                ],
+            )
+        ),
+        provider_installed=lambda _entry: False,
+    )
+
+    for capability in (AICapability.AUDIO_TRANSCRIBE, AICapability.AUDIO_TRANSLATE):
+        binding = registry.select(capability, provider="remote-stt")
+        assert binding.adapter_style == AIAdapterStyle.OPENAI_COMPATIBLE
+        assert binding.models == ("whisper-large-v3",)
+        assert binding.metadata["url"] == "http://localhost:8080/v1"
+
+
+def test_daemon_registry_reports_disabled_openai_audio_capability() -> None:
+    registry = build_daemon_ai_capability_registry(
+        DaemonConfig(
+            voice=VoiceConfig(
+                enabled=True,
+                openai_compatible_audio=[
+                    OpenAICompatibleAudioBindingConfig(
+                        provider="remote-stt",
+                        url="http://localhost:8080/v1",
+                        model="whisper-large-v3",
+                        translation_enabled=False,
+                    )
+                ],
+            )
+        ),
+        provider_installed=lambda _entry: False,
+    )
+
+    binding = registry.binding(AICapability.AUDIO_TRANSLATE, "remote-stt")
+    assert binding is not None
+    assert binding.available is False
+    assert binding.reason == "audio_translate is disabled for this OpenAI-compatible binding."
 
 
 def test_daemon_registry_marks_missing_provider_binaries_unavailable() -> None:
