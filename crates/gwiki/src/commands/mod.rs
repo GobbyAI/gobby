@@ -1,10 +1,10 @@
-pub mod backlinks;
-pub mod collect;
-pub mod index;
-pub mod init;
-pub mod search;
-pub mod setup;
-pub mod status;
+pub(crate) mod backlinks;
+pub(crate) mod collect;
+pub(crate) mod index;
+pub(crate) mod init;
+pub(crate) mod search;
+pub(crate) mod setup;
+pub(crate) mod status;
 
 use crate::{CommandOutcome, CommandResult, ScopeIdentity};
 
