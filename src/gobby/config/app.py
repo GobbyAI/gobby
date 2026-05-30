@@ -50,7 +50,7 @@ from gobby.config.sessions import (
     ChatHistoryConfig,
     ContextInjectionConfig,
     DigestConfig,
-    MemoryRecallHelperConfig,
+    MemoryRecallConfig,
     MessageTrackingConfig,
     SessionLifecycleConfig,
     SessionSummaryConfig,
@@ -205,6 +205,10 @@ class DaemonConfig(BaseModel):
                 raise ValueError(
                     "conductor config has been removed. Remove the top-level conductor section."
                 )
+            if "memory_recall_helper" in data:
+                raise ValueError(
+                    "memory_recall_helper config has been removed. Use memory_recall instead."
+                )
         return data
 
     # Daemon settings
@@ -302,8 +306,8 @@ class DaemonConfig(BaseModel):
         default_factory=DigestConfig,
         description="Rolling digest and title generation configuration",
     )
-    memory_recall_helper: MemoryRecallHelperConfig = Field(
-        default_factory=MemoryRecallHelperConfig,
+    memory_recall: MemoryRecallConfig = Field(
+        default_factory=MemoryRecallConfig,
         description="Daemon-owned memory recall runner configuration",
     )
     recommend_tools: RecommendToolsConfig = Field(

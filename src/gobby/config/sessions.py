@@ -5,7 +5,7 @@ Contains session-related Pydantic config models:
 - ContextInjectionConfig: Subagent context injection settings
 - SessionSummaryConfig: Session summary generation settings
 - DigestConfig: Rolling digest and title generation settings
-- MemoryRecallHelperConfig: Daemon-owned memory recall settings
+- MemoryRecallConfig: Daemon-owned memory recall settings
 - MessageTrackingConfig: Session message tracking settings
 - SessionLifecycleConfig: Session lifecycle management settings
 
@@ -20,7 +20,7 @@ __all__ = [
     "ChatHistoryConfig",
     "ContextInjectionConfig",
     "DigestConfig",
-    "MemoryRecallHelperConfig",
+    "MemoryRecallConfig",
     "SessionSummaryConfig",
     "MessageTrackingConfig",
     "SessionLifecycleConfig",
@@ -153,7 +153,7 @@ class DigestConfig(FeatureDefaultConfig):
     )
 
 
-class MemoryRecallHelperConfig(FeatureDefaultConfig):
+class MemoryRecallConfig(FeatureDefaultConfig):
     """Daemon-owned memory recall runner configuration."""
 
     enabled: bool = Field(

@@ -9,7 +9,7 @@ from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.hooks.session_types import HookSessionManager
 
 if TYPE_CHECKING:
-    from gobby.config.sessions import MemoryRecallHelperConfig
+    from gobby.config.sessions import MemoryRecallConfig
     from gobby.config.skills import SkillsConfig
     from gobby.config.tasks import WorkflowConfig
     from gobby.hooks.session_coordinator import SessionCoordinator
@@ -36,7 +36,7 @@ class EventHandlersBase:
     _session_coordinator: SessionCoordinator | None
     _skill_manager: HookSkillManager | None
     _skills_config: SkillsConfig | None
-    _memory_recall_helper_config: MemoryRecallHelperConfig | None
+    _memory_recall_config: MemoryRecallConfig | None
     _call_tool: Callable[[str, str, dict[str, Any]], dict[str, Any] | None] | None
     _get_machine_id: Callable[[], str]
     _resolve_project_id: Callable[[str | None, str | None], str]

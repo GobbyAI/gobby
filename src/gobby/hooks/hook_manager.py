@@ -460,7 +460,7 @@ class HookManager:
         session_id = event.metadata.get("_platform_session_id")
         if not isinstance(session_id, str) or not session_id:
             return workflow_context
-        config = getattr(self._config, "memory_recall_helper", None)
+        config = getattr(self._config, "memory_recall", None)
         if config is None or self._memory_manager is None or self._database is None:
             return workflow_context
 
@@ -476,20 +476,18 @@ class HookManager:
                 config=config,
                 log=self.logger,
             )
-            payload = self._run_coro_blocking(runner.run(event, session_id, dict(variables)))
-            if payload is None:
+            result = self._run_coro_blocking(runner.run(event, session_id, dict(variables)))
+            if result is None:
                 return workflow_context
-
-            message = payload.to_message()
-            if message.get("type") != "memory_recall":
-                return workflow_context
-            result = self._dedup_memory_results(
-                {"success": True, "memories": message.get("memories") or []},
+            deduped = self._dedup_memory_results(
+                {"success": True, "memories": result.memories},
                 session_id,
             )
-            if not result.get("memories"):
+            if not deduped.get("memories"):
                 return workflow_context
-            formatted = self._format_discovery_result({"tool": "search_memories", "result": result})
+            formatted = self._format_discovery_result(
+                {"tool": "search_memories", "result": deduped}
+            )
         except Exception as exc:  # noqa: BLE001 - recall must fail open at hook boundary
             self.logger.warning("Daemon memory recall failed: %s", exc)
             return workflow_context

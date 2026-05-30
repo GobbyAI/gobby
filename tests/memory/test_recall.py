@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from gobby.config.sessions import MemoryRecallHelperConfig
+from gobby.config.sessions import MemoryRecallConfig
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.memory.recall import MemoryRecallRunner, is_memory_recall_eligible
 from gobby.storage.agents import LocalAgentRunManager
@@ -123,7 +123,6 @@ def _memory(memory_id: str, content: str = "Useful project convention") -> Memor
 
 def _variables(**overrides: Any) -> dict[str, Any]:
     variables: dict[str, Any] = {
-        "memory_recall_helper_enabled": True,
         "parent_turn_seq": 3,
         "is_spawned_agent": False,
     }
@@ -155,7 +154,7 @@ def test_recall_eligibility_only_accepts_real_parent_user_turns(
     variables: dict[str, Any],
     expected: bool,
 ) -> None:
-    assert is_memory_recall_eligible(event, variables, MemoryRecallHelperConfig()) is expected
+    assert is_memory_recall_eligible(event, variables, MemoryRecallConfig()) is expected
 
 
 @pytest.mark.asyncio
@@ -170,7 +169,7 @@ async def test_runner_selects_memory_with_json_feature_call_and_no_child_session
         ]
     )
     llm = FakeLLMService({"memory_ids": ["mem-1", "mem-1", "mem-2"]})
-    config = MemoryRecallHelperConfig(candidate_limit=8, selected_limit=1, min_score=0.5)
+    config = MemoryRecallConfig(candidate_limit=8, selected_limit=1, min_score=0.5)
     runner = MemoryRecallRunner(
         db=temp_db,
         memory_manager=memory_manager,  # type: ignore[arg-type]
@@ -181,21 +180,18 @@ async def test_runner_selects_memory_with_json_feature_call_and_no_child_session
     payload = await runner.run(_event(), SESSION_ID, _variables())
 
     assert payload is not None
-    assert payload.to_message() == {
-        "type": "memory_recall",
-        "origin_turn_seq": 3,
-        "memories": [
-            {
-                "id": "mem-1",
-                "content": "Use gcode before broad source reads.",
-                "type": "fact",
-                "created_at": "2026-01-01T00:00:00+00:00",
-                "tags": ["test"],
-                "similarity": 0.91,
-                "search_via": "semantic",
-            }
-        ],
-    }
+    assert payload.origin_turn_seq == 3
+    assert payload.memories == [
+        {
+            "id": "mem-1",
+            "content": "Use gcode before broad source reads.",
+            "type": "fact",
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "tags": ["test"],
+            "similarity": 0.91,
+            "search_via": "semantic",
+        }
+    ]
     assert memory_manager.calls == [
         {
             "query": "please use project memory to fix this regression today",
@@ -204,7 +200,7 @@ async def test_runner_selects_memory_with_json_feature_call_and_no_child_session
             "min_score": 0.5,
         }
     ]
-    assert llm.calls[0]["caller"] == "memory.recall_helper"
+    assert llm.calls[0]["caller"] == "memory.recall"
     assert llm.calls[0]["feature_config"] is config
     assert LocalAgentRunManager(temp_db).list_by_parent(SESSION_ID) == []
 
@@ -219,7 +215,7 @@ async def test_runner_filters_already_injected_duplicates_before_llm(temp_db: Hu
         db=temp_db,
         memory_manager=FakeMemoryManager([_memory("mem-1"), _memory("mem-2")]),  # type: ignore[arg-type]
         llm_service=llm,
-        config=MemoryRecallHelperConfig(),
+        config=MemoryRecallConfig(),
     )
 
     payload = await runner.run(_event(), SESSION_ID, _variables())
@@ -238,7 +234,7 @@ async def test_runner_skips_legacy_feature_only_service(temp_db: HubDatabase) ->
         db=temp_db,
         memory_manager=FakeMemoryManager([_memory("mem-1")]),  # type: ignore[arg-type]
         llm_service=llm,
-        config=MemoryRecallHelperConfig(),
+        config=MemoryRecallConfig(),
     )
 
     payload = await runner.run(_event(), SESSION_ID, _variables())
@@ -267,7 +263,7 @@ async def test_runner_safe_empty_candidates_and_invalid_json(
         db=temp_db,
         memory_manager=memory_manager,  # type: ignore[arg-type]
         llm_service=llm,
-        config=MemoryRecallHelperConfig(),
+        config=MemoryRecallConfig(),
     )
 
     payload = await runner.run(_event(), SESSION_ID, _variables())
@@ -285,7 +281,7 @@ async def test_runner_safe_when_llm_fails(temp_db: HubDatabase) -> None:
         db=temp_db,
         memory_manager=FakeMemoryManager([_memory("mem-1")]),  # type: ignore[arg-type]
         llm_service=llm,
-        config=MemoryRecallHelperConfig(),
+        config=MemoryRecallConfig(),
     )
 
     assert await runner.run(_event(), SESSION_ID, _variables()) is None
@@ -299,7 +295,7 @@ async def test_runner_drops_stale_turn_result(temp_db: HubDatabase) -> None:
         db=temp_db,
         memory_manager=FakeMemoryManager([_memory("mem-1")]),  # type: ignore[arg-type]
         llm_service=FakeLLMService({"memory_ids": ["mem-1"]}),
-        config=MemoryRecallHelperConfig(),
+        config=MemoryRecallConfig(),
     )
 
     payload = await runner.run(_event(), SESSION_ID, _variables(parent_turn_seq=3))

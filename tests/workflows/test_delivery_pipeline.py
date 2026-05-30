@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 from datetime import UTC, datetime
 from typing import Any
 
@@ -51,7 +50,7 @@ def _memory_recall_message(
     memories: list[dict[str, Any]],
     *,
     origin_turn_seq: int | None = 4,
-    from_session: str = "child-helper",
+    from_session: str = "legacy-memory-recall",
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {"type": "memory_recall", "memories": memories}
     if origin_turn_seq is not None:
@@ -64,7 +63,7 @@ def _plain_message(content: str, *, from_session: str = "child-plain") -> dict[s
 
 
 def _variables(**overrides: Any) -> dict[str, Any]:
-    variables = {"parent_turn_seq": 5, "memory_recall_helper_enabled": True}
+    variables = {"parent_turn_seq": 5}
     variables.update(overrides)
     return variables
 
@@ -115,19 +114,21 @@ def test_empty_delivery_no_mutation(engine: RuleEngine, db: HubDatabase) -> None
     assert "injected_memory_ids" not in _vars(db, "plat-Y")
 
 
-def test_single_memory_recall_inject(engine: RuleEngine, db: HubDatabase) -> None:
+def test_memory_recall_delivery_payload_ignored(engine: RuleEngine, db: HubDatabase) -> None:
     result = engine._format_delivery_result(
         {"messages": [_memory_recall_message([_memory("m1")])], "count": 1},
         "plat-Y",
         _variables(),
     )
 
-    assert result is not None
-    assert "content-sentinel-m1" in result
-    assert _vars(db, "plat-Y")["injected_memory_ids"] == ["m1"]
+    assert result is None
+    assert "injected_memory_ids" not in _vars(db, "plat-Y")
 
 
-def test_dedup_against_injected_ids(engine: RuleEngine, db: HubDatabase) -> None:
+def test_memory_recall_delivery_does_not_touch_existing_injected_ids(
+    engine: RuleEngine,
+    db: HubDatabase,
+) -> None:
     _set_injected(db, "plat-Y", ["m1"])
 
     result = engine._format_delivery_result(
@@ -140,7 +141,10 @@ def test_dedup_against_injected_ids(engine: RuleEngine, db: HubDatabase) -> None
     assert _vars(db, "plat-Y")["injected_memory_ids"] == ["m1"]
 
 
-def test_mixed_memory_recall_and_plain_messages(engine: RuleEngine, db: HubDatabase) -> None:
+def test_mixed_memory_recall_and_plain_messages_formats_plain_only(
+    engine: RuleEngine,
+    db: HubDatabase,
+) -> None:
     result = engine._format_delivery_result(
         {
             "messages": [
@@ -154,9 +158,9 @@ def test_mixed_memory_recall_and_plain_messages(engine: RuleEngine, db: HubDatab
     )
 
     assert result is not None
-    assert result.count("content-sentinel-m1") == 1
+    assert "content-sentinel-m1" not in result
     assert "plain-msg-sentinel" in result
-    assert _vars(db, "plat-Y")["injected_memory_ids"] == ["m1"]
+    assert "injected_memory_ids" not in _vars(db, "plat-Y")
 
 
 def test_malformed_message_content_falls_through(engine: RuleEngine) -> None:
@@ -186,14 +190,14 @@ async def test_concurrent_append_race_safe(db: HubDatabase) -> None:
     assert _vars(db, "plat-Y")["injected_memory_ids"] == ["m1", "m2"]
 
 
-def test_memory_recall_delivery_does_not_depend_on_child_session_state(
+def test_memory_recall_delivery_payload_ignored_independent_of_sender(
     engine: RuleEngine,
     db: HubDatabase,
 ) -> None:
     result = engine._format_delivery_result(
         {
             "messages": [
-                _memory_recall_message([_memory("m-recall")], from_session="old-helper-name"),
+                _memory_recall_message([_memory("m-recall")], from_session="old-recall-name"),
                 _plain_message("plain-sentinel", from_session="old-worker-name"),
             ],
             "count": 2,
@@ -203,9 +207,9 @@ def test_memory_recall_delivery_does_not_depend_on_child_session_state(
     )
 
     assert result is not None
-    assert "content-sentinel-m-recall" in result
+    assert "content-sentinel-m-recall" not in result
     assert "plain-sentinel" in result
-    assert _vars(db, "plat-Y")["injected_memory_ids"] == ["m-recall"]
+    assert "injected_memory_ids" not in _vars(db, "plat-Y")
 
 
 @pytest.mark.asyncio
@@ -238,7 +242,10 @@ async def test_session_key_uses_platform_session_id(
     assert "injected_memory_ids" not in _vars(db, "ext-X")
 
 
-def test_freshness_guard_b_origin_turn_seq(engine: RuleEngine, db: HubDatabase) -> None:
+def test_stale_memory_recall_delivery_payloads_ignored(
+    engine: RuleEngine,
+    db: HubDatabase,
+) -> None:
     result = engine._format_delivery_result(
         {
             "messages": [
@@ -254,25 +261,15 @@ def test_freshness_guard_b_origin_turn_seq(engine: RuleEngine, db: HubDatabase) 
         _variables(),
     )
 
-    assert result is not None
-    assert "content-sentinel-fresh" in result
-    assert "content-sentinel-too-old" not in result
-    assert "content-sentinel-same-turn" not in result
-    assert "content-sentinel-future" not in result
-    assert "content-sentinel-missing" not in result
-    assert _vars(db, "plat-Y")["injected_memory_ids"] == ["fresh"]
+    assert result is None
+    assert "injected_memory_ids" not in _vars(db, "plat-Y")
 
 
-@pytest.mark.parametrize("parent_turn_seq", [None, "5"])
-def test_fail_closed_when_parent_turn_seq_missing(
+def test_memory_recall_delivery_ignored_when_parent_turn_seq_missing(
     engine: RuleEngine,
     db: HubDatabase,
-    caplog: pytest.LogCaptureFixture,
-    parent_turn_seq: Any,
 ) -> None:
-    variables = {"memory_recall_helper_enabled": True}
-    if parent_turn_seq is not None:
-        variables["parent_turn_seq"] = parent_turn_seq
+    variables: dict[str, Any] = {}
 
     result = engine._format_delivery_result(
         {
@@ -290,10 +287,12 @@ def test_fail_closed_when_parent_turn_seq_missing(
     assert "content-sentinel-unverified" not in result
     assert "plain-msg-unverified-sentinel" in result
     assert "injected_memory_ids" not in _vars(db, "plat-Y")
-    assert "parent_turn_seq missing or non-int" in caplog.text
 
 
-def test_kill_switch_drops_memory_recall_payloads(engine: RuleEngine, db: HubDatabase) -> None:
+def test_removed_kill_switch_does_not_enable_memory_recall_delivery(
+    engine: RuleEngine,
+    db: HubDatabase,
+) -> None:
     result = engine._format_delivery_result(
         {
             "messages": [
@@ -333,59 +332,6 @@ def test_search_memories_formatter_dedup(engine: RuleEngine, db: HubDatabase) ->
     assert "content-sentinel-m2" in second
     assert _vars(db, "plat-Y")["injected_memory_ids"] == ["m1", "m2"]
     assert engine._format_search_memories_result({"memories": []}, "plat-Y", _variables()) is None
-
-
-def test_hard_cap_truncates_excess_helper_memories(
-    engine: RuleEngine,
-    db: HubDatabase,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    caplog.set_level(logging.DEBUG, logger="gobby.workflows.engine.effects")
-    result = engine._format_delivery_result(
-        {
-            "messages": [
-                _memory_recall_message([_memory(f"m{i}") for i in range(1, 6)]),
-            ],
-            "count": 1,
-        },
-        "plat-Y",
-        _variables(),
-    )
-
-    assert result is not None
-    assert "content-sentinel-m1" in result
-    assert "content-sentinel-m2" in result
-    assert "content-sentinel-m3" in result
-    assert "content-sentinel-m4" not in result
-    assert "content-sentinel-m5" not in result
-    assert _vars(db, "plat-Y")["injected_memory_ids"] == ["m1", "m2", "m3"]
-    assert "Capping recall memories from 5 to 3" in caplog.text
-
-
-def test_cap_applies_after_merging_all_memory_recall_messages(
-    engine: RuleEngine,
-    db: HubDatabase,
-) -> None:
-    result = engine._format_delivery_result(
-        {
-            "messages": [
-                _memory_recall_message([_memory(f"m{i}") for i in range(1, 4)]),
-                _memory_recall_message([_memory(f"m{i}") for i in range(4, 7)]),
-            ],
-            "count": 2,
-        },
-        "plat-Y",
-        _variables(),
-    )
-
-    assert result is not None
-    assert "content-sentinel-m1" in result
-    assert "content-sentinel-m2" in result
-    assert "content-sentinel-m3" in result
-    assert "content-sentinel-m4" not in result
-    assert "content-sentinel-m5" not in result
-    assert "content-sentinel-m6" not in result
-    assert _vars(db, "plat-Y")["injected_memory_ids"] == ["m1", "m2", "m3"]
 
 
 @pytest.mark.asyncio

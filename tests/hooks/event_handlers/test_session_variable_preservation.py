@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gobby.config.sessions import MemoryRecallHelperConfig
+from gobby.config.sessions import MemoryRecallConfig
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
@@ -27,7 +27,7 @@ pytestmark = [pytest.mark.unit]
 
 def _make_event_handlers(
     *,
-    memory_recall_helper_config: MemoryRecallHelperConfig | None = None,
+    memory_recall_config: MemoryRecallConfig | None = None,
 ) -> EventHandlers:
     """Create an EventHandlers instance with minimal mocked dependencies."""
     session_storage = MagicMock()
@@ -38,7 +38,7 @@ def _make_event_handlers(
     return EventHandlers(
         session_manager=session_manager,
         session_storage=session_storage,
-        memory_recall_helper_config=memory_recall_helper_config,
+        memory_recall_config=memory_recall_config,
         logger=logging.getLogger("test"),
     )
 
@@ -93,11 +93,11 @@ def _make_real_event_handlers(
     db: HubDatabase,
     project_id: str,
     *,
-    memory_recall_helper_config: MemoryRecallHelperConfig | None = None,
+    memory_recall_config: MemoryRecallConfig | None = None,
 ) -> EventHandlers:
     return EventHandlers(
         session_manager=SessionManager(db),  # type: ignore[arg-type]
-        memory_recall_helper_config=memory_recall_helper_config,
+        memory_recall_config=memory_recall_config,
         get_machine_id=lambda: "machine-1",
         resolve_project_id=lambda _project_id, _cwd: project_id,
         logger=logging.getLogger("test"),
@@ -114,12 +114,12 @@ def _register_session(db: HubDatabase, project_id: str, tmp_path: Path) -> str:
     )
 
 
-def test_event_handlers_round_trips_memory_recall_helper_config() -> None:
-    config = MemoryRecallHelperConfig(enabled=False)
+def test_event_handlers_round_trips_memory_recall_config() -> None:
+    config = MemoryRecallConfig(enabled=False)
 
-    handlers = _make_event_handlers(memory_recall_helper_config=config)
+    handlers = _make_event_handlers(memory_recall_config=config)
 
-    assert handlers._memory_recall_helper_config is config
+    assert handlers._memory_recall_config is config
 
 
 class TestNewSessionGetsAllDefaults:
@@ -343,10 +343,10 @@ class TestMixedNewAndExistingVariables:
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     @patch("gobby.workflows.agent_resolver.resolve_agent")
-    def test_internal_keys_excludes_memory_recall_helper_enabled_from_variables_count(
+    def test_removed_memory_recall_helper_flag_counts_as_regular_variable(
         self, mock_resolve: MagicMock, mock_svm_cls: MagicMock
     ) -> None:
-        """The internal memory helper flag must not count as a user variable."""
+        """The removed helper flag is no longer treated as an internal key."""
         handlers = _make_event_handlers()
         mock_resolve.return_value = _make_agent_body(
             variables={
@@ -367,7 +367,7 @@ class TestMixedNewAndExistingVariables:
         )
 
         assert result is not None
-        assert result.variables_count == 1
+        assert result.variables_count == 2
 
 
 @patch("gobby.workflows.agent_resolver.resolve_agent")
@@ -421,21 +421,17 @@ def test_parent_turn_seq_seeded_on_first_activation(
 
     session_id = event.metadata["_platform_session_id"]
     variables = SessionVariableManager(temp_db).get_variables(session_id)
-    assert variables["memory_recall_helper_enabled"] is True
     assert variables["parent_turn_seq"] == 0
+    assert "memory_recall_helper_enabled" not in variables
 
 
 def test_variables_seeded_when_activation_skipped_at_flow_level(
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
-    """Skipped default-agent activation must still seed helper variables."""
+    """Skipped default-agent activation must still seed parent turn tracking."""
     project_id = _make_project(temp_db, tmp_path)
-    handlers = _make_real_event_handlers(
-        temp_db,
-        project_id,
-        memory_recall_helper_config=MemoryRecallHelperConfig(enabled=False),
-    )
+    handlers = _make_real_event_handlers(temp_db, project_id)
     event = _make_hook_event(
         {"cwd": str(tmp_path), "project_id": project_id, "skip_default_agent_activation": True}
     )
@@ -455,8 +451,8 @@ def test_variables_seeded_when_activation_skipped_at_flow_level(
     activate.assert_not_called()
     session_id = event.metadata["_platform_session_id"]
     variables = SessionVariableManager(temp_db).get_variables(session_id)
-    assert variables["memory_recall_helper_enabled"] is False
     assert variables["parent_turn_seq"] == 0
+    assert "memory_recall_helper_enabled" not in variables
 
 
 def test_full_session_start_marks_startup_context_injected(
@@ -499,7 +495,7 @@ def test_variables_seeded_in_pre_created_session_flow(
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
-    """Pre-created sessions seed helper variables before activation runs."""
+    """Pre-created sessions seed parent turn tracking before activation runs."""
     project_id = _make_project(temp_db, tmp_path)
     session_id = _register_session(temp_db, project_id, tmp_path)
     session_manager = SessionManager(temp_db)
@@ -545,7 +541,7 @@ def test_variables_seeded_in_pre_created_session_flow(
         )
 
     variables = SessionVariableManager(temp_db).get_variables(session_id)
-    assert seen_during_activation["memory_recall_helper_enabled"] is True
     assert seen_during_activation["parent_turn_seq"] == 0
-    assert variables["memory_recall_helper_enabled"] is True
+    assert "memory_recall_helper_enabled" not in seen_during_activation
     assert variables["parent_turn_seq"] == 0
+    assert "memory_recall_helper_enabled" not in variables

@@ -13,7 +13,7 @@ from gobby.prompts.loader import PromptLoader
 from gobby.workflows.state_manager import SessionVariableManager
 
 if TYPE_CHECKING:
-    from gobby.config.sessions import MemoryRecallHelperConfig
+    from gobby.config.sessions import MemoryRecallConfig
     from gobby.memory.manager import MemoryManager
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.memories import Memory
@@ -29,25 +29,17 @@ RECALL_SYSTEM_PROMPT = (
 
 
 @dataclass(frozen=True)
-class MemoryRecallPayload:
+class MemoryRecallResult:
     """Selected memories plus the parent turn freshness token."""
 
     origin_turn_seq: int
     memories: list[dict[str, Any]]
 
-    def to_message(self) -> dict[str, Any]:
-        """Return the legacy memory_recall message payload shape."""
-        return {
-            "type": "memory_recall",
-            "origin_turn_seq": self.origin_turn_seq,
-            "memories": self.memories,
-        }
-
 
 def is_memory_recall_eligible(
     event: HookEvent,
     variables: dict[str, Any],
-    config: MemoryRecallHelperConfig | None,
+    config: MemoryRecallConfig | None,
 ) -> bool:
     """Return whether this hook event is a real parent user turn."""
     if config is not None and not config.enabled:
@@ -81,7 +73,7 @@ class MemoryRecallRunner:
         db: HubDatabase,
         memory_manager: MemoryManager,
         llm_service: Any | None,
-        config: MemoryRecallHelperConfig,
+        config: MemoryRecallConfig,
         log: logging.Logger | None = None,
     ) -> None:
         self.db = db
@@ -95,8 +87,8 @@ class MemoryRecallRunner:
         event: HookEvent,
         session_id: str,
         variables: dict[str, Any],
-    ) -> MemoryRecallPayload | None:
-        """Return a fresh memory_recall payload for an eligible parent turn."""
+    ) -> MemoryRecallResult | None:
+        """Return fresh memory recall results for an eligible parent turn."""
         if not is_memory_recall_eligible(event, variables, self.config):
             return None
         if self.llm_service is None or not hasattr(self.llm_service, "call_json_feature"):
@@ -141,7 +133,7 @@ class MemoryRecallRunner:
             )
             return None
 
-        return MemoryRecallPayload(origin_turn_seq=origin_turn_seq, memories=selected)
+        return MemoryRecallResult(origin_turn_seq=origin_turn_seq, memories=selected)
 
     async def _search_candidates(self, prompt: str, project_id: str | None) -> list[Memory]:
         try:
@@ -214,7 +206,7 @@ class MemoryRecallRunner:
             self.config,
             recall_prompt,
             system_prompt=RECALL_SYSTEM_PROMPT,
-            caller="memory.recall_helper",
+            caller="memory.recall",
         )
 
     def _render_prompt(self, prompt: str, candidates: list[dict[str, Any]]) -> str:

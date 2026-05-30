@@ -308,8 +308,8 @@ class EffectsMixin:
     def _format_delivery_result(
         self,
         result: dict[str, Any],
-        platform_session_id: str | None,
-        variables: dict[str, Any],
+        _platform_session_id: str | None,
+        _variables: dict[str, Any],
     ) -> str | None:
         """Inline delivery-time pipeline for deliver_pending_messages results."""
         from gobby.hooks.dispatchers.mcp import format_discovery_result
@@ -318,14 +318,7 @@ class EffectsMixin:
             return None
 
         messages = result.get("messages") or []
-        recall_memories: dict[str, dict[str, Any]] = {}
         other_messages: list[Any] = []
-
-        current_turn_seq = variables.get("parent_turn_seq")
-        expected_origin_turn_seq = (
-            current_turn_seq - 1 if isinstance(current_turn_seq, int) else None
-        )
-        recall_enabled = variables.get("memory_recall_helper_enabled", True)
 
         for msg in messages:
             if not isinstance(msg, dict):
@@ -344,44 +337,8 @@ class EffectsMixin:
 
             if not (isinstance(parsed, dict) and parsed.get("type") == "memory_recall"):
                 other_messages.append(msg)
-                continue
-
-            if not recall_enabled:
-                logger.debug("Dropping memory_recall: memory_recall_helper_enabled is False")
-                continue
-            if expected_origin_turn_seq is None:
-                logger.warning(
-                    "Dropping memory_recall: parent_turn_seq missing or non-int "
-                    "- cannot verify freshness",
-                )
-                continue
-            payload_origin = parsed.get("origin_turn_seq")
-            if not isinstance(payload_origin, int) or payload_origin != expected_origin_turn_seq:
-                logger.debug(
-                    "Dropping stale memory_recall: origin=%r expected=%r",
-                    payload_origin,
-                    expected_origin_turn_seq,
-                )
-                continue
-
-            for mem in parsed.get("memories") or []:
-                mid = mem.get("id") if isinstance(mem, dict) else None
-                if isinstance(mid, str) and mid:
-                    recall_memories[mid] = mem
-
-        new_memories = self._filter_and_track_new_memories(
-            list(recall_memories.values()),
-            platform_session_id,
-            max_memories=3,
-        )
 
         parts: list[str] = []
-        if new_memories:
-            memory_formatted = format_discovery_result(
-                {"tool": "search_memories", "result": {"memories": new_memories}},
-            )
-            if memory_formatted:
-                parts.append(memory_formatted)
         if other_messages:
             message_formatted = format_discovery_result(
                 {
