@@ -14,8 +14,12 @@ from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
 from gobby.utils.native_bin import resolve_native_bin
 
 MIN_GCODE_GRAPH_VERSION = MANAGED_BIN_VERSION_PINS["gcode"]
+GCODE_ALLOW_MISSING_INDEXED_FILE_VERSION = "0.9.5"
 _VERSION_PATTERN = re.compile(r"\b(\d+\.\d+\.\d+(?:\.\d+)?)\b")
 _PROJECT_NOT_FOUND_PATTERN = re.compile(r"Project '([^']+)' not found")
+_INDEXED_FILE_NOT_FOUND_PATTERN = re.compile(
+    r"indexed file `([^`]+)` was not found for project (\S+)"
+)
 
 
 class GcodeGatewayError(RuntimeError):
@@ -59,6 +63,22 @@ class GcodeProjectNotFoundError(GcodeCommandError):
         super().__init__(command, returncode, stderr)
 
 
+class GcodeIndexedFileNotFoundError(GcodeCommandError):
+    """Raised when an indexed file is not found in the gcode index."""
+
+    def __init__(
+        self,
+        command: Sequence[str],
+        returncode: int,
+        stderr: str,
+        file_path: str,
+        project_id: str,
+    ) -> None:
+        self.file_path = file_path
+        self.project_id = project_id
+        super().__init__(command, returncode, stderr)
+
+
 class GcodeJsonError(GcodeGatewayError):
     """Raised when gcode returns invalid JSON."""
 
@@ -83,16 +103,22 @@ class GcodeGateway:
         return self._checked_version
 
     async def graph_sync_file(self, project_root: Path, file_path: str) -> dict[str, Any]:
-        return await self._run_json(
-            [
-                "graph",
-                "sync-file",
-                "--file",
-                file_path,
-                "--project",
-                str(project_root),
-            ]
-        )
+        await self._ensure_version()
+        args = [
+            "graph",
+            "sync-file",
+            "--file",
+            file_path,
+            "--project",
+            str(project_root),
+        ]
+        assert self._checked_version is not None
+        if is_at_least_version(
+            self._checked_version,
+            GCODE_ALLOW_MISSING_INDEXED_FILE_VERSION,
+        ):
+            args.append("--allow-missing-indexed-file")
+        return await self._run_json(args)
 
     async def graph_overview(self, project_root: Path, *, limit: int = 100) -> dict[str, Any]:
         return await self._run_json(
@@ -153,7 +179,8 @@ class GcodeGateway:
         if symbol_id is not None:
             args.extend(["--symbol-id", symbol_id])
         else:
-            assert file_path is not None
+            if file_path is None:
+                raise ValueError("file_path must be provided when symbol_id is None")
             args.extend(["--file", file_path])
         args.extend(["--depth", str(depth), "--limit", str(limit)])
         return await self._run_json(args)
@@ -244,6 +271,14 @@ class GcodeGateway:
         if proc.returncode != 0:
             stderr_text = stderr.decode(errors="replace").strip()
             if check_version:
+                if match := _INDEXED_FILE_NOT_FOUND_PATTERN.search(stderr_text):
+                    raise GcodeIndexedFileNotFoundError(
+                        command,
+                        proc.returncode or 1,
+                        stderr_text,
+                        match.group(1),
+                        match.group(2),
+                    )
                 if match := _PROJECT_NOT_FOUND_PATTERN.search(stderr_text):
                     raise GcodeProjectNotFoundError(
                         command,

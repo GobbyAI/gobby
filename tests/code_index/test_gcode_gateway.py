@@ -10,6 +10,7 @@ import pytest
 from gobby.code_index.gcode_gateway import (
     GcodeCommandError,
     GcodeGateway,
+    GcodeIndexedFileNotFoundError,
     GcodeJsonError,
     GcodeProjectNotFoundError,
     GcodeTimeoutError,
@@ -90,6 +91,7 @@ async def test_gateway_checks_version_once_and_builds_sync_file_args(
             "src/app.py",
             "--project",
             str(tmp_path),
+            "--allow-missing-indexed-file",
             "--format",
             "json",
             "--quiet",
@@ -319,3 +321,42 @@ async def test_gateway_classifies_project_not_found(
 
     assert exc_info.value.project_path == str(tmp_path)
     assert exc_info.value.returncode == 2
+
+
+async def test_gateway_classifies_indexed_file_not_found(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    processes = [
+        FakeProcess(stdout=GCODE_PIN_STDOUT),
+        FakeProcess(
+            returncode=2,
+            stderr=b"indexed file `src/app.py` was not found for project proj-1",
+        ),
+    ]
+    _patch_subprocess(monkeypatch, processes)
+    gateway = GcodeGateway(binary="/tmp/gcode")
+
+    with pytest.raises(GcodeIndexedFileNotFoundError) as exc_info:
+        await gateway.graph_sync_file(tmp_path, "src/app.py")
+
+    assert exc_info.value.file_path == "src/app.py"
+    assert exc_info.value.project_id == "proj-1"
+    assert exc_info.value.returncode == 2
+
+
+async def test_gateway_returns_indexed_file_not_found_skip_response(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    processes = [
+        FakeProcess(stdout=GCODE_PIN_STDOUT),
+        FakeProcess(stdout=b'{"status": "skipped", "reason": "indexed_file_not_found"}'),
+    ]
+    _patch_subprocess(monkeypatch, processes)
+    gateway = GcodeGateway(binary="/tmp/gcode")
+
+    assert await gateway.graph_sync_file(tmp_path, "src/app.py") == {
+        "status": "skipped",
+        "reason": "indexed_file_not_found",
+    }

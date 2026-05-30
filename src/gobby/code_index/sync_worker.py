@@ -14,7 +14,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.code_index.cleanup import purge_missing_project
-from gobby.code_index.gcode_gateway import GcodeProjectNotFoundError
+from gobby.code_index.gcode_gateway import (
+    GcodeIndexedFileNotFoundError,
+    GcodeProjectNotFoundError,
+)
 
 if TYPE_CHECKING:
     from gobby.code_index.context import CodeIndexContext
@@ -98,7 +101,7 @@ async def sync_worker_loop(
                 embed_model=embed_model,
                 batch_size=batch_size,
                 embedding_dim=embeddings_config.dim,
-                clear_graph=getattr(context, "clear_graph", None),
+                clear_graph=context.clear_graph,
                 run_db=run_db,
             )
         except Exception as e:
@@ -241,13 +244,43 @@ async def _sync_file(
     if not current.graph_synced and config.graph_enabled:
         if gcode_gateway is not None:
             try:
-                await _sync_graph(
+                graph_synced = await _sync_graph(
                     gcode_gateway=gcode_gateway,
                     project_root=root,
                     file=current,
                 )
-                await _run_db(run_db, storage.mark_graph_synced, current.id)
-                did_work = True
+                if graph_synced:
+                    await _run_db(run_db, storage.mark_graph_synced, current.id)
+                    did_work = True
+            except GcodeIndexedFileNotFoundError as e:
+                refreshed = await _run_db(run_db, storage.get_file, project_id, e.file_path)
+                if refreshed is None:
+                    logger.info(
+                        "Sync worker: indexed file %s disappeared from project %s during "
+                        "graph sync; leaving graph_synced=false",
+                        e.file_path,
+                        project_id,
+                    )
+                    return False
+                if not await asyncio.to_thread(root.is_dir):
+                    await purge_missing_project(
+                        project=_MissingProject(id=project_id, root_path=str(root)),
+                        storage=storage,
+                        config=config,
+                        vector_store=vector_store,
+                        clear_graph=clear_graph,
+                        run_db=run_db,
+                    )
+                    return False
+                if not await asyncio.to_thread((root / refreshed.file_path).exists):
+                    return False
+                logger.warning(
+                    "Sync worker: indexed file %s missing in gcode project %s during "
+                    "graph sync; leaving graph_synced=false for retry: %s",
+                    refreshed.file_path,
+                    e.project_id,
+                    e,
+                )
             except GcodeProjectNotFoundError as e:
                 if not await asyncio.to_thread(root.is_dir):
                     await purge_missing_project(
@@ -345,6 +378,9 @@ async def _sync_graph(
     gcode_gateway: GcodeGateway,
     project_root: Path,
     file: IndexedFile,
-) -> None:
+) -> bool:
     """Ask gcode to sync one indexed file into the code graph projection."""
-    await gcode_gateway.graph_sync_file(project_root, file.file_path)
+    result = await gcode_gateway.graph_sync_file(project_root, file.file_path)
+    if result.get("status") == "skipped" and result.get("reason") == "indexed_file_not_found":
+        return False
+    return True
