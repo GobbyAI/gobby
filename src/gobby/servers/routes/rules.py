@@ -222,17 +222,7 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
             count = 0
             for row in rows:
                 if row.source == request.source:
-                    try:
-                        manager.update(row.id, enabled=request.enabled)
-                    except Exception as e:
-                        logger.error(
-                            "Failed to update rule %s (%s): %s",
-                            row.id,
-                            row.name,
-                            e,
-                            exc_info=True,
-                        )
-                        raise
+                    manager.update(row.id, enabled=request.enabled)
                     count += 1
             return {"status": "success", "count": count}
         except Exception as e:

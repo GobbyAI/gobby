@@ -259,6 +259,14 @@ class GcodeGateway:
             )
         except FileNotFoundError as exc:
             raise GcodeUnavailableError(f"gcode binary not found: {command[0]}") from exc
+        except asyncio.CancelledError:
+            if proc is not None:
+                try:
+                    proc.kill()
+                    await proc.wait()
+                except ProcessLookupError:
+                    pass
+            raise
         except TimeoutError as exc:
             if proc is not None:
                 try:

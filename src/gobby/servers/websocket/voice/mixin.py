@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import binascii
 import json
 import logging
 import time
@@ -368,8 +369,8 @@ class VoiceMixin(VoiceWarmupMixin):
                 )
             except (ConnectionClosed, ConnectionClosedError):
                 pass
-        except Exception as e:
-            logger.error(f"Voice transcription error: {e}", exc_info=True)
+        except (binascii.Error, ValueError) as e:
+            logger.info("Voice transcription rejected: %s", e)
             try:
                 await websocket.send(
                     json.dumps(
@@ -378,6 +379,21 @@ class VoiceMixin(VoiceWarmupMixin):
                             request_id,
                             "error",
                             error=str(e),
+                        )
+                    )
+                )
+            except (ConnectionClosed, ConnectionClosedError):
+                pass
+        except Exception:
+            logger.error("Voice transcription error", exc_info=True)
+            try:
+                await websocket.send(
+                    json.dumps(
+                        _voice_status_payload(
+                            conversation_id,
+                            request_id,
+                            "error",
+                            error="Speech-to-text failed",
                         )
                     )
                 )

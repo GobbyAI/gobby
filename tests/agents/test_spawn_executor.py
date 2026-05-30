@@ -2,6 +2,7 @@
 
 import os
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -14,6 +15,7 @@ from gobby.agents.spawn_executor import (
     SpawnRequest,
     SpawnResult,
     _apply_extra_env,
+    _record_resume_launch_details,
     _sandbox_config_for_spawn,
     execute_spawn,
 )
@@ -25,7 +27,57 @@ pytestmark = pytest.mark.unit
 def test_codex_preapproved_gobby_tools_exist_on_mcp_handler() -> None:
     """Keep spawned Codex approval overrides aligned with the Gobby MCP surface."""
     tool_names = {name for name in dir(GobbyDaemonTools) if not name.startswith("_")}
-    assert set(_CODEX_PREAPPROVED_GOBBY_TOOLS) <= tool_names
+    for tool_name in _CODEX_PREAPPROVED_GOBBY_TOOLS:
+        assert tool_name in tool_names
+
+
+def test_record_resume_launch_details_uses_resolved_agent_run_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = object()
+    session_manager = SimpleNamespace(_storage=SimpleNamespace(db=db))
+    request = SpawnRequest(
+        prompt="Test",
+        cwd="/path",
+        provider="codex",
+        session_id="sess",
+        run_id="run",
+        parent_session_id="parent",
+        project_id="proj",
+        agent_run_id="original-run",
+        session_manager=session_manager,
+        resume_metadata_json={"provider": "codex"},
+    )
+    calls: list[tuple[object, str, dict[str, object]]] = []
+
+    class FakeAgentRunManager:
+        def __init__(self, database: object) -> None:
+            self.database = database
+
+        def update_resume_metadata(self, agent_run_id: str, metadata: dict[str, object]) -> None:
+            calls.append((self.database, agent_run_id, metadata))
+
+    monkeypatch.setattr("gobby.storage.agents.LocalAgentRunManager", FakeAgentRunManager)
+
+    _record_resume_launch_details(
+        request,
+        agent_run_id="resolved-run",
+        sandbox_args=["--sandbox"],
+    )
+
+    assert calls == [
+        (
+            db,
+            "resolved-run",
+            {
+                "provider": "codex",
+                "sandbox_args": ["--sandbox"],
+                "sandbox_env": {},
+                "env": {},
+                "config_overrides": [],
+            },
+        )
+    ]
 
 
 class TestSpawnRequest:

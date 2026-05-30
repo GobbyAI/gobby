@@ -17,7 +17,13 @@ def json_safe(value: Any) -> Any:
         return value
     if isinstance(value, Mapping):
         return {str(key): json_safe(item) for key, item in value.items()}
-    if isinstance(value, list | tuple | set):
+    if isinstance(value, set):
+        items = [json_safe(item) for item in value]
+        return sorted(
+            items,
+            key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":"), default=str),
+        )
+    if isinstance(value, list | tuple):
         return [json_safe(item) for item in value]
     try:
         json.dumps(value)

@@ -1413,6 +1413,7 @@ async def test_build_epic_dry_run_resume_skips_subtree_cascade_locking(
     task_manager.initialize_task_manifest(epic.id, stage_names=["development", "merge"])
 
     before_child_rows = task_manager.stage_states.list_for_task(child.id)
+    before_mutex_rows = temp_db.fetchall("SELECT * FROM task_dispatch_mutex ORDER BY task_id")
 
     async def fail_tick(*_args: object, **_kwargs: object) -> object:
         raise AssertionError("dry-run must not call dispatcher tick")
@@ -1430,6 +1431,9 @@ async def test_build_epic_dry_run_resume_skips_subtree_cascade_locking(
     assert result.created is False
     assert result.dispatcher_tick.reason == "dry_run"
     assert task_manager.stage_states.list_for_task(child.id) == before_child_rows
+    assert (
+        temp_db.fetchall("SELECT * FROM task_dispatch_mutex ORDER BY task_id") == before_mutex_rows
+    )
 
 
 @pytest.mark.asyncio

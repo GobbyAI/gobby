@@ -310,6 +310,38 @@ proptest! {
     assert report.issues == ()
 
 
+def test_rust_multiline_attrs_are_supported(tmp_path: Path) -> None:
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    path = tests_dir / "sample_test.rs"
+    path.write_text(
+        """
+#[tokio::test(
+    flavor = "multi_thread",
+    worker_threads = 2,
+)]
+async fn test_multiline_tokio_attr() {
+    assert_eq!(1, 1);
+}
+
+#[ignore(
+    = "tracked externally"
+)]
+#[test]
+fn test_multiline_ignore_attr() {
+    assert_eq!(1, 1);
+}
+""",
+        encoding="utf-8",
+    )
+
+    report = audit_paths([path], root=tmp_path)
+
+    assert report.tests_scanned == 2
+    assert {issue.issue_code for issue in report.issues} == {"UNCONDITIONAL_SKIP"}
+    assert report.issues[0].line == 10
+
+
 def test_rust_problem_patterns_are_reported(tmp_path: Path) -> None:
     tests_dir = tmp_path / "tests"
     tests_dir.mkdir()

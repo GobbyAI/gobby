@@ -38,7 +38,9 @@ class ConfigurationRouteContext:
         if isinstance(manager, LocalPromptManager):
             return manager
         dev_mode = getattr(self.server.services, "dev_mode", False)
-        return LocalPromptManager(self.server.services.database, dev_mode=dev_mode)
+        manager = LocalPromptManager(self.server.services.database, dev_mode=dev_mode)
+        self.server.services.prompt_manager = manager
+        return manager
 
     def get_prompt_loader(self) -> PromptLoader:
         return PromptLoader(

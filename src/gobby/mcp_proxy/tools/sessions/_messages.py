@@ -135,10 +135,9 @@ def register_message_tools(
         try:
             if session_id:
                 resolved_id = _resolve_session_id(session_id)
-                total = await transcript_reader.count_messages(resolved_id)
                 rendered_messages = await transcript_reader.get_rendered_messages(
                     session_id=resolved_id,
-                    limit=max(total, result_limit),
+                    limit=None,
                     offset=0,
                 )
                 session_results = search_rendered_messages(
@@ -170,10 +169,9 @@ def register_message_tools(
                     break
                 searched_sessions += 1
                 current_limit = result_limit - len(results)
-                total = await transcript_reader.count_messages(session.id)
                 rendered_messages = await transcript_reader.get_rendered_messages(
                     session_id=session.id,
-                    limit=max(total, current_limit),
+                    limit=None,
                     offset=0,
                 )
                 results.extend(

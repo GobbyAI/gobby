@@ -63,7 +63,10 @@ def test_build_coordinator_documents_unattended_build_discipline() -> None:
     assert "when you have not compacted recently" in body
     assert "after completing a coordination bug task" in body
     assert "gobby-agents:wait_for_agent" in body
-    assert "the last idle action only when agents are running and no actionable work remains" in normalized
+    assert (
+        "the last idle action only when agents are running and no actionable work remains"
+        in normalized
+    )
     assert "five-minute wait (`timeout_seconds=300`)" in body
     assert "Shorter waits are for diagnostics or recovery only" in normalized
 

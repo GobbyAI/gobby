@@ -611,6 +611,30 @@ class TestVoiceWarmup:
         mixin._handle_chat_message.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_voice_audio_generic_error_hides_raw_exception(self) -> None:
+        """Unexpected STT errors should not be sent verbatim to clients."""
+        mixin = DummyVoiceMixin(VoiceConfig(enabled=True, stt_enabled=True))
+        stt = MagicMock()
+        stt.transcribe = AsyncMock(side_effect=RuntimeError("Model crashed"))
+        mixin._get_stt = MagicMock(return_value=stt)
+        websocket = SimpleNamespace(send=AsyncMock())
+
+        await mixin._handle_voice_audio(
+            websocket,
+            {
+                "conversation_id": "conv-error",
+                "audio_data": "YXVkaW8=",
+                "mime_type": "audio/wav",
+                "request_id": "req-error",
+            },
+        )
+
+        payloads = [json.loads(call.args[0]) for call in websocket.send.await_args_list]
+        assert [payload["status"] for payload in payloads] == ["transcribing", "error"]
+        assert payloads[-1]["error"] == "Speech-to-text failed"
+        mixin._handle_chat_message.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_voice_audio_no_audio_error_includes_request_id(self) -> None:
         """No-audio errors should echo the client request_id."""
         mixin = DummyVoiceMixin(VoiceConfig(enabled=True, stt_enabled=True))

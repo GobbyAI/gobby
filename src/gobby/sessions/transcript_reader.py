@@ -71,29 +71,30 @@ class TranscriptReader:
     ) -> list[dict[str, Any]]:
         """Get messages for a session, falling back to gzip archive."""
         has_live_transcript = await self._has_live_transcript(session_id)
-        file_messages = await self._read_from_file(session_id, limit, offset, role)
         if has_live_transcript:
-            return file_messages
+            return await self._read_from_file(session_id, limit, offset, role)
 
         return await self._read_from_archive(session_id, limit, offset, role)
 
     async def get_rendered_messages(
         self,
         session_id: str,
-        limit: int = 100,
+        limit: int | None = 100,
         offset: int = 0,
     ) -> list[RenderedMessage]:
         """Get grouped, rendered messages for a session."""
         has_live_transcript = await self._has_live_transcript(session_id)
-        parsed_messages = await self._get_parsed_messages_from_file(session_id)
-
-        if not has_live_transcript:
+        if has_live_transcript:
+            parsed_messages = await self._get_parsed_messages_from_file(session_id)
+        else:
             parsed_messages = await self._get_parsed_messages_from_archive(session_id)
 
         if not parsed_messages:
             return []
 
         rendered = render_transcript(parsed_messages, session_id=session_id)
+        if limit is None:
+            return rendered[offset:]
         return rendered[offset : offset + limit]
 
     async def count_messages(self, session_id: str) -> int:

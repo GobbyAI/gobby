@@ -637,6 +637,18 @@ class TestWorkflowsReloadEndpoint:
         assert data["status"] == "error"
         assert "Failed to reload cache" in data["message"]
 
+    def test_reload_workflows_manager_exception(self, client, mock_server) -> None:
+        mock_server._internal_manager.get_all_registries.side_effect = RuntimeError(
+            "Manager unavailable"
+        )
+
+        response = client.post("/api/admin/workflows/reload")
+        assert response.status_code == 200
+        data = response.json()
+
+        assert data["status"] == "error"
+        assert data["message"] == "Failed to reload workflows"
+
 
 class TestTestEndpoints:
     """Tests for /admin/test/* endpoints (E2E test-mode only)."""

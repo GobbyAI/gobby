@@ -155,7 +155,7 @@ def register_import_export_routes(
     """Register configuration export/import routes."""
 
     @router.post("/export")
-    async def export_config() -> JSONResponse:
+    def export_config() -> JSONResponse:
         """Bundle config_store + prompt overrides + secret names (not values)."""
         try:
             config_store = context.get_config_store()
@@ -203,7 +203,7 @@ def register_import_export_routes(
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/import")
-    async def import_config(request: ImportConfigRequest) -> JSONResponse:
+    def import_config(request: ImportConfigRequest) -> JSONResponse:
         """Import config bundle; secret values must be re-entered."""
         summary_parts: list[str] = []
         config_imported = False

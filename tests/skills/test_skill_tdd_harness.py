@@ -77,9 +77,7 @@ def test_coderabbit_verifies_findings_before_fixing() -> None:
 
 def test_code_index_uses_gcode_navigation_before_line_readers() -> None:
     """Verify loaded code-index behavior retrieves symbols before narrow line context."""
-    result = run_recorded_skill_scenario(
-        SCENARIOS / "code-index/gcode-before-line-readers.yaml"
-    )
+    result = run_recorded_skill_scenario(SCENARIOS / "code-index/gcode-before-line-readers.yaml")
 
     assert result.baseline.action_names == (
         "gcode_search",

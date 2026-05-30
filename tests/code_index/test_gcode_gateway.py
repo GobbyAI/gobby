@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -36,15 +37,19 @@ class FakeProcess:
         stdout: bytes = b'{"success": true}',
         stderr: bytes = b"",
         timeout: bool = False,
+        cancelled: bool = False,
     ) -> None:
         self.returncode = returncode
         self.stdout = stdout
         self.stderr = stderr
         self.timeout = timeout
+        self.cancelled = cancelled
         self.killed = False
         self.waited = False
 
     async def communicate(self) -> tuple[bytes, bytes]:
+        if self.cancelled:
+            raise asyncio.CancelledError
         if self.timeout:
             raise TimeoutError
         return self.stdout, self.stderr
@@ -284,6 +289,22 @@ async def test_gateway_raises_for_timeout(monkeypatch: pytest.MonkeyPatch) -> No
 
     assert timeout_proc.killed is True
     assert timeout_proc.waited is True
+
+
+async def test_gateway_cleans_up_process_when_cancelled(monkeypatch: pytest.MonkeyPatch) -> None:
+    cancelled_proc = FakeProcess(cancelled=True)
+    processes = [
+        FakeProcess(stdout=GCODE_PIN_STDOUT),
+        cancelled_proc,
+    ]
+    _patch_subprocess(monkeypatch, processes)
+    gateway = GcodeGateway(binary="/tmp/gcode")
+
+    with pytest.raises(asyncio.CancelledError):
+        await gateway.graph_clear("proj-1")
+
+    assert cancelled_proc.killed is True
+    assert cancelled_proc.waited is True
 
 
 async def test_gateway_raises_when_binary_missing(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -27,12 +27,30 @@ export function useTaskActions({
     async (params: CreateTaskParams) => {
       const baseUrl = getBaseUrl();
       const body = projectId ? { ...params, project_id: projectId } : params;
-      const response = await fetch(`${baseUrl}/api/tasks`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const payload = await response.json().catch(() => null);
+      let response: Response;
+      try {
+        response = await fetch(`${baseUrl}/api/tasks`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+      } catch {
+        const message = "Failed to create task: request failed";
+        setActionError(message);
+        throw new Error(message);
+      }
+
+      let payload: unknown;
+      try {
+        payload = await response.json();
+      } catch {
+        const message = response.ok
+          ? "Failed to create task: invalid response"
+          : `Failed to create task (${response.status})`;
+        setActionError(message);
+        throw new Error(message);
+      }
+
       if (!response.ok) {
         const record = payload as { detail?: unknown; error?: unknown } | null;
         const detail = record?.detail ?? record?.error;

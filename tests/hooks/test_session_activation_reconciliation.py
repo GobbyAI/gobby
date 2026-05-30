@@ -6,6 +6,7 @@ import json
 import time
 from collections.abc import Iterator
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -53,7 +54,7 @@ def db(temp_db: HubDatabase) -> HubDatabase:
 
 
 @pytest.fixture
-def project_id(db: HubDatabase, tmp_path) -> str:
+def project_id(db: HubDatabase, tmp_path: Path) -> str:
     project = LocalProjectManager(db).create(name="activation-test", repo_path=str(tmp_path))
     return project.id
 
@@ -68,7 +69,7 @@ def handlers(session_manager: SessionManager) -> EventHandlers:
     return EventHandlers(session_manager=session_manager)  # type: ignore[arg-type]
 
 
-def _event(event_type: HookEventType, session_id: str, tmp_path) -> HookEvent:
+def _event(event_type: HookEventType, session_id: str, tmp_path: Path) -> HookEvent:
     return HookEvent(
         event_type=event_type,
         session_id="external-1",
@@ -82,7 +83,7 @@ def _event(event_type: HookEventType, session_id: str, tmp_path) -> HookEvent:
 def _register_session(
     session_manager: SessionManager,
     project_id: str,
-    tmp_path,
+    tmp_path: Path,
     *,
     external_id: str = "external-1",
     agent_depth: int = 0,
@@ -136,7 +137,7 @@ def _create_parent_and_child(
     db: HubDatabase,
     session_manager: SessionManager,
     project_id: str,
-    tmp_path,
+    tmp_path: Path,
 ) -> tuple[str, str]:
     parent_id = _register_session(
         session_manager,
@@ -168,7 +169,7 @@ def test_marker_creation_on_session_start(
     session_manager: SessionManager,
     handlers: EventHandlers,
     project_id: str,
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     session_id = _register_session(session_manager, project_id, tmp_path)
     result = reconcile_session_activation(
@@ -188,7 +189,7 @@ def test_before_agent_fast_noop_when_current(
     session_manager: SessionManager,
     handlers: EventHandlers,
     project_id: str,
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     session_id = _register_session(session_manager, project_id, tmp_path)
     event = _event(HookEventType.BEFORE_AGENT, session_id, tmp_path)
@@ -206,7 +207,7 @@ def test_missing_agent_type_restored_before_rules(
     session_manager: SessionManager,
     handlers: EventHandlers,
     project_id: str,
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     session_id = _register_session(session_manager, project_id, tmp_path)
     SessionVariableManager(db).merge_variables(
@@ -236,7 +237,7 @@ def test_reconciliation_refreshes_stale_active_rule_names(
     session_manager: SessionManager,
     handlers: EventHandlers,
     project_id: str,
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     """Refresh stale active rule names from the installed agent definition.
 
@@ -302,7 +303,7 @@ def test_reconciliation_caches_active_rule_names_for_same_agent_and_project(
     session_manager: SessionManager,
     handlers: EventHandlers,
     project_id: str,
-    tmp_path,
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     session_id = _register_session(session_manager, project_id, tmp_path)
@@ -371,7 +372,7 @@ def test_reconciliation_invalidates_active_rule_cache_after_definition_mutation(
     session_manager: SessionManager,
     handlers: EventHandlers,
     project_id: str,
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     session_id = _register_session(session_manager, project_id, tmp_path)
     manager = LocalWorkflowDefinitionManager(db)
@@ -503,7 +504,7 @@ def test_spawned_step_agent_restores_workflow_variable_and_instance(
     session_manager: SessionManager,
     handlers: EventHandlers,
     project_id: str,
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     _create_worker_agent(db)
     _, child_id = _create_parent_and_child(db, session_manager, project_id, tmp_path)
@@ -527,7 +528,7 @@ def test_existing_step_workflow_current_step_is_preserved(
     session_manager: SessionManager,
     handlers: EventHandlers,
     project_id: str,
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     _create_worker_agent(db)
     _, child_id = _create_parent_and_child(db, session_manager, project_id, tmp_path)
@@ -563,7 +564,7 @@ def test_stale_spawned_flag_is_repaired_from_session_depth(
     session_manager: SessionManager,
     handlers: EventHandlers,
     project_id: str,
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     child_id = _register_session(
         session_manager,
@@ -605,7 +606,7 @@ def test_baseline_dirty_initializes_once_and_preserves_session_edits(
     session_manager: SessionManager,
     handlers: EventHandlers,
     project_id: str,
-    tmp_path,
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     session_id = _register_session(session_manager, project_id, tmp_path)
@@ -628,7 +629,7 @@ def test_terminal_pickup_metadata_backfills_from_agent_runs(
     session_manager: SessionManager,
     handlers: EventHandlers,
     project_id: str,
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     _create_worker_agent(db)
     _, child_id = _create_parent_and_child(db, session_manager, project_id, tmp_path)

@@ -131,8 +131,14 @@ def _restart_option_field_was_supplied(
 def _existing_directory(value: str | None, *, field_name: str) -> Path | None:
     if value is None:
         return None
-    path = Path(value).expanduser().resolve()
-    if not path.is_dir():
+    path = _resolved_path(value)
+    if path is None:
+        return None
+    try:
+        is_directory = path.is_dir()
+    except OSError as exc:
+        raise ValueError(f"{field_name} must be an existing directory") from exc
+    if not is_directory:
         raise ValueError(f"{field_name} must be an existing directory")
     return path
 
@@ -140,7 +146,10 @@ def _existing_directory(value: str | None, *, field_name: str) -> Path | None:
 def _resolved_path(value: str | None) -> Path | None:
     if value is None:
         return None
-    return Path(value).expanduser().resolve()
+    try:
+        return Path(value).expanduser().resolve()
+    except (OSError, RuntimeError) as exc:
+        raise ValueError("path is invalid") from exc
 
 
 def _build_options(request_data: BuildRequest) -> BuildOptions:

@@ -8,39 +8,39 @@ pytestmark = pytest.mark.unit
 
 
 class TestBuildCliCommand:
-    def test_claude_basic(self):
+    def test_claude_basic(self) -> None:
         cmd, _env = build_cli_command("claude", prompt="hello")
         assert cmd == ["claude", "hello"]
 
-    def test_claude_with_session_id(self):
+    def test_claude_with_session_id(self) -> None:
         cmd, _env = build_cli_command("claude", session_id="123", prompt="hello")
         assert cmd == ["claude", "--session-id", "123", "hello"]
 
-    def test_claude_auto_approve(self):
+    def test_claude_auto_approve(self) -> None:
         cmd, _env = build_cli_command("claude", auto_approve=True, prompt="hello")
         assert cmd == ["claude", "--dangerously-skip-permissions", "hello"]
 
-    def test_claude_with_model(self):
+    def test_claude_with_model(self) -> None:
         cmd, _env = build_cli_command("claude", model="claude-3-opus", prompt="hello")
         assert cmd == ["claude", "--model", "claude-3-opus", "hello"]
 
-    def test_claude_with_reasoning_effort(self):
+    def test_claude_with_reasoning_effort(self) -> None:
         cmd, _env = build_cli_command("claude", reasoning_effort="high", prompt="hello")
         assert cmd == ["claude", "--effort", "high", "hello"]
 
-    def test_gemini_basic(self):
+    def test_gemini_basic(self) -> None:
         cmd, _env = build_cli_command("gemini", prompt="hello")
         assert cmd == ["gemini", "hello"]
 
-    def test_gemini_auto_approve(self):
+    def test_gemini_auto_approve(self) -> None:
         cmd, _env = build_cli_command("gemini", auto_approve=True, prompt="hello")
         assert cmd == ["gemini", "--approval-mode", "yolo", "hello"]
 
-    def test_gemini_with_model(self):
+    def test_gemini_with_model(self) -> None:
         cmd, _env = build_cli_command("gemini", model="gemini-1.5-pro", prompt="hello")
         assert cmd == ["gemini", "--model", "gemini-1.5-pro", "hello"]
 
-    def test_gemini_reasoning_uses_model_settings_without_extra_flag(self):
+    def test_gemini_reasoning_uses_model_settings_without_extra_flag(self) -> None:
         cmd, _env = build_cli_command(
             "gemini",
             model="gemini-3.1-pro-preview",
@@ -49,11 +49,11 @@ class TestBuildCliCommand:
         )
         assert cmd == ["gemini", "--model", "gemini-3.1-pro-preview", "hello"]
 
-    def test_codex_basic(self):
+    def test_codex_basic(self) -> None:
         cmd, _env = build_cli_command("codex", prompt="hello")
         assert cmd == ["codex", "hello"]
 
-    def test_codex_auto_approve(self):
+    def test_codex_auto_approve(self) -> None:
         cmd, _env = build_cli_command("codex", auto_approve=True, prompt="hello")
         assert cmd == [
             "codex",
@@ -75,7 +75,7 @@ class TestBuildCliCommand:
             ("qwen", ["--approval-mode", "yolo"]),
         ],
     )
-    def test_auto_approve_flags_precede_sandbox_args(self, cli, approval_args):
+    def test_auto_approve_flags_precede_sandbox_args(self, cli, approval_args) -> None:
         cmd, _env = build_cli_command(
             cli,
             auto_approve=True,
@@ -84,19 +84,19 @@ class TestBuildCliCommand:
         )
         assert cmd == [cli, *approval_args, "--sandbox", "hello"]
 
-    def test_codex_working_directory(self):
+    def test_codex_working_directory(self) -> None:
         cmd, _env = build_cli_command("codex", working_directory="/tmp", prompt="hello")
         assert cmd == ["codex", "-C", "/tmp", "hello"]
 
-    def test_codex_with_model(self):
+    def test_codex_with_model(self) -> None:
         cmd, _env = build_cli_command("codex", model="gpt-4", prompt="hello")
         assert cmd == ["codex", "--model", "gpt-4", "hello"]
 
-    def test_codex_with_reasoning_effort(self):
+    def test_codex_with_reasoning_effort(self) -> None:
         cmd, _env = build_cli_command("codex", reasoning_effort="xhigh", prompt="hello")
         assert cmd == ["codex", "-c", 'model_reasoning_effort="xhigh"', "hello"]
 
-    def test_codex_config_overrides_precede_prompt(self):
+    def test_codex_config_overrides_precede_prompt(self) -> None:
         cmd, _env = build_cli_command(
             "codex",
             prompt="hello",
@@ -117,7 +117,7 @@ class TestBuildCliCommand:
             "hello",
         ]
 
-    def test_droid_agent_command(self):
+    def test_droid_agent_command(self) -> None:
         cmd, _env = build_cli_command(
             "droid",
             prompt="hello",
@@ -144,7 +144,7 @@ class TestBuildCliCommand:
         assert "--worktree" not in cmd
         assert "--session-id" not in cmd
 
-    def test_droid_auto_approve_false_uses_low_autonomy(self):
+    def test_droid_auto_approve_false_uses_low_autonomy(self) -> None:
         cmd, _env = build_cli_command("droid", auto_approve=False, prompt="hello")
         assert cmd == [
             "droid",
@@ -156,12 +156,12 @@ class TestBuildCliCommand:
             "hello",
         ]
 
-    def test_generic_sandbox_args(self):
+    def test_generic_sandbox_args(self) -> None:
         cmd, _env = build_cli_command("claude", prompt="hello", sandbox_args=["--sandbox"])
         # sandbox args come before prompt
         assert cmd == ["claude", "--sandbox", "hello"]
 
-    def test_claude_interactive_mode_uses_stream_json_and_no_prompt(self):
+    def test_claude_interactive_mode_uses_stream_json_and_no_prompt(self) -> None:
         cmd, env = build_cli_command("claude", prompt="hello", mode="interactive")
         assert cmd == [
             "claude",
@@ -173,7 +173,7 @@ class TestBuildCliCommand:
         ]
         assert env == {}
 
-    def test_gemini_interactive_mode_uses_acp_and_resume(self):
+    def test_gemini_interactive_mode_uses_acp_and_resume(self) -> None:
         cmd, env = build_cli_command(
             "gemini",
             prompt="hello",
@@ -184,7 +184,7 @@ class TestBuildCliCommand:
         assert cmd == ["gemini", "--acp", "--resume", "gem-session"]
         assert env == {"CUSTOM_VAR": "value"}
 
-    def test_grok_agent_command(self):
+    def test_grok_agent_command(self) -> None:
         cmd, _env = build_cli_command(
             "grok",
             prompt="hello",
@@ -207,7 +207,7 @@ class TestBuildCliCommand:
             "hello",
         ]
 
-    def test_grok_interactive_mode_uses_acp_stdio(self):
+    def test_grok_interactive_mode_uses_acp_stdio(self) -> None:
         cmd, _env = build_cli_command(
             "grok",
             mode="interactive",
@@ -336,7 +336,7 @@ class TestBuildCliCommand:
             ),
         ],
     )
-    def test_resume_commands_preserve_launch_settings(self, cli, expected):
+    def test_resume_commands_preserve_launch_settings(self, cli, expected) -> None:
         cmd, _env = build_cli_command(
             cli,
             prompt="continue",

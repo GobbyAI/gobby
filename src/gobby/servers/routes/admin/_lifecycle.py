@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 
 from gobby.shutdown_intent import ShutdownIntent
 from gobby.telemetry.instruments import inc_counter
@@ -341,4 +341,7 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
 
         except Exception as e:
             logger.error(f"Error reloading workflows: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail="Internal server error") from e
+            return {
+                "status": "error",
+                "message": "Failed to reload workflows",
+            }

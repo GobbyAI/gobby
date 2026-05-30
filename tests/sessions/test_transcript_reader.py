@@ -2,8 +2,10 @@
 
 import gzip
 import json
+import os
 from datetime import UTC, datetime
 from pathlib import Path
+from time import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -85,6 +87,32 @@ def test_codex_transcript_scan_respects_exact_max_days(
 
     assert _find_transcript_on_disk("codex", "ext-abc", max_days=2) is None
     assert _find_transcript_on_disk("codex", "ext-abc", max_days=3) == str(target)
+
+
+def test_transcript_scan_respects_file_age_for_claude(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    target = tmp_path / ".claude" / "projects" / "project" / "ext-old.jsonl"
+    target.parent.mkdir(parents=True)
+    target.write_text("{}\n", encoding="utf-8")
+    old_mtime = time() - (3 * 24 * 60 * 60)
+    os.utime(target, (old_mtime, old_mtime))
+
+    assert _find_transcript_on_disk("claude", "ext-old", max_days=2) is None
+    assert _find_transcript_on_disk("claude", "ext-old", max_days=4) == str(target)
+
+
+def test_transcript_scan_ignores_os_errors_during_traversal(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    (tmp_path / ".claude" / "projects").mkdir(parents=True)
+
+    with patch.object(Path, "iterdir", side_effect=OSError("permission denied")):
+        assert _find_transcript_on_disk("claude", "ext-any", max_days=7) is None
 
 
 def _write_gzip_archive(archive_dir: Path, external_id: str, lines: list[dict]) -> Path:
@@ -245,6 +273,38 @@ class TestTranscriptReaderGzipFallback:
         result = await reader.get_messages("sess-1", limit=3, offset=2)
 
         assert len(result) == 3
+
+    @pytest.mark.asyncio
+    async def test_get_messages_skips_missing_live_file_and_reads_archive(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        archive_dir = tmp_path / "archives"
+        external_id = "ext-missing-live"
+        _write_gzip_archive(
+            archive_dir,
+            external_id,
+            [{"type": "user", "message": {"role": "user", "content": "archive"}}],
+        )
+
+        session = MagicMock()
+        session.external_id = external_id
+        session.source = "claude"
+        session.transcript_path = str(tmp_path / "missing.jsonl")
+
+        session_manager = MagicMock()
+        session_manager.get.return_value = session
+
+        reader = TranscriptReader(session_manager, archive_dir=str(archive_dir))
+        with patch.object(
+            reader,
+            "_read_from_file",
+            new=AsyncMock(side_effect=AssertionError("live file should not be read")),
+        ):
+            result = await reader.get_messages("sess-1", limit=50)
+
+        assert len(result) == 1
+        assert result[0]["content"] == "archive"
 
 
 class TestTranscriptReaderJsonlFallback:
@@ -456,6 +516,33 @@ class TestTranscriptReaderRendered:
         reader = TranscriptReader(session_manager)
 
         result = await reader.get_rendered_messages("sess-1", limit=3, offset=2)
+
+        assert len(result) == 3
+        assert "msg 2" in result[0].content
+        assert "msg 4" in result[2].content
+
+    @pytest.mark.asyncio
+    async def test_get_rendered_messages_limit_none_returns_all_after_offset(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        transcript_path = tmp_path / "transcript.jsonl"
+        lines = [
+            {"type": "user", "message": {"role": "user", "content": f"msg {i}"}} for i in range(5)
+        ]
+        _write_jsonl_file(transcript_path, lines)
+
+        session = MagicMock()
+        session.external_id = "no-archive"
+        session.source = "claude"
+        session.transcript_path = str(transcript_path)
+
+        session_manager = MagicMock()
+        session_manager.get.return_value = session
+
+        reader = TranscriptReader(session_manager)
+
+        result = await reader.get_rendered_messages("sess-1", limit=None, offset=2)
 
         assert len(result) == 3
         assert "msg 2" in result[0].content

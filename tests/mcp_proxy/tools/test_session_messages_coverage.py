@@ -12,7 +12,7 @@ Tests cover:
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -459,6 +459,12 @@ class TestSearchSessionMessages:
         assert result["searched_sessions"] == 1
         assert result["results"][0]["session_id"] == "sess-123"
         assert "needle" in result["results"][0]["snippet"]
+        transcript_reader.count_messages.assert_not_called()
+        transcript_reader.get_rendered_messages.assert_awaited_once_with(
+            session_id="sess-123",
+            limit=None,
+            offset=0,
+        )
 
     @pytest.mark.asyncio
     async def test_search_session_messages_no_match(self) -> None:
@@ -482,6 +488,7 @@ class TestSearchSessionMessages:
         assert result["success"] is True
         assert result["returned_count"] == 0
         assert result["results"] == []
+        transcript_reader.count_messages.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_search_session_messages_truncates_result(self) -> None:
@@ -507,6 +514,7 @@ class TestSearchSessionMessages:
         assert result["truncated"] is True
         assert "... (truncated)" in message["content"]
         assert "... (truncated)" in message["content_blocks"][0]["content"]
+        transcript_reader.count_messages.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_search_session_messages_requires_transcript_reader(self) -> None:
@@ -559,6 +567,11 @@ class TestSearchSessionMessages:
         assert result["success"] is True
         assert result["searched_sessions"] == 2
         assert result["results"][0]["session_id"] == "sess-2"
+        transcript_reader.count_messages.assert_not_called()
+        assert transcript_reader.get_rendered_messages.await_args_list == [
+            call(session_id="sess-1", limit=None, offset=0),
+            call(session_id="sess-2", limit=None, offset=0),
+        ]
         session_manager.list.assert_called_once_with(
             project_id="proj-1",
             status="active",

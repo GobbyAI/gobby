@@ -557,17 +557,38 @@ def _analyze_rust_file(source: str, relative_path: str) -> tuple[list[AuditIssue
 
 def _iter_rust_tests(source: str) -> Iterable[_RustTest]:
     pending_attrs: list[tuple[str, int, int]] = []
+    lines = source.splitlines(keepends=True)
     line_offset = 0
+    line_index = 0
 
-    for line_number, line in enumerate(source.splitlines(keepends=True), start=1):
+    while line_index < len(lines):
+        line_number = line_index + 1
+        line = lines[line_index]
         stripped = line.strip()
-        attr = _rust_attr_text(stripped)
-        if attr is not None:
-            pending_attrs.append((attr, line_number, line_offset + line.index("#[")))
+        attr_offset_in_line = line.index("#[") if stripped.startswith("#[") else -1
+        if attr_offset_in_line >= 0:
+            attr_offset = line_offset + attr_offset_in_line
+            parsed_attr = _rust_attr_at(source, attr_offset)
+            if parsed_attr is not None:
+                attr_text, attr_end = parsed_attr
+                pending_attrs.append((attr_text, line_number, attr_offset))
+                line_index, line_offset = _advance_rust_lines_through_offset(
+                    lines,
+                    line_index,
+                    line_offset,
+                    attr_end,
+                )
+                continue
+
+        single_line_attr = _rust_attr_text(stripped)
+        if single_line_attr is not None:
+            pending_attrs.append((single_line_attr, line_number, line_offset + line.index("#[")))
+            line_index += 1
             line_offset += len(line)
             continue
 
         if not stripped or stripped.startswith("//"):
+            line_index += 1
             line_offset += len(line)
             continue
 
@@ -592,7 +613,32 @@ def _iter_rust_tests(source: str) -> Iterable[_RustTest]:
                 )
 
         pending_attrs = []
+        line_index += 1
         line_offset += len(line)
+
+
+def _advance_rust_lines_through_offset(
+    lines: Sequence[str],
+    line_index: int,
+    line_offset: int,
+    target_offset: int,
+) -> tuple[int, int]:
+    while line_index < len(lines):
+        next_offset = line_offset + len(lines[line_index])
+        line_index += 1
+        line_offset = next_offset
+        if target_offset < next_offset:
+            break
+    return line_index, line_offset
+
+
+def _rust_attr_at(source: str, attr_offset: int) -> tuple[str, int] | None:
+    if not source.startswith("#[", attr_offset):
+        return None
+    end = _find_matching_delimiter(source, attr_offset + 1, "[", "]")
+    if end is None:
+        return None
+    return source[attr_offset + 2 : end].strip(), end
 
 
 def _rust_attr_text(stripped_line: str) -> str | None:

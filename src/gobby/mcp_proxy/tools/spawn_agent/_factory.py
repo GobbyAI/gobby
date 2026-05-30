@@ -174,6 +174,8 @@ def _resolve_spawn_project_context(
         logger.debug("Failed to resolve current project context", exc_info=True)
         current_ctx = None
     current_path = _project_path_from_context(current_ctx)
+    if parent_ctx is not None:
+        return parent_ctx, current_path
     if current_path:
         return current_ctx, current_path
 

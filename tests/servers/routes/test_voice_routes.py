@@ -369,5 +369,45 @@ class TestVoiceRoutes:
             )
         assert response.status_code == 200
         data = response.json()
-        assert "Model crashed" in data["error"]
+        assert data["error"] == "Transcription failed"
+        assert data["text"] == ""
+
+    def test_transcribe_validation_error_returns_message(
+        self, client: TestClient, server_with_voice: MagicMock
+    ) -> None:
+        """Expected transcription rejections keep their user-facing message."""
+        server_with_voice.config.voice = VoiceConfig(enabled=True)
+        mock_stt_instance = MagicMock()
+        mock_stt_instance.is_available = True
+        mock_stt_instance.transcribe = AsyncMock(side_effect=ValueError("Unsupported audio"))
+        mock_stt_cls = MagicMock(return_value=mock_stt_instance)
+
+        with patch("gobby.voice.stt.WhisperSTT", mock_stt_cls):
+            response = client.post(
+                "/api/voice/transcribe",
+                files={"file": ("test.webm", b"audio", "audio/webm")},
+            )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["error"] == "Unsupported audio"
+        assert data["text"] == ""
+
+    def test_transcribe_timeout_returns_timeout_message(
+        self, client: TestClient, server_with_voice: MagicMock
+    ) -> None:
+        """Transcription timeouts return a stable message."""
+        server_with_voice.config.voice = VoiceConfig(enabled=True)
+        mock_stt_instance = MagicMock()
+        mock_stt_instance.is_available = True
+        mock_stt_instance.transcribe = AsyncMock(side_effect=TimeoutError)
+        mock_stt_cls = MagicMock(return_value=mock_stt_instance)
+
+        with patch("gobby.voice.stt.WhisperSTT", mock_stt_cls):
+            response = client.post(
+                "/api/voice/transcribe",
+                files={"file": ("test.webm", b"audio", "audio/webm")},
+            )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["error"] == "Transcription timed out"
         assert data["text"] == ""

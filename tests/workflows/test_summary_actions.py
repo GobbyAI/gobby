@@ -326,7 +326,7 @@ class TestRenameTmuxWindow:
     """Tests for _rename_tmux_window helper."""
 
     @pytest.mark.asyncio
-    async def test_skips_when_no_terminal_context(self):
+    async def test_skips_when_no_terminal_context(self) -> None:
         """No-op when session has no terminal_context."""
         from gobby.workflows.summary_actions import _rename_tmux_window
 
@@ -339,7 +339,7 @@ class TestRenameTmuxWindow:
         assert mock_exec.await_count == 0
 
     @pytest.mark.asyncio
-    async def test_skips_when_no_tmux_pane(self):
+    async def test_skips_when_no_tmux_pane(self) -> None:
         """No-op when terminal_context has no tmux_pane."""
         from gobby.workflows.summary_actions import _rename_tmux_window
 
@@ -352,7 +352,7 @@ class TestRenameTmuxWindow:
         assert mock_exec.await_count == 0
 
     @pytest.mark.asyncio
-    async def test_user_session_renames_on_default_server(self):
+    async def test_user_session_renames_on_default_server(self) -> None:
         """User session (depth 0) calls tmux rename-window on default server."""
         from gobby.workflows.summary_actions import _rename_tmux_window
 
@@ -371,7 +371,7 @@ class TestRenameTmuxWindow:
         assert manager.rename_calls == [("%42", "#99: My Title")]
 
     @pytest.mark.asyncio
-    async def test_empty_title_falls_back_to_cwd_basename_and_ref(self):
+    async def test_empty_title_falls_back_to_cwd_basename_and_ref(self) -> None:
         """Empty titles use cwd basename before applying the session ref."""
         from gobby.workflows.summary_actions import _rename_tmux_window
 
@@ -389,7 +389,7 @@ class TestRenameTmuxWindow:
         assert manager.rename_calls == [("%42", "#99: gobby")]
 
     @pytest.mark.asyncio
-    async def test_empty_title_falls_back_to_source_then_session(self):
+    async def test_empty_title_falls_back_to_source_then_session(self) -> None:
         """Empty titles use source when no path basename exists, then session."""
         from gobby.workflows.summary_actions import _rename_tmux_window
 
@@ -414,7 +414,7 @@ class TestRenameTmuxWindow:
         assert _RecordingTmuxManager.instances[1].rename_calls == [("%44", "session")]
 
     @pytest.mark.asyncio
-    async def test_spawned_agent_renames_on_gobby_socket(self):
+    async def test_spawned_agent_renames_on_gobby_socket(self) -> None:
         """Spawned agent (depth > 0) uses TmuxSessionManager."""
         from gobby.workflows.summary_actions import _rename_tmux_window
 
@@ -433,7 +433,7 @@ class TestRenameTmuxWindow:
         assert manager.rename_calls == [("%0", "#55: Agent Title")]
 
     @pytest.mark.asyncio
-    async def test_tmux_socket_path_overrides_socket_name(self):
+    async def test_tmux_socket_path_overrides_socket_name(self) -> None:
         """Stored tmux_socket_path routes renames to that exact server."""
         from gobby.workflows.summary_actions import _rename_tmux_window
 
@@ -456,7 +456,7 @@ class TestRenameTmuxWindow:
         assert manager.rename_calls == [("%9", "Socket Path Title")]
 
     @pytest.mark.asyncio
-    async def test_tmux_socket_name_routes_to_named_server(self):
+    async def test_tmux_socket_name_routes_to_named_server(self) -> None:
         """Stored tmux_socket_name routes renames when no path is present."""
         from gobby.workflows.summary_actions import _rename_tmux_window
 
@@ -475,7 +475,7 @@ class TestRenameTmuxWindow:
         assert manager.rename_calls == [("%10", "Named Socket Title")]
 
     @pytest.mark.asyncio
-    async def test_failure_does_not_propagate(self):
+    async def test_failure_does_not_propagate(self) -> None:
         """Rename failures are swallowed, never propagated."""
         from gobby.workflows.summary_actions import _rename_tmux_window
 
@@ -509,7 +509,7 @@ class TestGenerateSummary:
         mock_llm_service,
         mock_transcript_processor,
         tmp_path,
-    ):
+    ) -> None:
         """Test successful summary generation."""
         transcript_file = tmp_path / "transcript.jsonl"
         with open(transcript_file, "w") as f:
@@ -547,7 +547,7 @@ class TestGenerateSummary:
         mock_session_manager,
         mock_llm_service,
         mock_transcript_processor,
-    ):
+    ) -> None:
         """Test that invalid mode raises ValueError."""
         with pytest.raises(ValueError) as exc_info:
             await generate_summary(
@@ -569,7 +569,7 @@ class TestGenerateSummary:
         mock_llm_service,
         mock_transcript_processor,
         tmp_path,
-    ):
+    ) -> None:
         """Test summary generation in clear mode."""
         transcript_file = tmp_path / "transcript.jsonl"
         with open(transcript_file, "w") as f:
@@ -610,7 +610,7 @@ class TestGenerateSummary:
         mock_llm_service,
         mock_transcript_processor,
         tmp_path,
-    ):
+    ) -> None:
         """Test summary generation in compact mode."""
         transcript_file = tmp_path / "transcript.jsonl"
         with open(transcript_file, "w") as f:
@@ -650,7 +650,7 @@ class TestGenerateSummary:
         mock_llm_service,
         mock_transcript_processor,
         tmp_path,
-    ):
+    ) -> None:
         """Test summary generation with previous summary for cumulative compression."""
         transcript_file = tmp_path / "transcript.jsonl"
         with open(transcript_file, "w") as f:
@@ -689,7 +689,7 @@ class TestGenerateSummary:
         self,
         mock_session_manager,
         mock_transcript_processor,
-    ):
+    ) -> None:
         """Test summary generation with missing LLM service."""
         result = await generate_summary(
             session_manager=mock_session_manager,
@@ -705,7 +705,7 @@ class TestGenerateSummary:
         self,
         mock_session_manager,
         mock_llm_service,
-    ):
+    ) -> None:
         """Test summary generation with missing transcript processor."""
         result = await generate_summary(
             session_manager=mock_session_manager,
@@ -722,7 +722,7 @@ class TestGenerateSummary:
         mock_session_manager,
         mock_llm_service,
         mock_transcript_processor,
-    ):
+    ) -> None:
         """Test summary generation when session is not found."""
         mock_session_manager.get.return_value = None
 
@@ -741,7 +741,7 @@ class TestGenerateSummary:
         mock_session_manager,
         mock_llm_service,
         mock_transcript_processor,
-    ):
+    ) -> None:
         """Test summary generation when session has no transcript path."""
         session = MagicMock()
         session.transcript_path = None
@@ -763,7 +763,7 @@ class TestGenerateSummary:
         mock_llm_service,
         mock_transcript_processor,
         tmp_path,
-    ):
+    ) -> None:
         """Test summary generation when transcript file doesn't exist."""
         session = MagicMock()
         session.transcript_path = str(tmp_path / "nonexistent.jsonl")
@@ -785,7 +785,7 @@ class TestGenerateSummary:
         mock_llm_service,
         mock_transcript_processor,
         tmp_path,
-    ):
+    ) -> None:
         """Test summary generation when transcript processing fails."""
         transcript_file = tmp_path / "bad_transcript.jsonl"
         with open(transcript_file, "w") as f:
@@ -811,7 +811,7 @@ class TestGenerateSummary:
         mock_llm_service,
         mock_transcript_processor,
         tmp_path,
-    ):
+    ) -> None:
         """Test summary generation when LLM call fails."""
         transcript_file = tmp_path / "transcript.jsonl"
         with open(transcript_file, "w") as f:
@@ -849,7 +849,7 @@ class TestGenerateSummary:
         mock_llm_service,
         mock_transcript_processor,
         tmp_path,
-    ):
+    ) -> None:
         """Test summary generation with custom template."""
         transcript_file = tmp_path / "transcript.jsonl"
         with open(transcript_file, "w") as f:
@@ -889,7 +889,7 @@ class TestGenerateSummary:
         mock_llm_service,
         mock_transcript_processor,
         tmp_path,
-    ):
+    ) -> None:
         """Test that summary generation includes git status and file changes."""
         transcript_file = tmp_path / "transcript.jsonl"
         with open(transcript_file, "w") as f:
@@ -930,7 +930,7 @@ class TestGenerateSummary:
         mock_llm_service,
         mock_transcript_processor,
         tmp_path,
-    ):
+    ) -> None:
         """Test that summary generation includes last messages in context."""
         transcript_file = tmp_path / "transcript.jsonl"
         with open(transcript_file, "w") as f:

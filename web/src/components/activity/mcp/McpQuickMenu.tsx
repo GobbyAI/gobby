@@ -42,10 +42,40 @@ export function McpQuickMenu({
     first?.focus();
   }, [menu.kind, menu.serverName, menu.toolName]);
 
+  const focusMenuItem = (index: number) => {
+    const items = Array.from(
+      menuRef.current?.querySelectorAll<HTMLButtonElement>(
+        '[role="menuitem"]:not(:disabled)',
+      ) ?? [],
+    );
+    items[index]?.focus();
+  };
+
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Escape") {
       event.preventDefault();
       onClose();
+      return;
+    }
+    const items = Array.from(
+      menuRef.current?.querySelectorAll<HTMLButtonElement>(
+        '[role="menuitem"]:not(:disabled)',
+      ) ?? [],
+    );
+    if (items.length === 0) return;
+    const activeIndex = items.findIndex((item) => item === document.activeElement);
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      focusMenuItem(activeIndex >= 0 ? (activeIndex + 1) % items.length : 0);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      focusMenuItem(activeIndex >= 0 ? (activeIndex - 1 + items.length) % items.length : 0);
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      focusMenuItem(0);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      focusMenuItem(items.length - 1);
     }
   };
 

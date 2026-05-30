@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 _AUDIT_HEADING = "Agent resume after daemon restart failed"
 _ESCALATION_REASON = "agent_resume_after_daemon_restart_failed"
+_WORKSPACE_DIRTY_CHECK_TIMEOUT_SECONDS = 10
 
 
 @dataclass(frozen=True)
@@ -172,7 +173,7 @@ async def _workspace_dirty(workspace_path: str | None) -> bool:
             ["git", "-C", str(path), "status", "--porcelain"],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=_WORKSPACE_DIRTY_CHECK_TIMEOUT_SECONDS,
             check=False,
         )
     except subprocess.TimeoutExpired:

@@ -208,9 +208,7 @@ async def test_list_worktrees(registry, mock_worktree_storage) -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_worktrees_accepts_explicit_project_id(
-    registry, mock_worktree_storage
-) -> None:
+async def test_list_worktrees_accepts_explicit_project_id(registry, mock_worktree_storage) -> None:
     wt1 = Worktree(
         id="1",
         project_id="target-proj",

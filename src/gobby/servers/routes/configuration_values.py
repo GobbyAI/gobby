@@ -90,7 +90,11 @@ def register_value_routes(router: APIRouter, context: ConfigurationRouteContext)
 
             current = context.current_config_values()
             deep_merge(current, unflatten_config(validation_flat))
-            DaemonConfig(**current)
+            try:
+                DaemonConfig(**current)
+            except (TypeError, ValueError) as e:
+                logger.info("Invalid config save request: %s", e)
+                raise HTTPException(status_code=400, detail="Invalid configuration values") from e
 
             count = 0
             secret_store = context.get_secret_store()
@@ -116,7 +120,12 @@ def register_value_routes(router: APIRouter, context: ConfigurationRouteContext)
                 resolved,
                 unflatten_config({k: v for k, v in flat_updates.items() if v != MASKED_SECRET}),
             )
-            context.set_runtime_config(DaemonConfig(**resolved), propagate_websocket=True)
+            try:
+                runtime_config = DaemonConfig(**resolved)
+            except (TypeError, ValueError) as e:
+                logger.info("Invalid resolved config after save: %s", e)
+                raise HTTPException(status_code=400, detail="Invalid configuration values") from e
+            context.set_runtime_config(runtime_config, propagate_websocket=True)
 
             response: dict[str, Any] = {"ok": True, "requires_restart": True}
             add_restart_hint(response, set(secret_entries))
@@ -124,8 +133,8 @@ def register_value_routes(router: APIRouter, context: ConfigurationRouteContext)
         except HTTPException:
             raise
         except Exception as e:
-            logger.error("Config save failed: %s", e, exc_info=True)
-            raise HTTPException(status_code=400, detail="Failed to save configuration") from e
+            logger.error("Config save failed", exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to save configuration") from e
 
     @router.post("/values/validate")
     async def validate_config(request: SaveConfigRequest) -> JSONResponse:

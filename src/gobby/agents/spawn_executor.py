@@ -79,12 +79,13 @@ def _apply_extra_env(env: dict[str, str], request: SpawnRequest) -> None:
 def _record_resume_launch_details(
     request: SpawnRequest,
     *,
+    agent_run_id: str,
     sandbox_args: list[str] | None = None,
     sandbox_env: dict[str, str] | None = None,
     config_overrides: list[str] | None = None,
 ) -> None:
     """Persist post-resolution CLI launch details for daemon-stop resume."""
-    if not request.agent_run_id or request.resume_metadata_json is None:
+    if request.resume_metadata_json is None:
         return
     storage = getattr(request.session_manager, "_storage", None)
     db = getattr(storage, "db", None)
@@ -101,7 +102,7 @@ def _record_resume_launch_details(
     try:
         from gobby.storage.agents import LocalAgentRunManager
 
-        LocalAgentRunManager(db).update_resume_metadata(request.agent_run_id, metadata)
+        LocalAgentRunManager(db).update_resume_metadata(agent_run_id, metadata)
     except Exception as exc:
         logger.warning("Failed to persist resume launch metadata: %s", exc)
 
@@ -264,7 +265,12 @@ async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
     if request.machine_id:
         env["GOBBY_MACHINE_ID"] = request.machine_id
 
-    _record_resume_launch_details(request, sandbox_args=sandbox_args, sandbox_env=sandbox_env)
+    _record_resume_launch_details(
+        request,
+        agent_run_id=spawn_context.agent_run_id,
+        sandbox_args=sandbox_args,
+        sandbox_env=sandbox_env,
+    )
 
     # Pre-approve workspace trust so the CLI doesn't show an interactive prompt
     pre_approve_directory("claude", request.cwd)
@@ -385,7 +391,12 @@ async def _spawn_gemini_terminal(request: SpawnRequest) -> SpawnResult:
     if request.machine_id:
         env["GOBBY_MACHINE_ID"] = request.machine_id
 
-    _record_resume_launch_details(request, sandbox_args=sandbox_args, sandbox_env=sandbox_env)
+    _record_resume_launch_details(
+        request,
+        agent_run_id=spawn_context.agent_run_id,
+        sandbox_args=sandbox_args,
+        sandbox_env=sandbox_env,
+    )
 
     # Pre-approve workspace trust so the CLI doesn't show an interactive prompt
     pre_approve_directory("gemini", request.cwd)
@@ -500,7 +511,12 @@ async def _spawn_qwen_terminal(request: SpawnRequest) -> SpawnResult:
     if request.machine_id:
         env["GOBBY_MACHINE_ID"] = request.machine_id
 
-    _record_resume_launch_details(request, sandbox_args=sandbox_args, sandbox_env=sandbox_env)
+    _record_resume_launch_details(
+        request,
+        agent_run_id=spawn_context.agent_run_id,
+        sandbox_args=sandbox_args,
+        sandbox_env=sandbox_env,
+    )
 
     pre_approve_directory("qwen", request.cwd)
 
@@ -601,7 +617,12 @@ async def _spawn_grok_terminal(request: SpawnRequest) -> SpawnResult:
     if request.machine_id:
         env["GOBBY_MACHINE_ID"] = request.machine_id
 
-    _record_resume_launch_details(request, sandbox_args=sandbox_args, sandbox_env=sandbox_env)
+    _record_resume_launch_details(
+        request,
+        agent_run_id=spawn_context.agent_run_id,
+        sandbox_args=sandbox_args,
+        sandbox_env=sandbox_env,
+    )
 
     pre_approve_directory("grok", request.cwd)
 
@@ -711,7 +732,10 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
         env["GOBBY_MACHINE_ID"] = request.machine_id
 
     _record_resume_launch_details(
-        request, sandbox_args=sandbox_args, config_overrides=config_overrides
+        request,
+        agent_run_id=spawn_context.agent_run_id,
+        sandbox_args=sandbox_args,
+        config_overrides=config_overrides,
     )
 
     pre_approve_directory("codex", request.cwd)
@@ -826,7 +850,7 @@ async def _spawn_droid_terminal(request: SpawnRequest) -> SpawnResult:
     if request.machine_id:
         env["GOBBY_MACHINE_ID"] = request.machine_id
 
-    _record_resume_launch_details(request)
+    _record_resume_launch_details(request, agent_run_id=spawn_context.agent_run_id)
 
     pre_approve_directory("droid", request.cwd)
 

@@ -124,8 +124,14 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
                 "bytes": len(audio_bytes),
                 "content_type": content_type,
             }
-        except Exception as e:
-            logger.error("Transcription error: %s", e, exc_info=True)
+        except ValueError as e:
+            logger.info("Transcription rejected: %s", e)
+            return {"error": str(e), "text": ""}
+        except TimeoutError:
+            logger.warning("Transcription timed out")
+            return {"error": "Transcription timed out", "text": ""}
+        except Exception:
+            logger.error("Transcription error", exc_info=True)
             return {"error": "Transcription failed", "text": ""}
 
     return router
