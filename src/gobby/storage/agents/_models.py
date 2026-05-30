@@ -158,6 +158,7 @@ class AgentRun:
             "timeout_seconds": self.timeout_seconds,
             "continuation_prompt": self.continuation_prompt,
             "terminal_reason": self.terminal_reason,
+            "resume_metadata_json": self.resume_metadata_json,
         }
 
     def to_brief(self) -> dict[str, Any]:
@@ -178,4 +179,5 @@ class AgentRun:
             "terminal_reason": self.terminal_reason,
             "tool_calls_count": self.tool_calls_count,
             "turns_used": self.turns_used,
+            "resume_metadata_json": self.resume_metadata_json,
         }

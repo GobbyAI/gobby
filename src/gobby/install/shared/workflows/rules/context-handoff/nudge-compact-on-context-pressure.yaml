@@ -1,0 +1,13 @@
+tags: [context-handoff, context, compact, lifecycle, gobby, default]
+
+rules:
+  nudge-compact-on-context-pressure:
+    description: "Remind non-plan agents to compact when normalized context pressure is high"
+    event: turn_start
+    enabled: true
+    priority: 30
+    when: "variables.get('context_compact_guidance_message')"
+    effects:
+      - type: inject_context
+        template: |
+          {{ variables.get('context_compact_guidance_message') }}

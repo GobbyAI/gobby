@@ -52,7 +52,7 @@ def create_configuration_router(server: "HTTPServer") -> APIRouter:
     router = APIRouter(prefix="/api/config", tags=["configuration"])
     context = ConfigurationRouteContext(server)
 
-    validation_detection_routes.register_validation_detection_routes(router, server)
+    validation_detection_routes.register_validation_detection_routes(router, context)
     register_value_routes(router, context)
     register_template_routes(router, context)
     register_secret_routes(router, context)

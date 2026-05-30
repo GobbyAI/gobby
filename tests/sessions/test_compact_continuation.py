@@ -8,11 +8,15 @@ from unittest.mock import patch
 import pytest
 
 from gobby.sessions.compact_continuation import (
+    COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE,
     COMPACT_SELF_CONTINUE_PROMPT,
     COMPACT_SELF_CONTINUE_VARIABLE,
+    build_compact_self_continue_prompt,
     mark_compact_self_continuation_pending,
+    persist_compact_resume_required_skills,
     schedule_compact_self_continuation_fallback,
 )
+from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.state_manager import SessionVariableManager
 from tests._timing import drain_asyncio_tasks
@@ -58,6 +62,35 @@ async def test_fallback_consumes_pending_marker_and_sends_prompt(
     assert tmux.sent_keys == [("%12", f"{COMPACT_SELF_CONTINUE_PROMPT}\n", True)]
     variables = SessionVariableManager(db).get_variables("sess-1")
     assert COMPACT_SELF_CONTINUE_VARIABLE not in variables
+
+
+def test_persist_compact_resume_required_skills_merges_required_and_loaded_skills(
+    hub_db: HubDatabase,
+) -> None:
+    db = hub_db
+    sv_mgr = SessionVariableManager(db)
+    sv_mgr.merge_variables(
+        "sess-1",
+        {
+            "required_skills": ["python"],
+            "claimed_task_required_skills": ["python", "development-discipline"],
+            "loaded_skills": ["code-index"],
+        },
+    )
+
+    skills = persist_compact_resume_required_skills(db, "sess-1")
+
+    assert skills == ["python", "code-index", "development-discipline"]
+    variables = sv_mgr.get_variables("sess-1")
+    assert variables[COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE] == skills
+
+
+def test_build_compact_self_continue_prompt_includes_skill_fetch_directives() -> None:
+    prompt = build_compact_self_continue_prompt(["python", "python", "development-discipline"])
+
+    assert "progressive discovery" in prompt
+    assert prompt.count(skill_fetch_directive("python")) == 1
+    assert skill_fetch_directive("development-discipline") in prompt
 
 
 @pytest.mark.asyncio

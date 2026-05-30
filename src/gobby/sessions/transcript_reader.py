@@ -7,6 +7,7 @@ gzip archives for expired sessions. Supports JSONL and native JSON transcripts.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import warnings
@@ -14,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.sessions.transcript_archive import get_archive_dir
 from gobby.sessions.transcript_io import (
+    DecompressionError,
     _decompress_archive,
     _read_json_file,
     _read_jsonl_lines,
@@ -139,7 +141,7 @@ class TranscriptReader:
                 session_id=session_id,
                 transcript_path=archive_path,
             )
-        except Exception as e:
+        except (DecompressionError, json.JSONDecodeError, ValueError, OSError) as e:
             logger.warning(f"Failed to read archive for session {session_id}: {e}")
             return []
 
@@ -263,7 +265,7 @@ class TranscriptReader:
                 session_id=session_id,
                 transcript_path=archive_path,
             )
-        except Exception as e:
+        except (DecompressionError, json.JSONDecodeError, ValueError, OSError) as e:
             logger.warning(f"Failed to read archive for session {session_id}: {e}")
             return []
 

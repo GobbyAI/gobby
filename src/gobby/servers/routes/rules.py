@@ -96,7 +96,7 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
             if ws and hasattr(ws, "broadcast_workflow_event"):
                 await ws.broadcast_workflow_event(event, definition_id, **kwargs)
         except Exception as e:
-            logger.debug("Failed to broadcast rule event %s: %s", event, e, exc_info=True)
+            logger.warning("Failed to broadcast rule event %s: %s", event, e, exc_info=True)
 
     # -----------------------------------------------------------------
     # GET /api/rules/groups (must be before /{name} to avoid conflict)

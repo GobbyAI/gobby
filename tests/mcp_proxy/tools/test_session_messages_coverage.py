@@ -296,7 +296,7 @@ class TestGetSessionMessages:
     """Tests for get_session_messages tool."""
 
     @pytest.mark.asyncio
-    async def test_get_messages_success(self):
+    async def test_get_messages_success(self) -> None:
         """Test successful message retrieval."""
         mock_msg1 = MagicMock()
         mock_msg1.to_dict.return_value = {"id": 1, "content": "Hello", "role": "user"}
@@ -317,7 +317,7 @@ class TestGetSessionMessages:
         assert len(result["messages"]) == 2
 
     @pytest.mark.asyncio
-    async def test_get_messages_truncates_content(self):
+    async def test_get_messages_truncates_content(self) -> None:
         """Test that large content is truncated when full_content=False."""
         long_content = "x" * 600  # More than 500 chars
         mock_msg = MagicMock()
@@ -338,7 +338,7 @@ class TestGetSessionMessages:
         assert "... (truncated)" in result["messages"][0]["content"]
 
     @pytest.mark.asyncio
-    async def test_get_messages_full_content(self):
+    async def test_get_messages_full_content(self) -> None:
         """Test that content is not truncated when full_content=True."""
         long_content = "x" * 600
         mock_msg = MagicMock()
@@ -357,7 +357,7 @@ class TestGetSessionMessages:
         assert result["messages"][0]["content"] == long_content
 
     @pytest.mark.asyncio
-    async def test_get_messages_truncates_tool_calls(self):
+    async def test_get_messages_truncates_tool_calls(self) -> None:
         """Test that tool call input is truncated."""
         long_input = "y" * 300
         mock_msg = MagicMock()
@@ -380,7 +380,7 @@ class TestGetSessionMessages:
         assert "... (truncated)" in result["messages"][0]["tool_calls"][0]["input"]
 
     @pytest.mark.asyncio
-    async def test_get_messages_truncates_tool_result(self):
+    async def test_get_messages_truncates_tool_result(self) -> None:
         """Test that tool result content is truncated."""
         long_result = "z" * 300
         mock_msg = MagicMock()
@@ -403,7 +403,7 @@ class TestGetSessionMessages:
         assert "... (truncated)" in result["messages"][0]["tool_result"]["content"]
 
     @pytest.mark.asyncio
-    async def test_get_messages_with_pagination(self):
+    async def test_get_messages_with_pagination(self) -> None:
         """Test message retrieval with pagination."""
         transcript_reader = AsyncMock()
         transcript_reader.get_rendered_messages.return_value = []
@@ -418,7 +418,7 @@ class TestGetSessionMessages:
         assert result["offset"] == 20
 
     @pytest.mark.asyncio
-    async def test_get_messages_error(self):
+    async def test_get_messages_error(self) -> None:
         """Test error handling in get_session_messages."""
         transcript_reader = AsyncMock()
         transcript_reader.get_rendered_messages.side_effect = Exception("Database error")
@@ -436,7 +436,7 @@ class TestSearchSessionMessages:
     """Tests for search_session_messages tool."""
 
     @pytest.mark.asyncio
-    async def test_search_session_messages_finds_match_in_session(self):
+    async def test_search_session_messages_finds_match_in_session(self) -> None:
         """Test searching a single rendered transcript."""
         mock_msg = MagicMock()
         mock_msg.to_dict.return_value = {
@@ -461,7 +461,7 @@ class TestSearchSessionMessages:
         assert "needle" in result["results"][0]["snippet"]
 
     @pytest.mark.asyncio
-    async def test_search_session_messages_no_match(self):
+    async def test_search_session_messages_no_match(self) -> None:
         """Test search with no matching messages."""
         mock_msg = MagicMock()
         mock_msg.to_dict.return_value = {
@@ -484,7 +484,7 @@ class TestSearchSessionMessages:
         assert result["results"] == []
 
     @pytest.mark.asyncio
-    async def test_search_session_messages_truncates_result(self):
+    async def test_search_session_messages_truncates_result(self) -> None:
         """Test search result content truncation."""
         long_content = "needle " + ("x" * 600)
         mock_msg = MagicMock()
@@ -509,7 +509,7 @@ class TestSearchSessionMessages:
         assert "... (truncated)" in message["content_blocks"][0]["content"]
 
     @pytest.mark.asyncio
-    async def test_search_session_messages_requires_transcript_reader(self):
+    async def test_search_session_messages_requires_transcript_reader(self) -> None:
         """Test search returns a clear error without TranscriptReader."""
         session_manager = MagicMock()
         registry = create_test_registry(session_manager=session_manager)
@@ -521,7 +521,7 @@ class TestSearchSessionMessages:
         assert "TranscriptReader not configured" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_search_session_messages_scans_filtered_sessions(self):
+    async def test_search_session_messages_scans_filtered_sessions(self) -> None:
         """Test multi-session search uses session filters."""
         session_one = MagicMock()
         session_one.id = "sess-1"
@@ -1203,7 +1203,7 @@ class TestEdgeCases:
     """Tests for edge cases and boundary conditions."""
 
     @pytest.mark.asyncio
-    async def test_get_messages_empty_content(self):
+    async def test_get_messages_empty_content(self) -> None:
         """Test handling messages with empty content."""
         mock_msg1 = MagicMock()
         mock_msg1.to_dict.return_value = {"id": 1, "content": "", "role": "user"}
@@ -1222,7 +1222,7 @@ class TestEdgeCases:
         assert result["returned_count"] == 2
 
     @pytest.mark.asyncio
-    async def test_get_messages_non_string_content(self):
+    async def test_get_messages_non_string_content(self) -> None:
         """Test handling messages with non-string content."""
         mock_msg = MagicMock()
         mock_msg.to_dict.return_value = {

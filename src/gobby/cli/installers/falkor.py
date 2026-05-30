@@ -322,8 +322,12 @@ async def _wait_for_health_async(
             )
             if result.returncode == 0 and "PONG" in result.stdout:
                 return True
-        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-            pass
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
+            logger.debug(
+                "FalkorDB health check attempt failed (%s): %s",
+                type(exc).__name__,
+                exc,
+            )
         await asyncio.sleep(interval)
     return False
 

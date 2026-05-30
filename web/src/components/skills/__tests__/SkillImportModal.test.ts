@@ -17,4 +17,18 @@ describe('detectSourceType', () => {
     expect(detectSourceType('ssh://github.com/GobbyAI/gobby')).toBe('unknown')
     expect(detectSourceType('foo://bar/baz')).toBe('unknown')
   })
+
+  it('detects bare owner/repo sources as GitHub imports', () => {
+    expect(detectSourceType('GobbyAI/gobby')).toBe('github')
+  })
+
+  it('detects zip sources before local path fallback', () => {
+    expect(detectSourceType('./skills.zip')).toBe('zip')
+  })
+
+  it('detects local sources', () => {
+    expect(detectSourceType('/tmp/skill')).toBe('local')
+    expect(detectSourceType('./skill')).toBe('local')
+    expect(detectSourceType('../skill')).toBe('local')
+  })
 })

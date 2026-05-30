@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.sessions.tmux_context import get_tmux_manager_for_context, parse_terminal_context_value
+from gobby.skills.formatting import skill_fetch_directive
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -17,10 +18,18 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 COMPACT_SELF_CONTINUE_VARIABLE = "compact_self_continue_pending"
+COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE = "compact_resume_required_skills"
 COMPACT_SELF_CONTINUE_PROMPT = "Continue where you last left off."
 COMPACT_SELF_CONTINUE_FRESH_SECONDS = 600
 COMPACT_SELF_CONTINUE_SEND_DELAY_SECONDS = 1.0
 COMPACT_SELF_CONTINUE_FALLBACK_DELAY_SECONDS = 3.0
+COMPACT_RESUME_SKILL_VARIABLE_KEYS = (
+    "required_skills",
+    "additional_skills",
+    "loaded_skills",
+    "claimed_task_required_skills",
+    "claimed_task_additional_skills",
+)
 
 
 def mark_compact_self_continuation_pending(
@@ -45,6 +54,38 @@ def mark_compact_self_continuation_pending(
             exc_info=True,
         )
         return False
+
+
+def persist_compact_resume_required_skills(
+    db: HubDatabase,
+    session_id: str,
+) -> list[str]:
+    """Persist skills that should be reloaded after compact_self resumes."""
+    variables = _load_session_variables(db, session_id)
+    skills = _collect_compact_resume_required_skills(variables)
+    try:
+        _merge_session_variable(db, session_id, COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE, skills)
+    except Exception:
+        logger.warning(
+            "Failed to persist compact resume required skills for session %s",
+            session_id,
+            exc_info=True,
+        )
+    return skills
+
+
+def build_compact_self_continue_prompt(required_skills: list[str] | None) -> str:
+    """Build the post-compact continuation prompt with skill reload directives."""
+    skills = _unique_strings(required_skills or [])
+    if not skills:
+        return COMPACT_SELF_CONTINUE_PROMPT
+
+    directives = "\n\n".join(skill_fetch_directive(skill) for skill in skills)
+    return (
+        "Continue where you last left off. Before continuing the task, use progressive "
+        "discovery to reload these required skills in order:\n\n"
+        f"{directives}"
+    )
 
 
 def clear_compact_self_continuation_pending(db: HubDatabase, session_id: str) -> bool:
@@ -302,6 +343,46 @@ def _merge_session_variable(
                 "VALUES (%s, %s, %s)",
                 (session_id, json.dumps(variables), now),
             )
+
+
+def _load_session_variables(db: HubDatabase, session_id: str) -> dict[str, Any]:
+    row = db.fetchone(
+        "SELECT variables FROM session_variables WHERE session_id = %s",
+        (session_id,),
+    )
+    return _load_variables(_row_variables(row))
+
+
+def _collect_compact_resume_required_skills(variables: dict[str, Any]) -> list[str]:
+    skills: list[str] = []
+    for key in COMPACT_RESUME_SKILL_VARIABLE_KEYS:
+        _extend_unique_strings(skills, variables.get(key))
+    return skills
+
+
+def _extend_unique_strings(target: list[str], values: Any) -> None:
+    for value in _iter_strings(values):
+        if value not in target:
+            target.append(value)
+
+
+def _unique_strings(values: list[str]) -> list[str]:
+    unique: list[str] = []
+    _extend_unique_strings(unique, values)
+    return unique
+
+
+def _iter_strings(values: Any) -> list[str]:
+    if isinstance(values, str):
+        return [values] if values else []
+    if not isinstance(values, list | tuple | set):
+        return []
+
+    result: list[str] = []
+    for value in values:
+        if isinstance(value, str) and value:
+            result.append(value)
+    return result
 
 
 def _remove_session_variable(db: HubDatabase, session_id: str, name: str) -> Any:

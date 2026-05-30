@@ -19,8 +19,10 @@ import aiofiles
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
 from gobby.sessions.compact_continuation import (
+    build_compact_self_continue_prompt,
     clear_compact_self_continuation_pending,
     mark_compact_self_continuation_pending,
+    persist_compact_resume_required_skills,
     schedule_compact_self_continuation_fallback,
 )
 from gobby.sessions.tmux_context import get_tmux_manager_for_context, parse_terminal_context_value
@@ -599,6 +601,8 @@ def register_terminal_tools(
                 f"{refresh_result.get('error', 'unknown error')}",
             }
 
+        required_skills = persist_compact_resume_required_skills(db, resolved_session_id)
+        continuation_prompt = build_compact_self_continue_prompt(required_skills)
         ok, reason, continuation_pending = await _send_terminal_compaction_command(
             tmux,
             target,
@@ -607,6 +611,7 @@ def register_terminal_tools(
             mark_continuation_pending=lambda: mark_compact_self_continuation_pending(
                 db,
                 resolved_session_id,
+                prompt=continuation_prompt,
             ),
             clear_continuation_pending=lambda: clear_compact_self_continuation_pending(
                 db,
@@ -633,6 +638,8 @@ def register_terminal_tools(
             "interrupted": True,
             "continuation_pending": continuation_pending,
         }
+        if required_skills:
+            result["compact_resume_required_skills"] = required_skills
         if refresh_result.get("refreshed"):
             result["handoff_context_refreshed"] = True
             result["handoff_summary_length"] = refresh_result.get("summary_length")

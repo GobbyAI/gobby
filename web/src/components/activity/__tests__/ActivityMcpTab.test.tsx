@@ -100,7 +100,7 @@ function Harness({
 function renderMcp(props = makeProps()) {
   // The shared header buttons live above the tab in the real layout; render
   // them here so Add/Refresh are reachable in tests.
-  return render(<Harness props={props}>{<ActivityActionButtons />}</Harness>);
+  return render(<Harness props={props}><ActivityActionButtons /></Harness>);
 }
 
 function treeItemFor(text: string) {

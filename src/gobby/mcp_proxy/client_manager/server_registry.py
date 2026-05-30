@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import suppress
 from typing import Any, Protocol, cast
 
 from gobby.mcp_proxy.bundled import normalize_bundled_server_config
@@ -245,19 +246,30 @@ async def set_server_enabled(
     if config.enabled == enabled:
         return {"success": True, "name": name, "enabled": enabled}
 
-    if manager.mcp_db_manager and effective_project_id:
-        manager.mcp_db_manager.update_server(name, effective_project_id, enabled=enabled)
-
-    config.enabled = enabled
-
     if enabled:
         session = await manager._connect_server(config)
         await _discover_and_cache_tools(manager, config, session)
+        if manager.mcp_db_manager and effective_project_id:
+            try:
+                manager.mcp_db_manager.update_server(name, effective_project_id, enabled=True)
+            except Exception:
+                with suppress(Exception):
+                    if name in manager._connections:
+                        await manager._connections[name].disconnect()
+                        del manager._connections[name]
+                manager.health.pop(name, None)
+                raise
+        config.enabled = True
+        manager._lazy_connector.register_server(name)
     else:
+        if manager.mcp_db_manager and effective_project_id:
+            manager.mcp_db_manager.update_server(name, effective_project_id, enabled=False)
+        config.enabled = False
         if name in manager._connections:
             await manager._connections[name].disconnect()
             del manager._connections[name]
         manager.health.pop(name, None)
+        manager._lazy_connector.unregister_server(name)
 
     return {"success": True, "name": name, "enabled": enabled}
 

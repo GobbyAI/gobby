@@ -187,6 +187,9 @@ export interface ContextUsage {
   uncachedInputTokens: number;
   cacheReadTokens: number;
   cacheCreationTokens: number;
+  contextUsageRatio?: number | null;
+  contextUsageSource?: string | null;
+  contextUsageConfidence?: string | null;
 }
 
 import type { A2UISurfaceState, UserAction } from "../components/canvas/types";

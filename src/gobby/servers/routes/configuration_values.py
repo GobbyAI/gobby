@@ -125,14 +125,18 @@ def register_value_routes(router: APIRouter, context: ConfigurationRouteContext)
             raise
         except Exception as e:
             logger.error("Config save failed: %s", e, exc_info=True)
-            raise HTTPException(status_code=400, detail=str(e)) from e
+            raise HTTPException(status_code=400, detail="Failed to save configuration") from e
 
     @router.post("/values/validate")
     async def validate_config(request: SaveConfigRequest) -> JSONResponse:
         """Validate config without saving."""
         try:
             current = context.current_config_values()
-            deep_merge(current, request.values)
+            flat_updates = flatten_config(request.values)
+            unmasked_updates = {
+                key: value for key, value in flat_updates.items() if value != MASKED_SECRET
+            }
+            deep_merge(current, unflatten_config(unmasked_updates))
             DaemonConfig(**current)
             return JSONResponse(content={"valid": True, "errors": []})
         except HTTPException:
@@ -151,4 +155,4 @@ def register_value_routes(router: APIRouter, context: ConfigurationRouteContext)
             return JSONResponse(content={"ok": True, "requires_restart": True})
         except Exception as e:
             logger.error("Config reset failed: %s", e, exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Failed to reset configuration") from e

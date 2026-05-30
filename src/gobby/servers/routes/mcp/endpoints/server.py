@@ -7,6 +7,7 @@ These endpoints handle server listing, addition, import, and removal.
 
 import logging
 import time
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from fastapi import Depends, HTTPException, Request
@@ -21,6 +22,16 @@ if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
 
 logger = logging.getLogger(__name__)
+
+
+async def _request_json_mapping(request: Request) -> Mapping[str, Any]:
+    body = await request.json()
+    if not isinstance(body, Mapping):
+        raise HTTPException(
+            status_code=400,
+            detail={"success": False, "error": "Request body must be a JSON object"},
+        )
+    return body
 
 
 def _mcp_manager_is_connected(mcp_manager: Any, name: str) -> bool:
@@ -112,7 +123,7 @@ async def add_mcp_server(
     start_time = time.perf_counter()
 
     try:
-        body = await request.json()
+        body = await _request_json_mapping(request)
         name = body.get("name")
         transport = body.get("transport")
 
@@ -203,7 +214,7 @@ async def import_mcp_server(
     start_time = time.perf_counter()
 
     try:
-        body = await request.json()
+        body = await _request_json_mapping(request)
         from_project = body.get("from_project")
         github_url = body.get("github_url")
         query = body.get("query")
@@ -356,7 +367,7 @@ async def set_mcp_server_enabled(
     start_time = time.perf_counter()
 
     try:
-        body = await request.json()
+        body = await _request_json_mapping(request)
         enabled = body.get("enabled")
         if not isinstance(enabled, bool):
             raise HTTPException(
@@ -393,14 +404,22 @@ async def set_mcp_server_enabled(
     except HTTPException:
         raise
     except PermissionError as e:
-        logger.warning(f"Set MCP server enabled permission error: {e}", exc_info=True)
+        logger.warning(
+            "Set MCP server enabled permission error",
+            extra={"server_name": name, "enabled": enabled, "error": str(e)},
+            exc_info=True,
+        )
         response_time_ms = (time.perf_counter() - start_time) * 1000
         raise HTTPException(
             status_code=403,
             detail={"success": False, "error": str(e), "response_time_ms": response_time_ms},
         ) from e
     except (ValueError, KeyError, RuntimeError, MCPError, CircuitBreakerOpen) as e:
-        logger.error(f"Set MCP server enabled error: {e}", exc_info=True)
+        logger.error(
+            "Set MCP server enabled error",
+            extra={"server_name": name, "enabled": enabled, "error": str(e)},
+            exc_info=True,
+        )
         response_time_ms = (time.perf_counter() - start_time) * 1000
         return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
 

@@ -20,6 +20,11 @@ from typing import Any, TypeVar, cast
 
 from gobby.app_context import get_app_context
 from gobby.config.sessions import SessionLifecycleConfig
+from gobby.sessions.context_usage import (
+    context_window_from_raw_message,
+    snapshot_from_token_usage,
+    snapshot_from_window_metadata,
+)
 from gobby.sessions.summarize import TURN_PATTERN
 from gobby.sessions.summary_validity import is_summary_markdown_valid
 from gobby.sessions.transcript_archive import backup_transcript
@@ -42,6 +47,7 @@ from gobby.storage.token_events import (
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+_WINDOW_ONLY_CONTEXT_SOURCES = frozenset({"droid", "agy", "grok"})
 
 
 def _session_int(value: Any) -> int:
@@ -63,18 +69,7 @@ def _coerce_context_window(value: Any) -> int | None:
 
 
 def _message_context_window(message: ParsedMessage) -> int | None:
-    raw_json = getattr(message, "raw_json", None)
-    if not isinstance(raw_json, dict):
-        return None
-    payload = raw_json.get("payload")
-    if not isinstance(payload, dict):
-        return None
-    info = payload.get("info")
-    if not isinstance(info, dict):
-        return None
-    return _coerce_context_window(
-        info.get("model_context_window") or info.get("modelContextWindow")
-    )
+    return context_window_from_raw_message(getattr(message, "raw_json", None))
 
 
 class SessionLifecycleManager:
@@ -528,6 +523,8 @@ class SessionLifecycleManager:
         parser: Any = ClaudeTranscriptParser(session_id=session_id)
         if session.source == "gemini":
             parser = GeminiTranscriptParser(session_id=session_id)
+        elif session.source == "agy":
+            parser = GeminiTranscriptParser(session_id=session_id)
         elif session.source == "grok":
             parser = GrokTranscriptParser(session_id=session_id)
         elif session.source == "qwen":
@@ -578,15 +575,24 @@ class SessionLifecycleManager:
         if app_ctx is not None:
             ws_server = app_ctx.websocket_server
         saw_usage = False
-        latest_codex_totals: dict[str, int] | None = None
+        latest_context_snapshot = None
 
         for msg in messages:
             message_model = msg.model if isinstance(msg.model, str) and msg.model else None
             if message_model:
                 last_model = message_model
 
+            message_context_window = _message_context_window(msg) or session_context_window
+            if message_context_window is not None:
+                session_context_window = message_context_window
             usage = msg.usage
             if usage is None:
+                if session_source in _WINDOW_ONLY_CONTEXT_SOURCES:
+                    latest_context_snapshot = snapshot_from_window_metadata(
+                        source=session_source,
+                        context_window=message_context_window,
+                        model=message_model or last_model,
+                    )
                 continue
 
             if not all(
@@ -606,11 +612,14 @@ class SessionLifecycleManager:
                 and usage.cache_creation_tokens == 0
                 and usage.cache_read_tokens == 0
             ):
+                if session_source in _WINDOW_ONLY_CONTEXT_SOURCES:
+                    latest_context_snapshot = snapshot_from_window_metadata(
+                        source=session_source,
+                        context_window=message_context_window,
+                        model=message_model or last_model,
+                    )
                 continue
             saw_usage = True
-            message_context_window = _message_context_window(msg) or session_context_window
-            if message_context_window is not None:
-                session_context_window = message_context_window
 
             event_timestamp = getattr(msg, "timestamp", None)
             if not isinstance(event_timestamp, datetime):
@@ -643,15 +652,12 @@ class SessionLifecycleManager:
                 running_totals["output_tokens"] += usage.output_tokens
                 running_totals["cache_creation_tokens"] += usage.cache_creation_tokens
                 running_totals["cache_read_tokens"] += usage.cache_read_tokens
-                if session_source == "codex":
-                    latest_codex_totals = {
-                        "input_tokens": usage.input_tokens
-                        + usage.cache_creation_tokens
-                        + usage.cache_read_tokens,
-                        "output_tokens": running_totals["output_tokens"],
-                        "cache_creation_tokens": usage.cache_creation_tokens,
-                        "cache_read_tokens": usage.cache_read_tokens,
-                    }
+                latest_context_snapshot = snapshot_from_token_usage(
+                    source=session_source,
+                    context_window=message_context_window,
+                    usage=usage,
+                    model=event_model,
+                )
 
                 if ws_server is not None:
                     try:
@@ -688,6 +694,8 @@ class SessionLifecycleManager:
             or _session_int(getattr(session, "usage_cache_creation_tokens", 0)) > 0
             or _session_int(getattr(session, "usage_cache_read_tokens", 0)) > 0
         ):
+            if latest_context_snapshot is not None:
+                self.session_manager.update_context_usage(session_id, latest_context_snapshot)
             logger.debug(
                 "Transcript yielded no token events for %s; preserving existing session totals",
                 session_id,
@@ -697,7 +705,7 @@ class SessionLifecycleManager:
         totals = self.token_event_store.get_session_totals(session_id)
         if saw_usage and not any(totals.values()) and any(running_totals.values()):
             totals = dict(running_totals)
-        session_totals = latest_codex_totals if latest_codex_totals is not None else totals
+        session_totals = totals
 
         # Update session with aggregated usage
         self.session_manager.update_usage(
@@ -709,6 +717,8 @@ class SessionLifecycleManager:
             context_window=session_context_window,
             model=last_model,
         )
+        if latest_context_snapshot is not None:
+            self.session_manager.update_context_usage(session_id, latest_context_snapshot)
 
         # NOTE: Memory extraction and summary generation are now called from
         # _process_pending_transcripts (the caller), not here.  This ensures

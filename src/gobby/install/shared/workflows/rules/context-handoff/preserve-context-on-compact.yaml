@@ -18,3 +18,9 @@ rules:
       - type: set_variable
         variable: handoff_source
         value: "compact"
+      - type: set_variable
+        variable: last_compacted_turn_seq
+        value: "variables.get('parent_turn_seq') or 0"
+      - type: set_variable
+        variable: turns_since_compact
+        value: 0

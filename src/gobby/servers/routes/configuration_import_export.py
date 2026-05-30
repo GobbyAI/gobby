@@ -18,14 +18,20 @@ from gobby.prompts.models import parse_frontmatter
 from gobby.servers.routes.configuration_context import ConfigurationRouteContext
 from gobby.servers.routes.configuration_models import ImportConfigRequest
 from gobby.servers.routes.configuration_secrets import (
+    FALKOR_REQUIREPASS_KEY,
     add_restart_hint,
-    falkordb_validation_response,
     mark_secret_keys,
     partition_config_entries,
     validate_falkordb_secret,
     validation_flat_for_secret_entries,
 )
-from gobby.storage.config_store import flatten_config, is_secret_key_name, unflatten_config
+from gobby.storage.config_store import (
+    ConfigStore,
+    flatten_config,
+    is_secret_key_name,
+    unflatten_config,
+)
+from gobby.storage.secrets import SecretStore
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +50,23 @@ _CONFIG_EXPORT_ERRORS: tuple[type[Exception], ...] = (
 )
 
 
+def _config_import_error_detail(error: Exception) -> str:
+    """Return safe client-facing details for known import failures."""
+    if isinstance(error, ValidationError):
+        return "Invalid imported configuration"
+    if isinstance(error, json.JSONDecodeError):
+        return "Invalid import JSON"
+    if isinstance(error, psycopg.Error):
+        return "Failed to persist imported configuration"
+    if isinstance(error, TypeError):
+        return "Invalid import data"
+    if isinstance(error, ValueError):
+        return str(error) or "Invalid import data"
+    if isinstance(error, RuntimeError):
+        return "Failed to import configuration"
+    return "Invalid import data"
+
+
 def _validate_imported_secret_values(secret_values: dict[str, Any]) -> dict[str, str | None]:
     """Validate imported concrete secret value types before config_store mutation."""
     validated: dict[str, str | None] = {}
@@ -57,11 +80,29 @@ def _validate_imported_secret_values(secret_values: dict[str, Any]) -> dict[str,
     return validated
 
 
+def _legacy_falkordb_requirepass(config: dict[str, Any]) -> tuple[bool, Any]:
+    if FALKOR_REQUIREPASS_KEY in config:
+        return True, config[FALKOR_REQUIREPASS_KEY]
+    databases = config.get("databases")
+    if not isinstance(databases, dict):
+        return False, None
+    falkordb = databases.get("falkordb")
+    if not isinstance(falkordb, dict) or "requirepass" not in falkordb:
+        return False, None
+    return True, falkordb["requirepass"]
+
+
+def _validate_legacy_imported_secrets(config: dict[str, Any]) -> None:
+    present, value = _legacy_falkordb_requirepass(config)
+    if present and value not in (None, ""):
+        validate_falkordb_secret(FALKOR_REQUIREPASS_KEY, value)
+
+
 def persist_imported_config(
     *,
     flat_config: dict[str, Any],
-    config_store: Any,
-    secret_store_provider: Callable[[], Any],
+    config_store: ConfigStore,
+    secret_store_provider: Callable[[], SecretStore],
     config_secret_keys: set[str],
     restart_touched_keys: set[str],
 ) -> int:
@@ -185,13 +226,18 @@ def register_import_export_routes(
                 config_imported = True
 
             elif request.config:
+                try:
+                    _validate_legacy_imported_secrets(request.config)
+                except ValueError as e:
+                    raise HTTPException(status_code=422, detail=str(e)) from e
+
                 flat = flatten_config(request.config)
                 try:
                     for key, value in flat.items():
                         if is_secret_key_name(key) and value not in (None, ""):
                             validate_falkordb_secret(key, value)
                 except ValueError as e:
-                    return falkordb_validation_response(e)
+                    raise HTTPException(status_code=422, detail=str(e)) from e
 
                 DaemonConfig(**request.config)
                 defaults_flat = flatten_config(
@@ -212,6 +258,7 @@ def register_import_export_routes(
 
             if request.prompts:
                 manager = context.get_prompt_manager()
+                project_id = context.server.services.project_id
                 for rel_path, content in request.prompts.items():
                     name = rel_path
                     if name.endswith(".md"):
@@ -223,7 +270,7 @@ def register_import_export_routes(
                     variables = frontmatter.get("variables")
                     stripped_body = body.strip()
 
-                    existing = manager.get_override(name)
+                    existing = manager.get_override(name, project_id=project_id)
                     if existing:
                         manager.update_prompt(
                             prompt_id=existing.id,
@@ -239,7 +286,8 @@ def register_import_export_routes(
                             content=stripped_body if stripped_body else content,
                             version=version,
                             variables=variables,
-                            scope="global",
+                            scope="project" if project_id else "global",
+                            project_id=project_id,
                         )
                 summary_parts.append(f"{len(request.prompts)} prompt override(s) restored")
 
@@ -254,7 +302,7 @@ def register_import_export_routes(
             raise
         except _CONFIG_IMPORT_ERRORS as e:
             logger.error("Config import failed", exc_info=True)
-            raise HTTPException(status_code=400, detail="Invalid import data") from e
+            raise HTTPException(status_code=400, detail=_config_import_error_detail(e)) from e
         except Exception as e:
             logger.error("Unexpected config import failure", exc_info=True)
-            raise HTTPException(status_code=500, detail="Unexpected server error") from e
+            raise HTTPException(status_code=500, detail="Failed to import configuration") from e

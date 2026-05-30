@@ -41,6 +41,11 @@ if TYPE_CHECKING:
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
+from gobby.sessions.context_usage import (
+    context_window_from_raw_message,
+    snapshot_from_token_usage,
+    snapshot_from_window_metadata,
+)
 from gobby.sessions.transcript_renderer import RenderState, render_incremental
 from gobby.sessions.transcripts import get_parser
 from gobby.sessions.transcripts.base import ParsedMessage, ParsedToolEvent, TranscriptParser
@@ -56,6 +61,7 @@ from gobby.storage.token_events import (
 from gobby.telemetry.instruments import inc_counter
 
 logger = logging.getLogger(__name__)
+_WINDOW_ONLY_CONTEXT_SOURCES = frozenset({"droid", "agy", "grok"})
 
 
 class SessionMessageProcessor:
@@ -245,15 +251,7 @@ class SessionMessageProcessor:
 
     @classmethod
     def _message_context_window(cls, message: ParsedMessage) -> int | None:
-        payload = message.raw_json.get("payload")
-        if not isinstance(payload, dict):
-            return None
-        info = payload.get("info")
-        if not isinstance(info, dict):
-            return None
-        return cls._coerce_context_window(
-            info.get("model_context_window") or info.get("modelContextWindow")
-        )
+        return context_window_from_raw_message(message.raw_json)
 
     @staticmethod
     def _usage_has_tokens(message: ParsedMessage) -> bool:
@@ -275,7 +273,11 @@ class SessionMessageProcessor:
         session_id: str,
         messages: list[ParsedMessage],
     ) -> None:
-        if not self.session_manager or not any(self._usage_has_tokens(msg) for msg in messages):
+        if not self.session_manager:
+            return
+        has_usage = any(self._usage_has_tokens(msg) for msg in messages)
+        has_window_metadata = any(self._message_context_window(msg) is not None for msg in messages)
+        if not has_usage and not has_window_metadata:
             return
 
         try:
@@ -295,7 +297,7 @@ class SessionMessageProcessor:
         last_model = getattr(session, "model", None)
         last_model = last_model if isinstance(last_model, str) and last_model else None
         running_totals = store.get_session_totals(session_id)
-        latest_codex_totals: dict[str, int] | None = None
+        latest_context_snapshot = None
         latest_event_at: str | None = None
         saw_insert = False
 
@@ -303,12 +305,19 @@ class SessionMessageProcessor:
             message_model = msg.model if isinstance(msg.model, str) and msg.model else None
             if message_model:
                 last_model = message_model
-            if not self._usage_has_tokens(msg) or msg.usage is None:
-                continue
 
             event_context_window = self._message_context_window(msg) or context_window
             if event_context_window is not None:
                 context_window = event_context_window
+            if not self._usage_has_tokens(msg) or msg.usage is None:
+                if source in _WINDOW_ONLY_CONTEXT_SOURCES:
+                    latest_context_snapshot = snapshot_from_window_metadata(
+                        source=source,
+                        context_window=event_context_window,
+                        model=message_model or last_model,
+                    )
+                continue
+
             event_at = canonicalize_event_timestamp(
                 msg.timestamp if isinstance(msg.timestamp, datetime) else datetime.now(UTC)
             )
@@ -343,15 +352,12 @@ class SessionMessageProcessor:
             running_totals["output_tokens"] += usage.output_tokens
             running_totals["cache_creation_tokens"] += usage.cache_creation_tokens
             running_totals["cache_read_tokens"] += usage.cache_read_tokens
-            if source == "codex":
-                latest_codex_totals = {
-                    "input_tokens": usage.input_tokens
-                    + usage.cache_creation_tokens
-                    + usage.cache_read_tokens,
-                    "output_tokens": running_totals["output_tokens"],
-                    "cache_creation_tokens": usage.cache_creation_tokens,
-                    "cache_read_tokens": usage.cache_read_tokens,
-                }
+            latest_context_snapshot = snapshot_from_token_usage(
+                source=source,
+                context_window=event_context_window,
+                usage=usage,
+                model=event.model,
+            )
             if self.websocket_server is not None:
                 await self.websocket_server.broadcast_token_event(
                     build_token_event_payload(
@@ -375,12 +381,39 @@ class SessionMessageProcessor:
                 )
 
         if not saw_insert:
+            if latest_context_snapshot is not None:
+                self.session_manager.update_context_usage(session_id, latest_context_snapshot)
+                if self.websocket_server is not None:
+                    await self.websocket_server.broadcast_session_usage_updated(
+                        build_session_usage_payload(
+                            session_id=session_id,
+                            project_id=project_id,
+                            model=last_model,
+                            context_window=latest_context_snapshot.context_window,
+                            totals=running_totals,
+                            context_used_tokens=latest_context_snapshot.context_used_tokens,
+                            context_usage_ratio=latest_context_snapshot.context_usage_ratio,
+                            context_usage_source=latest_context_snapshot.source,
+                            context_usage_confidence=latest_context_snapshot.confidence,
+                            last_prompt_input_tokens=latest_context_snapshot.raw_prompt_footprint,
+                            last_prompt_uncached_input_tokens=(
+                                latest_context_snapshot.uncached_prompt_tokens
+                            ),
+                            last_prompt_cache_read_tokens=(
+                                latest_context_snapshot.cache_read_tokens
+                            ),
+                            last_prompt_cache_creation_tokens=(
+                                latest_context_snapshot.cache_creation_tokens
+                            ),
+                            last_completion_output_tokens=latest_context_snapshot.output_tokens,
+                        )
+                    )
             return
 
         totals = store.get_session_totals(session_id)
         if not any(totals.values()) and any(running_totals.values()):
             totals = dict(running_totals)
-        session_totals = latest_codex_totals if latest_codex_totals is not None else totals
+        session_totals = totals
         self.session_manager.update_usage(
             session_id=session_id,
             input_tokens=session_totals["input_tokens"],
@@ -390,7 +423,28 @@ class SessionMessageProcessor:
             context_window=context_window,
             model=last_model,
         )
+        if latest_context_snapshot is not None:
+            self.session_manager.update_context_usage(session_id, latest_context_snapshot)
         if self.websocket_server is not None:
+            context_payload = (
+                {
+                    "context_used_tokens": latest_context_snapshot.context_used_tokens,
+                    "context_usage_ratio": latest_context_snapshot.context_usage_ratio,
+                    "context_usage_source": latest_context_snapshot.source,
+                    "context_usage_confidence": latest_context_snapshot.confidence,
+                    "last_prompt_input_tokens": latest_context_snapshot.raw_prompt_footprint,
+                    "last_prompt_uncached_input_tokens": (
+                        latest_context_snapshot.uncached_prompt_tokens
+                    ),
+                    "last_prompt_cache_read_tokens": latest_context_snapshot.cache_read_tokens,
+                    "last_prompt_cache_creation_tokens": (
+                        latest_context_snapshot.cache_creation_tokens
+                    ),
+                    "last_completion_output_tokens": latest_context_snapshot.output_tokens,
+                }
+                if latest_context_snapshot is not None
+                else {}
+            )
             await self.websocket_server.broadcast_session_usage_updated(
                 build_session_usage_payload(
                     session_id=session_id,
@@ -399,6 +453,7 @@ class SessionMessageProcessor:
                     context_window=context_window,
                     totals=session_totals,
                     updated_at=latest_event_at,
+                    **context_payload,
                 )
             )
 

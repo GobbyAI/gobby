@@ -23,7 +23,6 @@ export function isSecretField(path: string, secretKeys: string[]): boolean {
 
 export function splitSafeConfigPath(path: string): string[] | null {
   const parts = path.split('.')
-  if (parts.length === 0) return null
   if (parts.some(part => !part || UNSAFE_PATH_SEGMENTS.has(part))) return null
   return parts
 }

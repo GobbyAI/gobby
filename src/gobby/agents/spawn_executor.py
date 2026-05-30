@@ -137,6 +137,8 @@ def _sandbox_config_for_spawn(
         session_id = env_vars.get(GOBBY_SESSION_ID)
         if session_id:
             cargo_home = ensure_agent_cargo_home_dir(session_id)
+            # ``prepare_terminal_spawn`` gives each spawn a fresh env dict; mutate it here so
+            # sandbox args and child process env agree on the generated Cargo home.
             env_vars[CARGO_HOME] = cargo_home
     if cargo_home and cargo_home not in extra_write_paths:
         extra_write_paths.append(cargo_home)

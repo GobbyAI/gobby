@@ -13,7 +13,7 @@ from gobby.config.validation_detection import (
 )
 
 if TYPE_CHECKING:
-    from gobby.servers.http import HTTPServer
+    from gobby.servers.routes.configuration_context import ConfigurationRouteContext
 
 
 class ValidationDetectionPreviewRequest(BaseModel):
@@ -23,7 +23,10 @@ class ValidationDetectionPreviewRequest(BaseModel):
     config: dict[str, Any] | None = None
 
 
-def register_validation_detection_routes(router: APIRouter, server: HTTPServer) -> None:
+def register_validation_detection_routes(
+    router: APIRouter,
+    context: ConfigurationRouteContext,
+) -> None:
     """Register validation detection routes on the configuration router."""
 
     @router.post("/validation-detection/preview")
@@ -37,6 +40,7 @@ def register_validation_detection_routes(router: APIRouter, server: HTTPServer) 
             except ValidationError as exc:
                 raise HTTPException(400, str(exc)) from exc
         else:
+            server = context.server
             config = getattr(server.services, "config", None)
             detection_config = getattr(config, "validation_detection", ValidationDetectionConfig())
         match = classify_validation_command(request.command, detection_config)

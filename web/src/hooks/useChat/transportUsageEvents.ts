@@ -1,5 +1,6 @@
 import {
   buildContextUsageFromTotals,
+  computeContextUsageFromSessionData,
   type SessionUsageUpdatedMessage,
   type TokenEventMessage,
 } from "./core";
@@ -31,7 +32,24 @@ function isSessionUsageUpdatedMessage(
       data.usage_cache_creation_tokens,
       data.usage_cache_read_tokens,
       data.context_window,
+      data.context_used_tokens,
+      data.context_usage_ratio,
+      data.last_prompt_input_tokens,
+      data.last_prompt_uncached_input_tokens,
+      data.last_prompt_cache_read_tokens,
+      data.last_prompt_cache_creation_tokens,
+      data.last_completion_output_tokens,
     ].every((value) => value === undefined || value === null || isFiniteNumber(value))
+    && (
+      data.context_usage_source === undefined ||
+      data.context_usage_source === null ||
+      typeof data.context_usage_source === "string"
+    )
+    && (
+      data.context_usage_confidence === undefined ||
+      data.context_usage_confidence === null ||
+      typeof data.context_usage_confidence === "string"
+    )
   );
 }
 
@@ -82,20 +100,16 @@ export function handleSessionUsageUpdated(
   if (update.session_id === visibleSessionId) {
     ctx.markSessionUsageFresh(update.session_id, update.updated_at);
     ctx.setContextUsage((prev) =>
-      buildContextUsageFromTotals({
-        totalInputTokens:
-          optionalNumber(update.usage_input_tokens) ?? prev.totalInputTokens,
-        outputTokens:
-          optionalNumber(update.usage_output_tokens) ?? prev.outputTokens,
-        cacheReadTokens:
-          optionalNumber(update.usage_cache_read_tokens) ?? prev.cacheReadTokens,
-        cacheCreationTokens:
-          optionalNumber(update.usage_cache_creation_tokens) ??
-          prev.cacheCreationTokens,
-        contextWindow:
-          typeof update.context_window === "number"
-            ? update.context_window
-            : prev.contextWindow,
+      computeContextUsageFromSessionData({
+        usage_input_tokens: prev.totalInputTokens,
+        usage_output_tokens: prev.outputTokens,
+        usage_cache_read_tokens: prev.cacheReadTokens,
+        usage_cache_creation_tokens: prev.cacheCreationTokens,
+        context_window: prev.contextWindow,
+        context_usage_ratio: prev.contextUsageRatio,
+        context_usage_source: prev.contextUsageSource,
+        context_usage_confidence: prev.contextUsageConfidence,
+        ...update,
       }),
     );
   }

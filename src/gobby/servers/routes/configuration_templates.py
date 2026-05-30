@@ -8,6 +8,7 @@ from typing import Any
 import yaml
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 
 from gobby.config.app import DaemonConfig, deep_merge
 from gobby.servers.routes.configuration_context import ConfigurationRouteContext
@@ -184,6 +185,10 @@ def register_template_routes(router: APIRouter, context: ConfigurationRouteConte
             raise HTTPException(status_code=400, detail=f"Invalid YAML: {e}") from e
         except HTTPException:
             raise
+        except ValidationError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:
             logger.error("Failed to save config template: %s", e, exc_info=True)
-            raise HTTPException(status_code=400, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Failed to save config template") from e

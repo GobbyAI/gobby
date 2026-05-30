@@ -8,9 +8,9 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from gobby.sessions.transcript_renderer import RenderedMessage
 
-MATCH_BLOCK_TYPES = {"text", "thinking"}
-SNIPPET_RADIUS = 80
-TRUNCATE_LIMIT = 500
+MATCH_BLOCK_TYPES: set[str] = {"text", "thinking"}
+SNIPPET_RADIUS: int = 80
+TRUNCATE_LIMIT: int = 500
 
 
 def search_rendered_messages(

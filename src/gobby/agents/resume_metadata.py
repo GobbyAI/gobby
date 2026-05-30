@@ -13,7 +13,17 @@ RESUME_METADATA_VERSION = 1
 
 def json_safe(value: Any) -> Any:
     """Return a JSON-serializable copy, stringifying unknown leaf values."""
-    return json.loads(json.dumps(value, default=str))
+    if value is None or isinstance(value, str | int | float | bool):
+        return value
+    if isinstance(value, Mapping):
+        return {str(key): json_safe(item) for key, item in value.items()}
+    if isinstance(value, list | tuple | set):
+        return [json_safe(item) for item in value]
+    try:
+        json.dumps(value)
+    except (TypeError, ValueError):
+        return str(value)
+    return value
 
 
 def normalize_resume_metadata(value: Any) -> dict[str, Any] | None:

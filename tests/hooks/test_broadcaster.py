@@ -18,7 +18,7 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def mock_websocket_server():
+def mock_websocket_server() -> MagicMock:
     """Create a mock WebSocket server."""
     server = MagicMock()
     server.broadcast = AsyncMock()
@@ -26,13 +26,13 @@ def mock_websocket_server():
 
 
 @pytest.fixture
-def default_config():
+def default_config() -> DaemonConfig:
     """Create default daemon config."""
     return DaemonConfig()
 
 
 @pytest.fixture
-def disabled_config():
+def disabled_config() -> DaemonConfig:
     """Create config with broadcasting disabled."""
     config = DaemonConfig()
     config.hook_extensions.websocket.enabled = False
@@ -40,7 +40,7 @@ def disabled_config():
 
 
 @pytest.fixture
-def no_payload_config():
+def no_payload_config() -> DaemonConfig:
     """Create config with payload inclusion disabled."""
     config = DaemonConfig()
     config.hook_extensions.websocket.include_payload = False
@@ -48,14 +48,14 @@ def no_payload_config():
 
 
 @pytest.fixture
-def sample_input():
+def sample_input() -> SessionStartInput:
     """Create sample session start input."""
     return SessionStartInput(
         external_id="test-session", transcript_path="/tmp/test", source=SessionStartSource.STARTUP
     )
 
 
-def _make_after_tool_event(data) -> HookEvent:
+def _make_after_tool_event(data: dict[str, Any]) -> HookEvent:
     """Create a unified after_tool HookEvent for broadcaster tests."""
     from datetime import UTC, datetime
 
@@ -86,7 +86,11 @@ def _make_notification_event(data: dict[str, Any], session_id: str = "test-sessi
 
 
 @pytest.mark.asyncio
-async def test_broadcast_success(mock_websocket_server, default_config, sample_input):
+async def test_broadcast_success(
+    mock_websocket_server: MagicMock,
+    default_config: DaemonConfig,
+    sample_input: SessionStartInput,
+) -> None:
     """Test successful broadcast of allowed event."""
     broadcaster = HookEventBroadcaster(mock_websocket_server, default_config)
 
@@ -101,7 +105,11 @@ async def test_broadcast_success(mock_websocket_server, default_config, sample_i
 
 
 @pytest.mark.asyncio
-async def test_broadcast_disabled(mock_websocket_server, disabled_config, sample_input):
+async def test_broadcast_disabled(
+    mock_websocket_server: MagicMock,
+    disabled_config: DaemonConfig,
+    sample_input: SessionStartInput,
+) -> None:
     """Test no broadcast when feature disabled."""
     broadcaster = HookEventBroadcaster(mock_websocket_server, disabled_config)
 
@@ -113,7 +121,11 @@ async def test_broadcast_disabled(mock_websocket_server, disabled_config, sample
 
 
 @pytest.mark.asyncio
-async def test_broadcast_filtered_event(mock_websocket_server, default_config, sample_input):
+async def test_broadcast_filtered_event(
+    mock_websocket_server: MagicMock,
+    default_config: DaemonConfig,
+    sample_input: SessionStartInput,
+) -> None:
     """Test no broadcast for filtered event."""
     # Remove session-start from allowed list
     default_config.hook_extensions.websocket.broadcast_events = ["session-end"]
@@ -128,7 +140,11 @@ async def test_broadcast_filtered_event(mock_websocket_server, default_config, s
 
 
 @pytest.mark.asyncio
-async def test_broadcast_no_payload(mock_websocket_server, no_payload_config, sample_input):
+async def test_broadcast_no_payload(
+    mock_websocket_server: MagicMock,
+    no_payload_config: DaemonConfig,
+    sample_input: SessionStartInput,
+) -> None:
     """Test broadcast without payload data."""
     broadcaster = HookEventBroadcaster(mock_websocket_server, no_payload_config)
 
@@ -141,7 +157,10 @@ async def test_broadcast_no_payload(mock_websocket_server, no_payload_config, sa
 
 
 @pytest.mark.asyncio
-async def test_broadcast_no_server(default_config, sample_input):
+async def test_broadcast_no_server(
+    default_config: DaemonConfig,
+    sample_input: SessionStartInput,
+) -> None:
     """Test safe handling when websocket server is None."""
     broadcaster = HookEventBroadcaster(None, default_config)
 
@@ -151,7 +170,10 @@ async def test_broadcast_no_server(default_config, sample_input):
 
 
 @pytest.mark.asyncio
-async def test_broadcast_no_config(mock_websocket_server, sample_input):
+async def test_broadcast_no_config(
+    mock_websocket_server: MagicMock,
+    sample_input: SessionStartInput,
+) -> None:
     """Test safe handling when config is None."""
     broadcaster = HookEventBroadcaster(mock_websocket_server, None)
 
@@ -164,7 +186,11 @@ async def test_broadcast_no_config(mock_websocket_server, sample_input):
 
 
 @pytest.mark.asyncio
-async def test_broadcast_with_output(mock_websocket_server, default_config, sample_input):
+async def test_broadcast_with_output(
+    mock_websocket_server: MagicMock,
+    default_config: DaemonConfig,
+    sample_input: SessionStartInput,
+) -> None:
     """Test broadcast with output data."""
     from gobby.hooks.hook_types import SessionStartOutput
 
@@ -180,7 +206,10 @@ async def test_broadcast_with_output(mock_websocket_server, default_config, samp
 
 
 @pytest.mark.asyncio
-async def test_broadcast_event_unified(mock_websocket_server, default_config):
+async def test_broadcast_event_unified(
+    mock_websocket_server: MagicMock,
+    default_config: DaemonConfig,
+) -> None:
     """Test broadcast_event with unified HookEvent."""
     from datetime import UTC, datetime
 

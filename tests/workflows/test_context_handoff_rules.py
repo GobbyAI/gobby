@@ -23,6 +23,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.observer_context_usage import detect_context_compact_guidance
 from gobby.workflows.sync_rules import sync_bundled_rules
 
 pytestmark = pytest.mark.unit
@@ -35,6 +36,7 @@ CONTEXT_HANDOFF_RULES = {
     "inject-task-context-on-start",
     "prepare-clear-handoff",
     "preserve-context-on-compact",
+    "nudge-compact-on-context-pressure",
     "auto-compact-after-task-close",
 }
 
@@ -58,6 +60,22 @@ def _sync_bundled(db):
     # Mark templates as installed so get_by_name() finds them
     db.execute("UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'")
     return result
+
+
+class _SessionManagerWithContextRatio:
+    def __init__(self, ratio: float | None) -> None:
+        self.ratio = ratio
+
+    def get(self, _session_id: str) -> object:
+        return type(
+            "SessionStub",
+            (),
+            {
+                "context_usage_ratio": self.ratio,
+                "context_used_tokens": None,
+                "context_window": None,
+            },
+        )()
 
 
 class TestContextHandoffSync:
@@ -186,6 +204,10 @@ class TestInjectCompactHandoff:
         assert body.effects[0].type == "inject_context"
         assert body.effects[0].template is not None
         assert "Continuation Context" in body.effects[0].template
+        assert "skill_fetch_directive" in body.effects[0].template
+        assert body.effects[1].type == "set_variable"
+        assert body.effects[1].variable == "compact_resume_required_skills"
+        assert body.effects[1].value == []
 
     def test_has_when_condition(self, db, manager) -> None:
         _sync_bundled(db)
@@ -262,13 +284,13 @@ class TestPreserveContextOnCompact:
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.event.value == "pre_compact"
 
-    def test_has_three_effects(self, db, manager) -> None:
-        """Should have 3 set_variable effects."""
+    def test_has_five_effects(self, db, manager) -> None:
+        """Should have 5 set_variable effects."""
         _sync_bundled(db)
         row = manager.get_by_name("preserve-context-on-compact")
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         effects = body.resolved_effects
-        assert len(effects) == 3
+        assert len(effects) == 5
         assert all(e.type == "set_variable" for e in effects)
 
     def test_has_gemini_filter(self, db, manager) -> None:
@@ -302,6 +324,86 @@ class TestPreserveContextOnCompact:
         ]
         assert len(reset_flag) == 1
         assert reset_flag[0].value is True
+
+    def test_resets_context_nudge_cooldown(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("preserve-context-on-compact")
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        effects = body.resolved_effects
+        compacted_turn = [
+            e
+            for e in effects
+            if e.type == "set_variable" and e.variable == "last_compacted_turn_seq"
+        ]
+        turns_since = [
+            e for e in effects if e.type == "set_variable" and e.variable == "turns_since_compact"
+        ]
+        assert len(compacted_turn) == 1
+        assert compacted_turn[0].value == "variables.get('parent_turn_seq') or 0"
+        assert len(turns_since) == 1
+        assert turns_since[0].value == 0
+
+
+class TestNudgeCompactOnContextPressure:
+    """Compact guidance rule and observer behavior."""
+
+    def test_event_and_effect(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("nudge-compact-on-context-pressure")
+        assert row is not None
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.event.value == "turn_start"
+        assert body.when == "variables.get('context_compact_guidance_message')"
+        assert body.effects[0].type == "inject_context"
+        assert "context_compact_guidance_message" in (body.effects[0].template or "")
+
+    def test_soft_nudge_at_sixty_five_percent(self) -> None:
+        variables = {"parent_turn_seq": 4, "chat_mode": "normal"}
+        session_manager = _SessionManagerWithContextRatio(0.65)
+
+        detect_context_compact_guidance(variables, "session-1", session_manager)
+
+        assert variables["context_compact_guidance_kind"] == "soft"
+        assert "65%" in variables["context_compact_guidance_message"]
+        assert variables["last_compact_nudge_turn_seq"] == 5
+
+    def test_strong_nudge_uses_two_turn_cooldown(self) -> None:
+        variables = {
+            "parent_turn_seq": 8,
+            "chat_mode": "normal",
+            "last_compact_nudge_turn_seq": 8,
+        }
+        session_manager = _SessionManagerWithContextRatio(0.9)
+
+        detect_context_compact_guidance(variables, "session-1", session_manager)
+
+        assert variables["context_compact_guidance_message"] == ""
+
+        variables["parent_turn_seq"] = 9
+        detect_context_compact_guidance(variables, "session-1", session_manager)
+
+        assert variables["context_compact_guidance_kind"] == "strong"
+        assert "90%" in variables["context_compact_guidance_message"]
+        assert variables["last_compact_nudge_turn_seq"] == 10
+
+    def test_plan_mode_skips_guidance(self) -> None:
+        variables = {"parent_turn_seq": 1, "chat_mode": "plan"}
+        session_manager = _SessionManagerWithContextRatio(0.9)
+
+        detect_context_compact_guidance(variables, "session-1", session_manager)
+
+        assert variables["context_compact_guidance_message"] == ""
+        assert "turns_since_compact" not in variables
+
+    def test_unknown_usage_fallback_after_ten_non_plan_turns(self) -> None:
+        variables = {"parent_turn_seq": 9, "chat_mode": "normal", "turns_since_compact": 9}
+
+        detect_context_compact_guidance(
+            variables, "session-1", _SessionManagerWithContextRatio(None)
+        )
+
+        assert variables["context_compact_guidance_kind"] == "unknown"
+        assert "unknown for 10 non-plan turns" in variables["context_compact_guidance_message"]
 
 
 # ═══════════════════════════════════════════════════════════════════════

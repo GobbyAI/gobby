@@ -2,6 +2,7 @@ interface ContextUsageIndicatorProps {
   totalInputTokens: number
   outputTokens: number
   contextWindow: number | null
+  contextUsageRatio?: number | null
   staleMs?: number | null
   // Cache breakdown for tooltip
   uncachedInputTokens?: number
@@ -15,6 +16,7 @@ export function ContextUsageIndicator({
   totalInputTokens,
   outputTokens,
   contextWindow,
+  contextUsageRatio = null,
   staleMs = null,
   uncachedInputTokens = 0,
   cacheReadTokens = 0,
@@ -24,7 +26,12 @@ export function ContextUsageIndicator({
 
   // Context window is an INPUT limit — output tokens don't occupy it.
   // Only input tokens (uncached + cache_read + cache_creation) count toward context load.
-  const percentage = contextWindow ? Math.min((totalInputTokens / contextWindow) * 100, 100) : 0
+  const percentage =
+    typeof contextUsageRatio === 'number'
+      ? Math.min(Math.max(contextUsageRatio, 0), 1) * 100
+      : contextWindow
+        ? Math.min((totalInputTokens / contextWindow) * 100, 100)
+        : 0
   const displayPercent = Math.round(percentage)
   const indicatorLabel = `${displayPercent}%`
 

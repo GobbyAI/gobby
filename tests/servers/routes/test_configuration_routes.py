@@ -17,9 +17,11 @@ from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
 from gobby.servers.routes.configuration_prompts import _normalize_variable_spec
+from gobby.servers.routes.configuration_secrets import MASKED_SECRET
 from gobby.servers.tool_approvals import DEFAULT_GLOBAL_APPROVAL_RULES
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.prompts import LocalPromptManager
 from gobby.storage.secrets import SecretStore
 from gobby.storage.tasks import LocalTaskManager
 from tests.servers.conftest import create_http_server
@@ -317,6 +319,14 @@ class TestValidateConfig:
         assert response.status_code == 200
         assert response.json()["valid"] is True
 
+    def test_masked_secret_placeholder_is_ignored(self, client: TestClient) -> None:
+        response = client.post(
+            "/api/config/values/validate",
+            json={"values": {"databases": {"falkordb": {"requirepass": MASKED_SECRET}}}},
+        )
+        assert response.status_code == 200
+        assert response.json()["valid"] is True
+
 
 # ---------------------------------------------------------------------------
 # POST /api/config/values/reset
@@ -345,7 +355,7 @@ class TestResetConfig:
         ):
             response = client.post("/api/config/values/reset")
         assert response.status_code == 500
-        assert "Permission denied" in response.json()["detail"]
+        assert response.json()["detail"] == "Failed to reset configuration"
 
 
 # ---------------------------------------------------------------------------
@@ -724,7 +734,7 @@ class TestSecretsEndpoints:
             mock_cls.return_value = mock_store
             response = client.delete("/api/config/secrets/MY_SECRET")
         assert response.status_code == 500
-        assert "DB error" in response.json()["detail"]
+        assert response.json()["detail"] == "Internal server error"
 
     def test_list_secrets_internal_error(self, client: TestClient) -> None:
         with patch("gobby.servers.routes.configuration_context.SecretStore") as mock_cls:
@@ -772,6 +782,9 @@ class TestPromptsEndpoints:
         assert "categories" in data
         assert "total" in data
         assert isinstance(data["total"], int)
+        assert data["limit"] == 500
+        assert data["offset"] == 0
+        assert data["count"] == len(data["prompts"])
 
     def test_list_prompts_has_categories(self, client: TestClient) -> None:
         """Category counts are populated from listed prompts."""
@@ -781,6 +794,14 @@ class TestPromptsEndpoints:
             assert len(data["categories"]) > 0
             # Sum of category counts should equal total
             assert sum(data["categories"].values()) == data["total"]
+
+    def test_list_prompts_clamps_limit(self, client: TestClient) -> None:
+        response = client.get("/api/config/prompts?limit=2000&offset=1")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["limit"] == 1000
+        assert data["offset"] == 1
+        assert data["count"] == len(data["prompts"])
 
     def test_list_prompts_source_is_bundled(self, client: TestClient) -> None:
         """Without overrides, all sources should be 'bundled'."""
@@ -813,7 +834,13 @@ class TestPromptsEndpoints:
         }
         assert _normalize_variable_spec("fallback") == {
             "type": "str",
+            "required": False,
             "default": "fallback",
+        }
+        assert _normalize_variable_spec(None) == {
+            "type": "str",
+            "required": False,
+            "default": None,
         }
 
     def test_get_prompt_not_found(self, client: TestClient) -> None:
@@ -846,6 +873,33 @@ class TestPromptsEndpoints:
         response = client.delete("/api/config/prompts/test/prompt")
         assert response.status_code == 200
         assert response.json()["ok"] is True
+
+    def test_save_prompt_override_uses_project_scope(
+        self,
+        temp_db: Any,
+        real_config: Any,
+        task_manager: Any,
+        sample_project: dict[str, Any],
+    ) -> None:
+        project_id = sample_project["id"]
+        server = create_http_server(
+            config=real_config,
+            database=temp_db,
+            task_manager=task_manager,
+            project_id=project_id,
+        )
+        scoped_client = TestClient(server.app)
+
+        response = scoped_client.put(
+            "/api/config/prompts/test/project",
+            json={"content": "# Project override"},
+        )
+
+        assert response.status_code == 200
+        override = LocalPromptManager(temp_db).get_override("test/project", project_id=project_id)
+        assert override is not None
+        assert override.scope == "project"
+        assert override.project_id == project_id
 
     def test_delete_prompt_override_not_found(self, client: TestClient) -> None:
         response = client.delete("/api/config/prompts/no/such/prompt")
@@ -946,6 +1000,33 @@ class TestExportImport:
         assert "1 prompt override(s) restored" in data["summary"]
         assert data["requires_restart"] is False
 
+    def test_import_prompts_uses_project_scope(
+        self,
+        temp_db: Any,
+        real_config: Any,
+        task_manager: Any,
+        sample_project: dict[str, Any],
+    ) -> None:
+        project_id = sample_project["id"]
+        server = create_http_server(
+            config=real_config,
+            database=temp_db,
+            task_manager=task_manager,
+            project_id=project_id,
+        )
+        scoped_client = TestClient(server.app)
+
+        response = scoped_client.post(
+            "/api/config/import",
+            json={"prompts": {"test/imported.md": "# Imported"}},
+        )
+
+        assert response.status_code == 200
+        override = LocalPromptManager(temp_db).get_override("test/imported", project_id=project_id)
+        assert override is not None
+        assert override.scope == "project"
+        assert override.project_id == project_id
+
     def test_import_nothing(self, client: TestClient) -> None:
         response = client.post("/api/config/import", json={})
         assert response.status_code == 200
@@ -973,7 +1054,7 @@ class TestExportImport:
             )
 
         assert response.status_code == 400
-        assert "database unavailable" in response.json()["detail"]
+        assert response.json()["detail"] == "Failed to persist imported configuration"
 
     def test_import_non_string_secret_value_fails_before_deleting_existing_config(
         self, client: TestClient, temp_db: Any
@@ -1080,6 +1161,26 @@ class TestExportImport:
         assert store.get(FALKOR_REQUIREPASS_KEY) == "$secret:requirepass"
         assert store.get("databases.falkordb.rrf_k") == 77
         assert SecretStore(postgres_db).get("requirepass") == "Valid-123"
+
+    def test_import_legacy_config_non_string_falkordb_requirepass_rejected(
+        self, postgres_client: TestClient, postgres_db: Any
+    ) -> None:
+        response = postgres_client.post(
+            "/api/config/import",
+            json={
+                "config": {
+                    "databases": {
+                        "falkordb": {
+                            "requirepass": {"nested": "bad"},
+                        }
+                    }
+                }
+            },
+        )
+
+        assert response.status_code == 422
+        assert response.json()["detail"] == "FalkorDB password must be a string"
+        assert ConfigStore(postgres_db).get(FALKOR_REQUIREPASS_KEY) is None
 
     def test_import_falkordb_secret_reference_preserves_secret_row(
         self, postgres_client: TestClient, postgres_db: Any, mock_machine_id: Any
@@ -1359,7 +1460,7 @@ class TestUISettings:
         assert response.json()["ok"] is True
 
     def test_get_backend_error_returns_500(self, client: TestClient) -> None:
-        with patch.object(ConfigStore, "get", side_effect=RuntimeError("db down")):
+        with patch.object(ConfigStore, "get_all", side_effect=RuntimeError("db down")):
             response = client.get("/api/config/ui-settings")
 
         assert response.status_code == 500

@@ -54,7 +54,8 @@ class SkillsMPProvider(HubProvider):
         if not self.auth_token:
             raise RuntimeError(
                 "SkillsMP API key not configured. "
-                "Run 'gobby install' or 'gobby secrets set SKILLSMP_API_KEY'."
+                "Missing key: SKILLSMP_API_KEY. "
+                "Run 'gobby install' or 'gobby secrets set SKILLSMP_API_KEY <value>'."
             )
 
     async def _make_request(
@@ -95,7 +96,8 @@ class SkillsMPProvider(HubProvider):
         if not authenticated:
             info["error"] = (
                 "SKILLSMP_API_KEY not configured. "
-                "Run 'gobby install' or 'gobby secrets set SKILLSMP_API_KEY'."
+                "Missing key: SKILLSMP_API_KEY. "
+                "Run 'gobby install' or 'gobby secrets set SKILLSMP_API_KEY <value>'."
             )
         return info
 

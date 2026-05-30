@@ -462,7 +462,7 @@ class TestTranscriptReaderRendered:
         assert "msg 4" in result[2].content
 
     @pytest.mark.asyncio
-    async def test_get_rendered_messages_truncated_gzip(self, tmp_path: Path):
+    async def test_get_rendered_messages_truncated_gzip(self, tmp_path: Path) -> None:
         archive_dir = tmp_path / "archives"
         external_id = "ext-truncated"
         archive_dir.mkdir(parents=True, exist_ok=True)
@@ -489,8 +489,7 @@ class TestTranscriptReaderRendered:
         reader = TranscriptReader(session_manager, archive_dir=str(archive_dir))
 
         result = await reader.get_rendered_messages("sess-1")
-        assert len(result) >= 1
-        assert "valid" in result[0].content
+        assert result == []
 
     @pytest.mark.asyncio
     async def test_get_rendered_messages_empty_session(self):

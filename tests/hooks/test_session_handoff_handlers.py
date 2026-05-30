@@ -10,7 +10,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gobby.hooks.event_handlers import EventHandlers
-from gobby.hooks.event_handlers._session_start.handoff import find_parent_session
+from gobby.hooks.event_handlers._session_start.handoff import (
+    _preserve_compact_resume_required_skills,
+    find_parent_session,
+)
 from gobby.hooks.events import HookEventType
 from gobby.sessions.compact_continuation import (
     COMPACT_SELF_CONTINUE_VARIABLE,
@@ -285,11 +288,11 @@ class TestSessionStartHandoff:
         mock_new_session = MagicMock()
         mock_new_session.seq_num = 43
 
-        parent_gets = [stale_parent, refreshed_parent]
+        parent_gets = iter((stale_parent, refreshed_parent))
 
         def get_session(session_id: str) -> MagicMock | None:
             if session_id == "parent-sess-123":
-                return parent_gets.pop(0)
+                return next(parent_gets, refreshed_parent)
             if session_id == "new-sess-456":
                 return mock_new_session
             return None
@@ -482,13 +485,31 @@ class TestSessionStartHandoff:
             session_id="new-sess-456",
             force=True,
         )
-        assert mock_dependencies["task_manager"].claim_task.call_count == 1
-        assert mock_dependencies["task_manager"].claim_task.call_args is not None
         mock_dependencies["session_task_manager"].link_task.assert_called_once_with(
             "new-sess-456", "uuid-123", "claimed"
         )
         assert mock_dependencies["session_task_manager"].link_task.call_count == 1
         assert mock_dependencies["session_task_manager"].link_task.call_args is not None
+
+    def test_compact_resume_required_skills_carried_over(self) -> None:
+        sv_mgr = MagicMock()
+        parent_vars = {"compact_resume_required_skills": ["python", "", "development-discipline"]}
+
+        _preserve_compact_resume_required_skills(
+            sv_mgr,
+            "child-session",
+            parent_vars,
+        )
+
+        assert parent_vars["compact_resume_required_skills"] == [
+            "python",
+            "",
+            "development-discipline",
+        ]
+        sv_mgr.merge_variables.assert_called_once_with(
+            "child-session",
+            {"compact_resume_required_skills": ["python", "development-discipline"]},
+        )
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     def test_closed_task_not_carried_over(

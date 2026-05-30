@@ -22,6 +22,16 @@ export interface GobbySession {
   usage_cache_creation_tokens?: number;
   usage_cache_read_tokens?: number;
   context_window?: number | null;
+  context_used_tokens?: number | null;
+  context_usage_ratio?: number | null;
+  context_usage_source?: string | null;
+  context_usage_confidence?: string | null;
+  context_usage_updated_at?: string | null;
+  last_prompt_input_tokens?: number | null;
+  last_prompt_uncached_input_tokens?: number | null;
+  last_prompt_cache_read_tokens?: number | null;
+  last_prompt_cache_creation_tokens?: number | null;
+  last_completion_output_tokens?: number | null;
   had_edits: boolean;
   agent_depth: number;
   chat_mode: string | null;
@@ -45,7 +55,15 @@ export interface GobbySession {
   closed_task_refs?: number[];
 }
 
-export const KNOWN_SOURCES = ["claude", "gemini", "qwen", "codex", "droid"] as const;
+export const KNOWN_SOURCES = [
+  "claude",
+  "gemini",
+  "qwen",
+  "codex",
+  "droid",
+  "agy",
+  "grok",
+] as const;
 
 export interface SessionFilters {
   source: string | null;

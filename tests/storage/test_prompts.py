@@ -291,7 +291,9 @@ class TestPromptListing:
         assert manager.get_override("test/bundled") == override
         assert manager.delete_override("test/bundled") is True
         assert manager.get_override("test/bundled") is None
-        assert manager.get_by_name("test/bundled").content == "B"
+        bundled = manager.get_by_name("test/bundled")
+        assert bundled is not None
+        assert bundled.content == "B"
 
     def test_count_prompts(self, manager) -> None:
         """Test counting prompts."""

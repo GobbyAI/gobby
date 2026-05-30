@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse
 
 from gobby.prompts.models import parse_frontmatter
@@ -17,27 +17,34 @@ logger = logging.getLogger(__name__)
 
 def _normalize_variable_spec(spec: Any) -> dict[str, Any]:
     """Return the API shape for prompt variable metadata."""
+    if spec is None:
+        return {"type": "str", "required": False, "default": None}
     if isinstance(spec, dict):
         return {
             "type": spec.get("type", "str"),
             "required": spec.get("required", False),
             "default": spec.get("default"),
         }
-    return {"type": "str", "default": spec}
+    return {"type": "str", "required": False, "default": spec}
 
 
 def register_prompt_routes(router: APIRouter, context: ConfigurationRouteContext) -> None:
     """Register prompt listing, detail, override, and revert routes."""
 
     @router.get("/prompts")
-    async def list_prompts() -> JSONResponse:
+    async def list_prompts(
+        limit: int = Query(500, ge=1),
+        offset: int = Query(0, ge=0),
+    ) -> JSONResponse:
         """List all prompts with category, source tier, override status."""
         try:
             manager = context.get_prompt_manager()
+            page_limit = min(limit, 1000)
             records = manager.list_prompts(
                 project_id=context.server.services.project_id,
                 enabled=True,
-                limit=500,
+                limit=page_limit,
+                offset=offset,
             )
 
             seen: dict[str, Any] = {}
@@ -75,6 +82,9 @@ def register_prompt_routes(router: APIRouter, context: ConfigurationRouteContext
                     "prompts": prompts,
                     "categories": categories,
                     "total": len(prompts),
+                    "limit": page_limit,
+                    "offset": offset,
+                    "count": len(prompts),
                 }
             )
         except Exception as e:
@@ -126,9 +136,10 @@ def register_prompt_routes(router: APIRouter, context: ConfigurationRouteContext
         path: str,
         request: SavePromptOverrideRequest,
     ) -> JSONResponse:
-        """Create/update a prompt override (scope='global') in the database."""
+        """Create/update a prompt override in the database."""
         try:
             manager = context.get_prompt_manager()
+            project_id = context.server.services.project_id
 
             frontmatter, body = parse_frontmatter(request.content)
             description = frontmatter.get("description", "")
@@ -136,7 +147,7 @@ def register_prompt_routes(router: APIRouter, context: ConfigurationRouteContext
             variables = frontmatter.get("variables")
             stripped_body = body.strip()
 
-            existing_override = manager.get_override(path)
+            existing_override = manager.get_override(path, project_id=project_id)
 
             if existing_override:
                 manager.update_prompt(
@@ -153,7 +164,8 @@ def register_prompt_routes(router: APIRouter, context: ConfigurationRouteContext
                     content=stripped_body if stripped_body else request.content,
                     version=version,
                     variables=variables,
-                    scope="global",
+                    scope="project" if project_id else "global",
+                    project_id=project_id,
                 )
 
             loader = context.get_prompt_loader()
@@ -166,11 +178,11 @@ def register_prompt_routes(router: APIRouter, context: ConfigurationRouteContext
 
     @router.delete("/prompts/{path:path}")
     async def delete_prompt_override(path: str) -> JSONResponse:
-        """Remove override (revert to bundled) by deleting the global record."""
+        """Remove override (revert to bundled) by deleting the editable record."""
         try:
             manager = context.get_prompt_manager()
 
-            if not manager.delete_override(path):
+            if not manager.delete_override(path, project_id=context.server.services.project_id):
                 raise HTTPException(status_code=404, detail=f"No override for '{path}'")
 
             loader = context.get_prompt_loader()

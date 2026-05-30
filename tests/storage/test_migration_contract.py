@@ -88,6 +88,8 @@ def test_only_current_postgres_sql_migrations_exist_after_flattening() -> None:
         "262_neo4j_config_to_falkordb.sql",
         "264_drop_migration_state.sql",
         "265_build_runs_project_root_started.sql",
+        "266_agent_run_resume_metadata.sql",
+        "267_context_usage_snapshot.sql",
     ]
 
 
@@ -132,6 +134,32 @@ def test_removed_migration_baseline_and_import_files_are_absent() -> None:
     ]
 
     assert [path for path in removed_paths if path.exists()] == []
+
+
+def test_context_usage_snapshot_migration_and_baseline_define_session_snapshot_fields() -> None:
+    migration = (SRC_ROOT / "storage" / "migrations" / "267_context_usage_snapshot.sql").read_text(
+        encoding="utf-8"
+    )
+    baseline = (SRC_ROOT / "storage" / "postgres_baseline_schema.sql").read_text(encoding="utf-8")
+    expected_columns = [
+        "context_used_tokens",
+        "context_usage_ratio",
+        "context_usage_source",
+        "context_usage_confidence",
+        "context_usage_updated_at",
+        "last_prompt_input_tokens",
+        "last_prompt_uncached_input_tokens",
+        "last_prompt_cache_read_tokens",
+        "last_prompt_cache_creation_tokens",
+        "last_completion_output_tokens",
+    ]
+
+    for column in expected_columns:
+        assert f"ADD COLUMN IF NOT EXISTS {column}" in migration
+        assert column in baseline
+
+    assert "idx_sessions_context_usage_ratio" in migration
+    assert "idx_sessions_context_usage_ratio" in baseline
 
 
 def test_migration_helpers_are_not_imported_by_runtime_storage_paths() -> None:

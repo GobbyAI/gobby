@@ -40,7 +40,9 @@ def add_restart_hint(response: dict[str, Any], touched_keys: set[str]) -> None:
 
 def validate_falkordb_secret(key: str, value: Any) -> None:
     if key == FALKOR_REQUIREPASS_KEY:
-        validate_falkordb_password(str(value))
+        if not isinstance(value, str):
+            raise ValueError("FalkorDB password must be a string")
+        validate_falkordb_password(value)
 
 
 def falkordb_validation_response(error: ValueError) -> JSONResponse:

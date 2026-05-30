@@ -175,6 +175,16 @@ CREATE TABLE sessions (
     usage_cache_creation_tokens INTEGER DEFAULT 0,
     usage_cache_read_tokens INTEGER DEFAULT 0,
     context_window INTEGER,
+    context_used_tokens INTEGER,
+    context_usage_ratio DOUBLE PRECISION,
+    context_usage_source TEXT,
+    context_usage_confidence TEXT,
+    context_usage_updated_at TIMESTAMPTZ,
+    last_prompt_input_tokens INTEGER,
+    last_prompt_uncached_input_tokens INTEGER,
+    last_prompt_cache_read_tokens INTEGER,
+    last_prompt_cache_creation_tokens INTEGER,
+    last_completion_output_tokens INTEGER,
     terminal_context JSONB,
     seq_num INTEGER,
     model TEXT,
@@ -220,6 +230,8 @@ CREATE INDEX idx_sessions_spawned_by ON sessions(spawned_by_agent_id);
 CREATE INDEX idx_sessions_workflow ON sessions(workflow_name);
 
 CREATE INDEX idx_sessions_agent_run ON sessions(agent_run_id);
+
+CREATE INDEX idx_sessions_context_usage_ratio ON sessions(context_usage_ratio);
 
 CREATE UNIQUE INDEX idx_sessions_seq_num ON sessions(project_id, seq_num);
 
@@ -2002,7 +2014,7 @@ INSERT INTO "projects" ("id", "name", "repo_path", "github_url", "github_repo", 
 INSERT INTO "projects" ("id", "name", "repo_path", "github_url", "github_repo", "linear_team_id", "linear_project_id", "linear_synced_at", "deleted_at", "created_at", "updated_at") VALUES ('00000000-0000-0000-0000-000000060887', '_personal', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NOW(), NOW());
 
 -- Seed rows for sessions
-INSERT INTO "sessions" ("id", "external_id", "machine_id", "source", "project_id", "title", "title_source", "status", "transcript_path", "summary_path", "summary_markdown", "git_branch", "parent_session_id", "transcript_processed", "agent_depth", "spawned_by_agent_id", "workflow_name", "agent_run_id", "context_injected", "original_prompt", "usage_input_tokens", "usage_output_tokens", "usage_cache_creation_tokens", "usage_cache_read_tokens", "context_window", "terminal_context", "seq_num", "model", "is_local", "had_edits", "digest_markdown", "last_turn_markdown", "chat_mode", "last_digest_input_hash", "message_count", "turn_count", "tool_call_count", "last_assistant_content", "approved_tools_json", "session_type", "sandbox_enabled", "sandbox_policy_hash", "created_at", "updated_at") VALUES ('00000000-0000-0000-0000-000000000001', 'system', 'system', 'system', '00000000-0000-0000-0000-000000060887', '_system', NULL, 'active', NULL, NULL, NULL, NULL, NULL, FALSE, 0, NULL, NULL, NULL, FALSE, NULL, 0, 0, 0, 0, NULL, NULL, NULL, NULL, FALSE, FALSE, NULL, NULL, 'plan', NULL, 0, 0, 0, NULL, NULL, 'terminal', FALSE, NULL, NOW(), NOW());
+INSERT INTO "sessions" ("id", "external_id", "machine_id", "source", "project_id", "title", "title_source", "status", "transcript_path", "summary_path", "summary_markdown", "git_branch", "parent_session_id", "transcript_processed", "agent_depth", "spawned_by_agent_id", "workflow_name", "agent_run_id", "context_injected", "original_prompt", "usage_input_tokens", "usage_output_tokens", "usage_cache_creation_tokens", "usage_cache_read_tokens", "context_window", "context_used_tokens", "context_usage_ratio", "context_usage_source", "context_usage_confidence", "context_usage_updated_at", "last_prompt_input_tokens", "last_prompt_uncached_input_tokens", "last_prompt_cache_read_tokens", "last_prompt_cache_creation_tokens", "last_completion_output_tokens", "terminal_context", "seq_num", "model", "is_local", "had_edits", "digest_markdown", "last_turn_markdown", "chat_mode", "last_digest_input_hash", "message_count", "turn_count", "tool_call_count", "last_assistant_content", "approved_tools_json", "session_type", "sandbox_enabled", "sandbox_policy_hash", "created_at", "updated_at") VALUES ('00000000-0000-0000-0000-000000000001', 'system', 'system', 'system', '00000000-0000-0000-0000-000000060887', '_system', NULL, 'active', NULL, NULL, NULL, NULL, NULL, FALSE, 0, NULL, NULL, NULL, FALSE, NULL, 0, 0, 0, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, FALSE, FALSE, NULL, NULL, 'plan', NULL, 0, 0, 0, NULL, NULL, 'terminal', FALSE, NULL, NOW(), NOW());
 
 -- Seed rows for task_stages_registry
 INSERT INTO "task_stages_registry" ("name", "display_label", "description", "category", "default_agent", "reviewer_agent", "reviewer_agent_selector_json", "review_policy", "dispatch_type", "dispatch_target", "dispatch_inputs_json", "position_hint", "requires_human", "is_terminal", "default_max_work_attempts", "default_max_review_rounds", "bundled_hash", "updated_at") VALUES ('ideation', 'Ideation', 'Early problem framing; capture motivating questions and constraints.', 'discovery', 'analyst', NULL, NULL, 'none', NULL, NULL, NULL, 10, FALSE, FALSE, 3, 5, '30d0d059953b56f2cf9e809b42993be29df0da15598a38925b79a900a71e6331', NOW());

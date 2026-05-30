@@ -76,6 +76,7 @@ class TestSkillsMPSearch:
             await provider.search("test")
         # Error message directs users to gobby install, not env vars.
         assert "gobby install" in str(excinfo.value)
+        assert "gobby secrets set SKILLSMP_API_KEY <value>" in str(excinfo.value)
         assert "environment" not in str(excinfo.value).lower()
 
     @pytest.mark.asyncio
@@ -157,6 +158,7 @@ class TestSkillsMPDiscover:
         assert "SKILLSMP_API_KEY" in result["error"]
         # Error message directs users to gobby install (SecretStore), not env vars.
         assert "gobby install" in result["error"] or "gobby secrets set" in result["error"]
+        assert "gobby secrets set SKILLSMP_API_KEY <value>" in result["error"]
         assert "environment" not in result["error"].lower()
 
 

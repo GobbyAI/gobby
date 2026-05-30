@@ -28,8 +28,9 @@ class ConfigurationRouteContext:
 
     def get_config_store(self) -> ConfigStore:
         store = getattr(self.server.services, "config_store", None)
-        if store is None:
+        if not isinstance(store, ConfigStore):
             store = ConfigStore(require_hub_database(self.server.services.database))
+            self.server.services.config_store = store
         return store
 
     def get_prompt_manager(self) -> LocalPromptManager:
@@ -49,6 +50,8 @@ class ConfigurationRouteContext:
         config = getattr(self.server.services, "config", None)
         if config is None:
             raise HTTPException(status_code=503, detail="Config not available")
+        if not hasattr(config, "model_dump"):
+            raise HTTPException(status_code=503, detail="Config model not available")
         return cast(dict[str, Any], config.model_dump(mode="json", exclude_none=True))
 
     def set_runtime_config(

@@ -41,7 +41,7 @@ class TestGobbyRunnerShutdown:
     """Tests for shutdown handling in run method."""
 
     @pytest.mark.asyncio
-    async def test_run_waits_for_http_shutdown_before_reaping_children(self, mock_config):
+    async def test_run_waits_for_http_shutdown_before_reaping_children(self, mock_config) -> None:
         """Child reaping should only happen after HTTP shutdown completes."""
         mock_mcp_manager = AsyncMock()
         mock_mcp_manager.connect_all = AsyncMock()
@@ -91,7 +91,7 @@ class TestGobbyRunnerShutdown:
             assert runner.database.close.called is True
 
     @pytest.mark.asyncio
-    async def test_run_handles_http_server_shutdown_timeout(self, mock_config):
+    async def test_run_handles_http_server_shutdown_timeout(self, mock_config) -> None:
         """Test that run handles HTTP server shutdown timeout."""
         mock_mcp_manager = AsyncMock()
         mock_mcp_manager.connect_all = AsyncMock()
@@ -121,7 +121,7 @@ class TestGobbyRunnerShutdown:
             assert runner.database.close.called is True
 
     @pytest.mark.asyncio
-    async def test_run_handles_lifecycle_manager_shutdown_timeout(self, mock_config):
+    async def test_run_handles_lifecycle_manager_shutdown_timeout(self, mock_config) -> None:
         """Test that run handles lifecycle manager shutdown timeout."""
         mock_mcp_manager = AsyncMock()
         mock_mcp_manager.connect_all = AsyncMock()
@@ -161,7 +161,10 @@ class TestGobbyRunnerShutdown:
             assert runner.database.close.called is True
 
     @pytest.mark.asyncio
-    async def test_run_stops_lifecycle_manager_before_http_shutdown_completes(self, mock_config):
+    async def test_run_stops_lifecycle_manager_before_http_shutdown_completes(
+        self,
+        mock_config,
+    ) -> None:
         """Lifecycle cleanup should stop before we wait for HTTP lifespan shutdown."""
         mock_mcp_manager = AsyncMock()
         mock_mcp_manager.connect_all = AsyncMock()
@@ -278,7 +281,7 @@ class TestGobbyRunnerShutdown:
             assert events[-1] == "serve-exit"
 
     @pytest.mark.asyncio
-    async def test_run_handles_message_processor_shutdown_timeout(self, mock_config):
+    async def test_run_handles_message_processor_shutdown_timeout(self, mock_config) -> None:
         """Test that run handles message processor shutdown timeout."""
         mock_config.message_tracking = MagicMock()
         mock_config.message_tracking.enabled = True
@@ -322,7 +325,7 @@ class TestGobbyRunnerShutdown:
             assert runner.database.close.called is True
 
     @pytest.mark.asyncio
-    async def test_run_handles_mcp_disconnect_timeout(self, mock_config):
+    async def test_run_handles_mcp_disconnect_timeout(self, mock_config) -> None:
         """Test that run handles MCP disconnect timeout."""
         mock_mcp_manager = AsyncMock()
         mock_mcp_manager.connect_all = AsyncMock()
@@ -351,7 +354,7 @@ class TestGobbyRunnerShutdown:
             assert runner.database.close.called is True
 
     @pytest.mark.asyncio
-    async def test_run_starts_message_processor(self, mock_config):
+    async def test_run_starts_message_processor(self, mock_config) -> None:
         """Test that run starts the message processor when enabled."""
         mock_config.message_tracking = MagicMock()
         mock_config.message_tracking.enabled = True
@@ -411,7 +414,7 @@ class TestGobbyRunnerShutdown:
             assert runner._shutdown_requested is True
 
     @pytest.mark.asyncio
-    async def test_run_runs_startup_metrics_cleanup(self, mock_config):
+    async def test_run_runs_startup_metrics_cleanup(self, mock_config) -> None:
         """Test that run performs startup metrics cleanup."""
         mock_config.databases.qdrant.url = ""
         mock_config.databases.falkordb.requirepass = None
@@ -451,7 +454,7 @@ class TestGobbyRunnerShutdown:
             assert runner._shutdown_requested is True
 
     @pytest.mark.asyncio
-    async def test_run_handles_startup_metrics_cleanup_error(self, mock_config):
+    async def test_run_handles_startup_metrics_cleanup_error(self, mock_config) -> None:
         """Test that run handles startup metrics cleanup errors."""
         mock_mcp_manager = AsyncMock()
         mock_mcp_manager.connect_all = AsyncMock()
@@ -485,7 +488,7 @@ class TestGobbyRunnerShutdown:
             assert runner.database.close.called is True
 
     @pytest.mark.asyncio
-    async def test_run_fatal_error_exits(self, mock_config):
+    async def test_run_fatal_error_exits(self, mock_config) -> None:
         """Test that run exits on fatal error."""
         mock_mcp_manager = AsyncMock()
         mock_mcp_manager.connect_all = AsyncMock()
@@ -513,7 +516,7 @@ class TestGobbyRunnerShutdown:
             assert exc_info.value.code == 1
 
     @pytest.mark.asyncio
-    async def test_run_cancels_metrics_cleanup_task_on_shutdown(self, mock_config):
+    async def test_run_cancels_metrics_cleanup_task_on_shutdown(self, mock_config) -> None:
         """Test that metrics cleanup task is cancelled on shutdown."""
         mock_mcp_manager = AsyncMock()
         mock_mcp_manager.connect_all = AsyncMock()
@@ -550,7 +553,7 @@ class TestWebSocketServerShutdown:
     """Tests for WebSocket server shutdown handling."""
 
     @pytest.mark.asyncio
-    async def test_run_with_websocket_shutdown(self, mock_config_with_websocket):
+    async def test_run_with_websocket_shutdown(self, mock_config_with_websocket) -> None:
         """Test run properly shuts down WebSocket server."""
         mock_mcp_manager = AsyncMock()
         mock_mcp_manager.connect_all = AsyncMock()
@@ -596,7 +599,7 @@ class TestWebSocketServerShutdown:
             assert runner.database.close.called is True
 
     @pytest.mark.asyncio
-    async def test_run_websocket_shutdown_timeout(self, mock_config_with_websocket):
+    async def test_run_websocket_shutdown_timeout(self, mock_config_with_websocket) -> None:
         """Test run handles WebSocket server shutdown timeout."""
         mock_mcp_manager = AsyncMock()
         mock_mcp_manager.connect_all = AsyncMock()
@@ -659,7 +662,7 @@ class TestMetricsCleanupTaskShutdown:
     """Tests for metrics cleanup task shutdown behavior."""
 
     @pytest.mark.asyncio
-    async def test_run_handles_metrics_cleanup_task_cancelled_error(self, mock_config):
+    async def test_run_handles_metrics_cleanup_task_cancelled_error(self, mock_config) -> None:
         """Test run handles CancelledError from metrics cleanup task cancellation."""
         mock_mcp_manager = AsyncMock()
         mock_mcp_manager.connect_all = AsyncMock()
@@ -698,7 +701,7 @@ class TestGobbyRunnerShutdownExtended:
     """Tests for GobbyRunner shutdown behavior."""
 
     @pytest.mark.asyncio
-    async def test_run_calls_disconnect_on_shutdown(self, mock_config):
+    async def test_run_calls_disconnect_on_shutdown(self, mock_config) -> None:
         """Test that run always disconnects MCP on shutdown."""
         mock_mcp_manager = AsyncMock()
         mock_mcp_manager.connect_all = AsyncMock()
@@ -728,7 +731,7 @@ class TestGobbyRunnerShutdownExtended:
             assert runner.database.close.called is True
 
     @pytest.mark.asyncio
-    async def test_run_shuts_down_telemetry_before_closing_database(self, mock_config):
+    async def test_run_shuts_down_telemetry_before_closing_database(self, mock_config) -> None:
         """Telemetry flush should happen before the main daemon DB is closed."""
         mock_mcp_manager = AsyncMock()
         mock_mcp_manager.connect_all = AsyncMock()
@@ -766,7 +769,7 @@ class TestGobbyRunnerShutdownExtended:
             assert runner.database.close.call_count == 1
 
     @pytest.mark.asyncio
-    async def test_run_does_not_close_code_index_graph_client(self, mock_config):
+    async def test_run_does_not_close_code_index_graph_client(self, mock_config) -> None:
         """Code index graph projection is owned by gcode, not runner shutdown."""
         mock_mcp_manager = AsyncMock()
         mock_mcp_manager.connect_all = AsyncMock()
@@ -797,5 +800,5 @@ class TestGobbyRunnerShutdownExtended:
                     await runner.run()
 
             assert events == ["database"]
-            runner.code_indexer.close_graph_client.assert_not_awaited()
+            runner.code_indexer.close_graph_client.assert_not_called()
             assert runner.database.close.call_count == 1

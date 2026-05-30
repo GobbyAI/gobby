@@ -901,11 +901,9 @@ class TestExecuteSpawnSandbox:
             assert "SEATBELT_PROFILE" in call_kwargs["env"]
             assert call_kwargs["env"][UV_CACHE_DIR] == "/tmp/gobby/uv-cache/child-session-id"
             assert call_kwargs["env"][CARGO_HOME]
-            assert Path(call_kwargs["env"][CARGO_HOME]).parts[-3:] == (
-                "gobby",
-                "cargo-home",
-                "child-session-id",
-            )
+            cargo_home_parts = Path(call_kwargs["env"][CARGO_HOME]).parts
+            assert cargo_home_parts[-3:-1] == ("gobby", "cargo-home")
+            assert cargo_home_parts[-1].startswith("child-session-id-")
             assert call_kwargs["env"][CARGO_HOME] in resolved_config.extra_write_paths
             # Command should include sandbox args
             command = call_kwargs.get("command")
@@ -926,11 +924,9 @@ class TestExecuteSpawnSandbox:
         assert resolved is not None
         assert resolved.enabled is True
         assert env_vars[CARGO_HOME]
-        assert Path(env_vars[CARGO_HOME]).parts[-3:] == (
-            "gobby",
-            "cargo-home",
-            "child-session-one",
-        )
+        cargo_home_parts = Path(env_vars[CARGO_HOME]).parts
+        assert cargo_home_parts[-3:-1] == ("gobby", "cargo-home")
+        assert cargo_home_parts[-1].startswith("child-session-one-")
         assert "/already-allowed" in resolved.extra_write_paths
         assert "/tmp/gobby/uv-cache/child-session-one" in resolved.extra_write_paths
         assert env_vars[CARGO_HOME] in resolved.extra_write_paths

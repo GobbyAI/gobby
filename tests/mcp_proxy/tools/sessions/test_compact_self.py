@@ -258,8 +258,9 @@ class TestCompactSelfTerminalPath:
             events.append(("tmux", keys))
             return True
 
-        def mark_pending(_db: Any, session_id: str) -> bool:
+        def mark_pending(_db: Any, session_id: str, *, prompt: str) -> bool:
             events.append(("mark", session_id))
+            assert "Continue where you last left off." in prompt
             return True
 
         tmux.send_keys.side_effect = send_keys
@@ -276,6 +277,35 @@ class TestCompactSelfTerminalPath:
             ("tmux", "/compact\n"),
         ]
         mock_mark.assert_called_once()
+
+    def test_terminal_session_continuation_prompt_reloads_required_skills(self) -> None:
+        session = _make_terminal_session("codex")
+        registry, tmux = _register_compact_self(session)
+        captured_prompts: list[str] = []
+
+        def mark_pending(_db: Any, _session_id: str, *, prompt: str) -> bool:
+            captured_prompts.append(prompt)
+            return True
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal.persist_compact_resume_required_skills",
+                return_value=["python", "development-discipline"],
+            ) as mock_persist,
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal.mark_compact_self_continuation_pending",
+                side_effect=mark_pending,
+            ),
+        ):
+            result = _call_compact_self(registry, tmux, session_id="s1")
+
+        assert result["compacted"] is True
+        assert result["compact_resume_required_skills"] == ["python", "development-discipline"]
+        mock_persist.assert_called_once()
+        assert len(captured_prompts) == 1
+        assert "progressive discovery" in captured_prompts[0]
+        assert 'get_skill(name="python")' in captured_prompts[0]
+        assert 'get_skill(name="development-discipline")' in captured_prompts[0]
 
     def test_terminal_session_clears_continuation_on_slash_command_failure(self) -> None:
         session = _make_terminal_session("claude")

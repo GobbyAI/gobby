@@ -425,7 +425,7 @@ class HTTPServer:
         # already awaited completion with return_exceptions=True. We only need
         # to classify results for logging — no secondary cancellation pass or
         # lingering cleanup is required.
-        for (session_id, transport, _task), result in zip(pending, results, strict=False):
+        for (session_id, transport, _task), result in zip(pending, results, strict=True):
             if isinstance(result, TimeoutError):
                 logger.warning(
                     "Timed out terminating Streamable HTTP session %s after %.1fs",

@@ -211,6 +211,7 @@
     "workflows/rules/context-handoff/inject-compact-handoff.yaml": "8820a612b33985567be0ca162dda1e766627dbe5d726658d6508ce37c4dc25bb",
     "workflows/rules/context-handoff/inject-previous-session-summary.yaml": "a7ac6067079639a09580780dcec5c745837f738c5bfac7d5fb58411132239446",
     "workflows/rules/context-handoff/inject-task-context-on-start.yaml": "4b389a39c6dfd228ec85cb0d9e59b27cbc0066d2a5681c475e15e6b870db01d9",
+    "workflows/rules/context-handoff/nudge-compact-on-context-pressure.yaml": "c0f0eb2c49a02a86448d958f039104857ca76ad77d990c284805bcad6accb444",
     "workflows/rules/context-handoff/prepare-clear-handoff.yaml": "cadb2de5078f765593745ecd15e06a74c68c657ae1a93728398999d0a75c3768",
     "workflows/rules/context-handoff/preserve-context-on-compact.yaml": "df8ca42a7a6586c3a59308c26ae892e5b0c7d82ad4e49b5d1905884101029afe",
     "workflows/rules/context7/block-and-teach-context7.yaml": "570292f527e2218083eb08c1e44f4f79c3d8e74d5070565abc3d0df7b5229429",

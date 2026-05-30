@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import click
@@ -29,7 +30,7 @@ def _config_with_hubs(hubs: dict[str, HubConfig]) -> MagicMock:
 
 
 @pytest.fixture
-def patched_deps():
+def patched_deps() -> Any:
     """Patch SecretStore, runtime hub open, and load_full_config_from_db."""
     with (
         patch("gobby.cli.utils.load_full_config_from_db") as mock_load,

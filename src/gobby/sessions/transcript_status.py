@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.sessions.transcript_archive import get_archive_dir
 from gobby.sessions.transcript_io import (
+    DecompressionError,
     _count_nonempty_lines,
     _decompress_archive,
     _read_json_file,
@@ -118,7 +119,7 @@ async def _archive_transcript_counts(
         )
         parsed_message_count = len(await get_parsed_messages_from_archive(session_id))
         return raw_record_count, parsed_message_count, detected_source, False
-    except (json.JSONDecodeError, ValueError, OSError, gzip.BadGzipFile) as e:
+    except (DecompressionError, json.JSONDecodeError, ValueError, OSError, gzip.BadGzipFile) as e:
         logger.warning(f"Failed to read archive for session {session_id}: {e}")
         return 0, 0, None, True
 

@@ -7,6 +7,7 @@ import gzip
 import json
 import logging
 import zlib
+from collections.abc import Iterable
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -14,22 +15,26 @@ logger = logging.getLogger(__name__)
 _ARCHIVE_CACHE_SIZE = 32
 
 
-def _count_nonempty_lines(lines: list[str]) -> int:
+class DecompressionError(RuntimeError):
+    """Raised when a transcript archive cannot be decompressed."""
+
+
+def _count_nonempty_lines(lines: Iterable[str]) -> int:
     """Count non-empty JSONL records."""
     return sum(1 for line in lines if line.strip())
 
 
 @functools.lru_cache(maxsize=_ARCHIVE_CACHE_SIZE)
-def _decompress_archive(archive_path: str) -> list[str]:
+def _decompress_archive(archive_path: str) -> tuple[str, ...]:
     """Decompress a gzip archive and return lines."""
-    lines = []
+    lines: list[str] = []
     try:
         with gzip.open(archive_path, "rt", encoding="utf-8") as f:
             for line in f:
                 lines.append(line)
     except (EOFError, gzip.BadGzipFile, zlib.error) as e:
-        logger.warning(f"Truncated or malformed gzip archive {archive_path}: {e}")
-    return lines
+        raise DecompressionError(f"Truncated or malformed gzip archive {archive_path}: {e}") from e
+    return tuple(lines)
 
 
 def _read_jsonl_lines(path: str) -> list[str]:

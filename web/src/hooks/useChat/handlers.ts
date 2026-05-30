@@ -152,6 +152,12 @@ const handleChatStream = useCallback((chunk: ChatStreamChunk) => {
         // Output tokens: ACCUMULATE (genuinely incremental per turn)
         outputTokens: prev.outputTokens + (u.output_tokens ?? 0),
         contextWindow: chunk.context_window ?? prev.contextWindow,
+        contextUsageRatio:
+          chunk.context_window && turnTotal > 0
+            ? Math.min(Math.max(turnTotal / chunk.context_window, 0), 1)
+            : prev.contextUsageRatio ?? null,
+        contextUsageSource: prev.contextUsageSource ?? "web_chat",
+        contextUsageConfidence: "reported",
       }));
     } else if (chunk.context_window) {
       setContextUsage((prev) => ({

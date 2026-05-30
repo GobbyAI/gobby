@@ -5,7 +5,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -315,8 +315,8 @@ async def test_plan_file_quick_initializes_planning_pulse(
     temp_db,
     tmp_path: Path,
 ) -> None:
-    project_id, _repo_path = _project(temp_db, tmp_path)
-    plan_file = tmp_path / "plan.md"
+    project_id, repo_path = _project(temp_db, tmp_path)
+    plan_file = repo_path / "plan.md"
     plan_file.write_text("# Plan\n")
 
     result = await _build(
@@ -336,8 +336,8 @@ async def test_approved_plan_file_seed_starts_at_expansion(
     temp_db,
     tmp_path: Path,
 ) -> None:
-    project_id, _repo_path = _project(temp_db, tmp_path)
-    plan_file = tmp_path / "approved-plan.md"
+    project_id, repo_path = _project(temp_db, tmp_path)
+    plan_file = repo_path / "approved-plan.md"
     plan_file.write_text("# Plan\n")
 
     result = await _build(
@@ -357,8 +357,8 @@ async def test_needs_review_plan_file_seed_sets_planning_review_round_count(
     temp_db,
     tmp_path: Path,
 ) -> None:
-    project_id, _repo_path = _project(temp_db, tmp_path)
-    plan_file = tmp_path / "needs-review-plan.md"
+    project_id, repo_path = _project(temp_db, tmp_path)
+    plan_file = repo_path / "needs-review-plan.md"
     plan_file.write_text("# Plan\n")
 
     result = await _build(
@@ -444,7 +444,7 @@ async def test_build_validates_target_branch_exists(
     tmp_path: Path,
 ) -> None:
     project_id, repo_path = _project(temp_db, tmp_path)
-    plan_file = tmp_path / "plan.md"
+    plan_file = repo_path / "plan.md"
     plan_file.write_text("# Plan\n")
 
     import subprocess
@@ -466,8 +466,8 @@ async def test_build_validates_clones_dir_when_clone_isolation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    project_id, _repo_path = _project(temp_db, tmp_path)
-    plan_file = tmp_path / "plan.md"
+    project_id, repo_path = _project(temp_db, tmp_path)
+    plan_file = repo_path / "plan.md"
     plan_file.write_text("# Plan\n")
     clones_dir = tmp_path / "clones"
     clones_dir.mkdir()
@@ -508,8 +508,8 @@ async def test_build_plan_file_creates_planning_epic_artifacts_manifest_and_kick
     temp_db,
     tmp_path: Path,
 ) -> None:
-    project_id, _repo_path = _project(temp_db, tmp_path)
-    plan_file = tmp_path / "plan.md"
+    project_id, repo_path = _project(temp_db, tmp_path)
+    plan_file = repo_path / "plan.md"
     plan_file.write_text("# Plan\n")
 
     result = await _build(
@@ -552,8 +552,8 @@ async def test_build_plan_file_rerun_resumes_open_root_for_same_plan_file(
     tmp_path: Path,
 ) -> None:
     _disable_dispatcher_tick(monkeypatch)
-    project_id, _repo_path = _project(temp_db, tmp_path)
-    plan_file = tmp_path / "plan.md"
+    project_id, repo_path = _project(temp_db, tmp_path)
+    plan_file = repo_path / "plan.md"
     plan_file.write_text("# Plan\n")
 
     first = await _build(
@@ -597,8 +597,8 @@ async def test_build_plan_file_planning_spawn_uses_main_context_for_worktree_bui
     from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.sessions import SessionManager
 
-    project_id, _repo_path = _project(temp_db, tmp_path)
-    plan_file = tmp_path / "plan.md"
+    project_id, repo_path = _project(temp_db, tmp_path)
+    plan_file = repo_path / "plan.md"
     plan_file.write_text("# Plan\n")
     sync_bundled_agents(temp_db)
     task_manager = LocalTaskManager(temp_db)
@@ -653,8 +653,8 @@ async def test_build_plan_file_plan_adversary_spawn_uses_main_context_for_worktr
     from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.sessions import SessionManager
 
-    project_id, _repo_path = _project(temp_db, tmp_path)
-    plan_file = tmp_path / "plan.md"
+    project_id, repo_path = _project(temp_db, tmp_path)
+    plan_file = repo_path / "plan.md"
     plan_file.write_text("# Plan\n")
     sync_bundled_agents(temp_db)
     task_manager = LocalTaskManager(temp_db)
@@ -711,8 +711,8 @@ async def test_build_plan_file_dry_run_rolls_back_preview_side_effects(
 ) -> None:
     from gobby.config.build import StageCapOverride
 
-    project_id, _repo_path = _project(temp_db, tmp_path)
-    plan_file = tmp_path / "plan.md"
+    project_id, repo_path = _project(temp_db, tmp_path)
+    plan_file = repo_path / "plan.md"
     plan_file.write_text("# Plan\n")
     tables = (
         "tasks",
@@ -777,8 +777,8 @@ async def test_plan_file_dry_run_skip_pr_returns_full_manifest_chain(
 ) -> None:
     from gobby.config.build import StageCapOverride
 
-    project_id, _repo_path = _project(temp_db, tmp_path)
-    plan_file = tmp_path / "plan.md"
+    project_id, repo_path = _project(temp_db, tmp_path)
+    plan_file = repo_path / "plan.md"
     plan_file.write_text("# Plan\n")
 
     async def fail_tick(*_args: object, **_kwargs: object) -> object:
@@ -832,8 +832,8 @@ async def test_plan_file_bare_stage_overrides_do_not_select_manifest(
 ) -> None:
     from gobby.config.build import StageCapOverride
 
-    project_id, _repo_path = _project(temp_db, tmp_path)
-    plan_file = tmp_path / "plan.md"
+    project_id, repo_path = _project(temp_db, tmp_path)
+    plan_file = repo_path / "plan.md"
     plan_file.write_text("# Plan\n")
 
     async def fail_tick(*_args: object, **_kwargs: object) -> object:
@@ -904,8 +904,8 @@ async def test_plan_file_relative_hidden_path_resolves_from_request_cwd(
 async def test_build_persists_stage_caps_on_manifest_rows(temp_db, tmp_path: Path) -> None:
     from gobby.config.build import StageCapOverride
 
-    project_id, _repo_path = _project(temp_db, tmp_path)
-    plan_file = tmp_path / "plan.md"
+    project_id, repo_path = _project(temp_db, tmp_path)
+    plan_file = repo_path / "plan.md"
     plan_file.write_text("# Plan\n")
 
     result = await _build(
@@ -939,8 +939,8 @@ async def test_build_persists_stage_caps_on_manifest_rows(temp_db, tmp_path: Pat
 async def test_build_rejects_stage_cap_for_skipped_stage(temp_db, tmp_path: Path) -> None:
     from gobby.config.build import StageCapOverride
 
-    project_id, _repo_path = _project(temp_db, tmp_path)
-    plan_file = tmp_path / "plan.md"
+    project_id, repo_path = _project(temp_db, tmp_path)
+    plan_file = repo_path / "plan.md"
     plan_file.write_text("# Plan\n")
 
     with pytest.raises(ValueError, match="--stage target stage not in resolved manifest: pr"):
@@ -965,8 +965,8 @@ async def test_build_passes_active_agent_cap_separately_from_stage_work_cap(
     from gobby.build.service import DispatcherTickSummary
     from gobby.config.build import StageCapOverride
 
-    project_id, _repo_path = _project(temp_db, tmp_path)
-    plan_file = tmp_path / "plan.md"
+    project_id, repo_path = _project(temp_db, tmp_path)
+    plan_file = repo_path / "plan.md"
     plan_file.write_text("# Plan\n")
     tick_kwargs: list[dict[str, object]] = []
 
@@ -1034,8 +1034,8 @@ async def test_max_retries_zero_sets_one_attempt_per_resolved_stage(
     temp_db,
     tmp_path: Path,
 ) -> None:
-    project_id, _repo_path = _project(temp_db, tmp_path)
-    plan_file = tmp_path / "plan.md"
+    project_id, repo_path = _project(temp_db, tmp_path)
+    plan_file = repo_path / "plan.md"
     plan_file.write_text("# Plan\n")
 
     result = await _build(
@@ -1058,8 +1058,8 @@ async def test_stage_override_wins_over_max_retries_default(
 ) -> None:
     from gobby.config.build import StageCapOverride
 
-    project_id, _repo_path = _project(temp_db, tmp_path)
-    plan_file = tmp_path / "plan.md"
+    project_id, repo_path = _project(temp_db, tmp_path)
+    plan_file = repo_path / "plan.md"
     plan_file.write_text("# Plan\n")
 
     result = await _build(
@@ -1094,8 +1094,8 @@ async def test_build_rejects_stage_caps_below_one(
 ) -> None:
     from gobby.config.build import StageCapOverride
 
-    project_id, _repo_path = _project(temp_db, tmp_path)
-    plan_file = tmp_path / "plan.md"
+    project_id, repo_path = _project(temp_db, tmp_path)
+    plan_file = repo_path / "plan.md"
     plan_file.write_text("# Plan\n")
     override = (
         StageCapOverride(stage_name, max_work_attempts=0)
@@ -1117,8 +1117,8 @@ async def test_build_rejects_negative_max_retries(
     temp_db,
     tmp_path: Path,
 ) -> None:
-    project_id, _repo_path = _project(temp_db, tmp_path)
-    plan_file = tmp_path / "plan.md"
+    project_id, repo_path = _project(temp_db, tmp_path)
+    plan_file = repo_path / "plan.md"
     plan_file.write_text("# Plan\n")
 
     with pytest.raises(ValueError, match="max_retries.*greater than or equal to 0"):
@@ -1929,8 +1929,8 @@ async def test_build_task_ref_automates_existing_expansion_output(
 @pytest.mark.asyncio
 async def test_build_task_ref_repairs_legacy_expanded_epic_manifest_without_pr(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     from gobby.storage.expansion_runs import LocalExpansionRunManager
     from gobby.storage.tasks import StageManifestSpec
@@ -2020,8 +2020,8 @@ async def test_build_task_ref_repairs_legacy_expanded_epic_manifest_without_pr(
 @pytest.mark.asyncio
 async def test_build_task_ref_removes_skipped_pr_from_progressed_child_epic(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     from gobby.storage.expansion_runs import LocalExpansionRunManager
     from gobby.storage.tasks import StageManifestSpec
@@ -2301,6 +2301,7 @@ async def test_build_resume_development_epic_defers_workspace_refresh(
     temp_db,
     sample_project,
 ) -> None:
+    from gobby.storage.expansion_runs import LocalExpansionRunManager
     from gobby.storage.tasks import StageManifestSpec
 
     _disable_dispatcher_tick(monkeypatch)
@@ -2325,6 +2326,17 @@ async def test_build_resume_development_epic_defers_workspace_refresh(
     ]
     task_manager.stage_states.initialize_manifest(parent.id, manifest, by_session_id=None)
     task_manager.stage_states.initialize_manifest(child.id, manifest, by_session_id=None)
+    run = LocalExpansionRunManager(temp_db).create(
+        parent_task_id=parent.id,
+        project_id=sample_project["id"],
+        triggering_session_id=None,
+        input_source="task",
+    )
+    LocalExpansionRunManager(temp_db).save_apply_result(
+        run.id,
+        task_id_map={"child": child.id},
+        created_task_ids=[child.id],
+    )
     temp_db.execute(
         """
         UPDATE task_stage_states

@@ -120,8 +120,34 @@ def populate_handoff_session_variables(
         sv_mgr.merge_variables(session_id, handoff_vars)
 
     parent_vars = sv_mgr.get_variables(parent_session_id)
+    if session_source == "compact":
+        _preserve_compact_resume_required_skills(sv_mgr, session_id, parent_vars)
     if session_source in ("compact", "clear"):
         _preserve_task_claim_state(handler, sv_mgr, session_id, parent_session_id, parent_vars)
+
+
+def _preserve_compact_resume_required_skills(
+    sv_mgr: Any,
+    session_id: str,
+    parent_vars: dict[str, Any],
+) -> None:
+    raw_skills = parent_vars.get("compact_resume_required_skills")
+    if not isinstance(raw_skills, list):
+        return
+
+    skills: list[str] = []
+    seen: set[str] = set()
+    for value in raw_skills:
+        if not isinstance(value, str):
+            continue
+        skill = value.strip()
+        if not skill or skill in seen:
+            continue
+        seen.add(skill)
+        skills.append(skill)
+
+    if skills:
+        sv_mgr.merge_variables(session_id, {"compact_resume_required_skills": skills})
 
 
 def _refresh_parent_summary_for_handoff(

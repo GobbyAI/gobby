@@ -6,12 +6,14 @@ and hub browsing/install endpoints for the skill system.
 """
 
 import logging
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -116,7 +118,7 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
                     f"Failed to broadcast skill event '{event}' for skill {skill_id}: {e}"
                 )
 
-    def _resolve_project_import_path(source: str, project_id: str | None) -> str:
+    async def _resolve_project_import_path(source: str, project_id: str | None) -> str:
         if not project_id:
             raise HTTPException(
                 status_code=400,
@@ -124,7 +126,8 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
             )
         from gobby.storage.projects import LocalProjectManager
 
-        project = LocalProjectManager(server.services.database).get(project_id)
+        manager = LocalProjectManager(server.services.database)
+        project = await run_in_threadpool(partial(manager.get, project_id))
         if project is None or not project.repo_path:
             raise HTTPException(status_code=400, detail="Project repo_path is required")
         root = Path(project.repo_path).expanduser().resolve()
@@ -284,12 +287,12 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
                 parsed = loader.load_from_github(source, validate=True)
             elif source.endswith(".zip"):
                 parsed = loader.load_from_zip(
-                    _resolve_project_import_path(source, request_data.project_id),
+                    await _resolve_project_import_path(source, request_data.project_id),
                     validate=True,
                 )
             else:
                 parsed = loader.load_skill(
-                    _resolve_project_import_path(source, request_data.project_id),
+                    await _resolve_project_import_path(source, request_data.project_id),
                     validate=True,
                 )
 

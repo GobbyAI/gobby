@@ -34,10 +34,11 @@ def register_ui_setting_routes(router: APIRouter, context: ConfigurationRouteCon
         try:
             config_store = context.get_config_store()
             result: dict[str, Any] = {}
-            for key in UI_SETTINGS_KEYS:
-                value = config_store.get(f"{UI_SETTINGS_PREFIX}{key}")
+            values = config_store.get_all()
+            for prefixed_key in (f"{UI_SETTINGS_PREFIX}{key}" for key in UI_SETTINGS_KEYS):
+                value = values.get(prefixed_key)
                 if value is not None:
-                    result[key] = value
+                    result[prefixed_key.removeprefix(UI_SETTINGS_PREFIX)] = value
             return JSONResponse(content=result)
         except HTTPException:
             raise

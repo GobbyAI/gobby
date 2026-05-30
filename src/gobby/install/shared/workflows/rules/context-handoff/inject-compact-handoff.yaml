@@ -14,3 +14,16 @@ rules:
           *Injected by Gobby session handoff*
 
           {{ session_summary }}
+          {% set resume_skills = variables.get('compact_resume_required_skills') or [] %}
+          {% if resume_skills %}
+
+          ## Required Skill Reload
+          Reload these required skills with progressive discovery before continuing:
+
+          {% for skill in resume_skills %}
+          {{ skill_fetch_directive(skill) }}
+          {% endfor %}
+          {% endif %}
+      - type: set_variable
+        variable: compact_resume_required_skills
+        value: []

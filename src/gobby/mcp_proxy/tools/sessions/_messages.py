@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from gobby.sessions.transcript_reader import TranscriptReader
     from gobby.storage.sessions import SessionManager
 
-MAX_SEARCH_SESSIONS = 100
+MAX_SEARCH_SESSIONS: int = 100
 
 
 def register_message_tools(

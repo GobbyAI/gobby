@@ -447,12 +447,40 @@ class TestMCPClientManagerAddServer:
         mock_db = MagicMock()
         mock_db.update_server.side_effect = RuntimeError("db down")
         manager = MCPClientManager(server_configs=[config], mcp_db_manager=mock_db)
+        mock_session = AsyncMock()
+        mock_session.list_tools.return_value = MagicMock(tools=[])
 
-        with pytest.raises(RuntimeError, match="db down"):
+        async def connect_server(server_config: MCPServerConfig) -> AsyncMock:
+            manager._connections[server_config.name] = mock_session
+            return mock_session
+
+        with (
+            patch.object(manager, "_connect_server", new=AsyncMock(side_effect=connect_server)),
+            pytest.raises(RuntimeError, match="db down"),
+        ):
             await manager.set_server_enabled("existing-server", True)
 
         assert config.enabled is False
         assert manager.get_server_config("existing-server") is config
+        mock_session.disconnect.assert_awaited_once_with()
+        assert "existing-server" not in manager.health
+
+    @pytest.mark.asyncio
+    async def test_set_server_enabled_false_unregisters_lazy_server(self) -> None:
+        config = MCPServerConfig(
+            name="existing-server",
+            project_id="test-project",
+            transport="http",
+            url="http://localhost:8001",
+            enabled=True,
+        )
+        manager = MCPClientManager(server_configs=[config])
+
+        result = await manager.set_server_enabled("existing-server", False)
+
+        assert result == {"success": True, "name": "existing-server", "enabled": False}
+        assert config.enabled is False
+        assert manager._lazy_connector.get_state("existing-server") is None
 
     @pytest.mark.asyncio
     async def test_add_server_handles_list_tools_failure(self):

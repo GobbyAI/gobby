@@ -109,12 +109,13 @@ async def apply_before_tool_enforcement(
     if event_handlers is not None:
         from gobby.hooks.session_activation import reconcile_session_activation
 
-        await asyncio.to_thread(
+        activation_result = await asyncio.to_thread(
             reconcile_session_activation,
             event,
             event_handlers,
             logger=logger,
         )
+        logger.debug("Session activation reconciliation result: %s", activation_result)
     has_pending_context = getattr(workflow_handler, "has_pending_tool_context", None)
     if callable(has_pending_context):
         try:

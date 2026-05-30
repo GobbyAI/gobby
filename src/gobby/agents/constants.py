@@ -6,6 +6,7 @@ spawned terminal processes. When an agent spawns a child in terminal
 mode, these environment variables are set in the child process.
 """
 
+import hashlib
 import re
 import tempfile
 from pathlib import Path
@@ -62,10 +63,11 @@ CARGO_HOME = "CARGO_HOME"
 
 def get_agent_session_cache_dir(session_id: str, *path_components: str) -> Path:
     """Return a safe per-session cache directory path for spawned agents."""
-    safe_session_id = re.sub(r"[^a-zA-Z0-9_-]", "-", session_id).strip("-")
-    if not safe_session_id:
-        safe_session_id = "unknown-session"
-    return Path(tempfile.gettempdir(), *path_components, safe_session_id)
+    safe_prefix = re.sub(r"[^a-zA-Z0-9_-]", "-", session_id).strip("-")[:80]
+    if not safe_prefix:
+        safe_prefix = "unknown-session"
+    digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:16]
+    return Path(tempfile.gettempdir(), *path_components, f"{safe_prefix}-{digest}")
 
 
 def get_agent_uv_cache_dir(session_id: str) -> str:

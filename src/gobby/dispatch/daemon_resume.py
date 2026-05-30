@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import inspect
+import asyncio
 import logging
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from gobby.agents.resume_executor import resume_agent_run
 from gobby.dispatch.actions import SpawnAgentAction
@@ -48,7 +48,7 @@ async def try_resume_daemon_stop_run(
 
     metadata = candidate.resume_metadata_json or {}
     workspace_path = _workspace_path(metadata)
-    workspace_dirty = _workspace_dirty(workspace_path)
+    workspace_dirty = await _workspace_dirty(workspace_path)
     runner = getattr(services, "agent_runner", None)
     session_manager = getattr(services, "session_manager", None)
     if runner is None or session_manager is None:
@@ -63,18 +63,13 @@ async def try_resume_daemon_stop_run(
             error,
         )
 
-    result_or_awaitable = resume_agent_run(
+    resume_result = await resume_agent_run(
         candidate,
         resume_metadata=metadata,
         runner=runner,
         session_manager=session_manager,
         task_manager=getattr(services, "task_manager", None),
         daemon_config=getattr(services, "config", None),
-    )
-    resume_result = (
-        await cast(Any, result_or_awaitable)
-        if inspect.isawaitable(result_or_awaitable)
-        else result_or_awaitable
     )
     if resume_result.success and resume_result.run_id:
         mutex.attach(str(resume_result.run_id))
@@ -137,9 +132,11 @@ def _handle_resume_failure(
         workspace_path=workspace_path,
         error=error,
     )
-    TaskDispatchMutexManager(db).clear_by_run_id(candidate.id)
-    mutex.release()
-    escalate_task(db, action.task_id, reason=_ESCALATION_REASON)
+    try:
+        escalate_task(db, action.task_id, reason=_ESCALATION_REASON)
+    finally:
+        TaskDispatchMutexManager(db).clear_by_run_id(candidate.id)
+        mutex.release()
     return DaemonStopResumeResult(attempted=True, handled=True)
 
 
@@ -163,20 +160,24 @@ def _append_resume_failure_marker(
     return True
 
 
-def _workspace_dirty(workspace_path: str | None) -> bool:
+async def _workspace_dirty(workspace_path: str | None) -> bool:
     if not workspace_path:
         return False
     path = Path(workspace_path)
     if not path.is_dir():
         return False
     try:
-        result = subprocess.run(
+        result = await asyncio.to_thread(
+            subprocess.run,
             ["git", "-C", str(path), "status", "--porcelain"],
             capture_output=True,
             text=True,
             timeout=10,
             check=False,
         )
+    except subprocess.TimeoutExpired:
+        logger.debug("Timed out inspecting workspace dirty state for %s", path, exc_info=True)
+        return True
     except (OSError, subprocess.SubprocessError):
         logger.debug("Failed to inspect workspace dirty state for %s", path, exc_info=True)
         return True

@@ -95,6 +95,7 @@ export function AgentStatusBar({
             totalInputTokens={contextUsage?.totalInputTokens ?? 0}
             outputTokens={contextUsage?.outputTokens ?? 0}
             contextWindow={contextUsage?.contextWindow ?? null}
+            contextUsageRatio={contextUsage?.contextUsageRatio ?? null}
             staleMs={contextUsageStaleMs}
             uncachedInputTokens={contextUsage?.uncachedInputTokens ?? 0}
             cacheReadTokens={contextUsage?.cacheReadTokens ?? 0}

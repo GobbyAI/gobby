@@ -47,4 +47,17 @@ describe('ContextUsageIndicator', () => {
       'Context usage: waiting for first response...',
     )
   })
+
+  it('uses the normalized context ratio when provided', () => {
+    render(
+      <ContextUsageIndicator
+        totalInputTokens={100}
+        outputTokens={30}
+        contextWindow={1000}
+        contextUsageRatio={0.72}
+      />,
+    )
+
+    expect(screen.getByTestId('context-usage-indicator')).toHaveTextContent('72%')
+  })
 })

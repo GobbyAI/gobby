@@ -28,7 +28,8 @@ def classify_session_start_context(
     is_existing_session: bool,
 ) -> SessionStartContextDecision:
     """Decide whether SessionStart should emit full startup or live context."""
-    _ = is_existing_session
+    # Kept for callers that still pass the old classifier shape; startup context
+    # is now inferred from persisted session evidence instead.
     variables = _load_session_variables(handler, session_id)
     explicit_context_loss = _has_explicit_context_loss(session_source, variables)
 

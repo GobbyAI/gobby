@@ -64,6 +64,17 @@ async def resume_existing_lifecycle(
         warnings.append("Profile skip_stages ignored because the task already has a manifest")
         resume_skip_stages = []
     resume_opts = opts
+    cascade_parent_specs = (
+        resolve_stage_manifest_specs(
+            task_manager,
+            task,
+            "expanded_epic",
+            replace(resume_opts, stage_caps=[]),
+            resume_skip_stages,
+        )
+        if skip_stages_shape_resume
+        else None
+    )
     repair_expanded_epic_root_manifest_for_resume(
         task_manager,
         task,
@@ -98,6 +109,7 @@ async def resume_existing_lifecycle(
                 isolation=resume_opts.isolation,
                 unattended=opts.unattended,
                 allow_automation=True,
+                parent_manifest_specs=cascade_parent_specs,
                 include_merge_stage=resume_opts.isolation in {"worktree", "clone"}
                 and not opts.no_merge,
             )
