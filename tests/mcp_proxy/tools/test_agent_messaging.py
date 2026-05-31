@@ -294,6 +294,7 @@ class TestSendMessage:
         assert "target" in schema["inputSchema"]["properties"]
         assert "target_id" in schema["inputSchema"]["properties"]
         assert "from_session" in schema["inputSchema"]["properties"]
+        assert "project_id" in schema["inputSchema"]["properties"]
         assert "from_session" not in schema["inputSchema"]["required"]
         assert "to_session" not in schema["inputSchema"]["properties"]
         assert "send_to_all" not in schema["inputSchema"]["properties"]
@@ -483,6 +484,168 @@ class TestSendMessage:
         assert result["wake_results"] == [
             {"session_id": "s-child", "delivered": True, "method": "fake"}
         ]
+
+    @pytest.mark.asyncio
+    async def test_send_message_build_target_scopes_cross_project_coordinator(
+        self,
+        messaging_registry,
+        mock_session_manager,
+        mock_message_manager,
+        mock_db,
+    ) -> None:
+        """Build targets honor project_id and authorized cross-project coordinators."""
+        mock_session_manager.get.side_effect = lambda sid: {
+            "s-coord": MockSession(id="s-coord", project_id="proj-coord"),
+            "s-child": MockSession(id="s-child", project_id="proj-target"),
+        }.get(sid)
+
+        def fetchone(sql: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | None:
+            if "FROM build_runs WHERE id = %s" in sql:
+                return None
+            if "SELECT id FROM tasks WHERE project_id = %s AND seq_num = %s" in sql:
+                return {"id": "task-root"} if params == ("proj-target", 354) else None
+            if "SELECT project_id FROM tasks WHERE id = %s" in sql:
+                return {"project_id": "proj-target"}
+            if "SELECT *" in sql and "FROM build_runs" in sql:
+                return {
+                    "id": "br-1",
+                    "project_id": "proj-target",
+                    "root_task_id": "task-root",
+                    "input_ref": "#354",
+                    "action": "build",
+                    "status": "started",
+                    "actor": "build",
+                    "summary_json": {
+                        "build_project_id": "proj-target",
+                        "coordinator_project_id": "proj-coord",
+                        "coordinator_session_id": "s-coord",
+                    },
+                    "error": None,
+                    "started_at": "2026-01-01T00:00:00",
+                    "completed_at": None,
+                }
+            return None
+
+        def fetchall(sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
+            if "FROM build_runs" in sql and "input_ref" in sql:
+                return []
+            if "WITH RECURSIVE ancestors" in sql:
+                return [{"id": "task-root"}]
+            if "FROM agent_runs" in sql:
+                return [
+                    {
+                        "child_session_id": "s-child",
+                        "child_status": "active",
+                        "parent_session_id": "s-coord",
+                        "parent_status": "active",
+                    }
+                ]
+            return []
+
+        mock_db.fetchone.side_effect = fetchone
+        mock_db.fetchall.side_effect = fetchall
+        mock_message_manager.create_message.side_effect = lambda **kwargs: MockMessage(
+            id="msg-build",
+            from_session=kwargs["from_session"],
+            to_session=kwargs["to_session"],
+            content=kwargs["content"],
+            priority=kwargs["priority"],
+            message_type=kwargs["message_type"],
+            metadata_json=kwargs["metadata_json"],
+        )
+
+        result = await messaging_registry.call(
+            "send_message",
+            {
+                "from_session": "s-coord",
+                "target": "build",
+                "target_id": "#354",
+                "project_id": "proj-target",
+                "content": "daemon restart warning",
+            },
+        )
+
+        assert result["success"] is True
+        assert result["recipient_session_ids"] == ["s-child"]
+        assert result["selector_metadata"]["project_id"] == "proj-target"
+        mock_message_manager.create_message.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_send_message_agent_target_allows_cross_project_coordinator(
+        self,
+        messaging_registry,
+        mock_session_manager,
+        mock_message_manager,
+        mock_db,
+    ) -> None:
+        """Recorded build coordinators may message their build agents directly."""
+        mock_session_manager.get.side_effect = lambda sid: {
+            "s-coord": MockSession(id="s-coord", project_id="proj-coord"),
+            "s-child": MockSession(id="s-child", project_id="proj-target"),
+        }.get(sid)
+
+        def fetchone(sql: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | None:
+            if "FROM agent_runs ar" in sql:
+                return {
+                    "id": "run-1",
+                    "status": "running",
+                    "task_id": "task-leaf",
+                    "child_session_id": "s-child",
+                    "parent_session_id": "s-coord",
+                    "child_status": "active",
+                    "parent_status": "active",
+                }
+            if "SELECT project_id FROM tasks WHERE id = %s" in sql:
+                return {"project_id": "proj-target"}
+            if "SELECT *" in sql and "FROM build_runs" in sql:
+                return {
+                    "id": "br-1",
+                    "project_id": "proj-target",
+                    "root_task_id": "task-root",
+                    "input_ref": "#354",
+                    "action": "build",
+                    "status": "started",
+                    "actor": "build",
+                    "summary_json": {
+                        "build_project_id": "proj-target",
+                        "coordinator_project_id": "proj-coord",
+                        "coordinator_session_id": "s-coord",
+                    },
+                    "error": None,
+                    "started_at": "2026-01-01T00:00:00",
+                    "completed_at": None,
+                }
+            return None
+
+        mock_db.fetchone.side_effect = fetchone
+        mock_db.fetchall.side_effect = lambda sql, params=(): (
+            [{"id": "task-leaf"}, {"id": "task-root"}] if "WITH RECURSIVE ancestors" in sql else []
+        )
+        mock_message_manager.create_message.side_effect = lambda **kwargs: MockMessage(
+            id="msg-agent",
+            from_session=kwargs["from_session"],
+            to_session=kwargs["to_session"],
+            content=kwargs["content"],
+            priority=kwargs["priority"],
+            message_type=kwargs["message_type"],
+            metadata_json=kwargs["metadata_json"],
+        )
+
+        result = await messaging_registry.call(
+            "send_message",
+            {
+                "from_session": "s-coord",
+                "target": "agent",
+                "target_id": "run-1",
+                "project_id": "proj-target",
+                "content": "daemon restart warning",
+            },
+        )
+
+        assert result["success"] is True
+        assert result["recipient_session_ids"] == ["s-child"]
+        assert result["selector_metadata"]["task_id"] == "task-leaf"
+        mock_message_manager.create_message.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_send_message_persists_when_live_wake_has_no_tmux_pane(

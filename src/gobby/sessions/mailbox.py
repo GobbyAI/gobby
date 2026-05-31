@@ -10,6 +10,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
+from gobby.build.coordinator import summary_allows_cross_project_coordinator
+from gobby.storage.build_history import BuildHistoryStorage
 from gobby.storage.sessions import SYSTEM_SESSION_ID
 from gobby.storage.tasks._id import resolve_task_reference
 from gobby.storage.tasks._models import TaskNotFoundError
@@ -265,6 +267,14 @@ class MailboxService:
             from_session_id=from_session_id,
             project_id=project_id,
         )
+        build_project_id = str(
+            build_selector.get("project_id") or self._task_project_id(root_task_id)
+        )
+        self._validate_build_sender(
+            from_session_id=from_session_id,
+            root_task_id=root_task_id,
+            build_project_id=build_project_id,
+        )
         return MailboxTargetResolution(
             target=normalized_target,
             target_id=clean_target_id,
@@ -276,7 +286,7 @@ class MailboxService:
                 **build_selector,
                 **self._agent_selector_metadata(
                     target="build",
-                    project_id=build_selector.get("project_id"),
+                    project_id=build_project_id,
                     exclude_session_id=from_session_id,
                 ),
                 "root_task_id": root_task_id,
@@ -330,6 +340,7 @@ class MailboxService:
         from_session_id: str,
         to_session_id: str,
         project_id: str | None,
+        allow_cross_project: bool = False,
     ) -> str:
         sender: Session | None = self._session_manager.get(from_session_id)
         if sender is None:
@@ -343,12 +354,64 @@ class MailboxService:
             raise ValueError("Recipient session is outside the target project")
         # System-originated messages are internal daemon notifications scoped by
         # explicit project_id, so they bypass sender/recipient project equality.
-        if from_session_id != SYSTEM_SESSION_ID and sender.project_id != recipient.project_id:
+        if (
+            from_session_id != SYSTEM_SESSION_ID
+            and sender.project_id != recipient.project_id
+            and not allow_cross_project
+        ):
             raise ValueError(
                 "Cross-project messaging not allowed. "
                 f"Sender project: {sender.project_id}, recipient project: {recipient.project_id}"
             )
         return to_session_id
+
+    def _validate_build_sender(
+        self,
+        *,
+        from_session_id: str,
+        root_task_id: str,
+        build_project_id: str,
+    ) -> None:
+        sender: Session | None = self._session_manager.get(from_session_id)
+        if sender is None:
+            raise ValueError(f"Sender session not found: {from_session_id}")
+        if from_session_id == SYSTEM_SESSION_ID or sender.project_id == build_project_id:
+            return
+        if self._allows_cross_project_build_coordinator(
+            from_session_id=from_session_id,
+            build_project_id=build_project_id,
+            task_id=root_task_id,
+        ):
+            return
+        raise ValueError(
+            "Cross-project build messaging not allowed. "
+            f"Sender project: {sender.project_id}, build project: {build_project_id}"
+        )
+
+    def _allows_cross_project_build_coordinator(
+        self,
+        *,
+        from_session_id: str,
+        build_project_id: str,
+        task_id: str,
+    ) -> bool:
+        sender: Session | None = self._session_manager.get(from_session_id)
+        if sender is None:
+            raise ValueError(f"Sender session not found: {from_session_id}")
+
+        run = BuildHistoryStorage(self._db).latest_coordinated_run_for_task(
+            build_project_id,
+            task_id,
+        )
+        if run is None or not run.summary:
+            return False
+        if run.summary.get("coordinator_session_id") != from_session_id:
+            return False
+        return summary_allows_cross_project_coordinator(
+            run.summary,
+            coordinator_project_id=sender.project_id,
+            build_project_id=build_project_id,
+        )
 
     def _all_recipient_session_ids(self, from_session_id: str) -> list[str]:
         status_placeholders = ",".join("%s" for _ in DELIVERABLE_SESSION_STATUSES)
@@ -461,10 +524,26 @@ class MailboxService:
         if recipient_id is None:
             raise ValueError(f"Agent target has no deliverable session: {agent_run_id}")
 
+        sender: Session | None = self._session_manager.get(from_session_id)
+        recipient: Session | None = self._session_manager.get(recipient_id)
+        task_id = str(row["task_id"])
+        allow_cross_project = False
+        if (
+            sender is not None
+            and recipient is not None
+            and sender.project_id != recipient.project_id
+        ):
+            task_project_id = self._task_project_id(task_id)
+            allow_cross_project = self._allows_cross_project_build_coordinator(
+                from_session_id=from_session_id,
+                build_project_id=task_project_id,
+                task_id=task_id,
+            )
         recipient_id = self._validate_direct_recipient(
             from_session_id=from_session_id,
             to_session_id=recipient_id,
             project_id=project_id,
+            allow_cross_project=allow_cross_project,
         )
         return MailboxTargetResolution(
             target="agent",
@@ -474,7 +553,7 @@ class MailboxService:
                 "target": "agent",
                 "agent_run_id": agent_run_id,
                 "agent_run_status": row["status"],
-                "task_id": row["task_id"],
+                "task_id": task_id,
             },
         )
 
@@ -492,6 +571,8 @@ class MailboxService:
             (target_id,),
         )
         if run_row is not None:
+            if project_id and str(run_row["project_id"]) != project_id:
+                raise ValueError("Build target is outside the target project")
             root_task_id = self._resolve_build_run_root_task(
                 run_row=run_row,
                 fallback_project_id=sender_project_id,

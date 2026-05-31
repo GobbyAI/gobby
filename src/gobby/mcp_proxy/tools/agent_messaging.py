@@ -108,9 +108,11 @@ def add_messaging_tools(
             "target='session' (session ref), target='agent' (agent run id), "
             "target='project' (project id/name), and target='build' (build run id, "
             "build input ref, or root task ref). target='all' forbids target_id. "
+            "Pass project_id to scope project/build/agent selectors to a specific "
+            "project. "
             "from_session defaults to the calling session's id from SessionContext "
             "when omitted. "
-            "Optional fields such as priority, message_type, metadata, and "
+            "Optional fields such as project_id, priority, message_type, metadata, and "
             "include_wakeup are keyword-only."
         ),
     )
@@ -120,6 +122,7 @@ def add_messaging_tools(
         target_id: str | None = None,
         from_session: str | None = None,
         *,
+        project_id: str | None = None,
         priority: str = "normal",
         include_wakeup: bool = False,
         message_type: str = "message",
@@ -171,6 +174,7 @@ def add_messaging_tools(
                 priority=priority,
                 message_type=message_type,
                 metadata=metadata,
+                project_id=project_id,
             )
             msg = send_result.messages[0] if len(send_result.messages) == 1 else None
 

@@ -44,3 +44,20 @@ Validation run before commit:
 - `uv run gobby test-quality audit tests/mcp_proxy/tools/test_agent_live_stats.py --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity high` - passed
 
 Resolution note: the running daemon still shows stale counters until it is restarted with this fix loaded.
+
+## 2026-05-31 03:00 CDT - Coordinator messages could miss cross-project build agents
+
+After committing the telemetry fix, I needed to warn the active planner agent before restarting the daemon. Sending a build-scoped message from this Gobby coordinator session to target build task `#354` in `gobby-cli` did not reach the child agent because the `gobby-agents:send_message` tool did not forward the target `project_id` into mailbox resolution. The same task number was interpreted in the coordinator's Gobby project instead of the target project. A direct agent message was also rejected as cross-project, even though this session is the recorded coordinator for the target build.
+
+Opened build-system bug task `#15389` under coordination epic `#15385`. The fix adds an explicit `project_id` argument to `send_message`, forwards it to mailbox resolution, and allows cross-project build or direct agent messages only when build history proves the sender is the recorded coordinator for that target build. Ordinary cross-project session messages remain rejected.
+
+Validation is starting now with focused messaging tests, lint, formatting checks, type checking, and test-quality audit.
+
+Validation passed:
+
+- `GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/test_agent_messaging.py -v` - passed, 31 tests
+- `uv run ruff check src/gobby/sessions/mailbox.py src/gobby/mcp_proxy/tools/agent_messaging.py tests/mcp_proxy/tools/test_agent_messaging.py` - passed
+- `uv run ruff format --check src/gobby/sessions/mailbox.py src/gobby/mcp_proxy/tools/agent_messaging.py tests/mcp_proxy/tools/test_agent_messaging.py` - passed
+- `uv run mypy src/gobby/sessions/mailbox.py src/gobby/mcp_proxy/tools/agent_messaging.py --no-incremental --strict` - passed
+- `uv run gobby test-quality audit tests/mcp_proxy/tools/test_agent_messaging.py --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity high` - passed
+- `git diff --check` - passed
