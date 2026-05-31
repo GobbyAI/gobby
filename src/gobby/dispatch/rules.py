@@ -511,7 +511,11 @@ def _spawn_on_stage(
         return None
     if state == "needs_review" and _stage_review_exhausted(stage, context):
         return EscalateAction(task_id=_task_id(task), reason=f"{stage_name}_max_review_rounds")
-    if state == "in_progress" and _stage_work_exhausted(stage, context):
+    if (
+        state == "in_progress"
+        and _stage_work_exhausted(stage, context)
+        and not _stage_revision_review_budget_open(stage, context)
+    ):
         return EscalateAction(task_id=_task_id(task), reason=f"{stage_name}_max_work_attempts")
     if not _agent_dispatchable(context, agent_slug):
         return EscalateAction(task_id=_task_id(task), reason=f"{stage_name}_no_agent")
@@ -703,6 +707,16 @@ def _previous_stage_done(task: object, stage: object) -> bool:
 def _stage_work_exhausted(stage: object, context: object) -> bool:
     cap = _stage_cap(stage, context, "max_work_attempts", "default_max_work_attempts")
     return cap is not None and int(_field(stage, "work_attempt_count", 0) or 0) > cap
+
+
+def _stage_revision_review_budget_open(stage: object, context: object) -> bool:
+    if _field(stage, "review_policy") != "required":
+        return False
+    review_rounds = int(_field(stage, "review_round_count", 0) or 0)
+    work_attempts = int(_field(stage, "work_attempt_count", 0) or 0)
+    if review_rounds <= 0 or work_attempts > review_rounds:
+        return False
+    return not _stage_review_exhausted(stage, context)
 
 
 def _stage_review_exhausted(stage: object, context: object) -> bool:

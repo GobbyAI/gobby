@@ -303,6 +303,46 @@ def test_development_work_rule_allows_first_counted_attempt_at_cap() -> None:
     assert action.agent_slug == "backend-developer"
 
 
+def test_planning_work_rule_uses_review_budget_for_revisions() -> None:
+    from gobby.dispatch.actions import SpawnAgentAction
+
+    action = _evaluate(
+        _task_at(
+            "planning",
+            "in_progress",
+            stage_overrides={
+                "work_attempt_count": 4,
+                "max_work_attempts": 3,
+                "review_round_count": 5,
+                "max_review_rounds": 99,
+            },
+        )
+    )
+
+    assert isinstance(action, SpawnAgentAction)
+    assert action.agent_slug == "planner"
+
+
+def test_planning_work_rule_escalates_when_work_failures_outpace_reviews() -> None:
+    from gobby.dispatch.actions import EscalateAction
+
+    action = _evaluate(
+        _task_at(
+            "planning",
+            "in_progress",
+            stage_overrides={
+                "work_attempt_count": 4,
+                "max_work_attempts": 3,
+                "review_round_count": 2,
+                "max_review_rounds": 99,
+            },
+        )
+    )
+
+    assert isinstance(action, EscalateAction)
+    assert action.reason == "planning_max_work_attempts"
+
+
 def test_development_rule_falls_back_from_missing_assigned_agent() -> None:
     from gobby.dispatch.actions import SpawnAgentAction
 
