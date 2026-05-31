@@ -591,7 +591,7 @@ def _resolve_git_metadata_path(workspace: Path, raw_path: str) -> str | None:
         path = workspace / path
     try:
         return str(path.resolve(strict=False))
-    except OSError:
+    except (OSError, RuntimeError):
         return str(path)
 
 

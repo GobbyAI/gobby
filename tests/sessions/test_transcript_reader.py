@@ -971,6 +971,22 @@ class TestTranscriptReaderWindowed:
     """Windowed rendered reads: tail/head ordering, paging, and native guard."""
 
     @pytest.mark.asyncio
+    async def test_get_messages_limit_zero_returns_empty(self, tmp_path: Path) -> None:
+        reader = _jsonl_reader_with_user_msgs(tmp_path, 3)
+
+        assert await reader.get_messages("sess-1", limit=0) == []
+
+    @pytest.mark.asyncio
+    async def test_window_limit_zero_returns_empty_with_total(self, tmp_path: Path) -> None:
+        reader = _jsonl_reader_with_user_msgs(tmp_path, 3)
+
+        result = await reader.get_rendered_window("sess-1", limit=0, offset=0, order="tail")
+
+        assert result.groups == []
+        assert result.returned_count == 0
+        assert result.total_groups == 3
+
+    @pytest.mark.asyncio
     async def test_window_tail_returns_newest_slice(self, tmp_path: Path) -> None:
         reader = _jsonl_reader_with_user_msgs(tmp_path, 5)
 
@@ -1049,3 +1065,33 @@ class TestTranscriptReaderWindowed:
 
         with pytest.raises(TranscriptTooLargeError):
             await reader.get_rendered_window("sess-1", limit=50, offset=0, order="tail")
+
+    @pytest.mark.asyncio
+    async def test_native_json_get_messages_size_guard_raises(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        json_path = tmp_path / "session-big.json"
+        json_path.write_text(
+            json.dumps(
+                {
+                    "sessionId": "big-uuid",
+                    "messages": [
+                        {"type": "user", "content": "hi", "timestamp": "2025-03-23T10:00:00Z"},
+                    ],
+                }
+            )
+        )
+        session = MagicMock()
+        session.source = "gemini"
+        session.transcript_path = str(json_path)
+        session.external_id = None
+        session_manager = MagicMock()
+        session_manager.get.return_value = session
+
+        monkeypatch.setattr("gobby.sessions.transcript_reader.NATIVE_JSON_MAX_BYTES", 1)
+        reader = TranscriptReader(session_manager)
+
+        with pytest.raises(TranscriptTooLargeError):
+            await reader.get_messages("sess-1", limit=50)

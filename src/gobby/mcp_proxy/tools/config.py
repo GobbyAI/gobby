@@ -325,9 +325,6 @@ def create_config_registry(
             return result
         except ValueError as e:
             return {"success": False, "error": str(e)}
-        except RuntimeError as e:
-            logger.exception("Failed to set config batch")
-            return {"success": False, "error": str(e) or _UNEXPECTED_CONFIG_ERROR}
         except Exception:
             logger.exception("Failed to set config batch")
             return {"success": False, "error": _UNEXPECTED_CONFIG_ERROR}

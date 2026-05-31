@@ -415,17 +415,26 @@ class TestSessionManagerRegistration:
         session_manager.db.execute(
             "ALTER TABLE sessions DROP CONSTRAINT IF EXISTS sessions_parent_session_not_self"
         )
-        session_manager.db.execute(
-            "UPDATE sessions SET parent_session_id = id WHERE id = %s",
-            (session.id,),
-        )
+        try:
+            session_manager.db.execute(
+                "UPDATE sessions SET parent_session_id = id WHERE id = %s",
+                (session.id,),
+            )
 
-        repaired = session_manager.register(
-            external_id="corrupt-self-parent",
-            machine_id="machine-1",
-            source="codex",
-            project_id=sample_project["id"],
-        )
+            repaired = session_manager.register(
+                external_id="corrupt-self-parent",
+                machine_id="machine-1",
+                source="codex",
+                project_id=sample_project["id"],
+            )
+        finally:
+            session_manager.db.execute(
+                """
+                ALTER TABLE sessions
+                    ADD CONSTRAINT sessions_parent_session_not_self
+                    CHECK (parent_session_id IS NULL OR parent_session_id <> id)
+                """
+            )
 
         assert repaired.id == session.id
         assert repaired.parent_session_id is None

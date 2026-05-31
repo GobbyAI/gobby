@@ -168,11 +168,13 @@ def _resolve_spawn_project_context(
 ) -> tuple[dict[str, Any] | None, str | None]:
     """Resolve project context for a spawned agent.
 
-    Explicit ``project_path`` wins, then the parent session project when it has
-    a usable path, then the current process project context. If the parent
-    session has project metadata but no path, keep that identity and use the
-    current path only as a workspace fallback. Project context lookup failures
-    are debug-logged and return no context/path instead of blocking spawn.
+    Explicit ``project_path`` wins. Otherwise the parent session project
+    intentionally wins over the ambient current process project, so spawned
+    children stay in their parent's project even when the daemon call is made
+    from another workspace. If the parent session has project metadata but no
+    path, keep that identity and use the current path only as a workspace
+    fallback. Project context lookup failures are debug-logged and return no
+    context/path instead of blocking spawn.
     """
     explicit_path = _non_empty_string(project_path)
     if explicit_path:

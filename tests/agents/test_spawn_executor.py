@@ -68,6 +68,8 @@ def test_record_resume_launch_details_uses_resolved_agent_run_id(
         agent_run_id="resolved-run",
         sandbox_args=["--sandbox"],
         env={UV_CACHE_DIR: "/launch/uv", "LAUNCH_ONLY": "yes"},
+        mcp_path="/path/.mcp.json",
+        strict_mcp=True,
     )
 
     assert calls == [
@@ -83,6 +85,8 @@ def test_record_resume_launch_details_uses_resolved_agent_run_id(
                     UV_CACHE_DIR: "/launch/uv",
                 },
                 "config_overrides": [],
+                "mcp_path": "/path/.mcp.json",
+                "strict_mcp": True,
             },
         )
     ]

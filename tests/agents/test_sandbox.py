@@ -19,6 +19,7 @@ from gobby.agents.sandbox import (
     SandboxConfig,
     SandboxResolver,
     _normalize_sandbox_path,
+    _resolve_git_metadata_path,
     coerce_sandbox_config,
     compute_sandbox_paths,
     get_sandbox_resolver,
@@ -1038,6 +1039,19 @@ class TestComputeSandboxPaths:
         monkeypatch.setattr(Path, "resolve", fail_resolve)
 
         assert _normalize_sandbox_path("/bad/path") == Path("/bad/path")
+
+    def test_resolve_git_metadata_path_tolerates_runtime_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Git metadata path resolution can fail on malformed or platform-specific paths."""
+
+        def fail_resolve(self: Path, strict: bool = False) -> Path:
+            _ = strict
+            raise RuntimeError("bad path")
+
+        monkeypatch.setattr(Path, "resolve", fail_resolve)
+
+        assert _resolve_git_metadata_path(Path("/workspace"), ".git") == "/workspace/.git"
 
     def test_custom_daemon_port(self) -> None:
         """Test custom daemon port is set."""

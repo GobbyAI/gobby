@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import logging
+import os
+import stat
+import tempfile
+import time
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import TYPE_CHECKING, Any
@@ -25,6 +29,8 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+_VISION_TEMP_DIR_NAME = "gobby-vision"
+_VISION_TEMP_MAX_AGE_SECONDS = 24 * 60 * 60
 
 
 class TextGeneratePayload(BaseModel):
@@ -40,6 +46,7 @@ class TextGeneratePayload(BaseModel):
 
 def create_llm_router(server: HTTPServer) -> APIRouter:
     """Create daemon AI capability routes."""
+    _cleanup_stale_vision_temp_files()
     router = APIRouter(prefix="/api/llm", tags=["llm"])
 
     @router.get("/status")
@@ -145,9 +152,37 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
 
 def _write_temp_image(image_bytes: bytes, filename: str | None) -> Path:
     suffix = _image_suffix(filename)
-    with NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
+    temp_dir = _vision_temp_dir()
+    with NamedTemporaryFile(
+        delete=False,
+        prefix="vision-",
+        suffix=suffix,
+        dir=temp_dir,
+    ) as temp_file:
         temp_file.write(image_bytes)
+        os.chmod(temp_file.name, stat.S_IRUSR | stat.S_IWUSR)
         return Path(temp_file.name)
+
+
+def _vision_temp_dir() -> Path:
+    temp_dir = Path(tempfile.gettempdir()) / _VISION_TEMP_DIR_NAME
+    temp_dir.mkdir(mode=stat.S_IRWXU, exist_ok=True)
+    return temp_dir
+
+
+def _cleanup_stale_vision_temp_files(now: float | None = None) -> None:
+    temp_dir = Path(tempfile.gettempdir()) / _VISION_TEMP_DIR_NAME
+    if not temp_dir.is_dir():
+        return
+    cutoff = (time.time() if now is None else now) - _VISION_TEMP_MAX_AGE_SECONDS
+    for path in temp_dir.iterdir():
+        if not path.is_file():
+            continue
+        try:
+            if path.stat().st_mtime < cutoff:
+                path.unlink()
+        except OSError:
+            logger.debug("Failed to remove stale vision temp file %s", path, exc_info=True)
 
 
 def _image_suffix(filename: str | None) -> str:

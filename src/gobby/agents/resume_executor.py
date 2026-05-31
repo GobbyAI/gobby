@@ -165,9 +165,19 @@ async def resume_agent_run(
         config_overrides=_str_list(resume_metadata.get("config_overrides")),
     )
     if provider == "claude":
-        claude_mcp_config = Path(cwd) / ".mcp.json"
-        if claude_mcp_config.exists():
-            command.extend(["--mcp-config", str(claude_mcp_config), "--strict-mcp-config"])
+        claude_mcp_path = _metadata_str(resume_metadata, "mcp_path")
+        strict_mcp = bool(resume_metadata.get("strict_mcp"))
+        if not claude_mcp_path:
+            claude_mcp_config = Path(cwd) / ".mcp.json"
+            if claude_mcp_config.exists():
+                claude_mcp_path = str(claude_mcp_config)
+                strict_mcp = True
+                metadata["mcp_path"] = claude_mcp_path
+                metadata["strict_mcp"] = strict_mcp
+        if claude_mcp_path:
+            command.extend(["--mcp-config", claude_mcp_path])
+            if strict_mcp:
+                command.append("--strict-mcp-config")
         command.extend(sandbox_args)
         command.append(prompt)
 

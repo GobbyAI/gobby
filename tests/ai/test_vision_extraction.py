@@ -63,6 +63,7 @@ def _registry() -> AICapabilityRegistry:
     )
 
 
+@pytest.mark.asyncio
 async def test_vision_service_selects_extract_provider() -> None:
     adapter = _FakeVisionAdapter()
     service = VisionExtractService(_registry(), {"local": adapter})
@@ -90,6 +91,7 @@ async def test_vision_service_selects_extract_provider() -> None:
     ]
 
 
+@pytest.mark.asyncio
 async def test_vision_service_rejects_unproven_provider() -> None:
     service = VisionExtractService(_registry(), {"local": _FakeVisionAdapter()})
 
@@ -97,6 +99,7 @@ async def test_vision_service_rejects_unproven_provider() -> None:
         await service.extract(VisionExtractRequest(image_path="/tmp/image.png", provider="droid"))
 
 
+@pytest.mark.asyncio
 async def test_llm_provider_vision_adapter_forwards_image_context_and_model() -> None:
     provider = _FakeLLMProvider(calls=[])
     adapter = LLMProviderVisionExtractAdapter(cast(LLMProvider, provider))

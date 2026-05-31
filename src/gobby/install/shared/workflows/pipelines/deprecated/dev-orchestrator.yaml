@@ -1,0 +1,7 @@
+name: dev-orchestrator
+description: Deprecated tombstone for the retired development orchestrator pipeline.
+type: pipeline
+deprecated: true
+deprecated_reason: "Replaced by build stage automation and stage-specific agents."
+enabled: false
+steps: []

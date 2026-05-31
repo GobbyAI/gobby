@@ -32,8 +32,9 @@ function throwCreateTaskError(
   setActionError: Dispatch<SetStateAction<string | null>>,
 ): never {
   const detailed = `${message}\n${describeCaughtError(err)}`;
-  setActionError(detailed);
-  const error = new Error(detailed) as Error & { cause?: unknown };
+  console.error("Task creation failed", detailed);
+  setActionError(message);
+  const error = new Error(message) as Error & { cause?: unknown };
   error.cause = err;
   throw error;
 }
@@ -79,6 +80,10 @@ export function useTaskActions({
             ? detail
             : `Failed to create task (${response.status})`;
         const message = detailMessage || `Failed to create task (${response.status})`;
+        console.error("Task creation failed", {
+          status: response.status,
+          payload,
+        });
         setActionError(message);
         throw new Error(message);
       }

@@ -222,8 +222,8 @@ async def test_stop_prevents_dispatcher_respawn_on_next_heartbeat(
 
 @pytest.mark.asyncio
 async def test_resume_epic_sets_subtree_automation_and_kicks_dispatcher(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     from gobby.build.controls import build_resume_target
 
@@ -250,8 +250,8 @@ async def test_resume_epic_sets_subtree_automation_and_kicks_dispatcher(
 
 @pytest.mark.asyncio
 async def test_resume_clears_orphan_no_run_dispatch_mutex(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     from gobby.build.controls import build_resume_target
     from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
@@ -289,8 +289,8 @@ async def test_resume_clears_orphan_no_run_dispatch_mutex(
 
 @pytest.mark.asyncio
 async def test_resume_preserves_no_run_dispatch_mutex_with_live_lease(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     from gobby.build.controls import build_resume_target
     from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
@@ -417,8 +417,8 @@ async def test_clean_force_deletes_clone_and_clears_artifact_pair(
 
 def test_successful_merge_cleanup_defers_active_agent_worktree(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
     tmp_path: Path,
 ) -> None:
     from gobby.build import control_artifacts, controls
@@ -513,8 +513,8 @@ def test_successful_merge_cleanup_defers_active_agent_worktree(
 
 def test_successful_merge_cleanup_deletes_inactive_worktree(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
     tmp_path: Path,
 ) -> None:
     from gobby.build import control_artifacts, controls
@@ -583,8 +583,8 @@ def test_successful_merge_cleanup_deletes_inactive_worktree(
 
 def test_successful_merge_cleanup_force_deletes_dirty_inactive_worktree(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
     tmp_path: Path,
 ) -> None:
     from gobby.build import control_artifacts, controls
@@ -651,8 +651,8 @@ def test_successful_merge_cleanup_force_deletes_dirty_inactive_worktree(
 
 def test_successful_merge_cleanup_deletes_integrated_dirty_closed_descendant(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
     tmp_path: Path,
 ) -> None:
     from gobby.build import control_artifacts, controls
@@ -773,8 +773,8 @@ def test_successful_merge_cleanup_deletes_integrated_dirty_closed_descendant(
 
 def test_successful_merge_cleanup_defers_open_dirty_descendant(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
     tmp_path: Path,
 ) -> None:
     from gobby.build import control_artifacts, controls
@@ -843,8 +843,8 @@ def test_successful_merge_cleanup_defers_open_dirty_descendant(
 
 def test_successful_merge_cleanup_defers_unintegrated_dirty_closed_descendant(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
     tmp_path: Path,
 ) -> None:
     from gobby.build import control_artifacts, controls
@@ -934,8 +934,8 @@ def test_successful_merge_cleanup_defers_unintegrated_dirty_closed_descendant(
 
 @pytest.mark.asyncio
 async def test_clean_force_resets_runtime_state_without_artifacts(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
     tmp_path: Path,
 ) -> None:
     from gobby.build.controls import build_clean_target
@@ -1075,8 +1075,8 @@ async def test_restart_reseeds_exhausted_isolated_manifest_with_merge(
 
 @pytest.mark.asyncio
 async def test_restart_no_resume_rebuilds_plan_file_root_manifest_from_options(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
     tmp_path: Path,
 ) -> None:
     from gobby.build.controls import build_restart_target
@@ -1201,8 +1201,8 @@ async def test_restart_no_resume_rebuilds_plan_file_root_manifest_from_options(
 
 @pytest.mark.asyncio
 async def test_restart_no_resume_resets_epic_tree_without_dispatch(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
     tmp_path: Path,
 ) -> None:
     from gobby.build.controls import build_restart_target
@@ -1371,8 +1371,8 @@ async def test_restart_resets_stale_dispatch_failure_count_without_escalation(
 
 
 def test_default_branch_dir_name_uses_untitled_for_empty_slug(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     from gobby.build.branch_cleanup import default_task_branch_name
 

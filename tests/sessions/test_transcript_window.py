@@ -12,11 +12,13 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
+from typing import Any
 
 import pytest
 
 from gobby.sessions.transcript_index import build_index_from_file
-from gobby.sessions.transcript_renderer import render_transcript
+from gobby.sessions.transcript_renderer import RenderedMessage, render_transcript
 from gobby.sessions.transcript_window import (
     MAX_WINDOW_SPAN_BYTES,
     render_window,
@@ -27,6 +29,7 @@ from gobby.sessions.transcripts.codex import CodexTranscriptParser
 
 SESSION = "win-s1"
 HUGE = 1 << 30  # disable the span cap for exact equivalence
+pytestmark = pytest.mark.unit
 
 
 # --------------------------------------------------------------------------- #
@@ -183,27 +186,27 @@ FIXTURES = {
 }
 
 
-def _write(tmp_path, name: str, lines: list[str]) -> str:
+def _write(tmp_path: Path, name: str, lines: list[str]) -> str:
     path = tmp_path / f"{name}.jsonl"
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return str(path)
 
 
-def _full_render(parser_cls, lines: list[str]):
+def _full_render(parser_cls: type[Any], lines: list[str]) -> list[RenderedMessage]:
     parsed = [
         m for m in parser_cls(session_id=SESSION).parse_lines(lines) if isinstance(m, ParsedMessage)
     ]
     return render_transcript(parsed, session_id=SESSION)
 
 
-def _assert_equiv(full, windowed) -> None:
+def _assert_equiv(full: list[RenderedMessage], windowed: list[RenderedMessage]) -> None:
     assert len(windowed) == len(full)
     for expected, actual in zip(full, windowed, strict=True):
         assert actual.to_dict() == expected.to_dict()
 
 
-def _page_head(path: str, source: str, index, limit: int):
-    out = []
+def _page_head(path: str, source: str, index: Any, limit: int) -> list[RenderedMessage]:
+    out: list[RenderedMessage] = []
     offset = 0
     while offset < index.total_groups:
         result = render_window(
@@ -216,8 +219,8 @@ def _page_head(path: str, source: str, index, limit: int):
     return out
 
 
-def _page_tail(path: str, source: str, index, limit: int):
-    out: list = []
+def _page_tail(path: str, source: str, index: Any, limit: int) -> list[RenderedMessage]:
+    out: list[RenderedMessage] = []
     offset = 0
     while offset < index.total_groups:
         result = render_window(

@@ -81,7 +81,9 @@ class AudioCapabilityService:
         adapters: Mapping[str, AudioCapabilityAdapter],
     ) -> None:
         self._registry = registry
-        self._adapters = dict(adapters)
+        self._adapters = {
+            _provider_key(provider): adapter for provider, adapter in adapters.items()
+        }
 
     @property
     def registry(self) -> AICapabilityRegistry:
@@ -131,7 +133,7 @@ class AudioCapabilityService:
             provider=request.provider,
             model=request.model,
         )
-        adapter = self._adapters.get(binding.provider)
+        adapter = self._adapters.get(_provider_key(binding.provider))
         if adapter is None:
             raise RuntimeError(
                 f"No {capability.value} adapter registered for provider {binding.provider!r}"

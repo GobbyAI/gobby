@@ -730,9 +730,8 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
 
         Each JSONL line may produce multiple ParsedMessages (e.g. an assistant
         message with text + two tool_use blocks becomes three messages); indices are
-        assigned **per parsed message** from ``start_index``. The skip partner is
-        consumed atomically within the event that triggers it, so every emitted event
-        boundary is ``parser_safe`` (a skip-pair is never split).
+        assigned **per parsed message** from ``start_index``. Event boundaries are
+        parser-safe only when the one-line lookahead buffer is empty.
         """
         current_index = start_index
         source = iter(raw_lines)
@@ -770,7 +769,7 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
                     raw_line_no=cur.raw_line_no,
                     parsed_index=start_idx,
                     records=list(expanded),
-                    parser_safe=True,
+                    parser_safe=not peek,
                 )
 
             if skip_next:

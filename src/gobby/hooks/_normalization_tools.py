@@ -136,5 +136,5 @@ def _detect_tool_error(data: dict[str, Any]) -> None:
         return
 
     match = _EXIT_CODE_RE.search(output)
-    if match and match.group(1) != "0":
+    if match and int(match.group(1)) != 0:
         data["is_error"] = True

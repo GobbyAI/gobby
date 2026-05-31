@@ -87,6 +87,8 @@ def _record_resume_launch_details(
     sandbox_env: dict[str, str] | None = None,
     env: Mapping[str, str] | None = None,
     config_overrides: list[str] | None = None,
+    mcp_path: str | None = None,
+    strict_mcp: bool | None = None,
 ) -> None:
     """Persist post-resolution CLI launch details for daemon-stop resume."""
     if request.resume_metadata_json is None:
@@ -105,6 +107,10 @@ def _record_resume_launch_details(
     )
     metadata["env"] = final_env
     metadata["config_overrides"] = list(config_overrides or [])
+    if mcp_path is not None:
+        metadata["mcp_path"] = mcp_path
+    if strict_mcp is not None:
+        metadata["strict_mcp"] = strict_mcp
     tmux_config = getattr(request.daemon_config, "tmux", None)
     if isinstance(tmux_config, TmuxConfig):
         metadata["tmux_config"] = tmux_config.model_dump()
@@ -242,8 +248,12 @@ async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
         reasoning_effort=request.effective_reasoning_effort,
     )
     claude_mcp_config = Path(request.cwd) / ".mcp.json"
+    claude_mcp_path: str | None = None
+    strict_mcp = False
     if claude_mcp_config.exists():
-        cmd.extend(["--mcp-config", str(claude_mcp_config), "--strict-mcp-config"])
+        claude_mcp_path = str(claude_mcp_config)
+        strict_mcp = True
+        cmd.extend(["--mcp-config", claude_mcp_path, "--strict-mcp-config"])
 
     # Resolve sandbox config if provided
     sandbox_config = _sandbox_config_for_spawn(request.sandbox_config, spawn_context.env_vars)
@@ -286,6 +296,8 @@ async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
         sandbox_args=sandbox_args,
         sandbox_env=sandbox_env,
         env=env,
+        mcp_path=claude_mcp_path,
+        strict_mcp=strict_mcp,
     )
 
     # Pre-approve workspace trust so the CLI doesn't show an interactive prompt

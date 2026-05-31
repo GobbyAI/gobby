@@ -82,7 +82,7 @@ def list_automation_candidates(
     return sorted(
         ready_tasks,
         key=lambda task: (
-            holistic_gate_by_task_id[task.id] is not None,
+            holistic_gate_by_task_id[task.id] is None,
             task.priority,
             task.seq_num if task.seq_num is not None else 2**31,
             task.created_at,

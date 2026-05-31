@@ -63,6 +63,7 @@ def test_snapshot_match_api() -> None:
     assert not hasattr(RuntimeDispatchMutex, "candidate_tuple_matches")
 
 
+@pytest.mark.asyncio
 async def test_heartbeat_passes_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
     from gobby.dispatch import dispatcher
 

@@ -67,6 +67,7 @@ class DroidTranscriptParser(BaseTranscriptParser):
         self._sidecar_usage: TokenUsage | None = None
         self._sidecar_model: str | None = None
         self._sidecar_loaded_for: Path | None = None
+        self._last_assistant_index: int | None = None
 
     def _load_sidecar(self, jsonl_path: Path) -> None:
         """Side-read <droid-uuid>.settings.json beside the JSONL transcript."""

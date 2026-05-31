@@ -290,7 +290,7 @@ def render_window(
         source: Resolved CLI source (selects the parser).
         session_id: Session ref (drives ``RenderedMessage.id``).
         index: Cached boundary index for this snapshot.
-        limit: Requested page size (groups); clamped to ``>= 1``.
+        limit: Requested page size (groups); clamped to ``>= 0``.
         offset: Groups to skip from the page's reference edge.
         order: ``"tail"`` (newest-first paging) or ``"head"`` (oldest-first).
         lines: Decompressed archive lines, required when ``index.seek_mode`` is
@@ -301,7 +301,7 @@ def render_window(
         A :class:`WindowResult` whose ``groups`` are oldest-first.
     """
     total = index.total_groups
-    limit = max(1, limit)
+    limit = max(0, limit)
     offset = max(0, offset)
 
     g_start_req, g_end_req = _requested_range(total, limit, offset, order)

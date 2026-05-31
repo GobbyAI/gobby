@@ -35,7 +35,7 @@ class TmuxOutputReader:
     Lifecycle per agent:
 
     1. ``start_reader(run_id, session_name)``
-       - Creates ``/tmp/gobby-tmux-<session>.pipe`` FIFO.
+       - Creates ``<tempdir>/gobby-tmux-<socket>-<session>-<run>.pipe`` FIFO.
        - Runs ``tmux pipe-pane -t <session> "cat >> <fifo>"``.
        - Starts an async read loop on the FIFO fd.
 

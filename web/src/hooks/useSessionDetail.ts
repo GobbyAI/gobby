@@ -425,12 +425,13 @@ export function useSessionDetail(sessionId: string | null) {
     if (loadedCountRef.current >= renderedTotalRef.current) return
 
     const loadVersion = detailLoadVersionRef.current
+    const requestedOffset = loadedCountRef.current
     loadingOlderRef.current = true
     setIsLoadingOlder(true)
     try {
       const result = await fetchRenderedSessionMessages(
         activeSessionId,
-        loadedCountRef.current,
+        requestedOffset,
         'tail',
       )
       if (sessionIdRef.current !== activeSessionId || detailLoadVersionRef.current !== loadVersion) {
@@ -440,7 +441,10 @@ export function useSessionDetail(sessionId: string | null) {
 
       setMessages((prev) => [...result.mapped, ...prev])
       setFirstItemIndex((prev) => prev - result.returnedCount)
-      const nextLoaded = loadedCountRef.current + result.returnedCount
+      const nextLoaded = Math.max(
+        loadedCountRef.current,
+        requestedOffset + result.returnedCount,
+      )
       const nextTotal = Math.max(renderedTotalRef.current, result.renderedTotal)
       loadedCountRef.current = nextLoaded
       renderedTotalRef.current = nextTotal

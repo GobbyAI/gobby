@@ -470,7 +470,7 @@ class TestSetConfigSecret:
 
     @pytest.fixture
     def config_registry_with_db(
-        self: "TestSetConfigSecret",
+        self,
         temp_db: HubDatabase,
         config_store: ConfigStore,
         config_state: dict[str, DaemonConfig],
@@ -484,7 +484,7 @@ class TestSetConfigSecret:
         )
 
     def test_set_config_secret_encrypts(
-        self: "TestSetConfigSecret",
+        self,
         config_registry_with_db: InternalToolRegistry,
         config_store: ConfigStore,
         temp_db: HubDatabase,
@@ -508,7 +508,7 @@ class TestSetConfigSecret:
             assert raw == "$secret:provider_api_key"
 
     def test_set_config_normal_unchanged(
-        self: "TestSetConfigSecret",
+        self,
         config_registry_with_db: InternalToolRegistry,
         config_store: ConfigStore,
     ) -> None:
@@ -741,7 +741,7 @@ class TestSetConfigBatch:
             )
 
             assert result["success"] is False
-            assert "disk full" in result["error"]
+            assert result["error"] == "Internal config error"
             set_secret.assert_called_once()
             assert config_store.get("databases.falkordb.requirepass") is None
             assert config_store.get("databases.falkordb.rrf_k") is None

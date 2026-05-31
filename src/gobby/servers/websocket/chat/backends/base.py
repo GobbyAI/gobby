@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from gobby.hooks.normalization import normalize_tool_fields
-from gobby.llm.claude_models import resolve_context_window
+from gobby.llm.context_windows import resolve_context_window
 
 logger = logging.getLogger(__name__)
 

@@ -162,6 +162,20 @@ async def test_append_audit_marker_only_dedupes_trailing_marker(
     assert description.count(marker) == 2
 
 
+@pytest.mark.asyncio
+async def test_append_audit_marker_returns_false_on_db_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from gobby.dispatch import dispatcher
+
+    broken_db = MagicMock()
+    broken_db.fetchone.side_effect = RuntimeError("database unavailable")
+    caplog.set_level(logging.WARNING, logger="gobby.dispatch.audit")
+
+    assert await dispatcher.append_audit_marker(broken_db, "task-1", "Dispatch", "marker") is False
+    assert "Failed to append dispatch audit marker for task task-1" in caplog.text
+
+
 def test_development_prompt_includes_persisted_holistic_failure_context(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
@@ -346,9 +360,10 @@ async def test_heartbeat_allows_child_development_after_parent_expansion_done(
     )
 
 
-async def test_heartbeat_routes_reopened_descendant_before_gated_holistic_root(
-    temp_db,
-    sample_project,
+@pytest.mark.asyncio
+async def test_heartbeat_records_gated_holistic_root_before_reopened_descendant(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     from gobby.dispatch import dispatcher
 
@@ -387,10 +402,10 @@ async def test_heartbeat_routes_reopened_descendant_before_gated_holistic_root(
     )
 
     assert result.executed == 1
-    assert LocalTaskManager(temp_db).stage_states.get(child.id, "development").state == (
-        "in_progress"
-    )
+    assert LocalTaskManager(temp_db).stage_states.get(child.id, "development").state == "ready"
     assert LocalTaskManager(temp_db).stage_states.get(root.id, "holistic_qa").state == "ready"
+    root_description = get_task(temp_db, root.id).description or ""
+    assert "### Holistic QA deferred" in root_description
 
 
 def test_count_active_agents_scopes_by_parent_session_project(temp_db, sample_project) -> None:

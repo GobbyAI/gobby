@@ -48,7 +48,7 @@ def _current_project_id() -> str | None:
 
     try:
         project_ctx = get_project_context()
-    except (LookupError, OSError, RuntimeError, ValueError):
+    except (LookupError, OSError):
         logger.debug("Failed to load current project context", exc_info=True)
         return None
     if not project_ctx:

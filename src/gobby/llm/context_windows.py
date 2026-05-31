@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 
@@ -27,6 +28,10 @@ CONTEXT_LENGTH_FIELDS = (
     "contextWindow",
     "inputTokenLimit",
     "maxInputTokens",
+)
+PROVIDER_METADATA_CONTEXT_LENGTH_FIELDS = (
+    "model_context_window",
+    "modelContextWindow",
 )
 _QWEN_AUTH_TYPES = frozenset({"qwen-oauth", "openai", "anthropic", "gemini", "vertex-ai"})
 _KNOWN_PROVIDER_PREFIXES = (
@@ -267,9 +272,9 @@ def resolve_context_window_with_source(
 
     reported = coerce_context_length(provider_reported_context_window)
     if reported is None and isinstance(provider_metadata, dict):
-        reported = coerce_context_length(
-            provider_metadata.get("model_context_window")
-            or provider_metadata.get("modelContextWindow")
+        reported = _coerce_context_length_from_fields(
+            provider_metadata,
+            PROVIDER_METADATA_CONTEXT_LENGTH_FIELDS,
         )
     if reported is not None:
         return ResolvedContextWindow(reported, "provider_reported")
@@ -356,13 +361,26 @@ def _resolve_from_catalog(
             if value is not None and source is not None:
                 return ResolvedContextWindow(value, source)
         if isinstance(raw, int) and not isinstance(raw, bool):
-            return ResolvedContextWindow(raw, "provider_reported")
+            value = coerce_context_length(raw)
+            if value is not None:
+                return ResolvedContextWindow(value, "provider_reported")
 
     if hasattr(catalog, "get_context_window"):
         value = catalog.get_context_window(provider, model)
         context_window = coerce_context_length(value)
         if context_window is not None:
             return ResolvedContextWindow(context_window, "provider_reported")
+    return None
+
+
+def _coerce_context_length_from_fields(
+    values: Mapping[str, Any],
+    fields: tuple[str, ...],
+) -> int | None:
+    for field in fields:
+        context_length = coerce_context_length(values.get(field))
+        if context_length is not None:
+            return context_length
     return None
 
 

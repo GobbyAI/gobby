@@ -88,6 +88,23 @@ async def test_audio_service_selects_transcribe_provider() -> None:
 
 
 @pytest.mark.asyncio
+async def test_audio_service_normalizes_adapter_provider_keys() -> None:
+    adapter = _FakeAudioAdapter()
+    service = AudioCapabilityService(_registry(), {" Remote ": adapter})
+
+    result = await service.execute(
+        AudioCapabilityRequest(
+            audio_bytes=b"audio",
+            capability=AICapability.AUDIO_TRANSCRIBE,
+            provider="remote",
+        )
+    )
+
+    assert result.text == "transcribed"
+    assert result.provider == "remote"
+
+
+@pytest.mark.asyncio
 async def test_audio_service_selects_translate_provider() -> None:
     adapter = _FakeAudioAdapter()
     service = AudioCapabilityService(_registry(), {"remote": adapter})

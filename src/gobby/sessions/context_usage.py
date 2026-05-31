@@ -235,8 +235,6 @@ def _coerce_positive_int(value: object) -> int | None:
         if isinstance(value, int):
             coerced = value
         elif isinstance(value, float):
-            if not value.is_integer():
-                return None
             coerced = int(value)
         elif isinstance(value, str | bytes | bytearray):
             coerced = int(value)

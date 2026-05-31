@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import stat
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -7,6 +9,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+import gobby.servers.routes.llm as llm_module
 from gobby.ai import (
     AIAdapterStyle,
     AICapability,
@@ -243,3 +246,42 @@ def test_vision_extract_rejects_unproven_provider(client: TestClient) -> None:
             "(provider=droid)"
         )
     }
+
+
+def test_write_temp_image_uses_dedicated_restrictive_dir(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(llm_module.tempfile, "gettempdir", lambda: str(tmp_path))
+
+    image_path = llm_module._write_temp_image(b"image bytes", "screen.jpg")
+    try:
+        assert image_path.parent == tmp_path / "gobby-vision"
+        assert image_path.name.startswith("vision-")
+        assert image_path.suffix == ".jpg"
+        assert image_path.read_bytes() == b"image bytes"
+        assert stat.S_IMODE(image_path.stat().st_mode) == 0o600
+    finally:
+        image_path.unlink(missing_ok=True)
+
+
+def test_cleanup_stale_vision_temp_files(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(llm_module.tempfile, "gettempdir", lambda: str(tmp_path))
+    temp_dir = tmp_path / "gobby-vision"
+    temp_dir.mkdir()
+    old_file = temp_dir / "old.png"
+    new_file = temp_dir / "new.png"
+    old_file.write_bytes(b"old")
+    new_file.write_bytes(b"new")
+    now = 10_000.0
+    old_timestamp = now - llm_module._VISION_TEMP_MAX_AGE_SECONDS - 1
+    os.utime(old_file, (old_timestamp, old_timestamp))
+    os.utime(new_file, (now, now))
+
+    llm_module._cleanup_stale_vision_temp_files(now=now)
+
+    assert not old_file.exists()
+    assert new_file.exists()

@@ -67,6 +67,25 @@ def _build_canonical_tool_metadata(
     return data
 
 
+def _truncate_positional_paths(parts: list[str]) -> list[str]:
+    """Return path operands from a simple ``truncate`` command."""
+    positional: list[str] = []
+    skip_next = False
+    for part in parts[1:]:
+        if skip_next:
+            skip_next = False
+            continue
+        if part in _SHELL_CONTROL_TOKENS or not part:
+            continue
+        if part in {"-s", "--size"}:
+            skip_next = True
+            continue
+        if part.startswith("--size=") or part.startswith("-"):
+            continue
+        positional.append(part)
+    return [candidate for candidate in positional if _looks_path_target(candidate)]
+
+
 def _normalize_shell_tool_metadata(command: str) -> dict[str, Any]:
     """Infer canonical semantics from simple shell read/search/write commands."""
     try:
@@ -179,21 +198,7 @@ def _normalize_shell_tool_metadata(command: str) -> dict[str, Any]:
         )
 
     if cmd == "truncate":
-        truncate_positional: list[str] = []
-        skip_next = False
-        for part in parts[1:]:
-            if skip_next:
-                skip_next = False
-                continue
-            if part in _SHELL_CONTROL_TOKENS or not part:
-                continue
-            if part in {"-s", "--size"}:
-                skip_next = True
-                continue
-            if part.startswith("--size=") or part.startswith("-"):
-                continue
-            truncate_positional.append(part)
-        paths = [candidate for candidate in truncate_positional if _looks_path_target(candidate)]
+        paths = _truncate_positional_paths(parts)
         return _build_canonical_tool_metadata(
             "write",
             paths=paths or None,

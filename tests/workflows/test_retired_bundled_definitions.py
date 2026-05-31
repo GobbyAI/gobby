@@ -42,16 +42,14 @@ def test_no_external_conductor_imports_remain() -> None:
 
 
 @pytest.mark.parametrize("name", RETIRED_PIPELINES)
-def test_retired_pipeline_yaml_is_absent_from_active_and_deprecated_bundles(
+def test_retired_pipeline_yaml_is_absent_from_active_and_has_deprecated_tombstone(
     name: str,
 ) -> None:
     active_path = PIPELINES_DIR / f"{name}.yaml"
     deprecated_path = PIPELINES_DIR / "deprecated" / f"{name}.yaml"
 
     assert not active_path.exists(), f"retired pipeline remains active: {active_path}"
-    assert not deprecated_path.exists(), (
-        f"retired pipeline deprecated YAML remains: {deprecated_path}"
-    )
+    assert deprecated_path.exists(), f"retired pipeline tombstone is missing: {deprecated_path}"
 
 
 @pytest.mark.parametrize("name", RETIRED_AGENTS)

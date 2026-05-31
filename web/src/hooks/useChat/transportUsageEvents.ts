@@ -7,6 +7,7 @@ import type {
   TokenEventMessage,
 } from "./transportEventTypes";
 import type { UseChatTransportParams } from "./transportTypes";
+import { omitNullish } from "../../utils/omitNullish";
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
@@ -18,12 +19,6 @@ function optionalNumber(value: unknown): number | undefined {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function omitNullish<T extends object>(value: T): Partial<T> {
-  return Object.fromEntries(
-    Object.entries(value).filter(([, entryValue]) => entryValue !== null && entryValue !== undefined),
-  ) as Partial<T>;
 }
 
 function isSessionUsageUpdatedMessage(

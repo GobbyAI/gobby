@@ -1018,7 +1018,11 @@ class TestExportImport:
         assert prompts[f"project/{project_id}/test/shared.md"] == "# Project"
 
     def test_prompt_export_key_rejects_project_prompt_without_project_id(self) -> None:
-        record = SimpleNamespace(name="test/missing-project", scope="project", project_id=None)
+        record: SimpleNamespace = SimpleNamespace(
+            name="test/missing-project",
+            scope="project",
+            project_id=None,
+        )
 
         with pytest.raises(ValueError, match="test/missing-project"):
             _prompt_export_key(record)

@@ -34,7 +34,11 @@ from gobby.sessions.transcript_io import (
     _read_json_file,
     clear_archive_cache,
 )
-from gobby.sessions.transcript_limits import NATIVE_JSON_MAX_BYTES, RENDERED_LIMIT_MAX
+from gobby.sessions.transcript_limits import (
+    LEGACY_LIMIT_MAX,
+    NATIVE_JSON_MAX_BYTES,
+    RENDERED_LIMIT_MAX,
+)
 from gobby.sessions.transcript_parsing import (
     _get_parser,
     _parse_json_session,
@@ -123,8 +127,10 @@ class TranscriptReader:
         if not session:
             return []
 
-        limit = max(1, int(limit))
+        limit = min(max(0, int(limit)), LEGACY_LIMIT_MAX)
         offset = max(0, int(offset))
+        if limit == 0:
+            return []
         cap = offset + limit
 
         path = await self._get_live_transcript_path(session_id, session)
@@ -260,7 +266,7 @@ class TranscriptReader:
         :meth:`iter_rendered_windows`.
         """
         clamped = (
-            RENDERED_LIMIT_MAX if limit is None else min(max(int(limit), 1), RENDERED_LIMIT_MAX)
+            RENDERED_LIMIT_MAX if limit is None else min(max(int(limit), 0), RENDERED_LIMIT_MAX)
         )
         result = await self.get_rendered_window(
             session_id, clamped, max(0, int(offset)), order="head"
@@ -286,7 +292,7 @@ class TranscriptReader:
 
         rendered = await asyncio.to_thread(render_transcript, parsed, session_id=session_id)
         total = len(rendered)
-        g_start, g_end = _requested_range(total, max(1, int(limit)), max(0, int(offset)), order)
+        g_start, g_end = _requested_range(total, max(0, int(limit)), max(0, int(offset)), order)
         groups = rendered[g_start:g_end]
         return WindowResult(
             groups=groups,
@@ -446,6 +452,9 @@ class TranscriptReader:
 
         try:
             if _is_json_session_file(transcript_path):
+                size = await asyncio.to_thread(os.path.getsize, transcript_path)
+                if size > NATIVE_JSON_MAX_BYTES:
+                    raise TranscriptTooLargeError(size, NATIVE_JSON_MAX_BYTES)
                 data = await asyncio.to_thread(self._read_json_file, transcript_path)
                 source, _ = _resolve_effective_source(
                     session,

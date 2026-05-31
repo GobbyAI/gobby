@@ -23,6 +23,7 @@ import pytest
 from gobby.sessions.transcripts.base import (
     BaseTranscriptParser,
     ParsedMessage,
+    ParseEvent,
     RawLine,
     apply_adjustment,
 )
@@ -46,7 +47,11 @@ def _batch(parser: BaseTranscriptParser, lines: list[str]) -> list[ParsedMessage
     return [r for r in records if isinstance(r, ParsedMessage)]
 
 
-def _stream_messages(parser: BaseTranscriptParser, raws: list[RawLine], start_index: int):
+def _stream_messages(
+    parser: BaseTranscriptParser,
+    raws: list[RawLine],
+    start_index: int,
+) -> tuple[list[ParseEvent], list[ParsedMessage]]:
     events = list(parser.iter_parse_events(raws, start_index=start_index))
     records: list = []
     for ev in events:
@@ -215,6 +220,19 @@ def test_event_offsets_echoed(name: str) -> None:
         assert ev.byte_offset == by_line[ev.raw_line_no].byte_offset
         assert ev.records, "emitted events should carry records"
         assert ev.records[0].index == ev.parsed_index
+
+
+@pytest.mark.unit
+def test_claude_buffered_lookahead_marks_event_not_parser_safe() -> None:
+    events = list(
+        ClaudeTranscriptParser().iter_parse_events(
+            _raw_lines_with_offsets(_claude_lines()),
+            start_index=0,
+        )
+    )
+
+    assert any(not ev.parser_safe for ev in events[:-1])
+    assert events[-1].parser_safe is True
 
 
 @pytest.mark.unit

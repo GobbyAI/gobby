@@ -85,6 +85,18 @@ class _SourceCatalog:
         return self.values.get((provider, model))
 
 
+class _BareSourceCatalog:
+    def __init__(self, value: object) -> None:
+        self.value = value
+
+    def get_context_window_with_source(
+        self,
+        provider: str | None,
+        model: str,
+    ) -> object:
+        return self.value
+
+
 class TestResolveContextWindow:
     """Tests for resolve_context_window()."""
 
@@ -183,6 +195,19 @@ class TestResolveContextWindow:
 
         assert result == 258_400
 
+    def test_provider_reported_runtime_metadata_accepts_camel_alias(self) -> None:
+        """Runtime metadata accepts modelContextWindow alias."""
+        catalog = _SourceCatalog({("codex", "gpt-5.4"): (200_000, "static_default")})
+        with patch("gobby.llm.model_registry.lookup_context_window", side_effect=_mock_lookup):
+            result = resolve_context_window(
+                "gpt-5.4",
+                {"modelContextWindow": 258_400},
+                provider="codex",
+                catalog=catalog,
+            )
+
+        assert result == 258_400
+
     def test_catalog_wins_over_registry(self) -> None:
         """Provider catalog data takes precedence over OpenRouter/model_costs."""
         catalog = _FakeCatalog({("codex", "gpt-4o"): 256_000})
@@ -190,6 +215,27 @@ class TestResolveContextWindow:
             result = resolve_context_window("gpt-4o", None, provider="codex", catalog=catalog)
 
         assert result == 256_000
+
+    def test_bare_catalog_int_must_be_positive(self) -> None:
+        with patch("gobby.llm.model_registry.lookup_context_window", return_value=None):
+            assert (
+                resolve_context_window(
+                    "unknown-model-xyz",
+                    None,
+                    provider="codex",
+                    catalog=_BareSourceCatalog(123_000),
+                )
+                == 123_000
+            )
+            assert (
+                resolve_context_window(
+                    "unknown-model-xyz",
+                    None,
+                    provider="codex",
+                    catalog=_BareSourceCatalog(0),
+                )
+                is None
+            )
 
     def test_static_catalog_source_defers_to_registry(self) -> None:
         """Static catalog values are fallbacks, not authoritative provider metadata."""

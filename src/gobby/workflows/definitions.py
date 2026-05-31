@@ -490,6 +490,8 @@ class WorkflowDefinition(BaseModel):
     # Instance defaults: control whether workflow starts enabled and its evaluation priority
     enabled: bool = True
     priority: int = 100
+    deprecated: bool = False
+    deprecated_reason: str | None = None
 
     @field_validator("version", mode="before")
     @classmethod
@@ -622,6 +624,8 @@ class PipelineDefinition(BaseModel):
     type: Literal["pipeline"] = "pipeline"
     enabled: bool = True
     priority: int = 100
+    deprecated: bool = False
+    deprecated_reason: str | None = None
 
     @field_validator("version", mode="before")
     @classmethod
@@ -659,7 +663,7 @@ class PipelineDefinition(BaseModel):
     @model_validator(mode="after")
     def validate_active_pipeline_has_steps(self) -> PipelineDefinition:
         """Require every pipeline definition to include executable steps."""
-        if not self.steps:
+        if not self.steps and not self.deprecated:
             raise ValueError("Pipeline requires at least one step")
         return self
 

@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import ANY, AsyncMock, MagicMock
 
 import pytest
@@ -33,7 +34,11 @@ def mock_transcript_reader():
     return reader
 
 
-def _window(groups, *, parsed_message_count=None):
+def _window(
+    groups: list[Any],
+    *,
+    parsed_message_count: int | None = None,
+) -> WindowResult:
     """Build a WindowResult for a head-order page of rendered groups."""
     return WindowResult(
         groups=list(groups),

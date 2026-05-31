@@ -262,6 +262,19 @@ class TestPipelineDefinition:
         with pytest.raises(ValidationError):
             PipelineDefinition(name="empty", steps=[])
 
+    def test_deprecated_pipeline_allows_empty_steps(self) -> None:
+        """Deprecated tombstones do not need executable steps."""
+        pipeline = PipelineDefinition(
+            name="retired",
+            deprecated=True,
+            deprecated_reason="Replaced by stage automation.",
+            enabled=False,
+            steps=[],
+        )
+
+        assert pipeline.deprecated is True
+        assert pipeline.steps == []
+
     def test_pipeline_step_ids_unique(self) -> None:
         """Test that step IDs must be unique within pipeline."""
         with pytest.raises(ValidationError) as exc_info:
