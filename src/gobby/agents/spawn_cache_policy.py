@@ -40,6 +40,11 @@ def managed_tool_bin_dir() -> str:
     return str(native_bin_dir())
 
 
+def hook_inbox_dir() -> str:
+    """Return the daemon-owned hook inbox directory."""
+    return str(Path.home() / ".gobby" / "hooks" / "inbox")
+
+
 def build_spawn_cache_env(session_id: str) -> dict[str, str]:
     """Return env values for shared spawned-agent cache and tool paths."""
     env = {entry.env_var: entry.ensure_path(session_id) for entry in SPAWN_CACHE_POLICY}
@@ -74,7 +79,7 @@ def sandbox_config_for_spawn(
     sandbox_config: SandboxConfig | None,
     env_vars: dict[str, str],
 ) -> SandboxConfig | None:
-    """Include spawned validation caches and managed tools in sandbox writable paths."""
+    """Include spawned validation caches and hook inbox in sandbox writable paths."""
     if sandbox_config is None:
         return None
     if not sandbox_config.enabled:
@@ -92,7 +97,7 @@ def sandbox_config_for_spawn(
 def sandbox_write_paths(env_vars: dict[str, str]) -> list[str]:
     """Return concrete paths that a sandboxed spawned agent must be able to use."""
     paths = [env_vars.get(env_var, "") for env_var in SPAWN_CACHE_ENV_VARS]
-    paths.append(managed_tool_bin_dir())
+    paths.append(hook_inbox_dir())
     return _dedupe(paths)
 
 

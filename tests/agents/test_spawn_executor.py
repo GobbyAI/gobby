@@ -9,7 +9,7 @@ import pytest
 
 from gobby.agents.constants import CARGO_HOME, UV_CACHE_DIR
 from gobby.agents.sandbox import SandboxConfig
-from gobby.agents.spawn_cache_policy import PATH_ENV_VAR, managed_tool_bin_dir
+from gobby.agents.spawn_cache_policy import PATH_ENV_VAR, hook_inbox_dir, managed_tool_bin_dir
 from gobby.agents.spawn_executor import (
     _CODEX_PREAPPROVED_GOBBY_TOOLS,
     SpawnRequest,
@@ -978,7 +978,7 @@ class TestExecuteSpawnSandbox:
     def test_sandbox_config_for_spawn_adds_policy_write_paths(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """Sandboxed agents get writable caches and access to managed native tools."""
+        """Sandboxed agents get writable caches and a hook inbox, not managed binaries."""
         monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
         env_vars = {
             "GOBBY_SESSION_ID": "child/session:one",
@@ -997,7 +997,8 @@ class TestExecuteSpawnSandbox:
         assert "/already-allowed" in resolved.extra_write_paths
         assert "/tmp/gobby/uv-cache/child-session-one" in resolved.extra_write_paths
         assert env_vars[CARGO_HOME] in resolved.extra_write_paths
-        assert managed_tool_bin_dir() in resolved.extra_write_paths
+        assert hook_inbox_dir() in resolved.extra_write_paths
+        assert managed_tool_bin_dir() not in resolved.extra_write_paths
         assert config.extra_write_paths == ["/already-allowed"]
 
     @pytest.mark.asyncio
