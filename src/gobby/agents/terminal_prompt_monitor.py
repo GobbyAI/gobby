@@ -182,6 +182,7 @@ class TerminalPromptMonitor:
                 if not self._prompt_detector.detect_queued_continuation_prompt(pane_output):
                     continue
 
+                # Observation-only: periodic enter handling owns any actual key submission.
                 logger.info(
                     "Observed queued continuation prompt for agent %s; leaving input queue untouched",
                     run.id,

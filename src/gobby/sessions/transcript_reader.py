@@ -351,17 +351,16 @@ class TranscriptReader:
 
         try:
             resolved = await self._resolve_windowable(session, session_id)
-        except DecompressionError as e:
-            logger.warning(f"Failed to read archive for session {session_id}: {e}")
+            if resolved.kind == "native":
+                return _activity_counts_from_messages(
+                    await self._get_parsed_messages_from_file(session_id)
+                )
+            if resolved.index is not None:
+                return _activity_counts_from_index(resolved.index)
             return {"message_count": 0, "turn_count": 0, "tool_call_count": 0}
-
-        if resolved.kind == "native":
-            return _activity_counts_from_messages(
-                await self._get_parsed_messages_from_file(session_id)
-            )
-        if resolved.index is not None:
-            return _activity_counts_from_index(resolved.index)
-        return {"message_count": 0, "turn_count": 0, "tool_call_count": 0}
+        except (DecompressionError, TranscriptTooLargeError) as e:
+            logger.warning(f"Failed to count transcript activity for session {session_id}: {e}")
+            return {"message_count": 0, "turn_count": 0, "tool_call_count": 0}
 
     async def get_transcript_status(self, session_id: str) -> dict[str, Any]:
         """Report transcript availability and parseability for a session."""

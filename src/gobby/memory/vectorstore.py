@@ -680,40 +680,42 @@ class VectorStore:
         """
         async with self._rebuild_lock:
             client = await self._ensure_initialized()
+
             async with self._collection_lifecycle_lock:
                 collection_reset = await self._prepare_collection_for_rebuild(client)
 
-                existing_ids = set[str]()
-                if not collection_reset:
-                    existing_ids = set(await self.scroll_ids())
+            existing_ids = set[str]()
+            if not collection_reset:
+                existing_ids = set(await self.scroll_ids())
 
-                batch_size = 500
-                total = 0
-                incoming_ids: set[str] = set()
-                batch: list[tuple[str, list[float], dict[str, Any]]] = []
-                for mem in memories:
-                    memory_id = mem["id"]
-                    incoming_ids.add(memory_id)
-                    content = mem["content"]
-                    embedding = await embed_fn(content)
-                    payload = {k: v for k, v in mem.items() if k not in ("id",)}
-                    batch.append((memory_id, embedding, payload))
+            batch_size = 500
+            total = 0
+            incoming_ids: set[str] = set()
+            batch: list[tuple[str, list[float], dict[str, Any]]] = []
+            for mem in memories:
+                memory_id = mem["id"]
+                incoming_ids.add(memory_id)
+                content = mem["content"]
+                embedding = await embed_fn(content)
+                payload = {k: v for k, v in mem.items() if k not in ("id",)}
+                batch.append((memory_id, embedding, payload))
 
-                    if len(batch) >= batch_size:
-                        await self.batch_upsert(batch)
-                        total += len(batch)
-                        logger.info("Rebuild progress: %s/%s vectors", total, len(memories))
-                        batch = []
-
-                if batch:
+                if len(batch) >= batch_size:
                     await self.batch_upsert(batch)
                     total += len(batch)
+                    logger.info("Rebuild progress: %s/%s vectors", total, len(memories))
+                    batch = []
 
-                stale_ids = sorted(existing_ids - incoming_ids)
-                if stale_ids:
+            if batch:
+                await self.batch_upsert(batch)
+                total += len(batch)
+
+            stale_ids = sorted(existing_ids - incoming_ids)
+            if stale_ids:
+                async with self._collection_lifecycle_lock:
                     await self.delete_many(stale_ids)
 
-                logger.info("Rebuilt %s vectors in '%s'", total, self._collection_name)
+            logger.info("Rebuilt %s vectors in '%s'", total, self._collection_name)
 
     async def scroll_ids(self, batch_size: int = 1000) -> list[str]:
         """Return all point IDs in the collection."""

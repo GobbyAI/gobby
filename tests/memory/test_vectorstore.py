@@ -6,7 +6,7 @@ import asyncio
 import uuid
 from collections.abc import AsyncGenerator
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -476,7 +476,7 @@ async def test_rebuild_same_dimension_removes_stale_point_ids(
 
 
 @pytest.mark.asyncio
-async def test_rebuild_same_dimension_reads_and_deletes_stale_ids_under_lifecycle_lock() -> None:
+async def test_rebuild_same_dimension_releases_lifecycle_lock_for_expensive_work() -> None:
     store = VectorStore(collection_name="mock_memories", embedding_dim=4)
     client = MagicMock()
     client.collection_exists.return_value = True
@@ -484,6 +484,8 @@ async def test_rebuild_same_dimension_reads_and_deletes_stale_ids_under_lifecycl
     store._client = client
 
     scroll_lock_states: list[bool] = []
+    embed_lock_states: list[bool] = []
+    upsert_lock_states: list[bool] = []
     delete_lock_states: list[bool] = []
 
     def scroll(**_kwargs: object) -> tuple[list[SimpleNamespace], None]:
@@ -497,11 +499,19 @@ async def test_rebuild_same_dimension_reads_and_deletes_stale_ids_under_lifecycl
     client.delete.side_effect = delete
 
     async def embed_fn(_text: str) -> list[float]:
+        embed_lock_states.append(store._collection_lifecycle_lock.locked())
         return _make_embedding()
+
+    async def batch_upsert(_items: list[tuple[str, list[float], dict[str, object]]]) -> None:
+        upsert_lock_states.append(store._collection_lifecycle_lock.locked())
+
+    store.batch_upsert = AsyncMock(side_effect=batch_upsert)  # type: ignore[method-assign]
 
     await store.rebuild([{"id": MEM_2, "content": "keep"}], embed_fn)
 
-    assert scroll_lock_states == [True]
+    assert scroll_lock_states == [False]
+    assert embed_lock_states == [False]
+    assert upsert_lock_states == [False]
     assert delete_lock_states == [True]
     client.delete.assert_called_once()
 

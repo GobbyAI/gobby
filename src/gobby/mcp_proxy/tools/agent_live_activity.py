@@ -47,6 +47,7 @@ async def overlay_live_activity(run: Any, transcript_reader: Any | None) -> Any:
 
 
 async def overlay_runs_live_activity(runs: list[Any], transcript_reader: Any | None) -> list[Any]:
+    results: list[Any] = []
     for run in runs:
-        await overlay_live_activity(run, transcript_reader)
-    return runs
+        results.append(await overlay_live_activity(run, transcript_reader))
+    return results

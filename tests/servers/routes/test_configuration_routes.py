@@ -1576,6 +1576,24 @@ class TestSecretAwareConfig:
         assert context.store.secrets[EMBEDDING_API_KEY_SECRET_NAME] == "sk-embed-123"
         assert context.runtime_config.embeddings.api_key == "sk-embed-123"
 
+    def test_put_existing_embedding_storage_secret_keeps_secret_storage(
+        self, client: TestClient, temp_db: Any, mock_machine_id: Any
+    ) -> None:
+        store = ConfigStore(temp_db)
+        secret_store = SecretStore(temp_db)
+        store.set_secret(AI_EMBEDDING_MODEL_KEY, "old-secret-model", secret_store)
+
+        response = client.put(
+            "/api/config/values",
+            json={"values": {"embeddings": {"model": "new-secret-model"}}},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["ok"] is True
+        assert store.get(AI_EMBEDDING_MODEL_KEY) == "$secret:model"
+        assert AI_EMBEDDING_MODEL_KEY in store.get_secret_keys()
+        assert secret_store.get("model") == "new-secret-model"
+
     def test_put_masked_value_skipped(
         self, client: TestClient, temp_db: Any, mock_machine_id: Any
     ) -> None:

@@ -130,11 +130,16 @@ class DaemonClient:
 
     def _log_health_success(self) -> None:
         with self._health_log_lock:
-            if self._health_failed_since_last_success:
+            was_recovering = self._health_failed_since_last_success
+            log_extra = {
+                "url": self.url,
+                "health_failed_since_last_success": was_recovering,
+            }
+            if was_recovering:
                 self._health_failed_since_last_success = False
-                self.logger.info(f"Daemon health recovered at {self.url}")
+                self.logger.info("Daemon health recovered", extra=log_extra)
             else:
-                self.logger.debug(f"Daemon health check passed at {self.url}")
+                self.logger.debug("Daemon health check passed", extra=log_extra)
 
     def _mark_health_failed(self) -> None:
         with self._health_log_lock:

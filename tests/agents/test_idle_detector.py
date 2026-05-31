@@ -64,9 +64,7 @@ class TestDetect:
 
     def test_claude_running_with_queued_continuation_is_active(self) -> None:
         output = (
-            "⏺ Reading 3 files… (ctrl+o to expand)\n"
-            "  ⎿  crates/gcore/src/lib.rs\n\n"
-            "✽ Bunning… (7m 54s · ↓ 38.4k tokens · almost done thinking with max effort)\n\n"
+            "✽ Running… (7m 54s · ↓ 38.4k tokens)\n\n"
             "  ❯ Continue working on your task. Your active Gobby step workflow is not complete.\n"
             "    Workflow: planner-steps. Current step: plan.\n"
             "────────────────────────────────────────────────────────────────\n"
@@ -75,6 +73,16 @@ class TestDetect:
             "⏵⏵ bypass permissions on\n"
         )
         assert self.detector.detect(output) == "active"
+
+    def test_claude_bunning_typo_with_queued_continuation_is_idle(self) -> None:
+        output = (
+            "✽ Bunning… (7m 54s · ↓ 38.4k tokens)\n\n"
+            "  ❯ Continue working on your task. Your active Gobby step workflow is not complete.\n"
+            "    Workflow: planner-steps. Current step: plan.\n"
+            "────────────────────────────────────────────────────────────────\n"
+            "❯ Press up to edit queued messages\n"
+        )
+        assert self.detector.detect(output) == "idle"
 
     def test_queued_continuation_without_active_work_is_idle(self) -> None:
         output = (

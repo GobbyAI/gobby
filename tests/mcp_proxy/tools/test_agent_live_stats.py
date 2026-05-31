@@ -1,9 +1,11 @@
 """MCP regressions for live agent-run activity counters."""
 
-from unittest.mock import MagicMock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gobby.mcp_proxy.tools import agent_live_activity
 from gobby.mcp_proxy.tools.agents import create_agents_registry
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -21,6 +23,22 @@ class _FakeTranscriptReader:
     async def get_activity_counts(self, session_id: str) -> dict[str, int]:
         self.session_ids.append(session_id)
         return self.counts
+
+
+@pytest.mark.asyncio
+async def test_overlay_runs_live_activity_preserves_replacement_objects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = SimpleNamespace(child_session_id="child-1")
+    replacement = SimpleNamespace(child_session_id="child-1", live_message_count=2)
+    transcript_reader = object()
+    overlay = AsyncMock(return_value=replacement)
+    monkeypatch.setattr(agent_live_activity, "overlay_live_activity", overlay)
+
+    results = await agent_live_activity.overlay_runs_live_activity([run], transcript_reader)
+
+    assert results == [replacement]
+    overlay.assert_awaited_once_with(run, transcript_reader)
 
 
 def _register_session(

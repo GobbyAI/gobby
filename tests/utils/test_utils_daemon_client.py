@@ -59,7 +59,13 @@ class TestDaemonClientCheckHealth:
 
         assert is_healthy is True
         assert error is None
-        logger.debug.assert_called_once_with("Daemon health check passed at http://localhost:60887")
+        logger.debug.assert_called_once_with(
+            "Daemon health check passed",
+            extra={
+                "url": "http://localhost:60887",
+                "health_failed_since_last_success": False,
+            },
+        )
         logger.info.assert_not_called()
 
     def test_health_check_non_200_status(self) -> None:
@@ -103,8 +109,20 @@ class TestDaemonClientCheckHealth:
             assert client.check_health() == (True, None)
             assert client.check_health() == (True, None)
 
-        logger.info.assert_called_once_with("Daemon health recovered at http://localhost:60887")
-        logger.debug.assert_called_once_with("Daemon health check passed at http://localhost:60887")
+        logger.info.assert_called_once_with(
+            "Daemon health recovered",
+            extra={
+                "url": "http://localhost:60887",
+                "health_failed_since_last_success": True,
+            },
+        )
+        logger.debug.assert_called_once_with(
+            "Daemon health check passed",
+            extra={
+                "url": "http://localhost:60887",
+                "health_failed_since_last_success": False,
+            },
+        )
 
     def test_health_check_connection_refused_during_planned_restart_does_not_warn(
         self,

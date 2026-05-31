@@ -413,6 +413,15 @@ class TestRenameTmuxWindow:
         assert _contains_unresolved_session_ref("{session_ref}: gobby") is True
         assert _contains_unresolved_session_ref("session_reference: gobby") is False
 
+    def test_resolve_window_title_does_not_duplicate_existing_ref_prefix(self) -> None:
+        from gobby.workflows.summary_actions import _resolve_window_title
+
+        session = MagicMock()
+        session.ref = "#99"
+
+        assert _resolve_window_title(session, {}, "#99: My Title") == "#99: My Title"
+        assert _resolve_window_title(session, {}, "  #99: My Title") == "  #99: My Title"
+
     @pytest.mark.asyncio
     async def test_unresolved_title_falls_back_before_prefixing(self) -> None:
         """A stored placeholder title is replaced with the fallback basename."""

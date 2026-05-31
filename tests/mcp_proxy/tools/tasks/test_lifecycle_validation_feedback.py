@@ -83,6 +83,34 @@ def test_successful_validation_pattern_ignores_not_all_feedback(feedback: str) -
 @pytest.mark.parametrize(
     "feedback",
     [
+        "Verified all validation criteria are satisfied.",
+        "Resolved: all acceptance criteria were met.",
+        "All validation criteria passed after the workflow was re-tested.",
+    ],
+)
+def test_successful_validation_pattern_requires_explicit_verified_success(
+    feedback: str,
+) -> None:
+    assert matched_successful_validation_pattern(feedback) is not None
+
+
+@pytest.mark.parametrize(
+    "feedback",
+    [
+        "Verified all criteria are satisfied.",
+        "All validation criteria are satisfied.",
+        "All acceptance criteria are met.",
+    ],
+)
+def test_successful_validation_pattern_rejects_generic_or_unconfirmed_success(
+    feedback: str,
+) -> None:
+    assert matched_successful_validation_pattern(feedback) is None
+
+
+@pytest.mark.parametrize(
+    "feedback",
+    [
         "Tests were added for the new behavior.",
         "The build configuration was updated and validation can run locally.",
         "Static analysis coverage was expanded.",
@@ -232,6 +260,45 @@ async def test_valid_llm_result_with_zero_failure_feedback_remains_valid() -> No
     )
 
 
+@pytest.mark.asyncio
+async def test_invalid_llm_result_with_verified_success_feedback_is_promoted() -> None:
+    """Invalid status is corrected only for explicit verified criteria success feedback."""
+    update_task = MagicMock()
+    task = SimpleNamespace(
+        id="task-1",
+        title="Task",
+        description="Description",
+        validation_criteria="Tests pass",
+        category="code",
+    )
+    validator = SimpleNamespace(
+        validate_task=AsyncMock(
+            return_value=TaskValidationResult(
+                status="invalid",
+                feedback="Verified all validation criteria are satisfied.",
+            )
+        )
+    )
+    ctx = SimpleNamespace(task_manager=SimpleNamespace(update_task=update_task))
+
+    result = await validate_leaf_task_with_llm(
+        task,
+        validator,
+        "diff context",
+        None,
+        ctx,
+        "task-1",
+        None,
+    )
+
+    assert result.can_close is True
+    update_task.assert_called_once_with(
+        "task-1",
+        validation_status="valid",
+        validation_feedback="Verified all validation criteria are satisfied.",
+    )
+
+
 async def test_pending_llm_result_with_success_feedback_is_not_promoted() -> None:
     """Pending/error statuses stay blocking even when feedback contains success text."""
     update_task = MagicMock()
@@ -246,7 +313,10 @@ async def test_pending_llm_result_with_success_feedback_is_not_promoted() -> Non
         validate_task=AsyncMock(
             return_value=TaskValidationResult(
                 status="pending",
-                feedback="Validation failed: could not parse response. All criteria satisfied.",
+                feedback=(
+                    "Validation failed: could not parse response. "
+                    "Verified all validation criteria are satisfied."
+                ),
             )
         )
     )
@@ -267,5 +337,8 @@ async def test_pending_llm_result_with_success_feedback_is_not_promoted() -> Non
     update_task.assert_called_once_with(
         "task-1",
         validation_status="pending",
-        validation_feedback="Validation failed: could not parse response. All criteria satisfied.",
+        validation_feedback=(
+            "Validation failed: could not parse response. "
+            "Verified all validation criteria are satisfied."
+        ),
     )

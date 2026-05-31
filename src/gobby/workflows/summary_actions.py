@@ -387,7 +387,7 @@ def _resolve_window_title(session: Any, terminal_context: dict[str, Any], title:
     if not title or _contains_unresolved_session_ref(title):
         title = _synthesize_fallback_title(session, terminal_context)
     ref = _session_ref_for_window_title(session)
-    if ref:
+    if ref and not title.lstrip().startswith(f"{ref}:"):
         title = f"{ref}: {title}"
     return title
 

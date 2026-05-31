@@ -57,7 +57,7 @@ class IdleDetector:
     )
 
     ACTIVE_WORK_PATTERNS: tuple[re.Pattern[str], ...] = (
-        re.compile(r"\b[BR]unning\b", re.IGNORECASE),
+        re.compile(r"\bRunning\b", re.IGNORECASE),
         re.compile(r"almost done thinking", re.IGNORECASE),
         re.compile(r"thinking with .*effort", re.IGNORECASE),
         re.compile(r"\bReading\s+\d+\s+files?\b", re.IGNORECASE),

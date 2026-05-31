@@ -297,7 +297,7 @@ class AgentLifecycleMonitor:
         return await self._terminal_prompt_monitor.check_approval_prompts()
 
     async def check_queued_continuation_prompts(self) -> int:
-        """Submit queued Gobby continuation prompts."""
+        """Observe queued Gobby continuation prompts without submitting input."""
         return await self._terminal_prompt_monitor.check_queued_continuation_prompts()
 
     async def check_periodic_enters(self) -> int:

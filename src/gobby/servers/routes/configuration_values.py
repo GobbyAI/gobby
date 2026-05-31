@@ -14,6 +14,7 @@ from gobby.config.embedding_keys import (
     runtime_embedding_config_entries_to_storage,
     runtime_embedding_config_key_to_storage_key,
     storage_embedding_config_entries_to_runtime,
+    storage_embedding_config_key_to_runtime_key,
 )
 from gobby.servers.routes.configuration_context import ConfigurationRouteContext
 from gobby.servers.routes.configuration_models import SaveConfigRequest
@@ -67,6 +68,9 @@ def register_value_routes(router: APIRouter, context: ConfigurationRouteContext)
         try:
             config_store = context.get_config_store()
             existing_secret_keys = set(config_store.get_secret_keys())
+            converted_existing_secret_keys = {
+                storage_embedding_config_key_to_runtime_key(key) for key in existing_secret_keys
+            }
             runtime_updates = storage_embedding_config_entries_to_runtime(
                 flatten_config(request.values)
             )
@@ -83,7 +87,7 @@ def register_value_routes(router: APIRouter, context: ConfigurationRouteContext)
                 if (
                     is_secret_key_name(storage_key)
                     or storage_key in existing_secret_keys
-                    or runtime_key in existing_secret_keys
+                    or runtime_key in converted_existing_secret_keys
                 ):
                     if value == MASKED_SECRET:
                         continue
