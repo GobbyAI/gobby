@@ -11,7 +11,11 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
 from gobby.config.app import DaemonConfig, deep_merge
-from gobby.config.embedding_keys import runtimeize_embedding_config_entries
+from gobby.config.embedding_keys import (
+    runtime_embedding_config_entries_to_storage,
+    runtime_embedding_config_keys_to_storage,
+    storage_embedding_config_entries_to_runtime,
+)
 from gobby.servers.routes.configuration_context import ConfigurationRouteContext
 from gobby.servers.routes.configuration_models import SaveTemplateRequest
 from gobby.servers.routes.configuration_secrets import (
@@ -70,15 +74,21 @@ def _apply_transactional_changes(
     plain_entries: dict[str, Any],
 ) -> tuple[int, int]:
     config_store = context.get_config_store()
+    storage_masked_secret_keys = runtime_embedding_config_keys_to_storage(masked_secret_keys)
+    storage_secret_reference_entries = runtime_embedding_config_entries_to_storage(
+        secret_reference_entries
+    )
+    storage_secret_value_entries = runtime_embedding_config_entries_to_storage(secret_value_entries)
+    storage_plain_entries = runtime_embedding_config_entries_to_storage(plain_entries)
     count = 0
     with config_store.db.transaction():
-        deleted_count = delete_all_except(config_store, masked_secret_keys)
-        if secret_reference_entries:
-            count += config_store.set_many(secret_reference_entries, source="user")
-            mark_secret_keys(config_store, set(secret_reference_entries))
-        if secret_value_entries:
+        deleted_count = delete_all_except(config_store, storage_masked_secret_keys)
+        if storage_secret_reference_entries:
+            count += config_store.set_many(storage_secret_reference_entries, source="user")
+            mark_secret_keys(config_store, set(storage_secret_reference_entries))
+        if storage_secret_value_entries:
             secret_store = context.get_secret_store()
-            for key, value in secret_value_entries.items():
+            for key, value in storage_secret_value_entries.items():
                 if value is None or value == "":
                     config_store.clear_secret(key, secret_store)
                 elif not isinstance(value, str):
@@ -89,8 +99,8 @@ def _apply_transactional_changes(
                 else:
                     config_store.set_secret(key, value, secret_store, source="user")
                     count += 1
-        if plain_entries:
-            count += config_store.set_many(plain_entries, source="user")
+        if storage_plain_entries:
+            count += config_store.set_many(storage_plain_entries, source="user")
     return count, deleted_count
 
 
@@ -103,7 +113,7 @@ def register_template_routes(router: APIRouter, context: ConfigurationRouteConte
         try:
             defaults = DaemonConfig().model_dump(mode="json", exclude_none=True)
             config_store = context.get_config_store()
-            flat_overrides = runtimeize_embedding_config_entries(config_store.get_all())
+            flat_overrides = storage_embedding_config_entries_to_runtime(config_store.get_all())
             db_overrides = unflatten_config(mask_secret_values(flat_overrides))
             deep_merge(defaults, db_overrides)
             content = yaml.safe_dump(defaults, default_flow_style=False, sort_keys=False)
@@ -125,7 +135,7 @@ def register_template_routes(router: APIRouter, context: ConfigurationRouteConte
             defaults_flat = flatten_config(
                 DaemonConfig().model_dump(mode="json", exclude_none=True)
             )
-            parsed_flat = runtimeize_embedding_config_entries(flatten_config(parsed))
+            parsed_flat = storage_embedding_config_entries_to_runtime(flatten_config(parsed))
             config_store = context.get_config_store()
             existing_secret_keys = set(config_store.get_secret_keys())
             masked_secret_keys = {

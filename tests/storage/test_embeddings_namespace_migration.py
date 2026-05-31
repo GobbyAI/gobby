@@ -76,3 +76,27 @@ def test_embeddings_namespace_migration_is_idempotent(temp_db: HubDatabase) -> N
         + hashlib.md5(b"legacy-secret:embeddings_api_key", usedforsecurity=False).hexdigest()
     )
     assert copied == {"id": expected_id, "encrypted_value": "encrypted-value"}
+
+
+def test_embedding_provider_cleanup_migration_is_idempotent(temp_db: HubDatabase) -> None:
+    store = ConfigStore(temp_db)
+    for key in ("ai.embeddings.provider", "embeddings.provider"):
+        temp_db.execute(
+            """
+            INSERT INTO config_store (key, value, source, is_secret, updated_at)
+            VALUES (%s, %s, 'user', FALSE, NOW())
+            """,
+            (key, json.dumps("lmstudio")),
+        )
+    store.set("ai.embeddings.model", "nomic-embed-text")
+
+    migration = (
+        Path("src/gobby/storage/migrations/272_drop_embedding_provider_config.sql")
+    ).read_text(encoding="utf-8")
+    for _ in range(2):
+        with temp_db.transaction() as txn:
+            _execute_sql_script(txn, migration)
+
+    assert store.get("ai.embeddings.model") == "nomic-embed-text"
+    assert store.get("ai.embeddings.provider") is None
+    assert store.get("embeddings.provider") is None

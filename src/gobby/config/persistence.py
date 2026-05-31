@@ -222,10 +222,6 @@ class EmbeddingsConfig(BaseModel):
         default=None,
         description="Optional text prefix prepended to semantic-search queries before embedding.",
     )
-    provider: str | None = Field(
-        default=None,
-        description="Optional provider label for install/setup diagnostics.",
-    )
 
     @field_validator("dim")
     @classmethod

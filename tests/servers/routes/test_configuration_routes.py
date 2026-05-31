@@ -18,7 +18,11 @@ from fastapi import APIRouter, FastAPI
 from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
-from gobby.config.embedding_keys import AI_EMBEDDING_API_KEY_KEY, EMBEDDING_API_KEY_SECRET_NAME
+from gobby.config.embedding_keys import (
+    AI_EMBEDDING_API_KEY_KEY,
+    AI_EMBEDDING_MODEL_KEY,
+    EMBEDDING_API_KEY_SECRET_NAME,
+)
 from gobby.servers.routes.configuration_import_export import _prompt_export_key
 from gobby.servers.routes.configuration_prompts import _normalize_variable_spec
 from gobby.servers.routes.configuration_secrets import MASKED_SECRET
@@ -559,6 +563,19 @@ class TestValidationDetectionPreview:
         assert "daemon_port" in keys
         assert "bind_host" not in keys
 
+    def test_save_template_embedding_runtime_shape_persists_canonical(
+        self, client: TestClient, temp_db: Any
+    ) -> None:
+        content = yaml.safe_dump({"embeddings": {"model": "bge-m3", "dim": 1024}})
+
+        response = client.put("/api/config/template", json={"content": content})
+
+        assert response.status_code == 200
+        store = ConfigStore(temp_db)
+        assert store.get(AI_EMBEDDING_MODEL_KEY) == "bge-m3"
+        assert store.get("ai.embeddings.dim") == 1024
+        assert store.get("embeddings.model") is None
+
     def test_save_template_falkordb_requirepass_encrypts(
         self, postgres_client: TestClient, postgres_db: Any, mock_machine_id: Any
     ) -> None:
@@ -1068,6 +1085,20 @@ class TestExportImport:
         assert data["success"] is True
         assert "config restored" in data["summary"]
         assert data["requires_restart"] is True
+
+    def test_import_legacy_config_embedding_runtime_shape_persists_canonical(
+        self, client: TestClient, temp_db: Any
+    ) -> None:
+        response = client.post(
+            "/api/config/import",
+            json={"config": {"embeddings": {"model": "bge-m3", "dim": 1024}}},
+        )
+
+        assert response.status_code == 200
+        store = ConfigStore(temp_db)
+        assert store.get(AI_EMBEDDING_MODEL_KEY) == "bge-m3"
+        assert store.get("ai.embeddings.dim") == 1024
+        assert store.get("embeddings.model") is None
 
     def test_import_config_with_prompts(self, client: TestClient) -> None:
         response = client.post(

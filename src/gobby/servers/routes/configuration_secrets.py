@@ -8,7 +8,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 
-from gobby.config.embedding_keys import canonicalize_embedding_config_key
+from gobby.config.embedding_keys import runtime_embedding_config_keys_to_storage
 from gobby.config.persistence import validate_falkordb_password
 from gobby.servers.routes.configuration_context import ConfigurationRouteContext
 from gobby.servers.routes.configuration_models import SaveSecretRequest
@@ -58,7 +58,7 @@ def is_secret_reference(value: Any) -> bool:
 
 
 def mark_secret_keys(config_store: ConfigStore, keys: set[str]) -> None:
-    keys = {canonicalize_embedding_config_key(key) for key in keys}
+    keys = runtime_embedding_config_keys_to_storage(keys)
     if not keys:
         return
     placeholders = ",".join("%s" for _ in keys)
@@ -69,7 +69,7 @@ def mark_secret_keys(config_store: ConfigStore, keys: set[str]) -> None:
 
 
 def delete_all_except(config_store: ConfigStore, preserved_keys: set[str]) -> int:
-    preserved_keys = {canonicalize_embedding_config_key(key) for key in preserved_keys}
+    preserved_keys = runtime_embedding_config_keys_to_storage(preserved_keys)
     if not preserved_keys:
         return config_store.delete_all()
     placeholders = ",".join("%s" for _ in preserved_keys)

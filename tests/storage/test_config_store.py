@@ -113,12 +113,32 @@ class TestConfigStore:
         assert store.get("c") == "str"
 
     def test_set_rejects_plaintext_secret_key(self, store: ConfigStore):
-        with pytest.raises(ValueError, match=r"Config key 'embeddings\.api_key'"):
-            store.set(runtime_embedding_key("api_key"), "sk-plaintext")
+        with pytest.raises(ValueError, match=r"Config key 'ai\.embeddings\.api_key'"):
+            store.set(AI_EMBEDDING_API_KEY_KEY, "sk-plaintext")
 
     def test_set_many_rejects_plaintext_secret_key(self, store: ConfigStore):
-        with pytest.raises(ValueError, match=r"Config key 'embeddings\.api_key'"):
-            store.set_many({runtime_embedding_key("api_key"): "sk-plaintext"})
+        with pytest.raises(ValueError, match=r"Config key 'ai\.embeddings\.api_key'"):
+            store.set_many({AI_EMBEDDING_API_KEY_KEY: "sk-plaintext"})
+
+    @pytest.mark.parametrize("key", [runtime_embedding_key("model"), "ai.embeddings.provider"])
+    def test_set_rejects_removed_embedding_keys(self, store: ConfigStore, key: str):
+        with pytest.raises(ValueError, match="Embedding"):
+            store.set(key, "nomic-embed-text")
+
+    @pytest.mark.parametrize("key", [runtime_embedding_key("model"), "ai.embeddings.provider"])
+    def test_set_many_rejects_removed_embedding_keys(self, store: ConfigStore, key: str):
+        with pytest.raises(ValueError, match="Embedding"):
+            store.set_many({key: "nomic-embed-text"})
+
+    @pytest.mark.parametrize("key", [runtime_embedding_key("api_key"), "ai.embeddings.provider"])
+    def test_set_secret_rejects_removed_embedding_keys(self, store: ConfigStore, key: str):
+        with pytest.raises(ValueError, match="Embedding"):
+            store.set_secret(key, "secret", object())  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize("key", [runtime_embedding_key("api_key"), "ai.embeddings.provider"])
+    def test_clear_secret_rejects_removed_embedding_keys(self, store: ConfigStore, key: str):
+        with pytest.raises(ValueError, match="Embedding"):
+            store.clear_secret(key, object())  # type: ignore[arg-type]
 
     def test_set_allows_secret_reference(self, store: ConfigStore):
         store.set(AI_EMBEDDING_API_KEY_KEY, "$secret:embeddings_api_key")

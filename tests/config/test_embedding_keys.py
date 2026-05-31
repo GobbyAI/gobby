@@ -14,7 +14,7 @@ ALLOWED_LITERAL_FILES = {
 }
 EMBEDDING_CONFIG_KEY_PATTERN = re.compile(
     r"(?:^|[^A-Za-z0-9_])(?:ai\.)?embeddings\."
-    r"(?:api_base|api_key|model|dim|query_prefix|provider)(?:$|[^A-Za-z0-9_])"
+    r"(?:api_base|api_key|model|dim|query_prefix)(?:$|[^A-Za-z0-9_])"
 )
 
 
@@ -30,3 +30,9 @@ def test_embedding_keys_centralized_and_guarded() -> None:
                     offenders.append(f"{path.relative_to(SRC_ROOT)}:{node.lineno}")
 
     assert offenders == [], f"Embedding config key literals outside central module: {offenders}"
+
+
+def test_provider_is_not_a_canonical_embedding_key() -> None:
+    from gobby.config.embedding_keys import AI_EMBEDDING_CONFIG_KEYS
+
+    assert "ai.embeddings.provider" not in AI_EMBEDDING_CONFIG_KEYS

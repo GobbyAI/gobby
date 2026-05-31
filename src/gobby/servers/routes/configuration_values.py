@@ -11,9 +11,9 @@ from pydantic import ValidationError
 
 from gobby.config.app import DaemonConfig, deep_merge
 from gobby.config.embedding_keys import (
-    canonicalize_embedding_config_entries,
-    canonicalize_embedding_config_key,
-    runtimeize_embedding_config_entries,
+    runtime_embedding_config_entries_to_storage,
+    runtime_embedding_config_key_to_storage_key,
+    storage_embedding_config_entries_to_runtime,
 )
 from gobby.servers.routes.configuration_context import ConfigurationRouteContext
 from gobby.servers.routes.configuration_models import SaveConfigRequest
@@ -67,10 +67,12 @@ def register_value_routes(router: APIRouter, context: ConfigurationRouteContext)
         try:
             config_store = context.get_config_store()
             existing_secret_keys = set(config_store.get_secret_keys())
-            runtime_updates = runtimeize_embedding_config_entries(flatten_config(request.values))
-            storage_updates = canonicalize_embedding_config_entries(runtime_updates)
+            runtime_updates = storage_embedding_config_entries_to_runtime(
+                flatten_config(request.values)
+            )
+            storage_updates = runtime_embedding_config_entries_to_storage(runtime_updates)
             runtime_key_by_storage_key = {
-                canonicalize_embedding_config_key(runtime_key): runtime_key
+                runtime_embedding_config_key_to_storage_key(runtime_key): runtime_key
                 for runtime_key in runtime_updates
             }
 
@@ -152,6 +154,8 @@ def register_value_routes(router: APIRouter, context: ConfigurationRouteContext)
             return JSONResponse(content=response)
         except HTTPException:
             raise
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:
             logger.error("Config save failed", exc_info=True)
             raise HTTPException(status_code=500, detail="Failed to save configuration") from e
@@ -161,7 +165,9 @@ def register_value_routes(router: APIRouter, context: ConfigurationRouteContext)
         """Validate config without saving."""
         try:
             current = context.current_config_values()
-            runtime_updates = runtimeize_embedding_config_entries(flatten_config(request.values))
+            runtime_updates = storage_embedding_config_entries_to_runtime(
+                flatten_config(request.values)
+            )
             unmasked_updates = {
                 key: value for key, value in runtime_updates.items() if value != MASKED_SECRET
             }

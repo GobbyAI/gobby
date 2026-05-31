@@ -25,9 +25,8 @@ from gobby.config.communications import CommunicationsConfig
 from gobby.config.cron import CronConfig
 from gobby.config.daemon_sandbox import DaemonOwnedSandboxConfig
 from gobby.config.embedding_keys import (
-    AI_CONFIG_SECTION,
-    RUNTIME_EMBEDDINGS_CONFIG_SECTION,
-    is_runtime_embedding_config_key,
+    is_removed_embedding_config_store_key,
+    storage_embedding_config_entries_to_runtime,
 )
 from gobby.config.extensions import HookExtensionsConfig
 from gobby.config.features import (
@@ -655,18 +654,6 @@ def _resolve_config_values(
     return result
 
 
-def _normalize_ai_embeddings_config(config_dict: dict[str, Any]) -> dict[str, Any]:
-    ai_section = config_dict.get(AI_CONFIG_SECTION)
-    if not isinstance(ai_section, dict):
-        return config_dict
-
-    ai_embeddings = ai_section.get(RUNTIME_EMBEDDINGS_CONFIG_SECTION)
-    if isinstance(ai_embeddings, dict):
-        config_dict[RUNTIME_EMBEDDINGS_CONFIG_SECTION] = dict(ai_embeddings)
-        ai_section.pop(RUNTIME_EMBEDDINGS_CONFIG_SECTION, None)
-    return config_dict
-
-
 # Keys renamed/removed from DaemonConfig that may still exist in DB config_store
 _LEGACY_KEYS_TO_DROP = frozenset(
     {"_meta", "review", "task_description", "title_synthesis", "rules", "ui_settings"}
@@ -757,13 +744,13 @@ def _drop_legacy_neo4j_config_store_keys(
 def _drop_legacy_embedding_config_store_keys(
     flat_config: dict[str, Any], config_store: Any | None
 ) -> dict[str, Any]:
-    """Ignore stale pre-ai embedding config_store keys after the namespace migration."""
-    legacy_keys = sorted(key for key in flat_config if is_runtime_embedding_config_key(key))
+    """Ignore stale embedding config_store keys after the hard namespace cut."""
+    legacy_keys = sorted(key for key in flat_config if is_removed_embedding_config_store_key(key))
     if not legacy_keys:
         return flat_config
 
     logger.warning(
-        "Ignoring stale embedding config_store keys after namespace migration: %s",
+        "Ignoring stale embedding config_store keys after hard namespace cut: %s",
         ", ".join(legacy_keys),
     )
     migrated = dict(flat_config)
@@ -841,8 +828,7 @@ def load_config(
         flat_db = _drop_legacy_neo4j_config_store_keys(flat_db, config_store)
         flat_db = _drop_legacy_embedding_config_store_keys(flat_db, config_store)
         if flat_db:
-            db_dict = unflatten_config(flat_db)
-            db_dict = _normalize_ai_embeddings_config(db_dict)
+            db_dict = unflatten_config(storage_embedding_config_entries_to_runtime(flat_db))
             # Resolve $secret:NAME and ${VAR} patterns in DB values
             if secret_resolver is not None or any(
                 isinstance(v, str) and ("$secret:" in v or "${" in v) for v in flat_db.values()

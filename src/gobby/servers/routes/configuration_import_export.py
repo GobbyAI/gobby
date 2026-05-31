@@ -18,8 +18,9 @@ from starlette.concurrency import run_in_threadpool
 
 from gobby.config.app import DaemonConfig
 from gobby.config.embedding_keys import (
-    runtimeize_embedding_config_entries,
-    runtimeize_embedding_config_key,
+    runtime_embedding_config_entries_to_storage,
+    storage_embedding_config_entries_to_runtime,
+    storage_embedding_config_key_to_runtime_key,
 )
 from gobby.prompts.models import parse_frontmatter
 from gobby.servers.routes.configuration_context import ConfigurationRouteContext
@@ -259,8 +260,10 @@ def persist_imported_config(
     restart_touched_keys: set[str],
 ) -> int:
     """Persist validated import values into config_store and secret storage."""
-    flat_config = runtimeize_embedding_config_entries(flat_config)
-    config_secret_keys = {runtimeize_embedding_config_key(key) for key in config_secret_keys}
+    flat_config = storage_embedding_config_entries_to_runtime(flat_config)
+    config_secret_keys = {
+        storage_embedding_config_key_to_runtime_key(key) for key in config_secret_keys
+    }
     secret_references, secret_values, plain_values = partition_config_entries(
         flat_config,
         config_secret_keys,
@@ -281,20 +284,23 @@ def persist_imported_config(
     DaemonConfig(**unflatten_config(validation_flat))
 
     count = 0
+    storage_secret_references = runtime_embedding_config_entries_to_storage(secret_references)
+    storage_secret_values = runtime_embedding_config_entries_to_storage(validated_secret_values)
+    storage_plain_values = runtime_embedding_config_entries_to_storage(plain_values)
     with config_store.db.transaction():
         config_store.delete_all()
-        if secret_references:
-            count += config_store.set_many(secret_references, source="import")
-        if validated_secret_values:
+        if storage_secret_references:
+            count += config_store.set_many(storage_secret_references, source="import")
+        if storage_secret_values:
             secret_store = secret_store_provider()
-            for key, value in validated_secret_values.items():
+            for key, value in storage_secret_values.items():
                 if value is None or value == "":
                     config_store.clear_secret(key, secret_store)
                 else:
                     config_store.set_secret(key, value, secret_store, source="import")
                     count += 1
-        if plain_values:
-            count += config_store.set_many(plain_values, source="import")
+        if storage_plain_values:
+            count += config_store.set_many(storage_plain_values, source="import")
         mark_secret_keys(config_store, set(secret_references) | config_secret_keys)
 
     restart_touched_keys.update(secret_references)

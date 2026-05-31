@@ -9,7 +9,11 @@ from unittest.mock import patch
 import pytest
 
 from gobby.config.app import DaemonConfig
-from gobby.config.embedding_keys import AI_EMBEDDING_API_KEY_KEY, EMBEDDING_API_KEY_SECRET_NAME
+from gobby.config.embedding_keys import (
+    AI_EMBEDDING_API_KEY_KEY,
+    AI_EMBEDDING_MODEL_KEY,
+    EMBEDDING_API_KEY_SECRET_NAME,
+)
 from gobby.mcp_proxy.tools.config import create_config_registry
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.config_store import ConfigStore, config_key_to_secret_name, is_secret_key_name
@@ -216,6 +220,28 @@ class TestSetConfig:
         assert config_store.get("telemetry.log_level") == "debug"
         assert config_state["config"].telemetry.log_level == "debug"
 
+    def test_set_config_accepts_canonical_embedding_key(
+        self, config_registry, config_store: ConfigStore, config_state: dict[str, DaemonConfig]
+    ) -> None:
+        """Embedding config is written through canonical ai.embeddings keys."""
+        tool = config_registry.get_tool("set_config")
+        result = tool(key=AI_EMBEDDING_MODEL_KEY, value="bge-m3")
+
+        assert result["success"] is True
+        assert config_store.get(AI_EMBEDDING_MODEL_KEY) == "bge-m3"
+        assert config_state["config"].embeddings.model == "bge-m3"
+
+    @pytest.mark.parametrize("key", ["embeddings.model", "ai.embeddings.provider"])
+    def test_set_config_rejects_removed_embedding_keys(
+        self, config_registry, config_store: ConfigStore, key: str
+    ) -> None:
+        tool = config_registry.get_tool("set_config")
+        result = tool(key=key, value="bge-m3")
+
+        assert result["success"] is False
+        assert "Embedding" in result["error"]
+        assert config_store.get(AI_EMBEDDING_MODEL_KEY) is None
+
     def test_set_config_auto_detects_requirepass_secret(
         self,
         config_registry_with_db: InternalToolRegistry,
@@ -298,6 +324,24 @@ class TestListConfigKeys:
         assert result["count"] == 2
         assert all(k.startswith("telemetry") for k in result["keys"])
 
+    def test_list_config_keys_uses_canonical_embedding_prefix(
+        self, config_registry: InternalToolRegistry, config_store: ConfigStore
+    ) -> None:
+        config_store.set(AI_EMBEDDING_MODEL_KEY, "bge-m3")
+
+        tool = config_registry.get_tool("list_config_keys")
+        result = tool(prefix="ai.embeddings")
+
+        assert result["success"] is True
+        assert result["keys"] == [AI_EMBEDDING_MODEL_KEY]
+
+    def test_list_config_keys_rejects_embedding_alias(self, config_registry) -> None:
+        tool = config_registry.get_tool("list_config_keys")
+        result = tool(prefix="embeddings")
+
+        assert result["success"] is False
+        assert "ai.embeddings" in result["error"]
+
 
 class TestEnsureDefaults:
     """Tests for ensure_defaults tool."""
@@ -355,6 +399,19 @@ class TestEnsureDefaults:
 
         assert result["success"] is False
         assert "No default keys" in result["error"]
+
+    def test_ensure_defaults_uses_canonical_embedding_keys(
+        self, config_registry, config_store: ConfigStore
+    ) -> None:
+        tool = config_registry.get_tool("ensure_defaults")
+        result = tool(section="ai.embeddings")
+
+        assert result["success"] is True
+        assert result["total_section_keys"] == 5
+        assert AI_EMBEDDING_MODEL_KEY in result["keys_inserted"]
+        assert "ai.embeddings.provider" not in result["keys_inserted"]
+        assert all(key.startswith("ai.embeddings.") for key in result["keys_inserted"])
+        assert config_store.get(AI_EMBEDDING_MODEL_KEY) == "nomic-embed-text"
 
 
 # ===========================================================================
@@ -842,11 +899,13 @@ class TestDeleteConfig:
             delete_tool = config_registry_with_db.get_tool("delete_config")
 
             assert (
-                set_tool(key="embeddings.api_key", value="sk-delete-123", is_secret=True)["success"]
+                set_tool(key=AI_EMBEDDING_API_KEY_KEY, value="sk-delete-123", is_secret=True)[
+                    "success"
+                ]
                 is True
             )
 
-            result = delete_tool(key="embeddings.api_key")
+            result = delete_tool(key=AI_EMBEDDING_API_KEY_KEY)
 
             secret_store = SecretStore(temp_db)
             assert result["success"] is True
@@ -889,7 +948,9 @@ class TestDeleteConfig:
         with patch("gobby.utils.machine_id.get_machine_id", return_value="test-machine-12345"):
             set_tool = config_registry_with_db.get_tool("set_config")
             assert (
-                set_tool(key="embeddings.api_key", value="sk-delete-456", is_secret=True)["success"]
+                set_tool(key=AI_EMBEDDING_API_KEY_KEY, value="sk-delete-456", is_secret=True)[
+                    "success"
+                ]
                 is True
             )
 
@@ -899,7 +960,7 @@ class TestDeleteConfig:
                 config_setter=lambda c: config_state.__setitem__("config", c),
             )
             delete_tool = dbless_registry.get_tool("delete_config")
-            result = delete_tool(key="embeddings.api_key")
+            result = delete_tool(key=AI_EMBEDDING_API_KEY_KEY)
 
             secret_store = SecretStore(temp_db)
             assert result["success"] is False

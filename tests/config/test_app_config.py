@@ -697,8 +697,10 @@ class TestLoadConfig:
                 return {
                     runtime_embedding_key("model"): "legacy-model",
                     runtime_embedding_key("api_base"): "http://legacy/v1",
+                    runtime_embedding_key("provider"): "ollama",
                     AI_EMBEDDING_MODEL_KEY: "canonical-model",
                     AI_EMBEDDING_DIM_KEY: 768,
+                    "ai.embeddings.provider": "lmstudio",
                 }
 
             def delete(self, key: str) -> bool:
@@ -715,8 +717,10 @@ class TestLoadConfig:
         assert config.embeddings.model == "canonical-model"
         assert config.embeddings.api_base is None
         assert sorted(store.deleted) == [
+            "ai.embeddings.provider",
             runtime_embedding_key("api_base"),
             runtime_embedding_key("model"),
+            runtime_embedding_key("provider"),
         ]
 
     def test_load_config_drops_stale_neo4j_db_keys(

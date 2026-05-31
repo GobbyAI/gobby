@@ -312,6 +312,15 @@ class TestEmbeddingsConfigFields:
         assert config.api_base == "http://localhost:11434/v1"
         assert config.dim == 768
 
+    def test_provider_field_removed(self) -> None:
+        """provider is no longer part of the runtime embedding config surface."""
+        from gobby.config.persistence import EmbeddingsConfig
+
+        config = EmbeddingsConfig(provider="lmstudio")
+
+        assert "provider" not in EmbeddingsConfig.model_fields
+        assert not hasattr(config, "provider")
+
 
 class TestFalkorConfigFields:
     """Test FalkorConfig fields."""

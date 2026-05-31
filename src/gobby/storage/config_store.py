@@ -15,8 +15,8 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.config.embedding_keys import (
-    canonicalize_embedding_config_key,
     embedding_config_secret_name,
+    validate_embedding_storage_config_key,
 )
 from gobby.storage.hub.protocol import HubDatabase
 
@@ -98,8 +98,8 @@ class ConfigStore:
 
     def set(self, key: str, value: Any, source: str = "user") -> None:
         """Upsert a single config value (JSON-encoded)."""
+        validate_embedding_storage_config_key(key)
         _reject_plaintext_secret_value(key, value)
-        key = canonicalize_embedding_config_key(key)
         now = datetime.now(UTC).isoformat()
         json_value = json.dumps(value)
         self.db.execute(
@@ -115,8 +115,8 @@ class ConfigStore:
     def set_many(self, entries: dict[str, Any], source: str = "user") -> int:
         """Bulk upsert config entries. Returns count of entries written."""
         for key, value in entries.items():
+            validate_embedding_storage_config_key(key)
             _reject_plaintext_secret_value(key, value)
-        entries = {canonicalize_embedding_config_key(key): value for key, value in entries.items()}
         now = datetime.now(UTC).isoformat()
         count = 0
         for key, value in entries.items():
@@ -171,7 +171,7 @@ class ConfigStore:
         The actual value is encrypted in the ``secrets`` table.
         Both writes happen in a single transaction for consistency.
         """
-        key = canonicalize_embedding_config_key(key)
+        validate_embedding_storage_config_key(key)
         secret_name = config_key_to_secret_name(key)
         ref = f"$secret:{secret_name}"
         now = datetime.now(UTC).isoformat()
@@ -207,7 +207,7 @@ class ConfigStore:
         Both deletions run in a single transaction so either both succeed
         or both roll back.
         """
-        key = canonicalize_embedding_config_key(key)
+        validate_embedding_storage_config_key(key)
         secret_name = config_key_to_secret_name(key)
         with self.db.transaction():
             self.db.execute("DELETE FROM config_store WHERE key = %s", (key,))
