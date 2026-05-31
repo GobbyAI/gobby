@@ -197,6 +197,7 @@ fn configured_postgres_index_feeds_configured_search_when_test_database_is_avail
     let tmp = tempfile::tempdir().expect("tempdir");
     let hub = tmp.path().join("hub");
     let topic = unique_topic("pg-index-search");
+    let _cleanup = PostgresTopicCleanup::new(database_url.clone(), topic.clone());
 
     let init = gwiki(
         &hub,
@@ -257,8 +258,26 @@ fn configured_postgres_index_feeds_configured_search_when_test_database_is_avail
         }),
         "{search_payload:#}"
     );
+}
 
-    cleanup_postgres_topic(&database_url, &topic).expect("cleanup postgres topic");
+struct PostgresTopicCleanup {
+    database_url: String,
+    topic: String,
+}
+
+impl PostgresTopicCleanup {
+    fn new(database_url: String, topic: String) -> Self {
+        Self {
+            database_url,
+            topic,
+        }
+    }
+}
+
+impl Drop for PostgresTopicCleanup {
+    fn drop(&mut self) {
+        let _ = cleanup_postgres_topic(&self.database_url, &self.topic);
+    }
 }
 
 fn cleanup_postgres_topic(database_url: &str, topic: &str) -> Result<(), postgres::Error> {

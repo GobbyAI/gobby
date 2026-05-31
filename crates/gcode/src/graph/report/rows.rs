@@ -74,6 +74,8 @@ fn row_string(row: &Row, keys: &[&str]) -> Option<String> {
 
 fn row_usize(row: &Row, keys: &[&str]) -> Option<usize> {
     keys.iter().find_map(|key| row.get(*key)).and_then(|value| {
+        // Negative i64 values are invalid counts/ranks and are intentionally
+        // discarded by the fallible conversion.
         value
             .as_u64()
             .and_then(|value| usize::try_from(value).ok())

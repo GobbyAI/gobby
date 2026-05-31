@@ -33,9 +33,12 @@ pub(crate) fn execute(
         hits: search_support::store_search_hits(&store, &search_scope, &query),
     };
     let mut semantic_backend = search_support::UnavailableSemanticBackend;
+    let graph = crate::support::graph::memory_graph_from_store(&store, &search_scope);
+    let mut graph_backend = wiki_search::graph_boost::MemoryGraphBoostBackend::new(graph);
     run_search_with_backends(
         &mut bm25_backend,
         &mut semantic_backend,
+        &mut graph_backend,
         output_scope,
         search_scope,
         query,
@@ -69,9 +72,11 @@ fn run_search_attached(
         wiki_search::semantic::OpenAiEmbeddingBackend::new(),
         wiki_search::semantic::GobbyQdrantBackend,
     );
+    let mut graph_backend = wiki_search::graph_boost::PostgresGraphBoostBackend::new(database_url);
     run_search_with_backends(
         &mut bm25_backend,
         &mut semantic_backend,
+        &mut graph_backend,
         output_scope,
         search_scope,
         query,
@@ -79,9 +84,10 @@ fn run_search_attached(
     )
 }
 
-fn run_search_with_backends<B, S>(
+fn run_search_with_backends<B, S, G>(
     bm25_backend: &mut B,
     semantic_backend: &mut S,
+    graph_backend: &mut G,
     output_scope: ScopeIdentity,
     search_scope: wiki_search::SearchScope,
     query: String,
@@ -90,10 +96,12 @@ fn run_search_with_backends<B, S>(
 where
     B: wiki_search::bm25::Bm25SearchBackend,
     S: wiki_search::semantic::SemanticSearchBackend,
+    G: wiki_search::graph_boost::GraphBoostBackend,
 {
     let response = wiki_search::search(
         bm25_backend,
         semantic_backend,
+        graph_backend,
         wiki_search::SearchRequest {
             query: query.clone(),
             scope: search_scope,

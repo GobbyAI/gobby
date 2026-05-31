@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use crate::ingest::{
     IngestResult, index_after_ingest, markdown_metadata, markdown_title, path_to_string,
-    write_asset, write_raw_markdown,
+    write_asset, write_asset_from_path, write_raw_markdown,
 };
 use crate::sources::{
     CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest, SourceRecord,
@@ -31,6 +31,19 @@ pub struct VideoSnapshot {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VideoFileSnapshot {
+    pub location: String,
+    pub file_name: String,
+    pub fetched_at: String,
+    pub path: PathBuf,
+    pub mime_type: Option<String>,
+    pub duration_seconds: Option<u32>,
+    pub frame_interval_seconds: Option<u32>,
+    pub frame_descriptions: Vec<VideoFrameDescription>,
+    pub transcript_segments: Vec<TranscriptSegment>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VideoIngestResult {
     pub record: SourceRecord,
     pub raw_path: PathBuf,
@@ -46,21 +59,59 @@ pub fn ingest_video(
     scope: ScopeIdentity,
     snapshot: VideoSnapshot,
 ) -> Result<VideoIngestResult, WikiError> {
-    let title = markdown_title(&snapshot.file_name);
     let content_hash = gobby_core::indexing::content_hash(&snapshot.bytes);
+    let metadata = VideoSnapshotRef::from_snapshot(&snapshot);
+    ingest_video_with_asset(vault_root, store, scope, metadata, content_hash, |record| {
+        write_asset(vault_root, record, &snapshot.file_name, &snapshot.bytes)
+    })
+}
+
+pub fn ingest_video_file(
+    vault_root: &Path,
+    store: &mut impl WikiIndexStore,
+    scope: ScopeIdentity,
+    snapshot: VideoFileSnapshot,
+) -> Result<VideoIngestResult, WikiError> {
+    let content_hash =
+        gobby_core::indexing::file_content_hash(&snapshot.path).map_err(|error| WikiError::Io {
+            action: "hash video source",
+            path: Some(snapshot.path.clone()),
+            source: error,
+        })?;
+    let metadata = VideoSnapshotRef::from_file_snapshot(&snapshot);
+    ingest_video_with_asset(vault_root, store, scope, metadata, content_hash, |record| {
+        write_asset_from_path(
+            vault_root,
+            record,
+            &snapshot.file_name,
+            &snapshot.path,
+            &record.content_hash,
+        )
+    })
+}
+
+fn ingest_video_with_asset(
+    vault_root: &Path,
+    store: &mut impl WikiIndexStore,
+    scope: ScopeIdentity,
+    snapshot: VideoSnapshotRef<'_>,
+    content_hash: String,
+    write_asset_fn: impl FnOnce(&SourceRecord) -> Result<PathBuf, WikiError>,
+) -> Result<VideoIngestResult, WikiError> {
+    let title = markdown_title(snapshot.file_name);
     let draft = SourceDraft {
-        location: snapshot.location.clone(),
+        location: snapshot.location.to_string(),
         kind: SourceKind::Video,
-        fetched_at: snapshot.fetched_at.clone(),
+        fetched_at: snapshot.fetched_at.to_string(),
         content: Vec::new(),
         title: Some(title),
-        citation: Some(snapshot.location.clone()),
+        citation: Some(snapshot.location.to_string()),
         license: None,
         ingestion_method: IngestionMethod::Manual,
         compile_status: CompileStatus::Pending,
     };
     let record = SourceManifest::register_with_content_hash(vault_root, draft, content_hash)?;
-    let asset_path = write_asset(vault_root, &record, &snapshot.file_name, &snapshot.bytes)?;
+    let asset_path = write_asset_fn(&record)?;
     let frame_interval_seconds = snapshot
         .frame_interval_seconds
         .unwrap_or(DEFAULT_FRAME_INTERVAL_SECONDS);
@@ -86,15 +137,15 @@ pub fn ingest_video(
         &scope,
         &record,
         VideoMarkdownRequest {
-            file_name: &snapshot.file_name,
-            mime_type: snapshot.mime_type.as_deref(),
+            file_name: snapshot.file_name,
+            mime_type: snapshot.mime_type,
             asset_path: &asset_path,
             raw_path: &raw_path,
             duration_seconds: snapshot.duration_seconds,
             frame_interval_seconds,
             frame_samples: &frame_samples,
-            frame_descriptions: &snapshot.frame_descriptions,
-            transcript_segments: &snapshot.transcript_segments,
+            frame_descriptions: snapshot.frame_descriptions,
+            transcript_segments: snapshot.transcript_segments,
         },
     )?;
     index_after_ingest(vault_root, store)?;
@@ -109,6 +160,45 @@ pub fn ingest_video(
     })
 }
 
+struct VideoSnapshotRef<'a> {
+    location: &'a str,
+    file_name: &'a str,
+    fetched_at: &'a str,
+    mime_type: Option<&'a str>,
+    duration_seconds: Option<u32>,
+    frame_interval_seconds: Option<u32>,
+    frame_descriptions: &'a [VideoFrameDescription],
+    transcript_segments: &'a [TranscriptSegment],
+}
+
+impl<'a> VideoSnapshotRef<'a> {
+    fn from_snapshot(snapshot: &'a VideoSnapshot) -> Self {
+        Self {
+            location: &snapshot.location,
+            file_name: &snapshot.file_name,
+            fetched_at: &snapshot.fetched_at,
+            mime_type: snapshot.mime_type.as_deref(),
+            duration_seconds: snapshot.duration_seconds,
+            frame_interval_seconds: snapshot.frame_interval_seconds,
+            frame_descriptions: &snapshot.frame_descriptions,
+            transcript_segments: &snapshot.transcript_segments,
+        }
+    }
+
+    fn from_file_snapshot(snapshot: &'a VideoFileSnapshot) -> Self {
+        Self {
+            location: &snapshot.location,
+            file_name: &snapshot.file_name,
+            fetched_at: &snapshot.fetched_at,
+            mime_type: snapshot.mime_type.as_deref(),
+            duration_seconds: snapshot.duration_seconds,
+            frame_interval_seconds: snapshot.frame_interval_seconds,
+            frame_descriptions: &snapshot.frame_descriptions,
+            transcript_segments: &snapshot.transcript_segments,
+        }
+    }
+}
+
 impl From<VideoIngestResult> for IngestResult {
     fn from(result: VideoIngestResult) -> Self {
         Self {
@@ -120,7 +210,7 @@ impl From<VideoIngestResult> for IngestResult {
 }
 
 fn render_raw_video_markdown(
-    snapshot: &VideoSnapshot,
+    snapshot: &VideoSnapshotRef<'_>,
     source_hash: &str,
     asset_path: &Path,
     frame_interval_seconds: u32,
@@ -128,13 +218,13 @@ fn render_raw_video_markdown(
     let asset_path = path_to_string(asset_path);
     let mut fields = vec![
         ("source_kind", "video".to_string()),
-        ("source_location", snapshot.location.clone()),
-        ("fetched_at", snapshot.fetched_at.clone()),
+        ("source_location", snapshot.location.to_string()),
+        ("fetched_at", snapshot.fetched_at.to_string()),
         ("source_hash", source_hash.to_string()),
         ("source_asset", asset_path.clone()),
     ];
-    if let Some(mime_type) = &snapshot.mime_type {
-        fields.push(("video_mime_type", mime_type.clone()));
+    if let Some(mime_type) = snapshot.mime_type {
+        fields.push(("video_mime_type", mime_type.to_string()));
     }
     if let Some(duration_seconds) = snapshot.duration_seconds {
         fields.push(("video_duration_seconds", duration_seconds.to_string()));
@@ -154,7 +244,7 @@ fn render_raw_video_markdown(
 
     let mut markdown = markdown_metadata(&fields);
     markdown.push_str("# ");
-    markdown.push_str(&markdown_title(&snapshot.file_name));
+    markdown.push_str(&markdown_title(snapshot.file_name));
     markdown.push_str("\n\n");
     markdown.push_str("Original video stored under `");
     markdown.push_str(&asset_path);
@@ -164,7 +254,7 @@ fn render_raw_video_markdown(
 
 #[cfg(test)]
 mod tests {
-    use gobby_core::indexing::content_hash;
+    use gobby_core::indexing::{content_hash, file_content_hash};
 
     use super::*;
     use crate::sources::{SourceKind, SourceManifest};
@@ -236,6 +326,43 @@ mod tests {
         assert_eq!(manifest.entries.len(), 1);
         assert_eq!(manifest.entries[0].kind, SourceKind::Video);
         assert_eq!(manifest.entries[0].content_hash, expected_hash);
+    }
+
+    #[test]
+    fn stores_file_backed_video() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let source_path = temp.path().join("lecture-source.mp4");
+        let bytes = b"\0\0\0\x18ftypmp42file-backed-video";
+        std::fs::write(&source_path, bytes).expect("write source video");
+        let sample = sample_snapshot();
+        let expected_hash = file_content_hash(&source_path).expect("hash source video");
+        let mut store = MemoryWikiStore::default();
+
+        let result = ingest_video_file(
+            temp.path(),
+            &mut store,
+            ScopeIdentity::topic("field-work"),
+            VideoFileSnapshot {
+                location: sample.location,
+                file_name: sample.file_name,
+                fetched_at: sample.fetched_at,
+                path: source_path,
+                mime_type: sample.mime_type,
+                duration_seconds: sample.duration_seconds,
+                frame_interval_seconds: sample.frame_interval_seconds,
+                frame_descriptions: sample.frame_descriptions,
+                transcript_segments: sample.transcript_segments,
+            },
+        )
+        .expect("ingest file-backed video");
+
+        assert_eq!(
+            std::fs::read(temp.path().join(&result.asset_path)).expect("asset bytes"),
+            bytes
+        );
+        let manifest = SourceManifest::read(temp.path()).expect("read source manifest");
+        assert_eq!(manifest.entries[0].content_hash, expected_hash);
+        assert!(store.sources.contains_key(&result.derived_path));
     }
 
     #[test]

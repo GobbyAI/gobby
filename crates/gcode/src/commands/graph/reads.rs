@@ -50,7 +50,10 @@ fn empty_paged_response<T: Serialize>(
             results: vec![],
             hint: hint_for(ctx),
         }),
-        Format::Text => Ok(()),
+        Format::Text => {
+            print_graph_hint_text(ctx);
+            Ok(())
+        }
     }
 }
 

@@ -929,7 +929,7 @@ mod tests {
         );
         assert!(page.starts_with("---\n"));
         assert!(page.contains("title: \"Durable Compile\""));
-        assert!(page.contains("source_kind: topic"));
+        assert!(page.contains("source_kind: \"topic\""));
         assert!(page.contains("[[wiki/sources/compile-behavior|Compile behavior]]"));
         assert!(page.contains("Example Docs, Compile API"));
 

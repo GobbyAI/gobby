@@ -41,16 +41,20 @@ pub(crate) fn write_asset(
     file_name: &str,
     bytes: &[u8],
 ) -> Result<PathBuf, WikiError> {
-    let extension = Path::new(file_name)
-        .extension()
-        .and_then(|value| value.to_str())
-        .map(sanitize_extension)
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "bin".to_string());
-    let asset_path = PathBuf::from("raw")
-        .join("assets")
-        .join(format!("{}.{}", record.id, extension));
+    let asset_path = asset_path(record, file_name);
     write_immutable(vault_root, &asset_path, bytes)?;
+    Ok(asset_path)
+}
+
+pub(crate) fn write_asset_from_path(
+    vault_root: &Path,
+    record: &SourceRecord,
+    file_name: &str,
+    source_path: &Path,
+    content_hash: &str,
+) -> Result<PathBuf, WikiError> {
+    let asset_path = asset_path(record, file_name);
+    write_immutable_file(vault_root, &asset_path, source_path, content_hash)?;
     Ok(asset_path)
 }
 
@@ -152,6 +156,76 @@ fn write_immutable(vault_root: &Path, relative: &Path, bytes: &[u8]) -> Result<(
             source: error,
         }),
     }
+}
+
+fn write_immutable_file(
+    vault_root: &Path,
+    relative: &Path,
+    source_path: &Path,
+    content_hash: &str,
+) -> Result<(), WikiError> {
+    let path = vault_root.join(relative);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| WikiError::Io {
+            action: "create raw source directory",
+            path: Some(parent.to_path_buf()),
+            source: error,
+        })?;
+    }
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+    {
+        Ok(mut file) => {
+            let mut source = std::fs::File::open(source_path).map_err(|error| WikiError::Io {
+                action: "open raw source",
+                path: Some(source_path.to_path_buf()),
+                source: error,
+            })?;
+            std::io::copy(&mut source, &mut file).map_err(|error| WikiError::Io {
+                action: "write raw source",
+                path: Some(path),
+                source: error,
+            })?;
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let existing_hash =
+                gobby_core::indexing::file_content_hash(&path).map_err(|error| WikiError::Io {
+                    action: "hash existing raw source",
+                    path: Some(path.clone()),
+                    source: error,
+                })?;
+            if existing_hash == content_hash {
+                return Ok(());
+            }
+            Err(WikiError::InvalidInput {
+                field: "raw_path",
+                message: format!(
+                    "immutable raw source already exists at {}",
+                    relative.display()
+                ),
+            })
+        }
+        Err(error) => Err(WikiError::Io {
+            action: "create raw source",
+            path: Some(path),
+            source: error,
+        }),
+    }
+}
+
+fn asset_path(record: &SourceRecord, file_name: &str) -> PathBuf {
+    let extension = Path::new(file_name)
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(sanitize_extension)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "bin".to_string());
+    PathBuf::from("raw")
+        .join("assets")
+        .join(format!("{}.{}", record.id, extension))
 }
 
 fn sanitize_extension(extension: &str) -> String {

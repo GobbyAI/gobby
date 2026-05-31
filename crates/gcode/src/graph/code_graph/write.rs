@@ -257,6 +257,7 @@ pub fn clear_all_code_index(config: &crate::config::FalkorConfig) -> anyhow::Res
         Ok((Some(()), ServiceState::Available)) => Ok(()),
         Ok((_, ServiceState::NotConfigured)) => Err(GraphReadError::NotConfigured.into()),
         Ok((_, ServiceState::Unreachable { message })) => {
+            log::warn!("FalkorDB was unreachable while clearing code graph: {message}");
             Err(GraphReadError::Unreachable { message }.into())
         }
         Ok((None, ServiceState::Available)) => Err(GraphReadError::QueryFailed {

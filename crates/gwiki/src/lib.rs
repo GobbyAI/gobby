@@ -39,6 +39,6 @@ pub mod vault;
 pub mod video;
 pub mod vision;
 
-pub use api::{Command, CommandOutcome, CommandResult, ScopeIdentity, ScopeSelection};
+pub use api::{Command, CommandOutcome, CommandResult, ScopeIdentity, ScopeKind, ScopeSelection};
 pub use error::WikiError;
 pub use runner::{resolve_research_scope, run};

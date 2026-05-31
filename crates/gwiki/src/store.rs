@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 
 use serde_json::json;
 
+use crate::models::WikiScope;
+
 pub const MAX_MEMORY_INDEX_BYTES_ENV: &str = "GWIKI_MAX_MEMORY_INDEX_BYTES";
 const MAX_ID_LEN: usize = 63;
 const HASH_SUFFIX_LEN: usize = 12;
@@ -70,39 +72,40 @@ pub struct WikiIngestion {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WikiStoreScope {
-    scope_kind: String,
-    scope_id: String,
-    project_id: Option<String>,
-    topic_name: Option<String>,
+    scope: WikiScope,
 }
 
 impl WikiStoreScope {
     pub fn project(project_id: impl Into<String>) -> Self {
-        let project_id = project_id.into();
         Self {
-            scope_kind: "project".to_string(),
-            scope_id: project_id.clone(),
-            project_id: Some(project_id),
-            topic_name: None,
+            scope: WikiScope::Project {
+                project_id: project_id.into(),
+            },
         }
     }
 
     pub fn topic(topic_name: impl Into<String>) -> Self {
-        let topic_name = topic_name.into();
         Self {
-            scope_kind: "topic".to_string(),
-            scope_id: topic_name.clone(),
-            project_id: None,
-            topic_name: Some(topic_name),
+            scope: WikiScope::Topic {
+                name: topic_name.into(),
+            },
         }
     }
 
     pub fn scope_kind(&self) -> &str {
-        &self.scope_kind
+        self.scope.kind()
     }
 
     pub fn scope_id(&self) -> &str {
-        &self.scope_id
+        self.scope.identity()
+    }
+
+    fn project_id(&self) -> Option<String> {
+        self.scope.project_id().map(ToOwned::to_owned)
+    }
+
+    fn topic_name(&self) -> Option<String> {
+        self.scope.topic_name().map(ToOwned::to_owned)
     }
 }
 
@@ -243,10 +246,10 @@ impl<'a> PostgresWikiStore<'a> {
 
     fn scope_params(&self) -> (String, String, Option<String>, Option<String>) {
         (
-            self.scope.scope_kind.clone(),
-            self.scope.scope_id.clone(),
-            self.scope.project_id.clone(),
-            self.scope.topic_name.clone(),
+            self.scope.scope_kind().to_string(),
+            self.scope.scope_id().to_string(),
+            self.scope.project_id(),
+            self.scope.topic_name(),
         )
     }
 
@@ -261,8 +264,8 @@ impl<'a> PostgresWikiStore<'a> {
              FROM gwiki_documents
              WHERE scope_kind = $1 AND scope_id = $2 AND path = $3",
             &[
-                &self.scope.scope_kind.as_str(),
-                &self.scope.scope_id.as_str(),
+                &self.scope.scope_kind(),
+                &self.scope.scope_id(),
                 &path_string,
             ],
         )?;
@@ -286,10 +289,7 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
             "SELECT path, content_hash
              FROM gwiki_documents
              WHERE scope_kind = $1 AND scope_id = $2",
-            &[
-                &self.scope.scope_kind.as_str(),
-                &self.scope.scope_id.as_str(),
-            ],
+            &[&self.scope.scope_kind(), &self.scope.scope_id()],
         )?;
         Ok(rows
             .into_iter()
@@ -379,11 +379,7 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
         let mut tx = self.conn.transaction()?;
         if let Err(error) = tx.execute(
             "DELETE FROM gwiki_chunks WHERE scope_kind = $1 AND scope_id = $2 AND path = $3",
-            &[
-                &scope.scope_kind.as_str(),
-                &scope.scope_id.as_str(),
-                &path_string,
-            ],
+            &[&scope.scope_kind(), &scope.scope_id(), &path_string],
         ) {
             let _ = tx.rollback();
             return Err(error.into());
@@ -411,10 +407,10 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
             .to_string();
             let frontmatter = "{}";
             let (scope_kind, scope_id, project_id, topic_name) = (
-                scope.scope_kind.clone(),
-                scope.scope_id.clone(),
-                scope.project_id.clone(),
-                scope.topic_name.clone(),
+                scope.scope_kind().to_string(),
+                scope.scope_id().to_string(),
+                scope.project_id(),
+                scope.topic_name(),
             );
 
             if let Err(error) = tx.execute(
@@ -460,11 +456,7 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
         let mut tx = self.conn.transaction()?;
         tx.execute(
             "DELETE FROM gwiki_links WHERE scope_kind = $1 AND scope_id = $2 AND path = $3",
-            &[
-                &scope.scope_kind.as_str(),
-                &scope.scope_id.as_str(),
-                &path_string,
-            ],
+            &[&scope.scope_kind(), &scope.scope_id(), &path_string],
         )?;
 
         for link in links {
@@ -485,10 +477,10 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
             })
             .to_string();
             let (scope_kind, scope_id, project_id, topic_name) = (
-                scope.scope_kind.clone(),
-                scope.scope_id.clone(),
-                scope.project_id.clone(),
-                scope.topic_name.clone(),
+                scope.scope_kind().to_string(),
+                scope.scope_id().to_string(),
+                scope.project_id(),
+                scope.topic_name(),
             );
 
             tx.execute(
@@ -625,12 +617,10 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
 
     fn delete_derived_rows(&mut self, path: &Path) -> Result<(), StoreError> {
         let path = display_path(path);
+        let scope_kind = self.scope.scope_kind().to_string();
+        let scope_id = self.scope.scope_id().to_string();
         let mut tx = self.conn.transaction()?;
-        let params: [&(dyn postgres::types::ToSql + Sync); 3] = [
-            &self.scope.scope_kind.as_str(),
-            &self.scope.scope_id.as_str(),
-            &path,
-        ];
+        let params: [&(dyn postgres::types::ToSql + Sync); 3] = [&scope_kind, &scope_id, &path];
         tx.execute(
             "DELETE FROM gwiki_chunks WHERE scope_kind = $1 AND scope_id = $2 AND path = $3",
             &params,
@@ -675,8 +665,8 @@ fn scoped_id(prefix: &str, scope: &WikiStoreScope, path: &Path, suffix: Option<&
 fn scoped_text_id(prefix: &str, scope: &WikiStoreScope, path: &Path, suffixes: &[&str]) -> String {
     let mut id = format!(
         "{prefix}:{}:{}:{}",
-        scope.scope_kind,
-        scope.scope_id,
+        scope.scope_kind(),
+        scope.scope_id(),
         display_path(path)
     );
     for suffix in suffixes {

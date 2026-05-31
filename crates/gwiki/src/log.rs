@@ -98,6 +98,8 @@ fn render_entry(entry: &LogEntry) -> String {
 }
 
 fn same_log_path(left: &Path, right: &Path) -> bool {
+    // Compare after resolving existing parents; append_logs relies on this
+    // before writing so scope/global aliases do not receive duplicate entries.
     resolved_log_path(left) == resolved_log_path(right)
 }
 

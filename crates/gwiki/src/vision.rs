@@ -111,7 +111,7 @@ fn render_image_derived_markdown(
         ("source_asset".to_string(), asset_path.clone()),
         ("source_raw".to_string(), raw_path.clone()),
         ("fetched_at".to_string(), record.fetched_at.clone()),
-        ("scope_kind".to_string(), scope.kind.clone()),
+        ("scope_kind".to_string(), scope.kind.as_str().to_string()),
         ("scope_id".to_string(), scope.id.clone()),
         (
             "vision_status".to_string(),
@@ -171,7 +171,7 @@ fn render_image_derived_markdown(
             markdown.push_str("## Vision Metadata\n\n");
             for (key, value) in extraction.metadata {
                 markdown.push_str("- ");
-                markdown.push_str(&single_line(&key));
+                markdown.push_str(&vision_metadata_key(&key));
                 markdown.push_str(": ");
                 markdown.push_str(&single_line(&value));
                 markdown.push('\n');
@@ -199,6 +199,26 @@ fn render_image_derived_markdown(
         markdown.push('\n');
     }
     markdown
+}
+
+fn vision_metadata_key(key: &str) -> String {
+    let sanitized = single_line(key)
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('_')
+        .to_ascii_lowercase();
+    if sanitized.is_empty() {
+        "vision_metadata".to_string()
+    } else {
+        format!("vision_{sanitized}")
+    }
 }
 
 #[cfg(test)]

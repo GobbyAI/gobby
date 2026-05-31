@@ -37,8 +37,7 @@ fn postgres_count(
     table: &'static str,
     scope: &search::SearchScope,
 ) -> Result<usize, WikiError> {
-    let sql =
-        format!("SELECT COUNT(*)::BIGINT FROM {table} WHERE scope_kind = $1 AND scope_id = $2");
+    let sql = format!("SELECT COUNT(*) FROM {table} WHERE scope_kind = $1 AND scope_id = $2");
     let count = conn
         .query_one(&sql, &[&scope.scope_kind(), &scope.scope_value()])
         .map_err(|error| WikiError::Config {

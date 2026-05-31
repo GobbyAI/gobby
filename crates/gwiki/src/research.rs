@@ -404,11 +404,17 @@ fn append_raw_index(vault_root: &Path, title: &str, note_path: &Path) -> Result<
             source: error,
         })?;
     lock_raw_index(&lock, &lock_path)?;
-    let mut contents = fs::read_to_string(&index_path).map_err(|error| WikiError::Io {
-        action: "read raw index",
-        path: Some(index_path.clone()),
-        source: error,
-    })?;
+    let mut contents = match fs::read_to_string(&index_path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == ErrorKind::NotFound => "# Raw Sources\n\n".to_string(),
+        Err(error) => {
+            return Err(WikiError::Io {
+                action: "read raw index",
+                path: Some(index_path.clone()),
+                source: error,
+            });
+        }
+    };
     if contents.is_empty() {
         contents.push_str("# Raw sources\n\n");
     }

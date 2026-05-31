@@ -51,6 +51,11 @@ impl EventMonitor {
                 path: Some(self.path.clone()),
                 source: error,
             })?;
+        fs4::FileExt::lock(&file).map_err(|error| WikiError::Io {
+            action: "lock session event log",
+            path: Some(self.path.clone()),
+            source: error,
+        })?;
         file.write_all(&line).map_err(|error| WikiError::Io {
             action: "append session event",
             path: Some(self.path.clone()),

@@ -1,8 +1,6 @@
 use super::file::{ExplicitFileRoute, explicit_file_route, write_parsed_file_facts};
 use super::lifecycle::cleanup_deleted_file_projections;
-use super::overlay::{
-    IndexedFileState, OverlayReconcileAction, overlay_reconcile_action, valid_porcelain_status_byte,
-};
+use super::overlay::{IndexedFileState, OverlayReconcileAction, overlay_reconcile_action};
 use super::sink::CodeFactSink;
 use super::util::DEFAULT_EXCLUDES;
 use super::*;
@@ -348,16 +346,6 @@ fn overlay_reconciliation_actions_cover_inherit_shadow_add_delete() {
         overlay_reconcile_action(false, None, None, Some(&overlay), true),
         OverlayReconcileAction::DeleteOverlay
     );
-}
-
-#[test]
-fn porcelain_status_byte_validation_matches_git_v1_codes() {
-    for byte in [b' ', b'M', b'A', b'D', b'R', b'C', b'U', b'?', b'!'] {
-        assert!(valid_porcelain_status_byte(byte));
-    }
-    for byte in [0, b'X', b'\n'] {
-        assert!(!valid_porcelain_status_byte(byte));
-    }
 }
 
 #[test]

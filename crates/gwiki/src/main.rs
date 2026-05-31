@@ -61,11 +61,11 @@ enum CliCommand {
 
 #[derive(Debug, Args)]
 struct ScopeArgs {
-    /// Use the current Gobby project's wiki scope.
+    /// Use the current Gobby project's wiki scope; default is global.
     #[arg(long, global = true, conflicts_with = "topic")]
     project: bool,
 
-    /// Use a global topic wiki scope.
+    /// Use a named topic wiki scope; default is global.
     #[arg(long, global = true, value_name = "NAME")]
     topic: Option<String>,
 }

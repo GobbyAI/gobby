@@ -1,5 +1,6 @@
 use reqwest::StatusCode;
 use serde_json::{Value, json};
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use crate::config::{CODE_SYMBOL_COLLECTION_PREFIX, QdrantConfig};
@@ -10,6 +11,7 @@ use super::types::{ExistingVectorCollectionSchema, VectorLifecycleError};
 // Keep code-symbol collections compatible with the Python daemon's Qdrant schema.
 pub const VECTOR_DISTANCE_COSINE: &str = "Cosine";
 const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
+static QDRANT_HTTP_CLIENT: OnceLock<Mutex<Option<reqwest::blocking::Client>>> = OnceLock::new();
 
 pub fn collection_name(collection_prefix: &str, project_id: &str) -> String {
     let collection = format!("{collection_prefix}{project_id}");
@@ -119,10 +121,20 @@ fn parse_collection_names(data: &Value) -> Vec<String> {
 }
 
 fn qdrant_http_client() -> Result<reqwest::blocking::Client, VectorLifecycleError> {
-    reqwest::blocking::Client::builder()
+    let mut cached = QDRANT_HTTP_CLIENT
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .map_err(|err| VectorLifecycleError::QdrantOperation(err.to_string()))?;
+    if let Some(client) = cached.as_ref() {
+        return Ok(client.clone());
+    }
+
+    let client = reqwest::blocking::Client::builder()
         .timeout(HTTP_TIMEOUT)
         .build()
-        .map_err(|err| VectorLifecycleError::QdrantOperation(err.to_string()))
+        .map_err(|err| VectorLifecycleError::QdrantOperation(err.to_string()))?;
+    *cached = Some(client.clone());
+    Ok(client)
 }
 
 pub(super) fn qdrant_request_for_config(

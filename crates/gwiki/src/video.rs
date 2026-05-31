@@ -229,7 +229,7 @@ fn render_video_derived_markdown(
         ("source_asset".to_string(), asset_path.clone()),
         ("source_raw".to_string(), raw_path.clone()),
         ("fetched_at".to_string(), record.fetched_at.clone()),
-        ("scope_kind".to_string(), scope.kind.clone()),
+        ("scope_kind".to_string(), scope.kind.as_str().to_string()),
         ("scope_id".to_string(), scope.id.clone()),
         (
             "video_frame_interval_seconds".to_string(),

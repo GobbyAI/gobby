@@ -316,12 +316,7 @@ fn git_status_relative_paths(root_path: &Path) -> anyhow::Result<HashSet<String>
         if !is_porcelain_status_entry(entry) {
             continue;
         }
-        let path = String::from_utf8_lossy(&entry[3..]);
-        let path = if cfg!(windows) {
-            path.replace('\\', "/")
-        } else {
-            path.into_owned()
-        };
+        let path = String::from_utf8_lossy(&entry[3..]).into_owned();
         if !path.is_empty() {
             paths.insert(path);
         }
@@ -336,11 +331,26 @@ fn is_porcelain_status_entry(entry: &[u8]) -> bool {
         && entry[2] == b' '
 }
 
-pub(super) fn valid_porcelain_status_byte(byte: u8) -> bool {
+fn valid_porcelain_status_byte(byte: u8) -> bool {
     matches!(
         byte,
         b' ' | b'M' | b'A' | b'D' | b'R' | b'C' | b'U' | b'?' | b'!'
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::valid_porcelain_status_byte;
+
+    #[test]
+    fn porcelain_status_byte_validation_matches_git_v1_codes() {
+        for byte in [b' ', b'M', b'A', b'D', b'R', b'C', b'U', b'?', b'!'] {
+            assert!(valid_porcelain_status_byte(byte));
+        }
+        for byte in [0, b'X', b'\n'] {
+            assert!(!valid_porcelain_status_byte(byte));
+        }
+    }
 }
 
 fn rel_matches_filter(root_path: &Path, path_filter: &Path, rel: &str) -> bool {

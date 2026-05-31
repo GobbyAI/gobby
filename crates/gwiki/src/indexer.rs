@@ -269,7 +269,10 @@ fn parse_wiki_document(
             byte_start: chunk.byte_start,
             byte_end: chunk.byte_end,
             heading: chunk.heading,
-            content: body[chunk.byte_start..chunk.byte_end].to_string(),
+            content: body
+                .get(chunk.byte_start..chunk.byte_end)
+                .unwrap_or_default()
+                .to_string(),
         })
         .collect();
     let links = extract_links(path, &body);

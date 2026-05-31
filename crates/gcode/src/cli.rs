@@ -218,7 +218,8 @@ pub(crate) enum Command {
         /// Show N context lines before and after match
         #[arg(short = 'C', long)]
         context: Option<usize>,
-        /// Glob pattern to filter files (bare globs match basenames; slash globs match paths)
+        /// Glob pattern to filter files, ANDed with PATH filters when both are present
+        /// (bare globs match basenames; slash globs match paths)
         #[arg(short = 'g', long)]
         glob: Vec<String>,
         /// Maximum matching lines to include

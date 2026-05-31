@@ -4,7 +4,7 @@ use crate::ingest::{
     IngestResult, index_after_ingest, markdown_metadata, markdown_title, path_to_string,
     write_asset, write_raw_markdown,
 };
-use crate::sources::{CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest};
+use crate::sources::{CompileStatus, IngestionMethod, SourceDraftRef, SourceKind, SourceManifest};
 use crate::store::WikiIndexStore;
 use crate::vision::{
     VisionDegradation, VisionEndpoint, VisionMarkdownResult, VisionRequest,
@@ -55,18 +55,20 @@ pub fn ingest_image_with_vision(
     endpoint: VisionEndpoint<'_>,
 ) -> Result<ImageIngestResult, WikiError> {
     let title = markdown_title(&snapshot.file_name);
-    let draft = SourceDraft {
-        location: snapshot.location.clone(),
-        kind: SourceKind::Image,
-        fetched_at: snapshot.fetched_at.clone(),
-        content: snapshot.bytes.clone(),
-        title: Some(title),
-        citation: Some(snapshot.location.clone()),
-        license: None,
-        ingestion_method: IngestionMethod::Manual,
-        compile_status: CompileStatus::Pending,
-    };
-    let record = SourceManifest::register(vault_root, draft)?;
+    let record = SourceManifest::register_borrowed(
+        vault_root,
+        SourceDraftRef {
+            location: snapshot.location.clone(),
+            kind: SourceKind::Image,
+            fetched_at: snapshot.fetched_at.clone(),
+            content: &snapshot.bytes,
+            title: Some(title),
+            citation: Some(snapshot.location.clone()),
+            license: None,
+            ingestion_method: IngestionMethod::Manual,
+            compile_status: CompileStatus::Pending,
+        },
+    )?;
     let asset_path = write_asset(vault_root, &record, &snapshot.file_name, &snapshot.bytes)?;
     let raw_markdown = render_raw_image_markdown(&snapshot, &record.content_hash, &asset_path);
     let raw_path = write_raw_markdown(vault_root, &record, &raw_markdown)?;

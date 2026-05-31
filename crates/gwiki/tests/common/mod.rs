@@ -16,18 +16,18 @@ pub const GCODE_JSON: &str = r#"{
 "#;
 
 pub fn write_project_json(project: &Path) -> PathBuf {
-    let gobby_dir = project.join(".gobby");
-    fs::create_dir_all(&gobby_dir).expect("create .gobby");
-    let path = gobby_dir.join("project.json");
-    fs::write(&path, PROJECT_JSON).expect("write project json");
-    path
+    write_gobby_fixture(project, "project.json", PROJECT_JSON)
 }
 
 pub fn write_gcode_json(project: &Path) -> PathBuf {
+    write_gobby_fixture(project, "gcode.json", GCODE_JSON)
+}
+
+fn write_gobby_fixture(project: &Path, file_name: &str, contents: &str) -> PathBuf {
     let gobby_dir = project.join(".gobby");
     fs::create_dir_all(&gobby_dir).expect("create .gobby");
-    let path = gobby_dir.join("gcode.json");
-    fs::write(&path, GCODE_JSON).expect("write gcode json");
+    let path = gobby_dir.join(file_name);
+    fs::write(&path, contents).expect("write .gobby fixture");
     path
 }
 

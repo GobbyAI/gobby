@@ -47,13 +47,17 @@ pub fn source_record_matches_path(entry: &SourceRecord, vault_root: &Path, path:
 
 fn render_source_citation(entry: &SourceRecord) -> String {
     let mut parts = Vec::new();
-    parts.push(entry.citation.clone().unwrap_or_else(|| {
+    let primary = entry.citation.clone().unwrap_or_else(|| {
         entry
             .title
             .clone()
             .unwrap_or_else(|| entry.location.clone())
-    }));
-    parts.push(format!("Source: {}", entry.location));
+    });
+    let primary_is_location = normalize_path_text(&primary) == normalize_path_text(&entry.location);
+    parts.push(primary);
+    if !primary_is_location {
+        parts.push(format!("Source: {}", entry.location));
+    }
     parts.push(format!("Kind: {}", entry.kind));
     parts.push(format!("Fetched: {}", entry.fetched_at));
     if let Some(license) = &entry.license {
@@ -140,5 +144,26 @@ mod tests {
         assert!(rendered.starts_with("Already punctuated. Source:"));
         assert!(!rendered.contains(".. Source"));
         assert!(!rendered.ends_with('.'));
+    }
+
+    #[test]
+    fn citation_renderer_does_not_duplicate_location() {
+        let entry = SourceRecord {
+            id: "src".to_string(),
+            location: "raw/research/source.md".to_string(),
+            canonical_location: "raw/research/source.md".to_string(),
+            kind: crate::sources::SourceKind::Url,
+            fetched_at: "2026-05-29T15:00:00Z".to_string(),
+            content_hash: "hash".to_string(),
+            title: None,
+            citation: Some("raw/research/source.md".to_string()),
+            license: None,
+            ingestion_method: crate::sources::IngestionMethod::Manual,
+            compile_status: crate::sources::CompileStatus::Pending,
+        };
+
+        let rendered = render_source_citation(&entry);
+
+        assert_eq!(rendered.matches("raw/research/source.md").count(), 1);
     }
 }

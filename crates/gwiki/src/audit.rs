@@ -190,8 +190,9 @@ fn unsupported_claims(
     source_context: &Arc<Vec<AuditSourceContext>>,
     options: &AuditOptions,
 ) -> Vec<UnsupportedClaim> {
-    let supported_lines = supported_claim_lines(page, provenance, options);
-    claim_lines(page, options)
+    let claims = claim_lines(page, options);
+    let supported_lines = supported_claim_lines(page, provenance, &claims);
+    claims
         .into_iter()
         .filter_map(|claim| {
             if supported_lines.contains(&claim.line) || has_inline_source_support(&claim.text) {
@@ -212,7 +213,7 @@ fn unsupported_claims(
 fn supported_claim_lines(
     page: &WikiPage,
     provenance: &ProvenanceGraph,
-    options: &AuditOptions,
+    claims: &[ClaimLine],
 ) -> BTreeSet<usize> {
     let page_path = page.relative_path.to_string_lossy().replace('\\', "/");
     let page_title = crate::lint::title_for_page(page);
@@ -236,8 +237,8 @@ fn supported_claim_lines(
         return BTreeSet::new();
     }
 
-    claim_lines(page, options)
-        .into_iter()
+    claims
+        .iter()
         .filter_map(|claim| {
             claim
                 .heading
@@ -290,6 +291,9 @@ fn claim_lines(page: &WikiPage, options: &AuditOptions) -> Vec<ClaimLine> {
         if in_fence || trimmed.is_empty() || trimmed.starts_with("<!--") {
             continue;
         }
+        if is_thematic_break(trimmed) {
+            continue;
+        }
         if let Some(heading) = heading_title(trimmed) {
             current_heading = Some(heading);
             continue;
@@ -337,6 +341,20 @@ fn ignored_claim_line(line: &str) -> bool {
         || lower.starts_with("citation:")
         || lower.starts_with("citations:")
         || lower == "- none recorded."
+}
+
+fn is_thematic_break(line: &str) -> bool {
+    let compact = line
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect::<String>();
+    if compact.len() < 3 {
+        return false;
+    }
+    let Some(marker @ ('-' | '*' | '_')) = compact.chars().next() else {
+        return false;
+    };
+    compact.chars().all(|ch| ch == marker)
 }
 
 fn has_inline_source_support(line: &str) -> bool {
@@ -435,10 +453,9 @@ mod tests {
 
         let claims = claim_lines(&page, &AuditOptions::default());
 
-        assert_eq!(claims.len(), 3);
+        assert_eq!(claims.len(), 2);
         assert_eq!(claims[0].text, "Claim after TOML frontmatter.");
-        assert_eq!(claims[1].text, "---");
-        assert_eq!(claims[2].text, "Claim after thematic break.");
+        assert_eq!(claims[1].text, "Claim after thematic break.");
     }
 
     #[test]

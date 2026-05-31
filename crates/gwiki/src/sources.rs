@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::WikiError;
 
+const SOURCE_ID_HASH_PREFIX_LEN: usize = 16;
+
 const SOURCE_MARKER: &str = "<!-- gwiki-source:";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -455,7 +457,9 @@ fn lower_url_scheme_and_authority(location: &str) -> String {
 }
 
 fn source_id(canonical_location: &str, content_hash: &str) -> String {
-    let hash_prefix = &content_hash[..content_hash.len().min(12)];
+    // Sixteen hex chars gives a 64-bit collision space while keeping source IDs
+    // readable in Markdown manifests.
+    let hash_prefix = &content_hash[..content_hash.len().min(SOURCE_ID_HASH_PREFIX_LEN)];
     let mut slug = String::new();
     let mut last_was_dash = false;
     for ch in canonical_location.chars().flat_map(char::to_lowercase) {

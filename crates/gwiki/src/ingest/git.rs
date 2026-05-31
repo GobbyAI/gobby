@@ -2,7 +2,8 @@ use std::path::Path;
 
 use crate::WikiError;
 use crate::ingest::{
-    IngestResult, markdown_metadata, markdown_title, text_from_utf8_lossy, write_raw_then_index,
+    IngestResult, markdown_metadata, markdown_title, single_line, text_from_utf8_lossy,
+    write_raw_then_index,
 };
 use crate::sources::{CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest};
 use crate::store::WikiIndexStore;
@@ -86,12 +87,13 @@ fn render_git_markdown(snapshot: &GitRepositorySnapshot, title: &str, source_has
         markdown.push_str(&markdown_title(&file.path));
         markdown.push_str("\n\n");
         markdown.push_str("file_path: ");
-        markdown.push_str(&file.path);
+        markdown.push_str(&single_line(&file.path));
         let file_text = text_from_utf8_lossy(&file.bytes);
         let fence = markdown_code_fence(&file_text);
         markdown.push_str("\n\n");
         markdown.push_str(&fence);
-        markdown.push_str("text\n");
+        markdown.push_str(&code_fence_info(&file.path));
+        markdown.push('\n');
         markdown.push_str(&file_text);
         if !markdown.ends_with('\n') {
             markdown.push('\n');
@@ -100,6 +102,20 @@ fn render_git_markdown(snapshot: &GitRepositorySnapshot, title: &str, source_has
         markdown.push_str("\n\n");
     }
     markdown
+}
+
+fn code_fence_info(path: &str) -> String {
+    Path::new(path)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| {
+            extension
+                .chars()
+                .filter(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-'))
+                .collect::<String>()
+        })
+        .filter(|extension| !extension.is_empty())
+        .unwrap_or_else(|| "text".to_string())
 }
 
 fn markdown_code_fence(text: &str) -> String {

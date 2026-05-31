@@ -1,4 +1,6 @@
 use std::collections::{HashMap, HashSet};
+use std::fs::File;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 use rayon::prelude::*;
@@ -325,20 +327,24 @@ pub(super) fn build_java_local_class_index(candidate_files: &[PathBuf]) -> HashS
             if ext != "java" {
                 return classes;
             }
-            let Ok(contents) = std::fs::read_to_string(path) else {
+            let Ok(file) = File::open(path) else {
                 return classes;
             };
-            let package = contents.lines().find_map(|line| {
+            let mut package = None;
+            for line in BufReader::new(file).lines().map_while(Result::ok) {
                 let line = line.trim();
-                line.strip_prefix("package ")
-                    .map(|rest| rest.trim().trim_end_matches(';').trim().to_string())
-            });
-            for class_name in java_declared_types(&contents) {
-                classes.insert(class_name.clone());
-                if let Some(package) = package.as_deref()
-                    && !package.is_empty()
-                {
-                    classes.insert(format!("{package}.{class_name}"));
+                if package.is_none() {
+                    package = line
+                        .strip_prefix("package ")
+                        .map(|rest| rest.trim().trim_end_matches(';').trim().to_string());
+                }
+                for class_name in java_declared_types(line) {
+                    classes.insert(class_name.clone());
+                    if let Some(package) = package.as_deref()
+                        && !package.is_empty()
+                    {
+                        classes.insert(format!("{package}.{class_name}"));
+                    }
                 }
             }
             classes
@@ -359,10 +365,10 @@ pub(super) fn build_csharp_local_roots(candidate_files: &[PathBuf]) -> HashSet<S
         if ext != "cs" {
             continue;
         }
-        let Ok(contents) = std::fs::read_to_string(path) else {
+        let Ok(file) = File::open(path) else {
             continue;
         };
-        for line in contents.lines() {
+        for line in BufReader::new(file).lines().map_while(Result::ok) {
             let line = line.trim();
             if let Some(rest) = line.strip_prefix("namespace ") {
                 let namespace = rest
@@ -377,9 +383,9 @@ pub(super) fn build_csharp_local_roots(candidate_files: &[PathBuf]) -> HashSet<S
                     roots.insert(root.to_string());
                 }
             }
-        }
-        for type_name in csharp_declared_types(&contents) {
-            roots.insert(type_name);
+            for type_name in csharp_declared_types(line) {
+                roots.insert(type_name);
+            }
         }
     }
     roots
@@ -395,20 +401,24 @@ pub(super) fn build_php_local_symbol_index(candidate_files: &[PathBuf]) -> HashS
         if ext != "php" {
             continue;
         }
-        let Ok(contents) = std::fs::read_to_string(path) else {
+        let Ok(file) = File::open(path) else {
             continue;
         };
-        let namespace = contents.lines().find_map(|line| {
+        let mut namespace = None;
+        for line in BufReader::new(file).lines().map_while(Result::ok) {
             let line = line.trim();
-            line.strip_prefix("namespace ")
-                .map(|rest| rest.trim().trim_end_matches([';', '{']).to_string())
-        });
-        for name in php_declared_symbols(&contents) {
-            symbols.insert(name.clone());
-            if let Some(namespace) = namespace.as_deref()
-                && !namespace.is_empty()
-            {
-                symbols.insert(format!("{namespace}\\{name}"));
+            if namespace.is_none() {
+                namespace = line
+                    .strip_prefix("namespace ")
+                    .map(|rest| rest.trim().trim_end_matches([';', '{']).to_string());
+            }
+            for name in php_declared_symbols(line) {
+                symbols.insert(name.clone());
+                if let Some(namespace) = namespace.as_deref()
+                    && !namespace.is_empty()
+                {
+                    symbols.insert(format!("{namespace}\\{name}"));
+                }
             }
         }
     }
@@ -425,10 +435,10 @@ pub(super) fn build_ruby_local_constant_roots(candidate_files: &[PathBuf]) -> Ha
         if !matches!(ext, "rb" | "rake" | "gemspec") {
             continue;
         }
-        let Ok(contents) = std::fs::read_to_string(path) else {
+        let Ok(file) = File::open(path) else {
             continue;
         };
-        for line in contents.lines() {
+        for line in BufReader::new(file).lines().map_while(Result::ok) {
             let line = line.trim_start();
             let Some(rest) = line
                 .strip_prefix("class ")
@@ -490,10 +500,10 @@ pub(super) fn build_elixir_local_module_roots(candidate_files: &[PathBuf]) -> Ha
         if !matches!(ext, "ex" | "exs") {
             continue;
         }
-        let Ok(contents) = std::fs::read_to_string(path) else {
+        let Ok(file) = File::open(path) else {
             continue;
         };
-        for line in contents.lines() {
+        for line in BufReader::new(file).lines().map_while(Result::ok) {
             let line = line.trim_start();
             let Some(rest) = line.strip_prefix("defmodule ") else {
                 continue;

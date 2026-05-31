@@ -3,6 +3,7 @@ pub mod graph_boost;
 pub mod rrf;
 pub mod semantic;
 
+use std::collections::BTreeSet;
 use std::fmt;
 use std::path::PathBuf;
 
@@ -143,14 +144,18 @@ impl fmt::Display for SearchError {
 
 impl std::error::Error for SearchError {}
 
-pub fn search<B, S>(
+const GRAPH_SEED_LIMIT: usize = 5;
+
+pub fn search<B, S, G>(
     bm25_backend: &mut B,
     semantic_backend: &mut S,
+    graph_backend: &mut G,
     request: SearchRequest,
 ) -> Result<WikiSearchResponse, SearchError>
 where
     B: bm25::Bm25SearchBackend,
     S: semantic::SemanticSearchBackend,
+    G: graph_boost::GraphBoostBackend,
 {
     let bm25_hits = bm25::search_bm25(
         bm25_backend,
@@ -163,8 +168,8 @@ where
 
     let semantic_outcome = if request.include_semantic {
         semantic_backend.search_semantic(semantic::SemanticSearchRequest {
-            query: request.query,
-            scope: request.scope,
+            query: request.query.clone(),
+            scope: request.scope.clone(),
             limit: request.limit,
         })?
     } else {
@@ -173,6 +178,14 @@ where
             degradation: None,
         }
     };
+    let semantic_degraded = semantic_outcome.degradation.is_some();
+    let semantic_hits = semantic_outcome.hits;
+    let seed_paths = graph_seed_paths(&bm25_hits, &semantic_hits, GRAPH_SEED_LIMIT);
+    let graph_outcome = graph_backend.search_graph_boost(graph_boost::GraphBoostRequest {
+        scope: request.scope.clone(),
+        seed_paths,
+        limit: request.limit,
+    })?;
 
     let mut degradations = Vec::new();
     if let Some(degradation) = semantic_outcome.degradation {
@@ -182,14 +195,48 @@ where
             unavailable: vec![SearchSource::Semantic.as_str().to_string()],
         });
     }
+    if let Some(degradation) = graph_outcome.degradation {
+        degradations.push(degradation);
+        degradations.push(DegradationKind::PartialSearch {
+            available: available_sources(request.include_semantic, semantic_degraded),
+            unavailable: vec![SearchSource::Graph.as_str().to_string()],
+        });
+    }
 
     Ok(rrf::fuse_sources(
         bm25_hits,
-        semantic_outcome.hits,
-        Vec::new(),
+        semantic_hits,
+        graph_outcome.hits,
         degradations,
         request.limit,
     ))
+}
+
+fn graph_seed_paths(
+    bm25_hits: &[WikiSearchResult],
+    semantic_hits: &[WikiSearchResult],
+    limit: usize,
+) -> Vec<PathBuf> {
+    let mut seen = BTreeSet::new();
+    let mut paths = Vec::new();
+    for hit in bm25_hits.iter().chain(semantic_hits) {
+        let path = hit.provenance.document_path.clone();
+        if seen.insert(path.clone()) {
+            paths.push(path);
+        }
+        if paths.len() == limit {
+            break;
+        }
+    }
+    paths
+}
+
+fn available_sources(include_semantic: bool, semantic_degraded: bool) -> Vec<String> {
+    let mut available = vec![SearchSource::Bm25.as_str().to_string()];
+    if include_semantic && !semantic_degraded {
+        available.push(SearchSource::Semantic.as_str().to_string());
+    }
+    available
 }
 
 #[cfg(test)]
@@ -204,10 +251,12 @@ mod tests {
             "wiki/topics/rust.md",
         )]);
         let mut semantic = semantic::UnavailableSemanticBackend;
+        let mut graph = graph_boost::NoopGraphBoostBackend;
 
         let response = search(
             &mut bm25,
             &mut semantic,
+            &mut graph,
             SearchRequest {
                 query: "ownership".to_string(),
                 scope: SearchScope::project("project-1"),
@@ -238,6 +287,38 @@ mod tests {
         }));
     }
 
+    #[test]
+    fn graph_linked_pages_enter_search_results() {
+        let scope = SearchScope::project("project-1");
+        let mut bm25 = bm25::MemoryBm25Backend::new(vec![search_result(
+            "document:wiki/topics/seed.md",
+            scope.clone(),
+            "wiki/topics/seed.md",
+        )]);
+        let mut semantic = semantic::UnavailableSemanticBackend;
+        let mut graph = graph_boost::MemoryGraphBoostBackend::new(memory_graph(scope.clone()));
+
+        let response = search(
+            &mut bm25,
+            &mut semantic,
+            &mut graph,
+            SearchRequest {
+                query: "seed".to_string(),
+                scope,
+                limit: 10,
+                include_semantic: false,
+            },
+        )
+        .expect("search includes graph neighborhood");
+
+        let linked = response
+            .results
+            .iter()
+            .find(|result| result.path == PathBuf::from("wiki/topics/linked.md"))
+            .expect("linked page is included");
+        assert!(linked.sources.contains(&SearchSource::Graph));
+    }
+
     fn search_result(id: &str, scope: SearchScope, path: &str) -> WikiSearchResult {
         WikiSearchResult {
             id: id.to_string(),
@@ -262,6 +343,34 @@ mod tests {
                 source_kind: "topic".to_string(),
                 content_hash: Some("hash".to_string()),
             },
+        }
+    }
+
+    fn memory_graph(scope: SearchScope) -> crate::graph::MemoryWikiGraph {
+        let mut graph = crate::graph::MemoryWikiGraph::default();
+        graph.replace_facts(crate::graph::WikiGraphFacts {
+            documents: vec![
+                graph_doc(scope.clone(), "wiki/topics/seed.md"),
+                graph_doc(scope.clone(), "wiki/topics/linked.md"),
+            ],
+            links: vec![crate::graph::WikiGraphLink {
+                scope,
+                source_path: PathBuf::from("wiki/topics/seed.md"),
+                raw_target: "wiki/topics/linked.md".to_string(),
+                target: crate::graph::WikiGraphLinkTarget::Resolved(PathBuf::from(
+                    "wiki/topics/linked.md",
+                )),
+            }],
+            sources: Vec::new(),
+        });
+        graph
+    }
+
+    fn graph_doc(scope: SearchScope, path: &str) -> crate::graph::WikiGraphDocument {
+        crate::graph::WikiGraphDocument {
+            scope,
+            path: PathBuf::from(path),
+            title: None,
         }
     }
 }

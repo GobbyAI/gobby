@@ -118,30 +118,48 @@ impl Default for ScopeSelection {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ScopeKind {
+    Global,
+    Project,
+    Topic,
+}
+
+impl ScopeKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Global => "global",
+            Self::Project => "project",
+            Self::Topic => "topic",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ScopeIdentity {
-    pub kind: String,
+    pub kind: ScopeKind,
     pub id: String,
 }
 
 impl ScopeIdentity {
     pub fn global() -> Self {
         Self {
-            kind: "global".to_string(),
+            kind: ScopeKind::Global,
             id: "default".to_string(),
         }
     }
 
     pub fn project(id: impl Into<String>) -> Self {
         Self {
-            kind: "project".to_string(),
+            kind: ScopeKind::Project,
             id: id.into(),
         }
     }
 
     pub fn topic(id: impl Into<String>) -> Self {
         Self {
-            kind: "topic".to_string(),
+            kind: ScopeKind::Topic,
             id: id.into(),
         }
     }
@@ -149,7 +167,7 @@ impl ScopeIdentity {
 
 impl fmt::Display for ScopeIdentity {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}:{}", self.kind, self.id)
+        write!(f, "{}:{}", self.kind.as_str(), self.id)
     }
 }
 

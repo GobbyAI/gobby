@@ -283,11 +283,13 @@ impl StandaloneSetup for GcodeStandaloneSetup {
 
     fn create(&self, ctx: &mut SetupContext<'_>) -> Result<SetupReport, SetupError> {
         let mut report = SetupReport::default();
-        for mut object in self.owned_objects()? {
+        let mut objects = self.owned_objects()?.into_iter();
+        while let Some(mut object) = objects.next() {
             match (object.creator)(ctx) {
                 Ok(()) => report.created.push(object.name),
                 Err(err) => {
                     report.failed.push((object.name, err.to_string()));
+                    report.skipped.extend(objects.map(|object| object.name));
                     break;
                 }
             }

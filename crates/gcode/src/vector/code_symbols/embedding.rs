@@ -22,6 +22,8 @@ pub fn embedding_client(
         .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
         .map_err(|err| VectorLifecycleError::EmbeddingResponse(err.to_string()))?;
+    // The blocking HTTP client is keyed only by timeout because request-specific
+    // embedding endpoint, model, and auth details are applied per request.
     if let Some(client) = clients.get(&config.timeout_seconds) {
         return Ok(client.clone());
     }
@@ -146,11 +148,22 @@ fn parse_embedding(value: &Value) -> Result<Vec<f32>, VectorLifecycleError> {
         })?
         .iter()
         .map(|value| {
-            value.as_f64().map(|f| f as f32).ok_or_else(|| {
-                VectorLifecycleError::EmbeddingResponse(
-                    "embedding array contains a non-number".to_string(),
-                )
-            })
+            value
+                .as_f64()
+                .map(|f| {
+                    let converted = f as f32;
+                    if f.is_finite() && converted.is_infinite() {
+                        log::warn!(
+                            "embedding value {f} overflowed f32 range and was stored as {converted}"
+                        );
+                    }
+                    converted
+                })
+                .ok_or_else(|| {
+                    VectorLifecycleError::EmbeddingResponse(
+                        "embedding array contains a non-number".to_string(),
+                    )
+                })
         })
         .collect::<Result<Vec<_>, _>>()?;
 

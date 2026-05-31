@@ -112,11 +112,10 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
     // Resolve ALL results first so total reflects resolvable symbols only
     let mut all_resolved: Vec<(Symbol, f64, Vec<String>)> = Vec::new();
     for (sym_id, score, source_names) in &merged {
-        let sym = symbol_cache.get(sym_id).cloned().or_else(|| {
-            visibility::visible_symbol_by_id(&mut conn, ctx, sym_id)
-                .ok()
-                .flatten()
-        });
+        let sym = match symbol_cache.get(sym_id).cloned() {
+            Some(symbol) => Some(symbol),
+            None => visibility::visible_symbol_by_id(&mut conn, ctx, sym_id)?,
+        };
 
         if let Some(s) = sym
             && symbol_matches_filters(
@@ -168,12 +167,18 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
         }),
         Format::Text => {
             print_search_warning(ctx, hint.as_deref());
-            for r in &results {
-                let sources = r.sources.as_ref().map(|s| s.join("+")).unwrap_or_default();
-                println!(
-                    "{}:{} [{}] {} (score: {:.4}, via: {})",
-                    r.file_path, r.line_start, r.kind, r.qualified_name, r.score, sources
-                );
+            let lines = results
+                .iter()
+                .map(|r| {
+                    let sources = r.sources.as_ref().map(|s| s.join("+")).unwrap_or_default();
+                    format!(
+                        "{}:{} [{}] {} (score: {:.4}, via: {})",
+                        r.file_path, r.line_start, r.kind, r.qualified_name, r.score, sources
+                    )
+                })
+                .collect::<Vec<_>>();
+            if !lines.is_empty() {
+                output::print_text(&lines.join("\n"))?;
             }
             print_pagination_hint(total, options.offset, results.len());
             Ok(())
@@ -252,8 +257,12 @@ pub fn search_symbol(ctx: &Context, query: &str, options: SearchOptions<'_>) -> 
         }
         Format::Text => {
             print_search_warning(ctx, hint.as_deref());
-            for s in &results {
-                println!("{}", format_symbol_lookup_text(s));
+            let lines = results
+                .iter()
+                .map(format_symbol_lookup_text)
+                .collect::<Vec<_>>();
+            if !lines.is_empty() {
+                output::print_text(&lines.join("\n"))?;
             }
             print_pagination_hint(total, options.offset, results.len());
             Ok(())
@@ -293,9 +302,10 @@ fn search_symbol_with_graph(
         .collect();
     let mut all_resolved: Vec<(Symbol, f64, Vec<String>)> = Vec::new();
     for (sym_id, rrf_score, source_names) in &merged {
-        let sym = symbol_cache
-            .remove(sym_id)
-            .or_else(|| fetch_symbol_by_id(conn, ctx, sym_id));
+        let sym = match symbol_cache.remove(sym_id) {
+            Some(symbol) => Some(symbol),
+            None => fetch_symbol_by_id(conn, ctx, sym_id)?,
+        };
 
         if let Some(s) = sym
             && symbol_matches_filters(conn, ctx, &s, options.kind, options.language, path_patterns)
@@ -340,12 +350,18 @@ fn search_symbol_with_graph(
         }),
         Format::Text => {
             print_search_warning(ctx, hint.as_deref());
-            for r in &results {
-                let sources = r.sources.as_ref().map(|s| s.join("+")).unwrap_or_default();
-                println!(
-                    "{}:{} [{}] {} (score: {:.4}, via: {})",
-                    r.file_path, r.line_start, r.kind, r.qualified_name, r.score, sources
-                );
+            let lines = results
+                .iter()
+                .map(|r| {
+                    let sources = r.sources.as_ref().map(|s| s.join("+")).unwrap_or_default();
+                    format!(
+                        "{}:{} [{}] {} (score: {:.4}, via: {})",
+                        r.file_path, r.line_start, r.kind, r.qualified_name, r.score, sources
+                    )
+                })
+                .collect::<Vec<_>>();
+            if !lines.is_empty() {
+                output::print_text(&lines.join("\n"))?;
             }
             print_pagination_hint(total, options.offset, results.len());
             Ok(())
@@ -407,11 +423,17 @@ pub fn search_text(
         }),
         Format::Text => {
             print_search_warning(ctx, hint.as_deref());
-            for r in &results {
-                println!(
-                    "{}:{} [{}] {}",
-                    r.file_path, r.line_start, r.kind, r.qualified_name
-                );
+            let lines = results
+                .iter()
+                .map(|r| {
+                    format!(
+                        "{}:{} [{}] {}",
+                        r.file_path, r.line_start, r.kind, r.qualified_name
+                    )
+                })
+                .collect::<Vec<_>>();
+            if !lines.is_empty() {
+                output::print_text(&lines.join("\n"))?;
             }
             if total > offset + results.len() {
                 print_pagination_hint(total, offset, results.len());
@@ -505,14 +527,20 @@ pub fn search_content(
         }),
         Format::Text => {
             print_search_warning(ctx, hint.as_deref());
-            for r in &results {
-                println!(
-                    "{}:{}-{} {}",
-                    r.file_path,
-                    r.line_start,
-                    r.line_end,
-                    compact_snippet(&r.snippet)
-                );
+            let lines = results
+                .iter()
+                .map(|r| {
+                    format!(
+                        "{}:{}-{} {}",
+                        r.file_path,
+                        r.line_start,
+                        r.line_end,
+                        compact_snippet(&r.snippet)
+                    )
+                })
+                .collect::<Vec<_>>();
+            if !lines.is_empty() {
+                output::print_text(&lines.join("\n"))?;
             }
             if total > offset + results.len() {
                 print_pagination_hint(total, offset, results.len());
@@ -550,10 +578,8 @@ fn fetch_symbol_by_id(
     conn: &mut postgres::Client,
     ctx: &Context,
     symbol_id: &str,
-) -> Option<Symbol> {
+) -> anyhow::Result<Option<Symbol>> {
     visibility::visible_symbol_by_id(conn, ctx, symbol_id)
-        .ok()
-        .flatten()
 }
 
 fn symbol_matches_filters(

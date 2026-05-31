@@ -226,6 +226,65 @@ impl MemoryWikiGraph {
         suggestions
     }
 
+    pub fn related_paths(
+        &self,
+        scope: &SearchScope,
+        seed_paths: &[PathBuf],
+        limit: usize,
+    ) -> Vec<(PathBuf, f64)> {
+        if seed_paths.is_empty() || limit == 0 {
+            return Vec::new();
+        }
+
+        let documents = self.document_keys();
+        let seed_set = seed_paths.iter().cloned().collect::<BTreeSet<_>>();
+        let mut scores = BTreeMap::<PathBuf, f64>::new();
+        for (rank, seed_path) in seed_paths.iter().enumerate() {
+            if !documents.contains(&(scope.clone(), seed_path.clone())) {
+                continue;
+            }
+            let seed_score = 1.0 / (rank + 1) as f64;
+            for link in &self.facts.links {
+                if &link.scope != scope
+                    || !documents.contains(&(scope.clone(), link.source_path.clone()))
+                {
+                    continue;
+                }
+                let WikiGraphLinkTarget::Resolved(target_path) = &link.target else {
+                    continue;
+                };
+                if !documents.contains(&(scope.clone(), target_path.clone())) {
+                    continue;
+                }
+
+                let candidate = if &link.source_path == seed_path {
+                    Some((target_path, seed_score))
+                } else if target_path == seed_path {
+                    Some((&link.source_path, seed_score * 0.8))
+                } else {
+                    None
+                };
+                let Some((path, score)) = candidate else {
+                    continue;
+                };
+                if seed_set.contains(path) {
+                    continue;
+                }
+                *scores.entry(path.clone()).or_default() += score;
+            }
+        }
+
+        let mut ranked = scores.into_iter().collect::<Vec<_>>();
+        ranked.sort_by(|(left_path, left_score), (right_path, right_score)| {
+            right_score
+                .partial_cmp(left_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| left_path.cmp(right_path))
+        });
+        ranked.truncate(limit);
+        ranked
+    }
+
     fn document_keys(&self) -> BTreeSet<(SearchScope, PathBuf)> {
         self.facts
             .documents

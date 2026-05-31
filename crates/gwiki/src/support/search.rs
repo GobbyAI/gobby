@@ -16,7 +16,7 @@ impl search::bm25::Bm25SearchBackend for StoreBm25Backend {
         &mut self,
         _request: &search::bm25::Bm25SearchRequest,
     ) -> Result<Vec<search::WikiSearchResult>, search::SearchError> {
-        Ok(std::mem::take(&mut self.hits))
+        Ok(self.hits.clone())
     }
 }
 

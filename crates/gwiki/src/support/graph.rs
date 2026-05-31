@@ -79,7 +79,7 @@ fn resolve_graph_target(
         return Some(graph::WikiGraphLinkTarget::Resolved(direct));
     }
 
-    let target_slug = slugify(normalized.trim_end_matches(".md"));
+    let target_slug = slugify(normalized.strip_suffix(".md").unwrap_or(&normalized));
     if let Some(path) = slug_targets.get(&target_slug) {
         return Some(graph::WikiGraphLinkTarget::Resolved(path.clone()));
     }

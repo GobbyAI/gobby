@@ -202,12 +202,14 @@ fn index_explicit_files_with_connection(
         }
     }
 
+    let mut seen_import_candidates = std::collections::HashSet::new();
     let mut import_candidates = db::list_indexed_file_paths(conn, project_id)?
         .into_iter()
         .map(|path| root_path.join(path))
+        .filter(|path| seen_import_candidates.insert(path.clone()))
         .collect::<Vec<_>>();
     for path in &ast_files {
-        if !import_candidates.iter().any(|candidate| candidate == path) {
+        if seen_import_candidates.insert(path.clone()) {
             import_candidates.push(path.clone());
         }
     }
