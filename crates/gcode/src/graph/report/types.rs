@@ -246,6 +246,7 @@ impl ReportCodeEdge {
 #[derive(Debug, Clone, PartialEq)]
 pub(super) enum BridgeEdgeInput {
     Available(Vec<BridgeEdgeHypothesis>),
+    #[cfg(test)]
     Unavailable(String),
 }
 
@@ -254,6 +255,7 @@ impl BridgeEdgeInput {
         Self::Available(edges)
     }
 
+    #[cfg(test)]
     pub(super) fn unavailable(reason: impl Into<String>) -> Self {
         Self::Unavailable(reason.into())
     }

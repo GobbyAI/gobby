@@ -1,3 +1,4 @@
+use anyhow::Context as _;
 use gobby_core::falkor::GraphClient;
 
 use super::queries::{
@@ -19,11 +20,19 @@ pub(super) fn load_report_snapshot(
     top_n: usize,
 ) -> anyhow::Result<ReportGraphSnapshot> {
     let (query, params) = report_node_counts_query(project_id);
-    let node_counts_by_type = rows_to_named_counts(client.query(&query, Some(params))?);
+    let node_counts_by_type = rows_to_named_counts(
+        client
+            .query(&query, Some(params))
+            .context("load graph report node counts")?,
+    );
     let node_count = node_counts_by_type.values().sum();
 
     let (query, params) = report_code_edge_counts_query(project_id);
-    let code_edge_counts = rows_to_named_counts(client.query(&query, Some(params))?);
+    let code_edge_counts = rows_to_named_counts(
+        client
+            .query(&query, Some(params))
+            .context("load graph report code edge counts")?,
+    );
     let edge_count = code_edge_counts.values().sum();
 
     let summary = GraphReportSummary {
@@ -44,14 +53,14 @@ pub(super) fn load_report_snapshot(
     let external_targets = load_target_frequencies(client, project_id, "external", top_n)?;
 
     let (query, params) = report_bridge_edges_query(project_id);
-    let bridge_edges = match client.query(&query, Some(params)) {
-        Ok(rows) => BridgeEdgeInput::available(
-            rows.iter()
-                .filter_map(row_to_bridge_edge_hypothesis)
-                .collect(),
-        ),
-        Err(error) => BridgeEdgeInput::unavailable(format!("bridge edge query failed: {error}")),
-    };
+    let rows = client
+        .query(&query, Some(params))
+        .context("load graph report bridge edges")?;
+    let bridge_edges = BridgeEdgeInput::available(
+        rows.iter()
+            .filter_map(row_to_bridge_edge_hypothesis)
+            .collect(),
+    );
 
     Ok(ReportGraphSnapshot {
         nodes: vec![],
@@ -72,7 +81,8 @@ fn load_hotspots(
 ) -> anyhow::Result<Vec<GraphHotspot>> {
     let (query, params) = report_hotspots_query(project_id, node_class, top_n);
     Ok(client
-        .query(&query, Some(params))?
+        .query(&query, Some(params))
+        .with_context(|| format!("load graph report {node_class} hotspots"))?
         .iter()
         .filter_map(row_to_graph_hotspot)
         .collect())
@@ -85,7 +95,8 @@ fn load_incoming_call_hotspots(
 ) -> anyhow::Result<Vec<GraphHotspot>> {
     let (query, params) = report_incoming_call_hotspots_query(project_id, top_n);
     Ok(client
-        .query(&query, Some(params))?
+        .query(&query, Some(params))
+        .context("load graph report incoming call hotspots")?
         .iter()
         .filter_map(row_to_graph_hotspot)
         .collect())
@@ -99,7 +110,8 @@ fn load_target_frequencies(
 ) -> anyhow::Result<Vec<TargetFrequency>> {
     let (query, params) = report_target_frequencies_query(project_id, target_type, top_n);
     Ok(client
-        .query(&query, Some(params))?
+        .query(&query, Some(params))
+        .with_context(|| format!("load graph report {target_type} target frequencies"))?
         .iter()
         .filter_map(row_to_target_frequency)
         .collect())

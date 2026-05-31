@@ -161,6 +161,7 @@ fn accept_item(
     kind: InboxKind,
     report: &mut CollectReport,
 ) -> Result<(), WikiError> {
+    let previous_manifest = SourceManifest::read(vault_root)?;
     let (record_kind, raw_path) = match kind {
         InboxKind::Url(url) => {
             let record = SourceManifest::register(
@@ -218,7 +219,10 @@ fn accept_item(
         }
     };
 
-    fs::remove_file(&path).map_err(|error| io_error("remove accepted inbox item", &path, error))?;
+    if let Err(error) = fs::remove_file(&path) {
+        previous_manifest.write(vault_root)?;
+        return Err(io_error("remove accepted inbox item", &path, error));
+    }
     report.accepted.push(CollectAction {
         inbox_path: relative,
         status: CollectStatus::Accepted,

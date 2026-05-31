@@ -117,7 +117,6 @@ fn is_no_tls_server_error(error: &anyhow::Error) -> bool {
     error.chain().any(|cause| {
         let message = cause.to_string().to_ascii_lowercase();
         message.contains("server does not support tls")
-            || message.contains("server does not support ssl")
             || message.contains("the server does not support ssl")
             || message.contains("tls not supported")
             || message.contains("ssl is not enabled")

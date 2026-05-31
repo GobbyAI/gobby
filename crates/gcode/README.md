@@ -105,6 +105,10 @@ unavailable, it falls back to explicit fallback sources:
 `database_url`, then bootstrap `database_url`. Bootstrap fallback requires
 `hub_backend: postgres`; bootstrap `database_url_ref` is rejected.
 
+Standalone setup is tested against PostgreSQL 18 with `pg_search` BM25 indexes.
+The compatibility preflight reads PostgreSQL catalogs such as `pg_class` and
+`pg_namespace` to validate only gcode-owned code-index tables and indexes.
+
 ### With Gobby
 
 gcode is installed automatically as part of the [Gobby](https://github.com/GobbyAI/gobby) platform. If you're using Gobby, you already have it.

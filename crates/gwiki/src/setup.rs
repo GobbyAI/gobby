@@ -242,16 +242,17 @@ impl StandaloneSetup for GwikiStandaloneSetup {
         NAMESPACE
     }
 
-    fn owned_objects(&self) -> Vec<OwnedObject> {
-        match self.postgres_objects() {
-            Ok(objects) => objects.into_iter().map(owned_object).collect(),
-            Err(err) => vec![invalid_object("gwiki setup contract", err)],
-        }
+    fn owned_objects(&self) -> Result<Vec<OwnedObject>, SetupError> {
+        Ok(self
+            .postgres_objects()?
+            .into_iter()
+            .map(owned_object)
+            .collect())
     }
 
     fn create(&self, ctx: &mut SetupContext<'_>) -> Result<SetupReport, SetupError> {
         let mut report = SetupReport::default();
-        for mut object in self.owned_objects() {
+        for mut object in self.owned_objects()? {
             match (object.creator)(ctx) {
                 Ok(()) => report.created.push(object.name),
                 Err(err) => {
@@ -311,21 +312,6 @@ fn execute_postgres_ddl(
             object: object.to_string(),
             message: err.to_string(),
         })
-}
-
-fn invalid_object(name: &str, err: SetupError) -> OwnedObject {
-    let message = err.to_string();
-    let object_name = name.to_string();
-    OwnedObject {
-        name: object_name.clone(),
-        store: StoreKind::Postgres,
-        creator: Box::new(move |_| {
-            Err(SetupError::CreationFailed {
-                object: object_name.clone(),
-                message: message.clone(),
-            })
-        }),
-    }
 }
 
 fn quote_identifier(value: &str, label: &str) -> Result<String, SetupError> {
@@ -412,6 +398,7 @@ mod tests {
 
         let owned_names = setup
             .owned_objects()
+            .expect("owned objects")
             .into_iter()
             .map(|object| {
                 assert_eq!(object.store, StoreKind::Postgres);
@@ -425,5 +412,25 @@ mod tests {
                 .map(|object| object.name.to_string())
                 .collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn published_lists_match_generated_objects() {
+        let objects = GwikiStandaloneSetup::new("public")
+            .postgres_objects()
+            .expect("setup objects");
+        let tables = objects
+            .iter()
+            .filter(|object| object.kind == GwikiPostgresObjectKind::Table)
+            .map(|object| object.name)
+            .collect::<Vec<_>>();
+        let indexes = objects
+            .iter()
+            .filter(|object| object.kind == GwikiPostgresObjectKind::Index)
+            .map(|object| object.name)
+            .collect::<Vec<_>>();
+
+        assert_eq!(tables, GWIKI_POSTGRES_TABLES);
+        assert_eq!(indexes, GWIKI_POSTGRES_INDEXES);
     }
 }

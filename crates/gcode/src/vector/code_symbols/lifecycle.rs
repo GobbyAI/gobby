@@ -72,7 +72,7 @@ impl CodeSymbolVectorLifecycle {
         }
 
         let collection = collection_name(CODE_SYMBOL_COLLECTION_PREFIX, &project_id);
-        let client = embedding_client()?;
+        let client = embedding_client(&embedding)?;
         Ok(Self {
             project_id,
             collection,

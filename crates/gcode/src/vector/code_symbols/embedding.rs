@@ -1,21 +1,21 @@
 use serde_json::{Value, json};
-use std::time::Duration;
 
 use crate::config::EmbeddingConfig;
 use crate::models::Symbol;
 
 use super::types::VectorLifecycleError;
 
-const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 const DIMENSION_PROBE_TEXT: &str = "dimension_probe";
 
 pub(super) fn dimension_probe_text() -> &'static str {
     DIMENSION_PROBE_TEXT
 }
 
-pub fn embedding_client() -> Result<reqwest::blocking::Client, VectorLifecycleError> {
+pub fn embedding_client(
+    config: &EmbeddingConfig,
+) -> Result<reqwest::blocking::Client, VectorLifecycleError> {
     reqwest::blocking::Client::builder()
-        .timeout(HTTP_TIMEOUT)
+        .timeout(std::time::Duration::from_secs(config.timeout_seconds))
         .build()
         .map_err(|err| VectorLifecycleError::EmbeddingResponse(err.to_string()))
 }
@@ -78,12 +78,13 @@ pub fn embed_text(
 }
 
 pub fn embed_query(config: &EmbeddingConfig, text: &str) -> Option<Vec<f32>> {
-    let input = match config.query_prefix.as_deref() {
-        Some(prefix) if prefix.trim().is_empty() => text.to_string(),
-        Some(prefix) => format!("{prefix} {text}"),
-        None => format!("search_query: {text}"),
+    let prefix = config.query_prefix.as_deref().unwrap_or("").trim();
+    let input = if prefix.is_empty() {
+        text.to_string()
+    } else {
+        format!("{prefix} {text}")
     };
-    let client = match embedding_client() {
+    let client = match embedding_client(config) {
         Ok(client) => client,
         Err(error) => {
             eprintln!("gcode: query embedding failed: {error}");

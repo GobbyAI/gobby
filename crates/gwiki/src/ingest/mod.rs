@@ -111,12 +111,13 @@ pub(crate) fn path_to_string(path: &Path) -> String {
 fn write_immutable(vault_root: &Path, relative: &Path, bytes: &[u8]) -> Result<(), WikiError> {
     let path = vault_root.join(relative);
     if path.exists() {
-        let existing = std::fs::read(&path).map_err(|error| WikiError::Io {
-            action: "read existing raw source",
-            path: Some(path.clone()),
-            source: error.to_string(),
-        })?;
-        if existing == bytes {
+        let existing_hash =
+            gobby_core::indexing::file_content_hash(&path).map_err(|error| WikiError::Io {
+                action: "hash existing raw source",
+                path: Some(path.clone()),
+                source: error.to_string(),
+            })?;
+        if existing_hash == gobby_core::indexing::content_hash(bytes) {
             return Ok(());
         }
         return Err(WikiError::InvalidInput {

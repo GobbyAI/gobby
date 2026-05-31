@@ -94,7 +94,7 @@ fn append_hotspot_section(
     hotspots: &[GraphHotspot],
     top_n: usize,
 ) {
-    if hotspots.is_empty() {
+    if top_n == 0 || hotspots.is_empty() {
         return;
     }
     lines.push(String::new());
@@ -113,7 +113,7 @@ fn append_target_section(
     targets: &[TargetFrequency],
     top_n: usize,
 ) {
-    if targets.is_empty() {
+    if top_n == 0 || targets.is_empty() {
         return;
     }
     lines.push(String::new());

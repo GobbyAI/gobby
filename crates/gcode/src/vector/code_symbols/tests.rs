@@ -5,8 +5,9 @@ use crate::config::{
 use crate::models::{ProjectionProvenance, SOURCE_SYSTEM_GCODE, Symbol};
 use serde_json::{Value, json};
 use std::io::{Read, Write};
-use std::net::TcpListener;
+use std::net::{TcpListener, TcpStream};
 use std::thread;
+use std::time::{Duration, Instant};
 
 fn test_symbol(summary: Option<String>) -> Symbol {
     Symbol {
@@ -148,6 +149,7 @@ fn clear_project_vectors_does_not_touch_memory_vector_collections() {
             model: "unused".to_string(),
             api_key: None,
             query_prefix: None,
+            timeout_seconds: 10,
         },
         CodeVectorSettings {
             vector_dim: Some(3),
@@ -234,9 +236,10 @@ fn embedding_request_response() {
         model: "embed-small".to_string(),
         api_key: Some("embedding-key".to_string()),
         query_prefix: None,
+        timeout_seconds: 10,
     };
 
-    let client = embedding_client().expect("embedding client");
+    let client = embedding_client(&config).expect("embedding client");
     let embedding = embed_text(&client, &config, "dimension_probe").expect("embedding response");
     let requests = handle.join().expect("server thread");
 
@@ -273,6 +276,7 @@ fn ensure_collection_resolves_vector_size_and_distance() {
             model: "embed-small".to_string(),
             api_key: None,
             query_prefix: None,
+            timeout_seconds: 10,
         },
         CodeVectorSettings { vector_dim: None },
     )
@@ -306,6 +310,7 @@ fn ensure_collection_resolves_vector_size_and_distance() {
             model: "unused".to_string(),
             api_key: None,
             query_prefix: None,
+            timeout_seconds: 10,
         },
         CodeVectorSettings {
             vector_dim: Some(1536),
@@ -375,11 +380,15 @@ fn routes_through_gobby_core_qdrant() {
 
 fn spawn_http_responses(responses: Vec<(u16, Value)>) -> (String, thread::JoinHandle<Vec<String>>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+    listener
+        .set_nonblocking(true)
+        .expect("set test server nonblocking");
     let addr = listener.local_addr().expect("local addr");
     let handle = thread::spawn(move || {
         let mut requests = Vec::new();
         for (status, body) in responses {
-            let (mut stream, _) = listener.accept().expect("accept request");
+            let mut stream =
+                accept_with_timeout(&listener, Duration::from_secs(5)).expect("accept request");
             requests.push(read_http_request(&mut stream));
 
             let body = body.to_string();
@@ -396,7 +405,29 @@ fn spawn_http_responses(responses: Vec<(u16, Value)>) -> (String, thread::JoinHa
     (format!("http://{addr}"), handle)
 }
 
-fn read_http_request(stream: &mut impl Read) -> String {
+fn accept_with_timeout(listener: &TcpListener, timeout: Duration) -> std::io::Result<TcpStream> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match listener.accept() {
+            Ok((stream, _)) => return Ok(stream),
+            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                if Instant::now() >= deadline {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "timed out waiting for test HTTP request",
+                    ));
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(err) => return Err(err),
+        }
+    }
+}
+
+fn read_http_request(stream: &mut TcpStream) -> String {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .expect("set read timeout");
     let mut request = Vec::new();
     let mut buffer = [0; 4096];
     let mut expected_len = None;

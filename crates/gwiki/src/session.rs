@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -133,11 +134,44 @@ impl ResearchSession {
             path: Some(path.clone()),
             source: error.to_string(),
         })?;
-        fs::write(&path, json).map_err(|error| WikiError::Io {
-            action: "write research checkpoint",
-            path: Some(path),
+        let temp_path =
+            path.with_file_name(format!(".research-session.{}.tmp", std::process::id()));
+        let mut file = fs::File::create(&temp_path).map_err(|error| WikiError::Io {
+            action: "create research checkpoint temp file",
+            path: Some(temp_path.clone()),
             source: error.to_string(),
-        })
+        })?;
+        if let Err(error) = file.write_all(json.as_bytes()) {
+            let _ = fs::remove_file(&temp_path);
+            return Err(WikiError::Io {
+                action: "write research checkpoint temp file",
+                path: Some(temp_path),
+                source: error.to_string(),
+            });
+        }
+        if let Err(error) = file.sync_all() {
+            let _ = fs::remove_file(&temp_path);
+            return Err(WikiError::Io {
+                action: "sync research checkpoint temp file",
+                path: Some(temp_path),
+                source: error.to_string(),
+            });
+        }
+        drop(file);
+        if let Err(error) = fs::rename(&temp_path, &path) {
+            let _ = fs::remove_file(&temp_path);
+            return Err(WikiError::Io {
+                action: "replace research checkpoint",
+                path: Some(path),
+                source: error.to_string(),
+            });
+        }
+        if let Some(parent) = path.parent()
+            && let Ok(directory) = fs::File::open(parent)
+        {
+            let _ = directory.sync_all();
+        }
+        Ok(())
     }
 
     pub fn load_checkpoint(vault_root: &Path) -> Result<Self, WikiError> {

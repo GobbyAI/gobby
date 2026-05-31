@@ -70,6 +70,10 @@ impl GraphNode {
         }
     }
 
+    /// Builds a node from unprefixed Falkor rows.
+    ///
+    /// Fallback key priority is id: `id`, `node_id`; name: `name`,
+    /// `node_name`, then id; type: `type`, `node_type`, then `default_type`.
     pub(super) fn from_row(row: &Row, default_type: &str) -> Option<Self> {
         let id = row_string(row, &["id", "node_id"])?;
         let mut node = Self::new(

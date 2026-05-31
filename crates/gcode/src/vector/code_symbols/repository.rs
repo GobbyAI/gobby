@@ -27,6 +27,8 @@ fn fetch_symbols_where(
     predicate: &str,
     params: &[&(dyn postgres::types::ToSql + Sync)],
 ) -> anyhow::Result<Vec<Symbol>> {
+    // SQL safety invariant: callers pass only static predicates with numbered
+    // placeholders; all dynamic values must be supplied through `params`.
     let columns = db::symbol_select_columns("");
     conn.query(
         &format!(

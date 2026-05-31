@@ -61,6 +61,7 @@ fn ensure_creates_missing_and_reuses_compatible() {
             model: "embed-small".to_string(),
             api_key: None,
             query_prefix: None,
+            timeout_seconds: 10,
         },
         CodeVectorSettings {
             vector_dim: Some(3),
@@ -136,6 +137,7 @@ fn clear_and_rebuild_delete_project_and_upsert_current_symbols() {
             model: "embed-small".to_string(),
             api_key: None,
             query_prefix: None,
+            timeout_seconds: 10,
         },
         CodeVectorSettings {
             vector_dim: Some(3),
@@ -191,6 +193,7 @@ fn incompatible_existing_collection_errors_without_migration() {
             model: "unused".to_string(),
             api_key: None,
             query_prefix: None,
+            timeout_seconds: 10,
         },
         CodeVectorSettings {
             vector_dim: Some(3),

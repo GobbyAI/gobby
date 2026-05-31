@@ -100,7 +100,7 @@ pub(crate) fn count_callers_query(
         format!(
             "MATCH (caller:CodeSymbol {{project: $project}})-[:CALLS]->(target {{id: $id, project: $project}}) \
              WHERE {CALL_TARGET_PREDICATE} \
-             RETURN count(caller) AS cnt"
+             RETURN count(DISTINCT caller) AS cnt"
         ),
         typed_query::string_params(&[("project", project_id), ("id", symbol_id)]),
     )
@@ -135,8 +135,9 @@ pub(crate) fn find_callers_query(
         format!(
             "MATCH (caller:CodeSymbol {{project: $project}})-[r:CALLS]->(target {{id: $id, project: $project}}) \
              WHERE {CALL_TARGET_PREDICATE} \
-             RETURN caller.id AS caller_id, caller.name AS caller_name, \
-                    r.file AS file, r.line AS line \
+             RETURN DISTINCT caller.id AS caller_id, caller.name AS caller_name, \
+                    caller.file_path AS file, caller.line_start AS line \
+             ORDER BY caller.id \
              SKIP {offset} LIMIT {limit}"
         ),
         typed_query::string_params(&[("project", project_id), ("id", symbol_id)]),
@@ -157,6 +158,7 @@ pub(crate) fn find_usages_query(
              WHERE {CALL_TARGET_PREDICATE} \
              RETURN source.id AS source_id, source.name AS source_name, \
                     'CALLS' AS rel_type, r.file AS file, r.line AS line \
+             ORDER BY source.id, r.line, r.file \
              SKIP {offset} LIMIT {limit}"
         ),
         typed_query::string_params(&[("project", project_id), ("id", symbol_id)]),

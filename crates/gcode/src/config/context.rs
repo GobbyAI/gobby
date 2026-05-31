@@ -397,12 +397,13 @@ pub fn warn_project_identity(identity: &ProjectIdentity, quiet: bool) {
 /// Matches against the basename of `root_path` in the PostgreSQL hub.
 fn resolve_project_by_name(name: &str, database_url: &str) -> anyhow::Result<PathBuf> {
     let mut conn = db::connect_readonly(database_url)?;
+    let escaped_name = escape_like(name);
     let rows = conn.query(
         "SELECT root_path FROM code_indexed_projects
-         WHERE root_path = $1 OR root_path LIKE '%' || '/' || $1
+         WHERE root_path = $1 OR root_path LIKE '%' || '/' || $2 ESCAPE '\\'
          ORDER BY last_indexed_at DESC NULLS LAST
          LIMIT 1",
-        &[&name],
+        &[&name, &escaped_name],
     )?;
 
     if let Some(row) = rows.first() {
@@ -417,6 +418,17 @@ fn resolve_project_by_name(name: &str, database_url: &str) -> anyhow::Result<Pat
         "Project '{}' not found. Run `gcode projects` to see indexed projects.",
         name
     )
+}
+
+pub(super) fn escape_like(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        if matches!(ch, '\\' | '%' | '_') {
+            escaped.push('\\');
+        }
+        escaped.push(ch);
+    }
+    escaped
 }
 
 /// Detect project root by walking up the directory tree.

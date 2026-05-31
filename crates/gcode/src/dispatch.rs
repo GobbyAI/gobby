@@ -21,6 +21,10 @@ fn ensure_files_fresh(
     Ok(())
 }
 
+fn ensure_file_fresh(ctx: &config::Context, disabled: bool, file: &str) -> anyhow::Result<()> {
+    ensure_files_fresh(ctx, disabled, vec![std::path::PathBuf::from(file)])
+}
+
 fn ensure_symbol_fresh(ctx: &config::Context, disabled: bool, id: &str) -> anyhow::Result<()> {
     if !disabled {
         freshness::ensure_symbol_fresh(ctx, id)?;
@@ -187,11 +191,7 @@ fn run() -> anyhow::Result<()> {
         Command::Vector {
             command: VectorCommand::SyncFile { file },
         } => {
-            ensure_files_fresh(
-                &ctx,
-                cli.no_freshness,
-                vec![std::path::PathBuf::from(&file)],
-            )?;
+            ensure_file_fresh(&ctx, cli.no_freshness, &file)?;
             commands::vector::sync_file(&ctx, &file, format)
         }
         Command::Vector {
@@ -212,11 +212,7 @@ fn run() -> anyhow::Result<()> {
         Command::Graph {
             command: GraphCommand::File { file },
         } => {
-            ensure_files_fresh(
-                &ctx,
-                cli.no_freshness,
-                vec![std::path::PathBuf::from(&file)],
-            )?;
+            ensure_file_fresh(&ctx, cli.no_freshness, &file)?;
             commands::graph::file(&ctx, &file, format)
         }
         Command::Graph {
@@ -373,11 +369,7 @@ fn run() -> anyhow::Result<()> {
         }
 
         Command::Outline { file } => {
-            ensure_files_fresh(
-                &ctx,
-                cli.no_freshness,
-                vec![std::path::PathBuf::from(&file)],
-            )?;
+            ensure_file_fresh(&ctx, cli.no_freshness, &file)?;
             commands::symbols::outline(&ctx, &file, format, cli.verbose)
         }
         Command::Symbol { id } => {

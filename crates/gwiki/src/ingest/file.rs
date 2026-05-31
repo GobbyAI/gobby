@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::WikiError;
 use crate::ingest::{
@@ -32,7 +32,7 @@ pub fn ingest_path(
         .and_then(|value| value.to_str())
         .unwrap_or("source");
     let title = markdown_title(file_name);
-    let location = path.to_string_lossy().replace('\\', "/");
+    let location = source_location(vault_root, path);
     let draft = SourceDraft {
         location: location.clone(),
         kind: kind.clone(),
@@ -118,6 +118,18 @@ fn detect_source_kind(path: &Path) -> SourceKind {
         Some("txt" | "text") => SourceKind::Text,
         _ => SourceKind::File,
     }
+}
+
+fn source_location(vault_root: &Path, path: &Path) -> String {
+    let display_path = path
+        .strip_prefix(vault_root)
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|_| {
+            path.file_name()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| path.to_path_buf())
+        });
+    display_path.to_string_lossy().replace('\\', "/")
 }
 
 fn should_store_asset(kind: &SourceKind) -> bool {

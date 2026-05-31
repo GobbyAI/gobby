@@ -3,6 +3,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 
 use crate::WikiError;
@@ -30,6 +31,31 @@ pub struct ProjectRegistration {
 }
 
 pub fn register_scope(path: &Path, scope: &ResolvedScope) -> Result<(), WikiError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| WikiError::Io {
+            action: "create registry directory",
+            path: Some(parent.to_path_buf()),
+            source: error.to_string(),
+        })?;
+    }
+    let lock_path = registry_lock_path(path);
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .map_err(|error| WikiError::Io {
+            action: "open registry lock",
+            path: Some(lock_path.clone()),
+            source: error.to_string(),
+        })?;
+    lock.lock_exclusive().map_err(|error| WikiError::Io {
+        action: "lock registry",
+        path: Some(lock_path.clone()),
+        source: error.to_string(),
+    })?;
+
     let mut registry = read_registry(path)?;
 
     match scope.kind() {
@@ -57,18 +83,13 @@ pub fn register_scope(path: &Path, scope: &ResolvedScope) -> Result<(), WikiErro
         }
     }
 
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| WikiError::Io {
-            action: "create registry directory",
-            path: Some(parent.to_path_buf()),
-            source: error.to_string(),
-        })?;
-    }
     let contents =
         serde_json::to_string_pretty(&registry).map_err(|error| WikiError::Registry {
             detail: format!("failed to serialize {}: {error}", path.display()),
         })?;
-    write_registry_atomically(path, format!("{contents}\n").as_bytes())
+    let result = write_registry_atomically(path, format!("{contents}\n").as_bytes());
+    drop(lock);
+    result
 }
 
 fn write_registry_atomically(path: &Path, contents: &[u8]) -> Result<(), WikiError> {
@@ -128,6 +149,14 @@ fn temp_registry_path(path: &Path) -> PathBuf {
         counter,
         nanos
     ))
+}
+
+fn registry_lock_path(path: &Path) -> PathBuf {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("wikis.json");
+    path.with_file_name(format!("{file_name}.lock"))
 }
 
 fn read_registry(path: &Path) -> Result<Registry, WikiError> {

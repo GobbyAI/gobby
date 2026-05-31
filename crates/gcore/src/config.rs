@@ -30,10 +30,12 @@ pub struct EmbeddingConfig {
     pub model: String,
     pub api_key: Option<String>,
     pub query_prefix: Option<String>,
+    pub timeout_seconds: u64,
 }
 
 const FALKORDB_DEFAULT_PORT: u16 = 16379;
 const EMBEDDING_DEFAULT_MODEL: &str = "nomic-embed-text";
+const EMBEDDING_DEFAULT_TIMEOUT_SECONDS: u64 = 10;
 
 #[cfg(test)]
 pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -172,12 +174,19 @@ pub fn resolve_embedding_config(source: &mut impl ConfigSource) -> Option<Embedd
         "GOBBY_EMBEDDING_QUERY_PREFIX",
         "embeddings.query_prefix",
     );
+    let timeout_seconds = resolve_u64(
+        source,
+        "GOBBY_EMBEDDING_TIMEOUT_SECONDS",
+        "embeddings.timeout_seconds",
+        EMBEDDING_DEFAULT_TIMEOUT_SECONDS,
+    );
 
     Some(EmbeddingConfig {
         api_base,
         model,
         api_key,
         query_prefix,
+        timeout_seconds,
     })
 }
 
@@ -203,6 +212,25 @@ fn resolve_port(
         return default;
     };
     resolved.parse::<u16>().unwrap_or(default)
+}
+
+fn resolve_u64(
+    source: &mut impl ConfigSource,
+    env_key: &str,
+    config_key: &str,
+    default: u64,
+) -> u64 {
+    let Some(raw_value) = env_value(env_key).or_else(|| source.config_value(config_key)) else {
+        return default;
+    };
+    let Some(resolved) = resolve_non_empty(source, &raw_value) else {
+        return default;
+    };
+    resolved
+        .parse::<u64>()
+        .ok()
+        .filter(|value| *value > 0)
+        .unwrap_or(default)
 }
 
 fn resolve_non_empty(source: &mut impl ConfigSource, value: &str) -> Option<String> {
@@ -253,6 +281,7 @@ mod tests {
                 "GOBBY_EMBEDDING_MODEL",
                 "GOBBY_EMBEDDING_API_KEY",
                 "GOBBY_EMBEDDING_QUERY_PREFIX",
+                "GOBBY_EMBEDDING_TIMEOUT_SECONDS",
                 "GOBBY_TEST_PRESENT",
                 "GOBBY_TEST_MISSING",
             ] {
@@ -513,6 +542,7 @@ mod tests {
             env.set("GOBBY_QDRANT_API_KEY", "env-qdrant-key");
             env.set("GOBBY_EMBEDDING_MODEL", "env-embedding-model");
             env.set("GOBBY_EMBEDDING_QUERY_PREFIX", "env-query-prefix:");
+            env.set("GOBBY_EMBEDDING_TIMEOUT_SECONDS", "7");
 
             let mut source = TestSource::with_values([
                 ("databases.qdrant.url", "http://stored-qdrant:6333"),
@@ -521,6 +551,7 @@ mod tests {
                 ("embeddings.model", "stored-embedding-model"),
                 ("embeddings.api_key", "$secret:EMBEDDING_KEY"),
                 ("embeddings.query_prefix", "stored-query-prefix:"),
+                ("embeddings.timeout_seconds", "99"),
             ]);
 
             let qdrant = resolve_qdrant_config(&mut source).expect("qdrant config");
@@ -532,6 +563,7 @@ mod tests {
             assert_eq!(embedding.model, "env-embedding-model");
             assert_eq!(embedding.api_key.as_deref(), Some("resolved-EMBEDDING_KEY"));
             assert_eq!(embedding.query_prefix.as_deref(), Some("env-query-prefix:"));
+            assert_eq!(embedding.timeout_seconds, 7);
         }
 
         let _env = EnvGuard::new();
@@ -542,6 +574,10 @@ mod tests {
 
         assert_eq!(default_embedding.model, EMBEDDING_DEFAULT_MODEL);
         assert!(default_embedding.query_prefix.is_none());
+        assert_eq!(
+            default_embedding.timeout_seconds,
+            EMBEDDING_DEFAULT_TIMEOUT_SECONDS
+        );
         assert!(resolve_qdrant_config(&mut TestSource::default()).is_none());
     }
 

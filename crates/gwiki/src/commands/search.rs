@@ -66,7 +66,7 @@ fn run_search_attached(
     let mut semantic_backend = wiki_search::semantic::GobbySemanticBackend::new(
         embedding,
         qdrant,
-        wiki_search::semantic::OpenAiEmbeddingBackend::default(),
+        wiki_search::semantic::OpenAiEmbeddingBackend::new(),
         wiki_search::semantic::GobbyQdrantBackend,
     );
     run_search_with_backends(

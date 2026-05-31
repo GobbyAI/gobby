@@ -27,11 +27,12 @@ pub(super) fn extract_quoted_string(text: &str) -> Option<String> {
 pub(super) fn go_default_package_alias(module: &str) -> String {
     let module = module.trim_end_matches('/');
     let last_segment = module.rsplit('/').next().unwrap_or(module);
-    last_segment
-        .split_once(".v")
+    let without_version = last_segment
+        .rsplit_once(".v")
+        .filter(|(_, version)| !version.is_empty() && version.chars().all(|ch| ch.is_ascii_digit()))
         .map(|(name, _)| name)
-        .unwrap_or(last_segment)
-        .replace('-', "_")
+        .unwrap_or(last_segment);
+    without_version.replace('-', "_")
 }
 
 pub(super) fn split_alias(text: &str) -> (&str, Option<&str>) {
@@ -143,9 +144,7 @@ pub(super) fn split_top_level(text: &str, delimiter: char) -> Vec<&str> {
         }
     }
 
-    if start <= text.len() {
-        parts.push(text[start..].trim());
-    }
+    parts.push(text[start..].trim());
 
     parts
 }

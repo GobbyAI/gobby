@@ -10,25 +10,39 @@ pub fn search_code_symbols(
 ) -> Vec<CodeSymbolVectorSearchHit> {
     let qdrant_config = match &ctx.qdrant {
         Some(c) => c,
-        None => return vec![],
+        None => {
+            eprintln!("gcode: semantic vector search skipped: Qdrant config is missing");
+            return vec![];
+        }
     };
 
     let embedding_config = match &ctx.embedding {
         Some(c) => c,
-        None => return vec![],
+        None => {
+            eprintln!("gcode: semantic vector search skipped: embedding config is missing");
+            return vec![];
+        }
     };
 
     let embedding = match embed_query(embedding_config, &request.query) {
         Some(e) => e,
-        None => return vec![],
+        None => {
+            eprintln!("gcode: semantic vector search skipped: query embedding failed");
+            return vec![];
+        }
     };
 
     let collection = collection_name(&request.collection_prefix, &request.project_id);
-    vector_search(qdrant_config, &collection, &embedding, request.limit)
-        .unwrap_or_default()
-        .into_iter()
-        .map(|(symbol_id, score)| CodeSymbolVectorSearchHit { symbol_id, score })
-        .collect()
+    match vector_search(qdrant_config, &collection, &embedding, request.limit) {
+        Ok(hits) => hits
+            .into_iter()
+            .map(|(symbol_id, score)| CodeSymbolVectorSearchHit { symbol_id, score })
+            .collect(),
+        Err(error) => {
+            eprintln!("gcode: semantic vector search failed: {error}");
+            Vec::new()
+        }
+    }
 }
 
 pub fn semantic_search(ctx: &Context, query: &str, limit: usize) -> Vec<(String, f64)> {

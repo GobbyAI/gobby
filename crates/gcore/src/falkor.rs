@@ -44,12 +44,12 @@ impl GraphClient {
         })
     }
 
-    /// Run a closure with the underlying synchronous FalkorDB graph.
+    /// Run a read-only closure with the underlying synchronous FalkorDB graph.
     ///
     /// This is an escape hatch for consumers that need a FalkorDB operation the
-    /// shared `GraphClient` API does not expose yet. Keep domain-specific query
-    /// construction in consumer crates and prefer `GraphClient::query` when it
-    /// is sufficient.
+    /// shared `GraphClient` API does not expose yet. Do not perform writes
+    /// through this hook; keep domain-specific query construction in consumer
+    /// crates and prefer `GraphClient::query` when it is sufficient.
     pub fn with_sync_graph<T>(
         &mut self,
         f: impl FnOnce(&mut SyncGraph) -> anyhow::Result<T>,
@@ -347,5 +347,50 @@ mod tests {
 
         let signature: fn(&mut GraphClient) -> anyhow::Result<()> = use_hook;
         assert!(std::mem::size_of_val(&signature) > 0);
+    }
+
+    #[test]
+    fn live_sync_graph_read_is_env_gated() {
+        let Some((config, graph_name)) = live_falkor_fixture() else {
+            eprintln!("skipping live FalkorDB read test: GOBBY_FALKORDB_HOST is not set");
+            return;
+        };
+
+        let mut client =
+            GraphClient::from_config(&config, &graph_name).expect("connect live FalkorDB");
+        let rows = client
+            .with_sync_graph(|graph| {
+                let result = graph.query("RETURN 1 AS value").execute()?;
+                Ok(parse_falkor_result(result))
+            })
+            .expect("read through SyncGraph");
+
+        assert_eq!(
+            rows.first()
+                .and_then(|row| row.get("value"))
+                .and_then(|value| value.as_i64()),
+            Some(1)
+        );
+    }
+
+    fn live_falkor_fixture() -> Option<(FalkorConfig, String)> {
+        let host = std::env::var("GOBBY_FALKORDB_HOST").ok()?;
+        let port = std::env::var("GOBBY_FALKORDB_PORT")
+            .ok()
+            .and_then(|value| value.parse::<u16>().ok())
+            .unwrap_or(16379);
+        let password = std::env::var("GOBBY_FALKORDB_PASSWORD")
+            .ok()
+            .filter(|value| !value.is_empty());
+        let graph_name = std::env::var("GOBBY_FALKORDB_TEST_GRAPH")
+            .unwrap_or_else(|_| "gobby_core_live_test".to_string());
+        Some((
+            FalkorConfig {
+                host,
+                port,
+                password,
+            },
+            graph_name,
+        ))
     }
 }

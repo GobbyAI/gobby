@@ -243,8 +243,12 @@ fn format_tree_text(files: &[serde_json::Value]) -> String {
         let symbol_count = file["symbol_count"].as_i64().unwrap_or(0);
         let (dir, basename) = file_path
             .rsplit_once('/')
-            .filter(|(dir, basename)| !dir.is_empty() && !basename.is_empty())
-            .unwrap_or((".", file_path));
+            .map(|(dir, basename)| {
+                let dir = if dir.is_empty() { "." } else { dir };
+                (dir, basename)
+            })
+            .filter(|(_, basename)| !basename.is_empty())
+            .unwrap_or((".", file_path.trim_start_matches('/')));
 
         groups.entry(dir.to_string()).or_default().push(format!(
             "  {basename} [{language}] ({symbol_count} symbols)"
@@ -319,5 +323,16 @@ mod tests {
             format_tree_text(&files),
             ".\n  README.md [markdown] (0 symbols)\nsrc\n  lib.rs [rust] (3 symbols)\nsrc/commands\n  grep.rs [rust] (7 symbols)"
         );
+    }
+
+    #[test]
+    fn tree_text_treats_absolute_root_files_as_root_group() {
+        let files = vec![serde_json::json!({
+            "file_path": "/lib.rs",
+            "language": "rust",
+            "symbol_count": 1,
+        })];
+
+        assert_eq!(format_tree_text(&files), ".\n  lib.rs [rust] (1 symbols)");
     }
 }

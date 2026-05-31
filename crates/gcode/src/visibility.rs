@@ -38,8 +38,8 @@ pub fn context_for_source_project(ctx: &Context, source_project_id: &str) -> Con
         ProjectIndexScope::Overlay {
             overlay_project_id,
             overlay_root,
-            parent_project_id,
-            parent_root,
+            parent_project_id: _parent_project_id,
+            parent_root: _parent_root,
         } if source_project_id == overlay_project_id => overlay_root.clone(),
         ProjectIndexScope::Overlay {
             parent_project_id,

@@ -174,7 +174,7 @@ mod tests {
 
     #[test]
     fn scope_storage_names_reject_path_like_or_nested_ids() {
-        for invalid in ["", ".", "..", "bad/topic", r"bad\topic", "bad:topic"] {
+        for invalid in ["", "   ", ".", "..", "bad/topic", r"bad\topic", "bad:topic"] {
             assert!(
                 project_collection_name(invalid).is_err(),
                 "{invalid:?} should fail"

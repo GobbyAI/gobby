@@ -25,7 +25,10 @@ impl fmt::Debug for StandaloneSetupRequest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("StandaloneSetupRequest")
             .field("standalone", &self.standalone)
-            .field("database_url", &self.database_url)
+            .field(
+                "database_url",
+                &self.database_url.as_ref().map(|_| "<redacted>"),
+            )
             .field("no_services", &self.no_services)
             .field("overwrite_code_index", &self.overwrite_code_index)
             .field("schema", &self.schema)

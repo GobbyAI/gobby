@@ -12,6 +12,7 @@ fn standalone_setup_declares_public_daemon_code_index_subset() {
 
     let object_names: Vec<String> = setup
         .owned_objects()
+        .expect("owned objects")
         .into_iter()
         .map(|object| object.name)
         .collect();
@@ -55,7 +56,7 @@ fn standalone_setup_uses_gobby_core_contract() {
     assert_standalone_setup::<GcodeStandaloneSetup>();
 
     let setup = GcodeStandaloneSetup::new("public");
-    let objects = setup.owned_objects();
+    let objects = setup.owned_objects().expect("owned objects");
     assert!(
         objects
             .iter()
@@ -138,6 +139,20 @@ fn standalone_setup_request_redacts_password_in_json() {
 
     assert!(!encoded.contains("falkordb_password"));
     assert!(!encoded.contains("secret"));
+}
+
+#[test]
+fn standalone_setup_request_debug_redacts_database_url() {
+    let request = StandaloneSetupRequest::new(
+        true,
+        Some("postgresql://user:secret@localhost/gcode".to_string()),
+        None,
+    );
+
+    let debug = format!("{request:?}");
+
+    assert!(debug.contains("<redacted>"));
+    assert!(!debug.contains("secret"));
 }
 
 #[test]

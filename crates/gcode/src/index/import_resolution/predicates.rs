@@ -35,6 +35,10 @@ pub(super) fn is_external_js_module(
         return false;
     }
 
+    if JS_BUILTIN_MODULES.contains(&module) {
+        return true;
+    }
+
     let Some(package_name) = js_package_name(module) else {
         return false;
     };

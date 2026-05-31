@@ -4,6 +4,7 @@ use gobby_core::degradation::ServiceState;
 
 use crate::config::Context;
 
+#[cfg(test)]
 use super::RELATES_TO_CODE;
 use super::loading::load_report_snapshot;
 use super::render::{RenderMarkdownInput, render_markdown};
@@ -107,17 +108,19 @@ fn generate_report_from_snapshot_with_options(
         target_frequencies(&snapshot.code_edges, &node_by_id, "external", options.top_n)
     });
 
-    let (bridge_edges, mut degradation_details) = match snapshot.bridge_edges {
-        BridgeEdgeInput::Available(edges) => (normalize_bridge_edges(edges), vec![]),
-        BridgeEdgeInput::Unavailable(reason) => (
-            vec![],
-            vec![ReportDegradation {
-                input: RELATES_TO_CODE.to_string(),
-                required: false,
-                detail: reason,
-            }],
-        ),
-    };
+    let (bridge_edges, mut degradation_details): (_, Vec<ReportDegradation>) =
+        match snapshot.bridge_edges {
+            BridgeEdgeInput::Available(edges) => (normalize_bridge_edges(edges), vec![]),
+            #[cfg(test)]
+            BridgeEdgeInput::Unavailable(reason) => (
+                vec![],
+                vec![ReportDegradation {
+                    input: RELATES_TO_CODE.to_string(),
+                    required: false,
+                    detail: reason,
+                }],
+            ),
+        };
     let bridge_summary = summarize_bridge_edges(&bridge_edges);
     degradation_details.sort_by(|left, right| left.input.cmp(&right.input));
 

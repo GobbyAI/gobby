@@ -92,6 +92,12 @@ fn rollback_postgres_transaction(client: &mut Client, object: &str) -> Result<()
         })
 }
 
+/// The standalone setup target is PostgreSQL 18 with `pg_search` BM25 indexes.
+///
+/// Compatibility checks intentionally inspect PostgreSQL catalogs
+/// (`pg_class`, `pg_namespace`, `pg_attribute`, `pg_index`, `pg_am`) so gcode
+/// can validate only the code-index objects it owns before creating or
+/// overwriting anything.
 pub(crate) fn ensure_postgres_code_index_compatible(
     client: &mut impl GenericClient,
     schema: &str,

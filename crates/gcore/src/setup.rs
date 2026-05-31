@@ -153,7 +153,7 @@ pub trait StandaloneSetup {
     fn namespace(&self) -> &str;
 
     /// Declare what this consumer owns and can create.
-    fn owned_objects(&self) -> Vec<OwnedObject>;
+    fn owned_objects(&self) -> Result<Vec<OwnedObject>, SetupError>;
 
     /// Create consumer-owned resources. Called only on an explicit setup command.
     fn create(&self, ctx: &mut SetupContext<'_>) -> Result<SetupReport, SetupError>;

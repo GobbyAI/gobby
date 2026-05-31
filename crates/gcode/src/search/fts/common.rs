@@ -238,11 +238,13 @@ pub(super) fn append_visible_symbols(
     limit: usize,
 ) {
     for symbol in symbols {
-        if seen.insert(symbol.id.clone()) && visibility::symbol_is_visible(conn, ctx, &symbol) {
-            out.push(symbol);
-            if out.len() >= limit {
-                return;
-            }
+        if seen.contains(&symbol.id) || !visibility::symbol_is_visible(conn, ctx, &symbol) {
+            continue;
+        }
+        seen.insert(symbol.id.clone());
+        out.push(symbol);
+        if out.len() >= limit {
+            return;
         }
     }
 }

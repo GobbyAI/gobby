@@ -125,7 +125,10 @@ fn notify_daemon_invalidate(base_url: &str, project_id: &str) {
         .build()
     {
         Ok(c) => c,
-        Err(_) => return,
+        Err(error) => {
+            eprintln!("Warning: could not build daemon invalidate HTTP client: {error}");
+            return;
+        }
     };
 
     let base = base_url.trim_end_matches('/');
@@ -155,7 +158,7 @@ pub(super) fn refresh_project_stats(
     let total_files = count_rows(conn, "code_indexed_files", project_id);
     let total_symbols = count_rows(conn, "code_symbols", project_id);
 
-    let _ = api::upsert_project_stats(
+    if let Err(error) = api::upsert_project_stats(
         conn,
         &IndexedProject {
             id: project_id.to_string(),
@@ -166,7 +169,12 @@ pub(super) fn refresh_project_stats(
             index_duration_ms: elapsed_ms,
             total_eligible_files,
         },
-    );
+    ) {
+        eprintln!(
+            "Warning: refresh_project_stats failed to upsert project stats for project {project_id} at {}: {error}",
+            root_path.display()
+        );
+    }
 }
 
 pub(super) fn get_stale_files(

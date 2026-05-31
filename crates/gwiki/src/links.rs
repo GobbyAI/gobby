@@ -40,7 +40,6 @@ where
                 continue;
             }
         } else if rest.starts_with('[')
-            && !rest.starts_with("[[")
             && !is_image_marker(markdown, offset)
             && let Some((link, next_offset)) = parse_markdown_link(markdown, offset, &known_targets)
         {

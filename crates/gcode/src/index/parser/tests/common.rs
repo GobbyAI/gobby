@@ -97,9 +97,7 @@ pub(super) fn discover_supported_files(root: &Path) -> Vec<PathBuf> {
             let entry_path = entry.path();
             if entry_path.is_dir() {
                 stack.push(entry_path);
-            } else if let Some(language) = languages::detect_language(&entry_path.to_string_lossy())
-                && !language.is_empty()
-            {
+            } else if languages::detect_language(&entry_path.to_string_lossy()).is_some() {
                 candidates.push(entry_path);
             }
         }

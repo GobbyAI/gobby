@@ -43,33 +43,15 @@ impl StandaloneSetup for GcodeStandaloneSetup {
         NAMESPACE
     }
 
-    fn owned_objects(&self) -> Vec<OwnedObject> {
-        let code_indexed_projects = match self.qualified("code_indexed_projects") {
-            Ok(name) => name,
-            Err(err) => return vec![invalid_object("code_indexed_projects table", err)],
-        };
-        let code_indexed_files = match self.qualified("code_indexed_files") {
-            Ok(name) => name,
-            Err(err) => return vec![invalid_object("code_indexed_files table", err)],
-        };
-        let code_symbols = match self.qualified("code_symbols") {
-            Ok(name) => name,
-            Err(err) => return vec![invalid_object("code_symbols table", err)],
-        };
-        let code_content_chunks = match self.qualified("code_content_chunks") {
-            Ok(name) => name,
-            Err(err) => return vec![invalid_object("code_content_chunks table", err)],
-        };
-        let code_imports = match self.qualified("code_imports") {
-            Ok(name) => name,
-            Err(err) => return vec![invalid_object("code_imports table", err)],
-        };
-        let code_calls = match self.qualified("code_calls") {
-            Ok(name) => name,
-            Err(err) => return vec![invalid_object("code_calls table", err)],
-        };
+    fn owned_objects(&self) -> Result<Vec<OwnedObject>, SetupError> {
+        let code_indexed_projects = self.qualified("code_indexed_projects")?;
+        let code_indexed_files = self.qualified("code_indexed_files")?;
+        let code_symbols = self.qualified("code_symbols")?;
+        let code_content_chunks = self.qualified("code_content_chunks")?;
+        let code_imports = self.qualified("code_imports")?;
+        let code_calls = self.qualified("code_calls")?;
 
-        vec![
+        Ok(vec![
             self.object(
                 "pg_search extension",
                 "CREATE EXTENSION IF NOT EXISTS pg_search;".to_string(),
@@ -296,12 +278,12 @@ impl StandaloneSetup for GcodeStandaloneSetup {
                      WITH (key_field = 'id');"
                 ),
             ),
-        ]
+        ])
     }
 
     fn create(&self, ctx: &mut SetupContext<'_>) -> Result<SetupReport, SetupError> {
         let mut report = SetupReport::default();
-        for mut object in self.owned_objects() {
+        for mut object in self.owned_objects()? {
             match (object.creator)(ctx) {
                 Ok(()) => report.created.push(object.name),
                 Err(err) => {
@@ -331,19 +313,4 @@ fn execute_postgres_ddl(
             object: object.to_string(),
             message: err.to_string(),
         })
-}
-
-fn invalid_object(name: &str, err: SetupError) -> OwnedObject {
-    let message = err.to_string();
-    let object_name = name.to_string();
-    OwnedObject {
-        name: object_name.clone(),
-        store: StoreKind::Postgres,
-        creator: Box::new(move |_| {
-            Err(SetupError::CreationFailed {
-                object: object_name.clone(),
-                message: message.clone(),
-            })
-        }),
-    }
 }

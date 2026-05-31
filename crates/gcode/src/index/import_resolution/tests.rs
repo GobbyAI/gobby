@@ -7,7 +7,9 @@ use super::context::{
     load_elixir_dependency_names, load_rust_external_crates, load_rust_self_crate_name,
 };
 use super::helpers::{go_default_package_alias, split_top_level};
-use super::predicates::{csharp_declared_types, elixir_dependency_roots, ruby_require_root};
+use super::predicates::{
+    csharp_declared_types, elixir_dependency_roots, is_external_js_module, ruby_require_root,
+};
 use super::*;
 
 #[test]
@@ -347,9 +349,23 @@ end
 fn go_default_package_alias_uses_last_segment_before_version_suffix() {
     assert_eq!(go_default_package_alias("gopkg.in/yaml.v3"), "yaml");
     assert_eq!(
+        go_default_package_alias("example.com/api.vnext"),
+        "api.vnext"
+    );
+    assert_eq!(go_default_package_alias("example.com/api.vx"), "api.vx");
+    assert_eq!(
         go_default_package_alias("github.com/acme/api-client/"),
         "api_client"
     );
+}
+
+#[test]
+fn js_builtin_submodules_are_external_without_package_fallback() {
+    let context = ImportResolutionContext::default();
+
+    assert!(is_external_js_module("fs/promises", &context));
+    assert!(is_external_js_module("stream/web", &context));
+    assert!(!is_external_js_module("fs-extra/promises", &context));
 }
 
 #[test]

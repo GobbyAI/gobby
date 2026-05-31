@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use serde::Serialize;
 
@@ -82,7 +83,7 @@ pub struct AuditReport {
     pub scope: ScopeIdentity,
     pub root: PathBuf,
     pub unsupported_claims: Vec<UnsupportedClaim>,
-    pub source_context: Vec<AuditSourceContext>,
+    pub source_context: Arc<Vec<AuditSourceContext>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -92,7 +93,7 @@ pub struct UnsupportedClaim {
     pub heading: Option<String>,
     pub claim: String,
     pub reason: String,
-    pub source_context: Vec<AuditSourceContext>,
+    pub source_context: Arc<Vec<AuditSourceContext>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -113,7 +114,7 @@ pub fn run_with_options(
     options: AuditOptions,
 ) -> Result<AuditReport, WikiError> {
     let pages = collect_pages(vault_root)?;
-    let source_context = source_context(vault_root)?;
+    let source_context = Arc::new(source_context(vault_root)?);
     let provenance = load_provenance(vault_root)?;
     let unsupported_claims = pages
         .iter()
@@ -186,7 +187,7 @@ fn load_provenance(vault_root: &Path) -> Result<ProvenanceGraph, WikiError> {
 fn unsupported_claims(
     page: &WikiPage,
     provenance: &ProvenanceGraph,
-    source_context: &[AuditSourceContext],
+    source_context: &Arc<Vec<AuditSourceContext>>,
     options: &AuditOptions,
 ) -> Vec<UnsupportedClaim> {
     let supported_lines = supported_claim_lines(page, provenance, options);
@@ -202,7 +203,7 @@ fn unsupported_claims(
                 heading: claim.heading,
                 claim: claim.text,
                 reason: "claim has no source provenance or inline citation".to_string(),
-                source_context: source_context.to_vec(),
+                source_context: Arc::clone(source_context),
             })
         })
         .collect()

@@ -42,7 +42,7 @@ pub(crate) fn execute(selection: ScopeSelection) -> Result<CommandOutcome, WikiE
         let status = setup_status(&report.created, &report.skipped, &report.failed);
         (status, report.created, report.skipped, report.failed)
     } else {
-        ("ready", Vec::new(), Vec::new(), Vec::new())
+        ("no_database", Vec::new(), Vec::new(), Vec::new())
     };
 
     Ok(render(

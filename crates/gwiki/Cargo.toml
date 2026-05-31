@@ -12,7 +12,8 @@ keywords = ["gobby", "wiki", "cli"]
 categories = ["command-line-utilities", "development-tools"]
 
 [features]
-default = []
+default = ["rustls"]
+rustls = ["dep:reqwest"]
 
 [lib]
 name = "gobby_wiki"
@@ -27,8 +28,8 @@ gobby-core = { path = "../gcore", version = "0.2.2", features = ["postgres", "fa
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
 postgres = "0.19"
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
-serde = { version = "1", features = ["derive"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"], optional = true }
+serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 serde_norway = "0.9.42"
 toml = "1"

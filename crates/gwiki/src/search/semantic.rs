@@ -186,25 +186,42 @@ where
     }
 }
 
+#[cfg(feature = "rustls")]
 #[derive(Debug, Clone)]
 pub struct OpenAiEmbeddingBackend {
     client: reqwest::blocking::Client,
 }
 
+#[cfg(feature = "rustls")]
+impl OpenAiEmbeddingBackend {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+#[cfg(feature = "rustls")]
 impl Default for OpenAiEmbeddingBackend {
     fn default() -> Self {
         Self {
-            client: reqwest::blocking::Client::new(),
+            client: reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(10))
+                .build()
+                .expect("build default embedding HTTP client"),
         }
     }
 }
 
+#[cfg(feature = "rustls")]
 impl QueryEmbedder for OpenAiEmbeddingBackend {
     fn embed_query(
         &mut self,
         config: &EmbeddingConfig,
         query: &str,
     ) -> Result<Vec<f32>, SearchError> {
+        self.client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(config.timeout_seconds))
+            .build()
+            .map_err(|error| SearchError::Backend(error.to_string()))?;
         let url = format!("{}/embeddings", config.api_base.trim_end_matches('/'));
         let mut request = self.client.post(url).json(&json!({
             "model": config.model,
@@ -243,6 +260,30 @@ impl QueryEmbedder for OpenAiEmbeddingBackend {
                 })
             })
             .collect()
+    }
+}
+
+#[cfg(not(feature = "rustls"))]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct OpenAiEmbeddingBackend;
+
+#[cfg(not(feature = "rustls"))]
+impl OpenAiEmbeddingBackend {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+#[cfg(not(feature = "rustls"))]
+impl QueryEmbedder for OpenAiEmbeddingBackend {
+    fn embed_query(
+        &mut self,
+        _config: &EmbeddingConfig,
+        _query: &str,
+    ) -> Result<Vec<f32>, SearchError> {
+        Err(SearchError::Backend(
+            "semantic HTTP backend unavailable; build with the `rustls` feature".to_string(),
+        ))
     }
 }
 
@@ -412,6 +453,7 @@ mod tests {
             model: "embed-model".to_string(),
             api_key: None,
             query_prefix: None,
+            timeout_seconds: 10,
         };
         let qdrant = QdrantConfig {
             url: Some("http://qdrant.local".to_string()),

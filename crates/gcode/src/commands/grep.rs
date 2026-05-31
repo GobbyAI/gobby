@@ -313,6 +313,8 @@ impl CompiledGlob {
     }
 
     fn matches(&self, file_path: &str) -> bool {
+        // Match ripgrep-style basename globs (`*.rs`) while keeping slash
+        // globs (`src/*.rs`) scoped to the full indexed path.
         if self.pattern.matches(file_path) {
             return true;
         }
@@ -651,6 +653,37 @@ mod tests {
 
         assert_eq!(result.scanned_chunks, 1);
         assert_eq!(result.matches[0].path, "src/gobby/app.py");
+    }
+
+    #[test]
+    fn bare_globs_match_basenames_but_slash_globs_match_paths() {
+        let chunks = vec![
+            chunk("src/app.py", 1, "needle"),
+            chunk("tests/app.py", 1, "needle"),
+        ];
+        let bare = vec!["*.py".to_string()];
+        let slash = vec!["src/*.py".to_string()];
+
+        let bare_result = grep_chunks(
+            &chunks,
+            &GrepOptions {
+                globs: &bare,
+                ..options("needle")
+            },
+        )
+        .expect("bare glob grep");
+        let slash_result = grep_chunks(
+            &chunks,
+            &GrepOptions {
+                globs: &slash,
+                ..options("needle")
+            },
+        )
+        .expect("slash glob grep");
+
+        assert_eq!(bare_result.matches.len(), 2);
+        assert_eq!(slash_result.matches.len(), 1);
+        assert_eq!(slash_result.matches[0].path, "src/app.py");
     }
 
     #[test]

@@ -309,6 +309,8 @@ fn string_list(value: &Value) -> Vec<String> {
     }
 }
 
+/// Parse tags from either a string (`"#rust wiki"`, `"rust, wiki"`) or an
+/// array (`["#rust", "wiki"]`); a leading `#` is stripped from each tag.
 fn tag_list(value: &Value) -> Vec<String> {
     match value {
         Value::String(value) => value

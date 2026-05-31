@@ -210,7 +210,7 @@ pub(crate) enum Command {
         /// Show N context lines before and after match
         #[arg(short = 'C', long)]
         context: Option<usize>,
-        /// Glob pattern to filter files (can be specified multiple times)
+        /// Glob pattern to filter files (bare globs match basenames; slash globs match paths)
         #[arg(short = 'g', long)]
         glob: Vec<String>,
         /// Maximum matching lines to include
@@ -436,25 +436,37 @@ pub(crate) fn reject_unsupported_grep_flags(command: &Command) -> anyhow::Result
         return Ok(());
     };
 
-    let flag = [
-        (*unsupported_limit).then_some("--limit"),
-        (*unsupported_files_with_matches).then_some("--files-with-matches"),
-        (*unsupported_files_without_match).then_some("--files-without-match"),
-        (*unsupported_count).then_some("--count"),
-        (*unsupported_only_matching).then_some("--only-matching"),
-        (*unsupported_invert_match).then_some("--invert-match"),
-        (*unsupported_word_regexp).then_some("--word-regexp"),
-        unsupported_regexp.as_ref().map(|_| "--regexp"),
-        (*unsupported_recursive).then_some("--recursive"),
-        unsupported_type.as_ref().map(|_| "--type"),
-        unsupported_type_not.as_ref().map(|_| "--type-not"),
-        (*unsupported_pcre2).then_some("--pcre2"),
-        (*unsupported_multiline).then_some("--multiline"),
-        (*unsupported_json).then_some("--json"),
-    ]
-    .into_iter()
-    .flatten()
-    .next();
+    let flag = if *unsupported_limit {
+        Some("--limit")
+    } else if *unsupported_files_with_matches {
+        Some("--files-with-matches")
+    } else if *unsupported_files_without_match {
+        Some("--files-without-match")
+    } else if *unsupported_count {
+        Some("--count")
+    } else if *unsupported_only_matching {
+        Some("--only-matching")
+    } else if *unsupported_invert_match {
+        Some("--invert-match")
+    } else if *unsupported_word_regexp {
+        Some("--word-regexp")
+    } else if unsupported_regexp.is_some() {
+        Some("--regexp")
+    } else if *unsupported_recursive {
+        Some("--recursive")
+    } else if unsupported_type.is_some() {
+        Some("--type")
+    } else if unsupported_type_not.is_some() {
+        Some("--type-not")
+    } else if *unsupported_pcre2 {
+        Some("--pcre2")
+    } else if *unsupported_multiline {
+        Some("--multiline")
+    } else if *unsupported_json {
+        Some("--json")
+    } else {
+        None
+    };
 
     if let Some(flag) = flag {
         anyhow::bail!(

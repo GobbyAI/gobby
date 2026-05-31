@@ -77,6 +77,13 @@ pub struct AcceptedCompileSource {
     pub title: String,
     pub path: PathBuf,
     pub chunks: Vec<String>,
+    pub chunk_offsets: Vec<AcceptedCompileChunkOffset>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AcceptedCompileChunkOffset {
+    pub byte_start: usize,
+    pub byte_end: usize,
 }
 
 pub fn compile_to_wiki(
@@ -351,13 +358,22 @@ fn write_provenance(
             .map(|record| record.id.clone())
             .unwrap_or_else(|| page_slugify(&source.title));
         for (index, chunk) in source.chunks.iter().enumerate() {
+            let offset =
+                source
+                    .chunk_offsets
+                    .get(index)
+                    .cloned()
+                    .unwrap_or(AcceptedCompileChunkOffset {
+                        byte_start: 0,
+                        byte_end: chunk.len(),
+                    });
             graph.add_link(ProvenanceLink {
                 source: SourceChunkRef {
                     source_id: source_id.clone(),
                     chunk_id: format!("{source_id}#chunk-{index}"),
                     path: PathBuf::from(relative_path(vault_root, &source.path)),
-                    byte_start: 0,
-                    byte_end: chunk.len(),
+                    byte_start: offset.byte_start,
+                    byte_end: offset.byte_end,
                 },
                 section: section.clone(),
                 claim: Some(chunk.clone()),
@@ -419,7 +435,19 @@ fn collect_accepted_sources(session: &ResearchSession) -> Result<CollectedSource
         accepted_sources.push(AcceptedCompileSource {
             title: note.title.clone(),
             path,
-            chunks: note_sections.chunks,
+            chunks: note_sections
+                .chunks
+                .iter()
+                .map(|chunk| chunk.text.clone())
+                .collect(),
+            chunk_offsets: note_sections
+                .chunks
+                .iter()
+                .map(|chunk| AcceptedCompileChunkOffset {
+                    byte_start: chunk.byte_start,
+                    byte_end: chunk.byte_end,
+                })
+                .collect(),
         });
     }
 
@@ -436,12 +464,19 @@ struct ParsedNoteSections {
     citations: Vec<String>,
     conflicting_claims: Vec<String>,
     missing_evidence: Vec<String>,
-    chunks: Vec<String>,
+    chunks: Vec<ParsedNoteChunk>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ParsedNoteChunk {
+    text: String,
+    byte_start: usize,
+    byte_end: usize,
 }
 
 fn parse_note_sections(text: &str) -> ParsedNoteSections {
     let mut sections = ParsedNoteSections::default();
-    for line in body_lines(text) {
+    for (line_start, line) in body_line_spans(text) {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
@@ -458,23 +493,59 @@ fn parse_note_sections(text: &str) -> ParsedNoteSections {
             sections.missing_evidence.push(value.to_string());
             continue;
         }
-        sections.chunks.push(trimmed.to_string());
+        let leading = line.len() - line.trim_start().len();
+        let trailing = line.len() - line.trim_end().len();
+        sections.chunks.push(ParsedNoteChunk {
+            text: trimmed.to_string(),
+            byte_start: line_start + leading,
+            byte_end: line_start + line.len() - trailing,
+        });
     }
     sections
 }
 
-fn body_lines(text: &str) -> Vec<&str> {
-    let mut lines = text.lines();
-    if lines.next().map(str::trim) != Some("---") {
-        return text.lines().collect();
+fn body_line_spans(text: &str) -> Vec<(usize, &str)> {
+    let body_start = body_start_offset(text);
+    let mut spans = Vec::new();
+    let mut offset = body_start;
+    for segment in text[body_start..].split_inclusive('\n') {
+        let without_newline = segment.strip_suffix('\n').unwrap_or(segment);
+        let line = without_newline
+            .strip_suffix('\r')
+            .unwrap_or(without_newline);
+        spans.push((offset, line));
+        offset += segment.len();
+    }
+    spans
+}
+
+fn body_start_offset(text: &str) -> usize {
+    let Some(first_line_end) = text.find('\n') else {
+        return 0;
+    };
+    if text[..first_line_end].trim() != "---" {
+        return 0;
     }
 
-    for line in lines.by_ref() {
+    let mut offset = first_line_end + 1;
+    while offset < text.len() {
+        let line_end = text[offset..]
+            .find('\n')
+            .map_or(text.len(), |relative| offset + relative);
+        let line = text[offset..line_end].trim_end_matches('\r');
         if line.trim() == "---" {
-            return lines.collect();
+            return if line_end < text.len() {
+                line_end + 1
+            } else {
+                line_end
+            };
         }
+        if line_end == text.len() {
+            return text.len();
+        }
+        offset = line_end + 1;
     }
-    Vec::new()
+    text.len()
 }
 
 fn prefixed_value<'a>(line: &'a str, prefixes: &[&str]) -> Option<&'a str> {
@@ -808,7 +879,7 @@ mod tests {
                 .ends_with("wiki/topics/durable-compile.md")
         );
         assert!(page.starts_with("---\n"));
-        assert!(page.contains("title: Durable Compile"));
+        assert!(page.contains("title: \"Durable Compile\""));
         assert!(page.contains("source_kind: topic"));
         assert!(page.contains("[[wiki/sources/compile-behavior|Compile behavior]]"));
         assert!(page.contains("Example Docs, Compile API"));
@@ -819,6 +890,11 @@ mod tests {
             std::fs::read_to_string(scope.root().join("meta/provenance.json")).expect("provenance");
         assert!(provenance.contains("wiki/topics/durable-compile.md"));
         assert!(provenance.contains("raw/research/compile.md"));
+        let provenance: ProvenanceGraph =
+            serde_json::from_str(&provenance).expect("parse provenance");
+        let source = &provenance.links()[0].source;
+        assert!(source.byte_start > 0);
+        assert!(source.byte_end > source.byte_start);
     }
 
     #[test]

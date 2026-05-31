@@ -148,6 +148,13 @@ pub fn sanitize_pg_search_query(query: &str) -> String {
     cleaned
         .split_whitespace()
         .filter(|token| !token.is_empty())
+        .map(|token| {
+            if token.starts_with('-') {
+                format!("\\{token}")
+            } else {
+                token.to_string()
+            }
+        })
         .collect::<Vec<_>>()
         .join(" ")
 }
@@ -347,6 +354,11 @@ mod tests {
 
         assert!(!is_keyword_searchable_path("raw/private-note.md"));
         assert!(!is_keyword_searchable_path("outputs/export.md"));
+    }
+
+    #[test]
+    fn sanitizer_escapes_leading_minus_tokens() {
+        assert_eq!(sanitize_pg_search_query("-draft stable"), r"\-draft stable");
     }
 
     #[test]

@@ -90,6 +90,8 @@ fn resolve_graph_target(
 fn slug_target_map(store: &store::MemoryWikiStore) -> BTreeMap<String, PathBuf> {
     let mut targets = BTreeMap::new();
     for document in store.documents.values() {
+        // Deterministic collision behavior: first path in BTreeMap document
+        // order wins for each slug, and later title/file slug collisions keep it.
         if let Some(file_slug) = document
             .path
             .file_stem()

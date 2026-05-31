@@ -40,17 +40,33 @@ pub fn fuse_sources(
     let mut results = gobby_core::search::rrf_merge(sources)
         .into_iter()
         .filter_map(|fused| {
+            debug_assert!(
+                by_id.contains_key(&fused.id),
+                "RRF returned id absent from source hit map: {}",
+                fused.id
+            );
             let mut result = by_id.remove(&fused.id)?;
             result.score = fused.score;
             result.sources = fused
                 .sources
                 .iter()
-                .filter_map(|source| SearchSource::from_source_name(source))
+                .filter_map(|source| {
+                    debug_assert!(
+                        SearchSource::from_source_name(source).is_some(),
+                        "RRF returned unknown source name: {source}"
+                    );
+                    SearchSource::from_source_name(source)
+                })
                 .collect();
             result.explanations = fused
                 .explanations
                 .iter()
                 .filter_map(|explanation| {
+                    debug_assert!(
+                        SearchSource::from_source_name(&explanation.source).is_some(),
+                        "RRF returned unknown explanation source: {}",
+                        explanation.source
+                    );
                     Some(SearchSourceExplanation {
                         source: SearchSource::from_source_name(&explanation.source)?,
                         rank: explanation.rank,

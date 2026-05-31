@@ -3,6 +3,7 @@ use std::io::Write;
 use std::path::Path;
 use std::time::Duration;
 
+use fs2::FileExt;
 use serde::Serialize;
 
 use crate::events::{EventMonitor, SessionEvent};
@@ -349,12 +350,18 @@ fn append_raw_index(vault_root: &Path, title: &str, note_path: &Path) -> Result<
     let mut index = OpenOptions::new()
         .create(true)
         .append(true)
+        .read(true)
         .open(&index_path)
         .map_err(|error| WikiError::Io {
             action: "open raw index",
             path: Some(index_path.clone()),
             source: error.to_string(),
         })?;
+    index.lock_exclusive().map_err(|error| WikiError::Io {
+        action: "lock raw index",
+        path: Some(index_path.clone()),
+        source: error.to_string(),
+    })?;
     let is_empty = index
         .metadata()
         .map(|metadata| metadata.len() == 0)

@@ -168,8 +168,9 @@ pub fn synthesize_article(
         markdown.push_str("## ");
         markdown.push_str(heading);
         markdown.push_str("\n\n");
-        render_source_excerpts(&mut markdown, &input.accepted_sources);
     }
+    markdown.push_str("## Source excerpts\n\n");
+    render_source_excerpts(&mut markdown, &input.accepted_sources);
 
     render_list_section(&mut markdown, "Citations", &input.citations);
     render_list_section(
@@ -462,20 +463,13 @@ fn trim_markdown_extension(path: &str) -> String {
 }
 
 fn yaml_scalar(value: &str) -> String {
-    if value
-        .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, ' ' | '-' | '_' | '.'))
-    {
-        value.to_string()
-    } else {
-        let escaped = value
-            .replace('\\', "\\\\")
-            .replace('"', "\\\"")
-            .replace('\n', "\\n")
-            .replace('\r', "\\r")
-            .replace('\t', "\\t");
-        format!("\"{escaped}\"")
-    }
+    let escaped = value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t");
+    format!("\"{escaped}\"")
 }
 
 #[cfg(test)]
@@ -521,6 +515,7 @@ mod tests {
 
     #[test]
     fn yaml_scalar_escapes_quoted_control_characters() {
+        assert_eq!(yaml_scalar("Plain Title"), "\"Plain Title\"");
         assert_eq!(
             yaml_scalar("a\\b\"c\nd\re\tf"),
             "\"a\\\\b\\\"c\\nd\\re\\tf\""

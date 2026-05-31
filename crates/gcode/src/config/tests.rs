@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use super::context::escape_like;
 use super::context::resolve_project_id;
 use super::services::{
     resolve_code_vector_settings_from_values, resolve_embedding_config_from_values,
@@ -75,6 +76,7 @@ const SERVICE_ENV_KEYS: &[&str] = &[
     "GOBBY_EMBEDDING_URL",
     "GOBBY_EMBEDDING_MODEL",
     "GOBBY_EMBEDDING_API_KEY",
+    "GOBBY_EMBEDDING_TIMEOUT_SECONDS",
     "GOBBY_EMBEDDING_VECTOR_DIM",
 ];
 
@@ -109,6 +111,7 @@ fn adapter_env_precedence_and_json_decode() {
             ("embeddings.api_base", r#""http://embeddings.local:11434""#),
             ("embeddings.model", r#""embed-model""#),
             ("embeddings.api_key", "null"),
+            ("embeddings.timeout_seconds", "12"),
         ]);
 
         let falkor = resolve_falkordb_config_from_values(config_value_for(&values), |value| {
@@ -133,7 +136,13 @@ fn adapter_env_precedence_and_json_decode() {
         assert_eq!(embedding.api_base, "http://embeddings.local:11434");
         assert_eq!(embedding.model, "embed-model");
         assert_eq!(embedding.api_key, None);
+        assert_eq!(embedding.timeout_seconds, 12);
     });
+}
+
+#[test]
+fn project_name_like_lookup_escapes_wildcards() {
+    assert_eq!(escape_like(r"api\_%"), r"api\\\_\%");
 }
 
 #[test]

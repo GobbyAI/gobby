@@ -12,7 +12,9 @@ pub struct SourceChunkRef {
     pub source_id: String,
     pub chunk_id: String,
     pub path: PathBuf,
+    /// Inclusive byte offset in the source note.
     pub byte_start: usize,
+    /// Exclusive byte offset in the source note.
     pub byte_end: usize,
 }
 
