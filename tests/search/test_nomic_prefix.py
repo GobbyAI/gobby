@@ -379,7 +379,7 @@ async def test_lmstudio_connection_recovery_retries_once() -> None:
     ("api_base", "error_match", "sdk_called"),
     [
         ("http://remote.example:1234/v1", "Embedding generation failed", True),
-        (None, "embeddings.api_base", False),
+        (None, "embedding API base", False),
     ],
 )
 async def test_connection_failures_do_not_trigger_lmstudio_recovery_for_remote_or_openai(

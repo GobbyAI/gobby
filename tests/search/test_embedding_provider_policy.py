@@ -52,7 +52,7 @@ async def test_local_nomic_without_api_base_never_calls_openai_sdk(
 
     with (
         patch("openai.AsyncOpenAI") as mock_openai,
-        pytest.raises(EmbeddingGenerationError, match="embeddings.api_base") as exc_info,
+        pytest.raises(EmbeddingGenerationError, match="embedding API base") as exc_info,
     ):
         await generate_embedding("hello", model="nomic-embed-text")
 
@@ -66,7 +66,7 @@ async def test_lmstudio_nomic_without_api_base_never_calls_openai_sdk() -> None:
     """LM Studio's Nomic model id must also name a local endpoint explicitly."""
     with (
         patch("openai.AsyncOpenAI") as mock_openai,
-        pytest.raises(EmbeddingGenerationError, match="embeddings.api_base"),
+        pytest.raises(EmbeddingGenerationError, match="embedding API base"),
     ):
         await generate_embedding(
             "hello",

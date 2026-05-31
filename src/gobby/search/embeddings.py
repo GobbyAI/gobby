@@ -135,7 +135,9 @@ def _resolve_embedding_provider(
                 model=model,
                 api_base=normalized_api_base,
                 api_key=api_key,
-                reason=("local or OpenAI-compatible embedding models require embeddings.api_base"),
+                reason=(
+                    "local or OpenAI-compatible embedding models require an embedding API base"
+                ),
             )
         )
 
@@ -145,7 +147,7 @@ def _resolve_embedding_provider(
                 model=model,
                 api_base=normalized_api_base,
                 api_key=api_key,
-                reason="OpenAI cloud embeddings require embeddings.api_key",
+                reason="OpenAI cloud embeddings require an embedding API key",
             )
         )
 

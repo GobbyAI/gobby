@@ -10,6 +10,11 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
 from gobby.config.app import DaemonConfig, deep_merge
+from gobby.config.embedding_keys import (
+    canonicalize_embedding_config_entries,
+    canonicalize_embedding_config_key,
+    runtimeize_embedding_config_entries,
+)
 from gobby.servers.routes.configuration_context import ConfigurationRouteContext
 from gobby.servers.routes.configuration_models import SaveConfigRequest
 from gobby.servers.routes.configuration_secrets import (
@@ -62,12 +67,22 @@ def register_value_routes(router: APIRouter, context: ConfigurationRouteContext)
         try:
             config_store = context.get_config_store()
             existing_secret_keys = set(config_store.get_secret_keys())
-            flat_updates = flatten_config(request.values)
+            flat_updates = runtimeize_embedding_config_entries(flatten_config(request.values))
+            storage_updates = canonicalize_embedding_config_entries(flat_updates)
+            runtime_key_by_storage_key = {
+                canonicalize_embedding_config_key(runtime_key): runtime_key
+                for runtime_key in flat_updates
+            }
 
             secret_entries: dict[str, Any] = {}
             normal_entries: dict[str, Any] = {}
-            for key, value in flat_updates.items():
-                if is_secret_key_name(key) or key in existing_secret_keys:
+            for key, value in storage_updates.items():
+                runtime_key = runtime_key_by_storage_key[key]
+                if (
+                    is_secret_key_name(key)
+                    or key in existing_secret_keys
+                    or runtime_key in existing_secret_keys
+                ):
                     if value == MASKED_SECRET:
                         continue
                     secret_entries[key] = value
@@ -83,10 +98,11 @@ def register_value_routes(router: APIRouter, context: ConfigurationRouteContext)
 
             validation_flat = dict(flat_updates)
             for key in secret_entries:
+                runtime_key = runtime_key_by_storage_key[key]
                 if secret_entries[key] == "" or secret_entries[key] is None:
-                    validation_flat.pop(key, None)
+                    validation_flat.pop(runtime_key, None)
                 else:
-                    validation_flat[key] = f"$secret:{config_key_to_secret_name(key)}"
+                    validation_flat[runtime_key] = f"$secret:{config_key_to_secret_name(key)}"
             validation_flat = {k: v for k, v in validation_flat.items() if v != MASKED_SECRET}
 
             current = context.current_config_values()
@@ -142,7 +158,7 @@ def register_value_routes(router: APIRouter, context: ConfigurationRouteContext)
         """Validate config without saving."""
         try:
             current = context.current_config_values()
-            flat_updates = flatten_config(request.values)
+            flat_updates = runtimeize_embedding_config_entries(flatten_config(request.values))
             unmasked_updates = {
                 key: value for key, value in flat_updates.items() if value != MASKED_SECRET
             }

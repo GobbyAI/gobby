@@ -218,6 +218,14 @@ class EmbeddingsConfig(BaseModel):
             "Installers store this as an encrypted $secret: reference in config_store."
         ),
     )
+    query_prefix: str | None = Field(
+        default=None,
+        description="Optional text prefix prepended to semantic-search queries before embedding.",
+    )
+    provider: str | None = Field(
+        default=None,
+        description="Optional provider label for install/setup diagnostics.",
+    )
 
     @field_validator("dim")
     @classmethod

@@ -334,13 +334,19 @@ def _persist_embedding_config(
     provider: str,
     embedding_api_key: str | None = None,
 ) -> None:
-    """Write embedding config to the unified embeddings.* namespace via ConfigStore.
+    """Write embedding config to the canonical embedding namespace via ConfigStore.
 
-    Sets: embeddings.model, embeddings.api_base, embeddings.dim
+    Sets the model, API base, and vector dimension.
 
     For the "none" provider, writes null/zero values to disable semantic search.
-    If embedding_api_key is provided, stores it encrypted as embeddings.api_key.
+    If embedding_api_key is provided, stores it encrypted.
     """
+    from gobby.config.embedding_keys import (
+        AI_EMBEDDING_API_BASE_KEY,
+        AI_EMBEDDING_API_KEY_KEY,
+        AI_EMBEDDING_DIM_KEY,
+        AI_EMBEDDING_MODEL_KEY,
+    )
     from gobby.storage.config_store import ConfigStore
     from gobby.storage.hub.runtime import runtime_hub_database
     from gobby.storage.secrets import SecretStore
@@ -351,15 +357,15 @@ def _persist_embedding_config(
         entries: dict[str, Any]
         if provider == "none":
             entries = {
-                "embeddings.model": None,
-                "embeddings.api_base": None,
-                "embeddings.dim": 0,
+                AI_EMBEDDING_MODEL_KEY: None,
+                AI_EMBEDDING_API_BASE_KEY: None,
+                AI_EMBEDDING_DIM_KEY: 0,
             }
         else:
             entries = {
-                "embeddings.model": model,
-                "embeddings.api_base": api_base,
-                "embeddings.dim": dim,
+                AI_EMBEDDING_MODEL_KEY: model,
+                AI_EMBEDDING_API_BASE_KEY: api_base,
+                AI_EMBEDDING_DIM_KEY: dim,
             }
 
         store.set_many(entries, source="install")
@@ -367,7 +373,7 @@ def _persist_embedding_config(
         if embedding_api_key:
             secret_store = SecretStore(db)
             store.set_secret(
-                "embeddings.api_key",
+                AI_EMBEDDING_API_KEY_KEY,
                 embedding_api_key,
                 secret_store,
                 source="install",

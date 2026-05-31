@@ -18,6 +18,12 @@ from gobby.config.app import (
     save_config,
 )
 from gobby.config.bin_freshness import BinFreshnessConfig
+from gobby.config.embedding_keys import (
+    AI_EMBEDDING_API_BASE_KEY,
+    AI_EMBEDDING_DIM_KEY,
+    AI_EMBEDDING_MODEL_KEY,
+    runtime_embedding_key,
+)
 from gobby.config.extensions import (
     HookExtensionsConfig,
     WebhookEndpointConfig,
@@ -659,6 +665,59 @@ class TestLoadConfig:
 
         assert config.memory.kg.provider == "codex"
         assert config.memory.kg.model == "gpt-5-mini"
+
+    def test_ai_embeddings_normalized_at_load(self, temp_dir: Path) -> None:
+        """Canonical DB embedding keys populate the runtime embeddings model."""
+
+        class DummyConfigStore:
+            def get_all(self) -> dict[str, object]:
+                return {
+                    AI_EMBEDDING_MODEL_KEY: "bge-m3",
+                    AI_EMBEDDING_API_BASE_KEY: "http://localhost:9999/v1",
+                    AI_EMBEDDING_DIM_KEY: 1024,
+                }
+
+        config = load_config(
+            config_file=str(temp_dir / "bootstrap.yaml"),
+            config_store=DummyConfigStore(),
+        )
+
+        assert config.embeddings.model == "bge-m3"
+        assert config.embeddings.api_base == "http://localhost:9999/v1"
+        assert config.embeddings.dim == 1024
+
+    def test_legacy_embedding_db_keys_are_ignored(self, temp_dir: Path) -> None:
+        """Old DB embedding keys are no longer honored after the hard cut."""
+
+        class DummyConfigStore:
+            def __init__(self) -> None:
+                self.deleted: list[str] = []
+
+            def get_all(self) -> dict[str, object]:
+                return {
+                    runtime_embedding_key("model"): "legacy-model",
+                    runtime_embedding_key("api_base"): "http://legacy/v1",
+                    AI_EMBEDDING_MODEL_KEY: "canonical-model",
+                    AI_EMBEDDING_DIM_KEY: 768,
+                }
+
+            def delete(self, key: str) -> bool:
+                self.deleted.append(key)
+                return True
+
+        store = DummyConfigStore()
+
+        config = load_config(
+            config_file=str(temp_dir / "bootstrap.yaml"),
+            config_store=store,
+        )
+
+        assert config.embeddings.model == "canonical-model"
+        assert config.embeddings.api_base is None
+        assert sorted(store.deleted) == [
+            runtime_embedding_key("api_base"),
+            runtime_embedding_key("model"),
+        ]
 
     def test_load_config_drops_stale_neo4j_db_keys(
         self, temp_dir: Path, caplog: pytest.LogCaptureFixture

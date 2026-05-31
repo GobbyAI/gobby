@@ -39,7 +39,7 @@ class SearchConfig(BaseModel):
     - Whether to notify on fallback
 
     Embedding model/endpoint/key are configured once in EmbeddingsConfig
-    (config.embeddings.*) and passed to search consumers as constructor args.
+    and passed to search consumers as constructor args.
 
     Supported modes:
     - keyword: PostgreSQL keyword search only

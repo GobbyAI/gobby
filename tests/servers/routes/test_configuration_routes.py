@@ -14,12 +14,15 @@ from unittest.mock import MagicMock, patch
 import psycopg
 import pytest
 import yaml
+from fastapi import APIRouter, FastAPI
 from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
+from gobby.config.embedding_keys import AI_EMBEDDING_API_KEY_KEY, EMBEDDING_API_KEY_SECRET_NAME
 from gobby.servers.routes.configuration_import_export import _prompt_export_key
 from gobby.servers.routes.configuration_prompts import _normalize_variable_spec
 from gobby.servers.routes.configuration_secrets import MASKED_SECRET
+from gobby.servers.routes.configuration_values import register_value_routes
 from gobby.servers.tool_approvals import DEFAULT_GLOBAL_APPROVAL_RULES
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
@@ -1467,6 +1470,80 @@ class TestSecretAwareConfig:
         secret_store = SecretStore(temp_db)
         decrypted = secret_store.get("provider_api_key")
         assert decrypted == "sk-test-789"
+
+    def test_put_embedding_api_key_uses_canonical_secret(self) -> None:
+        class FakeTransaction:
+            def __enter__(self) -> None:
+                return None
+
+            def __exit__(self, *_args: object) -> bool:
+                return False
+
+        class FakeStore:
+            def __init__(self) -> None:
+                self.db = self
+                self.entries: dict[str, Any] = {}
+                self.secret_keys: set[str] = set()
+                self.secrets: dict[str, str] = {}
+
+            def transaction(self) -> FakeTransaction:
+                return FakeTransaction()
+
+            def get_secret_keys(self) -> list[str]:
+                return sorted(self.secret_keys)
+
+            def set_many(self, entries: dict[str, Any], source: str = "user") -> int:
+                self.entries.update(entries)
+                return len(entries)
+
+            def set_secret(
+                self,
+                key: str,
+                plaintext_value: str,
+                _secret_store: object,
+                source: str = "user",
+            ) -> None:
+                self.entries[key] = "$secret:embeddings_api_key"
+                self.secret_keys.add(key)
+                self.secrets[EMBEDDING_API_KEY_SECRET_NAME] = plaintext_value
+
+        class FakeContext:
+            def __init__(self) -> None:
+                self.store = FakeStore()
+                self.runtime_config = DaemonConfig()
+
+            def get_config_store(self) -> FakeStore:
+                return self.store
+
+            def get_secret_store(self) -> object:
+                return object()
+
+            def current_config_values(self) -> dict[str, Any]:
+                return self.runtime_config.model_dump(mode="json", exclude_none=True)
+
+            def set_runtime_config(
+                self, config: DaemonConfig, *, propagate_websocket: bool = False
+            ) -> None:
+                self.runtime_config = config
+
+        context = FakeContext()
+        app = FastAPI()
+        router = APIRouter(prefix="/api/config")
+        register_value_routes(router, context)  # type: ignore[arg-type]
+        app.include_router(router)
+        client = TestClient(app)
+
+        response = client.put(
+            "/api/config/values",
+            json={"values": {"embeddings": {"api_key": "sk-embed-123"}}},
+        )
+        assert response.status_code == 200
+        assert response.json()["ok"] is True
+
+        assert context.store.entries[AI_EMBEDDING_API_KEY_KEY] == "$secret:embeddings_api_key"
+        assert AI_EMBEDDING_API_KEY_KEY in context.store.secret_keys
+        assert context.store.secrets[EMBEDDING_API_KEY_SECRET_NAME] == "sk-embed-123"
+        assert context.runtime_config.embeddings.api_key == "sk-embed-123"
 
     def test_put_masked_value_skipped(
         self, client: TestClient, temp_db: Any, mock_machine_id: Any

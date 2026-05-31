@@ -7,6 +7,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.config.embedding_keys import (
+    AI_EMBEDDING_API_BASE_KEY,
+    AI_EMBEDDING_API_KEY_KEY,
+    AI_EMBEDDING_DIM_KEY,
+    AI_EMBEDDING_MODEL_KEY,
+)
 from gobby.utils import deps
 
 
@@ -305,8 +311,8 @@ def test_get_configured_embedding_provider_detects_ollama(temp_db) -> None:
     store = ConfigStore(temp_db)
     store.set_many(
         {
-            "embeddings.api_base": "http://localhost:11434/v1",
-            "embeddings.dim": 768,
+            AI_EMBEDDING_API_BASE_KEY: "http://localhost:11434/v1",
+            AI_EMBEDDING_DIM_KEY: 768,
         }
     )
 
@@ -321,8 +327,8 @@ def test_get_configured_embedding_provider_detects_lmstudio(temp_db) -> None:
     store = ConfigStore(temp_db)
     store.set_many(
         {
-            "embeddings.api_base": "http://localhost:1234/v1",
-            "embeddings.dim": 768,
+            AI_EMBEDDING_API_BASE_KEY: "http://localhost:1234/v1",
+            AI_EMBEDDING_DIM_KEY: 768,
         }
     )
 
@@ -340,9 +346,9 @@ def test_get_configured_embedding_provider_detects_embedding_api_key(
     store = ConfigStore(temp_db)
     store.set_many(
         {
-            "embeddings.model": "text-embedding-3-small",
-            "embeddings.api_base": None,
-            "embeddings.dim": 1536,
+            AI_EMBEDDING_MODEL_KEY: "text-embedding-3-small",
+            AI_EMBEDDING_API_BASE_KEY: None,
+            AI_EMBEDDING_DIM_KEY: 1536,
         }
     )
 
@@ -352,7 +358,7 @@ def test_get_configured_embedding_provider_detects_embedding_api_key(
         _patch_runtime_hub_database(temp_db),
     ):
         store.set_secret(
-            "embeddings.api_key",
+            AI_EMBEDDING_API_KEY_KEY,
             "sk-test",
             SecretStore(temp_db),
             source="test",
@@ -371,8 +377,8 @@ def test_get_configured_embedding_provider_returns_none_without_secret(
     store = ConfigStore(temp_db)
     store.set_many(
         {
-            "embeddings.api_base": None,
-            "embeddings.dim": 1536,
+            AI_EMBEDDING_API_BASE_KEY: None,
+            AI_EMBEDDING_DIM_KEY: 1536,
         }
     )
 
@@ -387,8 +393,8 @@ def test_get_configured_embedding_provider_detects_disabled_state(temp_db) -> No
     store = ConfigStore(temp_db)
     store.set_many(
         {
-            "embeddings.api_base": None,
-            "embeddings.dim": 0,
+            AI_EMBEDDING_API_BASE_KEY: None,
+            AI_EMBEDDING_DIM_KEY: 0,
         }
     )
 

@@ -15,6 +15,13 @@ from gobby.cli.installers.embedding import (
     _setup_ollama,
     install_embedding,
 )
+from gobby.config.embedding_keys import (
+    AI_EMBEDDING_API_BASE_KEY,
+    AI_EMBEDDING_API_KEY_KEY,
+    AI_EMBEDDING_DIM_KEY,
+    AI_EMBEDDING_MODEL_KEY,
+    EMBEDDING_API_KEY_SECRET_NAME,
+)
 from gobby.search.embeddings import EmbeddingGenerationError
 
 pytestmark = [pytest.mark.unit]
@@ -530,11 +537,10 @@ class TestPersistEmbeddingConfig:
 
         mock_store.set_many.assert_called_once()
         entries = mock_store.set_many.call_args.args[0]
-        # Only unified embeddings.* namespace
         assert entries == {
-            "embeddings.model": "text-embedding-nomic-embed-text-v1.5@f16",
-            "embeddings.api_base": "http://localhost:1234/v1",
-            "embeddings.dim": 768,
+            AI_EMBEDDING_MODEL_KEY: "text-embedding-nomic-embed-text-v1.5@f16",
+            AI_EMBEDDING_API_BASE_KEY: "http://localhost:1234/v1",
+            AI_EMBEDDING_DIM_KEY: 768,
         }
         # No duplicate namespaces
         assert not any(k.startswith("search.") for k in entries)
@@ -568,9 +574,9 @@ class TestPersistEmbeddingConfig:
 
         entries = mock_store.set_many.call_args.args[0]
         assert entries == {
-            "embeddings.model": None,
-            "embeddings.api_base": None,
-            "embeddings.dim": 0,
+            AI_EMBEDDING_MODEL_KEY: None,
+            AI_EMBEDDING_API_BASE_KEY: None,
+            AI_EMBEDDING_DIM_KEY: 0,
         }
         mock_db.close.assert_called_once()
         assert mock_db.close.call_count == 1
@@ -605,11 +611,11 @@ class TestPersistEmbeddingConfig:
             secret_store = SecretStore(temp_db)
             row = temp_db.fetchone(
                 "SELECT encrypted_value FROM secrets WHERE name = %s",
-                ("api_key",),
+                (EMBEDDING_API_KEY_SECRET_NAME,),
             )
 
-            assert store.get("embeddings.api_key") == "$secret:api_key"
-            assert secret_store.get("api_key") == "sk-xxx"
+            assert store.get(AI_EMBEDDING_API_KEY_KEY) == "$secret:embeddings_api_key"
+            assert secret_store.get(EMBEDDING_API_KEY_SECRET_NAME) == "sk-xxx"
             assert row is not None
             assert row["encrypted_value"] != "sk-xxx"
             assert row["encrypted_value"].startswith("gAAAAA")
@@ -647,9 +653,9 @@ class TestPersistEmbeddingConfig:
 
         entries = mock_store.set_many.call_args.args[0]
         assert entries == {
-            "embeddings.model": "text-embedding-3-small",
-            "embeddings.api_base": None,
-            "embeddings.dim": 1536,
+            AI_EMBEDDING_MODEL_KEY: "text-embedding-3-small",
+            AI_EMBEDDING_API_BASE_KEY: None,
+            AI_EMBEDDING_DIM_KEY: 1536,
         }
         mock_db.close.assert_called_once()
         assert mock_db.close.call_count == 1

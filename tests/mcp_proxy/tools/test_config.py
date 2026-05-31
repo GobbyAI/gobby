@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from gobby.config.app import DaemonConfig
+from gobby.config.embedding_keys import AI_EMBEDDING_API_KEY_KEY, EMBEDDING_API_KEY_SECRET_NAME
 from gobby.mcp_proxy.tools.config import create_config_registry
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.config_store import ConfigStore, config_key_to_secret_name, is_secret_key_name
@@ -372,6 +373,9 @@ class TestConfigKeyToSecretName:
 
     def test_no_dots(self) -> None:
         assert config_key_to_secret_name("api_key") == "api_key"
+
+    def test_embedding_api_key_uses_namespaced_secret(self) -> None:
+        assert config_key_to_secret_name(AI_EMBEDDING_API_KEY_KEY) == EMBEDDING_API_KEY_SECRET_NAME
 
 
 class TestIsSecretKeyName:
@@ -847,8 +851,8 @@ class TestDeleteConfig:
             secret_store = SecretStore(temp_db)
             assert result["success"] is True
             assert result["had_secret"] is True
-            assert "embeddings.api_key" not in config_store.list_keys()
-            assert secret_store.get("api_key") is None
+            assert AI_EMBEDDING_API_KEY_KEY not in config_store.list_keys()
+            assert secret_store.get(EMBEDDING_API_KEY_SECRET_NAME) is None
             assert config_state["config"].embeddings.api_key is None
 
     def test_delete_config_marks_requirepass_restart_required(
@@ -900,6 +904,6 @@ class TestDeleteConfig:
             secret_store = SecretStore(temp_db)
             assert result["success"] is False
             assert "database not available" in result["error"].lower()
-            assert "embeddings.api_key" in config_store.list_keys()
-            assert secret_store.get("api_key") == "sk-delete-456"
+            assert AI_EMBEDDING_API_KEY_KEY in config_store.list_keys()
+            assert secret_store.get(EMBEDDING_API_KEY_SECRET_NAME) == "sk-delete-456"
             assert config_state["config"].embeddings.api_key == "sk-delete-456"

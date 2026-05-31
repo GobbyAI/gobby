@@ -167,6 +167,7 @@ def _get_embedding_api_key(
     """
     embedding_api_key: str | None = None
     try:
+        from gobby.config.embedding_keys import AI_EMBEDDING_API_KEY_KEY
         from gobby.storage.config_store import ConfigStore, config_key_to_secret_name
         from gobby.storage.hub.runtime import runtime_hub_database
         from gobby.storage.secrets import SecretStore
@@ -174,8 +175,8 @@ def _get_embedding_api_key(
         with runtime_hub_database(apply_migrations=False) as db:
             store = ConfigStore(db)
             secrets = SecretStore(db)
-            configured = store.get("embeddings.api_key")
-            secret_name = config_key_to_secret_name("embeddings.api_key")
+            configured = store.get(AI_EMBEDDING_API_KEY_KEY)
+            secret_name = config_key_to_secret_name(AI_EMBEDDING_API_KEY_KEY)
             if isinstance(configured, str) and configured.startswith("$secret:"):
                 secret_name = configured.removeprefix("$secret:")
             if secrets.exists(secret_name):
@@ -183,7 +184,7 @@ def _get_embedding_api_key(
                 embedding_api_key = existing
                 click.echo("Using existing embedding API key from secrets")
     except (ImportError, OSError, RuntimeError, psycopg.Error) as e:
-        logger.warning("Failed to read existing embeddings.api_key: %s", e, exc_info=True)
+        logger.warning("Failed to read existing embedding API key: %s", e, exc_info=True)
 
     if embedding_api_key:
         return embedding_api_key

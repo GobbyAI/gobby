@@ -17,6 +17,10 @@ from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
 
 from gobby.config.app import DaemonConfig
+from gobby.config.embedding_keys import (
+    runtimeize_embedding_config_entries,
+    runtimeize_embedding_config_key,
+)
 from gobby.prompts.models import parse_frontmatter
 from gobby.servers.routes.configuration_context import ConfigurationRouteContext
 from gobby.servers.routes.configuration_models import ImportConfigRequest
@@ -255,6 +259,8 @@ def persist_imported_config(
     restart_touched_keys: set[str],
 ) -> int:
     """Persist validated import values into config_store and secret storage."""
+    flat_config = runtimeize_embedding_config_entries(flat_config)
+    config_secret_keys = {runtimeize_embedding_config_key(key) for key in config_secret_keys}
     secret_references, secret_values, plain_values = partition_config_entries(
         flat_config,
         config_secret_keys,

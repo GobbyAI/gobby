@@ -382,8 +382,8 @@ def _embedding_binding(config: DaemonConfig | None) -> CapabilityBinding:
             "local",
             adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
             reason=(
-                "Embedding capability requires embeddings.api_base for local/"
-                "OpenAI-compatible models or embeddings.api_key for OpenAI cloud models."
+                "Embedding capability requires an API base for local/OpenAI-compatible "
+                "models or an API key for OpenAI cloud models."
             ),
             models=(embeddings.model,),
             metadata=metadata,

@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
 from gobby.config.app import DaemonConfig, deep_merge
+from gobby.config.embedding_keys import runtimeize_embedding_config_entries
 from gobby.servers.routes.configuration_context import ConfigurationRouteContext
 from gobby.servers.routes.configuration_models import SaveTemplateRequest
 from gobby.servers.routes.configuration_secrets import (
@@ -102,7 +103,8 @@ def register_template_routes(router: APIRouter, context: ConfigurationRouteConte
         try:
             defaults = DaemonConfig().model_dump(mode="json", exclude_none=True)
             config_store = context.get_config_store()
-            db_overrides = unflatten_config(mask_secret_values(config_store.get_all()))
+            flat_overrides = runtimeize_embedding_config_entries(config_store.get_all())
+            db_overrides = unflatten_config(mask_secret_values(flat_overrides))
             deep_merge(defaults, db_overrides)
             content = yaml.safe_dump(defaults, default_flow_style=False, sort_keys=False)
             return JSONResponse(content={"content": content})
@@ -123,7 +125,7 @@ def register_template_routes(router: APIRouter, context: ConfigurationRouteConte
             defaults_flat = flatten_config(
                 DaemonConfig().model_dump(mode="json", exclude_none=True)
             )
-            parsed_flat = flatten_config(parsed)
+            parsed_flat = runtimeize_embedding_config_entries(flatten_config(parsed))
             config_store = context.get_config_store()
             existing_secret_keys = set(config_store.get_secret_keys())
             masked_secret_keys = {

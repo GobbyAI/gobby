@@ -397,10 +397,8 @@ def _infer_embedding_provider_from_api_base(api_base: Any) -> str | None:
     return None
 
 
-def _infer_from_config_or_none(
-    *, dim: Any, api_key: Any, model: Any, api_base: Any
-) -> str | None:
-    """Infer provider from configured embeddings.* values, or explicit disabled state."""
+def _infer_from_config_or_none(*, dim: Any, api_key: Any, model: Any, api_base: Any) -> str | None:
+    """Infer provider from configured embedding values, or explicit disabled state."""
     normalized_dim = dim
     if isinstance(dim, str):
         stripped = dim.strip()
@@ -422,15 +420,21 @@ def _infer_from_config_or_none(
 def get_configured_embedding_provider() -> str | None:
     """Get the configured embeddings provider from persisted config."""
     try:
+        from gobby.config.embedding_keys import (
+            AI_EMBEDDING_API_BASE_KEY,
+            AI_EMBEDDING_API_KEY_KEY,
+            AI_EMBEDDING_DIM_KEY,
+            AI_EMBEDDING_MODEL_KEY,
+        )
         from gobby.storage.config_store import ConfigStore
         from gobby.storage.hub.runtime import runtime_hub_database
 
         with runtime_hub_database(apply_migrations=False) as db:
             store = ConfigStore(db)
-            model = store.get("embeddings.model")
-            api_base = store.get("embeddings.api_base")
-            api_key = store.get("embeddings.api_key")
-            dim = store.get("embeddings.dim")
+            model = store.get(AI_EMBEDDING_MODEL_KEY)
+            api_base = store.get(AI_EMBEDDING_API_BASE_KEY)
+            api_key = store.get(AI_EMBEDDING_API_KEY_KEY)
+            dim = store.get(AI_EMBEDDING_DIM_KEY)
 
             if api_base == "":
                 return _infer_from_config_or_none(

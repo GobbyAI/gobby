@@ -93,6 +93,7 @@ def test_only_current_postgres_sql_migrations_exist_after_flattening() -> None:
         "268_prevent_self_parent_sessions.sql",
         "269_context_usage_ratio_range.sql",
         "270_context_usage_value_constraints.sql",
+        "271_embeddings_namespace_to_ai_embeddings.sql",
     ]
 
 
@@ -123,6 +124,17 @@ def test_neo4j_config_migration_preserves_tunables_and_uses_json_secret_guard() 
     assert "DELETE FROM config_store" in migration
     assert "WHERE key LIKE 'databases.neo4j.%'" in migration
     assert "to_json('$secret:auth'::text)::text" in migration
+
+
+def test_embedding_namespace_migration_uses_namespaced_secret_reference() -> None:
+    migration = (
+        SRC_ROOT / "storage" / "migrations" / "271_embeddings_namespace_to_ai_embeddings.sql"
+    ).read_text(encoding="utf-8")
+
+    assert "ai.embeddings.api_key" in migration
+    assert "embeddings_api_key" in migration
+    assert "to_json('$secret:embeddings_api_key'::text)::text" in migration
+    assert "DELETE FROM config_store" in migration
 
 
 def test_removed_migration_baseline_and_import_files_are_absent() -> None:

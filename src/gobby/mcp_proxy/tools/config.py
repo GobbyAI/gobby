@@ -17,6 +17,11 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from gobby.config.embedding_keys import (
+    canonicalize_embedding_config_entries,
+    canonicalize_embedding_config_key,
+    runtimeize_embedding_config_key,
+)
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.config_store import (
     config_key_to_secret_name,
@@ -113,9 +118,14 @@ def create_config_registry(
     )
     def get_config(key: str) -> dict[str, Any]:
         """Get a single config value by dotted key."""
+        lookup_key = runtimeize_embedding_config_key(key)
         flat = _flat_config()
-        if key in flat:
-            return {"success": True, "key": key, "value": _mask_secret_value(key, flat[key])}
+        if lookup_key in flat:
+            return {
+                "success": True,
+                "key": key,
+                "value": _mask_secret_value(lookup_key, flat[lookup_key]),
+            }
         return {"success": False, "error": f"Key '{key}' not found in config"}
 
     @registry.tool(
@@ -124,20 +134,21 @@ def create_config_registry(
     )
     def get_config_section(prefix: str) -> dict[str, Any]:
         """Get a config section filtered by dotted-path prefix."""
+        lookup_prefix = runtimeize_embedding_config_key(prefix)
         flat = _flat_config()
         # Filter keys matching the prefix (exact prefix + '.' boundary)
-        section_prefix = prefix + "."
+        section_prefix = lookup_prefix + "."
         filtered = {
             k[len(section_prefix) :]: _mask_secret_value(k, v)
             for k, v in flat.items()
             if k.startswith(section_prefix)
         }
         # Also include exact match
-        if prefix in flat:
+        if lookup_prefix in flat:
             return {
                 "success": True,
                 "prefix": prefix,
-                "value": _mask_secret_value(prefix, flat[prefix]),
+                "value": _mask_secret_value(lookup_prefix, flat[lookup_prefix]),
             }
         if not filtered:
             return {"success": False, "error": f"No keys found under prefix '{prefix}'"}
@@ -166,7 +177,9 @@ def create_config_registry(
 
         try:
             before_config = _current_config()
-            effective_is_secret = is_secret or is_secret_key_name(key)
+            runtime_key = runtimeize_embedding_config_key(key)
+            storage_key = canonicalize_embedding_config_key(runtime_key)
+            effective_is_secret = is_secret or is_secret_key_name(storage_key)
             if effective_is_secret and db is None:
                 return {
                     "success": False,
@@ -178,13 +191,13 @@ def create_config_registry(
 
             # For secret values, validate with the $secret: ref placeholder.
             if effective_is_secret:
-                ref = f"$secret:{config_key_to_secret_name(key)}"
+                ref = f"$secret:{config_key_to_secret_name(storage_key)}"
                 validation_value = ref
             else:
                 validation_value = value
 
             # Build a nested dict from the dotted key
-            update_nested = unflatten_config({key: validation_value})
+            update_nested = unflatten_config({runtime_key: validation_value})
 
             # Deep-merge into current config dict
             current_dict = before_config.model_dump(mode="json")
@@ -194,7 +207,7 @@ def create_config_registry(
             new_config = DaemonConfigCls(**current_dict)
 
             if effective_is_secret:
-                actual_nested = unflatten_config({key: value})
+                actual_nested = unflatten_config({runtime_key: value})
                 actual_dict = before_config.model_dump(mode="json")
                 deep_merge(actual_dict, actual_nested)
                 new_config = DaemonConfigCls(**actual_dict)
@@ -204,9 +217,9 @@ def create_config_registry(
                 from gobby.storage.secrets import SecretStore as SecretStoreCls
 
                 secret_store = SecretStoreCls(db)
-                config_store.set_secret(key, str(value), secret_store, source="mcp")
+                config_store.set_secret(storage_key, str(value), secret_store, source="mcp")
             else:
-                config_store.set(key, value, source="mcp")
+                config_store.set(storage_key, value, source="mcp")
 
             _state["config"] = new_config
             config_setter(new_config)
@@ -262,14 +275,16 @@ def create_config_registry(
                         "error": f"Cannot set '{key}' to a {type(value).__name__}. "
                         "Use dotted keys for nested values.",
                     }
-                flat_updates[key] = value
+                runtime_key = runtimeize_embedding_config_key(key)
+                flat_updates[runtime_key] = value
                 if bool(entry.get("is_secret", False)):
-                    explicit_secret_keys.add(key)
+                    explicit_secret_keys.add(runtime_key)
 
             secret_keys = {
                 key
                 for key in flat_updates
-                if key in explicit_secret_keys or is_secret_key_name(key)
+                if key in explicit_secret_keys
+                or is_secret_key_name(canonicalize_embedding_config_key(key))
             }
             plain_updates = {
                 key: value for key, value in flat_updates.items() if key not in secret_keys
@@ -287,7 +302,8 @@ def create_config_registry(
             # Unflatten all keys → nested dict, merge into current config
             validation_updates = dict(flat_updates)
             for key in secret_keys:
-                validation_updates[key] = f"$secret:{config_key_to_secret_name(key)}"
+                storage_key = canonicalize_embedding_config_key(key)
+                validation_updates[key] = f"$secret:{config_key_to_secret_name(storage_key)}"
             update_nested = unflatten_config(validation_updates)
             current_dict = before_config.model_dump(mode="json")
             deep_merge(current_dict, update_nested)
@@ -300,17 +316,19 @@ def create_config_registry(
             new_config = DaemonConfigCls(**actual_dict)
 
             # Persist all keys atomically
+            storage_plain_updates = canonicalize_embedding_config_entries(plain_updates)
             if secret_updates and db is not None:
                 from gobby.storage.secrets import SecretStore as SecretStoreCls
 
                 secret_store = SecretStoreCls(db)
                 with db.transaction():
                     for key, value in secret_updates.items():
-                        config_store.set_secret(key, str(value), secret_store, source="mcp")
-                    if plain_updates:
-                        config_store.set_many(plain_updates, source="mcp")
+                        storage_key = canonicalize_embedding_config_key(key)
+                        config_store.set_secret(storage_key, str(value), secret_store, source="mcp")
+                    if storage_plain_updates:
+                        config_store.set_many(storage_plain_updates, source="mcp")
             else:
-                config_store.set_many(plain_updates, source="mcp")
+                config_store.set_many(storage_plain_updates, source="mcp")
 
             # Update in-memory config
             _state["config"] = new_config
@@ -345,22 +363,26 @@ def create_config_registry(
 
         try:
             before_config = _current_config()
+            runtime_key = runtimeize_embedding_config_key(key)
+            storage_key = canonicalize_embedding_config_key(runtime_key)
             override_keys = set(config_store.list_keys())
-            if key not in override_keys:
+            if storage_key not in override_keys:
                 return {
                     "success": False,
                     "error": f"Key '{key}' not found in config_store (no override to delete)",
                 }
 
             secret_keys = set(config_store.get_secret_keys())
-            had_secret = key in secret_keys
+            had_secret = storage_key in secret_keys
 
             # Validate the post-delete state before mutating DB or memory.
             flat = _flat_config()
-            flat.pop(key, None)
-            remaining_override_keys = override_keys - {key}
+            flat.pop(runtime_key, None)
+            remaining_override_keys = {
+                runtimeize_embedding_config_key(k) for k in override_keys - {storage_key}
+            }
             defaults_flat = flatten_config(DaemonConfigCls().model_dump(mode="json"))
-            parent_prefix = key.rsplit(".", 1)[0] + "." if "." in key else ""
+            parent_prefix = runtime_key.rsplit(".", 1)[0] + "." if "." in runtime_key else ""
             if (
                 parent_prefix
                 and not any(k.startswith(parent_prefix) for k in remaining_override_keys)
@@ -381,9 +403,9 @@ def create_config_registry(
                 from gobby.storage.secrets import SecretStore as SecretStoreCls
 
                 secret_store = SecretStoreCls(db)
-                config_store.clear_secret(key, secret_store)
+                config_store.clear_secret(storage_key, secret_store)
             else:
-                config_store.delete(key)
+                config_store.delete(storage_key)
 
             _state["config"] = new_config
             config_setter(new_config)
@@ -406,7 +428,12 @@ def create_config_registry(
     )
     def list_config_keys(prefix: str | None = None) -> dict[str, Any]:
         """List config keys from the DB, optionally filtered by prefix."""
-        keys = config_store.list_keys(prefix=prefix)
+        storage_prefix = None
+        if prefix is not None:
+            storage_prefix = canonicalize_embedding_config_key(
+                runtimeize_embedding_config_key(prefix)
+            )
+        keys = config_store.list_keys(prefix=storage_prefix)
         return {"success": True, "count": len(keys), "keys": keys}
 
     @registry.tool(
@@ -420,13 +447,14 @@ def create_config_registry(
         try:
             # Get all defaults from a fresh DaemonConfig
             defaults_flat = flatten_config(DaemonConfigCls().model_dump(mode="json"))
+            runtime_section = runtimeize_embedding_config_key(section)
 
             # Filter to the requested section
-            section_prefix = section + "."
+            section_prefix = runtime_section + "."
             section_defaults = {
                 k: v
                 for k, v in defaults_flat.items()
-                if k.startswith(section_prefix) or k == section
+                if k.startswith(section_prefix) or k == runtime_section
             }
 
             if not section_defaults:
@@ -436,10 +464,12 @@ def create_config_registry(
                 }
 
             # Find which keys are already in DB
-            existing_keys = set(config_store.list_keys(prefix=section))
+            storage_section = canonicalize_embedding_config_key(runtime_section)
+            existing_keys = set(config_store.list_keys(prefix=storage_section))
 
             # Only insert missing ones
-            missing = {k: v for k, v in section_defaults.items() if k not in existing_keys}
+            storage_defaults = canonicalize_embedding_config_entries(section_defaults)
+            missing = {k: v for k, v in storage_defaults.items() if k not in existing_keys}
 
             if not missing:
                 return {

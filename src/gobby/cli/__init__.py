@@ -13,6 +13,7 @@ from .clones import clones
 from .communications import comms
 from .cron import cron
 from .daemon import health, restart, start, status, stop
+from .embeddings import embeddings
 from .export_import import export_cmd, import_cmd
 from .extensions import hooks, webhooks
 from .github import github
@@ -82,6 +83,7 @@ cli.add_command(stop)
 cli.add_command(restart)
 cli.add_command(status)
 cli.add_command(health)
+cli.add_command(embeddings)
 cli.add_command(mcp_server)
 cli.add_command(init)
 cli.add_command(setup)
