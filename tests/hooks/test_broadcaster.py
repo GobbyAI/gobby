@@ -7,7 +7,7 @@ import pytest
 
 from gobby.config.app import DaemonConfig
 from gobby.hooks.broadcaster import HookEventBroadcaster
-from gobby.hooks.events import HookEvent
+from gobby.hooks.events import HookEvent, HookResponse
 from gobby.hooks.hook_types import (
     HookType,
     SessionStartInput,
@@ -590,6 +590,62 @@ async def test_broadcast_event_after_tool_success_stays_post_tool_use(
     call_args = mock_websocket_server.broadcast.call_args[0][0]
     assert call_args["event_type"] == "post-tool-use"
     assert "error" not in call_args["data"]
+
+
+@pytest.mark.asyncio
+async def test_broadcast_event_after_tool_success_backfills_tool_name_from_response(
+    mock_websocket_server, default_config, caplog
+):
+    """Post-tool success broadcasts use the normalized tool name when input omitted it."""
+    caplog.set_level("WARNING", logger="gobby.hooks.broadcaster")
+    broadcaster = HookEventBroadcaster(mock_websocket_server, default_config)
+    event = _make_after_tool_event(
+        {
+            "tool_input": {"cmd": "ls"},
+            "result": "ok",
+        }
+    )
+
+    await broadcaster.broadcast_event(
+        event,
+        HookResponse(metadata={"_normalized_tool_name": "shell"}),
+    )
+
+    mock_websocket_server.broadcast.assert_called_once()
+    call_args = mock_websocket_server.broadcast.call_args[0][0]
+    assert call_args["event_type"] == "post-tool-use"
+    assert call_args["data"]["tool_name"] == "shell"
+    assert not any("Failed to broadcast event" in record.message for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_broadcast_event_after_tool_failure_backfills_tool_name_from_response(
+    mock_websocket_server, default_config, caplog
+):
+    """Post-tool failure broadcasts use the normalized tool name when input omitted it."""
+    caplog.set_level("WARNING", logger="gobby.hooks.broadcaster")
+    default_config.hook_extensions.websocket.broadcast_events.append("post-tool-use-failure")
+
+    broadcaster = HookEventBroadcaster(mock_websocket_server, default_config)
+    event = _make_after_tool_event(
+        {
+            "tool_input": {"cmd": "ls"},
+            "tool_output": {"error": "boom"},
+            "is_error": True,
+        }
+    )
+
+    await broadcaster.broadcast_event(
+        event,
+        HookResponse(metadata={"_normalized_tool_name": "shell"}),
+    )
+
+    mock_websocket_server.broadcast.assert_called_once()
+    call_args = mock_websocket_server.broadcast.call_args[0][0]
+    assert call_args["event_type"] == "post-tool-use-failure"
+    assert call_args["data"]["tool_name"] == "shell"
+    assert call_args["data"]["error"] == "boom"
+    assert not any("Failed to broadcast event" in record.message for record in caplog.records)
 
 
 @pytest.mark.asyncio

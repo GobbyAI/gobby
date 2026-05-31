@@ -244,6 +244,10 @@ class TestDispatchMcpCallsNoEventLoop:
         stub._dispatch_mcp_calls(calls, event)
 
         proxy.call_tool.assert_called_once()
+        stub.logger.info.assert_not_called()
+        debug_messages = [call.args[0] for call in stub.logger.debug.call_args_list]
+        assert any("dispatching 1 calls" in message for message in debug_messages)
+        assert any("gobby-sessions/set_handoff_context" in message for message in debug_messages)
         call_args = proxy.call_tool.call_args[0]
         assert call_args[0] == "gobby-sessions"
         assert call_args[1] == "set_handoff_context"
@@ -292,6 +296,9 @@ class TestDispatchMcpCallsNoEventLoop:
         stub.logger.error.assert_called()
         assert stub.logger.error.call_count >= 1
         assert stub.logger.error.call_args is not None
+        message = stub.logger.error.call_args.args[0]
+        assert "RuntimeError: connection refused" in message
+        assert stub.logger.error.call_args.kwargs["exc_info"] is True
 
     def test_multiple_calls_all_execute(self) -> None:
         """Multiple MCP calls in sequence all execute via asyncio.run()."""

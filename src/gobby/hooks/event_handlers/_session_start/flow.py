@@ -16,11 +16,62 @@ from .context import classify_session_start_context, mark_startup_context_inject
 from .handoff import find_parent_session, populate_handoff_session_variables
 from .types import AgentActivationResult
 
+SLOW_SESSION_START_THRESHOLD_MS = 1000
+
 
 def _compat_module() -> Any:
     import gobby.hooks.event_handlers._session_start as session_start
 
     return session_start
+
+
+def _log_session_start_lifecycle(
+    handler: Any,
+    *,
+    session_id: str | None,
+    session_source: str | None,
+    cli_source: str,
+    project_id: str | None,
+    parent_session_id: str | None,
+    pre_created: bool = False,
+) -> None:
+    parts = ["Session start:"]
+    if session_id:
+        parts.append(f"session={session_id}")
+    if session_source:
+        parts.append(f"source={session_source}")
+    parts.append(f"cli={cli_source}")
+    if project_id:
+        parts.append(f"project={project_id}")
+    if parent_session_id:
+        parts.append(f"parent={parent_session_id}")
+    if pre_created:
+        parts.append("pre_created=true")
+    handler.logger.info(" ".join(parts))
+
+
+def _log_session_start_timing(
+    handler: Any,
+    *,
+    session_source: str,
+    session_id: str | None,
+    timings: dict[str, int],
+) -> None:
+    timing_message = f"SESSION_START timing [{session_source}]: " + " ".join(
+        f"{name}={duration}ms" for name, duration in timings.items()
+    )
+    slow_component, slow_ms = max(
+        ((name, duration) for name, duration in timings.items() if name != "total"),
+        key=lambda item: item[1],
+    )
+    if timings["total"] >= SLOW_SESSION_START_THRESHOLD_MS:
+        handler.logger.info(
+            "SESSION_START slow: "
+            f"component={slow_component} duration={slow_ms}ms "
+            f"total={timings['total']}ms source={session_source} session={session_id}",
+        )
+    else:
+        handler.logger.debug(timing_message)
 
 
 def _consume_pending_compact_self_continuation(
@@ -381,16 +432,29 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
         return int((b - a) * 1000)
 
     _t_end = time.monotonic()
-    handler.logger.info(
-        f"SESSION_START timing [{session_source}]: "
-        f"pre_check={_ms(_t0, _t_pre_check)}ms "
-        f"parent={_ms(_t_pre_check, _t_parent)}ms "
-        f"register={_ms(_t_parent, _t_register)}ms "
-        f"activate_agent={_ms(_t_register, _t_activate)}ms "
-        f"track={_ms(_t_activate, _t_track)}ms "
-        f"msg_proc={_ms(_t_track, _t_msg_proc)}ms "
-        f"handoff={_ms(_t_msg_proc, _t_handoff)}ms "
-        f"total={_ms(_t0, _t_end)}ms",
+    _log_session_start_lifecycle(
+        handler,
+        session_id=session_id,
+        session_source=session_source,
+        cli_source=cli_source,
+        project_id=project_id,
+        parent_session_id=parent_session_id,
+    )
+    _log_session_start_timing(
+        handler,
+        session_source=session_source,
+        session_id=session_id,
+        timings={
+            "pre_check": _ms(_t0, _t_pre_check),
+            "session_lookup": _ms(_t_pre_check, _t_parent),
+            "parent": _ms(_t_parent, _t_register),
+            "register": _ms(_t_register, _t_activate),
+            "activate_agent": _ms(_t_activate, _t_track),
+            "track": _ms(_t_track, _t_msg_proc),
+            "msg_proc": _ms(_t_msg_proc, _t_handoff),
+            "handoff": _ms(_t_handoff, _t_end),
+            "total": _ms(_t0, _t_end),
+        },
     )
 
     response = cast(
@@ -552,6 +616,16 @@ def handle_pre_created_session(
         handler,
         pending_session_id=session_id,
         target_session=session_obj,
+    )
+
+    _log_session_start_lifecycle(
+        handler,
+        session_id=session_id,
+        session_source=session_source,
+        cli_source=cli_source,
+        project_id=session_obj.project_id,
+        parent_session_id=parent_session_id,
+        pre_created=True,
     )
 
     response = cast(

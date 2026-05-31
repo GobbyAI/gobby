@@ -7,6 +7,8 @@ from typing import Any
 
 from .types import AgentActivationResult
 
+SLOW_AGENT_ACTIVATION_THRESHOLD_MS = 1000
+
 
 def resolve_agent_name(
     handler: Any,
@@ -186,16 +188,30 @@ def activate_default_agent(
         return int((b - a) * 1000)
 
     _ta_end = time.monotonic()
-    handler.logger.info(
-        "_activate_default_agent timing: "
-        f"resolve_name={_ms(_ta0, _ta_resolve)}ms "
-        f"resolve_agent={_ms(_ta_resolve, _ta_queries)}ms "
-        f"db_queries={_ms(_ta_queries, _ta_build)}ms "
-        f"build_changes={_ms(_ta_build, _ta_vars)}ms "
-        f"merge_vars={_ms(_ta_vars, _ta_format)}ms "
-        f"format={_ms(_ta_format, _ta_end)}ms "
-        f"total={_ms(_ta0, _ta_end)}ms",
+    timings = {
+        "resolve_name": _ms(_ta0, _ta_resolve),
+        "resolve_agent": _ms(_ta_resolve, _ta_queries),
+        "db_queries": _ms(_ta_queries, _ta_build),
+        "build_changes": _ms(_ta_build, _ta_vars),
+        "merge_vars": _ms(_ta_vars, _ta_format),
+        "format": _ms(_ta_format, _ta_end),
+        "total": _ms(_ta0, _ta_end),
+    }
+    timing_message = "_activate_default_agent timing: " + " ".join(
+        f"{name}={duration}ms" for name, duration in timings.items()
     )
+    slow_component, slow_ms = max(
+        ((name, duration) for name, duration in timings.items() if name != "total"),
+        key=lambda item: item[1],
+    )
+    if timings["total"] >= SLOW_AGENT_ACTIVATION_THRESHOLD_MS:
+        handler.logger.info(
+            "Default agent activation slow: "
+            f"component={slow_component} duration={slow_ms}ms "
+            f"total={timings['total']}ms session={session_id} agent={agent_body.name}",
+        )
+    else:
+        handler.logger.debug(timing_message)
 
     return AgentActivationResult(
         context="\n\n".join(identity_parts) if identity_parts else None,

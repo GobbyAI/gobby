@@ -151,6 +151,37 @@ class HookEventBroadcaster:
 
         raw_input["error"] = "Tool execution failed."
 
+    @classmethod
+    def _normalize_post_tool_use_input(
+        cls,
+        raw_input: dict[str, Any],
+        response: HookResponse | None,
+    ) -> None:
+        """Backfill tool_name for post-tool broadcasts when adapters supplied an alias."""
+        if cls._is_non_empty_string(raw_input.get("tool_name")):
+            return
+
+        aliases = ("toolName", "tool", "name", "function_name")
+        for field_name in aliases:
+            candidate = raw_input.get(field_name)
+            if cls._is_non_empty_string(candidate):
+                raw_input["tool_name"] = candidate
+                return
+
+        tool_input = raw_input.get("tool_input")
+        if isinstance(tool_input, Mapping):
+            for field_name in aliases:
+                candidate = tool_input.get(field_name)
+                if cls._is_non_empty_string(candidate):
+                    raw_input["tool_name"] = candidate
+                    return
+
+        metadata = response.metadata if response else None
+        if isinstance(metadata, Mapping):
+            candidate = metadata.get("_normalized_tool_name")
+            if cls._is_non_empty_string(candidate):
+                raw_input["tool_name"] = candidate
+
     async def broadcast_event(self, event: HookEvent, response: HookResponse | None = None) -> None:
         """
         Broadcast a unified HookEvent to all connected clients.
@@ -217,6 +248,9 @@ class HookEventBroadcaster:
             ):
                 if "tool_name" not in raw_input:
                     raw_input["tool_name"] = "(tool_selection)"
+
+            if enum_hook_type in (HookType.POST_TOOL_USE, HookType.POST_TOOL_USE_FAILURE):
+                self._normalize_post_tool_use_input(raw_input, response)
 
             if enum_hook_type == HookType.POST_TOOL_USE_FAILURE:
                 self._normalize_post_tool_use_failure_input(raw_input)

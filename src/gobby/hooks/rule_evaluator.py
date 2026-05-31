@@ -159,7 +159,25 @@ class WorkflowRuleEvaluator:
         event_name = event.event_type.value
         tool_name = event.data.get("tool_name")
         has_rewrite = bool(workflow_response.modified_input)
-        has_visible_side_effects = bool(mcp_calls) or has_rewrite or workflow_response.auto_approve
+        has_captured_or_blocking_mcp_call = any(
+            call.get("inject_result")
+            or call.get("block_on_failure")
+            or call.get("block_on_success")
+            for call in mcp_calls
+        )
+        has_user_visible_response = any(
+            (
+                workflow_response.system_message,
+                workflow_response.permission_decision,
+                workflow_response.updated_permissions,
+                workflow_response.retry,
+                workflow_response.watch_paths,
+                workflow_response.worktree_path,
+                workflow_response.elicitation_action,
+                workflow_response.elicitation_content,
+                workflow_response.elicitation_error,
+            )
+        )
 
         parts = [
             f"Workflow rule evaluation: event={event_name}",
@@ -181,7 +199,11 @@ class WorkflowRuleEvaluator:
             parts.append(f"reason={workflow_response.reason}")
 
         message = ", ".join(parts)
-        if workflow_response.decision != "allow" or has_visible_side_effects:
+        if (
+            workflow_response.decision in ("block", "deny", "ask")
+            or has_captured_or_blocking_mcp_call
+            or has_user_visible_response
+        ):
             self.logger.info(message)
         else:
             self.logger.debug(message)

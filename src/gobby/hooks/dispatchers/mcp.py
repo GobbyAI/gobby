@@ -38,13 +38,19 @@ def run_coro_blocking(
             future = asyncio.run_coroutine_threadsafe(coro, loop)
             return future.result(timeout=30)
         except Exception as e:
-            logger.error(f"run_coro_blocking: threadsafe failed: {e}")
+            logger.error(
+                f"run_coro_blocking: threadsafe failed: {type(e).__name__}: {e}",
+                exc_info=True,
+            )
             return None
     else:
         try:
             return asyncio.run(coro)
         except Exception as e:
-            logger.error(f"run_coro_blocking: asyncio.run failed: {e}")
+            logger.error(
+                f"run_coro_blocking: asyncio.run failed: {type(e).__name__}: {e}",
+                exc_info=True,
+            )
             return None
 
 
@@ -245,7 +251,7 @@ def dispatch_mcp_calls(
         logger.debug("dispatch_mcp_calls: no tool_proxy_getter, skipping")
         return []
 
-    logger.info(
+    logger.debug(
         f"dispatch_mcp_calls: dispatching {len(mcp_calls)} calls for {event.event_type}",
     )
 
@@ -267,7 +273,7 @@ def dispatch_mcp_calls(
             logger.warning(f"dispatch_mcp_calls: missing server or tool in {call}")
             continue
 
-        logger.info(f"dispatch_mcp_calls: {server}/{tool} (background={background})")
+        logger.debug(f"dispatch_mcp_calls: {server}/{tool} (background={background})")
 
         # Inject event context into arguments
         if "session_id" not in arguments:
@@ -341,7 +347,10 @@ def dispatch_mcp_calls(
                     )
                 return result
             except Exception as exc:
-                logger.error(f"dispatch_mcp_calls: {s}/{t} failed: {exc}", exc_info=True)
+                logger.error(
+                    f"dispatch_mcp_calls: {s}/{t} failed: {type(exc).__name__}: {exc}",
+                    exc_info=True,
+                )
                 return {"success": False, "error": str(exc)}
             finally:
                 reset_seeded_contexts(tokens)

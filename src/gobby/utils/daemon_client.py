@@ -84,6 +84,8 @@ class DaemonClient:
         self._cached_message: str | None = None
         self._cached_status: str | None = None
         self._cached_error: str | None = None
+        self._health_log_lock = threading.Lock()
+        self._health_failed_since_last_success = False
 
     def check_health(self) -> tuple[bool, str | None]:
         """
@@ -101,14 +103,16 @@ class DaemonClient:
             )
             is_healthy = response.status_code == 200
             if is_healthy:
-                self.logger.info(f"Daemon health check passed at {self.url}")
+                self._log_health_success()
                 return True, None
             else:
                 error_reason = f"HTTP {response.status_code}"
+                self._mark_health_failed()
                 self.logger.warning(f"Daemon health check failed: status {response.status_code}")
                 return False, error_reason
         except Exception as e:
             error_msg = str(e)
+            self._mark_health_failed()
             # Check if it's a connection refused (daemon not running)
             if "refused" in error_msg.lower() or "connection" in error_msg.lower():
                 restart_source = self._planned_restart_source()
@@ -123,6 +127,18 @@ class DaemonClient:
                 # Other errors (timeout, DNS, etc.)
                 self.logger.warning(f"Daemon health check error: {e}")
                 return False, error_msg
+
+    def _log_health_success(self) -> None:
+        with self._health_log_lock:
+            if self._health_failed_since_last_success:
+                self._health_failed_since_last_success = False
+                self.logger.info(f"Daemon health recovered at {self.url}")
+            else:
+                self.logger.debug(f"Daemon health check passed at {self.url}")
+
+    def _mark_health_failed(self) -> None:
+        with self._health_log_lock:
+            self._health_failed_since_last_success = True
 
     def check_status(self) -> tuple[bool, str | None, str, str | None]:
         """

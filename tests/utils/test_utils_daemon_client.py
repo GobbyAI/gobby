@@ -48,7 +48,8 @@ class TestDaemonClientCheckHealth:
 
     def test_health_check_success(self) -> None:
         """Test successful health check."""
-        client = DaemonClient()
+        logger = MagicMock()
+        client = DaemonClient(logger=logger)
 
         mock_response = MagicMock()
         mock_response.status_code = 200
@@ -58,10 +59,13 @@ class TestDaemonClientCheckHealth:
 
         assert is_healthy is True
         assert error is None
+        logger.debug.assert_called_once_with("Daemon health check passed at http://localhost:60887")
+        logger.info.assert_not_called()
 
     def test_health_check_non_200_status(self) -> None:
         """Test health check with non-200 status."""
-        client = DaemonClient()
+        logger = MagicMock()
+        client = DaemonClient(logger=logger)
 
         mock_response = MagicMock()
         mock_response.status_code = 503
@@ -71,6 +75,7 @@ class TestDaemonClientCheckHealth:
 
         assert is_healthy is False
         assert error == "HTTP 503"
+        logger.warning.assert_called_once_with("Daemon health check failed: status 503")
 
     def test_health_check_connection_refused(self) -> None:
         """Test health check when daemon not running."""
@@ -83,6 +88,23 @@ class TestDaemonClientCheckHealth:
         assert is_healthy is False
         assert error is None  # None indicates daemon not running
         logger.warning.assert_called_once()
+
+    def test_health_check_recovery_logs_info_once(self) -> None:
+        """Recovery after a failed health state is logged once at info level."""
+        logger = MagicMock()
+        client = DaemonClient(logger=logger)
+        failure_response = MagicMock()
+        failure_response.status_code = 503
+        success_response = MagicMock()
+        success_response.status_code = 200
+
+        with patch("httpx.get", side_effect=[failure_response, success_response, success_response]):
+            assert client.check_health() == (False, "HTTP 503")
+            assert client.check_health() == (True, None)
+            assert client.check_health() == (True, None)
+
+        logger.info.assert_called_once_with("Daemon health recovered at http://localhost:60887")
+        logger.debug.assert_called_once_with("Daemon health check passed at http://localhost:60887")
 
     def test_health_check_connection_refused_during_planned_restart_does_not_warn(
         self,

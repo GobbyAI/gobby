@@ -564,12 +564,12 @@ class TestEvaluateWorkflowRules:
         assert "mcp_calls=" not in debug_message
         manager._dispatch_mcp_calls.assert_not_called()
 
-    def test_allow_with_mcp_calls_logs_at_info(
+    def test_allow_with_dispatch_only_mcp_calls_logs_at_debug(
         self,
         manager_with_mocks: HookManager,
         make_event: Callable,
     ) -> None:
-        """Allow decisions with MCP side effects remain info-level."""
+        """Routine dispatch-only MCP calls stay debug-level."""
         manager = manager_with_mocks
         manager.logger = MagicMock()
         manager._workflow_handler.handle.return_value = HookResponse(
@@ -590,14 +590,14 @@ class TestEvaluateWorkflowRules:
 
         assert context is None
         assert blocking is None
-        manager.logger.debug.assert_not_called()
-        manager.logger.info.assert_called_once()
-        info_message = manager.logger.info.call_args[0][0]
-        assert "decision=allow" in info_message
-        assert "tool=Write" in info_message
-        assert "mcp_calls=2" in info_message
-        assert "gobby-memory/search_memories" in info_message
-        assert "gobby-tasks/list_tasks" in info_message
+        manager.logger.info.assert_not_called()
+        manager.logger.debug.assert_called_once()
+        debug_message = manager.logger.debug.call_args[0][0]
+        assert "decision=allow" in debug_message
+        assert "tool=Write" in debug_message
+        assert "mcp_calls=2" in debug_message
+        assert "gobby-memory/search_memories" in debug_message
+        assert "gobby-tasks/list_tasks" in debug_message
         manager._dispatch_mcp_calls.assert_called_once_with(
             [
                 {"server": "gobby-memory", "tool": "search_memories"},
@@ -606,12 +606,48 @@ class TestEvaluateWorkflowRules:
             event,
         )
 
-    def test_allow_with_input_rewrite_logs_at_info(
+    def test_allow_with_captured_mcp_call_logs_at_info(
         self,
         manager_with_mocks: HookManager,
         make_event: Callable,
     ) -> None:
-        """Input rewriting and auto-approve stay visible at info level."""
+        """Captured or blocking MCP calls remain operator-visible."""
+        manager = manager_with_mocks
+        manager.logger = MagicMock()
+        manager._workflow_handler.handle.return_value = HookResponse(
+            decision="allow",
+            metadata={
+                "mcp_calls": [
+                    {
+                        "server": "gobby-memory",
+                        "tool": "search_memories",
+                        "inject_result": True,
+                    }
+                ]
+            },
+        )
+        manager._dispatch_mcp_calls = MagicMock(return_value=[])
+
+        event = make_event(event_type=HookEventType.BEFORE_AGENT, data={"prompt": "use context"})
+        event.metadata["_platform_session_id"] = "session-123"
+
+        context, blocking = manager._evaluate_workflow_rules(event)
+
+        assert context is None
+        assert blocking is None
+        manager.logger.debug.assert_not_called()
+        manager.logger.info.assert_called_once()
+        info_message = manager.logger.info.call_args[0][0]
+        assert "decision=allow" in info_message
+        assert "mcp_calls=1" in info_message
+        assert "gobby-memory/search_memories" in info_message
+
+    def test_allow_with_input_rewrite_logs_at_debug(
+        self,
+        manager_with_mocks: HookManager,
+        make_event: Callable,
+    ) -> None:
+        """Routine input rewriting and auto-approve stay debug-level."""
         manager = manager_with_mocks
         manager.logger = MagicMock()
         manager._workflow_handler.handle.return_value = HookResponse(
@@ -630,12 +666,38 @@ class TestEvaluateWorkflowRules:
         assert blocking is None
         assert event.metadata["_modified_input"] == {"path": "rewritten.txt"}
         assert event.metadata["_auto_approve"] is True
+        manager.logger.info.assert_not_called()
+        manager.logger.debug.assert_called_once()
+        debug_message = manager.logger.debug.call_args[0][0]
+        assert "decision=allow" in debug_message
+        assert "rewrote_input=true" in debug_message
+        assert "auto_approve=true" in debug_message
+
+    def test_allow_with_user_visible_response_logs_at_info(
+        self,
+        manager_with_mocks: HookManager,
+        make_event: Callable,
+    ) -> None:
+        """Allow decisions with user-visible output remain info-level."""
+        manager = manager_with_mocks
+        manager.logger = MagicMock()
+        manager._workflow_handler.handle.return_value = HookResponse(
+            decision="allow",
+            system_message="Handoff is ready",
+        )
+        manager._dispatch_mcp_calls = MagicMock(return_value=[])
+
+        event = make_event(event_type=HookEventType.BEFORE_AGENT, data={"prompt": "status"})
+        event.metadata["_platform_session_id"] = "session-123"
+
+        context, blocking = manager._evaluate_workflow_rules(event)
+
+        assert context is None
+        assert blocking is None
         manager.logger.debug.assert_not_called()
         manager.logger.info.assert_called_once()
         info_message = manager.logger.info.call_args[0][0]
         assert "decision=allow" in info_message
-        assert "rewrote_input=true" in info_message
-        assert "auto_approve=true" in info_message
 
     def test_block_logs_at_info_once(
         self,
@@ -814,15 +876,20 @@ class TestRunCoroBlocking:
         self,
         manager_with_mocks: HookManager,
     ) -> None:
-        """_run_coro_blocking returns None on error."""
+        """_run_coro_blocking logs exception details and returns None on error."""
         manager = manager_with_mocks
         manager._loop = None
+        manager.logger = MagicMock()
 
         async def failing_coro() -> str:
             raise RuntimeError("fail")
 
         result = manager._run_coro_blocking(failing_coro())
         assert result is None
+        manager.logger.error.assert_called_once()
+        message = manager.logger.error.call_args.args[0]
+        assert "RuntimeError: fail" in message
+        assert manager.logger.error.call_args.kwargs["exc_info"] is True
 
 
 class TestEnsureProjectInDb:
