@@ -125,28 +125,28 @@ impl ResearchSession {
             fs::create_dir_all(parent).map_err(|error| WikiError::Io {
                 action: "create research checkpoint directory",
                 path: Some(parent.to_path_buf()),
-                source: error.to_string(),
+                source: error,
             })?;
         }
 
         let json = serde_json::to_string_pretty(self).map_err(|error| WikiError::Json {
             action: "serialize research checkpoint",
             path: Some(path.clone()),
-            source: error.to_string(),
+            source: error,
         })?;
         let temp_path =
             path.with_file_name(format!(".research-session.{}.tmp", std::process::id()));
         let mut file = fs::File::create(&temp_path).map_err(|error| WikiError::Io {
             action: "create research checkpoint temp file",
             path: Some(temp_path.clone()),
-            source: error.to_string(),
+            source: error,
         })?;
         if let Err(error) = file.write_all(json.as_bytes()) {
             let _ = fs::remove_file(&temp_path);
             return Err(WikiError::Io {
                 action: "write research checkpoint temp file",
                 path: Some(temp_path),
-                source: error.to_string(),
+                source: error,
             });
         }
         if let Err(error) = file.sync_all() {
@@ -154,7 +154,7 @@ impl ResearchSession {
             return Err(WikiError::Io {
                 action: "sync research checkpoint temp file",
                 path: Some(temp_path),
-                source: error.to_string(),
+                source: error,
             });
         }
         drop(file);
@@ -163,7 +163,7 @@ impl ResearchSession {
             return Err(WikiError::Io {
                 action: "replace research checkpoint",
                 path: Some(path),
-                source: error.to_string(),
+                source: error,
             });
         }
         if let Some(parent) = path.parent()
@@ -179,12 +179,12 @@ impl ResearchSession {
         let json = fs::read_to_string(&path).map_err(|error| WikiError::Io {
             action: "read research checkpoint",
             path: Some(path.clone()),
-            source: error.to_string(),
+            source: error,
         })?;
         serde_json::from_str(&json).map_err(|error| WikiError::Json {
             action: "parse research checkpoint",
             path: Some(path),
-            source: error.to_string(),
+            source: error,
         })
     }
 

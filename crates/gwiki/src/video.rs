@@ -162,7 +162,7 @@ pub fn write_video_derived_markdown(
         std::fs::create_dir_all(parent).map_err(|error| WikiError::Io {
             action: "create video derived markdown directory",
             path: Some(parent.to_path_buf()),
-            source: error.to_string(),
+            source: error,
         })?;
     }
 
@@ -170,7 +170,7 @@ pub fn write_video_derived_markdown(
     std::fs::write(&path, markdown).map_err(|error| WikiError::Io {
         action: "write video derived markdown",
         path: Some(path),
-        source: error.to_string(),
+        source: error,
     })?;
 
     Ok(VideoMarkdownResult {

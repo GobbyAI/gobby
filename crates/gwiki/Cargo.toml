@@ -36,7 +36,7 @@ toml = "1"
 ureq = "2"
 html-escape = "0.2"
 dirs = "6"
-fs2 = "0.4"
+fs4 = "1.1"
 uuid = { version = "1", features = ["v4"] }
 regex = "1"
 scraper = "0.27"

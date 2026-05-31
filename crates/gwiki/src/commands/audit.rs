@@ -12,7 +12,7 @@ pub(crate) fn execute(selection: ScopeSelection) -> Result<CommandOutcome, WikiE
     let payload = serde_json::to_value(&report).map_err(|error| WikiError::Json {
         action: "serialize audit report",
         path: None,
-        source: error.to_string(),
+        source: error,
     })?;
     Ok(super::scoped_outcome(
         "audit",

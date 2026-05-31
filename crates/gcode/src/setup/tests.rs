@@ -1,4 +1,5 @@
 use super::contracts::{OVERWRITE_GUIDANCE, code_index_index_names, code_index_table_names};
+use super::identifiers::quote_identifier;
 use super::postgres::postgres_overwrite_reset_sql;
 use super::*;
 use gobby_core::setup::{StandaloneSetup, StoreKind};
@@ -142,6 +143,20 @@ fn standalone_setup_request_redacts_password_in_json() {
 }
 
 #[test]
+fn standalone_setup_request_redacts_database_url_in_json() {
+    let request = StandaloneSetupRequest::new(
+        true,
+        Some("postgresql://user:secret@localhost/gcode".to_string()),
+        None,
+    );
+
+    let encoded = serde_json::to_string(&request).expect("serialize request");
+
+    assert!(!encoded.contains("database_url"));
+    assert!(!encoded.contains("secret"));
+}
+
+#[test]
 fn standalone_setup_request_debug_redacts_database_url() {
     let request = StandaloneSetupRequest::new(
         true,
@@ -153,6 +168,14 @@ fn standalone_setup_request_debug_redacts_database_url() {
 
     assert!(debug.contains("<redacted>"));
     assert!(!debug.contains("secret"));
+}
+
+#[test]
+fn quote_identifier_rejects_names_over_postgres_byte_limit() {
+    let name = "a".repeat(64);
+    let error = quote_identifier(&name, "schema").expect_err("identifier is too long");
+
+    assert!(error.to_string().contains("at most 63 bytes"));
 }
 
 #[test]

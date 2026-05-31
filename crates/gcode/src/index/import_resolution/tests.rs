@@ -4,9 +4,10 @@ use std::fs;
 use tempfile::TempDir;
 
 use super::context::{
-    load_elixir_dependency_names, load_rust_external_crates, load_rust_self_crate_name,
+    load_dart_external_packages, load_elixir_dependency_names, load_rust_external_crates,
+    load_rust_self_crate_name,
 };
-use super::helpers::{go_default_package_alias, split_top_level};
+use super::helpers::{extract_quoted_string, go_default_package_alias, split_top_level};
 use super::predicates::{
     csharp_declared_types, elixir_dependency_roots, is_external_js_module, ruby_require_root,
 };
@@ -121,6 +122,23 @@ name = "my-crate"
     assert_eq!(
         load_rust_self_crate_name(tempdir.path()).as_deref(),
         Some("my_crate")
+    );
+}
+
+#[test]
+fn missing_dart_pubspec_loads_no_external_packages() {
+    let tempdir = TempDir::new().expect("tempdir");
+
+    let packages = load_dart_external_packages(tempdir.path());
+
+    assert!(packages.is_empty());
+}
+
+#[test]
+fn quoted_string_ignores_escaped_quote_terminators() {
+    assert_eq!(
+        extract_quoted_string(r#"import "pkg:\"quoted\"/thing";"#).as_deref(),
+        Some(r#"pkg:\"quoted\"/thing"#)
     );
 }
 

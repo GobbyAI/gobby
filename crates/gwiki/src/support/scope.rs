@@ -71,7 +71,7 @@ pub(crate) fn resolve_command_scope(
     let cwd = std::env::current_dir().map_err(|error| WikiError::Io {
         action: "read current directory",
         path: None,
-        source: error.to_string(),
+        source: error,
     })?;
     wiki_scope::resolve(selection, &cwd)
 }

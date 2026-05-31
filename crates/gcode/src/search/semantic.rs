@@ -51,7 +51,7 @@ fn per_project_semantic_limit(limit: usize, project_count: usize) -> Option<usiz
     if limit == 0 || project_count == 0 {
         return None;
     }
-    Some(limit.div_ceil(project_count))
+    Some(limit)
 }
 
 #[cfg(test)]
@@ -96,9 +96,9 @@ mod tests {
     }
 
     #[test]
-    fn per_project_limit_divides_across_visible_projects() {
-        assert_eq!(per_project_semantic_limit(10, 2), Some(5));
-        assert_eq!(per_project_semantic_limit(11, 2), Some(6));
+    fn per_project_limit_over_fetches_each_visible_project() {
+        assert_eq!(per_project_semantic_limit(10, 2), Some(10));
+        assert_eq!(per_project_semantic_limit(11, 2), Some(11));
         assert_eq!(per_project_semantic_limit(1, 2), Some(1));
     }
 

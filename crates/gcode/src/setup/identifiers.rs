@@ -1,5 +1,7 @@
 use gobby_core::setup::SetupError;
 
+const POSTGRES_IDENTIFIER_MAX_BYTES: usize = 63;
+
 pub(super) fn qualified_relation(
     schema: &str,
     relation: &str,
@@ -24,6 +26,14 @@ pub(super) fn quote_identifier(value: &str, label: &str) -> Result<String, Setup
         return Err(SetupError::CreationFailed {
             object: label.to_string(),
             message: format!("{label} identifier must not contain NUL bytes"),
+        });
+    }
+    if trimmed.len() > POSTGRES_IDENTIFIER_MAX_BYTES {
+        return Err(SetupError::CreationFailed {
+            object: label.to_string(),
+            message: format!(
+                "{label} identifier must be at most {POSTGRES_IDENTIFIER_MAX_BYTES} bytes"
+            ),
         });
     }
     Ok(format!("\"{}\"", trimmed.replace('"', "\"\"")))

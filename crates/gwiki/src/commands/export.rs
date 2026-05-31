@@ -12,7 +12,7 @@ pub(crate) fn execute(
     let payload = serde_json::to_value(&output).map_err(|error| WikiError::Json {
         action: "serialize export output",
         path: None,
-        source: error.to_string(),
+        source: error,
     })?;
     let paths = output
         .artifacts

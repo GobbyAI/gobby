@@ -30,7 +30,9 @@ pub fn append_logs(
     let global_log = global_hub_root
         .map(|root| root.join("log.md"))
         .map(|path| {
-            append_log(&path, entry)?;
+            if !same_log_path(&scope_log, &path) {
+                append_log(&path, entry)?;
+            }
             Ok::<PathBuf, WikiError>(path)
         })
         .transpose()?;
@@ -46,7 +48,7 @@ fn append_log(path: &Path, entry: &LogEntry) -> Result<(), WikiError> {
         fs::create_dir_all(parent).map_err(|error| WikiError::Io {
             action: "create log directory",
             path: Some(parent.to_path_buf()),
-            source: error.to_string(),
+            source: error,
         })?;
     }
 
@@ -58,7 +60,7 @@ fn append_log(path: &Path, entry: &LogEntry) -> Result<(), WikiError> {
         .map_err(|error| WikiError::Io {
             action: "open log",
             path: Some(path.to_path_buf()),
-            source: error.to_string(),
+            source: error,
         })?;
 
     if write_header {
@@ -66,7 +68,7 @@ fn append_log(path: &Path, entry: &LogEntry) -> Result<(), WikiError> {
             .map_err(|error| WikiError::Io {
                 action: "write log",
                 path: Some(path.to_path_buf()),
-                source: error.to_string(),
+                source: error,
             })?;
     }
 
@@ -74,7 +76,7 @@ fn append_log(path: &Path, entry: &LogEntry) -> Result<(), WikiError> {
         .map_err(|error| WikiError::Io {
             action: "write log",
             path: Some(path.to_path_buf()),
-            source: error.to_string(),
+            source: error,
         })
 }
 
@@ -93,6 +95,22 @@ fn render_entry(entry: &LogEntry) -> String {
     }
     rendered.push('\n');
     rendered
+}
+
+fn same_log_path(left: &Path, right: &Path) -> bool {
+    resolved_log_path(left) == resolved_log_path(right)
+}
+
+fn resolved_log_path(path: &Path) -> PathBuf {
+    if let Ok(path) = path.canonicalize() {
+        return path;
+    }
+    if let (Some(parent), Some(file_name)) = (path.parent(), path.file_name())
+        && let Ok(parent) = parent.canonicalize()
+    {
+        return parent.join(file_name);
+    }
+    path.to_path_buf()
 }
 
 #[cfg(test)]
@@ -130,5 +148,27 @@ mod tests {
 
         let global_log = fs::read_to_string(hub_root.join("log.md")).expect("global log");
         assert_eq!(global_log, scope_log);
+    }
+
+    #[test]
+    fn does_not_append_twice_when_scope_and_global_logs_match() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("hub");
+        fs::create_dir_all(&root).expect("hub root");
+
+        let entry = LogEntry {
+            timestamp: "2026-05-29T19:00:00Z".to_string(),
+            scope: ScopeIdentity::topic("rust"),
+            action: "query".to_string(),
+            summary: "Answered ownership question".to_string(),
+            artifacts: vec![],
+        };
+
+        let report = append_logs(&root, Some(&root), &entry).expect("logs are appended once");
+
+        assert_eq!(report.scope_log, root.join("log.md"));
+        assert_eq!(report.global_log, Some(root.join("log.md")));
+        let log = fs::read_to_string(root.join("log.md")).expect("log written");
+        assert_eq!(log.matches("Answered ownership question").count(), 1);
     }
 }

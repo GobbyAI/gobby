@@ -128,24 +128,24 @@ fn persist_report(vault_root: &Path, report: &HealthReport) -> Result<(), WikiEr
     fs::create_dir_all(&health_dir).map_err(|error| WikiError::Io {
         action: "create health report directory",
         path: Some(health_dir.clone()),
-        source: error.to_string(),
+        source: error,
     })?;
     let json_path = vault_root.join(&report.json_path);
     let text_path = vault_root.join(&report.text_path);
     let json = serde_json::to_string_pretty(report).map_err(|error| WikiError::Json {
         action: "serialize health report",
         path: Some(json_path.clone()),
-        source: error.to_string(),
+        source: error,
     })?;
     fs::write(&json_path, json).map_err(|error| WikiError::Io {
         action: "write health JSON report",
         path: Some(json_path),
-        source: error.to_string(),
+        source: error,
     })?;
     fs::write(&text_path, render_text(report)).map_err(|error| WikiError::Io {
         action: "write health text report",
         path: Some(text_path),
-        source: error.to_string(),
+        source: error,
     })
 }
 

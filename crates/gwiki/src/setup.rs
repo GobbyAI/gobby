@@ -5,6 +5,7 @@ use gobby_core::setup::{
 pub const NAMESPACE: &str = "gwiki";
 pub const DEFAULT_SCHEMA: &str = "public";
 pub const SETUP_OWNERSHIP_NOTE: &str = "gwiki setup is owned by `crates/gwiki/src/setup.rs`";
+const POSTGRES_IDENTIFIER_MAX_BYTES: usize = 63;
 
 pub const GWIKI_POSTGRES_TABLES: &[&str] = &[
     "gwiki_documents",
@@ -328,6 +329,14 @@ fn quote_identifier(value: &str, label: &str) -> Result<String, SetupError> {
             message: format!("{label} identifier must not contain NUL bytes"),
         });
     }
+    if trimmed.len() > POSTGRES_IDENTIFIER_MAX_BYTES {
+        return Err(SetupError::CreationFailed {
+            object: label.to_string(),
+            message: format!(
+                "{label} identifier must be at most {POSTGRES_IDENTIFIER_MAX_BYTES} bytes"
+            ),
+        });
+    }
     Ok(format!("\"{}\"", trimmed.replace('"', "\"\"")))
 }
 
@@ -432,5 +441,13 @@ mod tests {
 
         assert_eq!(tables, GWIKI_POSTGRES_TABLES);
         assert_eq!(indexes, GWIKI_POSTGRES_INDEXES);
+    }
+
+    #[test]
+    fn quote_identifier_rejects_names_over_postgres_byte_limit() {
+        let name = "a".repeat(64);
+        let error = quote_identifier(&name, "schema").expect_err("identifier is too long");
+
+        assert!(error.to_string().contains("at most 63 bytes"));
     }
 }

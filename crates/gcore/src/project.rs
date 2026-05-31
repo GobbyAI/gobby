@@ -45,7 +45,7 @@ fn read_project_id_from(path: &Path) -> anyhow::Result<String> {
         .or_else(|| json.get("project_id"))
         .and_then(|v| v.as_str())
         .map(String::from)
-        .with_context(|| format!("'id' field not found in {}", path.display()))
+        .with_context(|| format!("'id' or 'project_id' field not found in {}", path.display()))
 }
 
 #[cfg(test)]
@@ -97,5 +97,18 @@ mod tests {
             read_project_id(tmp.path()).expect("read gcode project id"),
             "standalone-code-index"
         );
+    }
+
+    #[test]
+    fn missing_project_id_error_mentions_all_accepted_keys() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let gobby_dir = tmp.path().join(".gobby");
+        fs::create_dir(&gobby_dir).expect("create .gobby");
+        fs::write(gobby_dir.join("project.json"), r#"{"name":"example"}"#)
+            .expect("write project json");
+
+        let error = read_project_id(tmp.path()).expect_err("project id is missing");
+
+        assert!(error.to_string().contains("'id' or 'project_id'"));
     }
 }

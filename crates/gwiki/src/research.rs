@@ -3,7 +3,6 @@ use std::io::Write;
 use std::path::Path;
 use std::time::Duration;
 
-use fs2::FileExt;
 use serde::Serialize;
 
 use crate::events::{EventMonitor, SessionEvent};
@@ -155,7 +154,7 @@ impl ResearchDispatcher for GobbyDaemonResearchDispatcher {
                     return Err(WikiError::Io {
                         action: "read daemon agent dispatch response",
                         path: None,
-                        source: error.to_string(),
+                        source: error,
                     });
                 }
             };
@@ -166,7 +165,7 @@ impl ResearchDispatcher for GobbyDaemonResearchDispatcher {
                     return Err(WikiError::Json {
                         action: "parse daemon agent dispatch response",
                         path: None,
-                        source: error.to_string(),
+                        source: error,
                     });
                 }
             };
@@ -230,7 +229,7 @@ pub fn resolve_scope(selection: &ScopeSelection) -> Result<ResearchScope, WikiEr
     let cwd = std::env::current_dir().map_err(|error| WikiError::Io {
         action: "read current directory",
         path: None,
-        source: error.to_string(),
+        source: error,
     })?;
     let scope = scope::resolve(selection, &cwd)?;
     Ok(research_scope_from_resolved(&scope))
@@ -298,7 +297,7 @@ fn write_accepted_note(
     fs::create_dir_all(&research_dir).map_err(|error| WikiError::Io {
         action: "create raw research directory",
         path: Some(research_dir.clone()),
-        source: error.to_string(),
+        source: error,
     })?;
 
     let file_name = format!("{}.md", slugify(&note.title));
@@ -312,7 +311,7 @@ fn write_accepted_note(
     .map_err(|error| WikiError::Yaml {
         action: "serialize accepted research note frontmatter",
         path: Some(path.clone()),
-        source: error.to_string(),
+        source: error,
     })?;
     let mut body = String::new();
     body.push_str("---\n");
@@ -324,7 +323,7 @@ fn write_accepted_note(
     fs::write(&path, body).map_err(|error| WikiError::Io {
         action: "write accepted research note",
         path: Some(path.clone()),
-        source: error.to_string(),
+        source: error,
     })?;
 
     append_raw_index(vault_root, &note.title, &path)?;
@@ -340,7 +339,7 @@ fn append_raw_index(vault_root: &Path, title: &str, note_path: &Path) -> Result<
     fs::create_dir_all(&raw_dir).map_err(|error| WikiError::Io {
         action: "create raw directory",
         path: Some(raw_dir.clone()),
-        source: error.to_string(),
+        source: error,
     })?;
     let index_path = raw_dir.join("INDEX.md");
     let relative = note_path
@@ -355,12 +354,12 @@ fn append_raw_index(vault_root: &Path, title: &str, note_path: &Path) -> Result<
         .map_err(|error| WikiError::Io {
             action: "open raw index",
             path: Some(index_path.clone()),
-            source: error.to_string(),
+            source: error,
         })?;
-    index.lock_exclusive().map_err(|error| WikiError::Io {
+    fs4::FileExt::lock(&index).map_err(|error| WikiError::Io {
         action: "lock raw index",
         path: Some(index_path.clone()),
-        source: error.to_string(),
+        source: error,
     })?;
     let is_empty = index
         .metadata()
@@ -368,7 +367,7 @@ fn append_raw_index(vault_root: &Path, title: &str, note_path: &Path) -> Result<
         .map_err(|error| WikiError::Io {
             action: "read raw index metadata",
             path: Some(index_path.clone()),
-            source: error.to_string(),
+            source: error,
         })?;
     if is_empty {
         index
@@ -376,13 +375,13 @@ fn append_raw_index(vault_root: &Path, title: &str, note_path: &Path) -> Result<
             .map_err(|error| WikiError::Io {
                 action: "initialize raw index",
                 path: Some(index_path.clone()),
-                source: error.to_string(),
+                source: error,
             })?;
     }
     writeln!(index, "- [{title}]({relative})").map_err(|error| WikiError::Io {
         action: "append raw index",
         path: Some(index_path),
-        source: error.to_string(),
+        source: error,
     })
 }
 

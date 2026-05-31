@@ -1,3 +1,5 @@
+#[cfg(feature = "rustls")]
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use gobby_core::config::{EmbeddingConfig, QdrantConfig};
@@ -187,9 +189,9 @@ where
 }
 
 #[cfg(feature = "rustls")]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct OpenAiEmbeddingBackend {
-    client: reqwest::blocking::Client,
+    clients: HashMap<u64, reqwest::blocking::Client>,
 }
 
 #[cfg(feature = "rustls")]
@@ -197,17 +199,20 @@ impl OpenAiEmbeddingBackend {
     pub fn new() -> Self {
         Self::default()
     }
-}
 
-#[cfg(feature = "rustls")]
-impl Default for OpenAiEmbeddingBackend {
-    fn default() -> Self {
-        Self {
-            client: reqwest::blocking::Client::builder()
-                .timeout(std::time::Duration::from_secs(10))
-                .build()
-                .expect("build default embedding HTTP client"),
+    fn client_for_timeout(
+        &mut self,
+        timeout_seconds: u64,
+    ) -> Result<reqwest::blocking::Client, SearchError> {
+        if let Some(client) = self.clients.get(&timeout_seconds) {
+            return Ok(client.clone());
         }
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(timeout_seconds))
+            .build()
+            .map_err(|error| SearchError::Backend(error.to_string()))?;
+        self.clients.insert(timeout_seconds, client.clone());
+        Ok(client)
     }
 }
 
@@ -218,12 +223,9 @@ impl QueryEmbedder for OpenAiEmbeddingBackend {
         config: &EmbeddingConfig,
         query: &str,
     ) -> Result<Vec<f32>, SearchError> {
-        self.client = reqwest::blocking::Client::builder()
-            .timeout(std::time::Duration::from_secs(config.timeout_seconds))
-            .build()
-            .map_err(|error| SearchError::Backend(error.to_string()))?;
+        let client = self.client_for_timeout(config.timeout_seconds)?;
         let url = format!("{}/embeddings", config.api_base.trim_end_matches('/'));
-        let mut request = self.client.post(url).json(&json!({
+        let mut request = client.post(url).json(&json!({
             "model": config.model,
             "input": query,
         }));

@@ -132,13 +132,7 @@ where
         .iter()
         .map(degradation_label)
         .collect::<Vec<_>>();
-    let output = SearchOutput::new(
-        output_scope.clone(),
-        query.clone(),
-        limit,
-        results,
-        degradations,
-    );
+    let output = SearchOutput::new(output_scope.clone(), query, limit, results, degradations);
     render(output)
 }
 
@@ -149,7 +143,7 @@ fn render(output: SearchOutput) -> Result<CommandOutcome, WikiError> {
     let payload = serde_json::to_value(&output).map_err(|error| WikiError::Json {
         action: "serialize search output",
         path: None,
-        source: error.to_string(),
+        source: error,
     })?;
 
     Ok(super::scoped_outcome("search", &scope, payload, text))

@@ -89,6 +89,10 @@ pub(super) fn csharp_declared_types(contents: &str) -> Vec<String> {
     )
 }
 
+/// Heuristic fallback scanner for import-resolution local symbol indexes.
+///
+/// The indexer records authoritative symbols from tree-sitter; this token scan
+/// only helps decide whether an otherwise unresolved import target is local.
 pub(super) fn declared_types(contents: &str, keywords: &[&str]) -> Vec<String> {
     let mut names = Vec::new();
     let tokens: Vec<&str> = contents
@@ -103,6 +107,10 @@ pub(super) fn declared_types(contents: &str, keywords: &[&str]) -> Vec<String> {
     names
 }
 
+/// Heuristic fallback scanner for PHP import-resolution local symbol indexes.
+///
+/// The indexer records authoritative symbols from tree-sitter; this token scan
+/// only helps decide whether an otherwise unresolved import target is local.
 pub(super) fn php_declared_symbols(contents: &str) -> Vec<String> {
     let mut names = Vec::new();
     let tokens: Vec<&str> = contents

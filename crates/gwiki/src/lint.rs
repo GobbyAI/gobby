@@ -204,7 +204,7 @@ fn collect_markdown_files(
             return Err(WikiError::Io {
                 action: "read wiki directory",
                 path: Some(directory.to_path_buf()),
-                source: error.to_string(),
+                source: error,
             });
         }
     };
@@ -213,13 +213,13 @@ fn collect_markdown_files(
         let entry = entry.map_err(|error| WikiError::Io {
             action: "read wiki directory entry",
             path: Some(directory.to_path_buf()),
-            source: error.to_string(),
+            source: error,
         })?;
         let path = entry.path();
         let file_type = entry.file_type().map_err(|error| WikiError::Io {
             action: "read wiki file type",
             path: Some(path.clone()),
-            source: error.to_string(),
+            source: error,
         })?;
         if file_type.is_dir() {
             collect_markdown_files(vault_root, &path, pages)?;
@@ -227,7 +227,7 @@ fn collect_markdown_files(
             let markdown = fs::read_to_string(&path).map_err(|error| WikiError::Io {
                 action: "read wiki markdown",
                 path: Some(path.clone()),
-                source: error.to_string(),
+                source: error,
             })?;
             let (frontmatter, has_frontmatter) = {
                 let parsed =

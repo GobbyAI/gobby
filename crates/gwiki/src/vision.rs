@@ -70,7 +70,7 @@ pub fn write_image_derived_markdown(
         std::fs::create_dir_all(parent).map_err(|error| WikiError::Io {
             action: "create vision derived markdown directory",
             path: Some(parent.to_path_buf()),
-            source: error.to_string(),
+            source: error,
         })?;
     }
 
@@ -79,7 +79,7 @@ pub fn write_image_derived_markdown(
     std::fs::write(&path, markdown).map_err(|error| WikiError::Io {
         action: "write vision derived markdown",
         path: Some(path),
-        source: error.to_string(),
+        source: error,
     })?;
 
     Ok(VisionMarkdownResult {

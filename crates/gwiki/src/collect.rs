@@ -331,7 +331,7 @@ fn write_status_sidecar(
     let contents = serde_json::to_string_pretty(&payload).map_err(|error| WikiError::Json {
         action: "serialize inbox status",
         path: Some(vault_root.join(&action.inbox_path)),
-        source: error.to_string(),
+        source: error,
     })? + "\n";
     fs::write(&sidecar, contents).map_err(|error| io_error("write inbox status", &sidecar, error))
 }
@@ -449,7 +449,7 @@ fn io_error(action: &'static str, path: &Path, error: std::io::Error) -> WikiErr
     WikiError::Io {
         action,
         path: Some(path.to_path_buf()),
-        source: error.to_string(),
+        source: error,
     }
 }
 

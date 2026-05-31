@@ -72,28 +72,29 @@ fn connect(database_url: &str) -> anyhow::Result<Client> {
     let config = database_url
         .parse::<postgres::Config>()
         .context("failed to parse PostgreSQL connection URL")?;
-    match config.get_ssl_mode() {
-        SslMode::Disable => config
+    let ssl_mode = config.get_ssl_mode();
+    if ssl_mode == SslMode::Disable {
+        return config
             .connect(NoTls)
-            .context("failed to connect to the Gobby PostgreSQL hub"),
-        SslMode::Prefer => match connect_with_tls_unverified(&config) {
+            .context("failed to connect to the Gobby PostgreSQL hub");
+    }
+    if ssl_mode == SslMode::Prefer {
+        return match connect_with_tls_unverified(&config) {
             Ok(client) => Ok(client),
             Err(error) if is_no_tls_server_error(&error) => config
                 .connect(NoTls)
                 .context("failed to connect to the Gobby PostgreSQL hub"),
             Err(error) => Err(error),
-        },
-        SslMode::Require => connect_with_tls_unverified(&config),
-        _ => connect_with_tls_verified(&config),
+        };
     }
+    if ssl_mode == SslMode::Require {
+        return connect_with_tls_unverified(&config);
+    }
+    connect_with_tls_verification(&config, true)
 }
 
 fn connect_with_tls_unverified(config: &postgres::Config) -> anyhow::Result<Client> {
     connect_with_tls_verification(config, false)
-}
-
-fn connect_with_tls_verified(config: &postgres::Config) -> anyhow::Result<Client> {
-    connect_with_tls_verification(config, true)
 }
 
 fn connect_with_tls_verification(

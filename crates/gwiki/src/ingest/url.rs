@@ -104,6 +104,7 @@ fn remove_tag_block(html: &str, tag: &str) -> String {
         }
         output.push_str(&html[cursor..start]);
         let Some(end_offset) = lower[start..].find(&close) else {
+            output.push_str(&html[start..]);
             return output;
         };
         cursor = start + end_offset + close.len();
@@ -210,5 +211,15 @@ mod tests {
         assert!(stripped.contains("<scripture>keep</scripture>"));
         assert!(!stripped.contains("drop()"));
         assert!(!stripped.contains("also_drop()"));
+    }
+
+    #[test]
+    fn remove_tag_block_preserves_tail_when_close_tag_is_missing() {
+        let html = "<main>keep</main><script>unterminated<div>tail</div>";
+
+        let stripped = remove_tag_block(html, "script");
+
+        assert!(stripped.contains("<main>keep</main>"));
+        assert!(stripped.contains("<script>unterminated<div>tail</div>"));
     }
 }

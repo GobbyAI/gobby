@@ -235,6 +235,8 @@ fn cleanup_gwiki_scope(database_url: &str, scope_kind: &str, scope_id: &str) {
         return;
     };
     for table in GWIKI_SCOPE_TABLES {
+        // Safe interpolation: `table` comes only from `GWIKI_SCOPE_TABLES`,
+        // a closed whitelist of gwiki-owned table names above.
         let sql = format!("DELETE FROM {table} WHERE scope_kind = $1 AND scope_id = $2");
         let _ = client.execute(&sql, &[&scope_kind, &scope_id]);
     }

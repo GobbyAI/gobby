@@ -115,7 +115,7 @@ fn write_immutable(vault_root: &Path, relative: &Path, bytes: &[u8]) -> Result<(
             gobby_core::indexing::file_content_hash(&path).map_err(|error| WikiError::Io {
                 action: "hash existing raw source",
                 path: Some(path.clone()),
-                source: error.to_string(),
+                source: error,
             })?;
         if existing_hash == gobby_core::indexing::content_hash(bytes) {
             return Ok(());
@@ -133,13 +133,13 @@ fn write_immutable(vault_root: &Path, relative: &Path, bytes: &[u8]) -> Result<(
         std::fs::create_dir_all(parent).map_err(|error| WikiError::Io {
             action: "create raw source directory",
             path: Some(parent.to_path_buf()),
-            source: error.to_string(),
+            source: error,
         })?;
     }
     std::fs::write(&path, bytes).map_err(|error| WikiError::Io {
         action: "write raw source",
         path: Some(path),
-        source: error.to_string(),
+        source: error,
     })
 }
 

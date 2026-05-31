@@ -61,7 +61,26 @@ fn render_source_citation(entry: &SourceRecord) -> String {
     }
     parts.push(format!("Hash: {}", entry.content_hash));
 
-    format!("{}.", parts.join(". "))
+    join_citation_parts(&parts)
+}
+
+fn join_citation_parts(parts: &[String]) -> String {
+    let mut rendered = String::new();
+    for part in parts {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        if !rendered.is_empty() {
+            if rendered.ends_with(['.', '!', '?']) {
+                rendered.push(' ');
+            } else {
+                rendered.push_str(". ");
+            }
+        }
+        rendered.push_str(part);
+    }
+    rendered
 }
 
 fn normalize_path_text(value: &str) -> String {
@@ -98,5 +117,28 @@ mod tests {
         assert!(citations[0].contains("raw/research/compile.md"));
         assert!(citations[0].contains("CC-BY-4.0"));
         assert!(citations[0].contains("2026-05-29T15:00:00Z"));
+    }
+
+    #[test]
+    fn citation_renderer_does_not_add_wrapper_punctuation() {
+        let entry = SourceRecord {
+            id: "src".to_string(),
+            location: "raw/research/source.md".to_string(),
+            canonical_location: "raw/research/source.md".to_string(),
+            kind: crate::sources::SourceKind::Url,
+            fetched_at: "2026-05-29T15:00:00Z".to_string(),
+            content_hash: "hash".to_string(),
+            title: None,
+            citation: Some("Already punctuated.".to_string()),
+            license: None,
+            ingestion_method: crate::sources::IngestionMethod::Manual,
+            compile_status: crate::sources::CompileStatus::Pending,
+        };
+
+        let rendered = render_source_citation(&entry);
+
+        assert!(rendered.starts_with("Already punctuated. Source:"));
+        assert!(!rendered.contains(".. Source"));
+        assert!(!rendered.ends_with('.'));
     }
 }

@@ -159,7 +159,7 @@ impl SourceManifest {
         let index = fs::read_to_string(&index_path).map_err(|error| WikiError::Io {
             action: "read raw source index",
             path: Some(index_path.clone()),
-            source: error.to_string(),
+            source: error,
         })?;
 
         let mut entries = Vec::new();
@@ -172,14 +172,17 @@ impl SourceManifest {
                 return Err(WikiError::Json {
                     action: "parse raw source index marker",
                     path: Some(index_path),
-                    source: "unterminated gwiki-source marker".to_string(),
+                    source: serde_json::Error::io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "unterminated gwiki-source marker",
+                    )),
                 });
             };
             let json = line[json_start..json_start + marker_end].trim();
             let record = serde_json::from_str(json).map_err(|error| WikiError::Json {
                 action: "parse raw source index marker",
                 path: Some(index_path.clone()),
-                source: error.to_string(),
+                source: error,
             })?;
             entries.push(record);
         }
@@ -228,7 +231,7 @@ impl SourceManifest {
         fs::create_dir_all(&raw_dir).map_err(|error| WikiError::Io {
             action: "create raw source directory",
             path: Some(raw_dir.clone()),
-            source: error.to_string(),
+            source: error,
         })?;
 
         let index_path = Self::index_path(vault_root);
@@ -243,7 +246,7 @@ impl SourceManifest {
         fs::write(&index_path, index).map_err(|error| WikiError::Io {
             action: "write raw source index",
             path: Some(index_path),
-            source: error.to_string(),
+            source: error,
         })
     }
 
@@ -294,7 +297,7 @@ fn render_entry(entry: &SourceRecord, index: &mut String) -> Result<(), WikiErro
     let metadata = serde_json::to_string(entry).map_err(|error| WikiError::Json {
         action: "serialize raw source index marker",
         path: None,
-        source: error.to_string(),
+        source: error,
     })?;
     index.push_str("  - ");
     index.push_str(SOURCE_MARKER);
@@ -336,7 +339,7 @@ fn existing_index_without_manifest(index_path: &Path) -> Result<String, WikiErro
     let existing = fs::read_to_string(index_path).map_err(|error| WikiError::Io {
         action: "read raw source index",
         path: Some(index_path.to_path_buf()),
-        source: error.to_string(),
+        source: error,
     })?;
     let mut preserved = Vec::new();
     let mut skipping_manifest = false;

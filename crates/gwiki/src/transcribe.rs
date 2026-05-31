@@ -78,7 +78,7 @@ pub fn write_audio_transcript_markdown(
         std::fs::create_dir_all(parent).map_err(|error| WikiError::Io {
             action: "create audio transcript directory",
             path: Some(parent.to_path_buf()),
-            source: error.to_string(),
+            source: error,
         })?;
     }
 
@@ -92,7 +92,7 @@ pub fn write_audio_transcript_markdown(
     std::fs::write(&path, markdown).map_err(|error| WikiError::Io {
         action: "write audio transcript markdown",
         path: Some(path),
-        source: error.to_string(),
+        source: error,
     })?;
 
     Ok(TranscriptionMarkdownResult {

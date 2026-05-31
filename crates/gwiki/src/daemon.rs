@@ -84,15 +84,15 @@ enum ProbeObservation {
 }
 
 trait DaemonProbeTransport {
-    fn get_status(&self, base_url: &str, path: &str) -> ProbeObservation;
+    fn status(&self, base_url: &str, method: &str, path: &str) -> ProbeObservation;
 }
 
 struct UreqProbeTransport;
 
 impl DaemonProbeTransport for UreqProbeTransport {
-    fn get_status(&self, base_url: &str, path: &str) -> ProbeObservation {
+    fn status(&self, base_url: &str, method: &str, path: &str) -> ProbeObservation {
         let url = format!("{}{}", base_url.trim_end_matches('/'), path);
-        match ureq::get(&url).timeout(PROBE_TIMEOUT).call() {
+        match ureq::request(method, &url).timeout(PROBE_TIMEOUT).call() {
             Ok(response) => ProbeObservation::HttpStatus(response.status()),
             Err(ureq::Error::Status(status, _)) => ProbeObservation::HttpStatus(status),
             Err(error) => ProbeObservation::TransportError(error.to_string()),
@@ -215,7 +215,7 @@ fn probe_contract(
     transport: &impl DaemonProbeTransport,
     contract: EndpointContract,
 ) -> CapabilityAvailability {
-    let observation = transport.get_status(base_url, contract.probe_path);
+    let observation = transport.status(base_url, contract.method, contract.probe_path);
     let degradation = degradation_for_observation(contract, observation);
     CapabilityAvailability {
         capability: contract.capability,
@@ -237,6 +237,7 @@ fn degradation_for_observation(
 ) -> Option<DaemonDegradation> {
     match observation {
         ProbeObservation::HttpStatus(status) if (200..=299).contains(&status) => None,
+        ProbeObservation::HttpStatus(400 | 422) if contract.method == "POST" => None,
         ProbeObservation::HttpStatus(status @ (401 | 403)) => Some(degradation(
             contract,
             DegradationReason::Unauthorized,
@@ -287,11 +288,13 @@ mod tests {
     use super::*;
 
     struct FakeTransport {
-        statuses: HashMap<&'static str, ProbeObservation>,
+        statuses: HashMap<(&'static str, &'static str), ProbeObservation>,
     }
 
     impl FakeTransport {
-        fn new(statuses: impl IntoIterator<Item = (&'static str, ProbeObservation)>) -> Self {
+        fn new(
+            statuses: impl IntoIterator<Item = ((&'static str, &'static str), ProbeObservation)>,
+        ) -> Self {
             Self {
                 statuses: statuses.into_iter().collect(),
             }
@@ -299,9 +302,9 @@ mod tests {
     }
 
     impl DaemonProbeTransport for FakeTransport {
-        fn get_status(&self, _base_url: &str, path: &str) -> ProbeObservation {
+        fn status(&self, _base_url: &str, method: &str, path: &str) -> ProbeObservation {
             self.statuses
-                .get(path)
+                .get(&(method, path))
                 .cloned()
                 .unwrap_or(ProbeObservation::HttpStatus(200))
         }
@@ -310,8 +313,14 @@ mod tests {
     #[test]
     fn missing_optional_endpoint_degrades() {
         let transport = FakeTransport::new([
-            ("/api/chat/attachments", ProbeObservation::HttpStatus(404)),
-            ("/api/agents/spawn", ProbeObservation::HttpStatus(405)),
+            (
+                ("POST", "/api/chat/attachments"),
+                ProbeObservation::HttpStatus(404),
+            ),
+            (
+                ("POST", "/api/agents/spawn"),
+                ProbeObservation::HttpStatus(405),
+            ),
         ]);
 
         let report = probe_daemon_capabilities_with("http://daemon.test", &transport);
@@ -342,5 +351,24 @@ mod tests {
                 .and_then(|d| d.http_status),
             Some(405)
         );
+    }
+
+    #[test]
+    fn post_validation_failures_still_mean_endpoint_exists() {
+        let transport = FakeTransport::new([
+            (
+                ("POST", "/api/memories/embeddings/reindex"),
+                ProbeObservation::HttpStatus(422),
+            ),
+            (
+                ("GET", "/api/memories/embeddings/reindex"),
+                ProbeObservation::HttpStatus(405),
+            ),
+        ]);
+
+        let report = probe_daemon_capabilities_with("http://daemon.test", &transport);
+
+        assert!(report.embeddings.available);
+        assert!(report.embeddings.degradation.is_none());
     }
 }

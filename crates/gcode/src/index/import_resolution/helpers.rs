@@ -20,8 +20,21 @@ pub(super) fn extract_quoted_string(text: &str) -> Option<String> {
     let quote = text.find(['"', '\'', '`'])?;
     let quote_char = text[quote..].chars().next()?;
     let after_quote = &text[quote + quote_char.len_utf8()..];
-    let end = after_quote.find(quote_char)?;
-    Some(after_quote[..end].to_string())
+    let mut escaped = false;
+    for (idx, ch) in after_quote.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if ch == quote_char {
+            return Some(after_quote[..idx].to_string());
+        }
+    }
+    None
 }
 
 pub(super) fn go_default_package_alias(module: &str) -> String {

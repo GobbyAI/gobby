@@ -120,7 +120,7 @@ pub fn export_report_file(
     let contents = std::fs::read_to_string(source_path).map_err(|error| WikiError::Io {
         action: "read export report",
         path: Some(source_path.to_path_buf()),
-        source: error.to_string(),
+        source: error,
     })?;
     write_export(
         root,
@@ -139,14 +139,14 @@ pub fn write_export(root: &Path, request: ExportRequest) -> Result<ExportArtifac
         std::fs::create_dir_all(parent).map_err(|error| WikiError::Io {
             action: "create export directory",
             path: Some(parent.to_path_buf()),
-            source: error.to_string(),
+            source: error,
         })?;
     }
 
     std::fs::write(&path, &request.contents).map_err(|error| WikiError::Io {
         action: "write export",
         path: Some(path.clone()),
-        source: error.to_string(),
+        source: error,
     })?;
 
     Ok(ExportArtifact {

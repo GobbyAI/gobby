@@ -82,10 +82,33 @@ fn render_pdf_markdown(
         markdown.push_str("## Page ");
         markdown.push_str(&page.number.to_string());
         markdown.push_str("\n\n");
-        markdown.push_str(&single_line(&page.text));
+        markdown.push_str(&normalize_page_text(&page.text));
         markdown.push_str("\n\n");
     }
     markdown
+}
+
+fn normalize_page_text(text: &str) -> String {
+    let mut paragraphs = Vec::new();
+    let mut current = Vec::new();
+
+    for line in text.lines() {
+        let line = single_line(line);
+        if line.is_empty() {
+            if !current.is_empty() {
+                paragraphs.push(current.join(" "));
+                current.clear();
+            }
+            continue;
+        }
+        current.push(line);
+    }
+
+    if !current.is_empty() {
+        paragraphs.push(current.join(" "));
+    }
+
+    paragraphs.join("\n\n")
 }
 
 #[cfg(test)]
@@ -142,5 +165,12 @@ mod tests {
         assert_eq!(manifest.entries.len(), 1);
         assert_eq!(manifest.entries[0].kind, SourceKind::Pdf);
         assert_eq!(manifest.entries[0].content_hash, expected_hash);
+    }
+
+    #[test]
+    fn pdf_page_text_preserves_paragraph_breaks() {
+        let text = normalize_page_text("First line\nwraps here.\n\nSecond paragraph.\n");
+
+        assert_eq!(text, "First line wraps here.\n\nSecond paragraph.");
     }
 }

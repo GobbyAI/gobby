@@ -75,8 +75,7 @@ fn render_wayback_markdown(
 fn html_to_text(bytes: &[u8]) -> String {
     let html = text_from_utf8_lossy(bytes);
     let output = extract_html_text(&strip_script_style(&html));
-    let decoded = html_escape::decode_html_entities(&output);
-    decoded
+    output
         .lines()
         .map(single_line)
         .filter(|line| !line.is_empty())
@@ -174,5 +173,14 @@ mod tests {
         assert_eq!(text, "Visible & decoded.");
         assert!(!text.contains("Archive Shell"));
         assert!(!text.contains("ignore()"));
+    }
+
+    #[test]
+    fn wayback_does_not_decode_entities_twice() {
+        let body = b"<html><body><p>Use &amp;amp; literally.</p></body></html>";
+
+        let text = html_to_text(body);
+
+        assert_eq!(text, "Use &amp; literally.");
     }
 }

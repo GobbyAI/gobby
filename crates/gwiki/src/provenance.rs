@@ -65,18 +65,18 @@ impl ProvenanceGraph {
         fs::create_dir_all(&meta_dir).map_err(|error| WikiError::Io {
             action: "create provenance metadata directory",
             path: Some(meta_dir.clone()),
-            source: error.to_string(),
+            source: error,
         })?;
         let path = meta_dir.join("provenance.json");
         let json = serde_json::to_string_pretty(self).map_err(|error| WikiError::Json {
             action: "serialize provenance graph",
             path: Some(path.clone()),
-            source: error.to_string(),
+            source: error,
         })?;
         fs::write(&path, json).map_err(|error| WikiError::Io {
             action: "write provenance graph",
             path: Some(path),
-            source: error.to_string(),
+            source: error,
         })
     }
 
@@ -85,12 +85,12 @@ impl ProvenanceGraph {
         let json = fs::read_to_string(&path).map_err(|error| WikiError::Io {
             action: "read provenance graph",
             path: Some(path.clone()),
-            source: error.to_string(),
+            source: error,
         })?;
         serde_json::from_str(&json).map_err(|error| WikiError::Json {
             action: "parse provenance graph",
             path: Some(path),
-            source: error.to_string(),
+            source: error,
         })
     }
 }

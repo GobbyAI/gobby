@@ -32,14 +32,14 @@ impl EventMonitor {
             fs::create_dir_all(parent).map_err(|error| WikiError::Io {
                 action: "create session event directory",
                 path: Some(parent.to_path_buf()),
-                source: error.to_string(),
+                source: error,
             })?;
         }
 
         let mut line = serde_json::to_vec(event).map_err(|error| WikiError::Json {
             action: "serialize session event",
             path: Some(self.path.clone()),
-            source: error.to_string(),
+            source: error,
         })?;
         line.push(b'\n');
         let mut file = OpenOptions::new()
@@ -49,12 +49,12 @@ impl EventMonitor {
             .map_err(|error| WikiError::Io {
                 action: "open session event log",
                 path: Some(self.path.clone()),
-                source: error.to_string(),
+                source: error,
             })?;
         file.write_all(&line).map_err(|error| WikiError::Io {
             action: "append session event",
             path: Some(self.path.clone()),
-            source: error.to_string(),
+            source: error,
         })
     }
 }

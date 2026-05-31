@@ -444,7 +444,9 @@ pub(super) fn build_ruby_local_constant_roots(candidate_files: &[PathBuf]) -> Ha
 }
 
 pub(super) fn load_dart_external_packages(root_path: &Path) -> HashSet<String> {
-    let contents = std::fs::read_to_string(root_path.join("pubspec.yaml")).unwrap_or_default();
+    let Ok(contents) = std::fs::read_to_string(root_path.join("pubspec.yaml")) else {
+        return HashSet::new();
+    };
     let Ok(yaml) = serde_yaml::from_str::<serde_yaml::Value>(&contents) else {
         return HashSet::new();
     };

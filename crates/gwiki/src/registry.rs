@@ -3,7 +3,6 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 
 use crate::WikiError;
@@ -35,7 +34,7 @@ pub fn register_scope(path: &Path, scope: &ResolvedScope) -> Result<(), WikiErro
         std::fs::create_dir_all(parent).map_err(|error| WikiError::Io {
             action: "create registry directory",
             path: Some(parent.to_path_buf()),
-            source: error.to_string(),
+            source: error,
         })?;
     }
     let lock_path = registry_lock_path(path);
@@ -48,12 +47,12 @@ pub fn register_scope(path: &Path, scope: &ResolvedScope) -> Result<(), WikiErro
         .map_err(|error| WikiError::Io {
             action: "open registry lock",
             path: Some(lock_path.clone()),
-            source: error.to_string(),
+            source: error,
         })?;
-    lock.lock_exclusive().map_err(|error| WikiError::Io {
+    fs4::FileExt::lock(&lock).map_err(|error| WikiError::Io {
         action: "lock registry",
         path: Some(lock_path.clone()),
-        source: error.to_string(),
+        source: error,
     })?;
 
     let mut registry = read_registry(path)?;
@@ -97,14 +96,14 @@ fn write_registry_atomically(path: &Path, contents: &[u8]) -> Result<(), WikiErr
     let mut file = std::fs::File::create(&temp_path).map_err(|error| WikiError::Io {
         action: "create registry temp file",
         path: Some(temp_path.clone()),
-        source: error.to_string(),
+        source: error,
     })?;
     if let Err(error) = file.write_all(contents) {
         let _ = std::fs::remove_file(&temp_path);
         return Err(WikiError::Io {
             action: "write registry temp file",
             path: Some(temp_path),
-            source: error.to_string(),
+            source: error,
         });
     }
     if let Err(error) = file.sync_all() {
@@ -112,7 +111,7 @@ fn write_registry_atomically(path: &Path, contents: &[u8]) -> Result<(), WikiErr
         return Err(WikiError::Io {
             action: "sync registry temp file",
             path: Some(temp_path),
-            source: error.to_string(),
+            source: error,
         });
     }
     drop(file);
@@ -121,7 +120,7 @@ fn write_registry_atomically(path: &Path, contents: &[u8]) -> Result<(), WikiErr
         return Err(WikiError::Io {
             action: "replace registry",
             path: Some(path.to_path_buf()),
-            source: error.to_string(),
+            source: error,
         });
     }
     if let Some(parent) = path.parent()
@@ -168,7 +167,7 @@ fn read_registry(path: &Path) -> Result<Registry, WikiError> {
         Err(error) => Err(WikiError::Io {
             action: "read registry",
             path: Some(path.to_path_buf()),
-            source: error.to_string(),
+            source: error,
         }),
     }
 }

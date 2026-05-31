@@ -5,6 +5,7 @@ use std::fmt;
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StandaloneSetupRequest {
     pub standalone: bool,
+    #[serde(skip_serializing)]
     pub database_url: Option<String>,
     pub no_services: bool,
     pub overwrite_code_index: bool,

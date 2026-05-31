@@ -56,7 +56,7 @@ pub fn initialize(scope: &ResolvedScope) -> Result<(), WikiError> {
     .map_err(|error| WikiError::Json {
         action: "serialize scope file",
         path: Some(root.join(".gwiki/scope.json")),
-        source: error.to_string(),
+        source: error,
     })?;
     write_file(
         root.join(".gwiki/scope.json").as_path(),
@@ -74,7 +74,7 @@ fn create_dir(path: &Path) -> Result<(), WikiError> {
     std::fs::create_dir_all(path).map_err(|error| WikiError::Io {
         action: "create directory",
         path: Some(path.to_path_buf()),
-        source: error.to_string(),
+        source: error,
     })
 }
 
@@ -89,7 +89,7 @@ fn ensure_file(path: &Path, contents: &str) -> Result<(), WikiError> {
     std::fs::write(path, contents).map_err(|error| WikiError::Io {
         action: "write file",
         path: Some(path.to_path_buf()),
-        source: error.to_string(),
+        source: error,
     })
 }
 
@@ -100,7 +100,7 @@ fn write_file(path: &Path, contents: &str) -> Result<(), WikiError> {
     std::fs::write(path, contents).map_err(|error| WikiError::Io {
         action: "write file",
         path: Some(path.to_path_buf()),
-        source: error.to_string(),
+        source: error,
     })
 }
 

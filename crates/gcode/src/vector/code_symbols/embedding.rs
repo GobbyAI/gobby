@@ -1,4 +1,6 @@
 use serde_json::{Value, json};
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 
 use crate::config::EmbeddingConfig;
 use crate::models::Symbol;
@@ -6,6 +8,8 @@ use crate::models::Symbol;
 use super::types::VectorLifecycleError;
 
 const DIMENSION_PROBE_TEXT: &str = "dimension_probe";
+static EMBEDDING_CLIENTS: OnceLock<Mutex<HashMap<u64, reqwest::blocking::Client>>> =
+    OnceLock::new();
 
 pub(super) fn dimension_probe_text() -> &'static str {
     DIMENSION_PROBE_TEXT
@@ -14,10 +18,20 @@ pub(super) fn dimension_probe_text() -> &'static str {
 pub fn embedding_client(
     config: &EmbeddingConfig,
 ) -> Result<reqwest::blocking::Client, VectorLifecycleError> {
-    reqwest::blocking::Client::builder()
+    let mut clients = EMBEDDING_CLIENTS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .map_err(|err| VectorLifecycleError::EmbeddingResponse(err.to_string()))?;
+    if let Some(client) = clients.get(&config.timeout_seconds) {
+        return Ok(client.clone());
+    }
+
+    let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(config.timeout_seconds))
         .build()
-        .map_err(|err| VectorLifecycleError::EmbeddingResponse(err.to_string()))
+        .map_err(|err| VectorLifecycleError::EmbeddingResponse(err.to_string()))?;
+    clients.insert(config.timeout_seconds, client.clone());
+    Ok(client)
 }
 
 pub fn embed_text(

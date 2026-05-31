@@ -2,7 +2,6 @@ use std::fs;
 use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 
-use fs2::FileExt;
 use serde::Serialize;
 
 use crate::WikiError;
@@ -219,13 +218,13 @@ pub fn prepare_handoff(
         fs::create_dir_all(parent).map_err(|error| WikiError::Io {
             action: "create compile handoff directory",
             path: Some(parent.to_path_buf()),
-            source: error.to_string(),
+            source: error,
         })?;
     }
     fs::write(&bundle.path, &rendered).map_err(|error| WikiError::Io {
         action: "write compile handoff bundle",
         path: Some(bundle.path.clone()),
-        source: error.to_string(),
+        source: error,
     })?;
 
     if bundle.write_intent
@@ -264,7 +263,7 @@ fn update_wiki_index(vault_root: &Path, article: &SynthesizedPage) -> Result<(),
         fs::create_dir_all(parent).map_err(|error| WikiError::Io {
             action: "create wiki index lock directory",
             path: Some(parent.to_path_buf()),
-            source: error.to_string(),
+            source: error,
         })?;
     }
     let lock = OpenOptions::new()
@@ -276,12 +275,12 @@ fn update_wiki_index(vault_root: &Path, article: &SynthesizedPage) -> Result<(),
         .map_err(|error| WikiError::Io {
             action: "open wiki index lock",
             path: Some(lock_path.clone()),
-            source: error.to_string(),
+            source: error,
         })?;
-    lock.lock_exclusive().map_err(|error| WikiError::Io {
+    fs4::FileExt::lock(&lock).map_err(|error| WikiError::Io {
         action: "lock wiki index",
         path: Some(lock_path.clone()),
-        source: error.to_string(),
+        source: error,
     })?;
 
     let index_path = vault_root.join("_index.md");
@@ -289,7 +288,7 @@ fn update_wiki_index(vault_root: &Path, article: &SynthesizedPage) -> Result<(),
         fs::read_to_string(&index_path).map_err(|error| WikiError::Io {
             action: "read wiki index",
             path: Some(index_path.clone()),
-            source: error.to_string(),
+            source: error,
         })?
     } else {
         "# Wiki Index\n\n".to_string()
@@ -315,13 +314,13 @@ fn update_wiki_index(vault_root: &Path, article: &SynthesizedPage) -> Result<(),
         fs::create_dir_all(parent).map_err(|error| WikiError::Io {
             action: "create wiki index directory",
             path: Some(parent.to_path_buf()),
-            source: error.to_string(),
+            source: error,
         })?;
     }
     fs::write(&index_path, index).map_err(|error| WikiError::Io {
         action: "write wiki index",
         path: Some(index_path),
-        source: error.to_string(),
+        source: error,
     })?;
     drop(lock);
     Ok(())
@@ -426,7 +425,7 @@ fn collect_accepted_sources(session: &ResearchSession) -> Result<CollectedSource
         let text = fs::read_to_string(&path).map_err(|error| WikiError::Io {
             action: "read accepted research note",
             path: Some(path.clone()),
-            source: error.to_string(),
+            source: error,
         })?;
         let note_sections = parse_note_sections(&text);
         extend_unique(&mut citations, note_sections.citations);
@@ -653,13 +652,13 @@ fn write_target_page(target_page: &Path, rendered: &str) -> Result<(), WikiError
         fs::create_dir_all(parent).map_err(|error| WikiError::Io {
             action: "create compile target directory",
             path: Some(parent.to_path_buf()),
-            source: error.to_string(),
+            source: error,
         })?;
     }
     fs::write(target_page, rendered).map_err(|error| WikiError::Io {
         action: "write compile target page",
         path: Some(target_page.to_path_buf()),
-        source: error.to_string(),
+        source: error,
     })
 }
 

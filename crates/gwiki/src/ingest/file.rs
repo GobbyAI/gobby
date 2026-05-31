@@ -24,7 +24,7 @@ pub fn ingest_path(
     let bytes = std::fs::read(path).map_err(|error| WikiError::Io {
         action: "read source file",
         path: Some(path.to_path_buf()),
-        source: error.to_string(),
+        source: error,
     })?;
     let kind = detect_source_kind(path);
     let file_name = path
