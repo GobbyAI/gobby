@@ -2,7 +2,8 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use gobby_wiki::{Command, ScopeSelection, WikiError, output};
+use gobby_core::config::AiRouting;
+use gobby_wiki::{Command, IngestFileOptions, ScopeSelection, WikiError, output};
 
 #[derive(Debug, Parser)]
 #[command(name = "gwiki", version, about = "Gobby wiki CLI")]
@@ -36,6 +37,27 @@ enum CliCommand {
     IngestFile {
         #[arg(value_name = "PATH")]
         path: PathBuf,
+        /// Disable AI-backed media extraction for this ingest.
+        #[arg(long)]
+        no_ai: bool,
+        /// Prefer audio translation over transcription where a backend is available.
+        #[arg(long)]
+        translate: bool,
+        /// Target language for audio translation.
+        #[arg(long, value_name = "LANG")]
+        target_lang: Option<String>,
+        /// Seconds between sampled video frames; 0 disables frames.
+        #[arg(long = "video-frame-interval", value_name = "SECONDS")]
+        video_frame_interval_seconds: Option<u32>,
+        /// Routing override for audio transcription and translation.
+        #[arg(long, value_name = "auto|daemon|direct|off")]
+        transcription_routing: Option<AiRouting>,
+        /// Routing override for vision extraction.
+        #[arg(long, value_name = "auto|daemon|direct|off")]
+        vision_routing: Option<AiRouting>,
+        /// Routing override for text generation.
+        #[arg(long, value_name = "auto|daemon|direct|off")]
+        text_routing: Option<AiRouting>,
     },
     /// Search wiki documents in the selected scope.
     Search(SearchArgs),
@@ -201,7 +223,28 @@ fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Comman
         CliCommand::Setup => Ok(Command::Setup { scope }),
         CliCommand::Index => Ok(Command::Index { scope }),
         CliCommand::Collect => Ok(Command::Collect { scope }),
-        CliCommand::IngestFile { path } => Ok(Command::IngestFile { path, scope }),
+        CliCommand::IngestFile {
+            path,
+            no_ai,
+            translate,
+            target_lang,
+            video_frame_interval_seconds,
+            transcription_routing,
+            vision_routing,
+            text_routing,
+        } => Ok(Command::IngestFile {
+            path,
+            scope,
+            options: IngestFileOptions {
+                no_ai,
+                translate,
+                target_lang,
+                video_frame_interval_seconds,
+                transcription_routing,
+                vision_routing,
+                text_routing,
+            },
+        }),
         CliCommand::Search(args) => Ok(Command::Search {
             query: args.query,
             scope,
@@ -295,5 +338,50 @@ fn exit_code_for_error(error: &WikiError) -> ExitCode {
         | WikiError::Yaml { .. }
         | WikiError::Registry { .. }
         | WikiError::Daemon { .. } => ExitCode::from(1),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gobby_core::ai_context::AiContext;
+    use gobby_core::config::{AiRouting, EnvOnlySource};
+
+    use super::*;
+
+    #[test]
+    fn ingest_file_cli_flags_map_to_command_options() {
+        let command = command_from_cli(
+            CliCommand::IngestFile {
+                path: PathBuf::from("media/interview.mp3"),
+                no_ai: false,
+                translate: true,
+                target_lang: Some("es".to_string()),
+                video_frame_interval_seconds: Some(0),
+                transcription_routing: Some(AiRouting::Direct),
+                vision_routing: Some(AiRouting::Off),
+                text_routing: Some(AiRouting::Daemon),
+            },
+            ScopeSelection::global(),
+        )
+        .expect("map ingest-file command");
+
+        let Command::IngestFile { options, .. } = command else {
+            panic!("expected ingest-file command");
+        };
+        assert!(options.translate);
+        assert_eq!(options.target_lang.as_deref(), Some("es"));
+        assert_eq!(options.video_frame_interval_seconds, Some(0));
+
+        let mut source = EnvOnlySource;
+        let mut context = AiContext::resolve(None, &mut source);
+        options.apply_to_ai_context(&mut context);
+        assert_eq!(context.bindings.audio_transcribe.routing, AiRouting::Direct);
+        assert_eq!(context.bindings.audio_translate.routing, AiRouting::Direct);
+        assert_eq!(context.bindings.vision_extract.routing, AiRouting::Off);
+        assert_eq!(context.bindings.text_generate.routing, AiRouting::Daemon);
+        assert_eq!(
+            context.bindings.audio_translate.target_lang.as_deref(),
+            Some("es")
+        );
     }
 }

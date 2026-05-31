@@ -20,7 +20,11 @@ pub(crate) fn run(command: Command) -> Result<CommandOutcome, WikiError> {
         Command::Setup { scope } => setup::execute(scope),
         Command::Index { scope } => index::execute(scope),
         Command::Collect { scope } => collect::execute(scope),
-        Command::IngestFile { path, scope } => index::execute_ingest_file(path, scope),
+        Command::IngestFile {
+            path,
+            scope,
+            options,
+        } => index::execute_ingest_file(path, scope, options),
         Command::Search {
             query,
             scope,

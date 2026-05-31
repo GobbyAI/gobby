@@ -47,7 +47,10 @@ pub struct VideoMarkdownResult {
 }
 
 pub fn sample_frames(asset_path: &Path, plan: FrameSamplingPlan) -> Vec<VideoFrameSample> {
-    let interval_seconds = plan.interval_seconds.max(1);
+    if plan.interval_seconds == 0 {
+        return Vec::new();
+    }
+    let interval_seconds = plan.interval_seconds;
     let mut samples = Vec::new();
     let Some(duration_seconds) = plan.duration_seconds else {
         samples.push(frame_sample(asset_path, 0));
@@ -419,6 +422,19 @@ mod tests {
             samples[1].source_reference,
             "raw/assets/lecture.mp4#t=00:00:03"
         );
+    }
+
+    #[test]
+    fn zero_frame_interval_disables_sampling() {
+        let samples = sample_frames(
+            &PathBuf::from("raw/assets/lecture.mp4"),
+            FrameSamplingPlan {
+                duration_seconds: Some(7),
+                interval_seconds: 0,
+            },
+        );
+
+        assert!(samples.is_empty());
     }
 
     #[test]

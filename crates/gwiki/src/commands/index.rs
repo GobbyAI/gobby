@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+use gobby_core::ai_context::{AiConfigSource, AiContext, LocalAiConfigSource};
+use gobby_core::config::ConfigSource;
 use serde_json::json;
 
 use crate::error::index_error_to_wiki_error;
@@ -10,8 +12,14 @@ use crate::support::scope::{
     resolve_command_scope, resolved_scope_identity, search_scope_for_resolved,
     store_scope_for_search,
 };
+use crate::support::search::PostgresConfigSource;
 use crate::support::time::collect_timestamp;
-use crate::{CommandOutcome, ScopeIdentity, ScopeSelection, WikiError, indexer, store, vault};
+use crate::{
+    CommandOutcome, IngestFileOptions, ScopeIdentity, ScopeKind, ScopeSelection, WikiError,
+    indexer, store, vault,
+};
+
+const VIDEO_FRAME_INTERVAL_KEY: &str = "gwiki.ingest.video_frame_interval_seconds";
 
 pub(crate) fn execute(selection: ScopeSelection) -> Result<CommandOutcome, WikiError> {
     let scope = resolve_command_scope(&selection)?;
@@ -40,10 +48,13 @@ pub(crate) fn execute(selection: ScopeSelection) -> Result<CommandOutcome, WikiE
 pub(crate) fn execute_ingest_file(
     path: PathBuf,
     selection: ScopeSelection,
+    options: IngestFileOptions,
 ) -> Result<CommandOutcome, WikiError> {
     let scope = resolve_command_scope(&selection)?;
     let _ = vault::initialize(&scope)?;
     let output_scope = resolved_scope_identity(&scope);
+    let project_id = ai_project_id(&output_scope);
+    let gobby_home = gobby_home()?;
     let fetched_at = collect_timestamp().map_err(|error| WikiError::Config {
         detail: format!("failed to read system clock: {error}"),
     })?;
@@ -53,20 +64,92 @@ pub(crate) fn execute_ingest_file(
                 detail: format!("failed to connect to PostgreSQL for gwiki ingest-file: {error}"),
             }
         })?;
+        let (ai_context, options) = {
+            let primary = PostgresConfigSource { conn: &mut conn };
+            let mut source = AiConfigSource::with_primary_from_gobby_home(primary, &gobby_home)
+                .map_err(|error| WikiError::Config {
+                    detail: format!("failed to resolve AI config for gwiki ingest-file: {error}"),
+                })?;
+            resolve_ingest_ai_context(project_id, &options, &mut source)?
+        };
         let search_scope = search_scope_for_resolved(&scope);
         let result = {
             let mut store =
                 store::PostgresWikiStore::new(&mut conn, store_scope_for_search(&search_scope));
-            ingest::file::ingest_path(scope.root(), &mut store, &path, &fetched_at)?
+            ingest::file::ingest_path(
+                scope.root(),
+                &mut store,
+                &output_scope,
+                &ai_context,
+                &options,
+                &path,
+                &fetched_at,
+            )?
         };
         let counts = postgres_index_counts(&mut conn, &search_scope)?;
         return Ok(render_ingest_file(&path, output_scope, &result, counts));
     }
 
+    let mut source =
+        LocalAiConfigSource::from_gobby_home(&gobby_home).map_err(|error| WikiError::Config {
+            detail: format!("failed to resolve AI config for gwiki ingest-file: {error}"),
+        })?;
+    let (ai_context, options) = resolve_ingest_ai_context(project_id, &options, &mut source)?;
     let mut store = store::MemoryWikiStore::default();
-    let result = ingest::file::ingest_path(scope.root(), &mut store, &path, &fetched_at)?;
+    let result = ingest::file::ingest_path(
+        scope.root(),
+        &mut store,
+        &output_scope,
+        &ai_context,
+        &options,
+        &path,
+        &fetched_at,
+    )?;
     let counts = index_counts(&store);
     Ok(render_ingest_file(&path, output_scope, &result, counts))
+}
+
+fn resolve_ingest_ai_context(
+    project_id: Option<String>,
+    options: &IngestFileOptions,
+    source: &mut impl ConfigSource,
+) -> Result<(AiContext, IngestFileOptions), WikiError> {
+    let mut context = AiContext::resolve(project_id, source);
+    let mut options = options.clone();
+    if options.video_frame_interval_seconds.is_none() {
+        options.video_frame_interval_seconds = Some(resolve_video_frame_interval_seconds(source)?);
+    }
+    options.apply_to_ai_context(&mut context);
+    Ok((context, options))
+}
+
+fn resolve_video_frame_interval_seconds(source: &mut impl ConfigSource) -> Result<u32, WikiError> {
+    let Some(raw_value) = source.config_value(VIDEO_FRAME_INTERVAL_KEY) else {
+        return Ok(ingest::video::DEFAULT_FRAME_INTERVAL_SECONDS);
+    };
+    let value = source
+        .resolve_value(&raw_value)
+        .map_err(|error| WikiError::Config {
+            detail: format!("failed to resolve {VIDEO_FRAME_INTERVAL_KEY}: {error}"),
+        })?;
+    value
+        .trim()
+        .parse::<u32>()
+        .map_err(|error| WikiError::Config {
+            detail: format!("invalid {VIDEO_FRAME_INTERVAL_KEY} value `{value}`: {error}"),
+        })
+}
+
+fn ai_project_id(scope: &ScopeIdentity) -> Option<String> {
+    (scope.kind == ScopeKind::Project).then(|| scope.id.clone())
+}
+
+fn gobby_home() -> Result<PathBuf, WikiError> {
+    dirs::home_dir()
+        .map(|home| home.join(".gobby"))
+        .ok_or_else(|| WikiError::Config {
+            detail: "failed to resolve home directory for gwiki AI config".to_string(),
+        })
 }
 
 fn render_index(scope: ScopeIdentity, root: &Path, counts: IndexCounts) -> CommandOutcome {
