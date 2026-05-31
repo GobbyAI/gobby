@@ -115,3 +115,20 @@ Committed bug fix `c33a73faf` for Gobby task `#15393` and closed the task. There
 I de-escalated target task `#354` in `gobby-cli` because the escalation was caused by the Gobby terminal automation bug, not by a real user decision. The de-escalation reset planning work attempts to 0 while preserving `review_round_count=2` and `max_review_rounds=99`. `explain_dispatch` reported the task eligible with proposed action `start_stage`. I did not manually tick the dispatcher.
 
 The daemon relaunched planner `run-431f7c29c44c` automatically. The planner progressed from 6 tool calls and 1 turn to 19 tool calls and 1 turn during the first post-fix wait, which is past the immediate stall point seen in the failed replacement planner.
+
+## 2026-05-31 09:05 CDT - Queued-continuation root cause corrected
+
+The first queued-continuation fix was incomplete. After `c33a73faf`, three more planner attempts failed: `run-431f7c29c44c`, `run-347aac3ec345`, and `run-0a79ed9cc11b` ended with `Agent idle: idle after max reprompt attempts`; `run-4ef6aa787cd4` ended before the step workflow reached `terminate`. Target task `#354` escalated again with `Failed 3 dispatch attempts`. No user decision was needed.
+
+Root cause: the pane was not truly idle. It showed Claude still running/thinking, including a status line like "Bunning ... almost done thinking with max effort", while Gobby's continuation message was visible in Claude's queued messages. The idle detector looked from the bottom of the pane upward, saw the queued prompt area, and treated the live Claude turn as idle. Repeated reprompts then accumulated until the lifecycle monitor killed the agent.
+
+I opened and claimed bug task `#15395` under coordination epic `#15385`. The follow-up fix classifies panes as active when queued messages are visible together with Claude active-work markers such as running/thinking or file-reading output, while preserving idle classification for queued continuation text without active-work evidence.
+
+Validation passed:
+
+- `GOBBY_TEST_PROTECT=1 uv run pytest tests/agents/test_idle_detector.py tests/agents/test_lifecycle_monitor_extra.py tests/mcp_proxy/tools/test_agent_live_stats.py -q` - passed, 77 tests
+- `uv run ruff check src/gobby/agents/idle_detector.py src/gobby/agents/prompt_detector.py src/gobby/agents/terminal_prompt_monitor.py src/gobby/agents/lifecycle_monitor.py src/gobby/mcp_proxy/tools/agent_live_activity.py tests/agents/test_idle_detector.py tests/agents/test_lifecycle_monitor_extra.py tests/mcp_proxy/tools/test_agent_live_stats.py` - passed
+- `uv run ruff format --check src/gobby/agents/idle_detector.py src/gobby/agents/prompt_detector.py src/gobby/agents/terminal_prompt_monitor.py src/gobby/agents/lifecycle_monitor.py src/gobby/mcp_proxy/tools/agent_live_activity.py tests/agents/test_idle_detector.py tests/agents/test_lifecycle_monitor_extra.py tests/mcp_proxy/tools/test_agent_live_stats.py` - passed
+- `uv run mypy src/gobby/agents/idle_detector.py src/gobby/agents/prompt_detector.py src/gobby/agents/terminal_prompt_monitor.py src/gobby/agents/lifecycle_monitor.py src/gobby/mcp_proxy/tools/agent_live_activity.py --no-incremental --strict` - passed
+- `uv run gobby test-quality audit tests/agents/test_idle_detector.py tests/agents/test_lifecycle_monitor_extra.py tests/mcp_proxy/tools/test_agent_live_stats.py --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity high` - passed
+- `git diff --check` - passed

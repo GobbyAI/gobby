@@ -51,6 +51,18 @@ class IdleDetector:
         re.compile(r"Rule enforced by Gobby", re.IGNORECASE),
     )
 
+    QUEUED_MESSAGE_PATTERNS: tuple[re.Pattern[str], ...] = (
+        re.compile(r"queued messages", re.IGNORECASE),
+        re.compile(r"Press up to edit queued messages", re.IGNORECASE),
+    )
+
+    ACTIVE_WORK_PATTERNS: tuple[re.Pattern[str], ...] = (
+        re.compile(r"\b[BR]unning\b", re.IGNORECASE),
+        re.compile(r"almost done thinking", re.IGNORECASE),
+        re.compile(r"thinking with .*effort", re.IGNORECASE),
+        re.compile(r"\bReading\s+\d+\s+files?\b", re.IGNORECASE),
+    )
+
     CONTEXT_FULL_PATTERNS: tuple[re.Pattern[str], ...] = (
         re.compile(r"context.*window.*full", re.IGNORECASE),
         re.compile(r"would you like to continue", re.IGNORECASE),
@@ -105,6 +117,13 @@ class IdleDetector:
         for pattern in self.STOP_HOOK_BLOCKED_PATTERNS:
             if pattern.search(full_text):
                 return "idle"
+
+        has_queued_message = any(
+            pattern.search(full_text) for pattern in self.QUEUED_MESSAGE_PATTERNS
+        )
+        has_active_work = any(pattern.search(full_text) for pattern in self.ACTIVE_WORK_PATTERNS)
+        if has_queued_message and has_active_work:
+            return "active"
 
         # Check lines bottom-up, skipping status bar chrome
         for line in reversed(lines):

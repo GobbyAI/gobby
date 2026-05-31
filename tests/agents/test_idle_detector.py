@@ -62,6 +62,28 @@ class TestDetect:
         output = "Processing file 3 of 10...\n"
         assert self.detector.detect(output) == "active"
 
+    def test_claude_running_with_queued_continuation_is_active(self) -> None:
+        output = (
+            "⏺ Reading 3 files… (ctrl+o to expand)\n"
+            "  ⎿  crates/gcore/src/lib.rs\n\n"
+            "✽ Bunning… (7m 54s · ↓ 38.4k tokens · almost done thinking with max effort)\n\n"
+            "  ❯ Continue working on your task. Your active Gobby step workflow is not complete.\n"
+            "    Workflow: planner-steps. Current step: plan.\n"
+            "────────────────────────────────────────────────────────────────\n"
+            "❯ Press up to edit queued messages\n"
+            "🤖 Opus 4.8 💰 $2.16 █░░░░░░░░░15%\n"
+            "⏵⏵ bypass permissions on\n"
+        )
+        assert self.detector.detect(output) == "active"
+
+    def test_queued_continuation_without_active_work_is_idle(self) -> None:
+        output = (
+            "  ❯ Continue working on your task. Your active Gobby step workflow is not complete.\n"
+            "    Workflow: planner-steps. Current step: plan.\n"
+            "❯ Press up to edit queued messages\n"
+        )
+        assert self.detector.detect(output) == "idle"
+
 
 class TestShouldReprompt:
     """Tests for reprompt timing logic."""
