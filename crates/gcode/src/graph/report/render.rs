@@ -21,8 +21,8 @@ pub(super) fn render_markdown(input: RenderMarkdownInput<'_>) -> String {
     let mut lines = vec![
         "# Project Graph Report".to_string(),
         String::new(),
-        format!("- Project: {}", input.project_id),
-        format!("- Generated: {}", input.generated_at),
+        format!("- Project: `{}`", input.project_id),
+        format!("- Generated: `{}`", input.generated_at),
         format!("- Nodes: {}", input.summary.node_count),
         format!("- Edges: {}", input.summary.edge_count),
     ];

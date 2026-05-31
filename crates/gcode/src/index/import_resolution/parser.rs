@@ -143,8 +143,8 @@ pub(crate) fn resolve_external_callee(
             return None;
         }
         let local_symbol = format!("{module}\\{callee_name}");
-        if import_context.php_local_symbols.contains(module)
-            || import_context.php_local_symbols.contains(&local_symbol)
+        if php_local_symbol_exists(import_context, module)
+            || php_local_symbol_exists(import_context, &local_symbol)
         {
             return None;
         }
@@ -153,6 +153,8 @@ pub(crate) fn resolve_external_callee(
             callee_name: callee_name.to_string(),
         });
     }
+    let (root_alias, qualifier_path) = csharp_global_qualifier_parts(root_alias, qualifier_path)
+        .unwrap_or((root_alias, qualifier_path));
     let root_binding = import_bindings.external_roots.get(root_alias)?;
     let module = if root_binding.module_from_qualifier {
         qualifier_path.to_string()
@@ -592,42 +594,36 @@ fn parse_csharp_import_statement(
     };
 
     if let Some(target) = rest.strip_prefix("static ") {
-        let target = target.trim();
+        let target = normalize_csharp_global_alias(target.trim());
         extracted.imports.push(ImportRelation {
             file_path: rel_path.to_string(),
-            module_name: target.to_string(),
+            module_name: target.clone(),
         });
-        if is_external_csharp_path(target, import_context) {
-            extracted
-                .bindings
-                .bare_wildcard_modules
-                .push(target.to_string());
+        if is_external_csharp_path(&target, import_context) {
+            extracted.bindings.bare_wildcard_modules.push(target);
         }
         return;
     }
 
     if let Some((alias, target)) = rest.split_once('=') {
         let alias = alias.trim();
-        let target = target.trim();
+        let target = normalize_csharp_global_alias(target.trim());
         extracted.imports.push(ImportRelation {
             file_path: rel_path.to_string(),
-            module_name: target.to_string(),
+            module_name: target.clone(),
         });
-        if !alias.is_empty() && is_external_csharp_path(target, import_context) {
-            extracted
-                .bindings
-                .member
-                .insert(alias.to_string(), target.to_string());
+        if !alias.is_empty() && is_external_csharp_path(&target, import_context) {
+            extracted.bindings.member.insert(alias.to_string(), target);
         }
         return;
     }
 
-    let namespace = rest.trim();
+    let namespace = normalize_csharp_global_alias(rest.trim());
     extracted.imports.push(ImportRelation {
         file_path: rel_path.to_string(),
-        module_name: namespace.to_string(),
+        module_name: namespace.clone(),
     });
-    if !is_external_csharp_path(namespace, import_context) {
+    if !is_external_csharp_path(&namespace, import_context) {
         return;
     }
     if let Some(root) = namespace.split('.').next()
@@ -641,6 +637,32 @@ fn parse_csharp_import_statement(
             },
         );
     }
+}
+
+fn normalize_csharp_global_alias(path: &str) -> String {
+    path.strip_prefix("global::").unwrap_or(path).to_string()
+}
+
+fn csharp_global_qualifier_parts<'a>(
+    root_alias: &'a str,
+    qualifier_path: &'a str,
+) -> Option<(&'a str, &'a str)> {
+    if root_alias != "global" {
+        return None;
+    }
+    let qualifier_path = qualifier_path.strip_prefix("global::")?;
+    let root_alias = qualifier_path
+        .split('.')
+        .next()
+        .filter(|root| !root.is_empty())?;
+    Some((root_alias, qualifier_path))
+}
+
+fn php_local_symbol_exists(import_context: &ImportResolutionContext, symbol: &str) -> bool {
+    import_context.php_local_symbols.contains(symbol)
+        || import_context
+            .php_local_symbols
+            .contains(&symbol.to_ascii_lowercase())
 }
 
 fn parse_php_import_statement(

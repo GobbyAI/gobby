@@ -149,7 +149,7 @@ fn split_assignment(line: &str) -> Option<(&str, &str)> {
         let next = line[idx + 1..].chars().next();
         if matches!(
             previous,
-            Some('=' | '!' | '<' | '>' | ':' | '+' | '-' | '*' | '/' | '%' | '&' | '|')
+            Some('=' | '!' | '<' | '>' | ':' | '+' | '-' | '*' | '/' | '%' | '&' | '|' | '^' | '?')
         ) || matches!(next, Some('=' | '>'))
         {
             continue;
@@ -201,6 +201,8 @@ mod tests {
     fn split_assignment_ignores_bitwise_compound_operators() {
         assert_eq!(split_assignment("flags &= READ"), None);
         assert_eq!(split_assignment("flags |= WRITE"), None);
+        assert_eq!(split_assignment("flags ^= EXECUTE"), None);
+        assert_eq!(split_assignment("value += 1"), None);
         assert_eq!(
             split_assignment("flags = READ | WRITE"),
             Some(("flags ", " READ | WRITE"))

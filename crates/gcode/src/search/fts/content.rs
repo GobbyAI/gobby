@@ -285,16 +285,14 @@ pub(super) fn make_snippet(content: &str, query: &str) -> String {
         .filter(|token| !token.is_empty())
         .collect();
     let (lower_content, lower_byte_to_original_char) = lowercase_with_original_char_map(content);
-    let mut match_at = None;
-    for token in tokens {
-        if let Some(byte_index) = lower_content.find(&token) {
-            match_at = lower_byte_to_original_char
-                .get(byte_index)
-                .copied()
-                .or(Some(0));
-            break;
-        }
-    }
+    let match_at = tokens
+        .iter()
+        .filter_map(|token| {
+            lower_content
+                .find(token)
+                .and_then(|byte_index| lower_byte_to_original_char.get(byte_index).copied())
+        })
+        .min();
     let match_at = match_at.unwrap_or(0);
     let start = match_at.saturating_sub(60);
     let content_len = content.chars().count();

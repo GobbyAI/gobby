@@ -107,6 +107,38 @@ class Client {}
 }
 
 #[test]
+fn leaves_case_insensitive_php_local_symbols_unresolved() {
+    let parsed = parse_php(
+        r#"
+<?php
+namespace App\Services;
+
+function run() {
+    \APP\SERVICES\MAILER::send();
+    \app\services\render();
+}
+"#,
+        &[(
+            "src/Services/Mailer.php",
+            r#"
+<?php
+namespace App\Services;
+
+class Mailer {}
+function render() {}
+"#,
+        )],
+    );
+
+    assert!(
+        parsed
+            .calls
+            .iter()
+            .all(|call| call.callee_target_kind.as_str() == "unresolved")
+    );
+}
+
+#[test]
 fn classifies_external_ruby_constant_qualified_require_calls() {
     let parsed = parse_ruby(
         r#"

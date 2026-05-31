@@ -113,7 +113,6 @@ pub fn sanitize_pg_search_query(query: &str) -> String {
 
     cleaned
         .split_whitespace()
-        .filter(|token| !token.is_empty())
         .map(|token| {
             if token.starts_with('-') {
                 format!("\\{token}")

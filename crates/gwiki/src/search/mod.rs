@@ -188,18 +188,19 @@ where
     })?;
 
     let mut degradations = Vec::new();
+    let mut unavailable_sources = Vec::new();
     if let Some(degradation) = semantic_outcome.degradation {
         degradations.push(degradation);
-        degradations.push(DegradationKind::PartialSearch {
-            available: vec![SearchSource::Bm25.as_str().to_string()],
-            unavailable: vec![SearchSource::Semantic.as_str().to_string()],
-        });
+        unavailable_sources.push(SearchSource::Semantic.as_str().to_string());
     }
     if let Some(degradation) = graph_outcome.degradation {
         degradations.push(degradation);
+        unavailable_sources.push(SearchSource::Graph.as_str().to_string());
+    }
+    if !unavailable_sources.is_empty() {
         degradations.push(DegradationKind::PartialSearch {
             available: available_sources(request.include_semantic, semantic_degraded),
-            unavailable: vec![SearchSource::Graph.as_str().to_string()],
+            unavailable: unavailable_sources,
         });
     }
 
@@ -319,6 +320,47 @@ mod tests {
         assert!(linked.sources.contains(&SearchSource::Graph));
     }
 
+    #[test]
+    fn combined_partial_search_reports_all_unavailable_sources_once() {
+        let scope = SearchScope::project("project-1");
+        let mut bm25 = bm25::MemoryBm25Backend::new(vec![search_result(
+            "bm25:wiki/topics/rust.md:0",
+            scope.clone(),
+            "wiki/topics/rust.md",
+        )]);
+        let mut semantic = semantic::UnavailableSemanticBackend;
+        let mut graph = DegradedGraphBackend;
+
+        let response = search(
+            &mut bm25,
+            &mut semantic,
+            &mut graph,
+            SearchRequest {
+                query: "ownership".to_string(),
+                scope,
+                limit: 10,
+                include_semantic: true,
+            },
+        )
+        .expect("search degrades to bm25");
+
+        let partials = response
+            .degradations
+            .iter()
+            .filter_map(|degradation| match degradation {
+                DegradationKind::PartialSearch {
+                    available,
+                    unavailable,
+                } => Some((available, unavailable)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(partials.len(), 1);
+        assert_eq!(partials[0].0.as_slice(), ["bm25"]);
+        assert_eq!(partials[0].1.as_slice(), ["semantic", "graph"]);
+    }
+
     fn search_result(id: &str, scope: SearchScope, path: &str) -> WikiSearchResult {
         WikiSearchResult {
             id: id.to_string(),
@@ -371,6 +413,25 @@ mod tests {
             scope,
             path: PathBuf::from(path),
             title: None,
+        }
+    }
+
+    struct DegradedGraphBackend;
+
+    impl graph_boost::GraphBoostBackend for DegradedGraphBackend {
+        fn search_graph_boost(
+            &mut self,
+            _request: graph_boost::GraphBoostRequest,
+        ) -> Result<graph_boost::GraphBoostOutcome, SearchError> {
+            Ok(graph_boost::GraphBoostOutcome {
+                hits: Vec::new(),
+                degradation: Some(DegradationKind::ServiceUnavailable {
+                    service: "gwiki_graph".to_string(),
+                    state: gobby_core::degradation::ServiceState::Unreachable {
+                        message: "offline".to_string(),
+                    },
+                }),
+            })
         }
     }
 }

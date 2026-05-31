@@ -414,10 +414,13 @@ pub(super) fn build_php_local_symbol_index(candidate_files: &[PathBuf]) -> HashS
             }
             for name in php_declared_symbols(line) {
                 symbols.insert(name.clone());
+                symbols.insert(name.to_ascii_lowercase());
                 if let Some(namespace) = namespace.as_deref()
                     && !namespace.is_empty()
                 {
-                    symbols.insert(format!("{namespace}\\{name}"));
+                    let qualified = format!("{namespace}\\{name}");
+                    symbols.insert(qualified.clone());
+                    symbols.insert(qualified.to_ascii_lowercase());
                 }
             }
         }

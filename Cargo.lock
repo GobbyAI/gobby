@@ -920,6 +920,7 @@ dependencies = [
  "dirs",
  "falkordb",
  "ignore",
+ "log",
  "native-tls",
  "postgres",
  "postgres-native-tls",

@@ -34,6 +34,39 @@ pub enum MarkdownParseError {
     Io(std::io::Error),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct MarkdownFence {
+    marker: u8,
+    len: usize,
+}
+
+pub(crate) fn markdown_fence_start(line: &str) -> Option<MarkdownFence> {
+    let leading_spaces = line.len() - line.trim_start_matches(' ').len();
+    if leading_spaces > 3 {
+        return None;
+    }
+    let trimmed = &line[leading_spaces..];
+    let marker = match trimmed.as_bytes().first().copied()? {
+        b'`' | b'~' => trimmed.as_bytes()[0],
+        _ => return None,
+    };
+    let len = trimmed.bytes().take_while(|byte| *byte == marker).count();
+    (len >= 3).then_some(MarkdownFence { marker, len })
+}
+
+pub(crate) fn markdown_fence_closes(line: &str, fence: MarkdownFence) -> bool {
+    let leading_spaces = line.len() - line.trim_start_matches(' ').len();
+    if leading_spaces > 3 {
+        return false;
+    }
+    let trimmed = &line[leading_spaces..];
+    let len = trimmed
+        .bytes()
+        .take_while(|byte| *byte == fence.marker)
+        .count();
+    len >= fence.len && trimmed[len..].trim().is_empty()
+}
+
 impl fmt::Display for MarkdownParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -99,7 +132,7 @@ fn extract_headings(markdown: &str, body_start: usize) -> Vec<MarkdownHeading> {
     let mut headings = Vec::new();
     let mut heading_path = Vec::new();
     let mut offset = body_start;
-    let mut fence: Option<&str> = None;
+    let mut fence: Option<MarkdownFence> = None;
 
     while offset < markdown.len() {
         let line_end = markdown[offset..]
@@ -109,16 +142,13 @@ fn extract_headings(markdown: &str, body_start: usize) -> Vec<MarkdownHeading> {
             .strip_suffix('\r')
             .map_or(line_end, |line| line.len());
         let line = &markdown[offset..line_content_end];
-        let trimmed = line.trim_start();
 
         if let Some(active_fence) = fence {
-            if trimmed.starts_with(active_fence) {
+            if markdown_fence_closes(line, active_fence) {
                 fence = None;
             }
-        } else if trimmed.starts_with("```") {
-            fence = Some("```");
-        } else if trimmed.starts_with("~~~") {
-            fence = Some("~~~");
+        } else if let Some(opening_fence) = markdown_fence_start(line) {
+            fence = Some(opening_fence);
         } else if let Some((level, title)) = parse_atx_heading(line) {
             let parent_depth = usize::from(level.saturating_sub(1));
             heading_path.truncate(parent_depth.min(heading_path.len()));
@@ -299,6 +329,21 @@ mod tests {
                 .and_then(Value::as_str),
             Some("Overview")
         );
+    }
+
+    #[test]
+    fn headings_ignore_code_until_matching_fence_length_closes() {
+        let markdown = "````md\n# Not Heading\n```\n# Still Not Heading\n````\n# Heading\n";
+
+        let parsed = parse_markdown(
+            "wiki/topics/fences.md",
+            markdown,
+            std::iter::empty::<&str>(),
+        )
+        .expect("parse markdown");
+
+        assert_eq!(parsed.headings.len(), 1);
+        assert_eq!(parsed.headings[0].title, "Heading");
     }
 
     #[test]

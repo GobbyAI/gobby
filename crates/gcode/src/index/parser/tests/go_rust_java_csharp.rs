@@ -337,6 +337,46 @@ class Sample {
 }
 
 #[test]
+fn classifies_external_csharp_global_alias_calls() {
+    let parsed = parse_csharp(
+        r#"
+using Json = global::Newtonsoft.Json.JsonConvert;
+using global::System;
+
+class Sample {
+    void Run() {
+        Json.SerializeObject(this);
+        global::System.Console.WriteLine("x");
+    }
+}
+"#,
+        &[],
+    );
+
+    let alias_call = parsed
+        .calls
+        .iter()
+        .find(|call| call.callee_name == "SerializeObject")
+        .expect("alias call");
+    assert_eq!(alias_call.callee_target_kind.as_str(), "external");
+    assert_eq!(
+        alias_call.callee_external_module.as_deref(),
+        Some("Newtonsoft.Json.JsonConvert")
+    );
+
+    let qualified_call = parsed
+        .calls
+        .iter()
+        .find(|call| call.callee_name == "WriteLine")
+        .expect("qualified call");
+    assert_eq!(qualified_call.callee_target_kind.as_str(), "external");
+    assert_eq!(
+        qualified_call.callee_external_module.as_deref(),
+        Some("System.Console")
+    );
+}
+
+#[test]
 fn leaves_csharp_instance_and_local_namespace_calls_unresolved() {
     let parsed = parse_csharp(
         r#"

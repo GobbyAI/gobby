@@ -105,8 +105,8 @@ impl CodeSymbolVectorLifecycle {
         file_path: &str,
         symbols: &[Symbol],
     ) -> Result<CodeSymbolVectorLifecycleOutput, VectorLifecycleError> {
-        self.ensure_collection()?;
-        let points = self.points_for_symbols(symbols)?;
+        let schema = self.ensure_collection()?;
+        let points = self.points_for_symbols(symbols, schema.size)?;
         let point_ids = point_ids(&points);
         let vectors_upserted = self.upsert_points(points)?;
         let delete_operations_issued = self.delete_stale_vectors(Some(file_path), &point_ids)?;
@@ -147,8 +147,8 @@ impl CodeSymbolVectorLifecycle {
         &mut self,
         symbols: &[Symbol],
     ) -> Result<CodeSymbolVectorLifecycleOutput, VectorLifecycleError> {
-        self.ensure_collection()?;
-        let points = self.points_for_symbols(symbols)?;
+        let schema = self.ensure_collection()?;
+        let points = self.points_for_symbols(symbols, schema.size)?;
         let point_ids = point_ids(&points);
         let vectors_upserted = self.upsert_points(points)?;
         let delete_operations_issued = self.delete_stale_vectors(None, &point_ids)?;
@@ -329,6 +329,7 @@ impl CodeSymbolVectorLifecycle {
     fn points_for_symbols(
         &self,
         symbols: &[Symbol],
+        expected_vector_size: usize,
     ) -> Result<Vec<UpsertRequest>, VectorLifecycleError> {
         if symbols.is_empty() {
             return Ok(Vec::new());
@@ -343,6 +344,14 @@ impl CodeSymbolVectorLifecycle {
             .iter()
             .zip(vectors)
             .map(|(symbol, vector)| {
+                if vector.len() != expected_vector_size {
+                    return Err(VectorLifecycleError::EmbeddingResponse(format!(
+                        "embedding for symbol {} returned {} dimension(s), expected {}",
+                        symbol.id,
+                        vector.len(),
+                        expected_vector_size
+                    )));
+                }
                 let payload = payload_map(CodeSymbolVectorPayload::from_symbol(symbol))?;
                 Ok(UpsertRequest {
                     id: symbol.id.clone(),

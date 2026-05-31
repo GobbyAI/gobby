@@ -52,7 +52,6 @@ fn append_log(path: &Path, entry: &LogEntry) -> Result<(), WikiError> {
         })?;
     }
 
-    let write_header = fs::metadata(path).map_or(true, |metadata| metadata.len() == 0);
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)
@@ -63,6 +62,7 @@ fn append_log(path: &Path, entry: &LogEntry) -> Result<(), WikiError> {
             source: error,
         })?;
 
+    let write_header = file.metadata().map_or(true, |metadata| metadata.len() == 0);
     if write_header {
         file.write_all(b"# Log\n\n")
             .map_err(|error| WikiError::Io {

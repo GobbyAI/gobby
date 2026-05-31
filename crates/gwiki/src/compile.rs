@@ -416,9 +416,7 @@ fn collect_accepted_sources(session: &ResearchSession) -> Result<CollectedSource
 
     for note in &session.accepted_notes {
         let path = note_path(session.scope.root(), &note.path);
-        if !path_is_in_scope(&path, session.scope.root()) {
-            continue;
-        }
+        require_path_in_scope(&path, session.scope.root())?;
         let text = fs::read_to_string(&path).map_err(|error| WikiError::Io {
             action: "read accepted research note",
             path: Some(path.clone()),
@@ -577,28 +575,38 @@ fn note_path(root: &Path, path: &Path) -> PathBuf {
     }
 }
 
-fn path_is_in_scope(path: &Path, root: &Path) -> bool {
+fn require_path_in_scope(path: &Path, root: &Path) -> Result<(), WikiError> {
     let root = match root.canonicalize() {
         Ok(root) => root,
         Err(error) => {
-            log::warn!(
-                "failed to canonicalize wiki scope root {} for scope check: {error}",
-                root.display()
-            );
-            return false;
+            return Err(WikiError::Io {
+                action: "canonicalize wiki scope root",
+                path: Some(root.to_path_buf()),
+                source: error,
+            });
         }
     };
     let path = match path.canonicalize() {
         Ok(path) => path,
         Err(error) => {
-            log::warn!(
-                "failed to canonicalize wiki path {} for scope check: {error}",
-                path.display()
-            );
-            return false;
+            return Err(WikiError::Io {
+                action: "canonicalize accepted research note",
+                path: Some(path.to_path_buf()),
+                source: error,
+            });
         }
     };
-    path.starts_with(root)
+    if path.starts_with(&root) {
+        return Ok(());
+    }
+    Err(WikiError::InvalidInput {
+        field: "accepted_note",
+        message: format!(
+            "accepted research note {} is outside wiki scope {}",
+            path.display(),
+            root.display()
+        ),
+    })
 }
 
 fn lock_wiki_index(lock: &fs::File, lock_path: &Path) -> Result<(), WikiError> {
@@ -864,7 +872,7 @@ mod tests {
     }
 
     #[test]
-    fn compile_bundle_is_scope_filtered() {
+    fn compile_fails_on_out_of_scope_accepted_note() {
         let in_scope = tempfile::tempdir().expect("in scope tempdir");
         let out_of_scope = tempfile::tempdir().expect("out of scope tempdir");
         let scope = ResearchScope::project(in_scope.path());
@@ -876,8 +884,11 @@ mod tests {
             title: "Out of scope".to_string(),
             path: out_of_scope.path().join("raw/research/out-of-scope.md"),
         });
+        let out_path = out_of_scope.path().join("raw/research/out-of-scope.md");
+        std::fs::create_dir_all(out_path.parent().expect("out parent")).expect("out raw dir");
+        std::fs::write(&out_path, "Out of scope citation").expect("out note written");
 
-        let outcome = prepare_handoff(
+        let err = prepare_handoff(
             &mut session,
             CompileRequest {
                 topic: "Scoped compile".to_string(),
@@ -886,22 +897,15 @@ mod tests {
                 write_intent: false,
             },
         )
-        .expect("compile handoff prepared");
+        .expect_err("out-of-scope accepted note must fail fast");
 
-        assert_eq!(outcome.bundle.accepted_sources.len(), 1);
-        assert_eq!(outcome.bundle.accepted_sources[0].title, "In scope");
-        assert!(
-            outcome.bundle.accepted_sources[0]
-                .path
-                .starts_with(scope.root())
-        );
-        assert!(
-            !outcome
-                .bundle
-                .accepted_sources
-                .iter()
-                .any(|source| source.path.starts_with(out_of_scope.path()))
-        );
+        assert!(matches!(
+            err,
+            WikiError::InvalidInput {
+                field: "accepted_note",
+                ..
+            }
+        ));
     }
 
     #[test]

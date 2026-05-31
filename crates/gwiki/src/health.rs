@@ -1,10 +1,12 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 use serde::Serialize;
 
 use crate::lint::{collect_pages, title_for_page};
+use crate::markdown::{MarkdownFence, markdown_fence_closes, markdown_fence_start};
 use crate::provenance::ProvenanceGraph;
 use crate::sources::{CompileStatus, SourceManifest, SourceRecord};
 use crate::{ScopeIdentity, WikiError};
@@ -164,11 +166,17 @@ fn source_citation_is_stale(source: &SourceRecord) -> bool {
 }
 
 fn stale_citation_years() -> u64 {
-    std::env::var(STALE_CITATION_YEARS_ENV)
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(1)
+    match std::env::var(STALE_CITATION_YEARS_ENV) {
+        Ok(raw) => stale_citation_years_from_env(&raw).unwrap_or_else(|| {
+            eprintln!("warning: ignoring invalid {STALE_CITATION_YEARS_ENV}={raw}");
+            1
+        }),
+        Err(_) => 1,
+    }
+}
+
+fn stale_citation_years_from_env(raw: &str) -> Option<u64> {
+    raw.trim().parse::<u64>().ok().filter(|value| *value > 0)
 }
 
 fn fetched_year(value: &str) -> Option<u64> {
@@ -231,18 +239,16 @@ fn source_reference_is_present(markdown: &str, needle: &str) -> bool {
 
 fn markdown_without_fenced_code(markdown: &str) -> String {
     let mut output = String::new();
-    let mut active_fence = None;
+    let mut active_fence: Option<MarkdownFence> = None;
     for line in markdown.lines() {
-        let trimmed = line.trim_start();
-        if let Some(fence) = fence_delimiter(trimmed) {
-            if active_fence == Some(fence) {
+        if let Some(fence) = active_fence {
+            if markdown_fence_closes(line, fence) {
                 active_fence = None;
                 continue;
             }
-            if active_fence.is_none() {
-                active_fence = Some(fence);
-                continue;
-            }
+        } else if let Some(fence) = markdown_fence_start(line) {
+            active_fence = Some(fence);
+            continue;
         }
         if active_fence.is_none() {
             output.push_str(line);
@@ -252,28 +258,37 @@ fn markdown_without_fenced_code(markdown: &str) -> String {
     output
 }
 
-fn fence_delimiter(line: &str) -> Option<&'static str> {
-    if line.starts_with("```") {
-        Some("```")
-    } else if line.starts_with("~~~") {
-        Some("~~~")
-    } else {
-        None
-    }
-}
-
 fn markdown_link_target_matches(markdown: &str, needle: &str) -> bool {
     let escaped = regex::escape(needle);
     let pattern = format!(
         r#"(?m)(\[[^\]]*\]\(\s*<?{escaped}>?(?:\s+["'][^"']*["'])?\s*\)|\[\[\s*{escaped}(?:\|[^\]]*)?\s*\]\])"#
     );
-    regex::Regex::new(&pattern).is_ok_and(|regex| regex.is_match(markdown))
+    cached_regex_is_match(pattern, markdown)
 }
 
 fn bounded_text_matches(markdown: &str, needle: &str) -> bool {
     let escaped = regex::escape(needle);
     let pattern = format!(r#"(^|[^\p{{L}}\p{{N}}_]){escaped}($|[^\p{{L}}\p{{N}}_])"#);
-    regex::Regex::new(&pattern).is_ok_and(|regex| regex.is_match(markdown))
+    cached_regex_is_match(pattern, markdown)
+}
+
+fn cached_regex_is_match(pattern: String, haystack: &str) -> bool {
+    static CACHE: OnceLock<Mutex<HashMap<String, regex::Regex>>> = OnceLock::new();
+    let Ok(mut cache) = CACHE.get_or_init(|| Mutex::new(HashMap::new())).lock() else {
+        return regex::Regex::new(&pattern).is_ok_and(|regex| regex.is_match(haystack));
+    };
+    let regex = match cache.get(&pattern) {
+        Some(regex) => regex.clone(),
+        None => {
+            let Ok(regex) = regex::Regex::new(&pattern) else {
+                return false;
+            };
+            cache.insert(pattern, regex.clone());
+            regex
+        }
+    };
+    drop(cache);
+    regex.is_match(haystack)
 }
 
 fn source_issue(source: &SourceRecord) -> HealthSourceIssue {
@@ -449,6 +464,24 @@ mod tests {
         let without_fences = markdown_without_fenced_code(markdown);
 
         assert_eq!(without_fences, "before\nafter\n");
+    }
+
+    #[test]
+    fn fenced_code_requires_matching_marker_length() {
+        let markdown =
+            "before\n````\nhttps://example.test/source\n```\nstill fenced\n````\nafter\n";
+
+        let without_fences = markdown_without_fenced_code(markdown);
+
+        assert_eq!(without_fences, "before\nafter\n");
+    }
+
+    #[test]
+    fn stale_citation_env_rejects_invalid_values() {
+        assert_eq!(stale_citation_years_from_env("3"), Some(3));
+        assert_eq!(stale_citation_years_from_env(" 2 "), Some(2));
+        assert_eq!(stale_citation_years_from_env("0"), None);
+        assert_eq!(stale_citation_years_from_env("nope"), None);
     }
 
     fn write_page(root: &Path, relative: &str, markdown: &str) {

@@ -105,7 +105,7 @@ fn marker_is_allowed_and_fresh(marker: &Value, now: f64, allow_seconds: f64) -> 
         return false;
     };
 
-    if now - timestamp > allow_seconds {
+    if timestamp > now || now - timestamp > allow_seconds {
         return false;
     }
 
@@ -287,6 +287,14 @@ mod tests {
             json!({"source": "cli_stop", "timestamp": now - 121.0}),
         );
         assert!(!fresh_shutdown_marker_at(stale.path(), now, 120.0));
+
+        let future = tempdir().unwrap();
+        write_marker(
+            future.path(),
+            ACTIVE_MARKER,
+            json!({"source": "cli_stop", "timestamp": now + 1.0}),
+        );
+        assert!(!fresh_shutdown_marker_at(future.path(), now, 120.0));
 
         let missing_timestamp = tempdir().unwrap();
         write_marker(

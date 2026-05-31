@@ -25,6 +25,23 @@ pub(super) struct SymbolFilters<'a> {
     pub(super) paths: &'a [String],
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(super) enum SymbolOrder {
+    Bm25Score,
+    FileLine,
+    Name,
+}
+
+impl SymbolOrder {
+    fn sql(self) -> &'static str {
+        match self {
+            Self::Bm25Score => "pdb.score(cs.id) DESC, cs.id ASC",
+            Self::FileLine => "cs.file_path ASC, cs.line_start ASC",
+            Self::Name => "cs.name ASC, cs.file_path ASC, cs.line_start ASC",
+        }
+    }
+}
+
 pub const FILTERED_FETCH_CAP: usize = 10_000;
 
 pub(super) fn push_param<T>(params: &mut Vec<PgParam>, value: T) -> String
@@ -257,7 +274,7 @@ pub(super) fn query_symbols_by_conditions(
     mut params: Vec<PgParam>,
     filters: SymbolFilters<'_>,
     limit: usize,
-    order_by: &str,
+    order: SymbolOrder,
 ) -> Vec<Symbol> {
     push_symbol_filters(&mut conditions, &mut params, "cs", filters);
     let limit_placeholder = push_param(&mut params, limit as i64);
@@ -274,7 +291,8 @@ pub(super) fn query_symbols_by_conditions(
            ON cf.project_id = cs.project_id AND cf.file_path = cs.file_path
          WHERE {where_clause}
          ORDER BY {order_by}
-         LIMIT {limit_placeholder}"
+         LIMIT {limit_placeholder}",
+        order_by = order.sql()
     );
     let refs = param_refs(&params);
     match conn.query(&sql, &refs) {

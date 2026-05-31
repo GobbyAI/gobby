@@ -78,9 +78,14 @@ fn connect(database_url: &str) -> anyhow::Result<Client> {
             .context("failed to connect to the Gobby PostgreSQL hub"),
         SslMode::Prefer => match connect_with_tls_unverified(&config) {
             Ok(client) => Ok(client),
-            Err(error) if is_no_tls_server_error(&error) => config
-                .connect(NoTls)
-                .context("failed to connect to the Gobby PostgreSQL hub"),
+            Err(error) if is_no_tls_server_error(&error) => {
+                log::debug!(
+                    "PostgreSQL sslmode=prefer TLS attempt failed with no-TLS server signal; retrying without TLS: {error}"
+                );
+                config
+                    .connect(NoTls)
+                    .context("failed to connect to the Gobby PostgreSQL hub")
+            }
             Err(error) => Err(error),
         },
         // libpq `sslmode=require` requires encryption without CA or hostname

@@ -1,3 +1,4 @@
+#[cfg(test)]
 pub(super) fn line_terminator_len(text: &str, line_start_byte: usize, line_len: usize) -> usize {
     let terminator_start = line_start_byte + line_len;
     let Some(rest) = text.as_bytes().get(terminator_start..) else {

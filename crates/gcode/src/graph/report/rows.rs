@@ -9,10 +9,10 @@ use super::RELATES_TO_CODE;
 use super::types::{BridgeEdgeHypothesis, GraphHotspot, TargetFrequency};
 
 pub(super) fn rows_to_named_counts(rows: Vec<Row>) -> BTreeMap<String, usize> {
-    rows.iter()
+    rows.into_iter()
         .filter_map(|row| {
-            let name = row_string(row, &["name"])?;
-            let count = row_usize(row, &["count"]).unwrap_or(0);
+            let name = row_string(&row, &["name"])?;
+            let count = row_usize(&row, &["count"]).unwrap_or(0);
             Some((name, count))
         })
         .collect()

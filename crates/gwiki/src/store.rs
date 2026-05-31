@@ -183,12 +183,14 @@ impl WikiIndexStore for MemoryWikiStore {
     }
 
     fn replace_chunks(&mut self, path: &Path, chunks: Vec<WikiChunk>) -> Result<(), StoreError> {
+        validate_chunk_paths(path, &chunks)?;
         self.chunk_replacements += 1;
         self.chunks.insert(path.to_path_buf(), chunks);
         Ok(())
     }
 
     fn replace_links(&mut self, path: &Path, links: Vec<WikiLink>) -> Result<(), StoreError> {
+        validate_link_paths(path, &links)?;
         self.link_replacements += 1;
         self.links.insert(path.to_path_buf(), links);
         Ok(())
@@ -359,6 +361,7 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
     }
 
     fn replace_chunks(&mut self, path: &Path, chunks: Vec<WikiChunk>) -> Result<(), StoreError> {
+        validate_chunk_paths(path, &chunks)?;
         let document = self.document_meta(path)?;
         let path_string = display_path(path);
         let scope = self.scope.clone();
@@ -381,7 +384,11 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
             "DELETE FROM gwiki_chunks WHERE scope_kind = $1 AND scope_id = $2 AND path = $3",
             &[&scope.scope_kind(), &scope.scope_id(), &path_string],
         ) {
-            let _ = tx.rollback();
+            if let Err(rollback_error) = tx.rollback() {
+                log::warn!(
+                    "failed to roll back gwiki chunk replacement after delete error: {rollback_error}"
+                );
+            }
             return Err(error.into());
         }
 
@@ -441,7 +448,11 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
                     &chunk.content,
                 ],
             ) {
-                let _ = tx.rollback();
+                if let Err(rollback_error) = tx.rollback() {
+                    log::warn!(
+                        "failed to roll back gwiki chunk replacement after insert error: {rollback_error}"
+                    );
+                }
                 return Err(error.into());
             }
         }
@@ -451,6 +462,7 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
     }
 
     fn replace_links(&mut self, path: &Path, links: Vec<WikiLink>) -> Result<(), StoreError> {
+        validate_link_paths(path, &links)?;
         let path_string = display_path(path);
         let scope = self.scope.clone();
         let mut tx = self.conn.transaction()?;
@@ -647,6 +659,42 @@ fn display_path(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
+fn validate_chunk_paths(path: &Path, chunks: &[WikiChunk]) -> Result<(), StoreError> {
+    for chunk in chunks {
+        validate_matching_path("chunk.path", path, &chunk.path)?;
+    }
+    Ok(())
+}
+
+fn validate_link_paths(path: &Path, links: &[WikiLink]) -> Result<(), StoreError> {
+    for link in links {
+        validate_matching_path("link.path", path, &link.path)?;
+    }
+    Ok(())
+}
+
+fn validate_matching_path(
+    field: &'static str,
+    expected: &Path,
+    found: &Path,
+) -> Result<(), StoreError> {
+    if equivalent_display_path(expected, found) {
+        return Ok(());
+    }
+    Err(StoreError::InvalidData {
+        field,
+        message: format!(
+            "expected {}, found {}",
+            display_path(expected),
+            display_path(found)
+        ),
+    })
+}
+
+fn equivalent_display_path(left: &Path, right: &Path) -> bool {
+    display_path(left) == display_path(right)
+}
+
 fn platform_path_from_display(path: &str) -> PathBuf {
     if std::path::MAIN_SEPARATOR == '/' {
         PathBuf::from(path)
@@ -712,7 +760,7 @@ fn ingestion_status(event: WikiIngestionEvent) -> &'static str {
     }
 }
 
-fn link_kind(target: &str) -> &'static str {
+pub(crate) fn link_kind(target: &str) -> &'static str {
     if target.contains("://") {
         "markdown"
     } else {
@@ -769,5 +817,52 @@ mod tests {
             id.rsplit_once('-')
                 .is_some_and(|(_, suffix)| suffix.len() == HASH_SUFFIX_LEN)
         );
+    }
+
+    #[test]
+    fn memory_store_rejects_path_mismatches() {
+        let mut store = MemoryWikiStore::default();
+        let err = store
+            .replace_chunks(
+                Path::new("wiki/topics/page.md"),
+                vec![WikiChunk {
+                    path: PathBuf::from("wiki/topics/other.md"),
+                    chunk_index: 0,
+                    byte_start: 0,
+                    byte_end: 4,
+                    heading: None,
+                    content: "body".to_string(),
+                }],
+            )
+            .expect_err("mismatched chunk path must fail");
+
+        assert!(matches!(
+            err,
+            StoreError::InvalidData {
+                field: "chunk.path",
+                ..
+            }
+        ));
+
+        let err = store
+            .replace_links(
+                Path::new("wiki/topics/page.md"),
+                vec![WikiLink {
+                    path: PathBuf::from("wiki/topics/other.md"),
+                    target: "Target".to_string(),
+                    alias: None,
+                    byte_start: 0,
+                    byte_end: 8,
+                }],
+            )
+            .expect_err("mismatched link path must fail");
+
+        assert!(matches!(
+            err,
+            StoreError::InvalidData {
+                field: "link.path",
+                ..
+            }
+        ));
     }
 }

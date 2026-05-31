@@ -7,8 +7,8 @@ use crate::models::{SearchResult, Symbol};
 use crate::visibility;
 
 use super::common::{
-    SymbolFilters, append_unique_symbols, append_visible_symbols, escape_like, push_param,
-    query_symbols_by_conditions, sanitize_pg_search_query,
+    SymbolFilters, SymbolOrder, append_unique_symbols, append_visible_symbols, escape_like,
+    push_param, query_symbols_by_conditions, sanitize_pg_search_query,
 };
 
 pub fn search_symbols_fts(
@@ -46,7 +46,7 @@ pub fn search_symbols_fts(
         params,
         filters,
         limit,
-        "pdb.score(cs.id) DESC, cs.id ASC",
+        SymbolOrder::Bm25Score,
     )
 }
 
@@ -85,7 +85,7 @@ pub fn search_symbols_by_name(
             paths,
         },
         limit,
-        "cs.name ASC, cs.file_path ASC, cs.line_start ASC",
+        SymbolOrder::Name,
     )
 }
 
@@ -122,7 +122,7 @@ pub fn search_symbols_exact_first(
         params,
         filters,
         limit,
-        "cs.file_path ASC, cs.line_start ASC",
+        SymbolOrder::FileLine,
     );
     append_unique_symbols(&mut results, &mut seen, exact, limit);
     if results.len() >= limit {
@@ -143,7 +143,7 @@ pub fn search_symbols_exact_first(
         params,
         filters,
         limit,
-        "cs.file_path ASC, cs.line_start ASC",
+        SymbolOrder::FileLine,
     );
     append_unique_symbols(&mut results, &mut seen, ci_exact, limit);
     if results.len() >= limit {
@@ -165,7 +165,7 @@ pub fn search_symbols_exact_first(
         params,
         filters,
         limit,
-        "cs.name ASC, cs.file_path ASC, cs.line_start ASC",
+        SymbolOrder::Name,
     );
     append_unique_symbols(&mut results, &mut seen, prefix_matches, limit);
     if results.len() >= limit {

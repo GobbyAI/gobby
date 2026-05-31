@@ -5,6 +5,7 @@ use std::sync::Arc;
 use serde::Serialize;
 
 use crate::lint::{WikiPage, collect_pages, line_number};
+use crate::markdown::{MarkdownFence, markdown_fence_closes, markdown_fence_start};
 use crate::provenance::ProvenanceGraph;
 use crate::sources::SourceManifest;
 use crate::synthesis::slugify;
@@ -265,7 +266,7 @@ fn claim_lines(page: &WikiPage, options: &AuditOptions) -> Vec<ClaimLine> {
     let mut claims = Vec::new();
     let mut offset = 0;
     let mut frontmatter_marker: Option<&str> = None;
-    let mut in_fence = false;
+    let mut fence: Option<MarkdownFence> = None;
     let mut current_heading: Option<String> = None;
 
     for raw_line in page.markdown.split_inclusive('\n') {
@@ -284,11 +285,16 @@ fn claim_lines(page: &WikiPage, options: &AuditOptions) -> Vec<ClaimLine> {
             }
             continue;
         }
-        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-            in_fence = !in_fence;
+        if let Some(active_fence) = fence {
+            if markdown_fence_closes(line, active_fence) {
+                fence = None;
+            }
+            continue;
+        } else if let Some(opening_fence) = markdown_fence_start(line) {
+            fence = Some(opening_fence);
             continue;
         }
-        if in_fence || trimmed.is_empty() || trimmed.starts_with("<!--") {
+        if trimmed.is_empty() || trimmed.starts_with("<!--") {
             continue;
         }
         if is_thematic_break(trimmed) {

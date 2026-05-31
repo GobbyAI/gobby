@@ -209,6 +209,40 @@ fn semantic_resolver_receives_utf16_columns_for_textual_dart_calls() {
 }
 
 #[test]
+fn semantic_resolver_receives_dart_byte_offsets_across_crlf_lines() {
+    let tempdir = TempDir::new().expect("create tempdir");
+    let root = tempdir.path();
+    let path = root.join("lib/sample.dart");
+    fs::create_dir_all(path.parent().expect("parent")).expect("create parent dirs");
+    let source = format!(
+        "void run() {{\r\n  final s = '{}';\r\n  Tooltip(message: 'x');\r\n}}\r\n",
+        '\u{1F600}'
+    );
+    fs::write(&path, source.as_bytes()).expect("write source");
+    let candidates = discover_supported_files(root);
+    let context = build_import_resolution_context(root, &candidates);
+    let mut resolver = FakeSemanticResolver {
+        target: None,
+        expected_language: "dart",
+        expected_callee: "Tooltip",
+        requests: Vec::new(),
+        error: None,
+    };
+
+    parse_file_with_semantic(&path, "proj", root, &[], &context, Some(&mut resolver))
+        .expect("parse result")
+        .expect("parse file");
+
+    let request = resolver
+        .requests
+        .iter()
+        .find(|request| request.callee_name == "Tooltip")
+        .expect("Tooltip semantic request");
+    assert_eq!(request.line, 3);
+    assert_eq!(request.column, 2);
+}
+
+#[test]
 fn semantic_resolver_errors_are_propagated() {
     let tempdir = TempDir::new().expect("create tempdir");
     let root = tempdir.path();

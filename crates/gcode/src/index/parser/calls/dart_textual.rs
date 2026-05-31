@@ -2,9 +2,7 @@ use crate::index::semantic::SemanticCallResolver;
 use crate::models::CallRelation;
 
 use super::resolution::CallSyntaxKind;
-use super::text::{
-    is_identifier_continue, is_textual_call_name_byte, line_terminator_len, should_ignore_call_name,
-};
+use super::text::{is_identifier_continue, is_textual_call_name_byte, should_ignore_call_name};
 use super::{CallExtractionContext, CallSite, materialize_call};
 
 pub(super) fn extract_textual_dart_calls(
@@ -12,13 +10,11 @@ pub(super) fn extract_textual_dart_calls(
     ctx: CallExtractionContext<'_>,
     mut semantic_resolver: Option<&mut (dyn SemanticCallResolver + '_)>,
 ) -> anyhow::Result<Vec<CallRelation>> {
-    let text = String::from_utf8_lossy(source);
     let mut calls = Vec::new();
-    let mut line_start_byte = 0usize;
     let mut dart_state = DartScanState::default();
 
-    for (row, line) in text.lines().enumerate() {
-        let terminator_len = line_terminator_len(&text, line_start_byte, line.len());
+    for (row, (line_start_byte, line_bytes)) in source_line_spans(source).into_iter().enumerate() {
+        let line = String::from_utf8_lossy(line_bytes);
         let trimmed = line.trim_start();
         if dart_state.is_code()
             && (trimmed.starts_with("import ")
@@ -27,14 +23,13 @@ pub(super) fn extract_textual_dart_calls(
                 || trimmed.starts_with("enum ")
                 || trimmed.starts_with("typedef "))
         {
-            dart_state = dart_state_after_line(line, dart_state);
-            line_start_byte += line.len() + terminator_len;
+            dart_state = dart_state_after_line(&line, dart_state);
             continue;
         }
 
-        for candidate in textual_call_candidates(line, line_start_byte, row + 1, &['.']) {
+        for candidate in textual_call_candidates(&line, line_start_byte, row + 1, &['.']) {
             let candidate_line_byte = candidate.name_byte.saturating_sub(line_start_byte);
-            if dart_textual_candidate_in_ignored_context(line, candidate_line_byte, dart_state) {
+            if dart_textual_candidate_in_ignored_context(&line, candidate_line_byte, dart_state) {
                 continue;
             }
             if should_ignore_call_name("dart", &candidate.callee_name) {
@@ -48,11 +43,32 @@ pub(super) fn extract_textual_dart_calls(
             )?);
         }
 
-        dart_state = dart_state_after_line(line, dart_state);
-        line_start_byte += line.len() + terminator_len;
+        dart_state = dart_state_after_line(&line, dart_state);
     }
 
     Ok(calls)
+}
+
+fn source_line_spans(source: &[u8]) -> Vec<(usize, &[u8])> {
+    let mut spans = Vec::new();
+    let mut start = 0usize;
+    while start < source.len() {
+        let line_end = source[start..]
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map_or(source.len(), |relative| start + relative);
+        let content_end = if line_end > start && source[line_end - 1] == b'\r' {
+            line_end - 1
+        } else {
+            line_end
+        };
+        spans.push((start, &source[start..content_end]));
+        if line_end == source.len() {
+            break;
+        }
+        start = line_end + 1;
+    }
+    spans
 }
 
 fn textual_call_candidates(

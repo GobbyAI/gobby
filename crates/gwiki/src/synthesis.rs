@@ -294,6 +294,7 @@ pub fn write_synthesized_page(
                 path: Some(page.path.clone()),
                 source: error,
             })?;
+            sync_parent_dir(&page.path)?;
             PageWriteKind::Created
         }
         WritePolicy::AllowOverwriteAfterMerge => {
@@ -309,6 +310,12 @@ pub fn write_synthesized_page(
                             path: Some(page.path.clone()),
                             source: error,
                         })?;
+                    file.sync_all().map_err(|error| WikiError::Io {
+                        action: "write synthesized wiki page",
+                        path: Some(page.path.clone()),
+                        source: error,
+                    })?;
+                    sync_parent_dir(&page.path)?;
                     PageWriteKind::Created
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
@@ -534,7 +541,21 @@ fn write_synthesized_page_atomically(path: &Path, contents: &[u8]) -> Result<(),
             source: error,
         });
     }
+    sync_parent_dir(path)?;
     Ok(())
+}
+
+fn sync_parent_dir(path: &Path) -> Result<(), WikiError> {
+    let Some(parent) = path.parent() else {
+        return Ok(());
+    };
+    fs::File::open(parent)
+        .and_then(|dir| dir.sync_all())
+        .map_err(|error| WikiError::Io {
+            action: "sync synthesized page directory",
+            path: Some(parent.to_path_buf()),
+            source: error,
+        })
 }
 
 fn temp_sibling_path(path: &Path) -> PathBuf {

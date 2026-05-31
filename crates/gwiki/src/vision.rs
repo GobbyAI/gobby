@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::ingest::{markdown_metadata, markdown_title, path_to_string, single_line};
@@ -76,11 +77,7 @@ pub fn write_image_derived_markdown(
 
     let markdown =
         render_image_derived_markdown(scope, record, request, extraction, degradation.as_ref());
-    std::fs::write(&path, markdown).map_err(|error| WikiError::Io {
-        action: "write vision derived markdown",
-        path: Some(path),
-        source: error,
-    })?;
+    write_vision_markdown_atomically(&path, markdown.as_bytes())?;
 
     Ok(VisionMarkdownResult {
         path: relative_path,
@@ -219,6 +216,70 @@ fn vision_metadata_key(key: &str) -> String {
     } else {
         format!("vision_{sanitized}")
     }
+}
+
+fn write_vision_markdown_atomically(path: &Path, contents: &[u8]) -> Result<(), WikiError> {
+    let temp_path = temp_sibling_path(path);
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp_path)
+        .map_err(|error| WikiError::Io {
+            action: "create vision derived markdown temp file",
+            path: Some(temp_path.clone()),
+            source: error,
+        })?;
+    if let Err(error) = file.write_all(contents) {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(WikiError::Io {
+            action: "write vision derived markdown temp file",
+            path: Some(temp_path),
+            source: error,
+        });
+    }
+    if let Err(error) = file.sync_all() {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(WikiError::Io {
+            action: "sync vision derived markdown temp file",
+            path: Some(temp_path),
+            source: error,
+        });
+    }
+    drop(file);
+    if let Err(error) = std::fs::rename(&temp_path, path) {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(WikiError::Io {
+            action: "replace vision derived markdown",
+            path: Some(path.to_path_buf()),
+            source: error,
+        });
+    }
+    sync_parent_dir(path)
+}
+
+fn sync_parent_dir(path: &Path) -> Result<(), WikiError> {
+    let Some(parent) = path.parent() else {
+        return Ok(());
+    };
+    std::fs::File::open(parent)
+        .and_then(|dir| dir.sync_all())
+        .map_err(|error| WikiError::Io {
+            action: "sync vision derived markdown directory",
+            path: Some(parent.to_path_buf()),
+            source: error,
+        })
+}
+
+fn temp_sibling_path(path: &Path) -> PathBuf {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("vision.md");
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    path.with_file_name(format!(".{file_name}.{}.{nanos}.tmp", std::process::id()))
 }
 
 #[cfg(test)]
@@ -392,5 +453,61 @@ mod tests {
         assert!(markdown.contains("vision_degradation: vision_error"));
         assert!(markdown.contains("## Source References"));
         assert!(markdown.contains("raw/assets/image.png"));
+    }
+
+    #[test]
+    fn vision_markdown_overwrites_atomically_without_temp_leftovers() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let record = record_for(temp.path());
+        let asset_path = PathBuf::from("raw/assets/image.png");
+
+        let first = write_image_derived_markdown(
+            temp.path(),
+            &ScopeIdentity::project("project-123"),
+            &record,
+            VisionRequest {
+                file_name: "circuit.png",
+                mime_type: None,
+                asset_path: &asset_path,
+                bytes: b"image-bytes",
+                width: None,
+                height: None,
+            },
+            VisionEndpoint::Unavailable(VisionDegradation {
+                reason: "first".to_string(),
+                fallback: "first fallback".to_string(),
+            }),
+        )
+        .expect("first write");
+        write_image_derived_markdown(
+            temp.path(),
+            &ScopeIdentity::project("project-123"),
+            &record,
+            VisionRequest {
+                file_name: "circuit.png",
+                mime_type: None,
+                asset_path: &asset_path,
+                bytes: b"image-bytes",
+                width: None,
+                height: None,
+            },
+            VisionEndpoint::Unavailable(VisionDegradation {
+                reason: "second".to_string(),
+                fallback: "second fallback".to_string(),
+            }),
+        )
+        .expect("second write");
+
+        let markdown = std::fs::read_to_string(temp.path().join(&first.path)).expect("markdown");
+        assert!(markdown.contains("vision_degradation: second"));
+        assert!(
+            std::fs::read_dir(temp.path().join("wiki/sources"))
+                .expect("sources dir")
+                .all(|entry| !entry
+                    .expect("dir entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .ends_with(".tmp"))
+        );
     }
 }

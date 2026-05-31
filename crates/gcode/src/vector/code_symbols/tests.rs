@@ -284,6 +284,47 @@ fn embedding_batch_preserves_response_index_order() {
 }
 
 #[test]
+fn sync_rejects_embedding_vectors_with_wrong_dimension() {
+    let (embedding_url, embedding_handle) =
+        spawn_http_responses(vec![(200, json!({"data": [{"embedding": [0.1, 0.2]}]}))]);
+    let (qdrant_url, qdrant_handle) = spawn_http_responses(vec![(
+        200,
+        json!({"result": {"config": {"params": {"vectors": {"size": 3, "distance": "Cosine"}}}}}),
+    )]);
+    let mut lifecycle = CodeSymbolVectorLifecycle::new(
+        "project-1".to_string(),
+        QdrantConfig {
+            url: Some(qdrant_url),
+            api_key: None,
+        },
+        EmbeddingConfig {
+            api_base: format!("{embedding_url}/v1"),
+            model: "embed-small".to_string(),
+            api_key: None,
+            query_prefix: None,
+            timeout_seconds: 10,
+        },
+        CodeVectorSettings {
+            vector_dim: Some(3),
+        },
+    )
+    .expect("lifecycle");
+
+    let err = lifecycle
+        .sync_file_symbols("src/lib.rs", &[test_symbol(None)])
+        .expect_err("wrong vector dimension must fail before upsert");
+    let embedding_requests = embedding_handle.join().expect("embedding requests");
+    let qdrant_requests = qdrant_handle.join().expect("qdrant requests");
+
+    assert!(
+        matches!(err, VectorLifecycleError::EmbeddingResponse(message) if message.contains("expected 3"))
+    );
+    assert_eq!(embedding_requests.len(), 1);
+    assert_eq!(qdrant_requests.len(), 1);
+    assert!(!qdrant_requests[0].contains("/points"));
+}
+
+#[test]
 fn dim_probe_with_override() {
     let (embedding_url, embedding_handle) = spawn_http_responses(vec![(
         200,

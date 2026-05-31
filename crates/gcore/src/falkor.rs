@@ -1,8 +1,7 @@
 //! FalkorDB foundation adapter boundary.
 //!
 //! This module is available with the `falkor` feature. The feature also enables
-//! `urlencoding` so FalkorDB connection URLs can encode passwords safely when
-//! graph client construction is added.
+//! `urlencoding` so FalkorDB connection URLs can encode passwords safely.
 
 use std::collections::HashMap;
 
@@ -140,12 +139,14 @@ fn with_graph_client<T, C>(
     f: impl FnOnce(&mut C) -> anyhow::Result<T>,
 ) -> anyhow::Result<(T, ServiceState)> {
     let Some(config) = config else {
+        log::trace!("FalkorDB graph `{graph_name}` unavailable: missing config");
         return Ok((default, ServiceState::NotConfigured));
     };
 
     let mut client = match make_client(config, graph_name) {
         Ok(client) => client,
         Err(error) => {
+            log::debug!("FalkorDB graph `{graph_name}` unavailable: {error}");
             return Ok((
                 default,
                 ServiceState::Unreachable {

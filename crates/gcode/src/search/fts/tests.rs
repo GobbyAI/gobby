@@ -95,6 +95,15 @@ fn snippet_centers_first_matching_token() {
 }
 
 #[test]
+fn snippet_centers_earliest_matching_token_regardless_of_query_order() {
+    let content = "early match ".to_string() + &"middle ".repeat(40) + "late match";
+    let snippet = make_snippet(&content, "late early");
+
+    assert!(snippet.contains("early match"));
+    assert!(!snippet.contains("late match"));
+}
+
+#[test]
 fn snippet_handles_unicode_before_match() {
     let content = "é".repeat(80) + " target call here";
     let snippet = make_snippet(&content, "target");

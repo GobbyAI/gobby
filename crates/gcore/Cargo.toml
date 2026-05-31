@@ -23,6 +23,7 @@ full = ["postgres", "falkor", "qdrant", "indexing", "search"]
 [dependencies]
 anyhow = "1"
 dirs = "6"
+log = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = { package = "yaml_serde", version = "0.10.4" }
