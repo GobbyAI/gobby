@@ -76,3 +76,9 @@ Follow-up validation passed:
 - `git diff --check` - passed
 
 Committed the final follow-up fix as `943814fb2` and closed task `#15389`. I warned the active planner agent `run-5d365cd5edcd`, waited 30 seconds, restarted the daemon, and confirmed `uv run gobby status` showed the daemon healthy with automation running and one active agent. A live build-scoped message sent with wrapper `project_id=gobby-cli`, `target="build"`, and `target_id="#354"` resolved the target root task in `gobby-cli` (`caa08e59-25ad-4db1-86fe-d97830cd6b87`) and delivered/woke planner session `30512c29-8fda-42a7-95e5-c16775503cc6`. This resolved the cross-project coordinator messaging anomaly.
+
+## 2026-05-31 04:01 CDT - Planner idle escalation recovered
+
+Planning attempt 3 used planner agent `run-fd30a0aa500a` on target task `#354`. The agent became idle at a Claude prompt after Gobby had queued "continue working" reminders. The agent eventually failed with `Agent idle: idle after max reprompt attempts`, and the target task escalated with reason `planning_work_failed:max`. This was not a real user decision: the planner was expected to continue or be relaunched by automation.
+
+I de-escalated target task `#354` in `gobby-cli` with `reset_stage_attempts=true`, leaving the planning stage `ready` with `review_round_count=2` and `max_review_rounds=99`. `explain_dispatch` then reported the task eligible and proposed `start_stage`, with no active mutex and no active agents. I did not tick the dispatcher manually; the daemon should relaunch the planner on its next automation loop.
