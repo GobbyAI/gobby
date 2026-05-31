@@ -24,6 +24,7 @@ echo ""
 # Track failures
 FAILED=0
 PYTEST_ISOLATION_DIR=""
+POSTGRES_SKIP_REASON="DATABASE_URL or configured bootstrap database_url is required"
 
 cleanup() {
     if [ -n "${PYTEST_ISOLATION_DIR:-}" ] && [ -d "$PYTEST_ISOLATION_DIR" ]; then
@@ -31,6 +32,111 @@ cleanup() {
     fi
 }
 trap cleanup EXIT
+
+docker_compose() {
+    if docker compose version >/dev/null 2>&1; then
+        docker compose "$@"
+    elif command -v docker-compose >/dev/null 2>&1; then
+        docker-compose "$@"
+    else
+        return 127
+    fi
+}
+
+read_bootstrap_database_url() {
+    uv run python - <<'PY'
+from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
+
+try:
+    database_url = load_bootstrap(resolve_database_url=True).database_url
+except BootstrapConfigError:
+    database_url = None
+
+if database_url:
+    print(database_url)
+PY
+}
+
+start_docker_postgres_test_database() {
+    if [ ! -f docker-compose.test.yml ]; then
+        echo "docker-compose.test.yml is required for the fallback PostgreSQL test database." >&2
+        return 1
+    fi
+
+    if ! docker_compose version >/dev/null 2>&1; then
+        echo "Docker Compose is required when DATABASE_URL and bootstrap database_url are unset." >&2
+        return 1
+    fi
+
+    echo "Starting postgres-test from docker-compose.test.yml..." >&2
+    if ! docker_compose -f docker-compose.test.yml up -d postgres-test >&2; then
+        echo "Failed to start postgres-test from docker-compose.test.yml." >&2
+        return 1
+    fi
+
+    local container_id
+    container_id=$(docker_compose -f docker-compose.test.yml ps -q postgres-test 2>/dev/null || true)
+    if [ -z "$container_id" ]; then
+        echo "Could not find the postgres-test container after startup." >&2
+        return 1
+    fi
+
+    local attempt
+    local health_status
+    attempt=1
+    while [ "$attempt" -le 30 ]; do
+        health_status=$(docker inspect \
+            --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' \
+            "$container_id" 2>/dev/null || true)
+        if [ "$health_status" = "healthy" ] || [ "$health_status" = "running" ]; then
+            printf 'postgresql://%s:%s@localhost:%s/%s\n' \
+                "${GOBBY_POSTGRES_TEST_USER:-gobby_test}" \
+                "${GOBBY_POSTGRES_TEST_PASSWORD:-gobby_test}" \
+                "${GOBBY_POSTGRES_TEST_PORT:-60892}" \
+                "${GOBBY_POSTGRES_TEST_DB:-gobby_test}"
+            return 0
+        fi
+        if [ "$health_status" = "unhealthy" ] \
+            || [ "$health_status" = "exited" ] \
+            || [ "$health_status" = "dead" ]; then
+            echo "postgres-test container is $health_status." >&2
+            docker logs "$container_id" >&2 || true
+            return 1
+        fi
+        sleep 2
+        attempt=$((attempt + 1))
+    done
+
+    echo "Timed out waiting for postgres-test to become healthy." >&2
+    docker logs "$container_id" >&2 || true
+    return 1
+}
+
+resolve_pytest_database_url() {
+    if [ -n "${DATABASE_URL:-}" ]; then
+        printf '%s\n' "$DATABASE_URL"
+        return 0
+    fi
+
+    local bootstrap_database_url
+    bootstrap_database_url=$(read_bootstrap_database_url 2>/dev/null || true)
+    if [ -n "$bootstrap_database_url" ]; then
+        printf '%s\n' "$bootstrap_database_url"
+        return 0
+    fi
+
+    start_docker_postgres_test_database
+}
+
+check_pytest_postgres_skip_guard() {
+    local report_path="$1"
+    if [ -f "$report_path" ] && grep -q "$POSTGRES_SKIP_REASON" "$report_path"; then
+        echo "✗ Pytest skipped PostgreSQL tests because no database URL was available"
+        echo "  Report contains: $POSTGRES_SKIP_REASON"
+        return 1
+    fi
+    return 0
+}
 
 # Ruff - autofix safe changes only (no unsafe fixes)
 echo ">>> Running ruff check + format..."
@@ -113,13 +219,18 @@ else
 fi
 echo ""
 
-# Pytest - tests with coverage report. CI enforces the 80% coverage threshold;
-# this isolated local run skips environment-dependent tests and should not fail
-# solely because the aggregate coverage percentage differs from CI.
+# Pytest - tests with coverage report. Keep HOME/GOBBY_HOME isolated while
+# passing an explicit PostgreSQL test target so DB coverage cannot silently skip.
 # Uses verbose mode with timestamps to correlate test execution with daemon logs
 echo ">>> Running pytest with coverage..."
 PYTEST_ISOLATION_DIR=$(mktemp -d "${TMPDIR:-/tmp}/gobby-pre-push-${TIMESTAMP}.XXXXXX")
-if ! mkdir -p \
+PYTEST_REPORT="$REPORTS_DIR/pytest-$TIMESTAMP.txt"
+if ! PYTEST_DATABASE_URL=$(resolve_pytest_database_url); then
+    echo "✗ Failed to resolve PostgreSQL DATABASE_URL for pytest"
+    echo "  Set DATABASE_URL, configure ~/.gobby/bootstrap.yaml database_url, or enable Docker"
+    echo "  so docker-compose.test.yml can start postgres-test on port 60892."
+    FAILED=1
+elif ! mkdir -p \
     "$PYTEST_ISOLATION_DIR/home" \
     "$PYTEST_ISOLATION_DIR/gobby-home" \
     "$PYTEST_ISOLATION_DIR/logs" \
@@ -127,7 +238,8 @@ if ! mkdir -p \
     echo "✗ Failed to create pytest isolation directories under PYTEST_ISOLATION_DIR=$PYTEST_ISOLATION_DIR"
     echo "  Check directory permissions and available disk space."
     FAILED=1
-elif GOBBY_TEST_PROTECT=1 \
+elif DATABASE_URL="$PYTEST_DATABASE_URL" \
+    GOBBY_TEST_PROTECT=1 \
     HOME="$PYTEST_ISOLATION_DIR/home" \
     GOBBY_HOME="$PYTEST_ISOLATION_DIR/gobby-home" \
     GOBBY_DATABASE_PATH="$PYTEST_ISOLATION_DIR/test.db" \
@@ -138,10 +250,16 @@ elif GOBBY_TEST_PROTECT=1 \
     GOBBY_LOGGING_MCP_SERVER="$PYTEST_ISOLATION_DIR/logs/mcp-server.log" \
     GOBBY_LOGGING_MCP_CLIENT="$PYTEST_ISOLATION_DIR/logs/mcp-client.log" \
     GOBBY_LOGGING_HOOK_MANAGER="$PYTEST_ISOLATION_DIR/logs/hook-manager.log" \
-    uv run pytest -v --tb=line -rFEw --cov=gobby --cov-report=term-missing --cov-fail-under=80 2>&1 | timestamp | tee "$REPORTS_DIR/pytest-$TIMESTAMP.txt"; then
-    echo "✓ Pytest passed"
+    uv run pytest -v --tb=line -rFEsw --cov=gobby --cov-report=term-missing --cov-fail-under=80 2>&1 | timestamp | tee "$PYTEST_REPORT"; then
+    if check_pytest_postgres_skip_guard "$PYTEST_REPORT"; then
+        echo "✓ Pytest passed"
+    else
+        echo "✗ Pytest failed"
+        FAILED=1
+    fi
 else
     echo "✗ Pytest failed"
+    check_pytest_postgres_skip_guard "$PYTEST_REPORT" || true
     FAILED=1
 fi
 echo ""

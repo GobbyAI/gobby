@@ -28,6 +28,7 @@ _POSTGRES_TEST_IMAGE = "gobby-postgres-local:18-pgsearch"
 _POSTGRES_TEST_PASSWORD = "gobby_test"
 _POSTGRES_TEST_PORT = "60892"
 _POSTGRES_TEST_USER = "gobby_test"
+_POSTGRES_SKIP_REASON = "DATABASE_URL or configured bootstrap database_url is required"
 
 _PGAUDIT_COMMAND_OPTIONS = [
     "shared_preload_libraries=pg_search,pgaudit",
@@ -217,10 +218,46 @@ def test_ci_build_job_runs_wheel_smoke_against_local_postgres(repo_root: Path) -
     )
 
 
+def test_pre_push_resolves_and_exports_postgres_database_url_for_pytest(
+    repo_root: Path,
+) -> None:
+    script = _load_pre_push_script(repo_root)
+
+    assert "resolve_pytest_database_url()" in script
+    assert 'if [ -n "${DATABASE_URL:-}" ]; then' in script
+    assert "read_bootstrap_database_url" in script
+    assert "load_bootstrap(resolve_database_url=True).database_url" in script
+    assert "docker_compose -f docker-compose.test.yml up -d postgres-test" in script
+    assert "${GOBBY_POSTGRES_TEST_PORT:-60892}" in script
+    assert "PYTEST_DATABASE_URL=$(resolve_pytest_database_url)" in script
+    assert 'DATABASE_URL="$PYTEST_DATABASE_URL"' in script
+    _assert_before(
+        script,
+        "PYTEST_DATABASE_URL=$(resolve_pytest_database_url)",
+        'HOME="$PYTEST_ISOLATION_DIR/home"',
+    )
+
+
+def test_pre_push_fails_if_postgres_skip_reason_reaches_pytest_report(
+    repo_root: Path,
+) -> None:
+    script = _load_pre_push_script(repo_root)
+
+    assert f'POSTGRES_SKIP_REASON="{_POSTGRES_SKIP_REASON}"' in script
+    assert "check_pytest_postgres_skip_guard()" in script
+    assert 'grep -q "$POSTGRES_SKIP_REASON" "$report_path"' in script
+    assert "uv run pytest -v --tb=line -rFEsw" in script
+    assert 'check_pytest_postgres_skip_guard "$PYTEST_REPORT"' in script
+
+
 def _load_yaml(path: Path) -> Mapping[str, Any]:
     data = yaml.safe_load(path.read_text())
     assert isinstance(data, dict)
     return data
+
+
+def _load_pre_push_script(repo_root: Path) -> str:
+    return (repo_root / "pre-push-test.sh").read_text()
 
 
 def _load_pg_search_manifest(repo_root: Path) -> Mapping[str, Any]:
@@ -251,6 +288,10 @@ def _step_runs(steps: Sequence[object]) -> list[str]:
 
 def _has_run(runs: Sequence[str], *needles: str) -> bool:
     return any(all(needle in run for needle in needles) for run in runs)
+
+
+def _assert_before(content: str, before: str, after: str) -> None:
+    assert content.index(before) < content.index(after)
 
 
 def _compose_default(env_name: str, default: str) -> str:
