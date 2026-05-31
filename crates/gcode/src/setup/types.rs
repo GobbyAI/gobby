@@ -15,8 +15,12 @@ pub struct StandaloneSetupRequest {
     pub embedding_provider: Option<String>,
     pub embedding_api_base: Option<String>,
     pub embedding_model: Option<String>,
+    pub embedding_query_prefix: Option<String>,
     pub embedding_vector_dim: Option<usize>,
-    pub embedding_api_key_env: Option<String>,
+    /// Setup-only embedding secret. It is redacted from `Debug`; standalone
+    /// setup persists it only to the user's local gcore.yaml.
+    #[serde(skip_serializing)]
+    pub embedding_api_key: Option<String>,
     pub falkordb_host: Option<String>,
     pub falkordb_port: Option<u16>,
     /// Setup-only FalkorDB secret. It is used during provisioning, redacted
@@ -40,8 +44,12 @@ impl fmt::Debug for StandaloneSetupRequest {
             .field("embedding_provider", &self.embedding_provider)
             .field("embedding_api_base", &self.embedding_api_base)
             .field("embedding_model", &self.embedding_model)
+            .field("embedding_query_prefix", &self.embedding_query_prefix)
             .field("embedding_vector_dim", &self.embedding_vector_dim)
-            .field("embedding_api_key_env", &self.embedding_api_key_env)
+            .field(
+                "embedding_api_key",
+                &self.embedding_api_key.as_ref().map(|_| "<redacted>"),
+            )
             .field("falkordb_host", &self.falkordb_host)
             .field("falkordb_port", &self.falkordb_port)
             .field(
@@ -64,8 +72,9 @@ impl StandaloneSetupRequest {
             embedding_provider: None,
             embedding_api_base: None,
             embedding_model: None,
+            embedding_query_prefix: None,
             embedding_vector_dim: None,
-            embedding_api_key_env: None,
+            embedding_api_key: None,
             falkordb_host: None,
             falkordb_port: None,
             falkordb_password: None,
@@ -86,8 +95,10 @@ pub struct StandaloneEmbeddingStatus {
     pub provider: String,
     pub api_base: String,
     pub model: String,
+    pub query_prefix: Option<String>,
     pub vector_dim: usize,
-    pub api_key_env: Option<String>,
+    pub api_key_present: bool,
+    pub api_key_fingerprint: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

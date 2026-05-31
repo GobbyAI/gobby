@@ -17,5 +17,5 @@ pub use context::{
 
 pub(crate) use context::{resolve_daemon_url, validate_parent_code_index};
 pub(crate) use services::{
-    EmbeddingConfigDetails, read_standalone_config, resolve_embedding_config_details,
+    EmbeddingConfigDetails, read_standalone_config_optional, resolve_embedding_config_details,
 };

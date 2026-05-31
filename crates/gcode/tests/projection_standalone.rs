@@ -1,6 +1,7 @@
 mod common;
 
 use common::{ProjectCleanup, cleanup_project};
+use gobby_core::config::embedding_keys;
 use postgres::{Client, NoTls};
 use serde_json::{Value, json};
 use std::fs;
@@ -64,6 +65,18 @@ fn graph_and_vector_lifecycle_commands_run_without_daemon() {
         .to_string(),
     )
     .expect("write gcode identity");
+    let gobby_home = project.path().join(".no-daemon-home");
+    fs::create_dir_all(&gobby_home).expect("create gobby home");
+    fs::write(
+        gobby_home.join("gcore.yaml"),
+        format!(
+            "{api_base}: {embedding_url}/v1\n{model}: embed-small\n{dim}: 3\n",
+            api_base = embedding_keys::AI_API_BASE,
+            model = embedding_keys::AI_MODEL,
+            dim = embedding_keys::AI_DIM,
+        ),
+    )
+    .expect("write standalone config");
 
     let mut conn = Client::connect(&env.database_url, NoTls).expect("connect PostgreSQL");
     let _cleanup = ProjectCleanup::new(&env.database_url, TEST_PROJECT_ID);
@@ -166,7 +179,7 @@ fn run_gcode(
     env: &StandaloneEnv,
     cwd: &std::path::Path,
     qdrant_url: &str,
-    embedding_url: &str,
+    _embedding_url: &str,
     args: &[&str],
 ) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_gcode"));
@@ -176,9 +189,6 @@ fn run_gcode(
         .env("GOBBY_FALKORDB_HOST", &env.falkor_host)
         .env("GOBBY_FALKORDB_PORT", &env.falkor_port)
         .env("GOBBY_QDRANT_URL", qdrant_url)
-        .env("GOBBY_EMBEDDING_URL", format!("{embedding_url}/v1"))
-        .env("GOBBY_EMBEDDING_MODEL", "embed-small")
-        .env("GOBBY_EMBEDDING_VECTOR_DIM", "3")
         .env("GOBBY_HOME", cwd.join(".no-daemon-home"))
         .arg("--no-freshness")
         .arg("--format")

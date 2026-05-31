@@ -12,7 +12,7 @@ use gobby_core::project::{find_project_root, read_project_id};
 use postgres::Client;
 
 use super::services::{
-    read_standalone_config, resolve_code_vector_settings, resolve_embedding_config,
+    read_standalone_config_optional, resolve_code_vector_settings, resolve_embedding_config,
     resolve_falkordb_config, resolve_qdrant_config,
 };
 use crate::db;
@@ -164,7 +164,7 @@ impl Context {
         let index_scope = identity.index_scope;
 
         // Resolve service configs from config_store (best-effort).
-        let standalone_config = read_standalone_config();
+        let standalone_config = read_standalone_config_optional();
         let mut conn = db::connect_readonly(&database_url)?;
         validate_parent_code_index(&mut conn, &index_scope)?;
         let falkordb = resolve_falkordb_config(&mut conn, standalone_config.clone(), quiet);
@@ -193,7 +193,7 @@ impl Context {
         let project_id = normalize_project_id(project_id)?;
         let database_url = db::resolve_database_url()?;
 
-        let standalone_config = read_standalone_config();
+        let standalone_config = read_standalone_config_optional();
         let mut conn = db::connect_readonly(&database_url)?;
         let falkordb = resolve_falkordb_config(&mut conn, standalone_config, quiet);
 

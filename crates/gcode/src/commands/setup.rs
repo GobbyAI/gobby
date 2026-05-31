@@ -6,6 +6,7 @@ use gobby_core::provisioning::{
     StandaloneConfig, compose_file_path, gcore_config_path, provision_docker_services,
 };
 use postgres::{Client, NoTls};
+use sha2::{Digest, Sha256};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
@@ -71,8 +72,10 @@ pub fn run(request: StandaloneSetupRequest, format: Format, quiet: bool) -> anyh
         provider: embedding.provider,
         api_base: embedding.api_base,
         model: embedding.model,
+        query_prefix: embedding.query_prefix,
         vector_dim: embedding.vector_dim,
-        api_key_env: embedding.api_key_env,
+        api_key_present: embedding.api_key.is_some(),
+        api_key_fingerprint: embedding.api_key.as_deref().map(api_key_fingerprint),
     });
 
     match format {
@@ -262,21 +265,29 @@ fn write_gcore_config(
     }
 
     if let Some(embedding) = embedding {
-        config.set(embedding_keys::LEGACY_PROVIDER, &embedding.provider);
-        config.set(embedding_keys::LEGACY_API_BASE, &embedding.api_base);
-        config.set(embedding_keys::LEGACY_MODEL, &embedding.model);
-        config.set(
-            embedding_keys::LEGACY_VECTOR_DIM,
-            embedding.vector_dim.to_string(),
-        );
-        match embedding.api_key_env.as_deref() {
-            Some(api_key_env) => config.set(embedding_keys::LEGACY_API_KEY_ENV, api_key_env),
-            None => config.remove(embedding_keys::LEGACY_API_KEY_ENV),
+        remove_legacy_embedding_keys(&mut config);
+        config.set(embedding_keys::AI_PROVIDER, &embedding.provider);
+        config.set(embedding_keys::AI_API_BASE, &embedding.api_base);
+        config.set(embedding_keys::AI_MODEL, &embedding.model);
+        config.set(embedding_keys::AI_DIM, embedding.vector_dim.to_string());
+        match embedding.query_prefix.as_deref() {
+            Some(query_prefix) => config.set(embedding_keys::AI_QUERY_PREFIX, query_prefix),
+            None => config.remove(embedding_keys::AI_QUERY_PREFIX),
+        }
+        match embedding.api_key.as_deref() {
+            Some(api_key) => config.set(embedding_keys::AI_API_KEY, api_key),
+            None => config.remove(embedding_keys::AI_API_KEY),
         }
     }
 
     config.write_at(&path)?;
     Ok(path)
+}
+
+fn remove_legacy_embedding_keys(config: &mut StandaloneConfig) {
+    for key in embedding_keys::legacy_keys() {
+        config.remove(&key);
+    }
 }
 
 fn service_configured_compose_file(home: &std::path::Path) -> Option<String> {
@@ -302,7 +313,11 @@ fn resolve_embedding_bootstrap(
         Some(other) => anyhow::bail!(
             "unsupported embedding provider `{other}`; expected lm-studio, ollama, openai-compatible, or none"
         ),
-        None if request.embedding_api_base.is_some() || request.embedding_model.is_some() => {
+        None if request.embedding_api_base.is_some()
+            || request.embedding_model.is_some()
+            || request.embedding_query_prefix.is_some()
+            || request.embedding_api_key.is_some() =>
+        {
             explicit_embedding_bootstrap(request)?
         }
         None if endpoint_reachable(DEFAULT_LM_STUDIO_API_BASE) => EmbeddingBootstrap::lm_studio(),
@@ -316,14 +331,17 @@ fn resolve_embedding_bootstrap(
     if let Some(model) = request.embedding_model.as_deref() {
         embedding.model = model.to_string();
     }
+    if let Some(query_prefix) = request.embedding_query_prefix.as_deref() {
+        embedding.query_prefix = Some(query_prefix.to_string());
+    }
     if let Some(vector_dim) = request.embedding_vector_dim {
         if vector_dim == 0 {
             anyhow::bail!("--embedding-vector-dim must be positive");
         }
         embedding.vector_dim = vector_dim;
     }
-    if let Some(api_key_env) = request.embedding_api_key_env.as_deref() {
-        embedding.api_key_env = Some(api_key_env.to_string());
+    if let Some(api_key) = request.embedding_api_key.as_deref() {
+        embedding.api_key = Some(api_key.to_string());
     }
 
     Ok(Some(embedding))
@@ -345,8 +363,14 @@ fn explicit_embedding_bootstrap(
         vector_dim: request
             .embedding_vector_dim
             .unwrap_or(DEFAULT_EMBEDDING_VECTOR_DIM),
-        api_key_env: request.embedding_api_key_env.clone(),
+        query_prefix: request.embedding_query_prefix.clone(),
+        api_key: request.embedding_api_key.clone(),
     })
+}
+
+fn api_key_fingerprint(api_key: &str) -> String {
+    let digest = Sha256::digest(api_key.as_bytes());
+    format!("{digest:x}").chars().take(8).collect()
 }
 
 fn endpoint_reachable(api_base: &str) -> bool {
@@ -370,6 +394,82 @@ fn endpoint_reachable(api_base: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value;
+
+    #[test]
+    fn write_gcore_config_writes_ai_embeddings_and_redacts_api_key() {
+        let home = tempfile::tempdir().expect("temp home");
+        let path = gcore_config_path(home.path());
+        let legacy_keys = embedding_keys::legacy_keys();
+        let mut existing = StandaloneConfig::empty();
+        existing.set(legacy_keys[1].clone(), "http://legacy.local/v1");
+        existing
+            .write_at(&path)
+            .expect("write existing standalone config");
+
+        let request = StandaloneSetupRequest::new(
+            true,
+            Some("postgresql://localhost/gobby".to_string()),
+            None,
+        );
+        let service_options = DockerServiceOptions::new(home.path().to_path_buf());
+        let embedding = EmbeddingBootstrap {
+            provider: "openai-compatible".to_string(),
+            api_base: "http://localhost:1234/v1".to_string(),
+            model: "embed-small".to_string(),
+            vector_dim: 1024,
+            query_prefix: Some("query: ".to_string()),
+            api_key: Some("local-api-key".to_string()),
+        };
+
+        let path = write_gcore_config(
+            home.path(),
+            &request,
+            &service_options,
+            "postgresql://localhost/gobby",
+            None,
+            Some(&embedding),
+        )
+        .expect("write gcore config");
+        let config = StandaloneConfig::read_at(&path)
+            .expect("read gcore config")
+            .expect("config present");
+
+        assert_eq!(
+            config.get(embedding_keys::AI_API_BASE),
+            Some("http://localhost:1234/v1")
+        );
+        assert_eq!(config.get(embedding_keys::AI_MODEL), Some("embed-small"));
+        assert_eq!(config.get(embedding_keys::AI_DIM), Some("1024"));
+        assert_eq!(config.get(embedding_keys::AI_QUERY_PREFIX), Some("query: "));
+        assert_eq!(
+            config.get(embedding_keys::AI_API_KEY),
+            Some("local-api-key")
+        );
+        for key in legacy_keys {
+            assert_eq!(config.get(&key), None, "legacy key survived: {key}");
+        }
+
+        let status = StandaloneEmbeddingStatus {
+            provider: embedding.provider,
+            api_base: embedding.api_base,
+            model: embedding.model,
+            query_prefix: embedding.query_prefix,
+            vector_dim: embedding.vector_dim,
+            api_key_present: embedding.api_key.is_some(),
+            api_key_fingerprint: embedding.api_key.as_deref().map(api_key_fingerprint),
+        };
+        let output = serde_json::to_value(status).expect("serialize status");
+        assert_eq!(output["api_key_present"], Value::Bool(true));
+        assert_eq!(
+            output["api_key_fingerprint"],
+            Value::String(api_key_fingerprint("local-api-key"))
+        );
+        assert!(
+            !output.to_string().contains("local-api-key"),
+            "setup status leaked plaintext API key"
+        );
+    }
 
     #[test]
     #[serial_test::serial]

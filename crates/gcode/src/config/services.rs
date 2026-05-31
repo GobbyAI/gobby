@@ -3,6 +3,8 @@ use gobby_core::config::embedding_keys;
 use gobby_core::provisioning::{GCORE_CONFIG_FILENAME, StandaloneConfig};
 use postgres::Client;
 use std::collections::HashMap;
+use std::fmt;
+use std::path::PathBuf;
 
 use super::{
     CodeVectorConfigError, CodeVectorSettings, FALKORDB_GRAPH_NAME, FalkorConfig, QdrantConfig,
@@ -85,19 +87,78 @@ impl ConfigSource for TracingFallbackConfigSource<'_> {
     }
 }
 
-pub(crate) fn read_standalone_config() -> Option<StandaloneConfig> {
-    let home = db::gobby_home().ok()?;
-    let path = home.join(GCORE_CONFIG_FILENAME);
-    match StandaloneConfig::read_at(&path) {
-        Ok(config) => config,
+pub(crate) fn read_standalone_config_optional() -> Option<StandaloneConfig> {
+    match read_standalone_config() {
+        Ok(config) => Some(config),
+        Err(StandaloneConfigReadError::NotFound { .. }) => None,
         Err(error) => {
-            log::warn!(
-                "failed to read standalone gcode config at {}: {error}",
-                path.display()
-            );
+            log::warn!("{error}");
             None
         }
     }
+}
+
+#[derive(Debug)]
+pub(crate) enum StandaloneConfigReadError {
+    Home {
+        source: anyhow::Error,
+    },
+    NotFound {
+        path: PathBuf,
+    },
+    Read {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    Parse {
+        path: PathBuf,
+        source: anyhow::Error,
+    },
+}
+
+impl fmt::Display for StandaloneConfigReadError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Home { source } => {
+                write!(
+                    f,
+                    "failed to resolve Gobby home for standalone config: {source}"
+                )
+            }
+            Self::NotFound { path } => {
+                write!(f, "standalone gcode config not found at {}", path.display())
+            }
+            Self::Read { path, source } => write!(
+                f,
+                "failed to read standalone gcode config at {}: {source}",
+                path.display()
+            ),
+            Self::Parse { path, source } => write!(
+                f,
+                "failed to parse standalone gcode config at {}: {source}",
+                path.display()
+            ),
+        }
+    }
+}
+
+impl std::error::Error for StandaloneConfigReadError {}
+
+pub(crate) fn read_standalone_config() -> Result<StandaloneConfig, StandaloneConfigReadError> {
+    let home = db::gobby_home().map_err(|source| StandaloneConfigReadError::Home { source })?;
+    let path = home.join(GCORE_CONFIG_FILENAME);
+    let contents = std::fs::read_to_string(&path).map_err(|source| {
+        if source.kind() == std::io::ErrorKind::NotFound {
+            StandaloneConfigReadError::NotFound { path: path.clone() }
+        } else {
+            StandaloneConfigReadError::Read {
+                path: path.clone(),
+                source,
+            }
+        }
+    })?;
+    StandaloneConfig::from_yaml_str(&contents)
+        .map_err(|source| StandaloneConfigReadError::Parse { path, source })
 }
 
 #[cfg(test)]
@@ -224,7 +285,7 @@ pub(super) fn resolve_qdrant_config(
     gobby_core::config::resolve_qdrant_config(&mut source)
 }
 
-/// Resolve embedding API configuration from config_store + env vars.
+/// Resolve embedding API configuration from config_store + gcore.yaml.
 ///
 /// Returns None if no api_base is found (BM25 only).
 ///
@@ -251,12 +312,9 @@ pub(crate) fn resolve_embedding_config_details(
         hits: HashMap::new(),
     };
     let resolution = gobby_core::config::resolve_embedding_config_resolution(&mut source)?;
-    let api_base_key = match resolution.namespace {
-        embedding_keys::LEGACY_NAMESPACE => embedding_keys::LEGACY_API_BASE,
-        embedding_keys::AI_NAMESPACE => embedding_keys::AI_API_BASE,
-        _ => embedding_keys::LEGACY_API_BASE,
-    };
-    let source_name = source.hit_source(api_base_key).unwrap_or("unknown");
+    let source_name = source
+        .hit_source(embedding_keys::AI_API_BASE)
+        .unwrap_or("unknown");
     Some(EmbeddingConfigDetails {
         config: resolution.config,
         namespace: resolution.namespace,
@@ -278,10 +336,7 @@ pub(super) fn resolve_code_vector_settings(
 pub(super) fn resolve_code_vector_settings_from_source(
     source: &mut impl ConfigSource,
 ) -> Result<CodeVectorSettings, CodeVectorConfigError> {
-    let vector_dim = match resolve_vector_dim(source, embedding_keys::LEGACY_VECTOR_DIM)? {
-        Some(size) => Some(size),
-        None => resolve_vector_dim(source, embedding_keys::AI_DIM)?,
-    };
+    let vector_dim = resolve_vector_dim(source, embedding_keys::AI_DIM)?;
 
     Ok(CodeVectorSettings { vector_dim })
 }

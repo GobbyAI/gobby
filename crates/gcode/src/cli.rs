@@ -59,12 +59,15 @@ pub(crate) enum Command {
         /// Embedding model name
         #[arg(long)]
         embedding_model: Option<String>,
+        /// Query prefix to prepend before embedding search queries
+        #[arg(long)]
+        embedding_query_prefix: Option<String>,
         /// Embedding vector dimension
         #[arg(long)]
         embedding_vector_dim: Option<usize>,
-        /// Environment variable name containing the embedding API key
+        /// Embedding API key to store in local gcore.yaml
         #[arg(long)]
-        embedding_api_key_env: Option<String>,
+        embedding_api_key: Option<String>,
         /// FalkorDB host to store in gcore.yaml
         #[arg(long)]
         falkordb_host: Option<String>,

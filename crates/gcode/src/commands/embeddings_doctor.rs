@@ -76,8 +76,10 @@ enum PeerDoctorOutcome {
 
 pub fn run(ctx: &Context) -> anyhow::Result<()> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
-    let resolution =
-        config::resolve_embedding_config_details(&mut conn, config::read_standalone_config());
+    let resolution = config::resolve_embedding_config_details(
+        &mut conn,
+        config::read_standalone_config_optional(),
+    );
     let peer = fetch_daemon_peer(ctx.daemon_url.as_deref());
     let (payload, exit_code) =
         build_doctor_report(resolution, ctx.code_vectors.vector_dim, probe_dim, peer);
@@ -277,7 +279,7 @@ mod tests {
                 query_prefix: None,
                 timeout_seconds: 10,
             },
-            namespace: embedding_keys::LEGACY_NAMESPACE,
+            namespace: embedding_keys::AI_NAMESPACE,
             source: "config_store",
         }
     }

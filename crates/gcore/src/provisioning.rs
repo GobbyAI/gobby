@@ -120,14 +120,6 @@ impl StandaloneConfig {
 
 impl ConfigSource for StandaloneConfig {
     fn config_value(&mut self, key: &str) -> Option<String> {
-        if key == embedding_keys::LEGACY_API_KEY
-            && let Some(env_name) = self.values.get(embedding_keys::LEGACY_API_KEY_ENV)
-            && !env_name.trim().is_empty()
-        {
-            return std::env::var(env_name.trim())
-                .ok()
-                .filter(|value| !value.trim().is_empty());
-        }
         self.values.get(key).cloned().or_else(|| match key {
             "databases.falkordb.requirepass" => {
                 self.values.get("databases.falkordb.password").cloned()
@@ -471,7 +463,8 @@ pub struct EmbeddingBootstrap {
     pub api_base: String,
     pub model: String,
     pub vector_dim: usize,
-    pub api_key_env: Option<String>,
+    pub query_prefix: Option<String>,
+    pub api_key: Option<String>,
 }
 
 impl EmbeddingBootstrap {
@@ -481,7 +474,8 @@ impl EmbeddingBootstrap {
             api_base: DEFAULT_LM_STUDIO_API_BASE.to_string(),
             model: DEFAULT_LM_STUDIO_MODEL.to_string(),
             vector_dim: DEFAULT_EMBEDDING_VECTOR_DIM,
-            api_key_env: None,
+            query_prefix: None,
+            api_key: None,
         }
     }
 
@@ -491,7 +485,8 @@ impl EmbeddingBootstrap {
             api_base: DEFAULT_OLLAMA_API_BASE.to_string(),
             model: DEFAULT_OLLAMA_MODEL.to_string(),
             vector_dim: DEFAULT_EMBEDDING_VECTOR_DIM,
-            api_key_env: None,
+            query_prefix: None,
+            api_key: None,
         }
     }
 }
@@ -510,15 +505,16 @@ pub fn write_standalone_bootstrap(
     config.set("databases.falkordb.password", &options.falkordb_password);
     config.set("databases.qdrant.url", options.qdrant_url());
     if let Some(embedding) = embedding {
-        config.set(embedding_keys::LEGACY_PROVIDER, &embedding.provider);
-        config.set(embedding_keys::LEGACY_API_BASE, &embedding.api_base);
-        config.set(embedding_keys::LEGACY_MODEL, &embedding.model);
-        config.set(
-            embedding_keys::LEGACY_VECTOR_DIM,
-            embedding.vector_dim.to_string(),
-        );
-        if let Some(api_key_env) = &embedding.api_key_env {
-            config.set(embedding_keys::LEGACY_API_KEY_ENV, api_key_env);
+        remove_legacy_embedding_keys(&mut config);
+        config.set(embedding_keys::AI_PROVIDER, &embedding.provider);
+        config.set(embedding_keys::AI_API_BASE, &embedding.api_base);
+        config.set(embedding_keys::AI_MODEL, &embedding.model);
+        config.set(embedding_keys::AI_DIM, embedding.vector_dim.to_string());
+        if let Some(query_prefix) = &embedding.query_prefix {
+            config.set(embedding_keys::AI_QUERY_PREFIX, query_prefix);
+        }
+        if let Some(api_key) = &embedding.api_key {
+            config.set(embedding_keys::AI_API_KEY, api_key);
         }
     }
     if let Some(compose_file) = compose_file {
@@ -526,6 +522,12 @@ pub fn write_standalone_bootstrap(
     }
     config.write_at(path)?;
     Ok(config)
+}
+
+fn remove_legacy_embedding_keys(config: &mut StandaloneConfig) {
+    for key in embedding_keys::legacy_keys() {
+        config.remove(&key);
+    }
 }
 
 fn flatten_yaml_value(
@@ -691,41 +693,6 @@ fn make_executable(path: &Path) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::TEST_ENV_LOCK;
-    use std::sync::MutexGuard;
-
-    struct ScopedEnvVar {
-        key: &'static str,
-        previous: Option<String>,
-        _lock: MutexGuard<'static, ()>,
-    }
-
-    impl ScopedEnvVar {
-        fn set(key: &'static str, value: &str) -> Self {
-            let lock = TEST_ENV_LOCK
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let previous = std::env::var(key).ok();
-            // SAFETY: tests serialize environment mutation with TEST_ENV_LOCK.
-            unsafe { std::env::set_var(key, value) };
-            Self {
-                key,
-                previous,
-                _lock: lock,
-            }
-        }
-    }
-
-    impl Drop for ScopedEnvVar {
-        fn drop(&mut self) {
-            match &self.previous {
-                // SAFETY: ScopedEnvVar holds TEST_ENV_LOCK until restoration completes.
-                Some(value) => unsafe { std::env::set_var(self.key, value) },
-                // SAFETY: ScopedEnvVar holds TEST_ENV_LOCK until restoration completes.
-                None => unsafe { std::env::remove_var(self.key) },
-            }
-        }
-    }
 
     #[test]
     fn gcore_yaml_reads_flat_and_nested_keys() {
@@ -735,9 +702,9 @@ databases.postgres.dsn: postgresql://flat/db
 databases:
   falkordb:
     port: 16379
-{api_key_env}: OPENAI_API_KEY
+{api_key}: local-api-key
 "#,
-            api_key_env = embedding_keys::LEGACY_API_KEY_ENV,
+            api_key = embedding_keys::AI_API_KEY,
         ))
         .expect("parse config");
 
@@ -747,8 +714,8 @@ databases:
         );
         assert_eq!(config.get("databases.falkordb.port"), Some("16379"));
         assert_eq!(
-            config.get(embedding_keys::LEGACY_API_KEY_ENV),
-            Some("OPENAI_API_KEY")
+            config.get(embedding_keys::AI_API_KEY),
+            Some("local-api-key")
         );
     }
 
@@ -758,25 +725,24 @@ databases:
         let path = dir.path().join(GCORE_CONFIG_FILENAME);
         let mut config = StandaloneConfig::empty();
         config.set("databases.postgres.dsn", "postgresql://local/db");
-        config.set(embedding_keys::LEGACY_VECTOR_DIM, "768");
+        config.set(embedding_keys::AI_DIM, "768");
 
         config.write_at(&path).expect("write config");
         let raw = fs::read_to_string(&path).expect("read config");
 
         assert!(raw.contains("databases.postgres.dsn:"));
-        assert!(raw.contains(&format!("{}:", embedding_keys::LEGACY_VECTOR_DIM)));
+        assert!(raw.contains(&format!("{}:", embedding_keys::AI_DIM)));
         assert_eq!(
             StandaloneConfig::read_at(&path)
                 .expect("read config")
                 .expect("config present")
-                .get(embedding_keys::LEGACY_VECTOR_DIM),
+                .get(embedding_keys::AI_DIM),
             Some("768")
         );
     }
 
     #[test]
-    fn standalone_config_resolves_service_keys_and_api_key_env() {
-        let _env = ScopedEnvVar::set("GCORE_TEST_EMBEDDING_KEY", "test-key");
+    fn standalone_config_resolves_service_keys_and_plain_api_key() {
         let mut config = StandaloneConfig::from_yaml_str(&format!(
             r#"
 databases.falkordb.host: 127.0.0.1
@@ -785,11 +751,11 @@ databases.falkordb.password: falkor-pass
 databases.qdrant.url: http://localhost:6333
 {api_base}: http://localhost:1234/v1
 {model}: text-embedding-nomic-embed-text-v1.5@f16
-{api_key_env}: GCORE_TEST_EMBEDDING_KEY
+{api_key}: test-key
 "#,
-            api_base = embedding_keys::LEGACY_API_BASE,
-            model = embedding_keys::LEGACY_MODEL,
-            api_key_env = embedding_keys::LEGACY_API_KEY_ENV,
+            api_base = embedding_keys::AI_API_BASE,
+            model = embedding_keys::AI_MODEL,
+            api_key = embedding_keys::AI_API_KEY,
         ))
         .expect("parse config");
 
@@ -799,6 +765,49 @@ databases.qdrant.url: http://localhost:6333
         assert_eq!(qdrant.url.as_deref(), Some("http://localhost:6333"));
         let embedding = crate::config::resolve_embedding_config(&mut config).expect("embedding");
         assert_eq!(embedding.api_key.as_deref(), Some("test-key"));
+    }
+
+    #[test]
+    fn writes_ai_embeddings_standalone_api_key() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join(GCORE_CONFIG_FILENAME);
+        let options = DockerServiceOptions::new(dir.path().join(".gobby"));
+        let embedding = EmbeddingBootstrap {
+            provider: "openai-compatible".to_string(),
+            api_base: "http://localhost:1234/v1".to_string(),
+            model: "embed-small".to_string(),
+            vector_dim: 1024,
+            query_prefix: Some("query: ".to_string()),
+            api_key: Some("local-api-key".to_string()),
+        };
+
+        let config = write_standalone_bootstrap(
+            &path,
+            "postgresql://localhost/gobby",
+            &options,
+            None,
+            Some(&embedding),
+        )
+        .expect("write standalone bootstrap");
+
+        assert_eq!(
+            config.get(embedding_keys::AI_PROVIDER),
+            Some("openai-compatible")
+        );
+        assert_eq!(
+            config.get(embedding_keys::AI_API_BASE),
+            Some("http://localhost:1234/v1")
+        );
+        assert_eq!(config.get(embedding_keys::AI_MODEL), Some("embed-small"));
+        assert_eq!(config.get(embedding_keys::AI_DIM), Some("1024"));
+        assert_eq!(config.get(embedding_keys::AI_QUERY_PREFIX), Some("query: "));
+        assert_eq!(
+            config.get(embedding_keys::AI_API_KEY),
+            Some("local-api-key")
+        );
+        for key in embedding_keys::legacy_keys() {
+            assert_eq!(config.get(&key), None, "legacy key was written: {key}");
+        }
     }
 
     #[test]

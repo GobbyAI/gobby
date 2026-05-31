@@ -110,12 +110,11 @@ fn adapter_env_precedence_and_json_decode() {
             ("databases.qdrant.url", r#""http://qdrant.local:6333""#),
             ("databases.qdrant.api_key", r#""qdrant-key""#),
             (
-                embedding_keys::LEGACY_API_BASE,
+                embedding_keys::AI_API_BASE,
                 r#""http://embeddings.local:11434""#,
             ),
-            (embedding_keys::LEGACY_MODEL, r#""embed-model""#),
-            (embedding_keys::LEGACY_API_KEY, "null"),
-            (embedding_keys::LEGACY_TIMEOUT_SECONDS, "12"),
+            (embedding_keys::AI_MODEL, r#""embed-model""#),
+            (embedding_keys::AI_API_KEY, "null"),
         ]);
 
         let falkor = resolve_falkordb_config_from_values(config_value_for(&values), |value| {
@@ -140,7 +139,7 @@ fn adapter_env_precedence_and_json_decode() {
         assert_eq!(embedding.api_base, "http://embeddings.local:11434");
         assert_eq!(embedding.model, "embed-model");
         assert_eq!(embedding.api_key, None);
-        assert_eq!(embedding.timeout_seconds, 12);
+        assert_eq!(embedding.timeout_seconds, 10);
     });
 }
 
@@ -161,11 +160,8 @@ fn adapter_resolves_config_store_secrets() {
             ),
             ("databases.qdrant.url", "http://qdrant.local:6333"),
             ("databases.qdrant.api_key", "$secret:qdrant_api_key"),
-            (
-                embedding_keys::LEGACY_API_BASE,
-                "http://embeddings.local:11434",
-            ),
-            (embedding_keys::LEGACY_API_KEY, "$secret:embedding_api_key"),
+            (embedding_keys::AI_API_BASE, "http://embeddings.local:11434"),
+            (embedding_keys::AI_API_KEY, "$secret:embedding_api_key"),
         ]);
 
         fn resolve_secret_stub(value: &str) -> anyhow::Result<String> {
@@ -195,36 +191,33 @@ fn adapter_resolves_config_store_secrets() {
 
 #[test]
 #[serial_test::serial]
-fn vector_dim_setting_dual_reads_config_store_no_env() {
+fn vector_dim_setting_reads_ai_config_no_env() {
     with_service_env(&[], || {
-        let values = std::collections::HashMap::from([
-            (embedding_keys::LEGACY_VECTOR_DIM, "1536"),
-            (embedding_keys::AI_DIM, "2048"),
-        ]);
+        let legacy_keys = embedding_keys::legacy_keys();
+        let values = std::collections::HashMap::from([(embedding_keys::AI_DIM, "2048")]);
 
         let settings = resolve_code_vector_settings_from_values(config_value_for(&values))
             .expect("config-store vector settings");
-        assert_eq!(settings.vector_dim, Some(1536));
+        assert_eq!(settings.vector_dim, Some(2048));
 
         temp_env::with_var("GOBBY_EMBEDDING_VECTOR_DIM", Some("3072"), || {
             let settings = resolve_code_vector_settings_from_values(config_value_for(&values))
                 .expect("env must not override vector settings");
-            assert_eq!(settings.vector_dim, Some(1536));
+            assert_eq!(settings.vector_dim, Some(2048));
         });
 
-        let fallback_values = std::collections::HashMap::from([(embedding_keys::AI_DIM, "2048")]);
-        let settings = resolve_code_vector_settings_from_values(config_value_for(&fallback_values))
-            .expect("ai vector settings");
-        assert_eq!(settings.vector_dim, Some(2048));
+        let legacy_values = std::collections::HashMap::from([(legacy_keys[7].as_str(), "1536")]);
+        let settings = resolve_code_vector_settings_from_values(config_value_for(&legacy_values))
+            .expect("legacy vector dim ignored");
+        assert_eq!(settings.vector_dim, None);
 
-        let null_values =
-            std::collections::HashMap::from([(embedding_keys::LEGACY_VECTOR_DIM, "null")]);
+        let null_values = std::collections::HashMap::from([(embedding_keys::AI_DIM, "null")]);
         let settings = resolve_code_vector_settings_from_values(config_value_for(&null_values))
             .expect("null config-store vector settings");
         assert_eq!(settings.vector_dim, None);
 
         let invalid_values =
-            std::collections::HashMap::from([(embedding_keys::LEGACY_VECTOR_DIM, r#""wide""#)]);
+            std::collections::HashMap::from([(embedding_keys::AI_DIM, r#""wide""#)]);
         let err = resolve_code_vector_settings_from_values(config_value_for(&invalid_values))
             .expect_err("invalid vector dim must error");
         assert!(matches!(

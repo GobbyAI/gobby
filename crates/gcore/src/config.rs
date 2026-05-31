@@ -35,17 +35,7 @@ pub struct EmbeddingConfig {
 
 /// Canonical home for embedding config keys during namespace migration.
 pub mod embedding_keys {
-    pub const LEGACY_NAMESPACE: &str = "embeddings";
     pub const AI_NAMESPACE: &str = "ai.embeddings";
-
-    pub const LEGACY_PROVIDER: &str = "embeddings.provider";
-    pub const LEGACY_API_BASE: &str = "embeddings.api_base";
-    pub const LEGACY_MODEL: &str = "embeddings.model";
-    pub const LEGACY_API_KEY: &str = "embeddings.api_key";
-    pub const LEGACY_API_KEY_ENV: &str = "embeddings.api_key_env";
-    pub const LEGACY_QUERY_PREFIX: &str = "embeddings.query_prefix";
-    pub const LEGACY_TIMEOUT_SECONDS: &str = "embeddings.timeout_seconds";
-    pub const LEGACY_VECTOR_DIM: &str = "embeddings.vector_dim";
 
     pub const AI_PROVIDER: &str = "ai.embeddings.provider";
     pub const AI_API_BASE: &str = "ai.embeddings.api_base";
@@ -53,6 +43,25 @@ pub mod embedding_keys {
     pub const AI_API_KEY: &str = "ai.embeddings.api_key";
     pub const AI_QUERY_PREFIX: &str = "ai.embeddings.query_prefix";
     pub const AI_DIM: &str = "ai.embeddings.dim";
+
+    const LEGACY_NAMESPACE: &str = "embeddings";
+    const LEGACY_KEY_SUFFIXES: &[&str] = &[
+        "provider",
+        "api_base",
+        "model",
+        "api_key",
+        "api_key_env",
+        "query_prefix",
+        "timeout_seconds",
+        "vector_dim",
+    ];
+
+    pub fn legacy_keys() -> Vec<String> {
+        LEGACY_KEY_SUFFIXES
+            .iter()
+            .map(|suffix| format!("{LEGACY_NAMESPACE}.{suffix}"))
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -200,35 +209,11 @@ pub fn resolve_embedding_config(source: &mut impl ConfigSource) -> Option<Embedd
 pub fn resolve_embedding_config_resolution(
     source: &mut impl ConfigSource,
 ) -> Option<EmbeddingConfigResolution> {
-    let (api_base, namespace) = resolve_embedding_setting(
-        source,
-        embedding_keys::LEGACY_API_BASE,
-        embedding_keys::AI_API_BASE,
-    )?;
-    let model = resolve_embedding_setting(
-        source,
-        embedding_keys::LEGACY_MODEL,
-        embedding_keys::AI_MODEL,
-    )
-    .map(|(value, _)| value)
-    .unwrap_or_else(|| EMBEDDING_DEFAULT_MODEL.to_string());
-    let api_key = resolve_embedding_setting(
-        source,
-        embedding_keys::LEGACY_API_KEY,
-        embedding_keys::AI_API_KEY,
-    )
-    .map(|(value, _)| value);
-    let query_prefix = resolve_embedding_setting(
-        source,
-        embedding_keys::LEGACY_QUERY_PREFIX,
-        embedding_keys::AI_QUERY_PREFIX,
-    )
-    .map(|(value, _)| value);
-    let timeout_seconds = resolve_u64_config(
-        source,
-        embedding_keys::LEGACY_TIMEOUT_SECONDS,
-        EMBEDDING_DEFAULT_TIMEOUT_SECONDS,
-    );
+    let api_base = resolve_config_value(source, embedding_keys::AI_API_BASE)?;
+    let model = resolve_config_value(source, embedding_keys::AI_MODEL)
+        .unwrap_or_else(|| EMBEDDING_DEFAULT_MODEL.to_string());
+    let api_key = resolve_config_value(source, embedding_keys::AI_API_KEY);
+    let query_prefix = resolve_config_value(source, embedding_keys::AI_QUERY_PREFIX);
 
     Some(EmbeddingConfigResolution {
         config: EmbeddingConfig {
@@ -236,22 +221,10 @@ pub fn resolve_embedding_config_resolution(
             model,
             api_key,
             query_prefix,
-            timeout_seconds,
+            timeout_seconds: EMBEDDING_DEFAULT_TIMEOUT_SECONDS,
         },
-        namespace,
+        namespace: embedding_keys::AI_NAMESPACE,
     })
-}
-
-fn resolve_embedding_setting(
-    source: &mut impl ConfigSource,
-    legacy_key: &'static str,
-    ai_key: &'static str,
-) -> Option<(String, &'static str)> {
-    resolve_config_value(source, legacy_key)
-        .map(|value| (value, embedding_keys::LEGACY_NAMESPACE))
-        .or_else(|| {
-            resolve_config_value(source, ai_key).map(|value| (value, embedding_keys::AI_NAMESPACE))
-        })
 }
 
 fn resolve_setting(
@@ -278,28 +251,7 @@ fn resolve_port(
     resolved.parse::<u16>().unwrap_or(default)
 }
 
-fn resolve_u64_config(
-    source: &mut impl ConfigSource,
-    config_key: &'static str,
-    default: u64,
-) -> u64 {
-    let Some(raw_value) = source.config_value(config_key) else {
-        return default;
-    };
-    let Some(resolved) = resolve_non_empty(source, &raw_value) else {
-        return default;
-    };
-    resolved
-        .parse::<u64>()
-        .ok()
-        .filter(|value| *value > 0)
-        .unwrap_or(default)
-}
-
-fn resolve_config_value(
-    source: &mut impl ConfigSource,
-    config_key: &'static str,
-) -> Option<String> {
+fn resolve_config_value(source: &mut impl ConfigSource, config_key: &str) -> Option<String> {
     let value = source.config_value(config_key)?;
     resolve_non_empty(source, &value)
 }
@@ -519,7 +471,7 @@ mod tests {
     }
 
     #[test]
-    fn dual_read_old_canonical_no_env() {
+    fn ai_embedding_keys_only_no_env() {
         let env = EnvGuard::new();
         env.set("GOBBY_EMBEDDING_URL", "http://env-embedding:11434");
         env.set("GOBBY_EMBEDDING_MODEL", "env-model");
@@ -528,45 +480,43 @@ mod tests {
         env.set("GOBBY_EMBEDDING_TIMEOUT_SECONDS", "7");
 
         let mut source = TestSource::with_values([
-            (
-                embedding_keys::LEGACY_API_BASE,
-                "http://stored-embedding:11434",
-            ),
             (embedding_keys::AI_API_BASE, "http://new-embedding:11434"),
-            (embedding_keys::LEGACY_MODEL, "stored-model"),
             (embedding_keys::AI_MODEL, "new-model"),
-            (embedding_keys::LEGACY_API_KEY, "$secret:LEGACY_KEY"),
             (embedding_keys::AI_API_KEY, "$secret:AI_KEY"),
-            (embedding_keys::LEGACY_QUERY_PREFIX, "stored-query:"),
             (embedding_keys::AI_QUERY_PREFIX, "new-query:"),
-            (embedding_keys::LEGACY_TIMEOUT_SECONDS, "99"),
         ]);
 
         let resolution =
             resolve_embedding_config_resolution(&mut source).expect("embedding config");
         let config = resolution.config;
 
-        assert_eq!(resolution.namespace, embedding_keys::LEGACY_NAMESPACE);
-        assert_eq!(config.api_base, "http://stored-embedding:11434");
-        assert_eq!(config.model, "stored-model");
-        assert_eq!(config.api_key.as_deref(), Some("resolved-LEGACY_KEY"));
-        assert_eq!(config.query_prefix.as_deref(), Some("stored-query:"));
-        assert_eq!(config.timeout_seconds, 99);
+        assert_eq!(resolution.namespace, embedding_keys::AI_NAMESPACE);
+        assert_eq!(config.api_base, "http://new-embedding:11434");
+        assert_eq!(config.model, "new-model");
+        assert_eq!(config.api_key.as_deref(), Some("resolved-AI_KEY"));
+        assert_eq!(config.query_prefix.as_deref(), Some("new-query:"));
+        assert_eq!(config.timeout_seconds, EMBEDDING_DEFAULT_TIMEOUT_SECONDS);
+    }
 
-        let mut fallback_source = TestSource::with_values([
-            (embedding_keys::AI_API_BASE, "http://new-embedding:11434"),
-            (embedding_keys::AI_MODEL, "new-model"),
-            (embedding_keys::AI_API_KEY, "$secret:AI_KEY"),
-            (embedding_keys::AI_QUERY_PREFIX, "new-query:"),
+    #[test]
+    fn legacy_keys_not_honored() {
+        let _env = EnvGuard::new();
+        let legacy_keys = embedding_keys::legacy_keys();
+        let mut source = TestSource::with_values([
+            (
+                leak(legacy_keys[1].clone()),
+                "http://legacy-embedding:11434",
+            ),
+            (leak(legacy_keys[2].clone()), "legacy-model"),
+            (leak(legacy_keys[3].clone()), "$secret:LEGACY_KEY"),
+            (leak(legacy_keys[5].clone()), "legacy-query:"),
         ]);
-        let fallback =
-            resolve_embedding_config_resolution(&mut fallback_source).expect("embedding config");
 
-        assert_eq!(fallback.namespace, embedding_keys::AI_NAMESPACE);
-        assert_eq!(fallback.config.api_base, "http://new-embedding:11434");
-        assert_eq!(fallback.config.model, "new-model");
-        assert_eq!(fallback.config.api_key.as_deref(), Some("resolved-AI_KEY"));
-        assert_eq!(fallback.config.query_prefix.as_deref(), Some("new-query:"));
+        assert!(resolve_embedding_config_resolution(&mut source).is_none());
+    }
+
+    fn leak(value: String) -> &'static str {
+        Box::leak(value.into_boxed_str())
     }
 
     #[test]
@@ -596,11 +546,11 @@ mod tests {
         let mut conn = ConnectionLike {
             values: HashMap::from([
                 (
-                    embedding_keys::LEGACY_API_BASE,
+                    embedding_keys::AI_API_BASE,
                     "http://stored-embedding:11434".to_string(),
                 ),
                 (
-                    embedding_keys::LEGACY_API_KEY,
+                    embedding_keys::AI_API_KEY,
                     "$secret:OPENAI_API_KEY".to_string(),
                 ),
             ]),
@@ -628,10 +578,10 @@ mod tests {
             ("databases.qdrant.url", r#""http://json-qdrant:6333""#),
             ("databases.qdrant.api_key", r#"["alpha",1]"#),
             (
-                embedding_keys::LEGACY_API_BASE,
+                embedding_keys::AI_API_BASE,
                 r#""http://json-embedding:11434""#,
             ),
-            (embedding_keys::LEGACY_MODEL, r#"["model",1]"#),
+            (embedding_keys::AI_MODEL, r#"["model",1]"#),
         ]);
 
         let falkordb = resolve_falkordb_config(&mut source).expect("falkordb config");
@@ -652,21 +602,16 @@ mod tests {
         {
             let env = EnvGuard::new();
             env.set("GOBBY_QDRANT_API_KEY", "env-qdrant-key");
-            env.set("GOBBY_EMBEDDING_MODEL", "env-embedding-model");
-            env.set("GOBBY_EMBEDDING_QUERY_PREFIX", "env-query-prefix:");
-            env.set("GOBBY_EMBEDDING_TIMEOUT_SECONDS", "7");
-
             let mut source = TestSource::with_values([
                 ("databases.qdrant.url", "http://stored-qdrant:6333"),
                 ("databases.qdrant.api_key", "stored-qdrant-key"),
                 (
-                    embedding_keys::LEGACY_API_BASE,
+                    embedding_keys::AI_API_BASE,
                     "http://stored-embedding:11434/v1",
                 ),
-                (embedding_keys::LEGACY_MODEL, "stored-embedding-model"),
-                (embedding_keys::LEGACY_API_KEY, "$secret:EMBEDDING_KEY"),
-                (embedding_keys::LEGACY_QUERY_PREFIX, "stored-query-prefix:"),
-                (embedding_keys::LEGACY_TIMEOUT_SECONDS, "99"),
+                (embedding_keys::AI_MODEL, "stored-embedding-model"),
+                (embedding_keys::AI_API_KEY, "$secret:EMBEDDING_KEY"),
+                (embedding_keys::AI_QUERY_PREFIX, "stored-query-prefix:"),
             ]);
 
             let qdrant = resolve_qdrant_config(&mut source).expect("qdrant config");
@@ -681,12 +626,12 @@ mod tests {
                 embedding.query_prefix.as_deref(),
                 Some("stored-query-prefix:")
             );
-            assert_eq!(embedding.timeout_seconds, 99);
+            assert_eq!(embedding.timeout_seconds, EMBEDDING_DEFAULT_TIMEOUT_SECONDS);
         }
 
         let _env = EnvGuard::new();
         let mut default_source = TestSource::with_values([(
-            embedding_keys::LEGACY_API_BASE,
+            embedding_keys::AI_API_BASE,
             "http://stored-embedding:11434/v1",
         )]);
         let default_embedding =
@@ -742,7 +687,27 @@ mod tests {
         std::fs::create_dir_all(&src).expect("create src");
         std::fs::write(
             src.join("bad.rs"),
-            r#"const BAD: &str = "embeddings.api_base";"#,
+            format!(r#"const BAD: &str = "{}";"#, embedding_keys::AI_API_BASE),
+        )
+        .expect("write bad source");
+
+        let offenders = embedding_key_literal_offenders(dir.path());
+
+        assert_eq!(offenders.len(), 1);
+        assert!(offenders[0].ends_with("bad.rs"));
+    }
+
+    #[test]
+    fn ci_guard_rejects_legacy_namespace() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let src = dir.path().join("src");
+        std::fs::create_dir_all(&src).expect("create src");
+        std::fs::write(
+            src.join("bad.rs"),
+            format!(
+                r#"const BAD: &str = "{}";"#,
+                embedding_keys::legacy_keys()[1]
+            ),
         )
         .expect("write bad source");
 
@@ -790,23 +755,15 @@ mod tests {
             let source = std::fs::read_to_string(&path).expect("read source file");
             if guarded_embedding_keys()
                 .iter()
-                .any(|key| source.contains(key))
+                .any(|key| source.contains(key.as_str()))
             {
                 offenders.push(path);
             }
         }
     }
 
-    fn guarded_embedding_keys() -> &'static [&'static str] {
-        &[
-            embedding_keys::LEGACY_PROVIDER,
-            embedding_keys::LEGACY_API_BASE,
-            embedding_keys::LEGACY_MODEL,
-            embedding_keys::LEGACY_API_KEY,
-            embedding_keys::LEGACY_API_KEY_ENV,
-            embedding_keys::LEGACY_QUERY_PREFIX,
-            embedding_keys::LEGACY_TIMEOUT_SECONDS,
-            embedding_keys::LEGACY_VECTOR_DIM,
+    fn guarded_embedding_keys() -> Vec<String> {
+        let mut keys = vec![
             embedding_keys::AI_PROVIDER,
             embedding_keys::AI_API_BASE,
             embedding_keys::AI_MODEL,
@@ -814,6 +771,11 @@ mod tests {
             embedding_keys::AI_QUERY_PREFIX,
             embedding_keys::AI_DIM,
         ]
+        .into_iter()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+        keys.extend(embedding_keys::legacy_keys());
+        keys
     }
 
     fn embedding_key_literal_allowed_path(path: &std::path::Path) -> bool {
