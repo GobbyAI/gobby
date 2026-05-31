@@ -12,6 +12,7 @@ pub mod project;
 pub mod provisioning;
 
 // Always available - lightweight foundation modules.
+pub mod ai_context;
 pub mod config;
 pub mod context;
 pub mod degradation;
