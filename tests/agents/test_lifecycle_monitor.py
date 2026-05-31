@@ -15,7 +15,7 @@ import threading
 import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -450,7 +450,7 @@ class TestCheckIdleAgents:
 
         # Pre-set idle state to simulate timeout elapsed
         state = idle_monitor._idle_detector.get_state(run.id)
-        state.first_idle_at = time.monotonic() - 120
+        state.first_idle_at = time.monotonic() - 360
 
         with (
             patch.object(
@@ -463,8 +463,38 @@ class TestCheckIdleAgents:
             handled = await idle_monitor.check_idle_agents()
 
         assert handled == 1
-        mock_send.assert_called_once()
-        assert "Continue working" in mock_send.call_args[0][1]
+        assert mock_send.call_args_list[0] == call("gobby-idle", "Escape", literal=False)
+        assert "Continue working" in mock_send.call_args_list[1].args[1]
+
+    @pytest.mark.asyncio
+    async def test_idle_agent_waits_for_semantic_reprompt_delay(
+        self,
+        idle_monitor: AgentLifecycleMonitor,
+        agent_run_manager: LocalAgentRunManager,
+        sample_session: dict,
+    ) -> None:
+        """Idle agents should not receive semantic reprompts before five minutes."""
+        import time
+
+        run = _make_terminal_run(
+            agent_run_manager,
+            sample_session,
+            run_id="run-idle-delay",
+            tmux_session_name="gobby-idle-delay",
+        )
+        state = idle_monitor._idle_detector.get_state(run.id)
+        state.first_idle_at = time.monotonic() - 120
+
+        with (
+            patch.object(
+                idle_monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="\u276f\n"
+            ),
+            patch.object(idle_monitor._tmux, "send_keys", new_callable=AsyncMock) as mock_send,
+        ):
+            handled = await idle_monitor.check_idle_agents()
+
+        assert handled == 0
+        mock_send.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_idle_agent_failed_after_max_reprompts(
@@ -764,7 +794,7 @@ class TestCheckIdleAgents:
 
         # Pre-set idle state to simulate timeout elapsed
         state = mon._idle_detector.get_state(run.id)
-        state.first_idle_at = time.monotonic() - 120
+        state.first_idle_at = time.monotonic() - 360
 
         with (
             patch.object(
@@ -779,7 +809,7 @@ class TestCheckIdleAgents:
         assert handled == 1
         # Pane capture SHOULD have been called since session was stale
         mock_capture.assert_called_once()
-        mock_send.assert_called_once()
+        assert mock_send.call_args_list[0] == call("gobby-session-stale", "Escape", literal=False)
 
     @pytest.mark.asyncio
     async def test_idle_step_workflow_agent_gets_actionable_handoff_reprompt(
@@ -852,7 +882,7 @@ class TestCheckIdleAgents:
             tmux_session_name="gobby-planner-step-idle",
             child_session_id=child.id,
         )
-        mon._idle_detector.get_state(run.id).first_idle_at = time.monotonic() - 120
+        mon._idle_detector.get_state(run.id).first_idle_at = time.monotonic() - 360
 
         with (
             patch.object(mon._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
@@ -863,7 +893,12 @@ class TestCheckIdleAgents:
             handled = await mon.check_idle_agents()
 
         assert handled == 1
-        prompt = mock_send.call_args.args[1]
+        assert mock_send.call_args_list[0] == call(
+            "gobby-planner-step-idle",
+            "Escape",
+            literal=False,
+        )
+        prompt = mock_send.call_args_list[1].args[1]
         assert "Workflow: planner-steps. Current step: plan." in prompt
         assert 'submit_for_review(stage_name="planning")' in prompt
         assert "end_agent_run" in prompt
@@ -910,7 +945,7 @@ class TestCheckIdleAgents:
             tmux_session_name="gobby-session-naive-stale",
             child_session_id=child.id,
         )
-        mon._idle_detector.get_state(run.id).first_idle_at = time.monotonic() - 120
+        mon._idle_detector.get_state(run.id).first_idle_at = time.monotonic() - 360
 
         with (
             patch.object(
@@ -924,7 +959,11 @@ class TestCheckIdleAgents:
 
         assert handled == 1
         mock_capture.assert_called_once()
-        mock_send.assert_called_once()
+        assert mock_send.call_args_list[0] == call(
+            "gobby-session-naive-stale",
+            "Escape",
+            literal=False,
+        )
 
     @pytest.mark.asyncio
     async def test_xhigh_session_within_scaled_timeout_skips_pane_check(
@@ -973,7 +1012,7 @@ class TestCheckIdleAgents:
         )
 
         state = mon._idle_detector.get_state(run.id)
-        state.first_idle_at = time.monotonic() - 120
+        state.first_idle_at = time.monotonic() - 360
         state.reprompt_count = 2
 
         with (
@@ -1040,7 +1079,7 @@ class TestCheckIdleAgents:
         )
 
         state = mon._idle_detector.get_state(run.id)
-        state.first_idle_at = time.monotonic() - 120
+        state.first_idle_at = time.monotonic() - 360
 
         with (
             patch.object(
@@ -1054,7 +1093,11 @@ class TestCheckIdleAgents:
 
         assert handled == 1
         mock_capture.assert_called_once()
-        mock_send.assert_called_once()
+        assert mock_send.call_args_list[0] == call(
+            "gobby-high-base-stale",
+            "Escape",
+            literal=False,
+        )
 
     @pytest.mark.asyncio
     async def test_xhigh_session_past_scaled_timeout_can_fail_after_reprompts(
@@ -1164,7 +1207,7 @@ class TestCheckIdleAgents:
 
         # Pre-set idle state to simulate timeout elapsed
         state = mon._idle_detector.get_state(run.id)
-        state.first_idle_at = time.monotonic() - 120
+        state.first_idle_at = time.monotonic() - 360
 
         with (
             patch.object(
@@ -1182,8 +1225,8 @@ class TestCheckIdleAgents:
 
         # Agent should be reprompted despite active-looking pane
         assert handled == 1
-        mock_send.assert_called_once()
-        assert "Continue working" in mock_send.call_args[0][1]
+        assert mock_send.call_args_list[0] == call("gobby-stale-active", "Escape", literal=False)
+        assert "Continue working" in mock_send.call_args_list[1].args[1]
 
 
 class TestCheckTrustPrompts:

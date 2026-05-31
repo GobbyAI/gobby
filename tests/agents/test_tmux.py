@@ -48,6 +48,7 @@ class TestTmuxConfig:
         assert config.config_file is None
         assert config.session_prefix == "gobby"
         assert config.history_limit == 10000
+        assert config.idle_reprompt_delay_seconds == 300
         assert config.init_activity_grace_seconds == 5.0
 
     def test_custom_values(self) -> None:
@@ -59,6 +60,7 @@ class TestTmuxConfig:
             config_file="/tmp/tmux.conf",
             session_prefix="myprefix",
             history_limit=5000,
+            idle_reprompt_delay_seconds=420,
             init_activity_grace_seconds=7.5,
         )
         assert config.enabled is False
@@ -68,6 +70,7 @@ class TestTmuxConfig:
         assert config.config_file == "/tmp/tmux.conf"
         assert config.session_prefix == "myprefix"
         assert config.history_limit == 5000
+        assert config.idle_reprompt_delay_seconds == 420
         assert config.init_activity_grace_seconds == 7.5
 
     def test_wsl_distribution_default(self) -> None:

@@ -114,6 +114,13 @@ class IdleCheckHandler:
             return self._tmux_config.idle_timeout_seconds * 5
         return self._tmux_config.idle_timeout_seconds
 
+    def _idle_reprompt_delay_seconds_for_run(self, run: AgentRun) -> int:
+        """Return the semantic idle reprompt delay for a run."""
+        return max(
+            self._tmux_config.idle_reprompt_delay_seconds,
+            self._idle_timeout_seconds_for_run(run),
+        )
+
     async def _handle_idle_check(self, run: AgentRun) -> int:
         """Handle idle check for a single agent."""
         latest_run = await self._run_db(self._agent_run_manager.get, run.id)
@@ -188,7 +195,7 @@ class IdleCheckHandler:
 
         if self._idle_detector.should_reprompt(
             run.id,
-            idle_timeout_seconds,
+            self._idle_reprompt_delay_seconds_for_run(run),
             self._tmux_config.max_reprompt_attempts,
         ):
             if session_stale and await self._recover_reasoning_idle(
@@ -205,6 +212,10 @@ class IdleCheckHandler:
                 reason="reprompting apparently idle agent",
             )
             reprompt_message = await self._idle_reprompt_message(run)
+            cleared = await self._tmux.send_keys(tmux_name, "Escape", literal=False)
+            if not cleared:
+                logger.warning("Failed to clear queued prompt before reprompting agent %s", run.id)
+                return 0
             sent = await self._tmux.send_keys(tmux_name, reprompt_message + "\n")
             if sent:
                 self._idle_detector.record_reprompt(run.id)

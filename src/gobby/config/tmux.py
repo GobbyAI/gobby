@@ -56,7 +56,12 @@ class TmuxConfig(BaseModel):
     idle_timeout_seconds: int = Field(
         default=60,
         ge=10,
-        description="Seconds an agent must be idle before triggering a reprompt.",
+        description="Seconds before an idle health check considers the session stale.",
+    )
+    idle_reprompt_delay_seconds: int = Field(
+        default=300,
+        ge=60,
+        description="Seconds an agent must be inactive before sending a semantic idle reprompt.",
     )
     max_reprompt_attempts: int = Field(
         default=3,
