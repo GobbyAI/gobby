@@ -132,3 +132,23 @@ Validation passed:
 - `uv run mypy src/gobby/agents/idle_detector.py src/gobby/agents/prompt_detector.py src/gobby/agents/terminal_prompt_monitor.py src/gobby/agents/lifecycle_monitor.py src/gobby/mcp_proxy/tools/agent_live_activity.py --no-incremental --strict` - passed
 - `uv run gobby test-quality audit tests/agents/test_idle_detector.py tests/agents/test_lifecycle_monitor_extra.py tests/mcp_proxy/tools/test_agent_live_stats.py --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity high` - passed
 - `git diff --check` - passed
+
+After the fix was committed and the daemon was restarted, target task `#354` was de-escalated again. The daemon relaunched planner `run-12248674eb36` automatically, preserving `review_round_count=2` and `max_review_rounds=99`.
+
+## 2026-05-31 09:20 CDT - Queued-message prompt still exhausted idle reprompts
+
+The planner relaunched after the previous fix and made real progress, reaching 26 reported tool calls. It then stopped at Claude's queued-message prompt, with the terminal showing Gobby's lifecycle continuation text queued above "Press up to edit queued messages." Gobby did not submit or otherwise clear that queued continuation. The lifecycle monitor counted repeated idle reprompts and killed planner `run-12248674eb36` with `Agent idle: idle after max reprompt attempts`.
+
+This is still a Gobby build automation bug, not a user decision. I opened and claimed coordination bug `#15397` under anchor epic `#15385` to fix the remaining queued-message prompt path. The daemon immediately launched replacement planner `run-844bba828c5c` for target `#354`; I am leaving daemon dispatch in control while fixing the monitor behavior.
+
+The fix changes Gobby's queued-continuation handler to follow Claude's own prompt: when a queued Gobby continuation is visible with "Press up to edit queued messages," the monitor sends `Up` to bring the queued message back for editing and then sends `Enter` to submit it. Plain approval prompts still receive only `Enter`.
+
+Validation passed:
+
+- `GOBBY_TEST_PROTECT=1 uv run pytest tests/agents/test_lifecycle_monitor_extra.py -q` - passed, 35 tests
+- `GOBBY_TEST_PROTECT=1 uv run pytest tests/agents/test_lifecycle_monitor_extra.py tests/agents/test_idle_detector.py tests/agents/test_prompt_detector.py -q` - passed, 99 tests
+- `uv run ruff check src/gobby/agents/prompt_detector.py src/gobby/agents/terminal_prompt_monitor.py tests/agents/test_lifecycle_monitor_extra.py tests/agents/test_idle_detector.py tests/agents/test_prompt_detector.py` - passed
+- `uv run ruff format --check src/gobby/agents/prompt_detector.py src/gobby/agents/terminal_prompt_monitor.py tests/agents/test_lifecycle_monitor_extra.py tests/agents/test_idle_detector.py tests/agents/test_prompt_detector.py` - passed
+- `uv run mypy src/gobby/agents/prompt_detector.py src/gobby/agents/terminal_prompt_monitor.py --no-incremental --strict` - passed
+- `uv run gobby test-quality audit tests/agents/test_lifecycle_monitor_extra.py tests/agents/test_idle_detector.py tests/agents/test_prompt_detector.py --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity high` - passed
+- `git diff --check` - passed

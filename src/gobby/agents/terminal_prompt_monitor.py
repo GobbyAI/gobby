@@ -183,6 +183,13 @@ class TerminalPromptMonitor:
                 if not self._prompt_detector.detect_queued_continuation_prompt(pane_output):
                     continue
 
+                edited = await self._get_tmux().send_keys(
+                    tmux_name,
+                    PromptDetector.EDIT_QUEUED_MESSAGE_KEY,
+                    literal=False,
+                )
+                if not edited:
+                    continue
                 sent = await self._get_tmux().send_keys(
                     tmux_name,
                     PromptDetector.ENTER_KEY,

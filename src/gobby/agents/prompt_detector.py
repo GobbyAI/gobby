@@ -73,6 +73,7 @@ class PromptDetector:
     # Key sequence to approve prompts whose visible text says Enter approves/proceeds.
     APPROVAL_DISMISS_KEYS = "\n"
     ENTER_KEY = "Enter"
+    EDIT_QUEUED_MESSAGE_KEY = "Up"
     QUEUED_CONTINUATION_PATTERNS: tuple[re.Pattern[str], ...] = (
         re.compile(r"Continue working on your task", re.IGNORECASE),
         re.compile(r"active Gobby step workflow is not complete", re.IGNORECASE),

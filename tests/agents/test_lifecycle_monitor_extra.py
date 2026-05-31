@@ -750,9 +750,10 @@ class TestPeriodicAgentTerminalEnter:
             self._run(run_id="run-claude", tmux_session_name="gobby-claude", provider="claude"),
         ]
         mock_tmux.capture_pane.return_value = (
-            "Continue working on your task. Your active Gobby step workflow is not complete.\n"
-            "Workflow: planner-steps. Current step: plan.\n"
-            "Press up to edit queued messages\n"
+            "  ❯ Continue working on your task. Your active Gobby step workflow is not complete.\n"
+            "    Workflow: planner-steps. Current step: plan.\n"
+            "────────────────────────────────────────────────────────────────────────────────\n"
+            "❯ Press up to edit queued messages\n"
         )
         mock_tmux.send_keys.return_value = True
 
@@ -761,11 +762,10 @@ class TestPeriodicAgentTerminalEnter:
 
         assert handled == 1
         assert periodic_handled == 0
-        mock_tmux.send_keys.assert_called_once_with(
-            "gobby-claude",
-            PromptDetector.ENTER_KEY,
-            literal=False,
-        )
+        assert mock_tmux.send_keys.call_args_list == [
+            call("gobby-claude", PromptDetector.EDIT_QUEUED_MESSAGE_KEY, literal=False),
+            call("gobby-claude", PromptDetector.ENTER_KEY, literal=False),
+        ]
 
     @pytest.mark.asyncio
     async def test_queued_message_prompt_without_gobby_continuation_is_ignored(self) -> None:
