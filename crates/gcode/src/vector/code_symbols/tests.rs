@@ -284,7 +284,7 @@ fn embedding_batch_preserves_response_index_order() {
 }
 
 #[test]
-fn ensure_collection_resolves_vector_size_and_distance() {
+fn dim_probe_with_override() {
     let (embedding_url, embedding_handle) = spawn_http_responses(vec![(
         200,
         json!({"data": [{"embedding": [0.1, 0.2, 0.3]}]}),

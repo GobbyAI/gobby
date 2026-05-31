@@ -1,4 +1,5 @@
 use anyhow::Context as _;
+use gobby_core::config::embedding_keys;
 use gobby_core::provisioning::{
     DEFAULT_EMBEDDING_VECTOR_DIM, DEFAULT_LM_STUDIO_API_BASE, DEFAULT_OLLAMA_API_BASE,
     DEFAULT_OLLAMA_MODEL, DockerProvisioningReport, DockerServiceOptions, EmbeddingBootstrap,
@@ -261,13 +262,16 @@ fn write_gcore_config(
     }
 
     if let Some(embedding) = embedding {
-        config.set("embeddings.provider", &embedding.provider);
-        config.set("embeddings.api_base", &embedding.api_base);
-        config.set("embeddings.model", &embedding.model);
-        config.set("embeddings.vector_dim", embedding.vector_dim.to_string());
+        config.set(embedding_keys::LEGACY_PROVIDER, &embedding.provider);
+        config.set(embedding_keys::LEGACY_API_BASE, &embedding.api_base);
+        config.set(embedding_keys::LEGACY_MODEL, &embedding.model);
+        config.set(
+            embedding_keys::LEGACY_VECTOR_DIM,
+            embedding.vector_dim.to_string(),
+        );
         match embedding.api_key_env.as_deref() {
-            Some(api_key_env) => config.set("embeddings.api_key_env", api_key_env),
-            None => config.remove("embeddings.api_key_env"),
+            Some(api_key_env) => config.set(embedding_keys::LEGACY_API_KEY_ENV, api_key_env),
+            None => config.remove(embedding_keys::LEGACY_API_KEY_ENV),
         }
     }
 

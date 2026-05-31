@@ -8,6 +8,7 @@ use super::services::{
     resolve_falkordb_config_from_values, resolve_qdrant_config_from_values,
 };
 use super::*;
+use gobby_core::config::embedding_keys;
 
 fn write_project_json(root: &Path, json: serde_json::Value) {
     let gobby_dir = root.join(".gobby");
@@ -108,10 +109,13 @@ fn adapter_env_precedence_and_json_decode() {
             ("databases.falkordb.requirepass", r#""stored-pass""#),
             ("databases.qdrant.url", r#""http://qdrant.local:6333""#),
             ("databases.qdrant.api_key", r#""qdrant-key""#),
-            ("embeddings.api_base", r#""http://embeddings.local:11434""#),
-            ("embeddings.model", r#""embed-model""#),
-            ("embeddings.api_key", "null"),
-            ("embeddings.timeout_seconds", "12"),
+            (
+                embedding_keys::LEGACY_API_BASE,
+                r#""http://embeddings.local:11434""#,
+            ),
+            (embedding_keys::LEGACY_MODEL, r#""embed-model""#),
+            (embedding_keys::LEGACY_API_KEY, "null"),
+            (embedding_keys::LEGACY_TIMEOUT_SECONDS, "12"),
         ]);
 
         let falkor = resolve_falkordb_config_from_values(config_value_for(&values), |value| {
@@ -157,8 +161,11 @@ fn adapter_resolves_config_store_secrets() {
             ),
             ("databases.qdrant.url", "http://qdrant.local:6333"),
             ("databases.qdrant.api_key", "$secret:qdrant_api_key"),
-            ("embeddings.api_base", "http://embeddings.local:11434"),
-            ("embeddings.api_key", "$secret:embedding_api_key"),
+            (
+                embedding_keys::LEGACY_API_BASE,
+                "http://embeddings.local:11434",
+            ),
+            (embedding_keys::LEGACY_API_KEY, "$secret:embedding_api_key"),
         ]);
 
         fn resolve_secret_stub(value: &str) -> anyhow::Result<String> {
@@ -188,9 +195,12 @@ fn adapter_resolves_config_store_secrets() {
 
 #[test]
 #[serial_test::serial]
-fn vector_dim_setting_resolves_env_and_config_store() {
+fn vector_dim_setting_dual_reads_config_store_no_env() {
     with_service_env(&[], || {
-        let values = std::collections::HashMap::from([("embeddings.vector_dim", "1536")]);
+        let values = std::collections::HashMap::from([
+            (embedding_keys::LEGACY_VECTOR_DIM, "1536"),
+            (embedding_keys::AI_DIM, "2048"),
+        ]);
 
         let settings = resolve_code_vector_settings_from_values(config_value_for(&values))
             .expect("config-store vector settings");
@@ -198,17 +208,23 @@ fn vector_dim_setting_resolves_env_and_config_store() {
 
         temp_env::with_var("GOBBY_EMBEDDING_VECTOR_DIM", Some("3072"), || {
             let settings = resolve_code_vector_settings_from_values(config_value_for(&values))
-                .expect("env vector settings");
-            assert_eq!(settings.vector_dim, Some(3072));
+                .expect("env must not override vector settings");
+            assert_eq!(settings.vector_dim, Some(1536));
         });
 
-        let null_values = std::collections::HashMap::from([("embeddings.vector_dim", "null")]);
+        let fallback_values = std::collections::HashMap::from([(embedding_keys::AI_DIM, "2048")]);
+        let settings = resolve_code_vector_settings_from_values(config_value_for(&fallback_values))
+            .expect("ai vector settings");
+        assert_eq!(settings.vector_dim, Some(2048));
+
+        let null_values =
+            std::collections::HashMap::from([(embedding_keys::LEGACY_VECTOR_DIM, "null")]);
         let settings = resolve_code_vector_settings_from_values(config_value_for(&null_values))
             .expect("null config-store vector settings");
         assert_eq!(settings.vector_dim, None);
 
         let invalid_values =
-            std::collections::HashMap::from([("embeddings.vector_dim", r#""wide""#)]);
+            std::collections::HashMap::from([(embedding_keys::LEGACY_VECTOR_DIM, r#""wide""#)]);
         let err = resolve_code_vector_settings_from_values(config_value_for(&invalid_values))
             .expect_err("invalid vector dim must error");
         assert!(matches!(

@@ -1,7 +1,7 @@
 use clap::Parser as _;
 use gobby_code::{commands, config, freshness, output, setup};
 
-use crate::cli::{self, Cli, Command, GraphCommand, VectorCommand};
+use crate::cli::{self, Cli, Command, EmbeddingsCommand, GraphCommand, VectorCommand};
 
 fn ensure_project_fresh(ctx: &config::Context, disabled: bool) -> anyhow::Result<()> {
     if !disabled {
@@ -119,6 +119,15 @@ pub(crate) fn run_with_exit_code() -> std::process::ExitCode {
                 }
                 return std::process::ExitCode::from(contract_error.exit_code());
             }
+            if let Some(doctor_exit) =
+                error.downcast_ref::<commands::embeddings_doctor::EmbeddingsDoctorExit>()
+            {
+                if let Err(print_error) = doctor_exit.print() {
+                    eprintln!("Error: {print_error:?}");
+                    return std::process::ExitCode::FAILURE;
+                }
+                return std::process::ExitCode::from(doctor_exit.exit_code());
+            }
             eprintln!("Error: {error:?}");
             std::process::ExitCode::FAILURE
         }
@@ -203,6 +212,9 @@ fn run() -> anyhow::Result<()> {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
             commands::vector::rebuild(&ctx, format)
         }
+        Command::Embeddings {
+            command: EmbeddingsCommand::Doctor,
+        } => commands::embeddings_doctor::run(&ctx),
         Command::Graph {
             command: GraphCommand::Overview { limit },
         } => {

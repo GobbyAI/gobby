@@ -113,6 +113,11 @@ pub(crate) enum Command {
         #[command(subcommand)]
         command: VectorCommand,
     },
+    /// Inspect embedding configuration consistency
+    Embeddings {
+        #[command(subcommand)]
+        command: EmbeddingsCommand,
+    },
 
     // ── Search (works in all modes) ──────────────────────────────────
     /// Hybrid search: pg_search BM25 + optional semantic (Qdrant) + optional graph boost (FalkorDB)
@@ -394,6 +399,12 @@ pub(crate) enum VectorCommand {
     Clear,
     /// Rebuild the current project's code-symbol vector projection from PostgreSQL facts
     Rebuild,
+}
+
+#[derive(Subcommand)]
+pub(crate) enum EmbeddingsCommand {
+    /// Emit embedding configuration doctor JSON
+    Doctor,
 }
 
 fn non_empty_grep_pattern(value: &str) -> Result<String, String> {

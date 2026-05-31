@@ -177,14 +177,7 @@ mod tests {
             context.qdrant().and_then(|c| c.url.as_deref()),
             Some("http://env-qdrant:6333")
         );
-        assert_eq!(
-            context.embedding().map(|c| c.api_base.as_str()),
-            Some("http://env-embedding:11434")
-        );
-        assert_eq!(
-            context.embedding().map(|c| c.model.as_str()),
-            Some("env-model")
-        );
+        assert!(context.embedding().is_none());
         assert!(!context.daemon_url().is_empty());
     }
 }

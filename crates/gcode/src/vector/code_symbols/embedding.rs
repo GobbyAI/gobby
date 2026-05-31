@@ -54,6 +54,11 @@ pub fn embed_text(
         .and_then(parse_embedding)
 }
 
+pub fn probe_embedding_dim(config: &EmbeddingConfig) -> Result<usize, VectorLifecycleError> {
+    let client = embedding_client(config)?;
+    Ok(embed_text(&client, config, dimension_probe_text())?.len())
+}
+
 pub fn embed_text_batch(
     client: &reqwest::blocking::Client,
     config: &EmbeddingConfig,

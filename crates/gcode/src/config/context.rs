@@ -36,8 +36,6 @@ pub type EmbeddingConfig = gobby_core::config::EmbeddingConfig;
 
 pub const FALKORDB_GRAPH_NAME: &str = "gobby_code";
 pub const CODE_SYMBOL_COLLECTION_PREFIX: &str = "code_symbols_";
-pub const GOBBY_EMBEDDING_VECTOR_DIM_ENV: &str = "GOBBY_EMBEDDING_VECTOR_DIM";
-pub const EMBEDDING_VECTOR_DIM_CONFIG_KEY: &str = "embeddings.vector_dim";
 
 pub const GOBBY_FALKORDB_HOST_ENV: &str = "GOBBY_FALKORDB_HOST";
 pub const GOBBY_FALKORDB_PORT_ENV: &str = "GOBBY_FALKORDB_PORT";

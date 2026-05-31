@@ -1,10 +1,11 @@
 use gobby_core::config::ConfigSource;
+use gobby_core::config::embedding_keys;
 use gobby_core::provisioning::{GCORE_CONFIG_FILENAME, StandaloneConfig};
 use postgres::Client;
+use std::collections::HashMap;
 
 use super::{
-    CodeVectorConfigError, CodeVectorSettings, EMBEDDING_VECTOR_DIM_CONFIG_KEY,
-    FALKORDB_GRAPH_NAME, FalkorConfig, GOBBY_EMBEDDING_VECTOR_DIM_ENV, QdrantConfig,
+    CodeVectorConfigError, CodeVectorSettings, FALKORDB_GRAPH_NAME, FalkorConfig, QdrantConfig,
 };
 use crate::{db, secrets};
 
@@ -44,7 +45,47 @@ impl ConfigSource for FallbackConfigSource<'_> {
     }
 }
 
-pub(super) fn read_standalone_config() -> Option<StandaloneConfig> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct EmbeddingConfigDetails {
+    pub config: super::EmbeddingConfig,
+    pub namespace: &'static str,
+    pub source: &'static str,
+}
+
+struct TracingFallbackConfigSource<'a> {
+    postgres: PostgresConfigSource<'a>,
+    standalone: Option<StandaloneConfig>,
+    hits: HashMap<String, &'static str>,
+}
+
+impl TracingFallbackConfigSource<'_> {
+    fn hit_source(&self, key: &str) -> Option<&'static str> {
+        self.hits.get(key).copied()
+    }
+}
+
+impl ConfigSource for TracingFallbackConfigSource<'_> {
+    fn config_value(&mut self, key: &str) -> Option<String> {
+        if let Some(value) = self.postgres.config_value(key) {
+            self.hits.insert(key.to_string(), "config_store");
+            return Some(value);
+        }
+        let value = self
+            .standalone
+            .as_mut()
+            .and_then(|standalone| standalone.config_value(key));
+        if value.is_some() {
+            self.hits.insert(key.to_string(), "gcore.yaml");
+        }
+        value
+    }
+
+    fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
+        self.postgres.resolve_value(value)
+    }
+}
+
+pub(crate) fn read_standalone_config() -> Option<StandaloneConfig> {
     let home = db::gobby_home().ok()?;
     let path = home.join(GCORE_CONFIG_FILENAME);
     match StandaloneConfig::read_at(&path) {
@@ -200,6 +241,29 @@ pub(super) fn resolve_embedding_config(
     gobby_core::config::resolve_embedding_config(&mut source)
 }
 
+pub(crate) fn resolve_embedding_config_details(
+    conn: &mut Client,
+    standalone: Option<StandaloneConfig>,
+) -> Option<EmbeddingConfigDetails> {
+    let mut source = TracingFallbackConfigSource {
+        postgres: PostgresConfigSource { conn },
+        standalone,
+        hits: HashMap::new(),
+    };
+    let resolution = gobby_core::config::resolve_embedding_config_resolution(&mut source)?;
+    let api_base_key = match resolution.namespace {
+        embedding_keys::LEGACY_NAMESPACE => embedding_keys::LEGACY_API_BASE,
+        embedding_keys::AI_NAMESPACE => embedding_keys::AI_API_BASE,
+        _ => embedding_keys::LEGACY_API_BASE,
+    };
+    let source_name = source.hit_source(api_base_key).unwrap_or("unknown");
+    Some(EmbeddingConfigDetails {
+        config: resolution.config,
+        namespace: resolution.namespace,
+        source: source_name,
+    })
+}
+
 pub(super) fn resolve_code_vector_settings(
     conn: &mut Client,
     standalone: Option<StandaloneConfig>,
@@ -214,21 +278,22 @@ pub(super) fn resolve_code_vector_settings(
 pub(super) fn resolve_code_vector_settings_from_source(
     source: &mut impl ConfigSource,
 ) -> Result<CodeVectorSettings, CodeVectorConfigError> {
-    let vector_dim = match std::env::var(GOBBY_EMBEDDING_VECTOR_DIM_ENV)
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-    {
-        Some(value) => Some(parse_vector_dim(
-            GOBBY_EMBEDDING_VECTOR_DIM_ENV,
-            value.trim(),
-        )?),
-        None => source
-            .config_value(EMBEDDING_VECTOR_DIM_CONFIG_KEY)
-            .map(|value| parse_vector_dim(EMBEDDING_VECTOR_DIM_CONFIG_KEY, value.trim()))
-            .transpose()?,
+    let vector_dim = match resolve_vector_dim(source, embedding_keys::LEGACY_VECTOR_DIM)? {
+        Some(size) => Some(size),
+        None => resolve_vector_dim(source, embedding_keys::AI_DIM)?,
     };
 
     Ok(CodeVectorSettings { vector_dim })
+}
+
+fn resolve_vector_dim(
+    source: &mut impl ConfigSource,
+    key: &'static str,
+) -> Result<Option<usize>, CodeVectorConfigError> {
+    source
+        .config_value(key)
+        .map(|value| parse_vector_dim(key, value.trim()))
+        .transpose()
 }
 
 fn parse_vector_dim(source: &'static str, value: &str) -> Result<usize, CodeVectorConfigError> {

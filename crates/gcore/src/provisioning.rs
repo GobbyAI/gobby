@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use serde::Deserialize;
 
-use crate::config::{ConfigSource, resolve_env_pattern};
+use crate::config::{ConfigSource, embedding_keys, resolve_env_pattern};
 
 pub const GCORE_CONFIG_FILENAME: &str = "gcore.yaml";
 pub const SERVICES_DIRNAME: &str = "services";
@@ -120,8 +120,8 @@ impl StandaloneConfig {
 
 impl ConfigSource for StandaloneConfig {
     fn config_value(&mut self, key: &str) -> Option<String> {
-        if key == "embeddings.api_key"
-            && let Some(env_name) = self.values.get("embeddings.api_key_env")
+        if key == embedding_keys::LEGACY_API_KEY
+            && let Some(env_name) = self.values.get(embedding_keys::LEGACY_API_KEY_ENV)
             && !env_name.trim().is_empty()
         {
             return std::env::var(env_name.trim())
@@ -510,12 +510,15 @@ pub fn write_standalone_bootstrap(
     config.set("databases.falkordb.password", &options.falkordb_password);
     config.set("databases.qdrant.url", options.qdrant_url());
     if let Some(embedding) = embedding {
-        config.set("embeddings.provider", &embedding.provider);
-        config.set("embeddings.api_base", &embedding.api_base);
-        config.set("embeddings.model", &embedding.model);
-        config.set("embeddings.vector_dim", embedding.vector_dim.to_string());
+        config.set(embedding_keys::LEGACY_PROVIDER, &embedding.provider);
+        config.set(embedding_keys::LEGACY_API_BASE, &embedding.api_base);
+        config.set(embedding_keys::LEGACY_MODEL, &embedding.model);
+        config.set(
+            embedding_keys::LEGACY_VECTOR_DIM,
+            embedding.vector_dim.to_string(),
+        );
         if let Some(api_key_env) = &embedding.api_key_env {
-            config.set("embeddings.api_key_env", api_key_env);
+            config.set(embedding_keys::LEGACY_API_KEY_ENV, api_key_env);
         }
     }
     if let Some(compose_file) = compose_file {
@@ -723,16 +726,16 @@ mod tests {
 
     #[test]
     fn gcore_yaml_reads_flat_and_nested_keys() {
-        let config = StandaloneConfig::from_yaml_str(
+        let config = StandaloneConfig::from_yaml_str(&format!(
             r#"
 databases.postgres.dsn: postgresql://flat/db
 databases:
   falkordb:
     port: 16379
-embeddings:
-  api_key_env: OPENAI_API_KEY
+{api_key_env}: OPENAI_API_KEY
 "#,
-        )
+            api_key_env = embedding_keys::LEGACY_API_KEY_ENV,
+        ))
         .expect("parse config");
 
         assert_eq!(
@@ -740,7 +743,10 @@ embeddings:
             Some("postgresql://flat/db")
         );
         assert_eq!(config.get("databases.falkordb.port"), Some("16379"));
-        assert_eq!(config.get("embeddings.api_key_env"), Some("OPENAI_API_KEY"));
+        assert_eq!(
+            config.get(embedding_keys::LEGACY_API_KEY_ENV),
+            Some("OPENAI_API_KEY")
+        );
     }
 
     #[test]
@@ -749,18 +755,18 @@ embeddings:
         let path = dir.path().join(GCORE_CONFIG_FILENAME);
         let mut config = StandaloneConfig::empty();
         config.set("databases.postgres.dsn", "postgresql://local/db");
-        config.set("embeddings.vector_dim", "768");
+        config.set(embedding_keys::LEGACY_VECTOR_DIM, "768");
 
         config.write_at(&path).expect("write config");
         let raw = fs::read_to_string(&path).expect("read config");
 
         assert!(raw.contains("databases.postgres.dsn:"));
-        assert!(raw.contains("embeddings.vector_dim:"));
+        assert!(raw.contains(&format!("{}:", embedding_keys::LEGACY_VECTOR_DIM)));
         assert_eq!(
             StandaloneConfig::read_at(&path)
                 .expect("read config")
                 .expect("config present")
-                .get("embeddings.vector_dim"),
+                .get(embedding_keys::LEGACY_VECTOR_DIM),
             Some("768")
         );
     }
@@ -768,17 +774,20 @@ embeddings:
     #[test]
     fn standalone_config_resolves_service_keys_and_api_key_env() {
         let _env = ScopedEnvVar::set("GCORE_TEST_EMBEDDING_KEY", "test-key");
-        let mut config = StandaloneConfig::from_yaml_str(
+        let mut config = StandaloneConfig::from_yaml_str(&format!(
             r#"
 databases.falkordb.host: 127.0.0.1
 databases.falkordb.port: "16379"
 databases.falkordb.password: falkor-pass
 databases.qdrant.url: http://localhost:6333
-embeddings.api_base: http://localhost:1234/v1
-embeddings.model: text-embedding-nomic-embed-text-v1.5@f16
-embeddings.api_key_env: GCORE_TEST_EMBEDDING_KEY
+{api_base}: http://localhost:1234/v1
+{model}: text-embedding-nomic-embed-text-v1.5@f16
+{api_key_env}: GCORE_TEST_EMBEDDING_KEY
 "#,
-        )
+            api_base = embedding_keys::LEGACY_API_BASE,
+            model = embedding_keys::LEGACY_MODEL,
+            api_key_env = embedding_keys::LEGACY_API_KEY_ENV,
+        ))
         .expect("parse config");
 
         let falkor = crate::config::resolve_falkordb_config(&mut config).expect("falkor");
