@@ -158,6 +158,9 @@ venv.bak/
 # mypy
 .mypy_cache/
 .dmypy.json
+
+# Local dogfood coordination logs
+gobby-build-journal.md
 dmypy.json
 
 # Pyre type checker
