@@ -193,6 +193,8 @@ pub(super) fn summarize_bridge_edges(
     })
 }
 
+/// Rebuild through `BridgeEdgeHypothesis::new` so inferred relation label,
+/// read-only, and provenance invariants are reapplied after graph reads.
 pub(super) fn normalize_bridge_edges(
     edges: Vec<BridgeEdgeHypothesis>,
 ) -> Vec<BridgeEdgeHypothesis> {

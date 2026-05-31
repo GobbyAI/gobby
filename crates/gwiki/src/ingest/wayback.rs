@@ -27,7 +27,7 @@ pub fn ingest_capture(
     store: &mut impl WikiIndexStore,
     snapshot: WaybackCaptureSnapshot,
 ) -> Result<IngestResult, WikiError> {
-    let title = markdown_title(&snapshot.original_url);
+    let title = wayback_title(&snapshot);
     let draft = SourceDraft {
         location: snapshot.capture_url.clone(),
         kind: SourceKind::Wayback,
@@ -42,6 +42,81 @@ pub fn ingest_capture(
     let record = SourceManifest::register(vault_root, draft)?;
     let markdown = render_wayback_markdown(&snapshot, &title, &record.content_hash);
     write_raw_then_index(vault_root, store, record, &markdown, None)
+}
+
+fn wayback_title(snapshot: &WaybackCaptureSnapshot) -> String {
+    html_title(&snapshot.body)
+        .or_else(|| title_from_url_path(&snapshot.original_url))
+        .or_else(|| url_host(&snapshot.original_url).map(|host| markdown_title(&host)))
+        .unwrap_or_else(|| markdown_title(&snapshot.original_url))
+}
+
+fn html_title(bytes: &[u8]) -> Option<String> {
+    let html = text_from_utf8_lossy(bytes);
+    let document = Html::parse_document(&html);
+    let title_selector = Selector::parse("title").expect("title selector parses");
+    document
+        .select(&title_selector)
+        .next()
+        .map(|title| markdown_title(&single_line(&title.text().collect::<Vec<_>>().join(" "))))
+        .filter(|title| !title.is_empty())
+}
+
+fn title_from_url_path(url: &str) -> Option<String> {
+    let without_fragment = url.split('#').next().unwrap_or(url);
+    let without_query = without_fragment
+        .split('?')
+        .next()
+        .unwrap_or(without_fragment);
+    let path = without_query
+        .split_once("://")
+        .and_then(|(_, rest)| rest.split_once('/').map(|(_, path)| path))
+        .unwrap_or(without_query);
+    let segment = path.trim_end_matches('/').rsplit('/').next()?.trim();
+    if segment.is_empty() {
+        return None;
+    }
+    let title = markdown_title(&percent_decode_lossy(segment));
+    (!title.is_empty()).then_some(title)
+}
+
+fn url_host(url: &str) -> Option<String> {
+    let host = url
+        .split_once("://")?
+        .1
+        .split(['/', '?', '#'])
+        .next()?
+        .trim();
+    (!host.is_empty()).then(|| host.to_string())
+}
+
+fn percent_decode_lossy(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%'
+            && index + 2 < bytes.len()
+            && let (Some(high), Some(low)) =
+                (hex_value(bytes[index + 1]), hex_value(bytes[index + 2]))
+        {
+            decoded.push((high << 4) | low);
+            index += 3;
+            continue;
+        }
+        decoded.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8_lossy(&decoded).into_owned()
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 fn render_wayback_markdown(
@@ -141,7 +216,7 @@ mod tests {
 
         let raw = std::fs::read_to_string(temp.path().join(&result.raw_path))
             .expect("raw markdown written");
-        assert!(raw.contains("# https://example.com/research"));
+        assert!(raw.contains("# research"));
         assert!(raw.contains("source_kind: wayback"));
         assert!(raw.contains("original_url: https://example.com/research"));
         assert!(raw.contains(
@@ -173,6 +248,32 @@ mod tests {
         assert_eq!(text, "Visible & decoded.");
         assert!(!text.contains("Archive Shell"));
         assert!(!text.contains("ignore()"));
+    }
+
+    #[test]
+    fn wayback_prefers_html_title_then_decoded_url_path_then_host() {
+        let with_title = WaybackCaptureSnapshot {
+            original_url: "https://example.com/fallback".to_string(),
+            capture_url: "https://web.archive.org/web/1/https://example.com/fallback".to_string(),
+            capture_timestamp: "1".to_string(),
+            fetched_at: "2026-05-29T18:10:00Z".to_string(),
+            body: b"<html><head><title>Readable Title</title></head><body></body></html>".to_vec(),
+            content_type: Some("text/html".to_string()),
+        };
+        let without_title = WaybackCaptureSnapshot {
+            original_url: "https://example.com/research/hello%20world?utm=1#frag".to_string(),
+            body: b"<html><body>No title</body></html>".to_vec(),
+            ..with_title.clone()
+        };
+        let host_only = WaybackCaptureSnapshot {
+            original_url: "https://example.com/?utm=1#frag".to_string(),
+            body: b"<html><body>No title</body></html>".to_vec(),
+            ..with_title.clone()
+        };
+
+        assert_eq!(wayback_title(&with_title), "Readable Title");
+        assert_eq!(wayback_title(&without_title), "hello world");
+        assert_eq!(wayback_title(&host_only), "example.com");
     }
 
     #[test]

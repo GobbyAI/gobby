@@ -109,6 +109,17 @@ fn collect_inbox_with_limit(
         }
 
         let bytes = fs::read(&path).map_err(|error| io_error("read inbox item", &path, error))?;
+        if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > max_item_bytes {
+            skip_item(
+                vault_root,
+                fetched_at,
+                relative,
+                path,
+                format!("inbox item exceeds {max_item_bytes} byte limit"),
+                &mut report,
+            )?;
+            continue;
+        }
         match classify_inbox_item(&path, &bytes) {
             Ok(kind) => {
                 accept_item(

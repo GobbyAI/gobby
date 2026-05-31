@@ -3,6 +3,8 @@ use std::sync::OnceLock;
 
 use super::context::{ImportResolutionContext, JS_BUILTIN_MODULES};
 
+const STANDARD_RUST_CRATES: &[&str] = &["std", "core", "alloc", "proc_macro", "test"];
+
 pub(super) fn is_external_python_module(
     module: &str,
     import_context: &ImportResolutionContext,
@@ -67,11 +69,7 @@ pub(super) fn is_external_go_module(
 
 pub(super) fn rust_external_roots(import_context: &ImportResolutionContext) -> HashSet<String> {
     let mut roots = import_context.rust_external_crates.clone();
-    roots.extend(
-        ["std", "core", "alloc", "proc_macro", "test"]
-            .into_iter()
-            .map(ToOwned::to_owned),
-    );
+    roots.extend(STANDARD_RUST_CRATES.iter().copied().map(ToOwned::to_owned));
     if let Some(self_crate) = import_context.rust_self_crate_name.as_deref() {
         roots.remove(self_crate);
     }
@@ -163,8 +161,7 @@ pub(super) fn is_external_rust_root(root: &str, import_context: &ImportResolutio
     if import_context.rust_self_crate_name.as_deref() == Some(root) {
         return false;
     }
-    import_context.rust_external_crates.contains(root)
-        || matches!(root, "std" | "core" | "alloc" | "proc_macro" | "test")
+    import_context.rust_external_crates.contains(root) || STANDARD_RUST_CRATES.contains(&root)
 }
 
 /// Returns a curated Ruby `require` to constant-root mapping.

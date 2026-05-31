@@ -1,6 +1,6 @@
-#[cfg(feature = "rustls")]
-use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
+#[cfg(feature = "rustls")]
+use std::time::Duration;
 
 use gobby_core::config::{EmbeddingConfig, QdrantConfig};
 use gobby_core::degradation::{DegradationKind, ServiceState};
@@ -189,45 +189,24 @@ where
 }
 
 #[cfg(feature = "rustls")]
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct OpenAiEmbeddingBackend {
-    clients: HashMap<u64, reqwest::blocking::Client>,
-    client_order: VecDeque<u64>,
+    client: reqwest::blocking::Client,
+}
+
+#[cfg(feature = "rustls")]
+impl Default for OpenAiEmbeddingBackend {
+    fn default() -> Self {
+        Self {
+            client: reqwest::blocking::Client::new(),
+        }
+    }
 }
 
 #[cfg(feature = "rustls")]
 impl OpenAiEmbeddingBackend {
-    const MAX_TIMEOUT_CLIENTS: usize = 4;
-
     pub fn new() -> Self {
         Self::default()
-    }
-
-    fn client_for_timeout(
-        &mut self,
-        timeout_seconds: u64,
-    ) -> Result<reqwest::blocking::Client, SearchError> {
-        if let Some(client) = self.clients.get(&timeout_seconds).cloned() {
-            self.touch_timeout_client(timeout_seconds);
-            return Ok(client);
-        }
-        let client = reqwest::blocking::Client::builder()
-            .timeout(std::time::Duration::from_secs(timeout_seconds))
-            .build()
-            .map_err(|error| SearchError::Backend(error.to_string()))?;
-        self.clients.insert(timeout_seconds, client.clone());
-        self.client_order.push_back(timeout_seconds);
-        while self.client_order.len() > Self::MAX_TIMEOUT_CLIENTS {
-            if let Some(evicted) = self.client_order.pop_front() {
-                self.clients.remove(&evicted);
-            }
-        }
-        Ok(client)
-    }
-
-    fn touch_timeout_client(&mut self, timeout_seconds: u64) {
-        self.client_order.retain(|value| *value != timeout_seconds);
-        self.client_order.push_back(timeout_seconds);
     }
 }
 
@@ -238,12 +217,15 @@ impl QueryEmbedder for OpenAiEmbeddingBackend {
         config: &EmbeddingConfig,
         query: &str,
     ) -> Result<Vec<f32>, SearchError> {
-        let client = self.client_for_timeout(config.timeout_seconds)?;
         let url = format!("{}/embeddings", config.api_base.trim_end_matches('/'));
-        let mut request = client.post(url).json(&json!({
-            "model": config.model,
-            "input": query,
-        }));
+        let mut request = self
+            .client
+            .post(url)
+            .timeout(Duration::from_secs(config.timeout_seconds))
+            .json(&json!({
+                "model": config.model,
+                "input": query,
+            }));
         if let Some(api_key) = &config.api_key {
             request = request.bearer_auth(api_key);
         }
@@ -345,6 +327,8 @@ fn payload_matches_scope(payload: &Map<String, Value>, scope: &SearchScope) -> b
 fn hit_to_result(hit: SearchHit, scope: &SearchScope) -> Option<WikiSearchResult> {
     let path = payload_string(&hit.payload, "path")?;
     let source_path = payload_string(&hit.payload, "source_path").unwrap_or_else(|| path.clone());
+    let path_buf = PathBuf::from(path);
+    let source_path_buf = PathBuf::from(source_path);
     let chunk_index = payload_usize(&hit.payload, "chunk_index");
     let byte_start = payload_usize(&hit.payload, "byte_start");
     let byte_end = payload_usize(&hit.payload, "byte_end");
@@ -362,8 +346,8 @@ fn hit_to_result(hit: SearchHit, scope: &SearchScope) -> Option<WikiSearchResult
         id: hit.id,
         title: payload_string(&hit.payload, "title"),
         scope: scope.clone(),
-        path: PathBuf::from(&path),
-        source_path: PathBuf::from(&source_path),
+        path: path_buf.clone(),
+        source_path: source_path_buf.clone(),
         hit_kind: if chunk.is_some() {
             SearchHitKind::Chunk
         } else {
@@ -377,8 +361,8 @@ fn hit_to_result(hit: SearchHit, scope: &SearchScope) -> Option<WikiSearchResult
         explanations: Vec::new(),
         chunk,
         provenance: SearchProvenance {
-            document_path: PathBuf::from(path),
-            source_path: PathBuf::from(source_path),
+            document_path: path_buf,
+            source_path: source_path_buf,
             source_kind: payload_string(&hit.payload, "source_kind")
                 .unwrap_or_else(|| "unknown".to_string()),
             content_hash: payload_string(&hit.payload, "content_hash"),

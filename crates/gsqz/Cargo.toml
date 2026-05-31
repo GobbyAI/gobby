@@ -25,7 +25,7 @@ clap = { version = "4", features = ["derive"] }
 dirs = "6"
 regex = "1"
 serde = { version = "1", features = ["derive"] }
-serde_yaml = "0.9"
+serde_yaml = { package = "yaml_serde", version = "0.10.4" }
 
 # Gobby-specific (daemon HTTP integration)
 ureq = { version = "2", features = ["json"], optional = true }

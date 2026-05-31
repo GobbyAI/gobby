@@ -189,6 +189,11 @@ impl Context {
     }
 
     /// Resolve service config for a caller-supplied project id without touching cwd identity.
+    ///
+    /// This is for daemon-style calls that already know the target project id and must not
+    /// discover a project root from cwd. The returned context therefore has an empty
+    /// `project_root`, default code-vector settings, and `None` for services that are not
+    /// needed by project-id-only graph operations.
     pub fn resolve_for_project_id(project_id: &str, quiet: bool) -> anyhow::Result<Self> {
         let project_id = normalize_project_id(project_id)?;
         let database_url = db::resolve_database_url()?;

@@ -253,6 +253,8 @@ impl StandaloneSetup for GwikiStandaloneSetup {
 
     fn create(&self, ctx: &mut SetupContext<'_>) -> Result<SetupReport, SetupError> {
         let mut report = SetupReport::default();
+        // Objects are created with `IF NOT EXISTS`, so setup is idempotent without
+        // holding a single explicit transaction across all gwiki-owned DDL.
         for mut object in self.owned_objects()? {
             match (object.creator)(ctx) {
                 Ok(()) => report.created.push(object.name),

@@ -8,6 +8,11 @@ use crate::models::Symbol;
 use super::common::ResolvedGraphSymbol;
 use super::symbols::{search_symbols_by_name, search_symbols_fts};
 
+const EXACT_ID_MATCH_LIMIT: usize = 2;
+const EXACT_QUALIFIED_NAME_MATCH_LIMIT: usize = 6;
+const EXACT_NAME_MATCH_LIMIT: usize = 6;
+const FUZZY_NAME_MATCH_LIMIT: usize = 6;
+
 fn exact_symbol_matches(
     conn: &mut Client,
     project_id: &str,
@@ -15,17 +20,31 @@ fn exact_symbol_matches(
     input: &str,
     limit: usize,
 ) -> Vec<Symbol> {
-    if !matches!(column, "id" | "qualified_name" | "name") {
-        return Vec::new();
-    }
     let columns = db::symbol_select_columns("");
-    let sql = format!(
-        "SELECT {columns}
-         FROM code_symbols
-         WHERE project_id = $1 AND {column} = $2
-         ORDER BY file_path ASC, line_start ASC
-         LIMIT $3"
-    );
+    let sql = match column {
+        "id" => format!(
+            "SELECT {columns}
+             FROM code_symbols
+             WHERE project_id = $1 AND id = $2
+             ORDER BY file_path ASC, line_start ASC
+             LIMIT $3"
+        ),
+        "qualified_name" => format!(
+            "SELECT {columns}
+             FROM code_symbols
+             WHERE project_id = $1 AND qualified_name = $2
+             ORDER BY file_path ASC, line_start ASC
+             LIMIT $3"
+        ),
+        "name" => format!(
+            "SELECT {columns}
+             FROM code_symbols
+             WHERE project_id = $1 AND name = $2
+             ORDER BY file_path ASC, line_start ASC
+             LIMIT $3"
+        ),
+        _ => return Vec::new(),
+    };
     match conn.query(&sql, &[&project_id, &input, &(limit as i64)]) {
         Ok(rows) => rows
             .iter()
@@ -85,7 +104,11 @@ pub fn resolve_graph_symbol(
     input: &str,
     project_id: &str,
 ) -> (Option<ResolvedGraphSymbol>, Vec<String>) {
-    for (column, limit) in [("id", 2), ("qualified_name", 6), ("name", 6)] {
+    for (column, limit) in [
+        ("id", EXACT_ID_MATCH_LIMIT),
+        ("qualified_name", EXACT_QUALIFIED_NAME_MATCH_LIMIT),
+        ("name", EXACT_NAME_MATCH_LIMIT),
+    ] {
         if let Some(result) =
             decisive_resolution(exact_symbol_matches(conn, project_id, column, input, limit))
         {
@@ -100,11 +123,19 @@ pub fn resolve_graph_symbol(
         None,
         None,
         &[],
-        6,
+        FUZZY_NAME_MATCH_LIMIT,
     )) {
         return result;
     }
 
-    let fts_results = search_symbols_fts(conn, input, project_id, None, None, &[], 6);
+    let fts_results = search_symbols_fts(
+        conn,
+        input,
+        project_id,
+        None,
+        None,
+        &[],
+        FUZZY_NAME_MATCH_LIMIT,
+    );
     resolve_from_candidates(fts_results)
 }

@@ -43,6 +43,7 @@ pub mod embedding_keys {
     pub const AI_API_KEY: &str = "ai.embeddings.api_key";
     pub const AI_QUERY_PREFIX: &str = "ai.embeddings.query_prefix";
     pub const AI_DIM: &str = "ai.embeddings.dim";
+    pub const AI_TIMEOUT_SECONDS: &str = "ai.embeddings.timeout_seconds";
 
     const LEGACY_NAMESPACE: &str = "embeddings";
     const LEGACY_KEY_SUFFIXES: &[&str] = &[
@@ -209,11 +210,14 @@ pub fn resolve_embedding_config(source: &mut impl ConfigSource) -> Option<Embedd
 pub fn resolve_embedding_config_resolution(
     source: &mut impl ConfigSource,
 ) -> Option<EmbeddingConfigResolution> {
-    let api_base = resolve_config_value(source, embedding_keys::AI_API_BASE)?;
-    let model = resolve_config_value(source, embedding_keys::AI_MODEL)
+    let api_base = resolve_embedding_setting(source, embedding_keys::AI_API_BASE)?;
+    let model = resolve_embedding_setting(source, embedding_keys::AI_MODEL)
         .unwrap_or_else(|| EMBEDDING_DEFAULT_MODEL.to_string());
-    let api_key = resolve_config_value(source, embedding_keys::AI_API_KEY);
-    let query_prefix = resolve_config_value(source, embedding_keys::AI_QUERY_PREFIX);
+    let api_key = resolve_embedding_setting(source, embedding_keys::AI_API_KEY);
+    let query_prefix = resolve_embedding_setting(source, embedding_keys::AI_QUERY_PREFIX);
+    let timeout_seconds = resolve_embedding_setting(source, embedding_keys::AI_TIMEOUT_SECONDS)
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(EMBEDDING_DEFAULT_TIMEOUT_SECONDS);
 
     Some(EmbeddingConfigResolution {
         config: EmbeddingConfig {
@@ -221,10 +225,14 @@ pub fn resolve_embedding_config_resolution(
             model,
             api_key,
             query_prefix,
-            timeout_seconds: EMBEDDING_DEFAULT_TIMEOUT_SECONDS,
+            timeout_seconds,
         },
         namespace: embedding_keys::AI_NAMESPACE,
     })
+}
+
+fn resolve_embedding_setting(source: &mut impl ConfigSource, config_key: &str) -> Option<String> {
+    resolve_config_value(source, config_key)
 }
 
 fn resolve_setting(
@@ -484,6 +492,7 @@ mod tests {
             (embedding_keys::AI_MODEL, "new-model"),
             (embedding_keys::AI_API_KEY, "$secret:AI_KEY"),
             (embedding_keys::AI_QUERY_PREFIX, "new-query:"),
+            (embedding_keys::AI_TIMEOUT_SECONDS, "12"),
         ]);
 
         let resolution =
@@ -495,7 +504,7 @@ mod tests {
         assert_eq!(config.model, "new-model");
         assert_eq!(config.api_key.as_deref(), Some("resolved-AI_KEY"));
         assert_eq!(config.query_prefix.as_deref(), Some("new-query:"));
-        assert_eq!(config.timeout_seconds, EMBEDDING_DEFAULT_TIMEOUT_SECONDS);
+        assert_eq!(config.timeout_seconds, 12);
     }
 
     #[test]
@@ -647,6 +656,22 @@ mod tests {
     }
 
     #[test]
+    fn invalid_embedding_timeout_uses_default() {
+        let _env = EnvGuard::new();
+        let mut source = TestSource::with_values([
+            (
+                embedding_keys::AI_API_BASE,
+                "http://stored-embedding:11434/v1",
+            ),
+            (embedding_keys::AI_TIMEOUT_SECONDS, "not-a-number"),
+        ]);
+
+        let embedding = resolve_embedding_config(&mut source).expect("embedding config");
+
+        assert_eq!(embedding.timeout_seconds, EMBEDDING_DEFAULT_TIMEOUT_SECONDS);
+    }
+
+    #[test]
     fn falkordb_config_has_no_domain_graph_name() {
         let config = FalkorConfig {
             host: "falkor.local".to_string(),
@@ -770,6 +795,7 @@ mod tests {
             embedding_keys::AI_API_KEY,
             embedding_keys::AI_QUERY_PREFIX,
             embedding_keys::AI_DIM,
+            embedding_keys::AI_TIMEOUT_SECONDS,
         ]
         .into_iter()
         .map(str::to_string)

@@ -5,7 +5,9 @@ use crate::ingest::{
     IngestResult, index_after_ingest, markdown_metadata, markdown_title, text_from_utf8_lossy,
     write_asset, write_raw_markdown,
 };
-use crate::sources::{CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest};
+use crate::sources::{
+    CompileStatus, IngestionMethod, SourceDraft, SourceDraftRef, SourceKind, SourceManifest,
+};
 use crate::store::WikiIndexStore;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,18 +35,20 @@ pub fn ingest_path(
         .unwrap_or("source");
     let title = markdown_title(file_name);
     let location = source_location(vault_root, path);
-    let draft = SourceDraft {
-        location: location.clone(),
-        kind: kind.clone(),
-        fetched_at: fetched_at.to_string(),
-        content: bytes.clone(),
-        title: Some(title.clone()),
-        citation: Some(location.clone()),
-        license: None,
-        ingestion_method: IngestionMethod::Manual,
-        compile_status: CompileStatus::Pending,
-    };
-    let record = SourceManifest::register(vault_root, draft)?;
+    let record = SourceManifest::register_borrowed(
+        vault_root,
+        SourceDraftRef {
+            location: location.clone(),
+            kind: kind.clone(),
+            fetched_at: fetched_at.to_string(),
+            content: &bytes,
+            title: Some(title.clone()),
+            citation: Some(location.clone()),
+            license: None,
+            ingestion_method: IngestionMethod::Manual,
+            compile_status: CompileStatus::Pending,
+        },
+    )?;
     let asset_path = should_store_asset(&kind)
         .then(|| write_asset(vault_root, &record, file_name, &bytes))
         .transpose()?;

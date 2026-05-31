@@ -82,7 +82,12 @@ fn render_pdf_markdown(
         markdown.push_str("## Page ");
         markdown.push_str(&page.number.to_string());
         markdown.push_str("\n\n");
-        markdown.push_str(&normalize_page_text(&page.text));
+        let body = normalize_page_text(&page.text);
+        if body.is_empty() {
+            markdown.push_str("No extractable page text.");
+        } else {
+            markdown.push_str(&body);
+        }
         markdown.push_str("\n\n");
     }
     markdown

@@ -331,6 +331,10 @@ impl CodeSymbolVectorLifecycle {
         &self,
         symbols: &[Symbol],
     ) -> Result<Vec<UpsertRequest>, VectorLifecycleError> {
+        if symbols.is_empty() {
+            return Ok(Vec::new());
+        }
+
         let texts = symbols
             .iter()
             .map(vector_text_for_symbol)

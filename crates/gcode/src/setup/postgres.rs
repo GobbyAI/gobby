@@ -31,14 +31,21 @@ pub fn run_standalone_setup(
         return Err(err);
     }
 
-    let report = {
+    let setup_result = {
         let mut ctx = SetupContext {
             pg: Some(client),
             falkor_config: None,
             qdrant_config: None,
             non_interactive: true,
         };
-        setup.create(&mut ctx)?
+        setup.create(&mut ctx)
+    };
+    let report = match setup_result {
+        Ok(report) => report,
+        Err(err) => {
+            let _ = rollback_postgres_transaction(client, "standalone setup rollback");
+            return Err(err);
+        }
     };
     if report.failed.is_empty() {
         commit_postgres_transaction(client)?;

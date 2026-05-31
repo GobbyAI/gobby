@@ -52,6 +52,10 @@ pub fn semantic_search(ctx: &Context, query: &str, limit: usize) -> Vec<(String,
     results
 }
 
+/// Fetch `limit` hits from each visible project, then globally truncate.
+///
+/// Per-project over-fetch prevents one collection from consuming the whole
+/// request before reciprocal-rank fusion can compare visible project results.
 fn per_project_semantic_limit(limit: usize, project_count: usize) -> Option<usize> {
     if limit == 0 || project_count == 0 {
         return None;

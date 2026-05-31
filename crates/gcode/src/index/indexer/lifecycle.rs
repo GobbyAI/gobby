@@ -88,30 +88,32 @@ pub fn invalidate(
         notify_daemon_invalidate(url, project_id);
     }
 
-    conn.execute(
+    let mut tx = conn.transaction()?;
+    tx.execute(
         "DELETE FROM code_symbols WHERE project_id = $1",
         &[&project_id],
     )?;
-    conn.execute(
+    tx.execute(
         "DELETE FROM code_indexed_files WHERE project_id = $1",
         &[&project_id],
     )?;
-    conn.execute(
+    tx.execute(
         "DELETE FROM code_content_chunks WHERE project_id = $1",
         &[&project_id],
     )?;
-    conn.execute(
+    tx.execute(
         "DELETE FROM code_imports WHERE project_id = $1",
         &[&project_id],
     )?;
-    conn.execute(
+    tx.execute(
         "DELETE FROM code_calls WHERE project_id = $1",
         &[&project_id],
     )?;
-    conn.execute(
+    tx.execute(
         "DELETE FROM code_indexed_projects WHERE id = $1",
         &[&project_id],
     )?;
+    tx.commit()?;
     eprintln!("Invalidated code index for project {project_id}");
 
     Ok(())

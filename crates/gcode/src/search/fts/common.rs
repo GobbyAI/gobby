@@ -261,7 +261,11 @@ pub(super) fn query_symbols_by_conditions(
 ) -> Vec<Symbol> {
     push_symbol_filters(&mut conditions, &mut params, "cs", filters);
     let limit_placeholder = push_param(&mut params, limit as i64);
-    let where_clause = conditions.join(" AND ");
+    let where_clause = if conditions.is_empty() {
+        "TRUE".to_string()
+    } else {
+        conditions.join(" AND ")
+    };
     let columns = db::symbol_select_columns("cs");
     let sql = format!(
         "SELECT {columns}

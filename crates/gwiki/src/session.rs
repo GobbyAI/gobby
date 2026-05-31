@@ -1,4 +1,4 @@
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -134,13 +134,19 @@ impl ResearchSession {
             path: Some(path.clone()),
             source: error,
         })?;
-        let temp_path =
-            path.with_file_name(format!(".research-session.{}.tmp", std::process::id()));
-        let mut file = fs::File::create(&temp_path).map_err(|error| WikiError::Io {
-            action: "create research checkpoint temp file",
-            path: Some(temp_path.clone()),
-            source: error,
-        })?;
+        let temp_path = path.with_file_name(format!(
+            ".research-session.{}.tmp",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp_path)
+            .map_err(|error| WikiError::Io {
+                action: "create research checkpoint temp file",
+                path: Some(temp_path.clone()),
+                source: error,
+            })?;
         if let Err(error) = file.write_all(json.as_bytes()) {
             let _ = fs::remove_file(&temp_path);
             return Err(WikiError::Io {

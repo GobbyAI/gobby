@@ -153,21 +153,14 @@ fn sync_file_graph(
     if !db::indexed_project_exists(&mut conn, &ctx.project_id)? {
         return Err(GraphSyncContractError::project_not_indexed(ctx, file_path).into());
     }
-    if !db::indexed_file_exists(&mut conn, &ctx.project_id, file_path)? {
-        if allow_missing_indexed_file {
-            return Ok(GraphFileSyncOutcome::SkippedMissingIndexedFile);
-        }
-        return Err(GraphSyncContractError::indexed_file_not_found(ctx, file_path).into());
-    }
-
     code_graph::require_graph_reads(ctx)?;
-    let facts = db::read_graph_file_facts(&mut conn, &ctx.project_id, file_path)?;
     if !db::mark_graph_sync_attempted(&mut conn, &ctx.project_id, file_path)? {
         if allow_missing_indexed_file {
             return Ok(GraphFileSyncOutcome::SkippedMissingIndexedFile);
         }
         return Err(GraphSyncContractError::indexed_file_not_found(ctx, file_path).into());
     }
+    let facts = db::read_graph_file_facts(&mut conn, &ctx.project_id, file_path)?;
     let relationships_written = code_graph::sync_file_graph(
         ctx,
         &facts.file_path,

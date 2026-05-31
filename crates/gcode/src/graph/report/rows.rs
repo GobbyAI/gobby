@@ -73,14 +73,12 @@ fn row_string(row: &Row, keys: &[&str]) -> Option<String> {
 }
 
 fn row_usize(row: &Row, keys: &[&str]) -> Option<usize> {
-    keys.iter()
-        .find_map(|key| row.get(*key))
-        .and_then(|value| {
-            value
-                .as_u64()
-                .or_else(|| value.as_i64().and_then(|value| value.try_into().ok()))
-        })
-        .map(|value| value as usize)
+    keys.iter().find_map(|key| row.get(*key)).and_then(|value| {
+        value
+            .as_u64()
+            .and_then(|value| usize::try_from(value).ok())
+            .or_else(|| value.as_i64().and_then(|value| usize::try_from(value).ok()))
+    })
 }
 
 fn row_f64(row: &Row, keys: &[&str]) -> Option<f64> {

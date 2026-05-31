@@ -40,7 +40,8 @@ pub fn read_project_id(project_root: &Path) -> anyhow::Result<String> {
 fn read_project_id_from(path: &Path) -> anyhow::Result<String> {
     let contents = std::fs::read_to_string(path)
         .with_context(|| format!("failed to read {}", path.display()))?;
-    let json: serde_json::Value = serde_json::from_str(&contents)?;
+    let json: serde_json::Value = serde_json::from_str(&contents)
+        .with_context(|| format!("failed to parse {}", path.display()))?;
     json.get("id")
         .or_else(|| json.get("project_id"))
         .and_then(|v| v.as_str())

@@ -421,7 +421,7 @@ fn render_frontmatter(
     markdown.push_str(&yaml_scalar(title));
     markdown.push('\n');
     markdown.push_str("source_kind: ");
-    markdown.push_str(source_kind);
+    markdown.push_str(&yaml_scalar(source_kind));
     markdown.push('\n');
     markdown.push_str("tags:\n");
     markdown.push_str("  - gwiki\n");
@@ -430,7 +430,7 @@ fn render_frontmatter(
     markdown.push_str(&yaml_scalar(handoff_id));
     markdown.push('\n');
     markdown.push_str("synthesis_mode: ");
-    markdown.push_str(synthesis_mode);
+    markdown.push_str(&yaml_scalar(synthesis_mode));
     markdown.push_str("\n---\n\n");
 }
 

@@ -137,7 +137,7 @@ fn render_image_derived_markdown(
     }
     if let Some(extraction) = &extraction {
         for (key, value) in &extraction.metadata {
-            fields.push((key.clone(), value.clone()));
+            fields.push((format!("vision_{key}"), value.clone()));
         }
     }
 

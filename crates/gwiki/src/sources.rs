@@ -129,6 +129,18 @@ impl SourceDraft {
     }
 }
 
+pub(crate) struct SourceDraftRef<'a> {
+    pub location: String,
+    pub kind: SourceKind,
+    pub fetched_at: String,
+    pub content: &'a [u8],
+    pub title: Option<String>,
+    pub citation: Option<String>,
+    pub license: Option<String>,
+    pub ingestion_method: IngestionMethod,
+    pub compile_status: CompileStatus,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourceRecord {
     pub id: String,
@@ -195,9 +207,51 @@ impl SourceManifest {
         Self::register_with_content_hash(vault_root, draft, content_hash)
     }
 
+    pub(crate) fn register_borrowed(
+        vault_root: &Path,
+        draft: SourceDraftRef<'_>,
+    ) -> Result<SourceRecord, WikiError> {
+        let content_hash = gobby_core::indexing::content_hash(draft.content);
+        Self::register_parts_with_content_hash(
+            vault_root,
+            SourceRecordParts {
+                location: draft.location,
+                kind: draft.kind,
+                fetched_at: draft.fetched_at,
+                title: draft.title,
+                citation: draft.citation,
+                license: draft.license,
+                ingestion_method: draft.ingestion_method,
+                compile_status: draft.compile_status,
+            },
+            content_hash,
+        )
+    }
+
     pub fn register_with_content_hash(
         vault_root: &Path,
         draft: SourceDraft,
+        content_hash: String,
+    ) -> Result<SourceRecord, WikiError> {
+        Self::register_parts_with_content_hash(
+            vault_root,
+            SourceRecordParts {
+                location: draft.location,
+                kind: draft.kind,
+                fetched_at: draft.fetched_at,
+                title: draft.title,
+                citation: draft.citation,
+                license: draft.license,
+                ingestion_method: draft.ingestion_method,
+                compile_status: draft.compile_status,
+            },
+            content_hash,
+        )
+    }
+
+    fn register_parts_with_content_hash(
+        vault_root: &Path,
+        draft: SourceRecordParts,
         content_hash: String,
     ) -> Result<SourceRecord, WikiError> {
         let mut manifest = Self::read(vault_root)?;
@@ -253,6 +307,17 @@ impl SourceManifest {
     pub fn index_path(vault_root: &Path) -> PathBuf {
         vault_root.join("raw").join("INDEX.md")
     }
+}
+
+struct SourceRecordParts {
+    location: String,
+    kind: SourceKind,
+    fetched_at: String,
+    title: Option<String>,
+    citation: Option<String>,
+    license: Option<String>,
+    ingestion_method: IngestionMethod,
+    compile_status: CompileStatus,
 }
 
 fn render_entry(entry: &SourceRecord, index: &mut String) -> Result<(), WikiError> {

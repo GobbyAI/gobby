@@ -1,7 +1,8 @@
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
@@ -402,11 +403,7 @@ fn append_raw_index(vault_root: &Path, title: &str, note_path: &Path) -> Result<
             path: Some(lock_path.clone()),
             source: error,
         })?;
-    fs4::FileExt::lock(&lock).map_err(|error| WikiError::Io {
-        action: "lock raw index",
-        path: Some(lock_path),
-        source: error,
-    })?;
+    lock_raw_index(&lock, &lock_path)?;
     let mut contents = fs::read_to_string(&index_path).map_err(|error| WikiError::Io {
         action: "read raw index",
         path: Some(index_path.clone()),
@@ -417,6 +414,38 @@ fn append_raw_index(vault_root: &Path, title: &str, note_path: &Path) -> Result<
     }
     contents.push_str(&format!("- [{title}]({relative})\n"));
     write_file_atomically(&index_path, contents.as_bytes(), "raw index")
+}
+
+fn lock_raw_index(lock: &fs::File, lock_path: &Path) -> Result<(), WikiError> {
+    let timeout = Duration::from_secs(10);
+    let started = Instant::now();
+
+    loop {
+        match fs4::FileExt::try_lock(lock) {
+            Ok(()) => return Ok(()),
+            Err(fs4::TryLockError::WouldBlock) => {
+                let elapsed = started.elapsed();
+                if elapsed >= timeout {
+                    return Err(WikiError::Io {
+                        action: "lock raw index",
+                        path: Some(lock_path.to_path_buf()),
+                        source: std::io::Error::new(
+                            ErrorKind::TimedOut,
+                            format!("timed out after {}ms", timeout.as_millis()),
+                        ),
+                    });
+                }
+                thread::sleep(Duration::from_millis(25).min(timeout - elapsed));
+            }
+            Err(error) => {
+                return Err(WikiError::Io {
+                    action: "lock raw index",
+                    path: Some(lock_path.to_path_buf()),
+                    source: error.into(),
+                });
+            }
+        }
+    }
 }
 
 fn raw_index_lock_path(index_path: &Path) -> PathBuf {
