@@ -286,6 +286,8 @@ fn exit_code_for_error(error: &WikiError) -> ExitCode {
     match error {
         WikiError::NotImplemented { .. }
         | WikiError::InvalidInput { .. }
+        | WikiError::Index { .. }
+        | WikiError::Search { .. }
         | WikiError::InvalidScope { .. } => ExitCode::from(2),
         WikiError::Config { .. }
         | WikiError::Io { .. }

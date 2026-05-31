@@ -100,6 +100,20 @@ impl GraphClient {
             }
         }
     }
+
+    /// Ensure an exact node index exists for a label/property pair.
+    pub fn ensure_exact_node_index(&mut self, label: &str, property: &str) -> anyhow::Result<()> {
+        let cypher = format!(
+            "CREATE INDEX ON :{}({})",
+            escape_label(label),
+            escape_property(property)
+        );
+        match self.query(&cypher, None) {
+            Ok(_) => Ok(()),
+            Err(error) if is_existing_index_error(&error) => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
 }
 
 /// Run a closure with a FalkorDB client, with typed degradation.
@@ -168,6 +182,13 @@ pub fn escape_string(value: &str) -> String {
 
 fn escape_identifier(value: &str) -> String {
     format!("`{}`", value.replace('`', "``"))
+}
+
+fn is_existing_index_error(error: &anyhow::Error) -> bool {
+    let message = error.to_string().to_ascii_lowercase();
+    message.contains("already indexed")
+        || message.contains("already exists")
+        || message.contains("index already exists")
 }
 
 fn parse_falkor_result(result: QueryResult<LazyResultSet<'_>>) -> Vec<Row> {

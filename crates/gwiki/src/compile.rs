@@ -558,8 +558,12 @@ fn prefixed_value<'a>(line: &'a str, prefixes: &[&str]) -> Option<&'a str> {
 }
 
 fn extend_unique(target: &mut Vec<String>, values: Vec<String>) {
+    let mut seen = target
+        .iter()
+        .cloned()
+        .collect::<std::collections::HashSet<_>>();
     for value in values {
-        if !target.contains(&value) {
+        if seen.insert(value.clone()) {
             target.push(value);
         }
     }

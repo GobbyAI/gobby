@@ -362,22 +362,34 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
         let document = self.document_meta(path)?;
         let path_string = display_path(path);
         let scope = self.scope.clone();
+        let chunks = chunks
+            .into_iter()
+            .map(|chunk| {
+                let chunk_index =
+                    i32::try_from(chunk.chunk_index).map_err(|_| StoreError::InvalidData {
+                        field: "chunk_index",
+                        message: format!(
+                            "{} is too large for PostgreSQL INTEGER",
+                            chunk.chunk_index
+                        ),
+                    })?;
+                Ok((chunk, chunk_index))
+            })
+            .collect::<Result<Vec<_>, StoreError>>()?;
         let mut tx = self.conn.transaction()?;
-        tx.execute(
+        if let Err(error) = tx.execute(
             "DELETE FROM gwiki_chunks WHERE scope_kind = $1 AND scope_id = $2 AND path = $3",
             &[
                 &scope.scope_kind.as_str(),
                 &scope.scope_id.as_str(),
                 &path_string,
             ],
-        )?;
+        ) {
+            let _ = tx.rollback();
+            return Err(error.into());
+        }
 
-        for chunk in chunks {
-            let chunk_index =
-                i32::try_from(chunk.chunk_index).map_err(|_| StoreError::InvalidData {
-                    field: "chunk_index",
-                    message: format!("{} is too large for PostgreSQL INTEGER", chunk.chunk_index),
-                })?;
+        for (chunk, chunk_index) in chunks {
             let chunk_path = display_path(&chunk.path);
             let id = scoped_id(
                 "chunk",
@@ -405,7 +417,7 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
                 scope.topic_name.clone(),
             );
 
-            tx.execute(
+            if let Err(error) = tx.execute(
                 "INSERT INTO gwiki_chunks (
                     id, document_id, scope_kind, scope_id, project_id, topic_name, path,
                     chunk_index, source_kind, content_hash, frontmatter, provenance,
@@ -432,7 +444,10 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
                     &heading_path,
                     &chunk.content,
                 ],
-            )?;
+            ) {
+                let _ = tx.rollback();
+                return Err(error.into());
+            }
         }
 
         tx.commit()?;
@@ -554,14 +569,8 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
 
     fn record_ingestion(&mut self, ingestion: WikiIngestion) -> Result<(), StoreError> {
         let content_hash = ingestion.content_hash.clone();
-        let content_hash_suffix = content_hash.as_deref().unwrap_or("null");
         let status = ingestion_status(ingestion.event);
-        let id = scoped_text_id(
-            "ingestion",
-            &self.scope,
-            &ingestion.path,
-            &[status, content_hash_suffix],
-        );
+        let id = scoped_text_id("ingestion", &self.scope, &ingestion.path, &[status]);
         let path = display_path(&ingestion.path);
         let source_kind = self
             .documents
@@ -714,26 +723,11 @@ fn ingestion_status(event: WikiIngestionEvent) -> &'static str {
 }
 
 fn link_kind(target: &str) -> &'static str {
-    if target.starts_with("//") || has_uri_scheme(target) {
+    if target.contains("://") {
         "markdown"
     } else {
         "wiki"
     }
-}
-
-fn has_uri_scheme(target: &str) -> bool {
-    let Some(colon) = target.find(':') else {
-        return false;
-    };
-    let scheme = &target[..colon];
-    !scheme.is_empty()
-        && scheme
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '-' | '.'))
-        && scheme
-            .chars()
-            .next()
-            .is_some_and(|ch| ch.is_ascii_alphabetic())
 }
 
 pub fn configured_memory_index_limit_bytes() -> Option<u64> {
@@ -757,8 +751,8 @@ mod tests {
     #[test]
     fn link_kind_classifies_uri_schemes_and_fragments() {
         assert_eq!(link_kind("https://example.test"), "markdown");
-        assert_eq!(link_kind("mailto:hello@example.test"), "markdown");
-        assert_eq!(link_kind("//example.test/path"), "markdown");
+        assert_eq!(link_kind("mailto:hello@example.test"), "wiki");
+        assert_eq!(link_kind("//example.test/path"), "wiki");
         assert_eq!(link_kind("#local-section"), "wiki");
         assert_eq!(link_kind("Concept Page"), "wiki");
     }

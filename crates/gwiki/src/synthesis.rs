@@ -307,11 +307,7 @@ pub fn write_synthesized_page(
                     PageWriteKind::Created
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                    fs::write(&page.path, &page.markdown).map_err(|error| WikiError::Io {
-                        action: "write synthesized wiki page",
-                        path: Some(page.path.clone()),
-                        source: error,
-                    })?;
+                    write_synthesized_page_atomically(&page.path, page.markdown.as_bytes())?;
                     PageWriteKind::Overwritten
                 }
                 Err(error) => {
@@ -482,13 +478,70 @@ fn trim_markdown_extension(path: &str) -> String {
 }
 
 fn yaml_scalar(value: &str) -> String {
-    let escaped = value
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n")
-        .replace('\r', "\\r")
-        .replace('\t', "\\t");
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '\\' => escaped.push_str("\\\\"),
+            '"' => escaped.push_str("\\\""),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            '\0' => escaped.push_str("\\0"),
+            '\u{0008}' => escaped.push_str("\\b"),
+            '\u{000C}' => escaped.push_str("\\f"),
+            '\u{007F}' => escaped.push_str("\\u007F"),
+            ch if ch.is_control() => escaped.push_str(&format!("\\u{:04X}", ch as u32)),
+            ch => escaped.push(ch),
+        }
+    }
     format!("\"{escaped}\"")
+}
+
+fn write_synthesized_page_atomically(path: &Path, contents: &[u8]) -> Result<(), WikiError> {
+    let temp_path = temp_sibling_path(path);
+    let mut file = fs::File::create(&temp_path).map_err(|error| WikiError::Io {
+        action: "create synthesized page temp file",
+        path: Some(temp_path.clone()),
+        source: error,
+    })?;
+    if let Err(error) = file.write_all(contents) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(WikiError::Io {
+            action: "write synthesized page temp file",
+            path: Some(temp_path),
+            source: error,
+        });
+    }
+    if let Err(error) = file.sync_all() {
+        let _ = fs::remove_file(&temp_path);
+        return Err(WikiError::Io {
+            action: "sync synthesized page temp file",
+            path: Some(temp_path),
+            source: error,
+        });
+    }
+    drop(file);
+    if let Err(error) = fs::rename(&temp_path, path) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(WikiError::Io {
+            action: "replace synthesized wiki page",
+            path: Some(path.to_path_buf()),
+            source: error,
+        });
+    }
+    Ok(())
+}
+
+fn temp_sibling_path(path: &Path) -> PathBuf {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("page.md");
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    path.with_file_name(format!(".{file_name}.{}.{nanos}.tmp", std::process::id()))
 }
 
 #[cfg(test)]
@@ -561,6 +614,10 @@ mod tests {
         assert_eq!(
             yaml_scalar("a\\b\"c\nd\re\tf"),
             "\"a\\\\b\\\"c\\nd\\re\\tf\""
+        );
+        assert_eq!(
+            yaml_scalar("nul\0del\u{7f}\u{80}"),
+            "\"nul\\0del\\u007F\\u0080\""
         );
     }
 }

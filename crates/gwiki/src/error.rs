@@ -43,6 +43,12 @@ pub enum WikiError {
         field: &'static str,
         message: String,
     },
+    Index {
+        source: indexer::IndexError,
+    },
+    Search {
+        source: search::SearchError,
+    },
 }
 
 impl WikiError {
@@ -57,6 +63,8 @@ impl WikiError {
             Self::Registry { .. } => "registry_error",
             Self::Daemon { .. } => "daemon_error",
             Self::InvalidInput { .. } => "invalid_input",
+            Self::Index { .. } => "invalid_input",
+            Self::Search { .. } => "invalid_input",
         }
     }
 }
@@ -91,6 +99,8 @@ impl fmt::Display for WikiError {
             Self::InvalidInput { field, message } => {
                 write!(f, "{field}: {message} ({})", self.code())
             }
+            Self::Index { source } => write!(f, "index: {source} ({})", self.code()),
+            Self::Search { source } => write!(f, "query: {source} ({})", self.code()),
         }
     }
 }
@@ -118,6 +128,8 @@ impl std::error::Error for WikiError {
             Self::Io { source, .. } => Some(source),
             Self::Json { source, .. } => Some(source),
             Self::Yaml { source, .. } => Some(source),
+            Self::Index { source } => Some(source),
+            Self::Search { source } => Some(source),
             _ => None,
         }
     }
@@ -130,17 +142,11 @@ pub(crate) fn setup_error_to_wiki_error(error: SetupError) -> WikiError {
 }
 
 pub(crate) fn index_error_to_wiki_error(error: indexer::IndexError) -> WikiError {
-    WikiError::InvalidInput {
-        field: "index",
-        message: error.to_string(),
-    }
+    WikiError::Index { source: error }
 }
 
 pub(crate) fn search_error_to_wiki_error(error: search::SearchError) -> WikiError {
-    WikiError::InvalidInput {
-        field: "query",
-        message: error.to_string(),
-    }
+    WikiError::Search { source: error }
 }
 
 #[cfg(test)]

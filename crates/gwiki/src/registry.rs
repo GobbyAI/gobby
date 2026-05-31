@@ -59,26 +59,26 @@ pub fn register_scope(path: &Path, scope: &ResolvedScope) -> Result<(), WikiErro
 
     match scope.kind() {
         ScopeKind::Topic { name } => {
-            registry
-                .topics
-                .entry(name.clone())
-                .or_insert_with(|| TopicRegistration {
+            registry.topics.insert(
+                name.clone(),
+                TopicRegistration {
                     name: name.clone(),
                     path: scope.root().display().to_string(),
-                });
+                },
+            );
         }
         ScopeKind::Project {
             project_id,
             project_root,
         } => {
-            registry
-                .projects
-                .entry(project_id.clone())
-                .or_insert_with(|| ProjectRegistration {
+            registry.projects.insert(
+                project_id.clone(),
+                ProjectRegistration {
                     project_id: project_id.clone(),
                     project_root: project_root.display().to_string(),
                     path: scope.root().display().to_string(),
-                });
+                },
+            );
         }
     }
 
@@ -178,7 +178,7 @@ mod tests {
     use std::fs;
 
     #[test]
-    fn register_preserves_existing_entries() {
+    fn register_overwrites_existing_entries() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let registry = tmp.path().join("wikis.json");
         fs::write(
@@ -221,13 +221,20 @@ mod tests {
 
         let stored = fs::read_to_string(&registry).expect("read registry");
         let stored: Registry = serde_json::from_str(&stored).expect("parse registry");
+        let expected_topic_path = tmp
+            .path()
+            .join("replacement")
+            .join("topics")
+            .join("existing")
+            .display()
+            .to_string();
 
         assert_eq!(
             stored
                 .topics
                 .get("existing")
                 .map(|topic| topic.path.as_str()),
-            Some("/keep/topic")
+            Some(expected_topic_path.as_str())
         );
         assert_eq!(
             stored

@@ -290,7 +290,13 @@ fn git_status_relative_paths(root_path: &Path) -> anyhow::Result<HashSet<String>
     let output = Command::new("git")
         .arg("-C")
         .arg(root_path)
-        .args(["status", "--porcelain=v1", "-z", "--untracked-files=all"])
+        .args([
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+            "--no-renames",
+        ])
         .output()?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr)

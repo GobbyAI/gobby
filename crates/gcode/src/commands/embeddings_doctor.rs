@@ -71,7 +71,7 @@ struct PeerDoctorReport {
 enum PeerDoctorOutcome {
     Absent,
     Present(PeerDoctorReport),
-    TransportError,
+    TransportError(String),
 }
 
 pub fn run(ctx: &Context) -> anyhow::Result<()> {
@@ -131,7 +131,7 @@ fn build_doctor_report(
 
     match peer {
         PeerDoctorOutcome::Absent => (report_without_peer(&resolution, dim), EXIT_HEALTHY),
-        PeerDoctorOutcome::TransportError => {
+        PeerDoctorOutcome::TransportError(_) => {
             (report_without_peer(&resolution, dim), EXIT_TRANSPORT)
         }
         PeerDoctorOutcome::Present(peer) => {
@@ -247,22 +247,31 @@ fn fetch_daemon_peer(daemon_url: Option<&str>) -> PeerDoctorOutcome {
         .build()
     {
         Ok(client) => client,
-        Err(_) => return PeerDoctorOutcome::TransportError,
+        Err(error) => {
+            return PeerDoctorOutcome::TransportError(format!("build HTTP client: {error}"));
+        }
     };
     let response = match client.get(url).send() {
         Ok(response) => response,
-        Err(_) => return PeerDoctorOutcome::Absent,
+        Err(error) => {
+            return PeerDoctorOutcome::TransportError(format!("send peer doctor request: {error}"));
+        }
     };
     if response.status() == reqwest::StatusCode::NOT_FOUND {
         return PeerDoctorOutcome::Absent;
     }
     if !response.status().is_success() {
-        return PeerDoctorOutcome::TransportError;
+        return PeerDoctorOutcome::TransportError(format!(
+            "peer doctor returned HTTP {}",
+            response.status()
+        ));
     }
-    response
-        .json::<PeerDoctorReport>()
-        .map(PeerDoctorOutcome::Present)
-        .unwrap_or(PeerDoctorOutcome::TransportError)
+    match response.json::<PeerDoctorReport>() {
+        Ok(report) => PeerDoctorOutcome::Present(report),
+        Err(error) => {
+            PeerDoctorOutcome::TransportError(format!("parse peer doctor response: {error}"))
+        }
+    }
 }
 
 #[cfg(test)]

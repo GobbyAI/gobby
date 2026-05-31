@@ -32,13 +32,18 @@ pub fn semantic_search(ctx: &Context, query: &str, limit: usize) -> Vec<(String,
             filter: None,
         };
 
-        let Ok((hits, _state)) =
-            gobby_core::qdrant::with_qdrant(ctx.qdrant.as_ref(), Vec::new(), |config| {
+        let hits =
+            match gobby_core::qdrant::with_qdrant(ctx.qdrant.as_ref(), Vec::new(), |config| {
                 gobby_core::qdrant::search(config, &collection, request)
-            })
-        else {
-            continue;
-        };
+            }) {
+                Ok((hits, _state)) => hits,
+                Err(error) => {
+                    log::warn!(
+                        "semantic Qdrant search failed for collection {collection}: {error}"
+                    );
+                    continue;
+                }
+            };
 
         results.extend(hits.into_iter().map(|hit| (hit.id, f64::from(hit.score))));
     }

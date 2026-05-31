@@ -1,6 +1,6 @@
 use std::fs::{self, OpenOptions};
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde::Serialize;
@@ -300,8 +300,6 @@ fn write_accepted_note(
         source: error,
     })?;
 
-    let file_name = format!("{}.md", slugify(&note.title));
-    let path = research_dir.join(file_name);
     let frontmatter = serde_yaml::to_string(&AcceptedNoteFrontmatter {
         title: &note.title,
         research_session: session_id,
@@ -310,7 +308,7 @@ fn write_accepted_note(
     })
     .map_err(|error| WikiError::Yaml {
         action: "serialize accepted research note frontmatter",
-        path: Some(path.clone()),
+        path: Some(research_dir.clone()),
         source: error,
     })?;
     let mut body = String::new();
@@ -320,17 +318,63 @@ fn write_accepted_note(
     body.push_str(note.body.trim());
     body.push('\n');
 
-    fs::write(&path, body).map_err(|error| WikiError::Io {
-        action: "write accepted research note",
-        path: Some(path.clone()),
-        source: error,
-    })?;
+    let (path, mut file) = create_new_research_note(&research_dir, &note.title)?;
+    if let Err(error) = file.write_all(body.as_bytes()) {
+        let _ = fs::remove_file(&path);
+        return Err(WikiError::Io {
+            action: "write accepted research note",
+            path: Some(path),
+            source: error,
+        });
+    }
+    if let Err(error) = file.sync_all() {
+        let _ = fs::remove_file(&path);
+        return Err(WikiError::Io {
+            action: "sync accepted research note",
+            path: Some(path),
+            source: error,
+        });
+    }
+    drop(file);
 
-    append_raw_index(vault_root, &note.title, &path)?;
+    if let Err(error) = append_raw_index(vault_root, &note.title, &path) {
+        let _ = fs::remove_file(&path);
+        return Err(error);
+    }
 
     Ok(AcceptedResearchNote {
         title: note.title.clone(),
         path,
+    })
+}
+
+fn create_new_research_note(
+    research_dir: &Path,
+    title: &str,
+) -> Result<(PathBuf, fs::File), WikiError> {
+    let slug = slugify(title);
+    for attempt in 1..=1000 {
+        let file_name = if attempt == 1 {
+            format!("{slug}.md")
+        } else {
+            format!("{slug}-{attempt}.md")
+        };
+        let path = research_dir.join(file_name);
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(file) => return Ok((path, file)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(WikiError::Io {
+                    action: "create accepted research note",
+                    path: Some(path),
+                    source: error,
+                });
+            }
+        }
+    }
+    Err(WikiError::InvalidInput {
+        field: "title",
+        message: format!("could not allocate unique research note path for `{title}`"),
     })
 }
 
@@ -346,43 +390,88 @@ fn append_raw_index(vault_root: &Path, title: &str, note_path: &Path) -> Result<
         .strip_prefix(vault_root)
         .unwrap_or(note_path)
         .to_string_lossy();
-    let mut index = OpenOptions::new()
+    let lock_path = raw_index_lock_path(&index_path);
+    let lock = OpenOptions::new()
         .create(true)
-        .append(true)
         .read(true)
-        .open(&index_path)
+        .write(true)
+        .truncate(false)
+        .open(&lock_path)
         .map_err(|error| WikiError::Io {
-            action: "open raw index",
-            path: Some(index_path.clone()),
+            action: "open raw index lock",
+            path: Some(lock_path.clone()),
             source: error,
         })?;
-    fs4::FileExt::lock(&index).map_err(|error| WikiError::Io {
+    fs4::FileExt::lock(&lock).map_err(|error| WikiError::Io {
         action: "lock raw index",
+        path: Some(lock_path),
+        source: error,
+    })?;
+    let mut contents = fs::read_to_string(&index_path).map_err(|error| WikiError::Io {
+        action: "read raw index",
         path: Some(index_path.clone()),
         source: error,
     })?;
-    let is_empty = index
-        .metadata()
-        .map(|metadata| metadata.len() == 0)
-        .map_err(|error| WikiError::Io {
-            action: "read raw index metadata",
-            path: Some(index_path.clone()),
-            source: error,
-        })?;
-    if is_empty {
-        index
-            .write_all(b"# Raw sources\n\n")
-            .map_err(|error| WikiError::Io {
-                action: "initialize raw index",
-                path: Some(index_path.clone()),
-                source: error,
-            })?;
+    if contents.is_empty() {
+        contents.push_str("# Raw sources\n\n");
     }
-    writeln!(index, "- [{title}]({relative})").map_err(|error| WikiError::Io {
-        action: "append raw index",
-        path: Some(index_path),
+    contents.push_str(&format!("- [{title}]({relative})\n"));
+    write_file_atomically(&index_path, contents.as_bytes(), "raw index")
+}
+
+fn raw_index_lock_path(index_path: &Path) -> PathBuf {
+    index_path.with_file_name("INDEX.md.lock")
+}
+
+fn write_file_atomically(
+    path: &Path,
+    contents: &[u8],
+    label: &'static str,
+) -> Result<(), WikiError> {
+    let temp_path = temp_sibling_path(path);
+    let mut file = fs::File::create(&temp_path).map_err(|error| WikiError::Io {
+        action: "create temp file",
+        path: Some(temp_path.clone()),
         source: error,
-    })
+    })?;
+    if let Err(error) = file.write_all(contents) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(WikiError::Io {
+            action: "write temp file",
+            path: Some(temp_path),
+            source: error,
+        });
+    }
+    if let Err(error) = file.sync_all() {
+        let _ = fs::remove_file(&temp_path);
+        return Err(WikiError::Io {
+            action: "sync temp file",
+            path: Some(temp_path),
+            source: error,
+        });
+    }
+    drop(file);
+    if let Err(error) = fs::rename(&temp_path, path) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(WikiError::Io {
+            action: label,
+            path: Some(path.to_path_buf()),
+            source: error,
+        });
+    }
+    Ok(())
+}
+
+fn temp_sibling_path(path: &Path) -> PathBuf {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("INDEX.md");
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    path.with_file_name(format!(".{file_name}.{}.{nanos}.tmp", std::process::id()))
 }
 
 fn slugify(title: &str) -> String {
@@ -532,6 +621,41 @@ mod tests {
         let index = std::fs::read_to_string(scope.root().join("raw/INDEX.md"))
             .expect("raw index includes note");
         assert!(index.contains("raw/research/session-event-monitoring.md"));
+    }
+
+    #[test]
+    fn accepted_note_collisions_use_numeric_suffixes() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        let first = write_accepted_note(
+            root,
+            "research-1",
+            &AcceptedNoteDraft {
+                title: "Same title".to_string(),
+                body: "first".to_string(),
+                source: None,
+            },
+        )
+        .expect("first note");
+        let second = write_accepted_note(
+            root,
+            "research-1",
+            &AcceptedNoteDraft {
+                title: "Same title".to_string(),
+                body: "second".to_string(),
+                source: None,
+            },
+        )
+        .expect("second note");
+
+        assert_eq!(
+            first.path.file_name().and_then(|name| name.to_str()),
+            Some("same-title.md")
+        );
+        assert_eq!(
+            second.path.file_name().and_then(|name| name.to_str()),
+            Some("same-title-2.md")
+        );
     }
 
     #[test]

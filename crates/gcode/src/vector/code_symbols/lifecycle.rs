@@ -108,14 +108,14 @@ impl CodeSymbolVectorLifecycle {
         self.ensure_collection()?;
         let points = self.points_for_symbols(symbols)?;
         let point_ids = point_ids(&points);
-        self.upsert_points(points)?;
+        let vectors_upserted = self.upsert_points(points)?;
         self.delete_stale_vectors(Some(file_path), &point_ids)?;
 
         Ok(self.output(
             CodeSymbolVectorLifecycleAction::SyncFile,
             Some(file_path.to_string()),
             symbols.len(),
-            symbols.len(),
+            vectors_upserted,
             1,
         ))
     }
@@ -151,14 +151,14 @@ impl CodeSymbolVectorLifecycle {
         self.ensure_collection()?;
         let points = self.points_for_symbols(symbols)?;
         let point_ids = point_ids(&points);
-        self.upsert_points(points)?;
+        let vectors_upserted = self.upsert_points(points)?;
         self.delete_stale_vectors(None, &point_ids)?;
 
         Ok(self.output(
             CodeSymbolVectorLifecycleAction::Rebuild,
             None,
             symbols.len(),
-            symbols.len(),
+            vectors_upserted,
             1,
         ))
     }
@@ -309,16 +309,17 @@ impl CodeSymbolVectorLifecycle {
         .map(|_| ())
     }
 
-    fn upsert_points(&self, points: Vec<UpsertRequest>) -> Result<(), VectorLifecycleError> {
+    fn upsert_points(&self, points: Vec<UpsertRequest>) -> Result<usize, VectorLifecycleError> {
         if points.is_empty() {
-            return Ok(());
+            return Ok(0);
         }
+        let requested = points.len();
         let ((), state) = gobby_core::qdrant::with_qdrant(Some(&self.qdrant), (), |config| {
             gobby_core::qdrant::upsert(config, &self.collection, points)
         })
         .map_err(|err| VectorLifecycleError::QdrantOperation(err.to_string()))?;
         match state {
-            ServiceState::Available => Ok(()),
+            ServiceState::Available => Ok(requested),
             ServiceState::NotConfigured => Err(VectorLifecycleError::MissingQdrantConfig),
             other => Err(VectorLifecycleError::QdrantOperation(format!(
                 "unexpected Qdrant service state: {other:?}"

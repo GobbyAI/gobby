@@ -165,8 +165,8 @@ fn sync_graph_files(ctx: &Context, file_paths: &[String]) -> anyhow::Result<Proj
         GraphProjectionState::mark_synced,
     );
     if report.synced_files > 0
-        && let Err(error) = code_graph::cleanup_orphans(ctx)
         && report.error.is_none()
+        && let Err(error) = code_graph::cleanup_orphans(ctx)
     {
         return Ok(ProjectionSyncReport::degraded_from_error(
             &error,

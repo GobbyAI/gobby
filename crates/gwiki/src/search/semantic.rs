@@ -1,5 +1,5 @@
 #[cfg(feature = "rustls")]
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 
 use gobby_core::config::{EmbeddingConfig, QdrantConfig};
@@ -192,10 +192,13 @@ where
 #[derive(Debug, Clone, Default)]
 pub struct OpenAiEmbeddingBackend {
     clients: HashMap<u64, reqwest::blocking::Client>,
+    client_order: VecDeque<u64>,
 }
 
 #[cfg(feature = "rustls")]
 impl OpenAiEmbeddingBackend {
+    const MAX_TIMEOUT_CLIENTS: usize = 4;
+
     pub fn new() -> Self {
         Self::default()
     }
@@ -204,15 +207,27 @@ impl OpenAiEmbeddingBackend {
         &mut self,
         timeout_seconds: u64,
     ) -> Result<reqwest::blocking::Client, SearchError> {
-        if let Some(client) = self.clients.get(&timeout_seconds) {
-            return Ok(client.clone());
+        if let Some(client) = self.clients.get(&timeout_seconds).cloned() {
+            self.touch_timeout_client(timeout_seconds);
+            return Ok(client);
         }
         let client = reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_secs(timeout_seconds))
             .build()
             .map_err(|error| SearchError::Backend(error.to_string()))?;
         self.clients.insert(timeout_seconds, client.clone());
+        self.client_order.push_back(timeout_seconds);
+        while self.client_order.len() > Self::MAX_TIMEOUT_CLIENTS {
+            if let Some(evicted) = self.client_order.pop_front() {
+                self.clients.remove(&evicted);
+            }
+        }
         Ok(client)
+    }
+
+    fn touch_timeout_client(&mut self, timeout_seconds: u64) {
+        self.client_order.retain(|value| *value != timeout_seconds);
+        self.client_order.push_back(timeout_seconds);
     }
 }
 

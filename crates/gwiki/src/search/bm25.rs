@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use gobby_core::search::sanitize_pg_search_query;
+
 use crate::search::{
     ChunkProvenance, SearchError, SearchHitKind, SearchProvenance, SearchScope, SearchSource,
     WikiSearchResult,
@@ -137,32 +139,6 @@ LIMIT $4
             limit,
         },
     })
-}
-
-pub fn sanitize_pg_search_query(query: &str) -> String {
-    let cleaned = query
-        .chars()
-        .map(|ch| {
-            if ch.is_alphanumeric() || matches!(ch, ' ' | '_' | '-') {
-                ch
-            } else {
-                ' '
-            }
-        })
-        .collect::<String>();
-
-    cleaned
-        .split_whitespace()
-        .filter(|token| !token.is_empty())
-        .map(|token| {
-            if token.starts_with('-') {
-                format!("\\{token}")
-            } else {
-                token.to_string()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 pub fn is_keyword_searchable_path(path: &str) -> bool {

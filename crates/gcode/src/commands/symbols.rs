@@ -236,6 +236,12 @@ pub fn tree(ctx: &Context, format: Format) -> anyhow::Result<()> {
     }
 }
 
+/// Format file summary rows as a directory tree.
+///
+/// Paths are grouped by their directory (`dir`) and displayed by filename
+/// (`basename`). Root-level files are grouped under `.`, a leading `/` is
+/// stripped for root files, and entries render as
+/// `  {basename} [{language}] ({symbol_count} symbols)`.
 fn format_tree_text(files: &[serde_json::Value]) -> String {
     let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
 

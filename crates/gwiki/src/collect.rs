@@ -190,7 +190,7 @@ fn accept_item(
     report: &mut CollectReport,
 ) -> Result<(), WikiError> {
     let previous_manifest = SourceManifest::read(vault_root)?;
-    let (record_kind, raw_path) = match kind {
+    let (record_kind, raw_path, asset_path) = match kind {
         InboxKind::Url(url) => {
             let record = SourceManifest::register(
                 vault_root,
@@ -208,7 +208,7 @@ fn accept_item(
             )?;
             let markdown = render_url_markdown(&url, fetched_at, &record.content_hash);
             let raw_path = write_raw_markdown(vault_root, &record, &markdown)?;
-            (record.kind, raw_path)
+            (record.kind, raw_path, None)
         }
         InboxKind::File(kind) => {
             let file_name = path
@@ -243,11 +243,15 @@ fn accept_item(
                 asset_path.as_deref(),
             );
             let raw_path = write_raw_markdown(vault_root, &record, &markdown)?;
-            (record.kind, raw_path)
+            (record.kind, raw_path, asset_path)
         }
     };
 
     if let Err(error) = fs::remove_file(&path) {
+        let _ = fs::remove_file(&raw_path);
+        if let Some(asset_path) = &asset_path {
+            let _ = fs::remove_file(asset_path);
+        }
         previous_manifest.write(vault_root)?;
         return Err(io_error("remove accepted inbox item", &path, error));
     }
@@ -428,21 +432,28 @@ fn extract_url(text: &str) -> Option<String> {
         if is_http_url(line) {
             return Some(line.to_string());
         }
-        if let Some(url) = url_from_embedded_text(line) {
+        if let Some(url) = urls_from_embedded_text(line).into_iter().next() {
             return Some(url);
         }
     }
     None
 }
 
-fn url_from_embedded_text(text: &str) -> Option<String> {
-    let start = text.find("https://").or_else(|| text.find("http://"))?;
-    let url = text[start..]
-        .split(|ch: char| ch.is_whitespace() || matches!(ch, '<' | '>' | '"' | '\''))
-        .next()
-        .unwrap_or("")
-        .trim_end_matches([',', '.', ';', ')', ']']);
-    is_http_url(url).then(|| url.to_string())
+fn urls_from_embedded_text(text: &str) -> Vec<String> {
+    let mut urls = Vec::new();
+    let mut rest = text;
+    while let Some(start) = rest.find("https://").or_else(|| rest.find("http://")) {
+        let candidate = rest[start..]
+            .split(|ch: char| ch.is_whitespace() || matches!(ch, '<' | '>' | '"' | '\''))
+            .next()
+            .unwrap_or("")
+            .trim_end_matches([',', '.', ';', ')', ']']);
+        if is_http_url(candidate) {
+            urls.push(candidate.to_string());
+        }
+        rest = &rest[start + candidate.len()..];
+    }
+    urls
 }
 
 fn is_http_url(value: &str) -> bool {
@@ -601,6 +612,19 @@ mod tests {
         assert!(store.ingestions.iter().any(|ingestion| {
             ingestion.path == catalog_path && ingestion.event == WikiIngestionEvent::Added
         }));
+    }
+
+    #[test]
+    fn embedded_url_parser_returns_all_urls_in_order() {
+        assert_eq!(
+            urls_from_embedded_text(
+                "Sources: https://example.test/one, then http://example.test/two."
+            ),
+            vec![
+                "https://example.test/one".to_string(),
+                "http://example.test/two".to_string()
+            ]
+        );
     }
 
     #[test]

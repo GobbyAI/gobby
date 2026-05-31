@@ -98,6 +98,33 @@ pub fn rrf_merge(sources: Vec<(&str, Vec<String>)>) -> Vec<SearchResult> {
     results
 }
 
+/// Sanitize user input for pg_search's BM25 query DSL.
+pub fn sanitize_pg_search_query(query: &str) -> String {
+    let cleaned: String = query
+        .chars()
+        .map(|ch| {
+            if ch.is_alphanumeric() || matches!(ch, ' ' | '_' | '-') {
+                ch
+            } else {
+                ' '
+            }
+        })
+        .collect();
+
+    cleaned
+        .split_whitespace()
+        .filter(|token| !token.is_empty())
+        .map(|token| {
+            if token.starts_with('-') {
+                format!("\\{token}")
+            } else {
+                token.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -123,6 +150,16 @@ mod tests {
         };
         assert_eq!(degradation.unavailable_sources, vec!["fallback"]);
         assert_eq!(degradation.available_sources, vec!["fts", "semantic"]);
+    }
+
+    #[test]
+    fn sanitize_pg_search_query_matches_gobby_rules() {
+        assert_eq!(
+            sanitize_pg_search_query("foo::bar baz-qux _id + \"drop\""),
+            "foo bar baz-qux _id drop"
+        );
+        assert_eq!(sanitize_pg_search_query("-draft stable"), "\\-draft stable");
+        assert_eq!(sanitize_pg_search_query(":: + ()"), "");
     }
 
     #[test]

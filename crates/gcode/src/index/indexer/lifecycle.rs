@@ -214,7 +214,16 @@ pub(super) fn current_file_hashes(
     let mut current_hashes = HashMap::new();
     for path in candidates.iter().chain(content_only.iter()) {
         if let Ok(rel) = relative_path(path, root_path) {
-            let hash = hasher::file_content_hash(path).unwrap_or_default();
+            let hash = match hasher::file_content_hash(path) {
+                Ok(hash) => hash,
+                Err(error) => {
+                    eprintln!(
+                        "Warning: failed to hash {} for incremental index detection: {error}",
+                        path.display()
+                    );
+                    String::new()
+                }
+            };
             current_hashes.insert(rel, hash);
         }
     }

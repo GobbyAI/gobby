@@ -43,7 +43,15 @@ impl fmt::Display for IndexError {
     }
 }
 
-impl std::error::Error for IndexError {}
+impl std::error::Error for IndexError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(source) => Some(source),
+            Self::Store(source) => Some(source),
+            _ => None,
+        }
+    }
+}
 
 impl From<StoreError> for IndexError {
     fn from(error: StoreError) -> Self {
@@ -118,9 +126,15 @@ pub fn index_vault(
 }
 
 fn discover_indexable_hashes(vault_root: &Path) -> Result<BTreeMap<PathBuf, String>, IndexError> {
+    discover_indexable_hashes_with_limit(vault_root, configured_memory_index_limit_bytes())
+}
+
+fn discover_indexable_hashes_with_limit(
+    vault_root: &Path,
+    memory_limit: Option<u64>,
+) -> Result<BTreeMap<PathBuf, String>, IndexError> {
     let mut current_hashes = BTreeMap::new();
     let walker = WalkerSettings::new(vault_root).into_walker().build();
-    let memory_limit = configured_memory_index_limit_bytes();
     let mut total_indexable_bytes = 0u64;
 
     for entry in walker {
@@ -438,7 +452,6 @@ fn extract_markdown_links(path: &Path, body: &str, links: &mut Vec<WikiLink>) {
 #[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};
-    use std::sync::{Mutex, MutexGuard};
 
     use gobby_core::indexing::content_hash;
 
@@ -446,41 +459,6 @@ mod tests {
     use crate::store::{
         MemoryWikiStore, WikiDocument, WikiDocumentKind, WikiIngestionEvent, WikiLink, WikiSource,
     };
-
-    static TEST_ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    struct ScopedEnvVar {
-        key: &'static str,
-        previous: Option<String>,
-        _lock: MutexGuard<'static, ()>,
-    }
-
-    impl ScopedEnvVar {
-        fn set(key: &'static str, value: &str) -> Self {
-            let lock = TEST_ENV_LOCK
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let previous = std::env::var(key).ok();
-            // SAFETY: tests serialize environment mutation with TEST_ENV_LOCK.
-            unsafe { std::env::set_var(key, value) };
-            Self {
-                key,
-                previous,
-                _lock: lock,
-            }
-        }
-    }
-
-    impl Drop for ScopedEnvVar {
-        fn drop(&mut self) {
-            match &self.previous {
-                // SAFETY: ScopedEnvVar holds TEST_ENV_LOCK until restoration completes.
-                Some(value) => unsafe { std::env::set_var(self.key, value) },
-                // SAFETY: ScopedEnvVar holds TEST_ENV_LOCK until restoration completes.
-                None => unsafe { std::env::remove_var(self.key) },
-            }
-        }
-    }
 
     fn write_file(root: &Path, relative: &str, contents: &str) {
         let path = root.join(relative);
@@ -634,10 +612,9 @@ mod tests {
     fn memory_index_limit_rejects_large_vaults() {
         let temp = tempfile::tempdir().expect("tempdir");
         write_file(temp.path(), "wiki/topics/large.md", "# Large\n\nabcdef\n");
-        let mut store = MemoryWikiStore::default();
-        let _env = ScopedEnvVar::set("GWIKI_MAX_MEMORY_INDEX_BYTES", "4");
 
-        let error = index_vault(temp.path(), &mut store).expect_err("limit rejects vault");
+        let error = discover_indexable_hashes_with_limit(temp.path(), Some(4))
+            .expect_err("limit rejects vault");
 
         assert!(matches!(error, IndexError::MemoryIndexTooLarge { .. }));
     }

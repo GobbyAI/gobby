@@ -6,6 +6,7 @@ use crate::models::{
 };
 use gobby_core::degradation::ServiceState;
 use gobby_core::falkor::GraphClient;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::GraphReadError;
 use super::connection::with_required_core_graph;
@@ -14,6 +15,13 @@ const PROJECT_NODE_PREDICATE: &str =
     "n:CodeFile OR n:CodeSymbol OR n:CodeModule OR n:UnresolvedCallee OR n:ExternalSymbol";
 const EXTRACTED_PROVENANCE: &str = "EXTRACTED";
 const SOURCE_SYSTEM_GCODE: &str = crate::models::SOURCE_SYSTEM_GCODE;
+const PROJECT_INDEXED_LABELS: &[&str] = &[
+    "CodeFile",
+    "CodeSymbol",
+    "CodeModule",
+    "UnresolvedCallee",
+    "ExternalSymbol",
+];
 
 pub struct CodeGraph<'a> {
     project_id: &'a str,
@@ -33,27 +41,41 @@ impl<'a> CodeGraph<'a> {
         calls: &[CallRelation],
         cleanup_orphans: bool,
     ) -> anyhow::Result<usize> {
-        self.ensure_file_node(file_path, definitions.len())?;
+        self.ensure_project_indexes()?;
+        let sync_token = new_sync_token(file_path);
+        self.ensure_file_node(file_path, definitions.len(), &sync_token)?;
         let current_symbol_ids = definitions
             .iter()
             .map(|symbol| symbol.id.clone())
             .collect::<Vec<_>>();
-        self.delete_file_graph(file_path, &current_symbol_ids)?;
 
         let mut relationship_count = 0;
-        relationship_count += self.add_imports(file_path, imports)?;
-        relationship_count += self.add_definitions(file_path, definitions)?;
-        relationship_count += self.add_calls(file_path, calls)?;
+        relationship_count += self.add_imports(file_path, imports, &sync_token)?;
+        relationship_count += self.add_definitions(file_path, definitions, &sync_token)?;
+        relationship_count += self.add_calls(file_path, calls, &sync_token)?;
+        self.delete_stale_file_graph(file_path, &current_symbol_ids, &sync_token)?;
         if cleanup_orphans {
             self.cleanup_orphans()?;
         }
         Ok(relationship_count)
     }
 
-    pub fn ensure_file_node(&mut self, file_path: &str, symbol_count: usize) -> anyhow::Result<()> {
+    pub fn ensure_project_indexes(&mut self) -> anyhow::Result<()> {
+        for label in PROJECT_INDEXED_LABELS {
+            self.client.ensure_exact_node_index(label, "project")?;
+        }
+        Ok(())
+    }
+
+    pub fn ensure_file_node(
+        &mut self,
+        file_path: &str,
+        symbol_count: usize,
+        sync_token: &str,
+    ) -> anyhow::Result<()> {
         execute_write_query(
             self.client,
-            ensure_file_node_query(self.project_id, file_path, symbol_count)?,
+            ensure_file_node_query(self.project_id, file_path, symbol_count, sync_token)?,
         )
     }
 
@@ -61,6 +83,7 @@ impl<'a> CodeGraph<'a> {
         &mut self,
         file_path: &str,
         imports: &[ImportRelation],
+        sync_token: &str,
     ) -> anyhow::Result<usize> {
         let mut written = 0;
         for import in imports {
@@ -74,7 +97,12 @@ impl<'a> CodeGraph<'a> {
             };
             execute_write_query(
                 self.client,
-                add_import_query(self.project_id, source_file, &import.module_name)?,
+                add_import_query(
+                    self.project_id,
+                    source_file,
+                    &import.module_name,
+                    sync_token,
+                )?,
             )?;
             written += 1;
         }
@@ -85,6 +113,7 @@ impl<'a> CodeGraph<'a> {
         &mut self,
         file_path: &str,
         definitions: &[Symbol],
+        sync_token: &str,
     ) -> anyhow::Result<usize> {
         let mut written = 0;
         for symbol in definitions {
@@ -93,22 +122,44 @@ impl<'a> CodeGraph<'a> {
             }
             execute_write_query(
                 self.client,
-                add_definition_query(self.project_id, file_path, symbol)?,
+                add_definition_query(self.project_id, file_path, symbol, sync_token)?,
             )?;
             written += 1;
         }
         Ok(written)
     }
 
-    pub fn add_calls(&mut self, file_path: &str, calls: &[CallRelation]) -> anyhow::Result<usize> {
+    pub fn add_calls(
+        &mut self,
+        file_path: &str,
+        calls: &[CallRelation],
+        sync_token: &str,
+    ) -> anyhow::Result<usize> {
         let mut written = 0;
         for call in calls {
-            if let Some(query) = add_call_query(self.project_id, file_path, call)? {
+            if let Some(query) = add_call_query(self.project_id, file_path, call, sync_token)? {
                 execute_write_query(self.client, query)?;
                 written += 1;
             }
         }
         Ok(written)
+    }
+
+    pub fn delete_stale_file_graph(
+        &mut self,
+        file_path: &str,
+        current_symbol_ids: &[String],
+        sync_token: &str,
+    ) -> anyhow::Result<()> {
+        for query in delete_stale_file_graph_queries(
+            self.project_id,
+            file_path,
+            current_symbol_ids,
+            sync_token,
+        )? {
+            execute_write_query(self.client, query)?;
+        }
+        Ok(())
     }
 
     pub fn delete_file_graph(
@@ -136,6 +187,7 @@ impl<'a> CodeGraph<'a> {
     }
 
     pub fn cleanup_orphans(&mut self) -> anyhow::Result<()> {
+        self.ensure_project_indexes()?;
         for query in cleanup_orphans_queries(self.project_id)? {
             execute_write_query(self.client, query)?;
         }
@@ -224,6 +276,14 @@ fn execute_write_query(client: &mut GraphClient, query: TypedQuery) -> anyhow::R
     Ok(())
 }
 
+fn new_sync_token(file_path: &str) -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    format!("{}:{}:{nanos}", std::process::id(), file_path)
+}
+
 fn typed_query<I, K>(cypher: impl Into<String>, params: I) -> anyhow::Result<TypedQuery>
 where
     I: IntoIterator<Item = (K, TypedValue)>,
@@ -233,7 +293,9 @@ where
 }
 
 fn usize_value(value: usize) -> TypedValue {
-    TypedValue::Integer(i64::try_from(value).unwrap_or(i64::MAX))
+    let value = i64::try_from(value)
+        .unwrap_or_else(|_| panic!("usize value {value} exceeds i64::MAX for FalkorDB integer"));
+    TypedValue::Integer(value)
 }
 
 fn optional_string_value(value: Option<&str>) -> TypedValue {
@@ -261,6 +323,10 @@ fn base_metadata_params(file_path: &str) -> Vec<(&'static str, TypedValue)> {
     ]
 }
 
+fn sync_token_param(sync_token: &str) -> (&'static str, TypedValue) {
+    ("sync_token", TypedValue::String(sync_token.to_string()))
+}
+
 fn extracted_edge_params(
     file_path: &str,
     source_line: usize,
@@ -276,14 +342,18 @@ pub(crate) fn ensure_file_node_query(
     project_id: &str,
     file_path: &str,
     symbol_count: usize,
+    sync_token: &str,
 ) -> anyhow::Result<TypedQuery> {
     typed_query(
         "MERGE (f:CodeFile {path: $file_path, project: $project})
-         SET f.updated_at = timestamp(), f.symbol_count = $symbol_count",
+         SET f.updated_at = timestamp(),
+             f.symbol_count = $symbol_count,
+             f.sync_token = $sync_token",
         [
             ("project", TypedValue::String(project_id.to_string())),
             ("file_path", TypedValue::String(file_path.to_string())),
             ("symbol_count", usize_value(symbol_count)),
+            sync_token_param(sync_token),
         ],
     )
 }
@@ -292,6 +362,7 @@ pub(crate) fn add_import_query(
     project_id: &str,
     source_file: &str,
     target_module: &str,
+    sync_token: &str,
 ) -> anyhow::Result<TypedQuery> {
     let mut params = vec![
         ("project", TypedValue::String(project_id.to_string())),
@@ -301,6 +372,7 @@ pub(crate) fn add_import_query(
             TypedValue::String(target_module.to_string()),
         ),
     ];
+    params.push(sync_token_param(sync_token));
     params.extend(base_metadata_params(source_file));
     typed_query(
         "MERGE (f:CodeFile {path: $source_file, project: $project})
@@ -309,7 +381,8 @@ pub(crate) fn add_import_query(
          SET r.provenance = $provenance,
              r.confidence = $confidence,
              r.source_system = $source_system,
-             r.source_file_path = $source_file_path",
+             r.source_file_path = $source_file_path,
+             r.sync_token = $sync_token",
         params,
     )
 }
@@ -318,6 +391,7 @@ pub(crate) fn add_definition_query(
     project_id: &str,
     file_path: &str,
     symbol: &Symbol,
+    sync_token: &str,
 ) -> anyhow::Result<TypedQuery> {
     let mut params = vec![
         ("project", TypedValue::String(project_id.to_string())),
@@ -332,6 +406,7 @@ pub(crate) fn add_definition_query(
         ("language", TypedValue::String(symbol.language.clone())),
         ("line_start", usize_value(symbol.line_start)),
         ("line_end", usize_value(symbol.line_end)),
+        sync_token_param(sync_token),
     ];
     params.extend(extracted_edge_params(
         file_path,
@@ -348,14 +423,16 @@ pub(crate) fn add_definition_query(
              s.file_path = $file_path,
              s.line_start = $line_start,
              s.line_end = $line_end,
-             s.updated_at = timestamp()
+             s.updated_at = timestamp(),
+             s.sync_token = $sync_token
          MERGE (f)-[r:DEFINES]->(s)
          SET r.provenance = $provenance,
              r.confidence = $confidence,
              r.source_system = $source_system,
              r.source_file_path = $source_file_path,
              r.source_line = $source_line,
-             r.source_symbol_id = $source_symbol_id",
+             r.source_symbol_id = $source_symbol_id,
+             r.sync_token = $sync_token",
         params,
     )
 }
@@ -399,6 +476,7 @@ pub(crate) fn add_call_query(
     project_id: &str,
     default_file_path: &str,
     call: &CallRelation,
+    sync_token: &str,
 ) -> anyhow::Result<Option<TypedQuery>> {
     if call.caller_symbol_id.is_empty() {
         return Ok(None);
@@ -426,6 +504,7 @@ pub(crate) fn add_call_query(
         ("callee_name", TypedValue::String(call.callee_name.clone())),
         ("file_path", TypedValue::String(file_path.to_string())),
         ("line", usize_value(call.line)),
+        sync_token_param(sync_token),
     ];
     params.extend(extracted_edge_params(
         file_path,
@@ -444,7 +523,8 @@ pub(crate) fn add_call_query(
                  r.source_system = $source_system,
                  r.source_file_path = $source_file_path,
                  r.source_line = $source_line,
-                 r.source_symbol_id = $source_symbol_id"
+                 r.source_symbol_id = $source_symbol_id,
+                 r.sync_token = $sync_token"
                 .to_string()
         }
         GraphCallTarget::External { module, .. } => {
@@ -454,28 +534,32 @@ pub(crate) fn add_call_query(
              SET callee.name = $callee_name,
                  callee.external_module = $callee_module,
                  callee.module = $callee_module,
-                 callee.updated_at = timestamp()
+                 callee.updated_at = timestamp(),
+                 callee.sync_token = $sync_token
              MERGE (caller)-[r:CALLS {file: $file_path, line: $line}]->(callee)
              SET r.provenance = $provenance,
                  r.confidence = $confidence,
                  r.source_system = $source_system,
                  r.source_file_path = $source_file_path,
                  r.source_line = $source_line,
-                 r.source_symbol_id = $source_symbol_id"
+                 r.source_symbol_id = $source_symbol_id,
+                 r.sync_token = $sync_token"
                 .to_string()
         }
         GraphCallTarget::Unresolved { .. } => {
             "MERGE (caller:CodeSymbol {id: $caller_id, project: $project})
              MERGE (callee:UnresolvedCallee {id: $target_id, project: $project})
              SET callee.name = $callee_name,
-                 callee.updated_at = timestamp()
+                 callee.updated_at = timestamp(),
+                 callee.sync_token = $sync_token
              MERGE (caller)-[r:CALLS {file: $file_path, line: $line}]->(callee)
              SET r.provenance = $provenance,
                  r.confidence = $confidence,
                  r.source_system = $source_system,
                  r.source_file_path = $source_file_path,
                  r.source_line = $source_line,
-                 r.source_symbol_id = $source_symbol_id"
+                 r.source_symbol_id = $source_symbol_id,
+                 r.sync_token = $sync_token"
                 .to_string()
         }
     };
@@ -543,6 +627,75 @@ pub(crate) fn delete_file_graph_queries(
     Ok(queries)
 }
 
+pub(crate) fn delete_stale_file_graph_queries(
+    project_id: &str,
+    file_path: &str,
+    current_symbol_ids: &[String],
+    sync_token: &str,
+) -> anyhow::Result<Vec<TypedQuery>> {
+    let base_params = || {
+        [
+            ("project", TypedValue::String(project_id.to_string())),
+            ("file_path", TypedValue::String(file_path.to_string())),
+            sync_token_param(sync_token),
+        ]
+    };
+    let mut queries = vec![
+        typed_query(
+            "MATCH (f:CodeFile {path: $file_path, project: $project})-[r:IMPORTS]->(:CodeModule {project: $project})
+             WHERE r.sync_token IS NULL OR r.sync_token <> $sync_token
+             DELETE r",
+            base_params(),
+        )?,
+        typed_query(
+            "MATCH (f:CodeFile {path: $file_path, project: $project})-[r:DEFINES]->(:CodeSymbol {project: $project})
+             WHERE r.sync_token IS NULL OR r.sync_token <> $sync_token
+             DELETE r",
+            base_params(),
+        )?,
+        typed_query(
+            "MATCH (s:CodeSymbol {project: $project})-[r:CALLS]->(n {project: $project})
+             WHERE (r.file = $file_path OR r.source_file_path = $file_path)
+               AND (r.sync_token IS NULL OR r.sync_token <> $sync_token)
+             DELETE r",
+            base_params(),
+        )?,
+    ];
+
+    let mut symbol_params = vec![
+        ("project", TypedValue::String(project_id.to_string())),
+        ("file_path", TypedValue::String(file_path.to_string())),
+        sync_token_param(sync_token),
+    ];
+    if current_symbol_ids.is_empty() {
+        queries.push(typed_query(
+            "MATCH (s:CodeSymbol {project: $project, file_path: $file_path})
+             WHERE s.sync_token IS NULL OR s.sync_token <> $sync_token
+             DETACH DELETE s",
+            symbol_params,
+        )?);
+    } else {
+        symbol_params.push((
+            "symbol_ids",
+            TypedValue::List(
+                current_symbol_ids
+                    .iter()
+                    .map(|id| TypedValue::String(id.clone()))
+                    .collect(),
+            ),
+        ));
+        queries.push(typed_query(
+            "MATCH (s:CodeSymbol {project: $project, file_path: $file_path})
+             WHERE (s.sync_token IS NULL OR s.sync_token <> $sync_token)
+               AND NOT s.id IN $symbol_ids
+             DETACH DELETE s",
+            symbol_params,
+        )?);
+    }
+
+    Ok(queries)
+}
+
 pub(crate) fn delete_file_node_query(
     project_id: &str,
     file_path: &str,
@@ -559,26 +712,28 @@ pub(crate) fn delete_file_node_query(
 
 pub(crate) fn cleanup_orphans_queries(project_id: &str) -> anyhow::Result<Vec<TypedQuery>> {
     let project_param = || [("project", TypedValue::String(project_id.to_string()))];
+    // Orphan cleanup runs after low-activity sync paths so failed writes leave
+    // the previous projection available.
     Ok(vec![
         typed_query(
             "MATCH (m:CodeModule {project: $project})
-             WHERE NOT (m)<-[:IMPORTS]-()
+             WHERE NOT (:CodeFile {project: $project})-[:IMPORTS]->(m)
              DETACH DELETE m",
             project_param(),
         )?,
         typed_query(
             "MATCH (n {project: $project})
              WHERE (n:UnresolvedCallee OR n:ExternalSymbol)
-               AND NOT ()-[:CALLS]->(n)
+               AND NOT ({project: $project})-[:CALLS]->(n)
              DETACH DELETE n",
             project_param(),
         )?,
         typed_query(
             "MATCH (s:CodeSymbol {project: $project})
              WHERE s.file_path IS NULL
-               AND NOT ()-[:DEFINES]->(s)
-               AND NOT ()-[:CALLS]->(s)
-               AND NOT (s)-[:CALLS]->()
+               AND NOT (:CodeFile {project: $project})-[:DEFINES]->(s)
+               AND NOT ({project: $project})-[:CALLS]->(s)
+               AND NOT (s)-[:CALLS]->({project: $project})
              DETACH DELETE s",
             project_param(),
         )?,

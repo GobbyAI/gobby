@@ -49,7 +49,13 @@ pub(super) fn extract_calls(
 
     let query = match Query::new(ctx.ts_lang, spec.call_query) {
         Ok(q) => q,
-        Err(_) => return Ok(Vec::new()),
+        Err(error) => {
+            log::error!(
+                "failed to compile call query for language `{language}` while parsing {}: {error}",
+                ctx.file_path.display()
+            );
+            return Ok(Vec::new());
+        }
     };
 
     let mut cursor = QueryCursor::new();

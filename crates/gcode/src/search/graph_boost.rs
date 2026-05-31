@@ -26,7 +26,7 @@ pub fn graph_boost(ctx: &Context, query: &str) -> Vec<String> {
         Ok(conn) => conn,
         Err(_) => return vec![],
     };
-    let empty_paths: Vec<String> = Vec::new();
+    let empty_paths = Vec::new();
     let mut resolved =
         fts::search_symbols_exact_first_visible(&mut conn, query, ctx, None, None, &empty_paths, 1);
     let Some(symbol) = resolved.pop() else {

@@ -226,7 +226,7 @@ fn cleanup_orphans_is_project_scoped() {
     assert!(
         queries[1]
             .cypher
-            .contains("WHERE (n:UnresolvedCallee OR n:ExternalSymbol)"),
+            .contains("AND NOT ({project: $project})-[:CALLS]->(n)"),
         "{}",
         queries[1].cypher
     );
@@ -235,9 +235,15 @@ fn cleanup_orphans_is_project_scoped() {
             .cypher
             .contains("MATCH (s:CodeSymbol {project: $project})")
             && queries[2].cypher.contains("s.file_path IS NULL")
-            && queries[2].cypher.contains("NOT ()-[:DEFINES]->(s)")
-            && queries[2].cypher.contains("NOT ()-[:CALLS]->(s)")
-            && queries[2].cypher.contains("NOT (s)-[:CALLS]->()"),
+            && queries[2]
+                .cypher
+                .contains("NOT (:CodeFile {project: $project})-[:DEFINES]->(s)")
+            && queries[2]
+                .cypher
+                .contains("NOT ({project: $project})-[:CALLS]->(s)")
+            && queries[2]
+                .cypher
+                .contains("NOT (s)-[:CALLS]->({project: $project})"),
         "{}",
         queries[2].cypher
     );

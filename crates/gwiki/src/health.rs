@@ -10,6 +10,7 @@ use crate::sources::{CompileStatus, SourceManifest, SourceRecord};
 use crate::{ScopeIdentity, WikiError};
 
 const AVERAGE_GREGORIAN_YEAR_SECONDS: u64 = 31_556_952;
+const STALE_CITATION_YEARS_ENV: &str = "GWIKI_STALE_CITATION_YEARS";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct HealthReport {
@@ -156,9 +157,18 @@ fn page_is_stale(page: &crate::lint::WikiPage) -> bool {
 }
 
 fn source_citation_is_stale(source: &SourceRecord) -> bool {
+    let stale_years = stale_citation_years();
     source.citation.is_some()
         && fetched_year(&source.fetched_at)
-            .is_some_and(|year| year + 1 < approximate_current_year())
+            .is_some_and(|year| year.saturating_add(stale_years) < approximate_current_year())
+}
+
+fn stale_citation_years() -> u64 {
+    std::env::var(STALE_CITATION_YEARS_ENV)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(1)
 }
 
 fn fetched_year(value: &str) -> Option<u64> {
@@ -200,15 +210,54 @@ fn source_is_cited(
         return true;
     }
     pages.iter().any(|page| {
-        let text = &page.markdown;
-        text.contains(&source.id)
-            || text.contains(&source.location)
-            || text.contains(&source.canonical_location)
+        source_reference_is_present(&page.markdown, &source.id)
+            || source_reference_is_present(&page.markdown, &source.location)
+            || source_reference_is_present(&page.markdown, &source.canonical_location)
             || source
                 .citation
                 .as_ref()
-                .is_some_and(|citation| text.contains(citation))
+                .is_some_and(|citation| source_reference_is_present(&page.markdown, citation))
     })
+}
+
+fn source_reference_is_present(markdown: &str, needle: &str) -> bool {
+    let needle = needle.trim();
+    if needle.is_empty() {
+        return false;
+    }
+    let markdown = markdown_without_fenced_code(markdown);
+    markdown_link_target_matches(&markdown, needle) || bounded_text_matches(&markdown, needle)
+}
+
+fn markdown_without_fenced_code(markdown: &str) -> String {
+    let mut output = String::new();
+    let mut in_fence = false;
+    for line in markdown.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if !in_fence {
+            output.push_str(line);
+            output.push('\n');
+        }
+    }
+    output
+}
+
+fn markdown_link_target_matches(markdown: &str, needle: &str) -> bool {
+    let escaped = regex::escape(needle);
+    let pattern = format!(
+        r#"(?m)(\[[^\]]*\]\(\s*<?{escaped}>?(?:\s+["'][^"']*["'])?\s*\)|\[\[\s*{escaped}(?:\|[^\]]*)?\s*\]\])"#
+    );
+    regex::Regex::new(&pattern).is_ok_and(|regex| regex.is_match(markdown))
+}
+
+fn bounded_text_matches(markdown: &str, needle: &str) -> bool {
+    let escaped = regex::escape(needle);
+    let pattern = format!(r#"(^|[^\p{{L}}\p{{N}}_]){escaped}($|[^\p{{L}}\p{{N}}_])"#);
+    regex::Regex::new(&pattern).is_ok_and(|regex| regex.is_match(markdown))
 }
 
 fn source_issue(source: &SourceRecord) -> HealthSourceIssue {
@@ -359,6 +408,22 @@ mod tests {
         assert_eq!(report.uncompiled_sources[0].source_id, source.id);
         assert!(root.join("meta/health/latest.json").exists());
         assert!(root.join("meta/health/latest.md").exists());
+    }
+
+    #[test]
+    fn source_reference_matching_skips_code_fences_and_partial_words() {
+        assert!(!source_reference_is_present(
+            "```md\nhttps://example.test/source\n```\n",
+            "https://example.test/source"
+        ));
+        assert!(!source_reference_is_present(
+            "prefixsource-idsuffix",
+            "source-id"
+        ));
+        assert!(source_reference_is_present(
+            "[Example](https://example.test/source)",
+            "https://example.test/source"
+        ));
     }
 
     fn write_page(root: &Path, relative: &str, markdown: &str) {

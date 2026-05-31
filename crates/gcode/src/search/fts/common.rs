@@ -8,6 +8,8 @@ use crate::db;
 use crate::models::Symbol;
 use crate::visibility;
 
+pub use gobby_core::search::sanitize_pg_search_query;
+
 pub(super) type PgParam = Box<dyn ToSql + Sync>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -281,30 +283,4 @@ pub(super) fn query_symbols_by_conditions(
             Vec::new()
         }
     }
-}
-
-/// Sanitize user input for pg_search's BM25 query DSL.
-pub fn sanitize_pg_search_query(query: &str) -> String {
-    let cleaned: String = query
-        .chars()
-        .map(|ch| {
-            if ch.is_alphanumeric() || matches!(ch, ' ' | '_' | '-') {
-                ch
-            } else {
-                ' '
-            }
-        })
-        .collect();
-    cleaned
-        .split_whitespace()
-        .filter(|token| !token.is_empty())
-        .map(|token| {
-            if token.starts_with('-') {
-                format!("\\{token}")
-            } else {
-                token.to_string()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
 }

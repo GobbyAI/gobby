@@ -127,39 +127,9 @@ pub fn has_identity_file(project_root: &Path) -> bool {
 
 // ── Internal helpers ────────────────────────────────────────────────
 
-/// Format current UTC time as ISO 8601 (no chrono dependency).
+/// Format current UTC time as ISO 8601.
 fn now_iso8601() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    let dur = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-    let secs = dur.as_secs();
-    let micros = dur.subsec_micros();
-
-    let (y, m, d) = days_to_ymd(secs / 86400);
-    let daytime = secs % 86400;
-    let h = daytime / 3600;
-    let min = (daytime % 3600) / 60;
-    let s = daytime % 60;
-
-    format!("{y:04}-{m:02}-{d:02}T{h:02}:{min:02}:{s:02}.{micros:06}+00:00")
-}
-
-/// Convert days since Unix epoch to (year, month, day).
-/// Howard Hinnant's civil_from_days algorithm.
-fn days_to_ymd(days: u64) -> (u64, u64, u64) {
-    let z = days as i64 + 719468;
-    let era = if z >= 0 { z } else { z - 146096 } / 146097;
-    let doe = (z - era * 146097) as u64;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let y = yoe as i64 + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    (y as u64, m, d)
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
 }
 
 fn absolute_fallback(path: &Path) -> PathBuf {
@@ -282,9 +252,9 @@ mod tests {
     #[test]
     fn test_now_iso8601_format() {
         let ts = now_iso8601();
-        // Should match YYYY-MM-DDTHH:MM:SS.ffffff+00:00
-        assert!(ts.len() >= 30, "timestamp too short: {ts}");
-        assert!(ts.ends_with("+00:00"));
+        // Should match YYYY-MM-DDTHH:MM:SS.ffffffZ
+        assert!(ts.len() >= 27, "timestamp too short: {ts}");
+        assert!(ts.ends_with('Z'));
         assert!(ts.contains('T'));
     }
 

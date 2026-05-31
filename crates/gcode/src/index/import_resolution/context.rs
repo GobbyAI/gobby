@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+use rayon::prelude::*;
+
 use crate::models::ImportRelation;
 
 use super::helpers::{is_elixir_alias, is_ruby_constant_name};
@@ -312,33 +314,39 @@ pub(super) fn normalize_rust_crate_name(name: &str) -> String {
 }
 
 pub(super) fn build_java_local_class_index(candidate_files: &[PathBuf]) -> HashSet<String> {
-    let mut classes = HashSet::new();
-    for path in candidate_files {
-        let ext = path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .unwrap_or_default();
-        if ext != "java" {
-            continue;
-        }
-        let Ok(contents) = std::fs::read_to_string(path) else {
-            continue;
-        };
-        let package = contents.lines().find_map(|line| {
-            let line = line.trim();
-            line.strip_prefix("package ")
-                .map(|rest| rest.trim().trim_end_matches(';').trim().to_string())
-        });
-        for class_name in java_declared_types(&contents) {
-            classes.insert(class_name.clone());
-            if let Some(package) = package.as_deref()
-                && !package.is_empty()
-            {
-                classes.insert(format!("{package}.{class_name}"));
+    candidate_files
+        .par_iter()
+        .map(|path| {
+            let mut classes = HashSet::new();
+            let ext = path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .unwrap_or_default();
+            if ext != "java" {
+                return classes;
             }
-        }
-    }
-    classes
+            let Ok(contents) = std::fs::read_to_string(path) else {
+                return classes;
+            };
+            let package = contents.lines().find_map(|line| {
+                let line = line.trim();
+                line.strip_prefix("package ")
+                    .map(|rest| rest.trim().trim_end_matches(';').trim().to_string())
+            });
+            for class_name in java_declared_types(&contents) {
+                classes.insert(class_name.clone());
+                if let Some(package) = package.as_deref()
+                    && !package.is_empty()
+                {
+                    classes.insert(format!("{package}.{class_name}"));
+                }
+            }
+            classes
+        })
+        .reduce(HashSet::new, |mut all, classes| {
+            all.extend(classes);
+            all
+        })
 }
 
 pub(super) fn build_csharp_local_roots(candidate_files: &[PathBuf]) -> HashSet<String> {

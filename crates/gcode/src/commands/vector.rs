@@ -94,6 +94,7 @@ pub(crate) struct VectorLifecycleJsonPayload {
     pub project_id: String,
     pub projection: &'static str,
     pub action: CodeSymbolVectorLifecycleAction,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub file_path: Option<String>,
     pub collection: String,
     pub status: ProjectionStatus,
