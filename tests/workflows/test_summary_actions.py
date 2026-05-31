@@ -495,6 +495,108 @@ class TestRenameTmuxWindow:
 
 
 # =============================================================================
+# Tests for enforce_window_name_if_unmanaged (repair-sweep helper)
+# =============================================================================
+
+
+class _EnforceTmuxManager:
+    """Records rename calls and returns a configurable automatic-rename flag."""
+
+    instances: list = []
+    auto_rename_return: bool | None = True
+
+    def __init__(self, config):
+        self.config = config
+        self.rename_calls = []
+        _EnforceTmuxManager.instances.append(self)
+
+    async def get_window_automatic_rename(self, target):
+        return type(self).auto_rename_return
+
+    async def rename_window(self, target, title):
+        self.rename_calls.append((target, title))
+        return True
+
+
+class TestEnforceWindowNameIfUnmanaged:
+    """Tests for the periodic repair-sweep rename helper."""
+
+    @pytest.mark.asyncio
+    async def test_renames_unmanaged_window_with_fallback(self) -> None:
+        """An un-named window (automatic-rename on) is renamed using the fallback."""
+        from gobby.workflows.summary_actions import enforce_window_name_if_unmanaged
+
+        _EnforceTmuxManager.instances = []
+        _EnforceTmuxManager.auto_rename_return = True
+        session = MagicMock()
+        session.terminal_context = {"tmux_pane": "%42", "cwd": "/work/repos/gobby/"}
+        session.agent_depth = 0
+        session.ref = "#99"
+        session.title = ""
+
+        with patch("gobby.sessions.tmux_context.TmuxSessionManager", _EnforceTmuxManager):
+            acted = await enforce_window_name_if_unmanaged(session)
+
+        assert acted is True
+        rename_calls = [c for m in _EnforceTmuxManager.instances for c in m.rename_calls]
+        assert rename_calls == [("%42", "#99: gobby")]
+
+    @pytest.mark.asyncio
+    async def test_skips_window_already_managed(self) -> None:
+        """A window Gobby already named (automatic-rename off) is left untouched."""
+        from gobby.workflows.summary_actions import enforce_window_name_if_unmanaged
+
+        _EnforceTmuxManager.instances = []
+        _EnforceTmuxManager.auto_rename_return = False
+        session = MagicMock()
+        session.terminal_context = {"tmux_pane": "%42", "cwd": "/work/repos/gobby/"}
+        session.agent_depth = 0
+        session.ref = "#99"
+        session.title = ""
+
+        with patch("gobby.sessions.tmux_context.TmuxSessionManager", _EnforceTmuxManager):
+            acted = await enforce_window_name_if_unmanaged(session)
+
+        assert acted is False
+        rename_calls = [c for m in _EnforceTmuxManager.instances for c in m.rename_calls]
+        assert rename_calls == []
+
+    @pytest.mark.asyncio
+    async def test_skips_when_window_unreadable(self) -> None:
+        """A vanished window (automatic-rename None) is not renamed."""
+        from gobby.workflows.summary_actions import enforce_window_name_if_unmanaged
+
+        _EnforceTmuxManager.instances = []
+        _EnforceTmuxManager.auto_rename_return = None
+        session = MagicMock()
+        session.terminal_context = {"tmux_pane": "%42", "cwd": "/x/gobby"}
+        session.agent_depth = 0
+        session.ref = "#99"
+        session.title = ""
+
+        with patch("gobby.sessions.tmux_context.TmuxSessionManager", _EnforceTmuxManager):
+            acted = await enforce_window_name_if_unmanaged(session)
+
+        assert acted is False
+        assert all(not m.rename_calls for m in _EnforceTmuxManager.instances)
+
+    @pytest.mark.asyncio
+    async def test_skips_when_no_tmux_pane(self) -> None:
+        """No tmux_pane in terminal_context -> no tmux work at all."""
+        from gobby.workflows.summary_actions import enforce_window_name_if_unmanaged
+
+        _EnforceTmuxManager.instances = []
+        session = MagicMock()
+        session.terminal_context = {"cwd": "/x"}
+
+        with patch("gobby.sessions.tmux_context.TmuxSessionManager", _EnforceTmuxManager):
+            acted = await enforce_window_name_if_unmanaged(session)
+
+        assert acted is False
+        assert _EnforceTmuxManager.instances == []
+
+
+# =============================================================================
 # Tests for generate_summary
 # =============================================================================
 

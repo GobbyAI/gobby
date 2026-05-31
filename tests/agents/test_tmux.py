@@ -1366,3 +1366,34 @@ class TestTmuxSessionManagerExtended:
         assert result is True
         # Should have called killpg with SIGTERM then SIGKILL
         assert mock_killpg.call_count >= 2
+
+
+class TestGetWindowAutomaticRename:
+    """Tests for TmuxSessionManager.get_window_automatic_rename."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            ("1", True),
+            ("on", True),
+            ("0", False),
+            ("off", False),
+            ("", None),
+            ("weird", None),
+        ],
+    )
+    async def test_parses_flag(self, raw: str, expected: bool | None) -> None:
+        mgr = TmuxSessionManager()
+        with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = (0, raw + "\n", "")
+            result = await mgr.get_window_automatic_rename("%1")
+        assert result is expected
+
+    @pytest.mark.asyncio
+    async def test_returns_none_on_error_rc(self) -> None:
+        mgr = TmuxSessionManager()
+        with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = (1, "", "no server running")
+            result = await mgr.get_window_automatic_rename("%1")
+        assert result is None

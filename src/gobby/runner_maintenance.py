@@ -278,6 +278,65 @@ async def cleanup_zombie_messages_loop(
             logger.error(f"Error in zombie message cleanup loop: {e}")
 
 
+async def tmux_window_name_repair_loop(
+    session_manager: Any,
+    is_shutdown_requested: Callable[[], bool],
+    interval_seconds: int = 120,
+) -> None:
+    """Ensure active tmux-backed sessions have Gobby-named windows.
+
+    Some interactive sessions — notably Claude Code in a VSCode tmux pane — keep
+    an empty title, so the session-start window rename never lands and the tmux
+    window name stays frozen at whatever the CLI's startup OSC set (e.g. its
+    version string), which then leaks into the VSCode terminal tab via
+    ``set-titles-string "#W"``. This sweep renames any active tracked session
+    whose tmux window still reports ``automatic-rename=on`` (i.e. Gobby never
+    named it), repairing already-stuck windows and self-healing any
+    session-start miss. Windows Gobby has already named are skipped.
+    """
+    from gobby.workflows.summary_actions import enforce_window_name_if_unmanaged
+
+    async def _repair_once() -> None:
+        if session_manager is None:
+            return
+        try:
+            sessions = session_manager.list(statuses=["active", "paused"], limit=200)
+        except Exception as e:
+            logger.warning(f"tmux window repair: failed to list sessions: {e}")
+            return
+        renamed = 0
+        for session in sessions:
+            tc = getattr(session, "terminal_context", None)
+            if not isinstance(tc, dict) or not tc.get("tmux_pane"):
+                continue
+            try:
+                if await enforce_window_name_if_unmanaged(session):
+                    renamed += 1
+            except Exception:
+                logger.debug(
+                    "tmux window repair: rename failed for session %s",
+                    getattr(session, "ref", "?"),
+                    exc_info=True,
+                )
+        if renamed:
+            logger.info(f"tmux window repair: renamed {renamed} window(s)")
+
+    # Run once on startup, then loop.
+    try:
+        await _repair_once()
+    except Exception as e:
+        logger.error(f"Error in initial tmux window repair: {e}")
+
+    while not is_shutdown_requested():
+        try:
+            await asyncio.sleep(interval_seconds)
+            await _repair_once()
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Error in tmux window repair loop: {e}")
+
+
 async def cleanup_comms_messages_loop(
     db: Any,
     is_shutdown_requested: Callable[[], bool],

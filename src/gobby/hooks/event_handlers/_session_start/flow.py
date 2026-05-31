@@ -47,12 +47,24 @@ def _consume_pending_compact_self_continuation(
 
 def _schedule_tmux_window_rename_for_session(handler: Any, session: Any) -> None:
     terminal_context = getattr(session, "terminal_context", None)
-    if not isinstance(terminal_context, dict) or not terminal_context.get("tmux_pane"):
+    pane = terminal_context.get("tmux_pane") if isinstance(terminal_context, dict) else None
+    if not pane:
+        handler.logger.debug(
+            "tmux window rename skipped for %s: no tmux_pane in terminal_context",
+            getattr(session, "ref", "?"),
+        )
         return
 
+    title = getattr(session, "title", None) or ""
+    handler.logger.info(
+        "Scheduling tmux window rename for %s pane=%s title=%r",
+        getattr(session, "ref", "?"),
+        pane,
+        title,
+    )
     _compat_module().schedule_tmux_window_rename(
         session,
-        getattr(session, "title", None) or "",
+        title,
         loop=getattr(handler._session_coordinator, "_event_loop", None),
     )
 

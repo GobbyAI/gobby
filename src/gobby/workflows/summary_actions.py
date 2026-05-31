@@ -315,14 +315,14 @@ def schedule_tmux_window_rename(
                 asyncio.run_coroutine_threadsafe(coro, loop)
                 return
             except Exception:
-                logger.debug("Failed to schedule tmux rename on captured loop", exc_info=True)
+                logger.warning("Failed to schedule tmux rename on captured loop", exc_info=True)
                 coro.close()
                 return
 
     try:
         asyncio.run(coro)
     except Exception:
-        logger.debug("Failed to run tmux rename synchronously", exc_info=True)
+        logger.warning("Failed to run tmux rename synchronously", exc_info=True)
 
 
 def _synthesize_fallback_title(session: object, terminal_context: dict[str, Any]) -> str:
@@ -358,6 +358,74 @@ def _path_basename_title(value: Any) -> str | None:
     return title or None
 
 
+def _resolve_window_title(session: Any, terminal_context: dict[str, Any], title: str) -> str:
+    """Resolve the final tmux window title: fallback when empty, ref-prefixed.
+
+    Prepends the session ref (e.g. ``#3605``) so the window reads ``#N: title``.
+    """
+    if not title:
+        title = _synthesize_fallback_title(session, terminal_context)
+    ref = getattr(session, "ref", None)
+    if ref:
+        title = f"{ref}: {title}"
+    return title
+
+
+def _tmux_manager_for_session(session: Any, terminal_context: dict[str, Any]) -> Any:
+    """Build a tmux manager for *session*'s recorded server context."""
+    agent_depth = getattr(session, "agent_depth", 0) or 0
+    default_socket_name = "gobby" if agent_depth > 0 else ""
+    return get_tmux_manager_for_context(terminal_context, default_socket_name=default_socket_name)
+
+
+async def _apply_window_rename(
+    session: Any, terminal_context: dict[str, Any], pane: str, title: str
+) -> bool:
+    """Rename *pane*'s window for *session*, logging the structured outcome.
+
+    Failures are logged but never propagated. Returns True only when tmux
+    confirms the rename was applied.
+    """
+    resolved = _resolve_window_title(session, terminal_context, title)
+    ref = getattr(session, "ref", "?")
+    socket = (
+        terminal_context.get("tmux_socket_path")
+        or terminal_context.get("tmux_socket_name")
+        or "default"
+    )
+    try:
+        mgr = _tmux_manager_for_session(session, terminal_context)
+        applied = bool(await mgr.rename_window(pane, resolved))
+    except Exception as e:
+        logger.warning(
+            "tmux window rename errored for %s pane=%s socket=%s title=%r: %s",
+            ref,
+            pane,
+            socket,
+            resolved,
+            e,
+        )
+        return False
+    if applied:
+        logger.info(
+            "Renamed tmux window for %s pane=%s socket=%s title=%r",
+            ref,
+            pane,
+            socket,
+            resolved,
+        )
+    else:
+        logger.warning(
+            "tmux window rename did not apply for %s pane=%s socket=%s title=%r "
+            "(target missing or tmux error)",
+            ref,
+            pane,
+            socket,
+            resolved,
+        )
+    return applied
+
+
 async def _rename_tmux_window(session: Any, title: str) -> None:
     """Rename the tmux window for a session after title synthesis.
 
@@ -370,25 +438,44 @@ async def _rename_tmux_window(session: Any, title: str) -> None:
     if not tc:
         return
     pane = tc.get("tmux_pane")
-    if not pane:
+    if not isinstance(pane, str) or not pane:
         return
+    await _apply_window_rename(session, tc, pane, title)
 
-    if not title:
-        title = _synthesize_fallback_title(session, tc)
 
-    agent_depth = getattr(session, "agent_depth", 0) or 0
+async def enforce_window_name_if_unmanaged(session: Any) -> bool:
+    """Rename a tracked session's tmux window iff Gobby has not named it yet.
 
-    # Prepend session ref (e.g. "#3605") so the window reads "#N: title"
-    ref = getattr(session, "ref", None)
-    if ref:
-        title = f"{ref}: {title}"
+    Used by the periodic repair sweep. A window Gobby has already named has
+    ``automatic-rename`` off (``rename_window`` disables it); such windows are
+    left untouched so the sweep stays cheap and idempotent and does not fight
+    the title-change rename path. Returns True when a rename was issued.
 
+    This is the durable safety net for sessions whose session-start rename never
+    lands — notably interactive Claude sessions in a VSCode tmux pane, which keep
+    an empty title and otherwise stay frozen on the CLI's startup OSC window name
+    (e.g. its version string).
+    """
+    tc = parse_terminal_context_value(getattr(session, "terminal_context", None))
+    if not tc:
+        return False
+    pane = tc.get("tmux_pane")
+    if not isinstance(pane, str) or not pane:
+        return False
+
+    mgr = _tmux_manager_for_session(session, tc)
     try:
-        default_socket_name = "gobby" if agent_depth > 0 else ""
-        mgr = get_tmux_manager_for_context(tc, default_socket_name=default_socket_name)
-        await mgr.rename_window(pane, title)
-    except Exception as e:
-        logger.warning(f"_rename_tmux_window: {e}")
+        auto_rename = await mgr.get_window_automatic_rename(pane)
+    except Exception:
+        logger.debug("Failed to read automatic-rename for pane %s", pane, exc_info=True)
+        return False
+    # None -> window unreadable/gone; False -> already Gobby-managed. Skip both;
+    # only act when automatic-rename is still on (Gobby never named this window).
+    if auto_rename is not True:
+        return False
+
+    title = getattr(session, "title", None) or ""
+    return await _apply_window_rename(session, tc, pane, title)
 
 
 async def generate_summary(

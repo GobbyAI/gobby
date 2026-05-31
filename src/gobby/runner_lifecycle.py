@@ -105,6 +105,7 @@ async def run_daemon(runner: GobbyRunner) -> None:
         rebuild_vector_store,
         setup_signal_handlers,
         span_cleanup_loop,
+        tmux_window_name_repair_loop,
     )
 
     try:
@@ -172,6 +173,7 @@ async def run_daemon(runner: GobbyRunner) -> None:
                 bin_freshness_loop=bin_freshness_loop,
                 drain_hook_inbox_loop=drain_hook_inbox_loop,
                 expire_approval_timeouts_loop=expire_approval_timeouts_loop,
+                tmux_window_name_repair_loop=tmux_window_name_repair_loop,
             )
 
             while not runner._shutdown_requested:

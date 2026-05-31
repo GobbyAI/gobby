@@ -111,6 +111,7 @@ class GobbyRunner:
     _memory_reconcile_task: asyncio.Task[None] | None
     _approval_timeout_task: asyncio.Task[None] | None
     _expired_isolation_task: asyncio.Task[None] | None
+    _tmux_window_repair_task: asyncio.Task[None] | None
     database: HubDatabase
     db_executor: DatabaseExecutor
     secret_store: SecretStore

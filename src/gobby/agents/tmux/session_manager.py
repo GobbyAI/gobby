@@ -466,6 +466,28 @@ class TmuxSessionManager:
         except ValueError:
             return None
 
+    async def get_window_automatic_rename(self, target: str) -> bool | None:
+        """Return whether ``automatic-rename`` is on for *target*'s window.
+
+        A window Gobby has named via :meth:`rename_window` has
+        ``automatic-rename`` disabled, so this is a cheap "has Gobby named this
+        window yet?" probe for the repair sweep.
+
+        Returns True/False, or None when the option cannot be read (e.g. the
+        target window no longer exists).
+        """
+        rc, stdout, _stderr = await self._run(
+            "display-message", "-t", target, "-p", "#{automatic-rename}"
+        )
+        if rc != 0:
+            return None
+        value = stdout.strip()
+        if value in ("1", "on"):
+            return True
+        if value in ("0", "off"):
+            return False
+        return None
+
     async def rename_window(self, target: str, title: str) -> bool:
         """Rename the tmux window containing *target*.
 

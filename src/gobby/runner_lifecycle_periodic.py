@@ -121,6 +121,14 @@ def start_periodic_tasks(
             name="approval-timeout-expiry",
         )
 
+    runner._tmux_window_repair_task = asyncio.create_task(
+        loops["tmux_window_name_repair_loop"](
+            getattr(runner, "session_manager", None),
+            lambda: runner._shutdown_requested,
+        ),
+        name="tmux-window-repair",
+    )
+
     task_count = sum(
         1
         for task in (
@@ -136,6 +144,7 @@ def start_periodic_tasks(
             runner._hook_inbox_task,
             runner._bin_freshness_task,
             runner._approval_timeout_task,
+            runner._tmux_window_repair_task,
         )
         if task is not None
     )
