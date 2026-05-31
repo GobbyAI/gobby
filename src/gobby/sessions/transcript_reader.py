@@ -148,7 +148,12 @@ class TranscriptReader:
                     )
                     source = self._archive_source(session, sample, session_id)
                     dicts = await asyncio.to_thread(
-                        _collect_legacy_from_archive, str(archive_path), source, session_id, cap, role
+                        _collect_legacy_from_archive,
+                        str(archive_path),
+                        source,
+                        session_id,
+                        cap,
+                        role,
                     )
                 except DecompressionError as e:
                     logger.warning(f"Failed to read archive for session {session_id}: {e}")
@@ -254,7 +259,9 @@ class TranscriptReader:
         render. Callers needing every group must page via
         :meth:`iter_rendered_windows`.
         """
-        clamped = RENDERED_LIMIT_MAX if limit is None else min(max(int(limit), 1), RENDERED_LIMIT_MAX)
+        clamped = (
+            RENDERED_LIMIT_MAX if limit is None else min(max(int(limit), 1), RENDERED_LIMIT_MAX)
+        )
         result = await self.get_rendered_window(
             session_id, clamped, max(0, int(offset)), order="head"
         )
@@ -334,9 +341,7 @@ class TranscriptReader:
         if path and os.path.isfile(path):
             st = await asyncio.to_thread(os.stat, path)
             if _is_json_session_file(path):
-                return _Windowable(
-                    kind="native", path=path, source=session.source, size=st.st_size
-                )
+                return _Windowable(kind="native", path=path, source=session.source, size=st.st_size)
             source = await asyncio.to_thread(
                 detect_source_bounded, path, session_source=session.source
             )
@@ -376,9 +381,7 @@ class TranscriptReader:
 
         return _Windowable(kind="missing")
 
-    def _archive_source(
-        self, session: Session, sample: list[str], session_id: str
-    ) -> str:
+    def _archive_source(self, session: Session, sample: list[str], session_id: str) -> str:
         """Resolve the parser source for an archive from a bounded line sample."""
         effective, _ = _resolve_effective_source(
             session, transcript_path=None, lines=sample, session_id=session_id

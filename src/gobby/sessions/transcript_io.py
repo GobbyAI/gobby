@@ -29,8 +29,7 @@ class TranscriptTooLargeError(RuntimeError):
         self.size_bytes = size_bytes
         self.max_bytes = max_bytes
         super().__init__(
-            f"Transcript too large to render ({size_bytes} bytes exceeds "
-            f"{max_bytes} byte limit)"
+            f"Transcript too large to render ({size_bytes} bytes exceeds {max_bytes} byte limit)"
         )
 
 

@@ -953,7 +953,10 @@ def _jsonl_reader_with_user_msgs(tmp_path: Path, count: int) -> TranscriptReader
     transcript_path = tmp_path / "transcript.jsonl"
     _write_jsonl_file(
         transcript_path,
-        [{"type": "user", "message": {"role": "user", "content": f"msg {i}"}} for i in range(count)],
+        [
+            {"type": "user", "message": {"role": "user", "content": f"msg {i}"}}
+            for i in range(count)
+        ],
     )
     session = MagicMock()
     session.external_id = "no-archive"

@@ -44,6 +44,7 @@ def _agen(pages: list[list[Any]]) -> Any:
 
     return gen()
 
+
 # ============================================================================
 # Custom Registry Class for Testing
 # ============================================================================
@@ -345,7 +346,9 @@ class TestGetSessionMessages:
         mock_msg = MagicMock()
         mock_msg.to_dict.return_value = {"id": 1, "content": long_content, "role": "user"}
         transcript_reader = AsyncMock()
-        transcript_reader.get_rendered_window.return_value = _window([mock_msg], parsed_message_count=1)
+        transcript_reader.get_rendered_window.return_value = _window(
+            [mock_msg], parsed_message_count=1
+        )
 
         registry = create_test_registry(transcript_reader=transcript_reader)
         get_messages = registry.get_tool("get_session_messages")
@@ -365,7 +368,9 @@ class TestGetSessionMessages:
         mock_msg = MagicMock()
         mock_msg.to_dict.return_value = {"id": 1, "content": long_content, "role": "user"}
         transcript_reader = AsyncMock()
-        transcript_reader.get_rendered_window.return_value = _window([mock_msg], parsed_message_count=1)
+        transcript_reader.get_rendered_window.return_value = _window(
+            [mock_msg], parsed_message_count=1
+        )
 
         registry = create_test_registry(transcript_reader=transcript_reader)
         get_messages = registry.get_tool("get_session_messages")
@@ -388,7 +393,9 @@ class TestGetSessionMessages:
             "tool_calls": [{"name": "Edit", "input": long_input}],
         }
         transcript_reader = AsyncMock()
-        transcript_reader.get_rendered_window.return_value = _window([mock_msg], parsed_message_count=1)
+        transcript_reader.get_rendered_window.return_value = _window(
+            [mock_msg], parsed_message_count=1
+        )
 
         registry = create_test_registry(transcript_reader=transcript_reader)
         get_messages = registry.get_tool("get_session_messages")
@@ -410,7 +417,9 @@ class TestGetSessionMessages:
             "tool_result": {"content": long_result},
         }
         transcript_reader = AsyncMock()
-        transcript_reader.get_rendered_window.return_value = _window([mock_msg], parsed_message_count=1)
+        transcript_reader.get_rendered_window.return_value = _window(
+            [mock_msg], parsed_message_count=1
+        )
 
         registry = create_test_registry(transcript_reader=transcript_reader)
         get_messages = registry.get_tool("get_session_messages")
@@ -1279,7 +1288,9 @@ class TestEdgeCases:
             "role": "assistant",
         }
         transcript_reader = AsyncMock()
-        transcript_reader.get_rendered_window.return_value = _window([mock_msg], parsed_message_count=1)
+        transcript_reader.get_rendered_window.return_value = _window(
+            [mock_msg], parsed_message_count=1
+        )
 
         registry = create_test_registry(transcript_reader=transcript_reader)
         get_messages = registry.get_tool("get_session_messages")
