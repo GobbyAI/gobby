@@ -1095,6 +1095,45 @@ class TestEndAgentRun:
         )
 
     @pytest.mark.asyncio
+    async def test_terminalizes_before_closing_terminal(self) -> None:
+        runner = _make_runner_with_run_storage()
+        mock_run = _make_mock_agent_run(
+            run_id="run-123",
+            session_id="sess-456",
+            parent_session_id="sess-parent",
+        )
+        runner.run_storage.get_by_session.return_value = mock_run
+        runner.get_run.return_value = mock_run
+        events: list[tuple[str, str, bool | None]] = []
+
+        def complete_run(run_id: str, result: str | None = None) -> bool:
+            events.append(("complete", run_id, None))
+            return True
+
+        async def kill_process(*args, **kwargs):
+            run = args[0]
+            events.append(("kill", run.id, kwargs.get("close_terminal")))
+            return {"success": True}
+
+        runner.complete_run.side_effect = complete_run
+        registry = create_agents_registry(runner)
+
+        from gobby.utils.session_context import session_context_for_test
+
+        with (
+            session_context_for_test("sess-456"),
+            patch(
+                "gobby.mcp_proxy.tools.agents._kill_agent_process",
+                new_callable=AsyncMock,
+                side_effect=kill_process,
+            ),
+        ):
+            result = await registry._tools["end_agent_run"].func()
+
+        assert result == {"success": True, "run_id": "run-123", "status": "success"}
+        assert events == [("complete", "run-123", None), ("kill", "run-123", True)]
+
+    @pytest.mark.asyncio
     async def test_returns_error_when_session_has_no_agent_run(self) -> None:
         runner = _make_runner_with_run_storage()
         runner.get_run_id_by_session.return_value = None

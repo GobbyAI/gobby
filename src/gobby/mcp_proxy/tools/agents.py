@@ -165,19 +165,8 @@ async def _complete_self_terminated_run(
 ) -> dict[str, Any]:
     """Terminate the caller's process and finalize the run as success."""
     agent_session_id = run.child_session_id
-    result = await _kill_agent_process(
-        run,
-        kill_db,
-        signal_name=signal,
-        close_terminal=not debug,
-    )
-    if not result.get("success") and result.get("error") != "No target PID found":
-        return result
+    result: dict[str, Any] = {}
 
-    # Read the agent's adversary_verdict session variable (written by
-    # approve_review / reject_review). When present,
-    # forward it as signoff_message — the wake dispatcher prefers
-    # result.get("signoff_message") for the parent's completion P2P content.
     notify_result: dict[str, Any] = {"status": "success", "run_id": run.id}
     if agent_session_id:
         try:
@@ -208,6 +197,17 @@ async def _complete_self_terminated_run(
         result["noop"] = True
     else:
         result["status"] = "success"
+
+    kill_result = await _kill_agent_process(
+        run,
+        kill_db,
+        signal_name=signal,
+        close_terminal=not debug,
+    )
+    if kill_result.get("success") or kill_result.get("error") == "No target PID found":
+        result.update(kill_result)
+    else:
+        result["terminal_cleanup_error"] = kill_result.get("error") or "unknown terminal cleanup"
 
     await _cleanup_terminal_artifacts(
         run_id=run.id,
