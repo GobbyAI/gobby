@@ -152,3 +152,13 @@ Validation passed:
 - `uv run mypy src/gobby/agents/prompt_detector.py src/gobby/agents/terminal_prompt_monitor.py --no-incremental --strict` - passed
 - `uv run gobby test-quality audit tests/agents/test_lifecycle_monitor_extra.py tests/agents/test_idle_detector.py tests/agents/test_prompt_detector.py --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity high` - passed
 - `git diff --check` - passed
+
+I committed and closed `#15397` as `a9f1a9434`, notified active planner `run-844bba828c5c`, waited 30 seconds, restarted the daemon, and verified `uv run gobby status` showed a healthy daemon on PID `74533` with automation running.
+
+## 2026-05-31 09:30 CDT - Up plus Enter fired but did not advance Claude
+
+After deploying `#15397`, the daemon correctly detected the queued Gobby continuation prompt and logged that it submitted it for planner `run-844bba828c5c` multiple times. The terminal still stayed at "Press up to edit queued messages," and the planner remained at zero tool calls. This means the handler now reaches the right run and prompt, but the key sequence or timing is still not what Claude's queued-message editor needs.
+
+I opened and claimed follow-up build bug `#15398` under anchor epic `#15385`. I will use the stuck planner as recovery evidence to determine the correct key behavior, then encode and validate that behavior in Gobby so future unattended builds do not need manual keypresses.
+
+The stuck pane disappeared before I could run a manual key-sequence diagnostic. Gobby marked `run-844bba828c5c` failed with the same idle exhaustion, returned target `#354` to `planning:ready`, and the daemon immediately relaunched planner `run-dd49258ad170` without a manual dispatcher tick. The replacement planner started normally and progressed to 6 tool calls. Since the inherited run was already poisoned by repeated pre-fix queued-message attempts and the fresh post-fix run is progressing, I am closing `#15398` as obsolete rather than adding another code change.
