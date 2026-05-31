@@ -9,7 +9,7 @@ priority: 20
 surfaces: [spawn, persona]
 provider: claude
 model: opus
-reasoning_effort: xhigh
+reasoning_effort: high
 isolation: none
 blocked_mcp_tools:
   - "gobby-agents:kill_agent"
