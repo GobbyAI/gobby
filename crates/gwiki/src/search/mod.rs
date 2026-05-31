@@ -3,7 +3,7 @@ pub mod graph_boost;
 pub mod rrf;
 pub mod semantic;
 
-use std::collections::BTreeSet;
+use std::collections::HashSet;
 use std::fmt;
 use std::path::PathBuf;
 
@@ -218,7 +218,7 @@ fn graph_seed_paths(
     semantic_hits: &[WikiSearchResult],
     limit: usize,
 ) -> Vec<PathBuf> {
-    let mut seen = BTreeSet::new();
+    let mut seen = HashSet::new();
     let mut paths = Vec::new();
     for hit in bm25_hits.iter().chain(semantic_hits) {
         let path = hit.provenance.document_path.clone();
@@ -315,7 +315,7 @@ mod tests {
         let linked = response
             .results
             .iter()
-            .find(|result| result.path == PathBuf::from("wiki/topics/linked.md"))
+            .find(|result| result.path.as_path() == std::path::Path::new("wiki/topics/linked.md"))
             .expect("linked page is included");
         assert!(linked.sources.contains(&SearchSource::Graph));
     }

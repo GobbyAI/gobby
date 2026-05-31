@@ -178,6 +178,7 @@ pub fn build_import_resolution_context_with_overrides(
         elixir_local_module_roots: build_elixir_local_module_roots(candidate_files),
     }
 }
+
 pub(super) fn build_python_module_index(
     root_path: &Path,
     candidate_files: &[PathBuf],

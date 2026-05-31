@@ -485,7 +485,7 @@ pub(crate) fn reject_unsupported_grep_flags(command: &Command) -> anyhow::Result
 
     if let Some(flag) = flag {
         anyhow::bail!(
-            "gcode grep is indexed search; unsupported grep/rg flag `{flag}`. Use raw `rg` for filesystem grep."
+            "gcode grep is indexed search; unsupported grep/rg flag `{flag}`. Use -m/--max-count for match caps or raw `rg` for filesystem grep."
         );
     }
 

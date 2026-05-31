@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::Context as _;
 use postgres::Client;
+use postgres::types::ToSql;
 use regex::Regex;
 use serde::Serialize;
 
@@ -78,8 +79,9 @@ struct GrepResult {
 
 pub fn run(ctx: &Context, options: GrepOptions<'_>) -> anyhow::Result<()> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
-    let chunks = load_indexed_chunks(&mut conn, ctx)?;
-    let result = grep_chunks(&chunks, &options)?;
+    let filters = GrepFilters::new(options.paths, options.globs)?;
+    let chunks = load_indexed_chunks(&mut conn, ctx, &filters)?;
+    let result = grep_chunks_with_filters(&chunks, &options, &filters)?;
 
     match options.format {
         Format::Json => output::print_json(&GrepResponse {
@@ -109,34 +111,41 @@ pub fn run(ctx: &Context, options: GrepOptions<'_>) -> anyhow::Result<()> {
 fn load_indexed_chunks(
     conn: &mut Client,
     ctx: &Context,
+    filters: &GrepFilters,
 ) -> anyhow::Result<Vec<IndexedContentChunk>> {
     let mut chunks = Vec::new();
+    let tombstone_language = visibility::TOMBSTONE_LANGUAGE;
     let rows = match &ctx.index_scope {
-        ProjectIndexScope::Single => conn.query(
-            "SELECT c.file_path,
-                    c.line_start::BIGINT AS line_start,
-                    c.content
-             FROM code_content_chunks c
-             JOIN code_indexed_files cf
-               ON cf.project_id = c.project_id AND cf.file_path = c.file_path
-             WHERE c.project_id = $1
-               AND cf.language != $2
-             ORDER BY c.file_path ASC, c.line_start ASC, c.chunk_index ASC",
-            &[&ctx.project_id, &visibility::TOMBSTONE_LANGUAGE],
-        )?,
+        ProjectIndexScope::Single => {
+            let mut params: Vec<&(dyn ToSql + Sync)> = vec![&ctx.project_id, &tombstone_language];
+            let mut conditions = vec![
+                "c.project_id = $1".to_string(),
+                "cf.language != $2".to_string(),
+            ];
+            push_grep_sql_prefilters(&mut conditions, &mut params, "c", filters);
+            let sql = format!(
+                "SELECT c.file_path,
+                        c.line_start::BIGINT AS line_start,
+                        c.content
+                 FROM code_content_chunks c
+                 JOIN code_indexed_files cf
+                   ON cf.project_id = c.project_id AND cf.file_path = c.file_path
+                 WHERE {}
+                 ORDER BY c.file_path ASC, c.line_start ASC, c.chunk_index ASC",
+                conditions.join(" AND ")
+            );
+            conn.query(&sql, &params)?
+        }
         ProjectIndexScope::Overlay {
             overlay_project_id,
             parent_project_id,
             ..
-        } => conn.query(
-            "SELECT c.file_path,
-                    c.line_start::BIGINT AS line_start,
-                    c.content
-             FROM code_content_chunks c
-             JOIN code_indexed_files cf
-               ON cf.project_id = c.project_id AND cf.file_path = c.file_path
-             WHERE cf.language != $3
-               AND (
+        } => {
+            let mut params: Vec<&(dyn ToSql + Sync)> =
+                vec![overlay_project_id, parent_project_id, &tombstone_language];
+            let mut conditions = vec![
+                "cf.language != $3".to_string(),
+                "(
                     c.project_id = $1
                     OR (
                         c.project_id = $2
@@ -146,14 +155,23 @@ fn load_indexed_chunks(
                               AND shadow.file_path = c.file_path
                         )
                     )
-               )
-             ORDER BY c.file_path ASC, c.line_start ASC, c.chunk_index ASC",
-            &[
-                overlay_project_id,
-                parent_project_id,
-                &visibility::TOMBSTONE_LANGUAGE,
-            ],
-        )?,
+                )"
+                .to_string(),
+            ];
+            push_grep_sql_prefilters(&mut conditions, &mut params, "c", filters);
+            let sql = format!(
+                "SELECT c.file_path,
+                        c.line_start::BIGINT AS line_start,
+                        c.content
+                 FROM code_content_chunks c
+                 JOIN code_indexed_files cf
+                   ON cf.project_id = c.project_id AND cf.file_path = c.file_path
+                 WHERE {}
+                 ORDER BY c.file_path ASC, c.line_start ASC, c.chunk_index ASC",
+                conditions.join(" AND ")
+            );
+            conn.query(&sql, &params)?
+        }
     };
     for row in rows {
         let file_path: String = row.try_get("file_path")?;
@@ -174,12 +192,63 @@ fn load_indexed_chunks(
     Ok(chunks)
 }
 
+fn push_grep_sql_prefilters<'a>(
+    conditions: &mut Vec<String>,
+    params: &mut Vec<&'a (dyn ToSql + Sync)>,
+    alias: &str,
+    filters: &'a GrepFilters,
+) {
+    push_grep_sql_prefix_filter(
+        conditions,
+        params,
+        alias,
+        filters.path_sql_prefixes.as_ref(),
+    );
+    push_grep_sql_prefix_filter(
+        conditions,
+        params,
+        alias,
+        filters.glob_sql_prefixes.as_ref(),
+    );
+}
+
+fn push_grep_sql_prefix_filter<'a>(
+    conditions: &mut Vec<String>,
+    params: &mut Vec<&'a (dyn ToSql + Sync)>,
+    alias: &str,
+    prefixes: Option<&'a Vec<String>>,
+) {
+    let Some(prefixes) = prefixes else {
+        return;
+    };
+    if prefixes.is_empty() {
+        return;
+    }
+    let placeholder = format!("${}", params.len() + 1);
+    params.push(prefixes);
+    conditions.push(format!(
+        "EXISTS (
+            SELECT 1 FROM unnest({placeholder}::TEXT[]) AS grep_prefix(value)
+            WHERE {alias}.file_path LIKE grep_prefix.value ESCAPE '\\'
+        )"
+    ));
+}
+
+#[cfg(test)]
 fn grep_chunks(
     chunks: &[IndexedContentChunk],
     options: &GrepOptions<'_>,
 ) -> anyhow::Result<GrepResult> {
-    let matcher = GrepMatcher::new(options.pattern, options.fixed_strings, options.ignore_case)?;
     let filters = GrepFilters::new(options.paths, options.globs)?;
+    grep_chunks_with_filters(chunks, options, &filters)
+}
+
+fn grep_chunks_with_filters(
+    chunks: &[IndexedContentChunk],
+    options: &GrepOptions<'_>,
+    filters: &GrepFilters,
+) -> anyhow::Result<GrepResult> {
+    let matcher = GrepMatcher::new(options.pattern, options.fixed_strings, options.ignore_case)?;
     let before_context = options.before_context.or(options.context).unwrap_or(0);
     let after_context = options.after_context.or(options.context).unwrap_or(0);
 
@@ -277,17 +346,23 @@ impl GrepMatcher {
 struct GrepFilters {
     paths: Vec<glob::Pattern>,
     globs: Vec<CompiledGlob>,
+    path_sql_prefixes: Option<Vec<String>>,
+    glob_sql_prefixes: Option<Vec<String>>,
 }
 
 impl GrepFilters {
     fn new(paths: &[String], globs: &[String]) -> anyhow::Result<Self> {
         let expanded_paths = fts::expand_paths(paths);
+        let path_sql_prefixes = sql_like_prefixes(&expanded_paths);
+        let glob_sql_prefixes = sql_like_prefixes(globs);
         Ok(Self {
             paths: fts::compile_patterns(&expanded_paths)?,
             globs: globs
                 .iter()
                 .map(|glob| CompiledGlob::new(glob))
                 .collect::<anyhow::Result<Vec<_>>>()?,
+            path_sql_prefixes,
+            glob_sql_prefixes,
         })
     }
 
@@ -298,6 +373,37 @@ impl GrepFilters {
             self.globs.is_empty() || self.globs.iter().any(|glob| glob.matches(file_path));
         path_matches && glob_matches
     }
+}
+
+fn sql_like_prefixes(patterns: &[String]) -> Option<Vec<String>> {
+    if patterns.is_empty() {
+        return Some(Vec::new());
+    }
+    patterns
+        .iter()
+        .map(|pattern| {
+            let prefix = pattern
+                .chars()
+                .take_while(|ch| !matches!(ch, '*' | '?' | '['))
+                .collect::<String>();
+            if prefix.is_empty() {
+                None
+            } else {
+                Some(format!("{}%", escape_like_prefix(&prefix)))
+            }
+        })
+        .collect()
+}
+
+fn escape_like_prefix(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        if matches!(ch, '%' | '_' | '\\') {
+            escaped.push('\\');
+        }
+        escaped.push(ch);
+    }
+    escaped
 }
 
 struct CompiledGlob {
@@ -521,6 +627,18 @@ mod tests {
 
         assert_eq!(result.matches.len(), 1);
         assert_eq!(result.matches[0].line, 1);
+    }
+
+    #[test]
+    fn sql_prefix_prefilter_requires_convertible_globs() {
+        let paths = vec!["src/foo_bar".to_string(), "src/foo_bar/**".to_string()];
+        assert_eq!(
+            sql_like_prefixes(&paths).expect("path prefixes"),
+            vec!["src/foo\\_bar%", "src/foo\\_bar/%"]
+        );
+
+        let globs = vec!["*.rs".to_string(), "src/*.rs".to_string()];
+        assert!(sql_like_prefixes(&globs).is_none());
     }
 
     #[test]

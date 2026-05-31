@@ -118,7 +118,8 @@ fn validate_scope_id(kind: &'static str, value: &str) -> Result<String, WikiErro
         || value == ".."
         || value.contains(':')
         || value.contains('/')
-        || value.contains('\\');
+        || value.contains('\\')
+        || value.chars().any(char::is_control);
     if invalid {
         return Err(WikiError::InvalidScope {
             detail: format!("invalid {kind} `{value}`"),
@@ -174,7 +175,17 @@ mod tests {
 
     #[test]
     fn scope_storage_names_reject_path_like_or_nested_ids() {
-        for invalid in ["", "   ", ".", "..", "bad/topic", r"bad\topic", "bad:topic"] {
+        for invalid in [
+            "",
+            "   ",
+            ".",
+            "..",
+            "bad/topic",
+            r"bad\topic",
+            "bad:topic",
+            "bad\ntopic",
+            "bad\0topic",
+        ] {
             assert!(
                 project_collection_name(invalid).is_err(),
                 "{invalid:?} should fail"

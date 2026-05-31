@@ -9,6 +9,11 @@ pub(super) enum CallSyntaxKind {
     Other,
 }
 
+/// Return the deepest symbol enclosing `byte_offset`.
+///
+/// Parser output is ordered by byte range, with nested symbols following their
+/// parents, so `rfind` picks the innermost match. Bounds are inclusive because
+/// call sites at either symbol boundary still belong to that symbol.
 pub(super) fn enclosing_symbol(symbols: &[Symbol], byte_offset: usize) -> Option<&Symbol> {
     symbols
         .iter()
@@ -152,14 +157,14 @@ pub(super) fn member_qualifier_path(
     }
 }
 
-pub(super) fn call_qualifier_path(
+pub(in crate::index::parser) fn call_qualifier_path(
     qualifier_from_name: Option<String>,
     qualifier_from_member: impl FnOnce() -> Option<String>,
 ) -> Option<String> {
     qualifier_from_name.or_else(qualifier_from_member)
 }
 
-pub(super) fn split_qualified_callee(raw: &str) -> (String, Option<String>) {
+pub(in crate::index::parser) fn split_qualified_callee(raw: &str) -> (String, Option<String>) {
     let raw = raw.trim();
     for separator in ["::", "\\", "."] {
         if let Some((qualifier, name)) = raw.rsplit_once(separator)

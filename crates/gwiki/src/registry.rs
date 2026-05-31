@@ -1,11 +1,14 @@
 use std::collections::BTreeMap;
-use std::io::Write;
+use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
 use crate::WikiError;
+use crate::compile::index_lock_timeout;
 use crate::scope::{ResolvedScope, ScopeKind};
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -49,11 +52,7 @@ pub fn register_scope(path: &Path, scope: &ResolvedScope) -> Result<(), WikiErro
             path: Some(lock_path.clone()),
             source: error,
         })?;
-    fs4::FileExt::lock(&lock).map_err(|error| WikiError::Io {
-        action: "lock registry",
-        path: Some(lock_path.clone()),
-        source: error,
-    })?;
+    lock_registry(&lock, &lock_path)?;
 
     let mut registry = read_registry(path)?;
 
@@ -89,6 +88,38 @@ pub fn register_scope(path: &Path, scope: &ResolvedScope) -> Result<(), WikiErro
     let result = write_registry_atomically(path, format!("{contents}\n").as_bytes());
     drop(lock);
     result
+}
+
+fn lock_registry(lock: &std::fs::File, lock_path: &Path) -> Result<(), WikiError> {
+    let timeout = index_lock_timeout();
+    let started = Instant::now();
+
+    loop {
+        match fs4::FileExt::try_lock(lock) {
+            Ok(()) => return Ok(()),
+            Err(fs4::TryLockError::WouldBlock) => {
+                let elapsed = started.elapsed();
+                if elapsed >= timeout {
+                    return Err(WikiError::Io {
+                        action: "lock registry",
+                        path: Some(lock_path.to_path_buf()),
+                        source: std::io::Error::new(
+                            ErrorKind::TimedOut,
+                            format!("timed out after {}ms", timeout.as_millis()),
+                        ),
+                    });
+                }
+                thread::sleep(Duration::from_millis(25).min(timeout - elapsed));
+            }
+            Err(error) => {
+                return Err(WikiError::Io {
+                    action: "lock registry",
+                    path: Some(lock_path.to_path_buf()),
+                    source: error.into(),
+                });
+            }
+        }
+    }
 }
 
 fn write_registry_atomically(path: &Path, contents: &[u8]) -> Result<(), WikiError> {

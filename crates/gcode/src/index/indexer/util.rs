@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
 /// Default exclude patterns (matching Python CodeIndexConfig defaults).
@@ -26,9 +27,9 @@ pub(super) fn filter_discovered_paths(
     paths: Vec<PathBuf>,
 ) -> Vec<PathBuf> {
     let filter_abs = if path_filter.is_absolute() {
-        path_filter.to_path_buf()
+        Cow::Borrowed(path_filter)
     } else {
-        root_path.join(path_filter)
+        Cow::Owned(root_path.join(path_filter))
     };
     let filter_canonical = filter_abs.canonicalize().ok();
 
@@ -36,11 +37,13 @@ pub(super) fn filter_discovered_paths(
         .into_iter()
         .filter(|path| {
             let path_abs = if path.is_absolute() {
-                path.clone()
+                Cow::Borrowed(path.as_path())
             } else {
-                root_path.join(path)
+                Cow::Owned(root_path.join(path))
             };
-            if path_abs == filter_abs || path_abs.starts_with(&filter_abs) {
+            if path_abs.as_ref() == filter_abs.as_ref()
+                || path_abs.as_ref().starts_with(filter_abs.as_ref())
+            {
                 return true;
             }
 

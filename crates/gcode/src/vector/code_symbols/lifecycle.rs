@@ -340,6 +340,13 @@ impl CodeSymbolVectorLifecycle {
             .map(vector_text_for_symbol)
             .collect::<Vec<_>>();
         let vectors = embed_text_batch(&self.client, &self.embedding, &texts)?;
+        if vectors.len() != symbols.len() {
+            return Err(VectorLifecycleError::EmbeddingResponse(format!(
+                "embedding batch returned {} vector(s) for {} symbol(s)",
+                vectors.len(),
+                symbols.len()
+            )));
+        }
         symbols
             .iter()
             .zip(vectors)

@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
+use crate::compile::index_lock_timeout;
 use crate::events::{EventMonitor, SessionEvent};
 use crate::scope::{self, ScopeKind};
 use crate::session::{AcceptedResearchNote, DaemonDispatch, ResearchScope, ResearchSession};
@@ -424,7 +425,7 @@ fn append_raw_index(vault_root: &Path, title: &str, note_path: &Path) -> Result<
 }
 
 fn lock_raw_index(lock: &fs::File, lock_path: &Path) -> Result<(), WikiError> {
-    let timeout = Duration::from_secs(10);
+    let timeout = index_lock_timeout();
     let started = Instant::now();
 
     loop {

@@ -105,22 +105,32 @@ mod tests {
             );
         }
 
-        let config =
+        let config_root =
             std::fs::read_to_string(manifest_dir.join("src/config.rs")).expect("read config.rs");
-        assert!(config.contains("gobby_core::config::resolve_falkordb_config"));
-        assert!(config.contains("gobby_core::config::resolve_qdrant_config"));
-        assert!(config.contains("gobby_core::config::resolve_embedding_config"));
-        assert!(config.contains("impl gobby_core::config::ConfigSource for PostgresConfigSource"));
-        assert!(config.contains("gobby_core::postgres::read_config_value"));
-        assert!(!config.contains("fn decode_config_value("));
+        let config_services = std::fs::read_to_string(manifest_dir.join("src/config/services.rs"))
+            .expect("read config/services.rs");
+        assert!(config_services.contains("gobby_core::config::resolve_falkordb_config"));
+        assert!(config_services.contains("gobby_core::config::resolve_qdrant_config"));
+        assert!(config_services.contains("gobby_core::config::resolve_embedding_config"));
+        assert!(config_services.contains("impl ConfigSource for PostgresConfigSource"));
+        assert!(config_services.contains("gobby_core::postgres::read_config_value"));
+        assert!(config_services.contains("gobby_core::config::decode_config_value"));
+        assert!(!config_root.contains("fn decode_config_value("));
 
         let db = std::fs::read_to_string(manifest_dir.join("src/db.rs")).expect("read db.rs");
         assert!(db.contains("gobby_core::postgres::connect_readonly"));
         assert!(db.contains("gobby_core::postgres::connect_readwrite"));
         assert!(!db.contains("Client::connect(database_url, NoTls)"));
 
-        let graph = std::fs::read_to_string(manifest_dir.join("src/graph/code_graph.rs"))
-            .expect("read graph/code_graph.rs");
+        let graph = [
+            std::fs::read_to_string(manifest_dir.join("src/graph/code_graph.rs"))
+                .expect("read graph/code_graph.rs"),
+            std::fs::read_to_string(manifest_dir.join("src/graph/code_graph/connection.rs"))
+                .expect("read graph/code_graph/connection.rs"),
+            std::fs::read_to_string(manifest_dir.join("src/graph/code_graph/write.rs"))
+                .expect("read graph/code_graph/write.rs"),
+        ]
+        .join("\n");
         assert!(graph.contains("gobby_core::falkor::with_graph"));
         assert!(!graph.contains("falkor::with_falkor"));
 

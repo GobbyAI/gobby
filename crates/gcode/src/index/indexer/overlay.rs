@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::time::Instant;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
 use postgres::Client;
@@ -287,7 +287,7 @@ fn indexed_file_states(
 }
 
 fn git_status_relative_paths(root_path: &Path) -> anyhow::Result<HashSet<String>> {
-    let output = Command::new("git")
+    let mut child = Command::new("git")
         .arg("-C")
         .arg(root_path)
         .args([
@@ -297,12 +297,32 @@ fn git_status_relative_paths(root_path: &Path) -> anyhow::Result<HashSet<String>
             "--untracked-files=all",
             "--no-renames",
         ])
-        .output()?;
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("spawn git status")?;
+    let started = Instant::now();
+    let timeout = Duration::from_secs(5);
+    let output = loop {
+        if child.try_wait()?.is_some() {
+            break child.wait_with_output()?;
+        }
+        if started.elapsed() >= timeout {
+            let _ = child.kill();
+            let output = child.wait_with_output()?;
+            let stderr = compact_stderr(&output.stderr);
+            if stderr.is_empty() {
+                anyhow::bail!("git status timed out after {}ms", timeout.as_millis());
+            }
+            anyhow::bail!(
+                "git status timed out after {}ms: {stderr}",
+                timeout.as_millis()
+            );
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    };
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr)
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ");
+        let stderr = compact_stderr(&output.stderr);
         if stderr.is_empty() {
             anyhow::bail!("git status failed");
         }
@@ -324,6 +344,13 @@ fn git_status_relative_paths(root_path: &Path) -> anyhow::Result<HashSet<String>
     Ok(paths)
 }
 
+fn compact_stderr(stderr: &[u8]) -> String {
+    String::from_utf8_lossy(stderr)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn is_porcelain_status_entry(entry: &[u8]) -> bool {
     entry.len() >= 4
         && valid_porcelain_status_byte(entry[0])
@@ -336,21 +363,6 @@ fn valid_porcelain_status_byte(byte: u8) -> bool {
         byte,
         b' ' | b'M' | b'A' | b'D' | b'R' | b'C' | b'U' | b'?' | b'!'
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::valid_porcelain_status_byte;
-
-    #[test]
-    fn porcelain_status_byte_validation_matches_git_v1_codes() {
-        for byte in [b' ', b'M', b'A', b'D', b'R', b'C', b'U', b'?', b'!'] {
-            assert!(valid_porcelain_status_byte(byte));
-        }
-        for byte in [0, b'X', b'\n'] {
-            assert!(!valid_porcelain_status_byte(byte));
-        }
-    }
 }
 
 fn rel_matches_filter(root_path: &Path, path_filter: &Path, rel: &str) -> bool {
@@ -384,4 +396,19 @@ fn write_tombstone(conn: &mut Client, project_id: &str, rel: &str) -> anyhow::Re
     })?;
     tx.commit().context("commit tombstone transaction")?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::valid_porcelain_status_byte;
+
+    #[test]
+    fn porcelain_status_byte_validation_matches_git_v1_codes() {
+        for byte in [b' ', b'M', b'A', b'D', b'R', b'C', b'U', b'?', b'!'] {
+            assert!(valid_porcelain_status_byte(byte));
+        }
+        for byte in [0, b'X', b'\n'] {
+            assert!(!valid_porcelain_status_byte(byte));
+        }
+    }
 }

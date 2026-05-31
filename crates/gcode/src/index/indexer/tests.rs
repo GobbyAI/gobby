@@ -4,10 +4,12 @@ use super::overlay::{IndexedFileState, OverlayReconcileAction, overlay_reconcile
 use super::sink::CodeFactSink;
 use super::util::DEFAULT_EXCLUDES;
 use super::*;
+use crate::config::Context;
 use crate::models::{
     CallRelation, CallTargetKind, ContentChunk, ImportRelation, IndexedFile, ParseResult, Symbol,
 };
 use crate::projection::sync::ProjectionTarget;
+use crate::visibility;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::path::Path;

@@ -175,6 +175,13 @@ mod tests {
         let out = diagnose("claude", "session-start");
         let v = serde_json::to_value(&out).unwrap();
         assert_validates(&compiled, &v);
+        assert_eq!(v["schema_version"], 2);
+        assert_eq!(v["cli"], "claude");
+        assert_eq!(v["hook_type"], "session-start");
+        assert_eq!(v["source"], "claude");
+        assert_eq!(v["cli_recognized"], true);
+        assert_eq!(v["critical"], true);
+        assert_eq!(v["terminal_context_enabled"], true);
     }
 
     #[test]
@@ -183,6 +190,13 @@ mod tests {
         let out = diagnose("cursor", "session-start");
         let v = serde_json::to_value(&out).unwrap();
         assert_validates(&compiled, &v);
+        assert_eq!(v["schema_version"], 2);
+        assert_eq!(v["cli"], "cursor");
+        assert_eq!(v["hook_type"], "session-start");
+        assert_eq!(v["source"], Value::Null);
+        assert_eq!(v["cli_recognized"], false);
+        assert_eq!(v["critical"], false);
+        assert_eq!(v["terminal_context_enabled"], false);
     }
 
     #[test]

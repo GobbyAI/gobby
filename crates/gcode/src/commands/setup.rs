@@ -370,7 +370,7 @@ fn explicit_embedding_bootstrap(
 
 fn api_key_fingerprint(api_key: &str) -> String {
     let digest = Sha256::digest(api_key.as_bytes());
-    format!("{digest:x}").chars().take(8).collect()
+    format!("{digest:x}").chars().take(16).collect()
 }
 
 fn endpoint_reachable(api_base: &str) -> bool {

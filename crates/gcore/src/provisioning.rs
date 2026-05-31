@@ -693,6 +693,47 @@ fn make_executable(path: &Path) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::TEST_ENV_LOCK;
+    use std::sync::MutexGuard;
+
+    struct EnvGuard {
+        _lock: MutexGuard<'static, ()>,
+    }
+
+    impl EnvGuard {
+        fn new() -> Self {
+            let guard = Self {
+                _lock: TEST_ENV_LOCK
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()),
+            };
+            guard.clear();
+            guard
+        }
+
+        fn clear(&self) {
+            for key in [
+                "GOBBY_FALKORDB_HOST",
+                "GOBBY_FALKORDB_PORT",
+                "GOBBY_FALKORDB_PASSWORD",
+                "GOBBY_QDRANT_URL",
+                "GOBBY_QDRANT_API_KEY",
+                "GOBBY_EMBEDDING_URL",
+                "GOBBY_EMBEDDING_MODEL",
+                "GOBBY_EMBEDDING_API_KEY",
+                "GOBBY_EMBEDDING_QUERY_PREFIX",
+                "GOBBY_EMBEDDING_TIMEOUT_SECONDS",
+            ] {
+                unsafe { std::env::remove_var(key) };
+            }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            self.clear();
+        }
+    }
 
     #[test]
     fn gcore_yaml_reads_flat_and_nested_keys() {
@@ -743,6 +784,7 @@ databases:
 
     #[test]
     fn standalone_config_resolves_service_keys_and_plain_api_key() {
+        let _env = EnvGuard::new();
         let mut config = StandaloneConfig::from_yaml_str(&format!(
             r#"
 databases.falkordb.host: 127.0.0.1

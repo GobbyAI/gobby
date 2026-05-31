@@ -1,11 +1,26 @@
 use std::process::Command;
 
+fn gwiki(args: &[&str]) -> std::process::Output {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let home = tmp.path().join("home");
+    std::fs::create_dir_all(&home).expect("create isolated home");
+    Command::new(env!("CARGO_BIN_EXE_gwiki"))
+        .args(args)
+        .env("GOBBY_WIKI_HUB", tmp.path().join("hub"))
+        .env("HOME", &home)
+        .env_remove("GWIKI_DATABASE_URL")
+        .env_remove("GWIKI_POSTGRES_TEST_DATABASE_URL")
+        .env_remove("GOBBY_POSTGRES_DSN")
+        .env_remove("GCODE_DATABASE_URL")
+        .env_remove("GCODE_POSTGRES_TEST_DATABASE_URL")
+        .current_dir(tmp.path())
+        .output()
+        .expect("gwiki binary runs")
+}
+
 #[test]
 fn text_output_uses_renderer() {
-    let output = Command::new(env!("CARGO_BIN_EXE_gwiki"))
-        .args(["--format", "text", "search", "--topic", "rust", "ownership"])
-        .output()
-        .expect("gwiki binary runs");
+    let output = gwiki(&["--format", "text", "search", "--topic", "rust", "ownership"]);
 
     assert!(
         output.status.success(),
@@ -23,10 +38,7 @@ fn text_output_uses_renderer() {
 
 #[test]
 fn status_goes_to_stderr() {
-    let output = Command::new(env!("CARGO_BIN_EXE_gwiki"))
-        .args(["--format", "json", "status", "--topic", "rust"])
-        .output()
-        .expect("gwiki binary runs");
+    let output = gwiki(&["--format", "json", "status", "--topic", "rust"]);
 
     assert!(
         output.status.success(),

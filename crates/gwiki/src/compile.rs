@@ -556,15 +556,18 @@ fn prefixed_value<'a>(line: &'a str, prefixes: &[&str]) -> Option<&'a str> {
 }
 
 fn extend_unique(target: &mut Vec<String>, values: Vec<String>) {
-    let mut seen = target
+    let seen = target
         .iter()
-        .cloned()
+        .map(String::as_str)
         .collect::<std::collections::HashSet<_>>();
+    let mut additions = Vec::new();
     for value in values {
-        if seen.insert(value.clone()) {
-            target.push(value);
+        if seen.contains(value.as_str()) || additions.iter().any(|existing| existing == &value) {
+            continue;
         }
+        additions.push(value);
     }
+    target.extend(additions);
 }
 
 fn note_path(root: &Path, path: &Path) -> PathBuf {
@@ -641,7 +644,7 @@ fn lock_wiki_index(lock: &fs::File, lock_path: &Path) -> Result<(), WikiError> {
     }
 }
 
-fn index_lock_timeout() -> Duration {
+pub(crate) fn index_lock_timeout() -> Duration {
     match std::env::var(INDEX_LOCK_TIMEOUT_ENV) {
         Ok(raw) => raw
             .parse::<u64>()

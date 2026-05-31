@@ -37,7 +37,8 @@ impl GraphPayload {
     }
 
     fn refresh_node_cache_if_needed(&mut self) {
-        if self.node_ids.len() == self.nodes.len() {
+        let non_empty_node_count = self.nodes.iter().filter(|node| !node.id.is_empty()).count();
+        if self.node_ids.len() == non_empty_node_count {
             return;
         }
         self.node_ids = self

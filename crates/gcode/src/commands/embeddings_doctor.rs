@@ -234,7 +234,7 @@ fn push_drift(
 
 fn api_key_fingerprint(api_key: &str) -> String {
     let digest = Sha256::digest(api_key.as_bytes());
-    format!("{digest:x}").chars().take(8).collect()
+    format!("{digest:x}").chars().take(16).collect()
 }
 
 fn fetch_daemon_peer(daemon_url: Option<&str>) -> PeerDoctorOutcome {

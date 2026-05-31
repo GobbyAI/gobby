@@ -7,6 +7,7 @@ pub use crate::vector::code_symbols::{embed_query, vector_search};
 use crate::config::{CODE_SYMBOL_COLLECTION_PREFIX, Context};
 use crate::visibility;
 use gobby_core::qdrant::{CollectionScope, SearchRequest};
+use rayon::prelude::*;
 
 pub fn semantic_search(ctx: &Context, query: &str, limit: usize) -> Vec<(String, f64)> {
     let project_ids = visibility::visible_project_ids(ctx);
@@ -20,33 +21,35 @@ pub fn semantic_search(ctx: &Context, query: &str, limit: usize) -> Vec<(String,
         return vec![];
     };
 
-    let mut results = Vec::new();
-    for project_id in project_ids {
-        let collection = gobby_core::qdrant::collection_name(
-            "gcode",
-            CollectionScope::Custom(&format!("{CODE_SYMBOL_COLLECTION_PREFIX}{project_id}")),
-        );
-        let request = SearchRequest {
-            vector: query_vector.clone(),
-            limit: per_project_limit,
-            filter: None,
-        };
+    let mut results = project_ids
+        .par_iter()
+        .flat_map(|project_id| {
+            let collection = gobby_core::qdrant::collection_name(
+                "gcode",
+                CollectionScope::Custom(&format!("{CODE_SYMBOL_COLLECTION_PREFIX}{project_id}")),
+            );
+            let request = SearchRequest {
+                vector: query_vector.clone(),
+                limit: per_project_limit,
+                filter: None,
+            };
 
-        let hits =
             match gobby_core::qdrant::with_qdrant(ctx.qdrant.as_ref(), Vec::new(), |config| {
                 gobby_core::qdrant::search(config, &collection, request)
             }) {
-                Ok((hits, _state)) => hits,
+                Ok((hits, _state)) => hits
+                    .into_iter()
+                    .map(|hit| (hit.id, f64::from(hit.score)))
+                    .collect::<Vec<_>>(),
                 Err(error) => {
                     log::warn!(
                         "semantic Qdrant search failed for collection {collection}: {error}"
                     );
-                    continue;
+                    Vec::new()
                 }
-            };
-
-        results.extend(hits.into_iter().map(|hit| (hit.id, f64::from(hit.score))));
-    }
+            }
+        })
+        .collect::<Vec<_>>();
     results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     results.truncate(limit);
     results

@@ -1,6 +1,7 @@
 use super::*;
-use crate::config::{CodeVectorSettings, ProjectIndexScope};
-use postgres::NoTls;
+use crate::config::{CodeVectorSettings, Context, ProjectIndexScope};
+use postgres::types::ToSql;
+use postgres::{Client, NoTls};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -152,25 +153,16 @@ fn overlay_visibility_counts_and_kinds_use_database_predicates() {
 }
 
 fn connect_overlay_visibility_test_db() -> Option<Client> {
-    let explicit_url = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL").ok();
-    let database_url = explicit_url
-        .clone()
-        .or_else(|| crate::db::resolve_database_url().ok())?;
+    let database_url = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL").ok()?;
     match Client::connect(&database_url, NoTls) {
         Ok(mut conn) => {
             if let Err(err) = crate::schema::validate_runtime_schema(&mut conn) {
-                if explicit_url.is_some() {
-                    panic!("test PostgreSQL hub schema is invalid: {err}");
-                }
-                return None;
+                panic!("test PostgreSQL hub schema is invalid: {err}");
             }
             Some(conn)
         }
         Err(err) => {
-            if explicit_url.is_some() {
-                panic!("failed to connect test PostgreSQL hub: {err}");
-            }
-            None
+            panic!("failed to connect test PostgreSQL hub: {err}");
         }
     }
 }
@@ -184,9 +176,7 @@ struct OverlayFixtureIds {
 impl OverlayFixtureIds {
     fn new() -> Self {
         let database_url = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL")
-            .ok()
-            .or_else(|| crate::db::resolve_database_url().ok())
-            .expect("database URL already resolved");
+            .expect("GCODE_POSTGRES_TEST_DATABASE_URL is required for overlay visibility tests");
         let suffix = format!(
             "{}-{}",
             std::process::id(),
@@ -361,18 +351,20 @@ fn insert_file(
     symbol_count: i32,
 ) {
     let id = format!("{project_id}:{file_path}");
+    let params: &[&(dyn ToSql + Sync)] = &[&id, &project_id, &file_path, &language, &symbol_count];
     conn.execute(
         "INSERT INTO code_indexed_files
                 (id, project_id, file_path, language, content_hash, symbol_count, byte_size,
                  graph_synced, vectors_synced, graph_sync_attempted_at, indexed_at)
              VALUES ($1, $2, $3, $4, 'hash', $5, 1, false, false, NULL, NOW())",
-        &[&id, &project_id, &file_path, &language, &symbol_count],
+        params,
     )
     .expect("insert indexed file");
 }
 
 fn insert_symbol(conn: &mut Client, project_id: &str, file_path: &str, name: &str, kind: &str) {
     let id = format!("{project_id}:{file_path}:{name}");
+    let params: &[&(dyn ToSql + Sync)] = &[&id, &project_id, &file_path, &name, &kind];
     conn.execute(
         "INSERT INTO code_symbols
                 (id, project_id, file_path, name, qualified_name, kind, language, byte_start,
@@ -380,7 +372,7 @@ fn insert_symbol(conn: &mut Client, project_id: &str, file_path: &str, name: &st
                  content_hash, summary, created_at, updated_at)
              VALUES ($1, $2, $3, $4, $4, $5, 'rust', 0, 1, 1, 1, $4, NULL, NULL,
                      'hash', NULL, NOW(), NOW())",
-        &[&id, &project_id, &file_path, &name, &kind],
+        params,
     )
     .expect("insert symbol");
 }
@@ -393,12 +385,13 @@ fn insert_chunk(
     content: &str,
 ) {
     let id = format!("{project_id}:{file_path}:{chunk_index}");
+    let params: &[&(dyn ToSql + Sync)] = &[&id, &project_id, &file_path, &chunk_index, &content];
     conn.execute(
         "INSERT INTO code_content_chunks
                 (id, project_id, file_path, chunk_index, line_start, line_end, content, language,
                  created_at)
              VALUES ($1, $2, $3, $4, 1, 1, $5, 'rust', NOW())",
-        &[&id, &project_id, &file_path, &chunk_index, &content],
+        params,
     )
     .expect("insert content chunk");
 }

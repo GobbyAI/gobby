@@ -38,14 +38,24 @@ pub(super) fn index_file(
         return Ok(None);
     };
 
+    let language = languages::detect_language(&file_path.to_string_lossy()).unwrap_or("unknown");
+    let h = match hasher::file_content_hash(file_path) {
+        Ok(hash) => hash,
+        Err(error) => {
+            log::debug!(
+                "skipping AST index for unreadable file {}: {error}",
+                file_path.display()
+            );
+            return Ok(None);
+        }
+    };
+    let size = file_path.metadata().map(|m| m.len()).unwrap_or(0);
+
     // PostgreSQL hub writes (transactional).
     let mut tx = conn
         .transaction()
         .context("start indexed file transaction")?;
 
-    let language = languages::detect_language(&file_path.to_string_lossy()).unwrap_or("unknown");
-    let h = hasher::file_content_hash(file_path).unwrap_or_default();
-    let size = file_path.metadata().map(|m| m.len()).unwrap_or(0);
     let mut sink = PostgresCodeFactSink::new(&mut tx);
     let counts = write_parsed_file_facts(
         &mut sink,
@@ -127,7 +137,16 @@ pub(super) fn index_content_only(
     };
 
     let lang = walker::content_language(path);
-    let content_hash = hasher::file_content_hash(path).unwrap_or_default();
+    let content_hash = match hasher::file_content_hash(path) {
+        Ok(hash) => hash,
+        Err(error) => {
+            log::debug!(
+                "skipping content-only index for unreadable file {}: {error}",
+                path.display()
+            );
+            return Ok(None);
+        }
+    };
 
     let mut tx = conn
         .transaction()

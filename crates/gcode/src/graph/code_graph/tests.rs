@@ -1,6 +1,7 @@
 use super::*;
-use crate::config::CodeVectorSettings;
+use crate::config::{CodeVectorSettings, Context};
 use crate::models::{ProjectionProvenance, SOURCE_SYSTEM_GCODE};
+use gobby_core::falkor::Row;
 use serde_json::json;
 
 fn test_context(falkordb: Option<crate::config::FalkorConfig>) -> Context {

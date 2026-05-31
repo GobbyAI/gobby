@@ -233,6 +233,10 @@ mod tests {
         type ValidateSchema = fn(&mut Client, ClientSchemaValidator) -> Vec<SchemaCheck>;
 
         let _validate: ValidateSchema = validate_schema;
+        assert!(std::ptr::fn_addr_eq(
+            _validate,
+            validate_schema as ValidateSchema
+        ));
     }
 
     #[test]

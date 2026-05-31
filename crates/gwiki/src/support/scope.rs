@@ -52,13 +52,11 @@ pub(crate) fn resolve_selection_context(
 /// in-memory index. Topic scopes take precedence over project scopes because a
 /// topic vault may still live inside a project checkout.
 pub(crate) fn search_scope_for_resolved(scope: &wiki_scope::ResolvedScope) -> search::SearchScope {
-    if let Some(topic) = scope.topic_name() {
-        return search::SearchScope::topic(topic);
+    match topic_project_precedence(scope.topic_name(), scope.project_id()) {
+        ScopePrecedence::Topic(topic) => search::SearchScope::topic(topic),
+        ScopePrecedence::Project(project_id) => search::SearchScope::project(project_id),
+        ScopePrecedence::DefaultProject => search::SearchScope::project("current"),
     }
-    if let Some(project_id) = scope.project_id() {
-        return search::SearchScope::project(project_id);
-    }
-    search::SearchScope::project("current")
 }
 
 pub(crate) fn store_scope_for_search(scope: &search::SearchScope) -> store::WikiStoreScope {
@@ -87,13 +85,29 @@ pub(crate) fn research_scope_identity(scope: &session::ResearchScope) -> ScopeId
 }
 
 pub(crate) fn resolved_scope_identity(scope: &wiki_scope::ResolvedScope) -> ScopeIdentity {
-    if let Some(topic) = scope.topic_name() {
-        return ScopeIdentity::topic(topic);
+    match topic_project_precedence(scope.topic_name(), scope.project_id()) {
+        ScopePrecedence::Topic(topic) => ScopeIdentity::topic(topic),
+        ScopePrecedence::Project(project_id) => ScopeIdentity::project(project_id),
+        ScopePrecedence::DefaultProject => ScopeIdentity::project("current"),
     }
+}
 
-    if let Some(project_id) = scope.project_id() {
-        return ScopeIdentity::project(project_id);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScopePrecedence<'a> {
+    Topic(&'a str),
+    Project(&'a str),
+    DefaultProject,
+}
+
+fn topic_project_precedence<'a>(
+    topic_name: Option<&'a str>,
+    project_id: Option<&'a str>,
+) -> ScopePrecedence<'a> {
+    if let Some(topic) = topic_name {
+        return ScopePrecedence::Topic(topic);
     }
-
-    ScopeIdentity::project("current")
+    if let Some(project_id) = project_id {
+        return ScopePrecedence::Project(project_id);
+    }
+    ScopePrecedence::DefaultProject
 }

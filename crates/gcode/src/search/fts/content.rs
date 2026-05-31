@@ -267,10 +267,12 @@ fn content_hits_from_rows(rows: &[Row], query: &str) -> Vec<ContentSearchHit> {
     rows.iter()
         .filter_map(|row| {
             let content: String = row.try_get("content").ok()?;
+            let line_start = usize::try_from(row.try_get::<_, i64>("line_start").ok()?).ok()?;
+            let line_end = usize::try_from(row.try_get::<_, i64>("line_end").ok()?).ok()?;
             Some(ContentSearchHit {
                 file_path: row.try_get("file_path").ok()?,
-                line_start: row.try_get::<_, i64>("line_start").ok()? as usize,
-                line_end: row.try_get::<_, i64>("line_end").ok()? as usize,
+                line_start,
+                line_end,
                 snippet: make_snippet(&content, query),
                 language: row.try_get("language").ok()?,
             })

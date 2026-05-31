@@ -2,8 +2,8 @@ use super::contracts::{OVERWRITE_GUIDANCE, code_index_index_names, code_index_ta
 use super::identifiers::quote_identifier;
 use super::postgres::postgres_overwrite_reset_sql;
 use super::*;
+use ::postgres::{Client, NoTls};
 use gobby_core::setup::{SetupContext, StandaloneSetup, StoreKind};
-use postgres::{Client, NoTls};
 
 #[test]
 fn standalone_setup_declares_public_daemon_code_index_subset() {
@@ -293,7 +293,7 @@ fn destructive_postgres_test_allowed(database_url: &str) -> Result<(), String> {
         return Ok(());
     }
     let config = database_url
-        .parse::<postgres::Config>()
+        .parse::<::postgres::Config>()
         .map_err(|error| format!("database URL could not be parsed: {error}"))?;
     match config.get_dbname() {
         Some(name) if name.ends_with("_test") => Ok(()),

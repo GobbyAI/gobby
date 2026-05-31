@@ -146,6 +146,8 @@ pub(super) fn qdrant_request_for_config(
     let base = qdrant
         .url
         .as_deref()
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
         .ok_or(VectorLifecycleError::MissingQdrantConfig)?
         .trim_end_matches('/');
     let url = format!("{base}{path}");

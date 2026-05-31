@@ -232,7 +232,21 @@ pub fn resolve_embedding_config_resolution(
 }
 
 fn resolve_embedding_setting(source: &mut impl ConfigSource, config_key: &str) -> Option<String> {
-    resolve_config_value(source, config_key)
+    let Some(env_key) = embedding_env_key(config_key) else {
+        return resolve_config_value(source, config_key);
+    };
+    resolve_setting(source, env_key, config_key)
+}
+
+fn embedding_env_key(config_key: &str) -> Option<&'static str> {
+    match config_key {
+        embedding_keys::AI_API_BASE => Some("GOBBY_EMBEDDING_URL"),
+        embedding_keys::AI_MODEL => Some("GOBBY_EMBEDDING_MODEL"),
+        embedding_keys::AI_API_KEY => Some("GOBBY_EMBEDDING_API_KEY"),
+        embedding_keys::AI_QUERY_PREFIX => Some("GOBBY_EMBEDDING_QUERY_PREFIX"),
+        embedding_keys::AI_TIMEOUT_SECONDS => Some("GOBBY_EMBEDDING_TIMEOUT_SECONDS"),
+        _ => None,
+    }
 }
 
 fn resolve_setting(
@@ -479,7 +493,7 @@ mod tests {
     }
 
     #[test]
-    fn ai_embedding_keys_only_no_env() {
+    fn env_overrides_ai_embedding_keys() {
         let env = EnvGuard::new();
         env.set("GOBBY_EMBEDDING_URL", "http://env-embedding:11434");
         env.set("GOBBY_EMBEDDING_MODEL", "env-model");
@@ -500,11 +514,11 @@ mod tests {
         let config = resolution.config;
 
         assert_eq!(resolution.namespace, embedding_keys::AI_NAMESPACE);
-        assert_eq!(config.api_base, "http://new-embedding:11434");
-        assert_eq!(config.model, "new-model");
-        assert_eq!(config.api_key.as_deref(), Some("resolved-AI_KEY"));
-        assert_eq!(config.query_prefix.as_deref(), Some("new-query:"));
-        assert_eq!(config.timeout_seconds, 12);
+        assert_eq!(config.api_base, "http://env-embedding:11434");
+        assert_eq!(config.model, "env-model");
+        assert_eq!(config.api_key.as_deref(), Some("env-key"));
+        assert_eq!(config.query_prefix.as_deref(), Some("env-prefix:"));
+        assert_eq!(config.timeout_seconds, 7);
     }
 
     #[test]
@@ -513,18 +527,18 @@ mod tests {
         let legacy_keys = embedding_keys::legacy_keys();
         let mut source = TestSource::with_values([
             (
-                leak(legacy_keys[1].clone()),
+                leak_for_test(legacy_keys[1].clone()),
                 "http://legacy-embedding:11434",
             ),
-            (leak(legacy_keys[2].clone()), "legacy-model"),
-            (leak(legacy_keys[3].clone()), "$secret:LEGACY_KEY"),
-            (leak(legacy_keys[5].clone()), "legacy-query:"),
+            (leak_for_test(legacy_keys[2].clone()), "legacy-model"),
+            (leak_for_test(legacy_keys[3].clone()), "$secret:LEGACY_KEY"),
+            (leak_for_test(legacy_keys[5].clone()), "legacy-query:"),
         ]);
 
         assert!(resolve_embedding_config_resolution(&mut source).is_none());
     }
 
-    fn leak(value: String) -> &'static str {
+    fn leak_for_test(value: String) -> &'static str {
         // Test fixtures need stable borrowed keys; leaking these tiny strings is intentional.
         Box::leak(value.into_boxed_str())
     }

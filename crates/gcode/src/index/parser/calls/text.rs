@@ -1,5 +1,9 @@
 #[cfg(test)]
-pub(super) fn line_terminator_len(text: &str, line_start_byte: usize, line_len: usize) -> usize {
+pub(in crate::index::parser) fn line_terminator_len(
+    text: &str,
+    line_start_byte: usize,
+    line_len: usize,
+) -> usize {
     let terminator_start = line_start_byte + line_len;
     let Some(rest) = text.as_bytes().get(terminator_start..) else {
         return 0;
@@ -20,9 +24,26 @@ pub(super) fn utf16_column_at_byte(source: &[u8], byte_offset: usize) -> usize {
         .rposition(|byte| *byte == b'\n')
         .map(|idx| idx + 1)
         .unwrap_or(0);
-    String::from_utf8_lossy(&source[line_start..byte_offset])
-        .encode_utf16()
-        .count()
+    lossy_utf16_units(&source[line_start..byte_offset])
+}
+
+fn lossy_utf16_units(mut bytes: &[u8]) -> usize {
+    let mut units = 0;
+    loop {
+        match std::str::from_utf8(bytes) {
+            Ok(valid) => return units + valid.chars().map(char::len_utf16).sum::<usize>(),
+            Err(error) => {
+                let valid_up_to = error.valid_up_to();
+                let valid = std::str::from_utf8(&bytes[..valid_up_to]).unwrap_or("");
+                units += valid.chars().map(char::len_utf16).sum::<usize>();
+                units += char::REPLACEMENT_CHARACTER.len_utf16();
+                let Some(error_len) = error.error_len() else {
+                    return units;
+                };
+                bytes = &bytes[valid_up_to + error_len..];
+            }
+        }
+    }
 }
 
 pub(super) fn trim_identifier_token(token: &str) -> &str {

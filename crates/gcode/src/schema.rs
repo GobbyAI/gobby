@@ -98,7 +98,7 @@ mod tests {
 
         let mut client =
             Client::connect(&database_url, NoTls).expect("connect test PostgreSQL hub");
-        validate_runtime_schema(&mut client).expect("validate test PostgreSQL hub schema");
+        assert!(validate_runtime_schema(&mut client).is_ok());
     }
 
     #[test]

@@ -13,8 +13,6 @@ use crate::index::hasher::symbol_content_hash;
 use crate::index::import_resolution::{self, ExtractedImports};
 use crate::index::languages;
 use crate::index::security;
-#[cfg(test)]
-use crate::index::semantic::SemanticCallRequest;
 use crate::index::semantic::SemanticCallResolver;
 use crate::models::{ParseResult, Symbol};
 use calls::{CallExtractionContext, extract_calls};

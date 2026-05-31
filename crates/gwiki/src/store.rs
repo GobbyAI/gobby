@@ -391,6 +391,10 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
             }
             return Err(error.into());
         }
+        if chunks.is_empty() {
+            tx.commit()?;
+            return Ok(());
+        }
 
         for (chunk, chunk_index) in chunks {
             let chunk_path = display_path(&chunk.path);

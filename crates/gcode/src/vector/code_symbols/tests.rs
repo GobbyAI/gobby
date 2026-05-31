@@ -103,6 +103,20 @@ fn delete_project_collection_targets_only_project_collection() {
 }
 
 #[test]
+fn blank_qdrant_url_is_missing_config() {
+    let err = delete_project_collection(
+        &QdrantConfig {
+            url: Some(" \t ".to_string()),
+            api_key: None,
+        },
+        "project-1",
+    )
+    .expect_err("blank URL should be treated as missing config");
+
+    assert_eq!(err, VectorLifecycleError::MissingQdrantConfig);
+}
+
+#[test]
 fn delete_file_vectors_filters_by_project_and_file_without_embedding() {
     let (qdrant_url, handle) =
         spawn_http_responses(vec![(200, json!({"result": {"operation_id": 1}}))]);
@@ -325,6 +339,55 @@ fn sync_rejects_embedding_vectors_with_wrong_dimension() {
 }
 
 #[test]
+fn sync_rejects_embedding_vector_count_mismatch() {
+    let (embedding_url, embedding_handle) = spawn_http_responses(vec![(
+        200,
+        json!({"data": [{"embedding": [0.1, 0.2, 0.3]}]}),
+    )]);
+    let (qdrant_url, qdrant_handle) = spawn_http_responses(vec![(
+        200,
+        json!({"result": {"config": {"params": {"vectors": {"size": 3, "distance": "Cosine"}}}}}),
+    )]);
+    let mut lifecycle = CodeSymbolVectorLifecycle::new(
+        "project-1".to_string(),
+        QdrantConfig {
+            url: Some(qdrant_url),
+            api_key: None,
+        },
+        EmbeddingConfig {
+            api_base: format!("{embedding_url}/v1"),
+            model: "embed-small".to_string(),
+            api_key: None,
+            query_prefix: None,
+            timeout_seconds: 10,
+        },
+        CodeVectorSettings {
+            vector_dim: Some(3),
+        },
+    )
+    .expect("lifecycle");
+    let mut second = test_symbol(None);
+    second.id = "symbol-2".to_string();
+
+    let err = lifecycle
+        .sync_file_symbols("src/lib.rs", &[test_symbol(None), second])
+        .expect_err("vector count mismatch must fail before upsert");
+    let embedding_requests = embedding_handle.join().expect("embedding requests");
+    let qdrant_requests = qdrant_handle.join().expect("qdrant requests");
+
+    let VectorLifecycleError::EmbeddingResponse(message) = &err else {
+        panic!("unexpected error: {err}");
+    };
+    assert!(
+        message.contains("1 vector(s) for 2 symbol(s)")
+            || message.contains("1 vector(s) for 2 input(s)")
+    );
+    assert_eq!(embedding_requests.len(), 1);
+    assert_eq!(qdrant_requests.len(), 1);
+    assert!(!qdrant_requests[0].contains("/points"));
+}
+
+#[test]
 fn dim_probe_with_override() {
     let (embedding_url, embedding_handle) = spawn_http_responses(vec![(
         200,
@@ -403,12 +466,16 @@ fn lifecycle_http_scoped_to_module() {
     let src_dir = manifest_dir.join("src");
     let mut offenders = Vec::new();
 
-    fn visit(path: &std::path::Path, offenders: &mut Vec<std::path::PathBuf>) {
+    fn visit(
+        path: &std::path::Path,
+        src_dir: &std::path::Path,
+        offenders: &mut Vec<std::path::PathBuf>,
+    ) {
         for entry in std::fs::read_dir(path).expect("read source directory") {
             let entry = entry.expect("source entry");
             let path = entry.path();
             if path.is_dir() {
-                visit(&path, offenders);
+                visit(&path, src_dir, offenders);
                 continue;
             }
             if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
@@ -436,7 +503,7 @@ fn lifecycle_http_scoped_to_module() {
         }
     }
 
-    visit(&src_dir, &mut offenders);
+    visit(&src_dir, &src_dir, &mut offenders);
     assert!(
         offenders.is_empty(),
         "Qdrant lifecycle REST must stay scoped to vector/code_symbols module: {offenders:?}"

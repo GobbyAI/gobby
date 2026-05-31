@@ -3,41 +3,69 @@ mod error;
 mod runner;
 pub(crate) mod support;
 
-pub mod audit;
-pub mod citations;
-pub mod collect;
-pub mod commands;
-pub mod compile;
-pub mod credibility;
-pub mod daemon;
-pub mod events;
+#[allow(dead_code)]
+pub(crate) mod audit;
+#[allow(dead_code)]
+pub(crate) mod citations;
+#[allow(dead_code)]
+pub(crate) mod collect;
+#[allow(dead_code)]
+pub(crate) mod commands;
+#[allow(dead_code)]
+pub(crate) mod compile;
+#[allow(dead_code)]
+pub(crate) mod credibility;
+#[allow(dead_code)]
+pub(crate) mod daemon;
+#[allow(dead_code)]
+pub(crate) mod events;
 pub mod exports;
-pub mod frontmatter;
-pub mod graph;
-pub mod health;
-pub mod indexer;
-pub mod ingest;
-pub mod links;
-pub mod lint;
-pub mod log;
-pub mod markdown;
+#[allow(dead_code)]
+pub(crate) mod frontmatter;
+#[allow(dead_code)]
+pub(crate) mod graph;
+#[allow(dead_code)]
+pub(crate) mod health;
+#[allow(dead_code)]
+pub(crate) mod indexer;
+#[allow(dead_code)]
+pub(crate) mod ingest;
+#[allow(dead_code)]
+pub(crate) mod links;
+#[allow(dead_code)]
+pub(crate) mod lint;
+#[allow(dead_code)]
+pub(crate) mod log;
+#[allow(dead_code)]
+pub(crate) mod markdown;
 pub mod models;
 pub mod output;
-pub mod provenance;
-pub mod registry;
+#[allow(dead_code)]
+pub(crate) mod provenance;
+#[allow(dead_code)]
+pub(crate) mod registry;
 pub mod research;
-pub mod schema;
-pub mod scope;
-pub mod search;
+#[allow(dead_code)]
+pub(crate) mod schema;
+#[allow(dead_code)]
+pub(crate) mod scope;
+#[allow(dead_code)]
+pub(crate) mod search;
 pub mod session;
-pub mod setup;
+#[allow(dead_code)]
+pub(crate) mod setup;
 pub mod sources;
-pub mod store;
+#[allow(dead_code)]
+pub(crate) mod store;
 pub mod synthesis;
-pub mod transcribe;
-pub mod vault;
-pub mod video;
-pub mod vision;
+#[allow(dead_code)]
+pub(crate) mod transcribe;
+#[allow(dead_code)]
+pub(crate) mod vault;
+#[allow(dead_code)]
+pub(crate) mod video;
+#[allow(dead_code)]
+pub(crate) mod vision;
 
 pub use api::{Command, CommandOutcome, CommandResult, ScopeIdentity, ScopeKind, ScopeSelection};
 pub use error::WikiError;
