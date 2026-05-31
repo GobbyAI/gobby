@@ -372,6 +372,46 @@ class TestCloseTask:
         mock_task_manager.close_task.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_close_task_invalid_llm_status_closes_when_feedback_satisfies_criteria(
+        self, mock_task_manager, mock_sync_manager
+    ) -> None:
+        """A contradictory invalid status is corrected when feedback says all criteria passed."""
+        task = _make_task(validation_criteria="Focused tests and lint pass")
+        mock_task_manager.get_task.return_value = task
+        mock_task_manager.list_tasks.return_value = []
+        mock_task_manager.close_task.return_value = task
+        task_validator = AsyncMock()
+        task_validator.validate_task.return_value = MagicMock(
+            status="invalid",
+            feedback="All three validation criteria are satisfied: tests pass and lint passes.",
+        )
+
+        registry = _create_registry(mock_task_manager, mock_sync_manager, task_validator)
+
+        with patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close.validate_commit_requirements"
+        ) as mock_vcr:
+            mock_vcr.return_value = MagicMock(can_close=True)
+            result = await registry.call(
+                "close_task",
+                {"task_id": task.id, "changes_summary": "Implemented and verified"},
+            )
+
+        assert result == {"success": True}
+        task_validator.validate_task.assert_awaited_once()
+        validation_kwargs = task_validator.validate_task.await_args.kwargs
+        assert validation_kwargs["task_id"] == task.id
+        assert "Implemented and verified" in validation_kwargs["changes_summary"]
+        mock_task_manager.update_task.assert_called_once_with(
+            task.id,
+            validation_status="valid",
+            validation_feedback=(
+                "All three validation criteria are satisfied: tests pass and lint passes."
+            ),
+        )
+        mock_task_manager.close_task.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_close_task_valid_llm_result_rejected_when_feedback_says_mypy_failed(
         self, mock_task_manager, mock_sync_manager
     ) -> None:

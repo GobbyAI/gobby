@@ -140,6 +140,29 @@ def feedback_admits_required_validation_failure(feedback: str | None) -> bool:
     return matched_required_validation_failure_pattern(feedback) is not None
 
 
+_SUCCESSFUL_VALIDATION_FEEDBACK_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(
+        r"(?<!not )\ball\s+(?:\w+\s+){0,6}"
+        r"(?:validation\s+criteria|acceptance\s+criteria|criteria)\s+"
+        r"(?:are\s+|were\s+)?(?:satisfied|met|passed)\b",
+        re.IGNORECASE,
+    ),
+)
+
+
+def matched_successful_validation_pattern(feedback: str | None) -> re.Pattern[str] | None:
+    """Return the validation-success pattern matched by feedback, if any."""
+    if not feedback or matched_required_validation_failure_pattern(feedback) is not None:
+        return None
+
+    normalized_feedback = _ZERO_FAILURE_TOKEN_RE.sub("", " ".join(feedback.split()))
+    searchable_feedback = _QUOTED_FEEDBACK_FRAGMENT_RE.sub("", normalized_feedback)
+    for pattern in _SUCCESSFUL_VALIDATION_FEEDBACK_PATTERNS:
+        if pattern.search(searchable_feedback) is not None:
+            return pattern
+    return None
+
+
 def matched_required_validation_failure_pattern(feedback: str | None) -> re.Pattern[str] | None:
     """Return the validation-failure pattern matched by feedback, if any."""
     if not feedback:
@@ -362,6 +385,7 @@ async def validate_leaf_task_with_llm(
 
     validation_status = result.status
     matched_failure_pattern = matched_required_validation_failure_pattern(result.feedback)
+    matched_success_pattern = matched_successful_validation_pattern(result.feedback)
     if result.status == "valid" and matched_failure_pattern is not None:
         logger.warning(
             "Overriding validation status for task %s: LLM returned 'valid' but feedback "
@@ -371,6 +395,16 @@ async def validate_leaf_task_with_llm(
             result.feedback,
         )
         validation_status = "invalid"
+    elif result.status != "valid" and matched_success_pattern is not None:
+        logger.warning(
+            "Overriding validation status for task %s: LLM returned %r but feedback "
+            "says validation criteria are satisfied. Pattern: %s. Feedback: %s",
+            resolved_id,
+            result.status,
+            matched_success_pattern.pattern,
+            result.feedback,
+        )
+        validation_status = "valid"
 
     # Store validation result regardless of pass/fail
     ctx.task_manager.update_task(
