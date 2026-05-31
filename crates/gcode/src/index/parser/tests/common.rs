@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use tempfile::TempDir;
 
-use crate::index::languages;
+use crate::index::{languages, walker};
 use crate::models::ParseResult;
 
 use super::super::{build_import_resolution_context, parse_file_with_semantic};
@@ -88,19 +88,9 @@ pub(super) fn parse_swift(source: &str, extra_files: &[(&str, &str)]) -> ParseRe
 }
 
 pub(super) fn discover_supported_files(root: &Path) -> Vec<PathBuf> {
-    let mut candidates = Vec::new();
-    let mut stack = vec![root.to_path_buf()];
-    while let Some(path) = stack.pop() {
-        let entries = fs::read_dir(&path).expect("read dir");
-        for entry in entries {
-            let entry = entry.expect("dir entry");
-            let entry_path = entry.path();
-            if entry_path.is_dir() {
-                stack.push(entry_path);
-            } else if languages::detect_language(&entry_path.to_string_lossy()).is_some() {
-                candidates.push(entry_path);
-            }
-        }
-    }
+    let (candidates, _) = walker::discover_files(root, &[]);
     candidates
+        .into_iter()
+        .filter(|path| languages::detect_language(&path.to_string_lossy()).is_some())
+        .collect()
 }

@@ -222,9 +222,7 @@ fn normalized_target_parts(target: &str) -> (String, Option<String>) {
         while let Some(rest) = normalized.strip_prefix("./") {
             normalized = rest.to_string();
         }
-        while normalized.contains("//") {
-            normalized = normalized.replace("//", "/");
-        }
+        normalized = collapse_repeated_slashes(&normalized);
         normalized = normalized.trim_matches('/').to_string();
 
         let lower = normalized.to_ascii_lowercase();
@@ -236,6 +234,23 @@ fn normalized_target_parts(target: &str) -> (String, Option<String>) {
     }
 
     (normalized, anchor)
+}
+
+fn collapse_repeated_slashes(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    let mut previous_was_slash = false;
+    for ch in value.chars() {
+        if ch == '/' {
+            if !previous_was_slash {
+                output.push(ch);
+            }
+            previous_was_slash = true;
+        } else {
+            output.push(ch);
+            previous_was_slash = false;
+        }
+    }
+    output
 }
 
 fn is_url_like_target(target: &str) -> bool {

@@ -190,6 +190,8 @@ pub fn rank_link_neighborhood(
             let candidate = if &link.source_path == seed_path {
                 Some((target_path, seed_score))
             } else if target_path == *seed_path {
+                // Backlinks are useful context, but direct outbound neighbors
+                // usually better express the user's starting point.
                 Some((link.source_path.clone(), seed_score * 0.8))
             } else {
                 None

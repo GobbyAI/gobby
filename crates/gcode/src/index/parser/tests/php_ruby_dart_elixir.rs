@@ -308,6 +308,27 @@ void run() {
 }
 
 #[test]
+fn textual_dart_calls_handle_nested_generics() {
+    let parsed = parse_dart(
+        r#"
+void run() {
+  builder<Map<String, List<int>>>();
+  service.fetch<List<Map<String, int>>>();
+}
+"#,
+        &[],
+    );
+
+    let call_names: Vec<_> = parsed
+        .calls
+        .iter()
+        .map(|call| call.callee_name.as_str())
+        .collect();
+    assert!(call_names.contains(&"builder"));
+    assert!(call_names.contains(&"fetch"));
+}
+
+#[test]
 fn textual_dart_calls_ignore_raw_and_triple_quoted_multiline_strings() {
     let parsed = parse_dart(
         r#"

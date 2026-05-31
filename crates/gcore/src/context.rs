@@ -115,6 +115,8 @@ mod tests {
                 "GOBBY_EMBEDDING_MODEL",
                 "GOBBY_EMBEDDING_API_KEY",
             ] {
+                // SAFETY: TEST_ENV_LOCK serializes all test environment mutation
+                // here, and the loop only touches the fixed key list above.
                 unsafe { std::env::remove_var(key) };
             }
         }

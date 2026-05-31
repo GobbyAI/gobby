@@ -560,9 +560,10 @@ fn extend_unique(target: &mut Vec<String>, values: Vec<String>) {
         .iter()
         .map(String::as_str)
         .collect::<std::collections::HashSet<_>>();
+    let mut additions_seen = std::collections::HashSet::new();
     let mut additions = Vec::new();
     for value in values {
-        if seen.contains(value.as_str()) || additions.iter().any(|existing| existing == &value) {
+        if seen.contains(value.as_str()) || !additions_seen.insert(value.clone()) {
             continue;
         }
         additions.push(value);

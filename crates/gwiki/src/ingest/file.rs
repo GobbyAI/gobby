@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 
 use crate::WikiError;
 use crate::ingest::{
-    IngestResult, index_after_ingest, markdown_metadata, markdown_title, text_from_utf8_lossy,
-    write_asset, write_raw_markdown,
+    IngestResult, index_after_ingest, markdown_metadata, markdown_title, path_to_string,
+    text_from_utf8_lossy, write_asset, write_raw_markdown,
 };
 use crate::sources::{
     CompileStatus, IngestionMethod, SourceDraft, SourceDraftRef, SourceKind, SourceManifest,
@@ -160,7 +160,7 @@ fn render_file_markdown(
         ("source_hash", source_hash.to_string()),
     ];
     if let Some(asset_path) = asset_path {
-        fields.push(("source_asset", asset_path.display().to_string()));
+        fields.push(("source_asset", path_to_string(asset_path)));
     }
 
     let mut markdown = markdown_metadata(&fields);
@@ -178,7 +178,7 @@ fn render_file_markdown(
         _ => {
             if let Some(asset_path) = asset_path {
                 markdown.push_str("Original artifact stored under `");
-                markdown.push_str(&asset_path.display().to_string());
+                markdown.push_str(&path_to_string(asset_path));
                 markdown.push_str("`.\n");
             } else {
                 markdown.push_str(

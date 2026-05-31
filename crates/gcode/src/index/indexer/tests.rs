@@ -295,7 +295,7 @@ fn explicit_file_route_sends_unsupported_text_to_content_only() {
 }
 
 #[test]
-fn explicit_file_route_skips_mjs_and_markdown() {
+fn explicit_file_route_indexes_mjs_and_skips_markdown() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path();
     write_file(root, "src/generated.mjs", b"export const value = 1;\n");
@@ -306,7 +306,7 @@ fn explicit_file_route_skips_mjs_and_markdown() {
 
     assert_eq!(
         explicit_file_route(root, &root.join("src/generated.mjs"), &excludes),
-        ExplicitFileRoute::Skip
+        ExplicitFileRoute::Ast
     );
     assert_eq!(
         explicit_file_route(root, &root.join("README.md"), &excludes),

@@ -8,6 +8,11 @@ pub fn file_content_hash(path: &Path) -> anyhow::Result<String> {
     Ok(gobby_core::indexing::file_content_hash(path)?)
 }
 
+/// SHA-256 hash of in-memory file contents.
+pub fn content_hash(source: &[u8]) -> String {
+    gobby_core::indexing::content_hash(source)
+}
+
 /// SHA-256 hash of a byte slice (symbol source).
 pub fn symbol_content_hash(source: &[u8], start: usize, end: usize) -> anyhow::Result<String> {
     let slice = source.get(start..end).ok_or_else(|| {

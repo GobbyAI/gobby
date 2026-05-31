@@ -219,16 +219,7 @@ fn vision_metadata_key(key: &str) -> String {
 }
 
 fn write_vision_markdown_atomically(path: &Path, contents: &[u8]) -> Result<(), WikiError> {
-    let temp_path = temp_sibling_path(path);
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temp_path)
-        .map_err(|error| WikiError::Io {
-            action: "create vision derived markdown temp file",
-            path: Some(temp_path.clone()),
-            source: error,
-        })?;
+    let (temp_path, mut file) = create_vision_temp_file(path)?;
     if let Err(error) = file.write_all(contents) {
         let _ = std::fs::remove_file(&temp_path);
         return Err(WikiError::Io {
@@ -257,6 +248,39 @@ fn write_vision_markdown_atomically(path: &Path, contents: &[u8]) -> Result<(), 
     sync_parent_dir(path)
 }
 
+fn create_vision_temp_file(path: &Path) -> Result<(PathBuf, std::fs::File), WikiError> {
+    const TEMP_RETRIES: usize = 8;
+
+    for attempt in 0..TEMP_RETRIES {
+        let temp_path = temp_sibling_path(path, attempt);
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp_path)
+        {
+            Ok(file) => return Ok((temp_path, file)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(WikiError::Io {
+                    action: "create vision derived markdown temp file",
+                    path: Some(temp_path),
+                    source: error,
+                });
+            }
+        }
+    }
+
+    let temp_path = temp_sibling_path(path, TEMP_RETRIES);
+    Err(WikiError::Io {
+        action: "create vision derived markdown temp file",
+        path: Some(temp_path),
+        source: std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "exhausted unique temp file retries",
+        ),
+    })
+}
+
 fn sync_parent_dir(path: &Path) -> Result<(), WikiError> {
     let Some(parent) = path.parent() else {
         return Ok(());
@@ -270,7 +294,7 @@ fn sync_parent_dir(path: &Path) -> Result<(), WikiError> {
         })
 }
 
-fn temp_sibling_path(path: &Path) -> PathBuf {
+fn temp_sibling_path(path: &Path, attempt: usize) -> PathBuf {
     let file_name = path
         .file_name()
         .and_then(|name| name.to_str())
@@ -279,7 +303,10 @@ fn temp_sibling_path(path: &Path) -> PathBuf {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or_default();
-    path.with_file_name(format!(".{file_name}.{}.{nanos}.tmp", std::process::id()))
+    path.with_file_name(format!(
+        ".{file_name}.{}.{nanos}.{attempt}.tmp",
+        std::process::id()
+    ))
 }
 
 #[cfg(test)]

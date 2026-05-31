@@ -3,6 +3,8 @@ mod error;
 mod runner;
 pub(crate) mod support;
 
+// TODO(#357): Narrow these broad library-build allowances as gwiki CLI-only
+// modules are split from reusable public APIs.
 #[allow(dead_code)]
 pub(crate) mod audit;
 #[allow(dead_code)]

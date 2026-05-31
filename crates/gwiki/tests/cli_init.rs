@@ -26,28 +26,38 @@ fn assert_vault_shape(root: &std::path::Path) {
 fn init_creates_vault_shape() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let hub = tmp.path().join("hub");
-    let topic_status = Command::new(env!("CARGO_BIN_EXE_gwiki"))
+    let topic_output = Command::new(env!("CARGO_BIN_EXE_gwiki"))
         .args(["init", "--topic", "rust"])
         .env("GOBBY_WIKI_HUB", &hub)
         .current_dir(tmp.path())
-        .status()
+        .output()
         .expect("run topic init");
 
-    assert!(topic_status.success());
+    assert!(
+        topic_output.status.success(),
+        "topic init failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&topic_output.stdout),
+        String::from_utf8_lossy(&topic_output.stderr)
+    );
     assert_vault_shape(&hub.join("topics").join("rust"));
     assert!(hub.join("wikis.json").is_file());
 
     let project = tmp.path().join("project");
     let project_json = common::write_project_json(&project);
 
-    let project_status = Command::new(env!("CARGO_BIN_EXE_gwiki"))
+    let project_output = Command::new(env!("CARGO_BIN_EXE_gwiki"))
         .args(["init", "--project"])
         .env_remove("GOBBY_WIKI_HUB")
         .current_dir(&project)
-        .status()
+        .output()
         .expect("run project init");
 
-    assert!(project_status.success());
+    assert!(
+        project_output.status.success(),
+        "project init failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&project_output.stdout),
+        String::from_utf8_lossy(&project_output.stderr)
+    );
     assert_vault_shape(&project.join(".gobby").join("wiki"));
     assert!(
         project

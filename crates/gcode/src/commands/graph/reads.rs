@@ -87,15 +87,15 @@ where
 
 /// Resolve user input to a canonical symbol id, printing suggestions on ambiguity.
 /// Returns None and prints an error message if no match found.
-fn resolve_symbol(ctx: &Context, input: &str) -> Option<ResolvedGraphSymbol> {
+fn resolve_symbol(ctx: &Context, input: &str) -> anyhow::Result<Option<ResolvedGraphSymbol>> {
     let mut conn = match db::connect_readonly(&ctx.database_url) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Failed to open index for graph resolution: {e}");
-            return None;
+            return Ok(None);
         }
     };
-    let (resolved, suggestions) = fts::resolve_graph_symbol(&mut conn, input, &ctx.project_id);
+    let (resolved, suggestions) = fts::resolve_graph_symbol(&mut conn, input, &ctx.project_id)?;
     if resolved.is_none() {
         if suggestions.is_empty() {
             eprintln!("No symbol matching '{input}' found");
@@ -106,7 +106,7 @@ fn resolve_symbol(ctx: &Context, input: &str) -> Option<ResolvedGraphSymbol> {
             );
         }
     }
-    resolved
+    Ok(resolved)
 }
 
 fn resolve_symbol_or_empty_response(
@@ -116,7 +116,7 @@ fn resolve_symbol_or_empty_response(
     limit: usize,
     format: Format,
 ) -> anyhow::Result<Option<ResolvedGraphSymbol>> {
-    match resolve_symbol(ctx, input) {
+    match resolve_symbol(ctx, input)? {
         Some(symbol) => Ok(Some(symbol)),
         None => {
             empty_paged_response::<crate::models::GraphResult>(ctx, offset, limit, format)?;

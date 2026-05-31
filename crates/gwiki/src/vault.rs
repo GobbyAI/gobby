@@ -11,6 +11,12 @@ pub struct VaultPaths {
     pub files: Vec<&'static str>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CreatedVaultPaths {
+    pub directories: Vec<String>,
+    pub files: Vec<String>,
+}
+
 const DIRECTORIES: &[&str] = &[
     "raw",
     "raw/assets",
@@ -38,14 +44,24 @@ pub fn required_paths() -> VaultPaths {
     }
 }
 
-pub fn initialize(scope: &ResolvedScope) -> Result<(), WikiError> {
+pub fn initialize(scope: &ResolvedScope) -> Result<CreatedVaultPaths, WikiError> {
     let root = scope.root();
+    let mut created = CreatedVaultPaths {
+        directories: Vec::new(),
+        files: Vec::new(),
+    };
     for directory in DIRECTORIES {
-        create_dir(root.join(directory).as_path())?;
+        let path = root.join(directory);
+        if !path.exists() {
+            created.directories.push((*directory).to_string());
+        }
+        create_dir(path.as_path())?;
     }
 
     for (path, contents) in DEFAULT_FILES {
-        ensure_file(root.join(path).as_path(), contents)?;
+        if ensure_file(root.join(path).as_path(), contents)? {
+            created.files.push((*path).to_string());
+        }
     }
     let identity = scope.identity();
     let root_path = root.display().to_string();
@@ -58,10 +74,13 @@ pub fn initialize(scope: &ResolvedScope) -> Result<(), WikiError> {
         path: Some(root.join(".gwiki/scope.json")),
         source: error,
     })?;
-    write_file(
-        root.join(".gwiki/scope.json").as_path(),
-        format!("{scope_json}\n").as_str(),
-    )
+    let scope_file = root.join(".gwiki/scope.json");
+    let scope_file_created = !scope_file.exists();
+    write_file(scope_file.as_path(), format!("{scope_json}\n").as_str())?;
+    if scope_file_created {
+        created.files.push(".gwiki/scope.json".to_string());
+    }
+    Ok(created)
 }
 
 #[derive(Serialize)]
@@ -78,12 +97,13 @@ fn create_dir(path: &Path) -> Result<(), WikiError> {
     })
 }
 
-fn ensure_file(path: &Path, contents: &str) -> Result<(), WikiError> {
+fn ensure_file(path: &Path, contents: &str) -> Result<bool, WikiError> {
     if path.exists() {
-        return Ok(());
+        return Ok(false);
     }
 
-    write_file(path, contents)
+    write_file(path, contents)?;
+    Ok(true)
 }
 
 fn write_file(path: &Path, contents: &str) -> Result<(), WikiError> {
@@ -157,10 +177,11 @@ mod tests {
         let scope_file = root.join(".gwiki/scope.json");
         std::fs::write(&scope_file, "stale").expect("write stale scope");
 
-        initialize(&scope).expect("initialize twice");
+        let created = initialize(&scope).expect("initialize twice");
 
         let contents = std::fs::read_to_string(scope_file).expect("read scope");
         assert!(contents.contains("topic:rust"));
         assert!(!contents.contains("stale"));
+        assert!(!created.files.contains(&".gwiki/scope.json".to_string()));
     }
 }

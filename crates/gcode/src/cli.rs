@@ -451,37 +451,22 @@ pub(crate) fn reject_unsupported_grep_flags(command: &Command) -> anyhow::Result
         return Ok(());
     };
 
-    let flag = if *unsupported_limit {
-        Some("--limit")
-    } else if *unsupported_files_with_matches {
-        Some("--files-with-matches")
-    } else if *unsupported_files_without_match {
-        Some("--files-without-match")
-    } else if *unsupported_count {
-        Some("--count")
-    } else if *unsupported_only_matching {
-        Some("--only-matching")
-    } else if *unsupported_invert_match {
-        Some("--invert-match")
-    } else if *unsupported_word_regexp {
-        Some("--word-regexp")
-    } else if unsupported_regexp.is_some() {
-        Some("--regexp")
-    } else if *unsupported_recursive {
-        Some("--recursive")
-    } else if unsupported_type.is_some() {
-        Some("--type")
-    } else if unsupported_type_not.is_some() {
-        Some("--type-not")
-    } else if *unsupported_pcre2 {
-        Some("--pcre2")
-    } else if *unsupported_multiline {
-        Some("--multiline")
-    } else if *unsupported_json {
-        Some("--json")
-    } else {
-        None
-    };
+    let flag = first_set_flag(&[
+        ("--limit", *unsupported_limit),
+        ("--files-with-matches", *unsupported_files_with_matches),
+        ("--files-without-match", *unsupported_files_without_match),
+        ("--count", *unsupported_count),
+        ("--only-matching", *unsupported_only_matching),
+        ("--invert-match", *unsupported_invert_match),
+        ("--word-regexp", *unsupported_word_regexp),
+        ("--regexp", unsupported_regexp.is_some()),
+        ("--recursive", *unsupported_recursive),
+        ("--type", unsupported_type.is_some()),
+        ("--type-not", unsupported_type_not.is_some()),
+        ("--pcre2", *unsupported_pcre2),
+        ("--multiline", *unsupported_multiline),
+        ("--json", *unsupported_json),
+    ]);
 
     if let Some(flag) = flag {
         anyhow::bail!(
@@ -490,6 +475,12 @@ pub(crate) fn reject_unsupported_grep_flags(command: &Command) -> anyhow::Result
     }
 
     Ok(())
+}
+
+fn first_set_flag(flags: &[(&'static str, bool)]) -> Option<&'static str> {
+    flags
+        .iter()
+        .find_map(|(flag, is_set)| is_set.then_some(*flag))
 }
 
 #[cfg(test)]

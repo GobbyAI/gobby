@@ -71,7 +71,11 @@ pub(crate) fn row_to_graph_result(row: &Row) -> GraphResult {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string(),
-        line: row.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
+        line: row
+            .get("line")
+            .and_then(|v| v.as_u64())
+            .and_then(|value| usize::try_from(value).ok())
+            .unwrap_or(0),
         relation: row
             .get("relation")
             .or_else(|| row.get("rel_type"))
@@ -80,7 +84,7 @@ pub(crate) fn row_to_graph_result(row: &Row) -> GraphResult {
         distance: row
             .get("distance")
             .and_then(|v| v.as_u64())
-            .map(|d| d as usize),
+            .and_then(|d| usize::try_from(d).ok()),
         metadata: row_to_projection_metadata(row),
     }
 }
@@ -477,7 +481,8 @@ fn count_from_rows(rows: &[Row]) -> usize {
             v.as_u64()
                 .or_else(|| v.as_i64().and_then(|value| value.try_into().ok()))
         })
-        .unwrap_or(0) as usize
+        .and_then(|value| usize::try_from(value).ok())
+        .unwrap_or(0)
 }
 
 pub fn project_overview_graph(ctx: &Context, limit: usize) -> anyhow::Result<GraphPayload> {

@@ -100,7 +100,24 @@ fn render_entry(entry: &LogEntry) -> String {
 fn same_log_path(left: &Path, right: &Path) -> bool {
     // Compare after resolving existing parents; append_logs relies on this
     // before writing so scope/global aliases do not receive duplicate entries.
-    resolved_log_path(left) == resolved_log_path(right)
+    let resolved_left = resolved_log_path(left);
+    let resolved_right = resolved_log_path(right);
+    resolved_left == resolved_right || same_file_identity(&resolved_left, &resolved_right)
+}
+
+#[cfg(unix)]
+fn same_file_identity(left: &Path, right: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+
+    let (Ok(left), Ok(right)) = (std::fs::metadata(left), std::fs::metadata(right)) else {
+        return false;
+    };
+    left.dev() == right.dev() && left.ino() == right.ino()
+}
+
+#[cfg(not(unix))]
+fn same_file_identity(_left: &Path, _right: &Path) -> bool {
+    false
 }
 
 fn resolved_log_path(path: &Path) -> PathBuf {

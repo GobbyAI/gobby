@@ -220,7 +220,7 @@ pub(super) fn push_symbol_filters(
     params: &mut Vec<PgParam>,
     alias: &str,
     filters: SymbolFilters<'_>,
-) {
+) -> bool {
     if let Some(kind) = filters.kind {
         let placeholder = push_param(params, kind.to_string());
         conditions.push(format!("{alias}.kind = {placeholder}"));
@@ -229,7 +229,29 @@ pub(super) fn push_symbol_filters(
         let placeholder = push_param(params, language.to_string());
         conditions.push(format!("{alias}.language = {placeholder}"));
     }
-    push_path_filter(conditions, params, alias, filters.paths);
+    push_path_filter(conditions, params, alias, filters.paths)
+}
+
+pub(super) fn symbols_matching_paths(
+    symbols: impl IntoIterator<Item = Symbol>,
+    paths: &[String],
+) -> Vec<Symbol> {
+    let patterns = match compile_patterns(paths) {
+        Ok(patterns) => patterns,
+        Err(error) => {
+            log::warn!("invalid post-query symbol path filter: {error}");
+            return Vec::new();
+        }
+    };
+    symbols
+        .into_iter()
+        .filter(|symbol| {
+            patterns.is_empty()
+                || patterns
+                    .iter()
+                    .any(|pattern| pattern.matches(&symbol.file_path))
+        })
+        .collect()
 }
 
 pub(super) fn append_unique_symbols(
@@ -276,8 +298,13 @@ pub(super) fn query_symbols_by_conditions(
     limit: usize,
     order: SymbolOrder,
 ) -> Vec<Symbol> {
-    push_symbol_filters(&mut conditions, &mut params, "cs", filters);
-    let limit_placeholder = push_param(&mut params, limit as i64);
+    let path_filter_fallback = push_symbol_filters(&mut conditions, &mut params, "cs", filters);
+    let query_limit = if path_filter_fallback {
+        limit.max(FILTERED_FETCH_CAP)
+    } else {
+        limit
+    };
+    let limit_placeholder = push_param(&mut params, query_limit as i64);
     let where_clause = if conditions.is_empty() {
         "TRUE".to_string()
     } else {
@@ -295,14 +322,19 @@ pub(super) fn query_symbols_by_conditions(
         order_by = order.sql()
     );
     let refs = param_refs(&params);
-    match conn.query(&sql, &refs) {
+    let mut symbols = match conn.query(&sql, &refs) {
         Ok(rows) => rows
             .iter()
             .filter_map(|row| Symbol::from_row(row).ok())
             .collect(),
         Err(error) => {
             log::error!("symbol query failed: {error}");
-            Vec::new()
+            return Vec::new();
         }
+    };
+    if path_filter_fallback {
+        symbols = symbols_matching_paths(symbols, filters.paths);
+        symbols.truncate(limit);
     }
+    symbols
 }

@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::config::Context;
@@ -24,6 +25,7 @@ const PROJECT_INDEXED_LABELS: &[&str] = &[
     "UnresolvedCallee",
     "ExternalSymbol",
 ];
+static SYNC_TOKEN_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub struct CodeGraph<'a> {
     project_id: &'a str,
@@ -329,7 +331,8 @@ fn new_sync_token(file_path: &str) -> String {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or_default();
-    format!("{}:{}:{nanos}", std::process::id(), file_path)
+    let suffix = SYNC_TOKEN_COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("{}:{}:{nanos}:{suffix}", std::process::id(), file_path)
 }
 
 fn typed_query<I, K>(cypher: impl Into<String>, params: I) -> anyhow::Result<TypedQuery>

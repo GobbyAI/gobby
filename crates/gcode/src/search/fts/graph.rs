@@ -13,13 +13,13 @@ const EXACT_QUALIFIED_NAME_MATCH_LIMIT: usize = 6;
 const EXACT_NAME_MATCH_LIMIT: usize = 6;
 const FUZZY_NAME_MATCH_LIMIT: usize = 6;
 
-fn exact_symbol_matches(
+fn exact_symbol_matches_result(
     conn: &mut Client,
     project_id: &str,
     column: &str,
     input: &str,
     limit: usize,
-) -> Vec<Symbol> {
+) -> anyhow::Result<Vec<Symbol>> {
     let columns = db::symbol_select_columns("");
     let sql = match column {
         "id" => format!(
@@ -43,18 +43,13 @@ fn exact_symbol_matches(
              ORDER BY file_path ASC, line_start ASC
              LIMIT $3"
         ),
-        _ => return Vec::new(),
+        _ => return Ok(Vec::new()),
     };
-    match conn.query(&sql, &[&project_id, &input, &(limit as i64)]) {
-        Ok(rows) => rows
-            .iter()
-            .filter_map(|row| Symbol::from_row(row).ok())
-            .collect(),
-        Err(error) => {
-            eprintln!("gcode: exact graph symbol lookup failed for {column}: {error}");
-            Vec::new()
-        }
-    }
+    let rows = conn.query(&sql, &[&project_id, &input, &(limit as i64)])?;
+    Ok(rows
+        .iter()
+        .filter_map(|row| Symbol::from_row(row).ok())
+        .collect())
 }
 
 fn suggestion_label(symbol: &Symbol) -> String {
@@ -103,16 +98,16 @@ pub fn resolve_graph_symbol(
     conn: &mut Client,
     input: &str,
     project_id: &str,
-) -> (Option<ResolvedGraphSymbol>, Vec<String>) {
+) -> anyhow::Result<(Option<ResolvedGraphSymbol>, Vec<String>)> {
     for (column, limit) in [
         ("id", EXACT_ID_MATCH_LIMIT),
         ("qualified_name", EXACT_QUALIFIED_NAME_MATCH_LIMIT),
         ("name", EXACT_NAME_MATCH_LIMIT),
     ] {
-        if let Some(result) =
-            decisive_resolution(exact_symbol_matches(conn, project_id, column, input, limit))
-        {
-            return result;
+        if let Some(result) = decisive_resolution(exact_symbol_matches_result(
+            conn, project_id, column, input, limit,
+        )?) {
+            return Ok(result);
         }
     }
 
@@ -125,7 +120,7 @@ pub fn resolve_graph_symbol(
         &[],
         FUZZY_NAME_MATCH_LIMIT,
     )) {
-        return result;
+        return Ok(result);
     }
 
     let fts_results = search_symbols_fts(
@@ -137,5 +132,5 @@ pub fn resolve_graph_symbol(
         &[],
         FUZZY_NAME_MATCH_LIMIT,
     );
-    resolve_from_candidates(fts_results)
+    Ok(resolve_from_candidates(fts_results))
 }

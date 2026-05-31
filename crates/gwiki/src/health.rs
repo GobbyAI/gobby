@@ -274,8 +274,13 @@ fn bounded_text_matches(markdown: &str, needle: &str) -> bool {
 
 fn cached_regex_is_match(pattern: String, haystack: &str) -> bool {
     static CACHE: OnceLock<Mutex<HashMap<String, regex::Regex>>> = OnceLock::new();
-    let Ok(mut cache) = CACHE.get_or_init(|| Mutex::new(HashMap::new())).lock() else {
-        return regex::Regex::new(&pattern).is_ok_and(|regex| regex.is_match(haystack));
+    let mut cache = match CACHE.get_or_init(|| Mutex::new(HashMap::new())).lock() {
+        Ok(cache) => cache,
+        Err(poisoned) => {
+            // Regex compilation is deterministic; recovering the cache keeps a
+            // prior panic from forcing every later check down the slow path.
+            poisoned.into_inner()
+        }
     };
     let regex = match cache.get(&pattern) {
         Some(regex) => regex.clone(),

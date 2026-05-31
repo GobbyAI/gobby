@@ -102,7 +102,9 @@ fn append_hotspot_section(
     for hotspot in hotspots.iter().take(top_n) {
         lines.push(format!(
             "- {} ({}, degree {})",
-            hotspot.name, hotspot.node_type, hotspot.degree
+            inline_code(&hotspot.name),
+            hotspot.node_type,
+            hotspot.degree
         ));
     }
 }
@@ -119,8 +121,16 @@ fn append_target_section(
     lines.push(String::new());
     lines.push(format!("## {title}"));
     for target in targets.iter().take(top_n) {
-        lines.push(format!("- {} ({})", target.name, target.count));
+        lines.push(format!(
+            "- {} ({})",
+            inline_code(&target.name),
+            target.count
+        ));
     }
+}
+
+fn inline_code(value: &str) -> String {
+    format!("`{}`", value.replace('`', "\\`"))
 }
 
 fn named_counts_inline(counts: &BTreeMap<String, usize>) -> String {

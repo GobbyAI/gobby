@@ -9,6 +9,35 @@ fn gwiki(args: &[&str]) -> Output {
     let project = tmp.path().join("project");
     common::write_gcode_json(&project);
     fs::write(project.join("README.md"), "# Parse fixture\n").expect("write ingest fixture");
+    if args.first().is_none_or(|command| *command != "init") {
+        if args.contains(&"--topic") {
+            let output = Command::new(env!("CARGO_BIN_EXE_gwiki"))
+                .args(["init", "--topic", "rust"])
+                .env("GOBBY_WIKI_HUB", &hub)
+                .current_dir(&project)
+                .output()
+                .expect("gwiki topic init runs");
+            assert!(
+                output.status.success(),
+                "topic init fixture failed\nstdout:\n{}\nstderr:\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        } else if args.contains(&"--project") {
+            let output = Command::new(env!("CARGO_BIN_EXE_gwiki"))
+                .args(["init", "--project"])
+                .env("GOBBY_WIKI_HUB", &hub)
+                .current_dir(&project)
+                .output()
+                .expect("gwiki project init runs");
+            assert!(
+                output.status.success(),
+                "project init fixture failed\nstdout:\n{}\nstderr:\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
 
     Command::new(env!("CARGO_BIN_EXE_gwiki"))
         .args(args)

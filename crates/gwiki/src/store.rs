@@ -470,10 +470,17 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
         let path_string = display_path(path);
         let scope = self.scope.clone();
         let mut tx = self.conn.transaction()?;
-        tx.execute(
+        if let Err(error) = tx.execute(
             "DELETE FROM gwiki_links WHERE scope_kind = $1 AND scope_id = $2 AND path = $3",
             &[&scope.scope_kind(), &scope.scope_id(), &path_string],
-        )?;
+        ) {
+            if let Err(rollback_error) = tx.rollback() {
+                log::warn!(
+                    "failed to roll back gwiki link replacement after delete error: {rollback_error}"
+                );
+            }
+            return Err(error.into());
+        }
 
         for link in links {
             let target_path = link.target.clone();
@@ -765,6 +772,8 @@ fn ingestion_status(event: WikiIngestionEvent) -> &'static str {
 }
 
 pub(crate) fn link_kind(target: &str) -> &'static str {
+    // Only `://` is treated as external Markdown because bare schemes such as
+    // `mailto:` are valid wiki targets in existing vaults.
     if target.contains("://") {
         "markdown"
     } else {

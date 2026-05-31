@@ -3,8 +3,9 @@ use postgres::Client;
 use crate::config::Context;
 
 use super::common::{
-    PgParam, SymbolFilters, escape_like, param_refs, push_param, push_path_filter,
-    push_symbol_filters, push_visible_project_file_filter, query_count, sanitize_pg_search_query,
+    PgParam, SymbolFilters, compile_patterns, escape_like, param_refs, push_param,
+    push_path_filter, push_symbol_filters, push_visible_project_file_filter, query_count,
+    sanitize_pg_search_query,
 };
 
 pub fn count_text(
@@ -35,7 +36,7 @@ pub fn count_text(
         ),
         format!("cs.project_id = {project_placeholder}"),
     ];
-    push_symbol_filters(
+    let path_filter_fallback = push_symbol_filters(
         &mut conditions,
         &mut params,
         "cs",
@@ -45,6 +46,9 @@ pub fn count_text(
             paths,
         },
     );
+    if path_filter_fallback {
+        return count_symbol_file_path_rows(conn, conditions, params, paths).unwrap_or(0);
+    }
     let refs = param_refs(&params);
     let sql = format!(
         "SELECT COUNT(*)::BIGINT AS count
@@ -79,7 +83,7 @@ fn count_symbols_by_name_like(
             "(cs.name LIKE {name_placeholder} ESCAPE '\\' OR cs.qualified_name LIKE {qualified_placeholder} ESCAPE '\\')"
         ),
     ];
-    push_symbol_filters(
+    let path_filter_fallback = push_symbol_filters(
         &mut conditions,
         &mut params,
         "cs",
@@ -89,6 +93,9 @@ fn count_symbols_by_name_like(
             paths,
         },
     );
+    if path_filter_fallback {
+        return count_symbol_file_path_rows(conn, conditions, params, paths).unwrap_or(0);
+    }
     let refs = param_refs(&params);
     let sql = format!(
         "SELECT COUNT(*)::BIGINT AS count
@@ -191,7 +198,7 @@ fn count_visible_symbols_by_conditions(
     language: Option<&str>,
     paths: &[String],
 ) -> Result<usize, postgres::Error> {
-    push_symbol_filters(
+    let path_filter_fallback = push_symbol_filters(
         &mut conditions,
         &mut params,
         "cs",
@@ -202,6 +209,9 @@ fn count_visible_symbols_by_conditions(
         },
     );
     push_visible_project_file_filter(&mut conditions, &mut params, "cs", "cf", ctx);
+    if path_filter_fallback {
+        return count_symbol_file_path_rows(conn, conditions, params, paths);
+    }
     let sql = format!(
         "SELECT COUNT(*)::BIGINT AS count
          FROM code_symbols cs
@@ -211,6 +221,38 @@ fn count_visible_symbols_by_conditions(
         conditions.join(" AND ")
     );
     query_count(conn, &sql, &params)
+}
+
+fn count_symbol_file_path_rows(
+    conn: &mut Client,
+    conditions: Vec<String>,
+    params: Vec<PgParam>,
+    paths: &[String],
+) -> Result<usize, postgres::Error> {
+    let patterns = match compile_patterns(paths) {
+        Ok(patterns) => patterns,
+        Err(error) => {
+            log::warn!("invalid post-query count path filter: {error}");
+            return Ok(0);
+        }
+    };
+    let refs = param_refs(&params);
+    let sql = format!(
+        "SELECT cs.file_path
+         FROM code_symbols cs
+         JOIN code_indexed_files cf
+           ON cf.project_id = cs.project_id AND cf.file_path = cs.file_path
+         WHERE {}",
+        conditions.join(" AND ")
+    );
+    let rows = conn.query(&sql, &refs)?;
+    Ok(rows
+        .iter()
+        .filter_map(|row| row.try_get::<_, String>("file_path").ok())
+        .filter(|file_path| {
+            patterns.is_empty() || patterns.iter().any(|pattern| pattern.matches(file_path))
+        })
+        .count())
 }
 
 fn count_symbols_fts_visible(

@@ -724,6 +724,8 @@ mod tests {
                 "GOBBY_EMBEDDING_QUERY_PREFIX",
                 "GOBBY_EMBEDDING_TIMEOUT_SECONDS",
             ] {
+                // SAFETY: TEST_ENV_LOCK serializes all test environment mutation
+                // here, and the loop only touches the fixed key list above.
                 unsafe { std::env::remove_var(key) };
             }
         }

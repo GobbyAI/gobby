@@ -30,7 +30,7 @@ const PYTHON: LanguageSpec = LanguageSpec {
 };
 
 const JAVASCRIPT: LanguageSpec = LanguageSpec {
-    extensions: &[".js", ".jsx", ".cjs"],
+    extensions: &[".js", ".jsx", ".cjs", ".mjs"],
     symbol_query: r#"
         (function_declaration name: (identifier) @name) @definition.function
         (class_declaration name: (identifier) @name) @definition.class
@@ -374,10 +374,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn mjs_and_markdown_extensions_are_not_detected() {
-        // These formats are intentionally handled by the walker skip list, not
-        // by AST language detection.
-        assert_eq!(detect_language("src/generated.mjs"), None);
+    fn markdown_extensions_are_not_detected() {
+        // Markdown is intentionally handled by the walker skip list, not AST
+        // language detection.
         assert_eq!(detect_language("README.md"), None);
         assert_eq!(detect_language("docs/guide.markdown"), None);
     }
@@ -387,5 +386,6 @@ mod tests {
         assert_eq!(detect_language("src/app.js"), Some("javascript"));
         assert_eq!(detect_language("src/app.jsx"), Some("javascript"));
         assert_eq!(detect_language("src/app.cjs"), Some("javascript"));
+        assert_eq!(detect_language("src/generated.mjs"), Some("javascript"));
     }
 }

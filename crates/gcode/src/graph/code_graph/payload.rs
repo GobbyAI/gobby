@@ -37,16 +37,16 @@ impl GraphPayload {
     }
 
     fn refresh_node_cache_if_needed(&mut self) {
-        let non_empty_node_count = self.nodes.iter().filter(|node| !node.id.is_empty()).count();
-        if self.node_ids.len() == non_empty_node_count {
-            return;
-        }
-        self.node_ids = self
+        let node_ids = self
             .nodes
             .iter()
             .filter(|node| !node.id.is_empty())
             .map(|node| node.id.clone())
-            .collect();
+            .collect::<HashSet<_>>();
+        if self.node_ids == node_ids {
+            return;
+        }
+        self.node_ids = node_ids;
     }
 }
 

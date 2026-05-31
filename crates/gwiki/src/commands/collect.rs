@@ -10,7 +10,7 @@ use crate::{CommandOutcome, ScopeIdentity, ScopeSelection, WikiError, store, vau
 pub(crate) fn execute(selection: ScopeSelection) -> Result<CommandOutcome, WikiError> {
     let scope = resolve_command_scope(&selection)?;
 
-    vault::initialize(&scope)?;
+    let _ = vault::initialize(&scope)?;
     let output_scope = resolved_scope_identity(&scope);
     let mut store = store::MemoryWikiStore::default();
     let timestamp = collect_timestamp().map_err(|error| WikiError::Config {

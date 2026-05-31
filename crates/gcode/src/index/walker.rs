@@ -8,7 +8,7 @@ use crate::index::security;
 
 /// Maximum file size to index (10 MB).
 const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
-const SKIPPED_EXTENSIONS: &[&str] = &["mjs", "md", "markdown"];
+const SKIPPED_EXTENSIONS: &[&str] = &["md", "markdown"];
 
 /// How a file should be indexed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -170,7 +170,7 @@ mod tests {
         // discover_files omits api_key.txt via the security module
         // (SECRET_SUBSTRINGS matches "api_key"), image.bin via binary
         // detection, and target/* via the explicit excludes vector.
-        assert_eq!(rels(root, ast), vec!["src/lib.rs"]);
+        assert_eq!(rels(root, ast), vec!["src/generated.mjs", "src/lib.rs"]);
         assert_eq!(
             rels(root, content_only),
             vec![
@@ -199,7 +199,7 @@ mod tests {
     }
 
     #[test]
-    fn classifies_mjs_and_markdown_as_skipped() {
+    fn classifies_mjs_as_ast_and_markdown_as_skipped() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let root = tmp.path();
         write_file(root, "src/generated.mjs", b"export const value = 1;\n");
@@ -209,7 +209,7 @@ mod tests {
 
         assert_eq!(
             classify_file(root, &root.join("src/generated.mjs"), &excludes),
-            None
+            Some(FileClassification::Ast)
         );
         assert_eq!(
             classify_file(root, &root.join("README.md"), &excludes),

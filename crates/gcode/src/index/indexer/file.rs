@@ -49,7 +49,10 @@ pub(super) fn index_file(
             return Ok(None);
         }
     };
-    let size = file_path.metadata().map(|m| m.len()).unwrap_or(0);
+    let size = file_path
+        .metadata()
+        .map(|m| usize::try_from(m.len()).unwrap_or(usize::MAX))
+        .unwrap_or(0);
 
     // PostgreSQL hub writes (transactional).
     let mut tx = conn
@@ -63,7 +66,7 @@ pub(super) fn index_file(
         &rel,
         language,
         &h,
-        size as usize,
+        size,
         &parse_result,
     )?;
 
@@ -137,16 +140,7 @@ pub(super) fn index_content_only(
     };
 
     let lang = walker::content_language(path);
-    let content_hash = match hasher::file_content_hash(path) {
-        Ok(hash) => hash,
-        Err(error) => {
-            log::debug!(
-                "skipping content-only index for unreadable file {}: {error}",
-                path.display()
-            );
-            return Ok(None);
-        }
-    };
+    let content_hash = hasher::content_hash(&source);
 
     let mut tx = conn
         .transaction()

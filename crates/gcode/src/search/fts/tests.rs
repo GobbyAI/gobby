@@ -121,11 +121,11 @@ fn snippet_handles_unicode_before_match() {
 
 #[test]
 fn overlay_visibility_counts_and_kinds_use_database_predicates() {
-    let Some(mut conn) = connect_overlay_visibility_test_db() else {
+    let Some((mut conn, database_url)) = connect_overlay_visibility_test_db() else {
         return;
     };
 
-    let ids = OverlayFixtureIds::new();
+    let ids = OverlayFixtureIds::new(database_url);
     cleanup_overlay_visibility_fixture(&mut conn, &ids);
     let _cleanup = OverlayFixtureCleanup {
         database_url: ids.database_url.clone(),
@@ -152,14 +152,14 @@ fn overlay_visibility_counts_and_kinds_use_database_predicates() {
     assert_eq!(count_content_visible(&mut conn, "++", &ctx, None, &[]), 3);
 }
 
-fn connect_overlay_visibility_test_db() -> Option<Client> {
+fn connect_overlay_visibility_test_db() -> Option<(Client, String)> {
     let database_url = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL").ok()?;
     match Client::connect(&database_url, NoTls) {
         Ok(mut conn) => {
             if let Err(err) = crate::schema::validate_runtime_schema(&mut conn) {
                 panic!("test PostgreSQL hub schema is invalid: {err}");
             }
-            Some(conn)
+            Some((conn, database_url))
         }
         Err(err) => {
             panic!("failed to connect test PostgreSQL hub: {err}");
@@ -174,9 +174,7 @@ struct OverlayFixtureIds {
 }
 
 impl OverlayFixtureIds {
-    fn new() -> Self {
-        let database_url = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL")
-            .expect("GCODE_POSTGRES_TEST_DATABASE_URL is required for overlay visibility tests");
+    fn new(database_url: String) -> Self {
         let suffix = format!(
             "{}-{}",
             std::process::id(),

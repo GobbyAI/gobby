@@ -69,14 +69,16 @@ pub fn validate_schema(
 }
 
 fn connect(database_url: &str) -> anyhow::Result<Client> {
-    let config = database_url
+    let requested_ssl_mode = requested_ssl_mode(database_url);
+    let normalized_url = normalize_sslmode_for_parser(database_url);
+    let config = normalized_url
         .parse::<postgres::Config>()
         .context("failed to parse PostgreSQL connection URL")?;
-    match config.get_ssl_mode() {
-        SslMode::Disable => config
+    match requested_ssl_mode.unwrap_or_else(|| requested_ssl_mode_from_config(&config)) {
+        RequestedSslMode::Disable => config
             .connect(NoTls)
             .context("failed to connect to the Gobby PostgreSQL hub"),
-        SslMode::Prefer => match connect_with_tls_unverified(&config) {
+        RequestedSslMode::Prefer => match connect_with_tls_unverified(&config) {
             Ok(client) => Ok(client),
             Err(error) if is_no_tls_server_error(&error) => {
                 log::debug!(
@@ -89,14 +91,77 @@ fn connect(database_url: &str) -> anyhow::Result<Client> {
             Err(error) => Err(error),
         },
         // libpq `sslmode=require` requires encryption without CA or hostname
-        // verification. `verify-ca` and `verify-full` keep verification enabled.
-        SslMode::Require => connect_with_tls_unverified(&config),
-        _ => connect_with_tls_verification(&config, true),
+        // verification. `verify-ca` keeps CA verification while allowing
+        // hostname mismatch; `verify-full` keeps both checks strict.
+        RequestedSslMode::Require => connect_with_tls_unverified(&config),
+        RequestedSslMode::VerifyCa => connect_with_tls_verify_ca(&config),
+        RequestedSslMode::VerifyFull => connect_with_tls_verification(&config, true),
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RequestedSslMode {
+    Disable,
+    Prefer,
+    Require,
+    VerifyCa,
+    VerifyFull,
+}
+
+fn requested_ssl_mode_from_config(config: &postgres::Config) -> RequestedSslMode {
+    match config.get_ssl_mode() {
+        SslMode::Disable => RequestedSslMode::Disable,
+        SslMode::Prefer => RequestedSslMode::Prefer,
+        SslMode::Require => RequestedSslMode::Require,
+        _ => RequestedSslMode::Prefer,
+    }
+}
+
+fn requested_ssl_mode(database_url: &str) -> Option<RequestedSslMode> {
+    let value = sslmode_value(database_url)?;
+    match value.as_str() {
+        "disable" => Some(RequestedSslMode::Disable),
+        "prefer" => Some(RequestedSslMode::Prefer),
+        "require" => Some(RequestedSslMode::Require),
+        "verify-ca" => Some(RequestedSslMode::VerifyCa),
+        "verify-full" => Some(RequestedSslMode::VerifyFull),
+        _ => None,
+    }
+}
+
+fn sslmode_value(database_url: &str) -> Option<String> {
+    if let Some((_, query)) = database_url.split_once('?') {
+        return query.split('&').find_map(|pair| {
+            let (key, value) = pair.split_once('=')?;
+            (key == "sslmode").then(|| value.to_ascii_lowercase())
+        });
+    }
+
+    database_url.split_whitespace().find_map(|part| {
+        let (key, value) = part.split_once('=')?;
+        (key == "sslmode").then(|| value.trim_matches('\'').to_ascii_lowercase())
+    })
+}
+
+fn normalize_sslmode_for_parser(database_url: &str) -> String {
+    database_url
+        .replace("sslmode=verify-ca", "sslmode=require")
+        .replace("sslmode=verify-full", "sslmode=require")
 }
 
 fn connect_with_tls_unverified(config: &postgres::Config) -> anyhow::Result<Client> {
     connect_with_tls_verification(config, false)
+}
+
+fn connect_with_tls_verify_ca(config: &postgres::Config) -> anyhow::Result<Client> {
+    let mut builder = native_tls::TlsConnector::builder();
+    builder.danger_accept_invalid_hostnames(true);
+    let connector = builder
+        .build()
+        .context("failed to build PostgreSQL TLS connector")?;
+    config
+        .connect(MakeTlsConnector::new(connector))
+        .context("failed to connect to the Gobby PostgreSQL hub")
 }
 
 fn connect_with_tls_verification(

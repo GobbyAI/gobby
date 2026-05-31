@@ -486,9 +486,10 @@ pub fn detect_project_root_from(start: &Path) -> anyhow::Result<PathBuf> {
 /// Resolve Gobby daemon base URL.
 ///
 /// Resolution order:
-/// 1. `GOBBY_PORT` env var (explicit override)
-/// 2. `~/.gobby/bootstrap.yaml` `daemon_port` + `bind_host` keys
-/// 3. Default: `http://localhost:60887`
+/// 1. Non-empty `GOBBY_PORT` env var, composed as `http://localhost:{GOBBY_PORT}`.
+/// 2. `~/.gobby/bootstrap.yaml` `daemon_port` plus optional `bind_host`.
+/// 3. `http://localhost:60887` when the env var is empty/missing or bootstrap
+///    is unavailable, unreadable, malformed, or missing `daemon_port`.
 pub(crate) fn resolve_daemon_url() -> Option<String> {
     // Env var override takes priority (empty value falls through to defaults)
     if let Ok(port) = std::env::var("GOBBY_PORT")

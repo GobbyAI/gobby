@@ -330,6 +330,8 @@ mod tests {
                 "GOBBY_TEST_PRESENT",
                 "GOBBY_TEST_MISSING",
             ] {
+                // SAFETY: TEST_ENV_LOCK serializes all test environment mutation
+                // here, and the loop only touches the fixed key list above.
                 unsafe { std::env::remove_var(key) };
             }
         }

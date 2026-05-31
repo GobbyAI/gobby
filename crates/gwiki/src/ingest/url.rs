@@ -1,5 +1,7 @@
 use std::path::Path;
 
+use scraper::{ElementRef, Html, Node, Selector};
+
 use crate::WikiError;
 use crate::ingest::{
     IngestResult, index_after_ingest, markdown_metadata, markdown_title, single_line,
@@ -72,71 +74,47 @@ fn render_url_markdown(snapshot: &UrlSnapshot, canonical_url: &str, title: &str)
 
 fn extract_title(bytes: &[u8]) -> Option<String> {
     let html = text_from_utf8_lossy(bytes);
-    let lower = html.to_ascii_lowercase();
-    let start = lower.find("<title")?;
-    let content_start = lower[start..].find('>')? + start + 1;
-    let content_end = lower[content_start..].find("</title>")? + content_start;
-    let title = decode_html_entities(&html[content_start..content_end]);
+    let document = Html::parse_document(&html);
+    let selector = Selector::parse("title").ok()?;
+    let title = document
+        .select(&selector)
+        .next()?
+        .text()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let title = decode_html_entities(&title);
     let title = single_line(&title);
     (!title.is_empty()).then_some(title)
 }
 
 fn html_to_markdownish_text(bytes: &[u8]) -> String {
     let html = text_from_utf8_lossy(bytes);
-    let without_blocks = remove_tag_block(
-        &remove_tag_block(&remove_tag_block(&html, "script"), "style"),
-        "head",
-    );
-    let text = strip_tags(&without_blocks);
+    let document = Html::parse_document(&html);
+    let mut parts = Vec::new();
+    let root = Selector::parse("body")
+        .ok()
+        .and_then(|selector| document.select(&selector).next())
+        .unwrap_or_else(|| document.root_element());
+    collect_visible_text(root, &mut parts);
+    let text = parts.join("\n");
     normalize_markdown_text(&decode_html_entities(&text))
 }
 
-fn remove_tag_block(html: &str, tag: &str) -> String {
-    let mut output = String::new();
-    let mut cursor = 0;
-    let lower = html.to_ascii_lowercase();
-    let open = format!("<{tag}");
-    let close = format!("</{tag}>");
-    let mut search_cursor = cursor;
-
-    while let Some(start_offset) = lower[search_cursor..].find(&open) {
-        let start = search_cursor + start_offset;
-        let name_end = start + open.len();
-        if !is_tag_name_boundary(lower[name_end..].chars().next()) {
-            search_cursor = name_end;
-            continue;
-        }
-        output.push_str(&html[cursor..start]);
-        let Some(end_offset) = lower[start..].find(&close) else {
-            output.push_str(&html[start..]);
-            return output;
-        };
-        cursor = start + end_offset + close.len();
-        search_cursor = cursor;
+fn collect_visible_text(element: ElementRef<'_>, parts: &mut Vec<String>) {
+    if matches!(element.value().name(), "head" | "script" | "style") {
+        return;
     }
-    output.push_str(&html[cursor..]);
-    output
-}
-
-fn is_tag_name_boundary(next: Option<char>) -> bool {
-    next.is_none_or(|ch| ch == '>' || ch == '/' || ch.is_ascii_whitespace())
-}
-
-fn strip_tags(html: &str) -> String {
-    let mut output = String::new();
-    let mut in_tag = false;
-    for ch in html.chars() {
-        match ch {
-            '<' => in_tag = true,
-            '>' => {
-                in_tag = false;
-                output.push(' ');
+    for child in element.children() {
+        match child.value() {
+            Node::Text(text) => parts.push(text.text.to_string()),
+            Node::Element(_) => {
+                if let Some(child_element) = ElementRef::wrap(child) {
+                    collect_visible_text(child_element, parts);
+                }
             }
-            _ if !in_tag => output.push(ch),
             _ => {}
         }
     }
-    output
 }
 
 fn normalize_markdown_text(text: &str) -> String {
@@ -208,23 +186,14 @@ mod tests {
     }
 
     #[test]
-    fn remove_tag_block_respects_tag_name_boundaries() {
-        let html = "<scripture>keep</scripture><script>drop()</script><script type=\"x\">also_drop()</script>";
+    fn html_parser_extracts_body_text_and_decodes_entities() {
+        let html = br#"<!doctype html>
+<html>
+<head><title>Hidden &amp; Title</title></head>
+<body><main><p>Keep &amp; decode.</p><script>drop()</script></main></body>
+</html>"#;
 
-        let stripped = remove_tag_block(html, "script");
-
-        assert!(stripped.contains("<scripture>keep</scripture>"));
-        assert!(!stripped.contains("drop()"));
-        assert!(!stripped.contains("also_drop()"));
-    }
-
-    #[test]
-    fn remove_tag_block_preserves_tail_when_close_tag_is_missing() {
-        let html = "<main>keep</main><script>unterminated<div>tail</div>";
-
-        let stripped = remove_tag_block(html, "script");
-
-        assert!(stripped.contains("<main>keep</main>"));
-        assert!(stripped.contains("<script>unterminated<div>tail</div>"));
+        assert_eq!(extract_title(html), Some("Hidden & Title".to_string()));
+        assert_eq!(html_to_markdownish_text(html), "Keep & decode.");
     }
 }

@@ -18,7 +18,7 @@ pub(super) fn dimension_probe_text() -> &'static str {
 pub fn embedding_client(
     config: &EmbeddingConfig,
 ) -> Result<reqwest::blocking::Client, VectorLifecycleError> {
-    let mut clients = EMBEDDING_CLIENTS
+    let clients = EMBEDDING_CLIENTS
         .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
         .map_err(|err| VectorLifecycleError::EmbeddingResponse(err.to_string()))?;
@@ -27,11 +27,19 @@ pub fn embedding_client(
     if let Some(client) = clients.get(&config.timeout_seconds) {
         return Ok(client.clone());
     }
+    drop(clients);
 
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(config.timeout_seconds))
         .build()
         .map_err(|err| VectorLifecycleError::EmbeddingResponse(err.to_string()))?;
+    let mut clients = EMBEDDING_CLIENTS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .map_err(|err| VectorLifecycleError::EmbeddingResponse(err.to_string()))?;
+    if let Some(client) = clients.get(&config.timeout_seconds) {
+        return Ok(client.clone());
+    }
     clients.insert(config.timeout_seconds, client.clone());
     Ok(client)
 }
