@@ -1397,3 +1397,27 @@ class TestGetWindowAutomaticRename:
             mock_run.return_value = (1, "", "no server running")
             result = await mgr.get_window_automatic_rename("%1")
         assert result is None
+
+
+class TestGetWindowName:
+    """Tests for TmuxSessionManager.get_window_name."""
+
+    @pytest.mark.asyncio
+    async def test_returns_window_name(self) -> None:
+        mgr = TmuxSessionManager()
+        with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = (0, "#99: gobby\n", "")
+            result = await mgr.get_window_name("%1")
+
+        assert result == "#99: gobby"
+        mock_run.assert_called_once_with("display-message", "-t", "%1", "-p", "#{window_name}")
+
+    @pytest.mark.asyncio
+    async def test_returns_none_on_error_or_empty(self) -> None:
+        mgr = TmuxSessionManager()
+        with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = (1, "", "no server running")
+            assert await mgr.get_window_name("%1") is None
+
+            mock_run.return_value = (0, "\n", "")
+            assert await mgr.get_window_name("%1") is None

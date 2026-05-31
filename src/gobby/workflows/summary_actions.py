@@ -358,14 +358,32 @@ def _path_basename_title(value: Any) -> str | None:
     return title or None
 
 
+def _contains_unresolved_session_ref(value: Any) -> bool:
+    return isinstance(value, str) and "session_ref" in value.lower()
+
+
+def _session_ref_for_window_title(session: Any) -> str | None:
+    seq_num = getattr(session, "seq_num", None)
+    if isinstance(seq_num, int) and seq_num > 0:
+        return f"#{seq_num}"
+
+    ref = getattr(session, "ref", None)
+    if not isinstance(ref, str):
+        return None
+    ref = ref.strip()
+    if not ref or _contains_unresolved_session_ref(ref):
+        return None
+    return ref
+
+
 def _resolve_window_title(session: Any, terminal_context: dict[str, Any], title: str) -> str:
     """Resolve the final tmux window title: fallback when empty, ref-prefixed.
 
     Prepends the session ref (e.g. ``#3605``) so the window reads ``#N: title``.
     """
-    if not title:
+    if not title or _contains_unresolved_session_ref(title):
         title = _synthesize_fallback_title(session, terminal_context)
-    ref = getattr(session, "ref", None)
+    ref = _session_ref_for_window_title(session)
     if ref:
         title = f"{ref}: {title}"
     return title
@@ -426,6 +444,17 @@ async def _apply_window_rename(
     return applied
 
 
+async def _window_name_has_unresolved_session_ref(mgr: Any, pane: str) -> bool:
+    getter = getattr(mgr, "get_window_name", None)
+    if getter is None:
+        return False
+    try:
+        return _contains_unresolved_session_ref(await getter(pane))
+    except Exception:
+        logger.debug("Failed to read window name for pane %s", pane, exc_info=True)
+        return False
+
+
 async def _rename_tmux_window(session: Any, title: str) -> None:
     """Rename the tmux window for a session after title synthesis.
 
@@ -469,9 +498,11 @@ async def enforce_window_name_if_unmanaged(session: Any) -> bool:
     except Exception:
         logger.debug("Failed to read automatic-rename for pane %s", pane, exc_info=True)
         return False
-    # None -> window unreadable/gone; False -> already Gobby-managed. Skip both;
-    # only act when automatic-rename is still on (Gobby never named this window).
-    if auto_rename is not True:
+    # None -> window unreadable/gone; False -> already Gobby-managed. Bad names
+    # from older builds are repaired even though they are already managed.
+    if auto_rename is None:
+        return False
+    if auto_rename is False and not await _window_name_has_unresolved_session_ref(mgr, pane):
         return False
 
     title = getattr(session, "title", None) or ""

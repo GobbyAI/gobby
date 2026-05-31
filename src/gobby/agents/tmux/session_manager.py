@@ -488,6 +488,16 @@ class TmuxSessionManager:
             return False
         return None
 
+    async def get_window_name(self, target: str) -> str | None:
+        """Return *target*'s current tmux window name, or None when unreadable."""
+        rc, stdout, _stderr = await self._run(
+            "display-message", "-t", target, "-p", "#{window_name}"
+        )
+        if rc != 0:
+            return None
+        value = stdout.strip()
+        return value or None
+
     async def rename_window(self, target: str, title: str) -> bool:
         """Rename the tmux window containing *target*.
 
