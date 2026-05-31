@@ -74,3 +74,5 @@ Follow-up validation passed:
 - `uv run mypy src/gobby/mcp_proxy/tools/agent_messaging.py src/gobby/sessions/mailbox.py --no-incremental --strict` - passed
 - `uv run gobby test-quality audit tests/mcp_proxy/tools/test_agent_messaging.py --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity high` - passed
 - `git diff --check` - passed
+
+Committed the final follow-up fix as `943814fb2` and closed task `#15389`. I warned the active planner agent `run-5d365cd5edcd`, waited 30 seconds, restarted the daemon, and confirmed `uv run gobby status` showed the daemon healthy with automation running and one active agent. A live build-scoped message sent with wrapper `project_id=gobby-cli`, `target="build"`, and `target_id="#354"` resolved the target root task in `gobby-cli` (`caa08e59-25ad-4db1-86fe-d97830cd6b87`) and delivered/woke planner session `30512c29-8fda-42a7-95e5-c16775503cc6`. This resolved the cross-project coordinator messaging anomaly.
