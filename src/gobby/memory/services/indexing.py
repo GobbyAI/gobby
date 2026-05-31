@@ -44,6 +44,7 @@ class IndexingService:
         self._kg_rebuilder = kg_rebuilder
         self._run_db = run_db
         self._global_reindex_lock = asyncio.Lock()
+        self._global_reindex_task: asyncio.Task[dict[str, Any]] | None = None
         self._last_global_reindex_fingerprint: str | None = None
         self._last_global_reindex_completed_at: float | None = None
 
@@ -172,52 +173,31 @@ class IndexingService:
         if not self._vector_store or not self._embed_fn:
             return {"success": False, "error": "Vector store or embedding function not configured"}
 
+        if project_id is None:
+            return await self._reindex_global_embeddings()
+
         total = 0
         try:
-            if project_id is None:
-                async with self._global_reindex_lock:
-                    memories = self._storage.list_memories(limit=MAX_REINDEX_LIMIT)
-                    total = len(memories)
-                    memory_dicts = self._memory_dicts(memories)
-                    fingerprint = self._fingerprint_memory_dicts(memory_dicts)
-                    if await self._global_reindex_is_current(memory_dicts, fingerprint):
-                        logger.info(
-                            "Skipping global embedding reindex; source snapshot unchanged "
-                            "(%s memories)",
-                            total,
-                        )
-                        return {
-                            "success": True,
-                            "total_memories": total,
-                            "embeddings_generated": 0,
-                            "skipped": True,
-                            "skip_reason": "source_snapshot_unchanged",
-                        }
-                    await self._vector_store.rebuild(memory_dicts, self._embed_fn)
-                    self._last_global_reindex_fingerprint = fingerprint
-                    self._last_global_reindex_completed_at = asyncio.get_running_loop().time()
-                generated = total
-            else:
-                memories = self._storage.list_memories(
-                    project_id=project_id,
-                    limit=MAX_REINDEX_LIMIT,
-                )
-                total = len(memories)
-                memory_dicts = self._memory_dicts(memories)
-                await self._vector_store.delete(filters={"project_id": project_id})
-                batch: list[tuple[str, list[float], dict[str, Any]]] = []
-                for mem in memory_dicts:
-                    mem_id: str = mem["id"]
-                    embedding = await self._embed_fn(mem["content"])
-                    payload = {k: v for k, v in mem.items() if k != "id"}
-                    batch.append((mem_id, embedding, payload))
-                    if len(batch) >= 500:
-                        await self._vector_store.batch_upsert(batch)
-                        logger.info(f"Reindex progress: {len(batch)}/{total} vectors")
-                        batch = []
-                if batch:
+            memories = self._storage.list_memories(
+                project_id=project_id,
+                limit=MAX_REINDEX_LIMIT,
+            )
+            total = len(memories)
+            memory_dicts = self._memory_dicts(memories)
+            await self._vector_store.delete(filters={"project_id": project_id})
+            batch: list[tuple[str, list[float], dict[str, Any]]] = []
+            for mem in memory_dicts:
+                mem_id: str = mem["id"]
+                embedding = await self._embed_fn(mem["content"])
+                payload = {k: v for k, v in mem.items() if k != "id"}
+                batch.append((mem_id, embedding, payload))
+                if len(batch) >= 500:
                     await self._vector_store.batch_upsert(batch)
-                generated = len(memory_dicts)
+                    logger.info(f"Reindex progress: {len(batch)}/{total} vectors")
+                    batch = []
+            if batch:
+                await self._vector_store.batch_upsert(batch)
+            generated = len(memory_dicts)
         except Exception as e:
             logger.error(f"Failed to rebuild vector store: {e}")
             return {"success": False, "total_memories": total, "error": str(e)}
@@ -226,6 +206,60 @@ class IndexingService:
             "success": True,
             "total_memories": total,
             "embeddings_generated": generated,
+            "skipped": False,
+        }
+
+    async def _reindex_global_embeddings(self) -> dict[str, Any]:
+        async with self._global_reindex_lock:
+            if self._global_reindex_task is None or self._global_reindex_task.done():
+                self._global_reindex_task = asyncio.create_task(
+                    self._run_global_embedding_reindex()
+                )
+            task = self._global_reindex_task
+
+        try:
+            return await asyncio.shield(task)
+        finally:
+            if task.done():
+                async with self._global_reindex_lock:
+                    if self._global_reindex_task is task:
+                        self._global_reindex_task = None
+
+    async def _run_global_embedding_reindex(self) -> dict[str, Any]:
+        total = 0
+        try:
+            memories = self._storage.list_memories(limit=MAX_REINDEX_LIMIT)
+            total = len(memories)
+            memory_dicts = self._memory_dicts(memories)
+            fingerprint = self._fingerprint_memory_dicts(memory_dicts)
+            if await self._global_reindex_is_current(memory_dicts, fingerprint):
+                logger.info(
+                    "Skipping global embedding reindex; source snapshot unchanged (%s memories)",
+                    total,
+                )
+                return {
+                    "success": True,
+                    "total_memories": total,
+                    "embeddings_generated": 0,
+                    "skipped": True,
+                    "skip_reason": "source_snapshot_unchanged",
+                }
+            if self._vector_store is None or self._embed_fn is None:
+                return {
+                    "success": False,
+                    "error": "Vector store or embedding function not configured",
+                }
+            await self._vector_store.rebuild(memory_dicts, self._embed_fn)
+            self._last_global_reindex_fingerprint = fingerprint
+            self._last_global_reindex_completed_at = asyncio.get_running_loop().time()
+        except Exception as e:
+            logger.error(f"Failed to rebuild vector store: {e}")
+            return {"success": False, "total_memories": total, "error": str(e)}
+
+        return {
+            "success": True,
+            "total_memories": total,
+            "embeddings_generated": total,
             "skipped": False,
         }
 

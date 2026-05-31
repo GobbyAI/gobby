@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -66,6 +68,23 @@ class _VectorStore:
         return list(self.ids)
 
 
+class _SlowVectorStore(_VectorStore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.rebuild_started = asyncio.Event()
+        self.complete_rebuild = asyncio.Event()
+        self.rebuild = AsyncMock(side_effect=self._slow_rebuild)
+
+    async def _slow_rebuild(
+        self,
+        memory_dicts: list[dict[str, Any]],
+        embed_fn: Callable[[str], Awaitable[list[float]]],
+    ) -> None:
+        self.rebuild_started.set()
+        await self.complete_rebuild.wait()
+        await self._rebuild(memory_dicts, embed_fn)
+
+
 async def _embed_fn(_content: str) -> list[float]:
     return [0.1, 0.2]
 
@@ -101,6 +120,55 @@ async def test_global_reindex_skips_unchanged_memory_snapshot() -> None:
     assert second["embeddings_generated"] == 0
     assert second["skipped"] is True
     assert vector_store.rebuild.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_concurrent_global_reindex_awaits_running_rebuild(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = _MemoryStorage(
+        [
+            _memory("mem-1", "alpha"),
+            _memory("mem-2", "beta"),
+        ]
+    )
+    vector_store = _SlowVectorStore()
+    service = _service(storage, vector_store)
+    original_shield = asyncio.shield
+    shield_calls = 0
+    second_call_waiting = asyncio.Event()
+
+    def shield_spy(awaitable: Any) -> Any:
+        nonlocal shield_calls
+        shield_calls += 1
+        if shield_calls == 2:
+            second_call_waiting.set()
+        return original_shield(awaitable)
+
+    monkeypatch.setattr(asyncio, "shield", shield_spy)
+
+    with caplog.at_level(logging.INFO, logger="gobby.memory.services.indexing"):
+        first_task = asyncio.create_task(service.reindex_embeddings())
+        await asyncio.wait_for(vector_store.rebuild_started.wait(), timeout=1.0)
+        second_task = asyncio.create_task(service.reindex_embeddings())
+        await asyncio.wait_for(second_call_waiting.wait(), timeout=1.0)
+        vector_store.complete_rebuild.set()
+        first, second = await asyncio.wait_for(
+            asyncio.gather(first_task, second_task),
+            timeout=1.0,
+        )
+
+    assert first["success"] is True
+    assert first["embeddings_generated"] == 2
+    assert first["skipped"] is False
+    assert second["success"] is True
+    assert second["embeddings_generated"] == 2
+    assert second["skipped"] is False
+    assert "skip_reason" not in second
+    assert shield_calls == 2
+    assert vector_store.rebuild.await_count == 1
+    assert "Skipping global embedding reindex" not in caplog.text
 
 
 @pytest.mark.asyncio
