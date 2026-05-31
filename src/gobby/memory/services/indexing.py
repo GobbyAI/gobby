@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
@@ -17,6 +19,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 MAX_REINDEX_LIMIT = 100_000
+GLOBAL_REINDEX_DEDUPE_WINDOW_SECONDS = 60.0
 
 
 class IndexingService:
@@ -40,11 +43,65 @@ class IndexingService:
         self._crossref_service = crossref_service
         self._kg_rebuilder = kg_rebuilder
         self._run_db = run_db
+        self._global_reindex_lock = asyncio.Lock()
+        self._last_global_reindex_fingerprint: str | None = None
+        self._last_global_reindex_completed_at: float | None = None
 
     async def _run_storage(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         if self._run_db is None:
             return await asyncio.to_thread(func, *args, **kwargs)
         return await self._run_db(func, *args, **kwargs)
+
+    @staticmethod
+    def _memory_dicts(memories: list[Memory]) -> list[dict[str, Any]]:
+        return [
+            {"id": mem.id, "content": mem.content, "project_id": mem.project_id} for mem in memories
+        ]
+
+    @staticmethod
+    def _fingerprint_memory_dicts(memory_dicts: list[dict[str, Any]]) -> str:
+        digest = hashlib.sha256()
+        for mem in sorted(memory_dicts, key=lambda item: str(item["id"])):
+            digest.update(
+                json.dumps(
+                    {
+                        "id": mem["id"],
+                        "content": mem["content"],
+                        "project_id": mem.get("project_id"),
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                ).encode("utf-8")
+            )
+            digest.update(b"\n")
+        return digest.hexdigest()
+
+    async def _global_reindex_is_current(
+        self,
+        memory_dicts: list[dict[str, Any]],
+        fingerprint: str,
+    ) -> bool:
+        if self._last_global_reindex_fingerprint != fingerprint:
+            return False
+        if self._last_global_reindex_completed_at is None:
+            return False
+        elapsed = asyncio.get_running_loop().time() - self._last_global_reindex_completed_at
+        if elapsed > GLOBAL_REINDEX_DEDUPE_WINDOW_SECONDS:
+            return False
+        if self._vector_store is None:
+            return False
+
+        expected_ids = {str(mem["id"]) for mem in memory_dicts}
+        try:
+            actual_ids = set(await self._vector_store.scroll_ids())
+        except Exception as exc:
+            logger.debug("Could not verify vector store IDs before skipping reindex: %s", exc)
+            return False
+        if actual_ids != expected_ids:
+            self._last_global_reindex_fingerprint = None
+            return False
+        return True
 
     @property
     def kg_service(self) -> KnowledgeGraphService | None:
@@ -115,16 +172,38 @@ class IndexingService:
         if not self._vector_store or not self._embed_fn:
             return {"success": False, "error": "Vector store or embedding function not configured"}
 
-        memories = self._storage.list_memories(project_id=project_id, limit=MAX_REINDEX_LIMIT)
-        total = len(memories)
-        memory_dicts: list[dict[str, Any]] = [
-            {"id": mem.id, "content": mem.content, "project_id": mem.project_id} for mem in memories
-        ]
-
+        total = 0
         try:
             if project_id is None:
-                await self._vector_store.rebuild(memory_dicts, self._embed_fn)
+                async with self._global_reindex_lock:
+                    memories = self._storage.list_memories(limit=MAX_REINDEX_LIMIT)
+                    total = len(memories)
+                    memory_dicts = self._memory_dicts(memories)
+                    fingerprint = self._fingerprint_memory_dicts(memory_dicts)
+                    if await self._global_reindex_is_current(memory_dicts, fingerprint):
+                        logger.info(
+                            "Skipping global embedding reindex; source snapshot unchanged "
+                            "(%s memories)",
+                            total,
+                        )
+                        return {
+                            "success": True,
+                            "total_memories": total,
+                            "embeddings_generated": 0,
+                            "skipped": True,
+                            "skip_reason": "source_snapshot_unchanged",
+                        }
+                    await self._vector_store.rebuild(memory_dicts, self._embed_fn)
+                    self._last_global_reindex_fingerprint = fingerprint
+                    self._last_global_reindex_completed_at = asyncio.get_running_loop().time()
+                generated = total
             else:
+                memories = self._storage.list_memories(
+                    project_id=project_id,
+                    limit=MAX_REINDEX_LIMIT,
+                )
+                total = len(memories)
+                memory_dicts = self._memory_dicts(memories)
                 await self._vector_store.delete(filters={"project_id": project_id})
                 batch: list[tuple[str, list[float], dict[str, Any]]] = []
                 for mem in memory_dicts:
@@ -138,12 +217,17 @@ class IndexingService:
                         batch = []
                 if batch:
                     await self._vector_store.batch_upsert(batch)
-            generated = len(memory_dicts)
+                generated = len(memory_dicts)
         except Exception as e:
             logger.error(f"Failed to rebuild vector store: {e}")
             return {"success": False, "total_memories": total, "error": str(e)}
 
-        return {"success": True, "total_memories": total, "embeddings_generated": generated}
+        return {
+            "success": True,
+            "total_memories": total,
+            "embeddings_generated": generated,
+            "skipped": False,
+        }
 
     async def clear_indices(self, project_id: str | None = None) -> dict[str, Any]:
         """Fast wipe of all secondary indices for a project (or all projects)."""
@@ -158,6 +242,8 @@ class IndexingService:
                     await self._vector_store.delete(filters={"project_id": project_id})
                 else:
                     await self._vector_store.delete_collection(self._vector_store.collection_name)
+                self._last_global_reindex_fingerprint = None
+                self._last_global_reindex_completed_at = None
                 report["vectors_cleared"] = True
             except Exception as e:
                 logger.error(f"Failed to clear vectors: {e}")
