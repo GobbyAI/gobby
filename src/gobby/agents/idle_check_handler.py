@@ -161,9 +161,9 @@ class IdleCheckHandler:
                 await self._fail_idle_agent(run, reason="context window exhausted")
                 return 1
 
-            if self._prompt_detector.detect_queued_continuation_prompt(pane_output):
+            if self._prompt_detector.detect_queued_message_prompt(pane_output):
                 logger.info(
-                    "Agent %s has a queued Gobby continuation prompt visible; "
+                    "Agent %s has a queued-message prompt visible; "
                     "skipping idle reprompt to avoid stacking queued messages",
                     run.id,
                 )

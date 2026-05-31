@@ -158,6 +158,31 @@ class TestDetectApprovalPrompt:
         assert detector.detect_approval_prompt(loop_output) is False
 
 
+class TestDetectQueuedMessagePrompt:
+    """Tests for queued-message prompt detection."""
+
+    def test_detects_claude_queued_message_prompt(self) -> None:
+        detector = PromptDetector()
+
+        assert detector.detect_queued_message_prompt("❯ Press up to edit queued messages\n")
+
+    def test_detects_queued_messages_without_full_instruction(self) -> None:
+        detector = PromptDetector()
+        output = (
+            'submit_for_review(stage_name="planning").\n'
+            "Finish the required Gobby lifecycle MCP transition, then call end_agent_run.\n"
+            "❯ Press up to edit queued messages\n"
+        )
+
+        assert detector.detect_queued_message_prompt(output)
+        assert not detector.detect_queued_continuation_prompt(output)
+
+    def test_no_match_on_normal_output(self) -> None:
+        detector = PromptDetector()
+
+        assert not detector.detect_queued_message_prompt("Running tests...\n")
+
+
 class TestDismissedTracking:
     """Tests for the dismissed state tracking."""
 

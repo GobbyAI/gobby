@@ -112,6 +112,13 @@ class PromptDetector:
 
         return any(pattern.search(pane_output) for pattern in self.APPROVAL_ENTER_PATTERNS)
 
+    def detect_queued_message_prompt(self, pane_output: str) -> bool:
+        """Return True when the CLI shows a queued-message editing prompt."""
+        if not pane_output:
+            return False
+
+        return any(pattern.search(pane_output) for pattern in self.QUEUED_MESSAGE_PROMPT_PATTERNS)
+
     def detect_queued_continuation_prompt(self, pane_output: str) -> bool:
         """Return True when a Gobby continuation message is queued at a CLI prompt."""
         if not pane_output:
@@ -123,7 +130,7 @@ class PromptDetector:
         if not has_continuation:
             return False
 
-        return any(pattern.search(pane_output) for pattern in self.QUEUED_MESSAGE_PROMPT_PATTERNS)
+        return self.detect_queued_message_prompt(pane_output)
 
     def record_loop_dismiss(self, run_id: str) -> int:
         """Record loop prompt dismissal. Returns the new count."""

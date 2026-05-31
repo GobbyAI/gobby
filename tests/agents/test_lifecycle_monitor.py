@@ -544,6 +544,48 @@ class TestCheckIdleAgents:
         assert updated.status == "running"
 
     @pytest.mark.asyncio
+    async def test_truncated_queued_message_prompt_skips_idle_reprompt_and_failure(
+        self,
+        idle_monitor: AgentLifecycleMonitor,
+        agent_run_manager: LocalAgentRunManager,
+        sample_session: dict,
+    ) -> None:
+        """A short pane slice with only Claude's queue prompt must not be reprompted."""
+        run = _make_terminal_run(
+            agent_run_manager,
+            sample_session,
+            run_id="run-truncated-queued-prompt",
+            tmux_session_name="gobby-truncated-queued-prompt",
+        )
+        state = idle_monitor._idle_detector.get_state(run.id)
+        state.reprompt_count = 2
+
+        pane_output = (
+            'submit_for_review(stage_name="planning").\n'
+            "Finish the required Gobby lifecycle MCP transition, then call end_agent_run.\n"
+            "────────────────────────────────────────────────────────────────────────────────\n"
+            "❯ Press up to edit queued messages\n"
+        )
+        with (
+            patch.object(
+                idle_monitor._tmux,
+                "capture_pane",
+                new_callable=AsyncMock,
+                return_value=pane_output,
+            ),
+            patch.object(idle_monitor._tmux, "send_keys", new_callable=AsyncMock) as mock_send,
+            patch.object(idle_monitor._tmux, "kill_session", new_callable=AsyncMock) as mock_kill,
+        ):
+            handled = await idle_monitor.check_idle_agents()
+
+        assert handled == 0
+        mock_send.assert_not_called()
+        mock_kill.assert_not_called()
+        updated = agent_run_manager.get(run.id)
+        assert updated is not None
+        assert updated.status == "running"
+
+    @pytest.mark.asyncio
     async def test_context_full_fails_immediately(
         self,
         idle_monitor: AgentLifecycleMonitor,
