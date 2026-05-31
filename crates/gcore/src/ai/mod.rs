@@ -293,7 +293,7 @@ mod tests {
     #[test]
     fn retry_caps_at_two() {
         let mut attempts = 0;
-        let result = retry_with_backoff(
+        let result: Result<(), AiError> = retry_with_backoff(
             || {
                 attempts += 1;
                 Err(AiError::transport_failure(
