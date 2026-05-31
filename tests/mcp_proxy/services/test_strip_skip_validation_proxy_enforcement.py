@@ -1,6 +1,8 @@
-"""Regression test for #13048: bundled strip-skip-validation rule fires on the
-proxy before-tool event shape, and ``apply_before_tool_enforcement`` propagates
-the rewrite into the dispatched arguments.
+"""Regression tests for the bundled skip-validation rule.
+
+The proxy may inject context, but skip_validation must pass through unchanged
+so close_task can enforce the audited override policy with full task/session
+context.
 """
 
 from __future__ import annotations
@@ -117,16 +119,10 @@ class _StubService:
 
 
 @pytest.mark.asyncio
-async def test_apply_before_tool_enforcement_strips_skip_validation(
+async def test_apply_before_tool_enforcement_leaves_skip_validation_for_close_task(
     temp_db: HubDatabase,
 ) -> None:
-    """End-to-end regression for #13048.
-
-    Builds the same before_tool event the proxy emits, runs it through the real
-    RuleEngine with the bundled YAML rule loaded, then calls the production
-    ``apply_before_tool_enforcement`` helper. The dispatched arguments must
-    have ``skip_validation: False`` after the rewrite is applied.
-    """
+    """The bundled rule must not rewrite skip_validation before dispatch."""
     db = temp_db
     _load_strip_skip_validation_rule(db)
 
@@ -148,7 +144,7 @@ async def test_apply_before_tool_enforcement_strips_skip_validation(
     assert error is None
     assert server_name == "gobby-tasks"
     assert tool_name == "close_task"
-    assert arguments == {"task_id": "t-1", "skip_validation": False}
+    assert arguments == {"task_id": "t-1", "skip_validation": True}
 
 
 @pytest.mark.asyncio

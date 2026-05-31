@@ -763,10 +763,10 @@ class TestRequireCommitBeforeStatus:
 
 
 class TestStripSkipValidationWithCommit:
-    """Verify strip-skip-validation-with-commit rewrites skip_validation."""
+    """Verify strip-skip-validation-with-commit does not rewrite skip_validation."""
 
-    def test_rewrites_close_task(self, db, manager) -> None:
-        """Should use rewrite_input + inject_context effects."""
+    def test_does_not_rewrite_close_task(self, db, manager) -> None:
+        """Should inject context only; close_task enforces policy."""
         _sync_bundled(db)
 
         row = manager.get_by_name("strip-skip-validation-with-commit")
@@ -775,7 +775,7 @@ class TestStripSkipValidationWithCommit:
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.event.value == "before_tool"
         effect_types = {e.type for e in body.resolved_effects}
-        assert "rewrite_input" in effect_types
+        assert "rewrite_input" not in effect_types
         assert "inject_context" in effect_types
 
     def test_when_checks_skip_validation(self, db, manager) -> None:

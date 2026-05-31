@@ -1,5 +1,7 @@
 """Tests for commit linking and diff functionality."""
 
+import subprocess
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -42,6 +44,12 @@ class TestGetTaskDiff:
             assert isinstance(result, TaskDiffResult)
             assert "added line" in result.diff
             assert result.commits == ["abc123", "def456"]
+            assert mock_git.call_args_list[0].args[0] == ["git", "show", "--format=", "abc123"]
+            assert mock_git.call_args_list[1].args[0] == ["git", "show", "--format=", "def456"]
+            assert not any(
+                call.args[0][1] == "diff" and ".." in " ".join(call.args[0])
+                for call in mock_git.call_args_list
+            )
 
     def test_includes_uncommitted_changes(self, mock_task_manager) -> None:
         """Test that uncommitted changes are included when flag is set."""
@@ -151,10 +159,9 @@ class TestGetTaskDiff:
             assert result.commits == ["abc123"]
 
     def test_orders_commits_chronologically(self, mock_task_manager) -> None:
-        """Test that commits are processed in chronological order."""
+        """Test that linked commits are deduped while preserving stored order."""
         mock_task = MagicMock()
-        # Commits listed newest to oldest (as typically stored)
-        mock_task.commits = ["newest", "middle", "oldest"]
+        mock_task.commits = ["oldest", "middle", "oldest", "newest"]
         mock_task_manager.get_task.return_value = mock_task
 
         call_order = []
@@ -168,8 +175,73 @@ class TestGetTaskDiff:
 
             result = get_task_diff("gt-test123", mock_task_manager)
 
-            # Commits should be in the result in order
-            assert result.commits == ["newest", "middle", "oldest"]
+            assert result.commits == ["oldest", "middle", "newest"]
+            assert [call[0][-1] for call in call_order] == ["oldest", "middle", "newest"]
+
+    def test_exact_linked_commits_exclude_interleaved_foreign_commits(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """Real git regression: linked SHAs must be exact, not a first..last range."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+
+        def git(*args: str) -> str:
+            result = subprocess.run(
+                ["git", *args],
+                cwd=repo,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            return result.stdout.strip()
+
+        def commit_file(path: str, content: str, message: str) -> str:
+            file_path = repo / path
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            file_path.write_text(content, encoding="utf-8")
+            git("add", path)
+            git("commit", "-m", message)
+            return git("rev-parse", "--short", "HEAD")
+
+        git("init")
+        git("config", "user.email", "test@example.com")
+        git("config", "user.name", "Test User")
+
+        task_sha_1 = commit_file("task-a1.txt", "a1\n", "[gobby-#1] task A1")
+        foreign_sha_1 = commit_file("foreign-f1.txt", "f1\n", "foreign F1")
+        task_sha_2 = commit_file("task-a2.txt", "a2\n", "[gobby-#1] task A2")
+        foreign_sha_2 = commit_file("foreign-f2.txt", "f2\n", "foreign F2")
+        task_sha_3 = commit_file("task-a3.txt", "a3\n", "[gobby-#1] task A3")
+
+        assert foreign_sha_1 and foreign_sha_2
+        task_manager = MagicMock()
+        task_manager.get_task.return_value = SimpleNamespace(
+            commits=[task_sha_1, task_sha_2, task_sha_3],
+            closed_commit_sha=None,
+        )
+
+        from gobby.tasks import commits as commits_module
+
+        commands: list[list[str]] = []
+        original_run_git_command = commits_module.run_git_command
+
+        def record_git_command(command, cwd, timeout=5):
+            commands.append(command)
+            return original_run_git_command(command, cwd, timeout=timeout)
+
+        monkeypatch.setattr(commits_module, "run_git_command", record_git_command)
+
+        result = get_task_diff("gt-test123", task_manager, cwd=repo)
+
+        assert "task-a1.txt" in result.diff
+        assert "task-a2.txt" in result.diff
+        assert "task-a3.txt" in result.diff
+        assert "foreign-f1.txt" not in result.diff
+        assert "foreign-f2.txt" not in result.diff
+        assert result.commits == [task_sha_1, task_sha_2, task_sha_3]
+        assert result.file_count == 3
+        assert sum(1 for command in commands if command[:3] == ["git", "show", "--format="]) == 3
+        assert not any(command[1] == "diff" and ".." in " ".join(command) for command in commands)
 
     def test_raises_on_invalid_task(self, mock_task_manager) -> None:
         """Test that ValueError is raised for non-existent task."""
@@ -216,6 +288,31 @@ index 123..456 100644
 
         with patch("gobby.tasks.commits.run_git_command") as mock_git:
             mock_git.return_value = diff_with_files
+
+            result = get_task_diff("gt-test123", mock_task_manager)
+
+            assert result.file_count == 2
+
+    def test_counts_unique_modified_files_across_patch_series(self, mock_task_manager) -> None:
+        """The same path touched in multiple linked commits counts once."""
+        mock_task = MagicMock()
+        mock_task.commits = ["abc123", "def456"]
+        mock_task_manager.get_task.return_value = mock_task
+
+        first_diff = """diff --git a/file1.py b/file1.py
+@@ -1,1 +1,2 @@
++new line
+"""
+        second_diff = """diff --git a/file1.py b/file1.py
+@@ -1,1 +1,2 @@
++another line
+diff --git a/file2.py b/file2.py
+@@ -1,1 +1,2 @@
++second file
+"""
+
+        with patch("gobby.tasks.commits.run_git_command") as mock_git:
+            mock_git.side_effect = [first_diff, second_diff]
 
             result = get_task_diff("gt-test123", mock_task_manager)
 

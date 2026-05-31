@@ -215,10 +215,10 @@ class TestMCPRewriteNesting:
 
 
 class TestStripSkipValidation:
-    """Tests for the strip-skip-validation-with-commit rule pattern."""
+    """Tests for the skip-validation-with-commit rule pattern."""
 
     @pytest.mark.asyncio
-    async def test_strips_skip_validation_with_commits(
+    async def test_warns_without_rewriting_skip_validation_with_commits(
         self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         _load_bundled_rule(manager, "strip-skip-validation-with-commit")
@@ -240,10 +240,8 @@ class TestStripSkipValidation:
         )
 
         assert response.decision == "allow"
-        assert "stripped skip_validation" in (response.context or "")
-        assert response.modified_input is not None
-        inner = response.modified_input["arguments"]
-        assert inner["skip_validation"] is False
+        assert "skip_validation override policy" in (response.context or "")
+        assert response.modified_input is None
 
     @pytest.mark.asyncio
     async def test_passthrough_without_commits(

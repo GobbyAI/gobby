@@ -334,8 +334,6 @@ class TestCloseTaskTool:
     @pytest.mark.asyncio
     async def test_close_task_with_skip_validation(self, mock_task_manager, mock_sync_manager):
         """Test close_task with skip_validation bypasses LLM validation."""
-        registry = create_task_registry(mock_task_manager, mock_sync_manager)
-
         mock_task = MagicMock()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
         mock_task.commits = ["abc123"]
@@ -351,6 +349,9 @@ class TestCloseTaskTool:
 
         with (
             patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager,
+            patch(
+                "gobby.mcp_proxy.tools.tasks._context.SessionVariableManager"
+            ) as MockSessionVarManager,
             patch("gobby.utils.git.run_git_command") as mock_git,
             patch(
                 "gobby.utils.git.normalize_commit_sha",
@@ -360,7 +361,18 @@ class TestCloseTaskTool:
             mock_proj_instance = MagicMock()
             mock_proj_instance.get.return_value = None
             MockProjManager.return_value = mock_proj_instance
+            MockSessionVarManager.return_value.get_variables.return_value = {
+                "verification_evidence": [
+                    {
+                        "evidence_type": "manual_diff_review",
+                        "success": True,
+                        "summary": "Reviewed exact linked commit",
+                        "supports": "completion readiness for task",
+                    }
+                ]
+            }
             mock_git.return_value = "abc123"
+            registry = create_task_registry(mock_task_manager, mock_sync_manager)
 
             result = await registry.call(
                 "close_task",
@@ -372,15 +384,12 @@ class TestCloseTaskTool:
                 },
             )
 
-            # When override_justification is provided, task escalates for human review.
-            # The validation_override_reason is now persisted in the same write as
-            # the escalation (no separate update_task call).
-            assert result.get("routed_to_escalation") is True
-            mock_task_manager.escalate_task.assert_called_once_with(
-                "550e8400-e29b-41d4-a716-446655440000",
-                reason="Validation override requested: Manually verified",
-                validation_override_reason="Manually verified",
-            )
+            assert result == {"success": True}
+            mock_task_manager.close_task.assert_called_once()
+            mock_task_manager.escalate_task.assert_not_called()
+            close_call = mock_task_manager.close_task.call_args
+            assert close_call.args == ("550e8400-e29b-41d4-a716-446655440000",)
+            assert close_call.kwargs["validation_override_reason"] == "Manually verified"
             assert not any(
                 call.kwargs.get("validation_override_reason") is not None
                 for call in mock_task_manager.update_task.call_args_list

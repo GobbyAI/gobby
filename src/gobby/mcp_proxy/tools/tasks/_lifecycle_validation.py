@@ -400,10 +400,9 @@ def determine_close_outcome(
     Returns:
         Tuple of (route_to_escalation, store_override)
     """
-    # Determine if override should be stored
     store_override = skip_validation
 
-    # Route to escalation if override was used — skipped validation needs explicit human triage
-    route_to_escalation = bool(override_justification and store_override)
-
-    return route_to_escalation, store_override
+    # close_task enforces evidence-backed overrides directly, then closes with
+    # validation_override_reason audit metadata. It does not route overrides to
+    # escalation.
+    return False, store_override

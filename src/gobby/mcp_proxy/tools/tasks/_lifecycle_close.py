@@ -23,6 +23,7 @@ from gobby.plans.bootstrap_ledger import BootstrapLedgerMismatchError
 from gobby.storage.session_models import Session
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.tasks.state_semantics import get_claimed_session_id
+from gobby.workflows.condition_helpers import completion_evidence_ready
 from gobby.workflows.verification_evidence import VERIFICATION_EVIDENCE_VARIABLE
 
 logger = logging.getLogger(__name__)
@@ -99,9 +100,12 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         # Link commit if provided (convenience for link + close in one call)
         if commit_sha:
             try:
-                task = ctx.task_manager.link_commit(resolved_id, commit_sha, cwd=cwd)
+                ctx.task_manager.link_commit(resolved_id, commit_sha, cwd=cwd)
             except ValueError as e:
                 return {"error": str(e)}
+            task = ctx.task_manager.get_task(resolved_id)
+            if not task:
+                return {"error": f"Task {task_id} not found after linking commit"}
 
         # Check if this is a parent task with all children closed
         # Parent tasks (epics) are organizational containers -- no own commits needed
@@ -150,6 +154,19 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             except (KeyError, ValueError, TypeError) as e:
                 logger.debug(f"Best-effort session lookup failed: {e}")
 
+        autolink_error = _auto_link_claim_window_commits(
+            ctx=ctx,
+            task=task,
+            resolved_id=resolved_id,
+            resolved_session_id=resolved_session_id,
+            cwd=cwd,
+        )
+        if autolink_error is not None:
+            return autolink_error
+        task = ctx.task_manager.get_task(resolved_id)
+        if not task:
+            return {"error": f"Task {task_id} not found after commit autolinking"}
+
         # Check for linked commits (unless parent with all children closed or epic)
         # Skip the check if the session made no edits — nothing to commit
         # Tri-state: True = edits confirmed, False = no edits, None = unknown.
@@ -165,18 +182,9 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                     "message": commit_result.message,
                 }
 
-        # Enforce skip_validation constraints:
-        # - Cannot skip if a commit_sha is provided (you did real work, validate it)
-        # - Cannot skip if the task was claimed by this session (you own it, validate it)
-        # - Cannot skip without override_justification
+        # Enforce audited skip_validation constraints. Validation may be skipped
+        # only with an explicit reason and current-session verification evidence.
         if skip_validation:
-            if commit_sha:
-                return {
-                    "success": False,
-                    "error": "skip_validation_with_commit",
-                    "message": "Cannot skip validation when a commit_sha is provided. "
-                    "If you're linking a commit, you did real work — let validation verify it.",
-                }
             if not override_justification:
                 return {
                     "success": False,
@@ -184,14 +192,13 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                     "message": "override_justification is required when skip_validation=True. "
                     "Explain why validation should be skipped.",
                 }
-            # Check if task was claimed by the calling session
-            if resolved_session_id and get_claimed_session_id(task) == resolved_session_id:
+            if not _has_current_session_verification_evidence(ctx, resolved_session_id):
                 return {
                     "success": False,
-                    "error": "skip_validation_own_task",
-                    "message": "Cannot skip validation on a task you claimed. "
-                    "You own this work — let validation verify it. "
-                    "Write a detailed changes_summary instead.",
+                    "error": "skip_validation_missing_evidence",
+                    "message": "skip_validation=True requires successful verification evidence "
+                    "recorded in the current session. Run a validation command or call "
+                    "gobby-sessions:record_verification_evidence, then retry close_task.",
                 }
 
         # Auto-skip validation for certain close reasons
@@ -414,7 +421,9 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             "Validation auto-skipped for: duplicate, already_implemented, wont_fix, "
             "obsolete, out_of_repo. Note: out_of_repo only skips LLM validation and "
             "the basic commit-linked check; commits are still required if the session "
-            "edited in-repo files (session.had_edits enforcement)."
+            "edited in-repo files (session.had_edits enforcement). skip_validation=True "
+            "is an audited override requiring override_justification and current-session "
+            "verification evidence."
         ),
         input_schema={
             "type": "object",
@@ -435,17 +444,20 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                 "skip_validation": {
                     "type": "boolean",
                     "description": (
-                        "Skip LLM validation even when task has validation_criteria. "
-                        "USE THIS when: validation fails due to truncated diff, validator misses context, "
-                        "or you've manually verified completion. Provide override_justification explaining why."
+                        "Audited override for LLM validation when validation is unavailable "
+                        "or demonstrably wrong. Requires override_justification and successful "
+                        "current-session verification evidence from a validation command or "
+                        "gobby-sessions:record_verification_evidence. Commits may be attached; "
+                        "close_task stores validation_override_reason for audit."
                     ),
                     "default": False,
                 },
                 "override_justification": {
                     "type": "string",
                     "description": (
-                        "Justification for bypassing validation. Required when skip_validation=True. "
-                        "Example: 'Validation saw truncated diff - verified via git show that commit includes all changes'"
+                        "Justification for bypassing LLM validation. Required when "
+                        "skip_validation=True and stored as validation_override_reason. "
+                        "Example: 'Validator missed generated migration; verified via focused pytest.'"
                     ),
                     "default": None,
                 },
@@ -497,3 +509,93 @@ def _append_verification_evidence_context(
     if validation_context:
         return f"{validation_context}\n\n{evidence_text}"
     return evidence_text
+
+
+def _auto_link_claim_window_commits(
+    *,
+    ctx: RegistryContext,
+    task: Any,
+    resolved_id: str,
+    resolved_session_id: str | None,
+    cwd: str,
+) -> dict[str, Any] | None:
+    claim_started_at = _claimed_session_window_start(ctx, task, resolved_id, resolved_session_id)
+    if not claim_started_at:
+        return None
+
+    try:
+        from gobby.tasks.commits import auto_link_commits
+
+        auto_link_commits(
+            ctx.task_manager,
+            task_id=resolved_id,
+            since=claim_started_at,
+            cwd=cwd,
+            project_name=ctx.get_current_project_name(),
+            project_id=task.project_id,
+        )
+    except Exception as exc:
+        logger.warning(
+            "close_task failed to auto-link claim-window commits for task %s: %s",
+            resolved_id,
+            exc,
+        )
+        return {
+            "success": False,
+            "error": "claim_window_autolink_failed",
+            "message": (
+                "close_task could not resolve task-tagged commits from the claim window. "
+                "Validation would be incomplete; retry after fixing commit autolinking."
+            ),
+        }
+    return None
+
+
+def _claimed_session_window_start(
+    ctx: RegistryContext,
+    task: Any,
+    resolved_id: str,
+    resolved_session_id: str | None,
+) -> str | None:
+    if not resolved_session_id or get_claimed_session_id(task) != resolved_session_id:
+        return None
+
+    try:
+        rows = ctx.session_task_manager.get_task_sessions(resolved_id)
+    except Exception as exc:
+        logger.debug("Failed to load task session links for claim-window autolink: %s", exc)
+        return None
+
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        action = row.get("action") or row.get("session_action")
+        session_id = row.get("session_id")
+        if action != "claimed" or str(session_id) != resolved_session_id:
+            continue
+        return _format_git_since(row.get("created_at") or row.get("link_created_at"))
+
+    return None
+
+
+def _format_git_since(value: Any) -> str | None:
+    if value is None:
+        return None
+    if hasattr(value, "isoformat"):
+        value = value.isoformat()
+    text = str(value).strip()
+    return text or None
+
+
+def _has_current_session_verification_evidence(
+    ctx: RegistryContext,
+    resolved_session_id: str | None,
+) -> bool:
+    if not resolved_session_id:
+        return False
+    try:
+        variables = ctx.session_var_manager.get_variables(resolved_session_id)
+    except Exception as exc:
+        logger.debug("Failed to load verification evidence for skip override: %s", exc)
+        return False
+    return completion_evidence_ready(variables)

@@ -253,11 +253,11 @@ triggers:
             - Decided not to do it: reason="wont_fix"
             - Changes outside repo (e.g., ~/.gobby/config.yaml): reason="out_of_repo"
 
-        # Block skip_validation when a commit is attached (work was done = must validate)
+        # Audit skip_validation when a commit is attached
         - mcp_tools: ["gobby-tasks:close_task"]
           when: "tool_input.get('skip_validation') and (task_has_commits or tool_input.get('commit_sha'))"
           reason: |
-            skip_validation is not allowed when a commit is attached. If work was done, validation must run. Close the task without skip_validation.
+            skip_validation with attached commits is allowed only as an audited override. close_task requires override_justification plus successful current-session verification evidence, then stores validation_override_reason.
 
         # Block AskUserQuestion when the turn-end hook has fired with an actionable directive
         # If stop_attempts > 0 and a task is still claimed, the agent should be

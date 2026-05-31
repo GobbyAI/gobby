@@ -840,6 +840,247 @@ async def test_close_task_uses_commit_diff_when_commits_linked(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+async def test_close_task_autolinks_claim_window_before_validation(
+    mock_task_manager, mock_task_validator
+):
+    """close_task(commit_sha=last) validates the resolved linked task commit set."""
+    task = _task(
+        id="t1",
+        title="Task with interleaved commits",
+        project_id="p1",
+        status="open",
+        description="Do it",
+        validation_criteria="Must include only task commits",
+        commits=["a1"],
+        claimed_by_session_id="sess-uuid",
+        priority=2,
+        task_type="task",
+        created_at="now",
+        updated_at="now",
+    )
+    mock_task_manager.get_task.return_value = task
+    mock_task_manager.list_tasks.return_value = []
+    mock_task_validator.validate_task.return_value = ValidationResult(status="valid", feedback="OK")
+    mock_task_manager.close_task.return_value = task
+
+    def link_commit_side_effect(task_id, commit_sha, cwd=None):
+        assert task_id == "t1"
+        assert cwd == "/test/repo"
+        task.commits.append(commit_sha)
+        return task
+
+    def autolink_side_effect(*args, **kwargs):
+        assert kwargs["task_id"] == "t1"
+        assert kwargs["since"] == "2026-05-01T00:00:00+00:00"
+        assert kwargs["cwd"] == "/test/repo"
+        assert kwargs["project_id"] == "p1"
+        task.commits.insert(1, "a2")
+
+    from gobby.tasks.commits import TaskDiffResult
+
+    with (
+        patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager"),
+        patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as mock_pm,
+        patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as mock_sm_cls,
+        patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager") as mock_stm_cls,
+        patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as mock_svm_cls,
+        patch("gobby.tasks.commits.auto_link_commits") as mock_autolink,
+        patch("gobby.tasks.commits.get_task_diff") as mock_diff,
+        patch("gobby.utils.git.normalize_commit_sha", side_effect=lambda sha, cwd=None: sha),
+    ):
+        mock_pm.return_value.get.return_value = MagicMock(repo_path="/test/repo")
+        mock_sm = MagicMock()
+        mock_sm.resolve_session_reference.return_value = "sess-uuid"
+        mock_sm.get.return_value = MagicMock(had_edits=True)
+        mock_sm_cls.return_value = mock_sm
+        mock_stm = MagicMock()
+        mock_stm.get_task_sessions.return_value = [
+            {
+                "session_id": "sess-uuid",
+                "task_id": "t1",
+                "action": "claimed",
+                "created_at": "2026-05-01T00:00:00+00:00",
+            }
+        ]
+        mock_stm_cls.return_value = mock_stm
+        mock_svm_cls.return_value.get_variables.return_value = {}
+        mock_task_manager.link_commit.side_effect = link_commit_side_effect
+        mock_autolink.side_effect = autolink_side_effect
+
+        def diff_side_effect(task_id, task_manager, include_uncommitted, cwd):
+            assert task.commits == ["a1", "a2", "a3"]
+            assert include_uncommitted is False
+            assert cwd == "/test/repo"
+            return TaskDiffResult(
+                diff=(
+                    "diff --git a/a1.py b/a1.py\n+task A1\n"
+                    "diff --git a/a2.py b/a2.py\n+task A2\n"
+                    "diff --git a/a3.py b/a3.py\n+task A3\n"
+                ),
+                commits=list(task.commits),
+                has_uncommitted_changes=False,
+                file_count=3,
+            )
+
+        mock_diff.side_effect = diff_side_effect
+
+        registry = create_task_registry(
+            task_manager=mock_task_manager,
+            sync_manager=MagicMock(),
+            task_validator=mock_task_validator,
+        )
+
+        result = await registry.call(
+            "close_task",
+            {
+                "task_id": "t1",
+                "commit_sha": "a3",
+                "changes_summary": "test changes",
+            },
+        )
+
+    assert result == {"success": True}
+    mock_autolink.assert_called_once()
+    validator_call = mock_task_validator.validate_task.call_args
+    changes_summary = validator_call.kwargs["changes_summary"]
+    assert "Commit-based diff (3 commits, 3 files):" in changes_summary
+    assert "task A1" in changes_summary
+    assert "task A2" in changes_summary
+    assert "task A3" in changes_summary
+    assert "foreign" not in changes_summary
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_close_task_skip_validation_with_evidence_stores_override(
+    mock_task_manager, mock_task_validator
+):
+    task = _task(
+        id="t1",
+        title="Task with audited override",
+        project_id="p1",
+        status="open",
+        description="Do it",
+        validation_criteria="Must have tests",
+        commits=["abc123"],
+        priority=2,
+        task_type="task",
+        created_at="now",
+        updated_at="now",
+    )
+    mock_task_manager.get_task.return_value = task
+    mock_task_manager.list_tasks.return_value = []
+    mock_task_manager.close_task.return_value = task
+
+    with (
+        patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager"),
+        patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as mock_pm,
+        patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as mock_sm_cls,
+        patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"),
+        patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as mock_svm_cls,
+        patch("gobby.utils.git.normalize_commit_sha", side_effect=lambda sha, cwd=None: sha),
+    ):
+        mock_pm.return_value.get.return_value = MagicMock(repo_path="/test/repo")
+        mock_sm = MagicMock()
+        mock_sm.resolve_session_reference.return_value = "sess-uuid"
+        mock_sm.get.return_value = MagicMock(had_edits=True)
+        mock_sm_cls.return_value = mock_sm
+        mock_svm_cls.return_value.get_variables.return_value = {
+            "verification_evidence": [
+                {
+                    "evidence_type": "manual_diff_review",
+                    "success": True,
+                    "summary": "Reviewed exact linked commits",
+                    "supports": "completion readiness for t1",
+                }
+            ]
+        }
+
+        registry = create_task_registry(
+            task_manager=mock_task_manager,
+            sync_manager=MagicMock(),
+            task_validator=mock_task_validator,
+        )
+
+        result = await registry.call(
+            "close_task",
+            {
+                "task_id": "t1",
+                "skip_validation": True,
+                "override_justification": "Validator unavailable; exact diff reviewed.",
+                "changes_summary": "test changes",
+            },
+        )
+
+    assert result == {"success": True}
+    mock_task_validator.validate_task.assert_not_called()
+    mock_task_manager.close_task.assert_called_once()
+    assert (
+        mock_task_manager.close_task.call_args.kwargs["validation_override_reason"]
+        == "Validator unavailable; exact diff reviewed."
+    )
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_close_task_skip_validation_fails_without_evidence(
+    mock_task_manager, mock_task_validator
+):
+    task = _task(
+        id="t1",
+        title="Task missing evidence",
+        project_id="p1",
+        status="open",
+        description="Do it",
+        validation_criteria="Must have tests",
+        commits=["abc123"],
+        priority=2,
+        task_type="task",
+        created_at="now",
+        updated_at="now",
+    )
+    mock_task_manager.get_task.return_value = task
+    mock_task_manager.list_tasks.return_value = []
+
+    with (
+        patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager"),
+        patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as mock_pm,
+        patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as mock_sm_cls,
+        patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"),
+        patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as mock_svm_cls,
+        patch("gobby.utils.git.normalize_commit_sha", side_effect=lambda sha, cwd=None: sha),
+    ):
+        mock_pm.return_value.get.return_value = MagicMock(repo_path="/test/repo")
+        mock_sm = MagicMock()
+        mock_sm.resolve_session_reference.return_value = "sess-uuid"
+        mock_sm.get.return_value = MagicMock(had_edits=True)
+        mock_sm_cls.return_value = mock_sm
+        mock_svm_cls.return_value.get_variables.return_value = {}
+
+        registry = create_task_registry(
+            task_manager=mock_task_manager,
+            sync_manager=MagicMock(),
+            task_validator=mock_task_validator,
+        )
+
+        result = await registry.call(
+            "close_task",
+            {
+                "task_id": "t1",
+                "skip_validation": True,
+                "override_justification": "Validator unavailable.",
+                "changes_summary": "test changes",
+            },
+        )
+
+    assert result["success"] is False
+    assert result["error"] == "skip_validation_missing_evidence"
+    mock_task_manager.close_task.assert_not_called()
+    mock_task_validator.validate_task.assert_not_called()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
 async def test_close_task_skip_reason_bypasses_commit_check(mock_task_manager, mock_task_validator):
     """Test that close_task with skip reason (obsolete) bypasses commit check.
 

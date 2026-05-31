@@ -5,6 +5,7 @@ Provides utilities for linking commits to tasks and computing diffs.
 
 import logging
 import re
+import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -37,13 +38,48 @@ class TaskDiffResult:
 def _diff_commits_for_task(task: Any) -> list[str]:
     linked_commits = list(task.commits or [])
     if linked_commits:
-        return linked_commits
+        return _dedupe_commits(linked_commits)
 
     closed_commit_sha = getattr(task, "closed_commit_sha", None)
     if isinstance(closed_commit_sha, str) and closed_commit_sha.strip():
         return [closed_commit_sha.strip()]
 
     return []
+
+
+def _dedupe_commits(commits: list[str]) -> list[str]:
+    """Return unique commit SHAs in their stored chronological order."""
+    unique_commits: list[str] = []
+    seen: set[str] = set()
+    for commit in commits:
+        if commit in seen:
+            continue
+        seen.add(commit)
+        unique_commits.append(commit)
+    return unique_commits
+
+
+def _strip_diff_path_prefix(path: str) -> str:
+    if path.startswith("a/") or path.startswith("b/"):
+        return path[2:]
+    return path
+
+
+def _count_unique_diff_paths(diff: str) -> int:
+    paths: set[str] = set()
+    for line in diff.splitlines():
+        if not line.startswith("diff --git "):
+            continue
+        try:
+            parts = shlex.split(line.removeprefix("diff --git "))
+        except ValueError:
+            continue
+        if len(parts) < 2:
+            continue
+        old_path = _strip_diff_path_prefix(parts[0])
+        new_path = _strip_diff_path_prefix(parts[1])
+        paths.add(new_path if new_path != "/dev/null" else old_path)
+    return len(paths)
 
 
 def get_task_diff(
@@ -80,22 +116,9 @@ def get_task_diff(
 
     # Get diff for each linked commit
     if commits:
-        # For multiple commits, we get the combined diff
-        # git diff <first_commit>^..<last_commit> shows all changes
-        if len(commits) == 1:
-            # Single commit: show its changes
+        for commit in commits:
             result = run_git_command(
-                ["git", "show", "--format=", commits[0]],
-                cwd=working_dir,
-            )
-            if result:
-                diff_parts.append(result)
-        else:
-            # Multiple commits: get combined diff
-            # Commits are stored in chronological order (oldest at index 0, newest at index -1)
-            # git diff oldest^..newest shows all changes in the range
-            result = run_git_command(
-                ["git", "diff", f"{commits[0]}^..{commits[-1]}"],
+                ["git", "show", "--format=", commit],
                 cwd=working_dir,
             )
             if result:
@@ -115,7 +138,7 @@ def get_task_diff(
     combined_diff = "\n".join(diff_parts)
 
     # Count files in the diff
-    file_count = len(re.findall(r"^diff --git", combined_diff, re.MULTILINE))
+    file_count = _count_unique_diff_paths(combined_diff)
 
     return TaskDiffResult(
         diff=combined_diff,
@@ -674,7 +697,7 @@ def auto_link_commits(
 
     # Build git log command
     # Format: "sha|message" for easy parsing
-    git_cmd = ["git", "log", "--pretty=format:%h|%s"]
+    git_cmd = ["git", "log", "--reverse", "--pretty=format:%h|%s"]
 
     # When a task_id is provided, resolve the isolation branch so we
     # search the correct branch even when cwd is the main repo.

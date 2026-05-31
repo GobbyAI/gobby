@@ -2,7 +2,7 @@ tags: [task-enforcement, enforcement, tasks, gobby, default]
 
 rules:
   strip-skip-validation-with-commit:
-    description: "Strip skip_validation when commits exist — validation must run on real work"
+    description: "Warn when skip_validation is used with commits; close_task enforces override policy"
     event: before_tool
     enabled: true
     priority: 33
@@ -18,9 +18,6 @@ rules:
     effects:
       - type: inject_context
         template: |
-          Gobby stripped skip_validation from your close_task call. Commits are attached,
-          so validation must run. This is automatic — no action needed.
-      - type: rewrite_input
-        input_updates:
-          skip_validation: false
-        auto_approve: true
+          close_task will enforce the skip_validation override policy. With attached
+          commits, skip_validation requires override_justification plus successful
+          current-session verification evidence, and the override reason is audited.
