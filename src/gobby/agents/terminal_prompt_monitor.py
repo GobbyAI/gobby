@@ -165,13 +165,12 @@ class TerminalPromptMonitor:
         return handled
 
     async def check_queued_continuation_prompts(self) -> int:
-        """Submit queued Gobby continuation prompts that Claude leaves waiting."""
+        """Observe queued Gobby continuation prompts without editing the CLI input queue."""
         if not self._get_tmux_config().auto_enter_agent_terminals:
             return 0
 
         runs = await self._run_db(self._get_active_terminal_runs)
 
-        handled = 0
         for run in runs:
             tmux_name = run.tmux_session_name
             assert tmux_name is not None
@@ -183,26 +182,14 @@ class TerminalPromptMonitor:
                 if not self._prompt_detector.detect_queued_continuation_prompt(pane_output):
                     continue
 
-                edited = await self._get_tmux().send_keys(
-                    tmux_name,
-                    PromptDetector.EDIT_QUEUED_MESSAGE_KEY,
-                    literal=False,
+                logger.info(
+                    "Observed queued continuation prompt for agent %s; leaving input queue untouched",
+                    run.id,
                 )
-                if not edited:
-                    continue
-                sent = await self._get_tmux().send_keys(
-                    tmux_name,
-                    PromptDetector.ENTER_KEY,
-                    literal=False,
-                )
-                if sent:
-                    self.mark_enter_sent(run.id)
-                    logger.info("Submitted queued continuation prompt for agent %s", run.id)
-                    handled += 1
             except Exception as e:
                 logger.warning("Error checking queued continuation for agent %s: %s", run.id, e)
 
-        return handled
+        return 0
 
     async def check_periodic_enters(self) -> int:
         """Periodically send Enter to active spawned-agent terminal panes."""

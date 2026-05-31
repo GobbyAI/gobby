@@ -13,6 +13,7 @@ import psycopg
 import pydantic
 
 from gobby.agents.idle_detector import IdleDetector
+from gobby.agents.prompt_detector import PromptDetector
 from gobby.utils.datetime import parse_stored_datetime
 from gobby.workflows.step_context import get_active_step_workflow_context
 
@@ -58,6 +59,7 @@ class IdleCheckHandler:
         self._tmux_config = tmux_config
         self._task_manager = task_manager
         self._run_db_callback = run_db
+        self._prompt_detector = PromptDetector()
 
     async def _run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         if self._run_db_callback is None:
@@ -158,6 +160,15 @@ class IdleCheckHandler:
                 logger.info(f"Agent {run.id} hit context window limit - failing")
                 await self._fail_idle_agent(run, reason="context window exhausted")
                 return 1
+
+            if self._prompt_detector.detect_queued_continuation_prompt(pane_output):
+                logger.info(
+                    "Agent %s has a queued Gobby continuation prompt visible; "
+                    "skipping idle reprompt to avoid stacking queued messages",
+                    run.id,
+                )
+                self._idle_detector.reset_idle(run.id)
+                return 0
 
             if not session_stale and status == "active":
                 self._idle_detector.reset_idle(run.id)

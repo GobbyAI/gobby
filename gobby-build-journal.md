@@ -162,3 +162,24 @@ After deploying `#15397`, the daemon correctly detected the queued Gobby continu
 I opened and claimed follow-up build bug `#15398` under anchor epic `#15385`. I will use the stuck planner as recovery evidence to determine the correct key behavior, then encode and validate that behavior in Gobby so future unattended builds do not need manual keypresses.
 
 The stuck pane disappeared before I could run a manual key-sequence diagnostic. Gobby marked `run-844bba828c5c` failed with the same idle exhaustion, returned target `#354` to `planning:ready`, and the daemon immediately relaunched planner `run-dd49258ad170` without a manual dispatcher tick. The replacement planner started normally and progressed to 6 tool calls. Since the inherited run was already poisoned by repeated pre-fix queued-message attempts and the fresh post-fix run is progressing, I am closing `#15398` as obsolete rather than adding another code change.
+
+The fresh replacement planner `run-dd49258ad170` later reproduced the same failure. It reached 26 tool calls, sat at Claude's "Press up to edit queued messages" prompt, and the daemon logged queued-continuation submissions, but Claude did not advance. The run then failed with `Agent idle: idle after max reprompt attempts`, and target `#354` escalated again with `Failed 3 dispatch attempts`.
+
+I reopened and claimed `#15398`. The live evidence shows `Up` plus `Enter` is not enough for Claude's queued-message state after several queued Gobby continuations. The next fix will stop trying to edit that queue in place and will prevent Gobby from adding more queued continuation messages while that prompt is visible.
+
+## 2026-05-31 09:45 CDT - Build paused and queued-message editor path removed
+
+The user pointed out that sending Up to Claude's queued-message prompt is itself the regression. Past successful `gobby build` runs did not need to edit queued messages, and the recent `Up` plus `Enter` handler made the IDE instability worse by repeatedly interacting with that prompt.
+
+I paused target build task `#354` by disabling automation on the target root task. A status check showed the build state as paused, no active agents, no automation-enabled target tasks, and the target still escalated from the prior failed planner attempts.
+
+Under reopened bug task `#15398`, I removed the queued-message editor key path entirely. Gobby now observes the visible queued Gobby continuation prompt as diagnostic information only and does not send Up or a special extra submit action from that handler. The normal periodic Enter heartbeat remains intact because past successful builds relied on it and it does not queue messages. I also added an idle-check guard so a visible queued Gobby continuation prompt does not cause Gobby to send another continuation message or fail the agent after max idle reprompts. This prevents the daemon from stacking more queued input while preserving the terminal state for diagnosis during a run.
+
+Validation passed:
+
+- `GOBBY_TEST_PROTECT=1 uv run pytest tests/agents/test_lifecycle_monitor_extra.py tests/agents/test_lifecycle_monitor.py tests/agents/test_prompt_detector.py -q` - passed, 136 tests
+- `uv run ruff check src/gobby/agents/prompt_detector.py src/gobby/agents/terminal_prompt_monitor.py src/gobby/agents/idle_check_handler.py tests/agents/test_lifecycle_monitor_extra.py tests/agents/test_lifecycle_monitor.py tests/agents/test_prompt_detector.py` - passed
+- `uv run ruff format --check src/gobby/agents/prompt_detector.py src/gobby/agents/terminal_prompt_monitor.py src/gobby/agents/idle_check_handler.py tests/agents/test_lifecycle_monitor_extra.py tests/agents/test_lifecycle_monitor.py tests/agents/test_prompt_detector.py` - passed
+- `uv run mypy src/gobby/agents/prompt_detector.py src/gobby/agents/terminal_prompt_monitor.py src/gobby/agents/idle_check_handler.py --no-incremental --strict` - passed
+- `uv run gobby test-quality audit tests/agents/test_lifecycle_monitor_extra.py tests/agents/test_lifecycle_monitor.py tests/agents/test_prompt_detector.py --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity high` - passed
+- `git diff --check` - passed

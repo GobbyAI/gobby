@@ -742,7 +742,7 @@ class TestPeriodicAgentTerminalEnter:
         )
 
     @pytest.mark.asyncio
-    async def test_submits_visible_queued_gobby_continuation_prompt(self) -> None:
+    async def test_observes_queued_gobby_continuation_without_editor_keys(self) -> None:
         mock_run_mgr = MagicMock()
         mock_tmux = AsyncMock()
         monitor = self._monitor(mock_run_mgr, mock_tmux, interval=30)
@@ -760,12 +760,13 @@ class TestPeriodicAgentTerminalEnter:
         handled = await monitor.check_queued_continuation_prompts()
         periodic_handled = await monitor.check_periodic_enters()
 
-        assert handled == 1
-        assert periodic_handled == 0
-        assert mock_tmux.send_keys.call_args_list == [
-            call("gobby-claude", PromptDetector.EDIT_QUEUED_MESSAGE_KEY, literal=False),
-            call("gobby-claude", PromptDetector.ENTER_KEY, literal=False),
-        ]
+        assert handled == 0
+        assert periodic_handled == 1
+        mock_tmux.send_keys.assert_called_once_with(
+            "gobby-claude",
+            PromptDetector.ENTER_KEY,
+            literal=False,
+        )
 
     @pytest.mark.asyncio
     async def test_queued_message_prompt_without_gobby_continuation_is_ignored(self) -> None:
