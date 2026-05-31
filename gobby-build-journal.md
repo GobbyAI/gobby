@@ -107,3 +107,11 @@ Validation passed:
 - `uv run mypy src/gobby/agents/prompt_detector.py src/gobby/agents/terminal_prompt_monitor.py src/gobby/agents/lifecycle_monitor.py src/gobby/mcp_proxy/tools/agent_live_activity.py --no-incremental --strict` - passed
 - `uv run gobby test-quality audit tests/agents/test_lifecycle_monitor_extra.py tests/mcp_proxy/tools/test_agent_live_stats.py --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity high` - passed
 - `git diff --check` - passed
+
+## 2026-05-31 04:33 CDT - Queued-continuation fix deployed
+
+Committed bug fix `c33a73faf` for Gobby task `#15393` and closed the task. There were no active build agents to warn before restart. I restarted the daemon with `uv run gobby restart --verbose`; `uv run gobby status` then reported the daemon healthy on PID `39503`, services healthy, and automation running.
+
+I de-escalated target task `#354` in `gobby-cli` because the escalation was caused by the Gobby terminal automation bug, not by a real user decision. The de-escalation reset planning work attempts to 0 while preserving `review_round_count=2` and `max_review_rounds=99`. `explain_dispatch` reported the task eligible with proposed action `start_stage`. I did not manually tick the dispatcher.
+
+The daemon relaunched planner `run-431f7c29c44c` automatically. The planner progressed from 6 tool calls and 1 turn to 19 tool calls and 1 turn during the first post-fix wait, which is past the immediate stall point seen in the failed replacement planner.
