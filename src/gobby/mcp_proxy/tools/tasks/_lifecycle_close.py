@@ -28,6 +28,8 @@ from gobby.workflows.verification_evidence import VERIFICATION_EVIDENCE_VARIABLE
 
 logger = logging.getLogger(__name__)
 
+CLOSE_VALIDATION_EVIDENCE_CONTEXT_LIMIT = 30
+
 
 def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) -> None:
     """Register the close_task tool on the given registry."""
@@ -492,7 +494,7 @@ def _append_verification_evidence_context(
         return validation_context
 
     lines: list[str] = []
-    for item in evidence_items[-10:]:
+    for item in evidence_items[-CLOSE_VALIDATION_EVIDENCE_CONTEXT_LIMIT:]:
         if not isinstance(item, dict) or item.get("success") is not True:
             continue
         command = item.get("command")

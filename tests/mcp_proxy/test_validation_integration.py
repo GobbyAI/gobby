@@ -5,9 +5,11 @@ import pytest
 
 from gobby.mcp_proxy.tools.task_validation import create_validation_registry
 from gobby.mcp_proxy.tools.tasks import create_task_registry
+from gobby.mcp_proxy.tools.tasks._lifecycle_close import CLOSE_VALIDATION_EVIDENCE_CONTEXT_LIMIT
 from gobby.storage.tasks import LocalTaskManager, StageState, Task
 from gobby.tasks.validation import TaskValidator, ValidationResult
 from gobby.utils.session_context import session_context_for_test
+from gobby.workflows.verification_evidence import VERIFICATION_EVIDENCE_VARIABLE
 
 
 def _stage(task_id: str, state: str) -> StageState:
@@ -836,6 +838,85 @@ async def test_close_task_uses_commit_diff_when_commits_linked(
         assert "diff content from commits" in changes_summary
         assert "Agent changes summary:\ntest changes" in changes_summary
         assert result.get("validated", True) is True
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_close_task_includes_latest_thirty_verification_commands(
+    mock_task_manager, mock_task_validator
+):
+    """close_task should pass a useful evidence window to LLM validation."""
+    task = _task(
+        id="t1",
+        title="Task with retained evidence",
+        project_id="p1",
+        status="open",
+        description="Do it",
+        validation_criteria="Must have validation evidence",
+        commits=["abc123"],
+        priority=2,
+        task_type="task",
+        created_at="now",
+        updated_at="now",
+    )
+    mock_task_manager.get_task.return_value = task
+    mock_task_manager.list_tasks.return_value = []
+    mock_task_validator.validate_task.return_value = ValidationResult(status="valid", feedback="OK")
+    mock_task_manager.close_task.return_value = task
+
+    evidence = [
+        {
+            "evidence_type": "validation_command",
+            "success": True,
+            "command": f"uv run pytest validation_suite_{index:03d}.py",
+            "matcher_id": "pytest",
+        }
+        for index in range(1, CLOSE_VALIDATION_EVIDENCE_CONTEXT_LIMIT + 2)
+    ]
+
+    from gobby.tasks.commits import TaskDiffResult
+
+    with (
+        patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager"),
+        patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"),
+        patch("gobby.tasks.commits.get_task_diff") as mock_diff,
+        patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as mock_pm,
+        patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as mock_sm_cls,
+        patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as mock_svm_cls,
+        patch("gobby.utils.git.normalize_commit_sha", side_effect=lambda sha, cwd=None: sha),
+    ):
+        mock_diff.return_value = TaskDiffResult(
+            diff="diff content from commits",
+            commits=["abc123"],
+            has_uncommitted_changes=False,
+            file_count=1,
+        )
+        mock_pm.return_value.get.return_value = MagicMock(repo_path="/test/repo")
+        mock_sm = MagicMock()
+        mock_sm.resolve_session_reference.return_value = "sess-uuid"
+        mock_sm.get.return_value = MagicMock(had_edits=True)
+        mock_sm_cls.return_value = mock_sm
+        mock_svm_cls.return_value.get_variables.return_value = {
+            VERIFICATION_EVIDENCE_VARIABLE: evidence
+        }
+
+        registry = create_task_registry(
+            task_manager=mock_task_manager,
+            sync_manager=MagicMock(),
+            task_validator=mock_task_validator,
+        )
+
+        result = await registry.call(
+            "close_task", {"task_id": "t1", "changes_summary": "test changes"}
+        )
+
+    assert result == {"success": True}
+    validator_call = mock_task_validator.validate_task.call_args
+    changes_summary = validator_call.kwargs["changes_summary"]
+    assert "Successful verification evidence:" in changes_summary
+    assert "uv run pytest validation_suite_001.py" not in changes_summary
+    for index in range(2, CLOSE_VALIDATION_EVIDENCE_CONTEXT_LIMIT + 2):
+        assert f"uv run pytest validation_suite_{index:03d}.py [pytest]" in changes_summary
 
 
 @pytest.mark.integration
