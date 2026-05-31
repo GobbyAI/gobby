@@ -109,14 +109,14 @@ impl CodeSymbolVectorLifecycle {
         let points = self.points_for_symbols(symbols)?;
         let point_ids = point_ids(&points);
         let vectors_upserted = self.upsert_points(points)?;
-        self.delete_stale_vectors(Some(file_path), &point_ids)?;
+        let delete_operations_issued = self.delete_stale_vectors(Some(file_path), &point_ids)?;
 
         Ok(self.output(
             CodeSymbolVectorLifecycleAction::SyncFile,
             Some(file_path.to_string()),
             symbols.len(),
             vectors_upserted,
-            1,
+            delete_operations_issued,
         ))
     }
 
@@ -135,8 +135,7 @@ impl CodeSymbolVectorLifecycle {
                         found,
                     )?;
                 }
-                self.delete_vectors(None)?;
-                1
+                self.delete_vectors(None)?
             }
             None => 0,
         };
@@ -152,14 +151,14 @@ impl CodeSymbolVectorLifecycle {
         let points = self.points_for_symbols(symbols)?;
         let point_ids = point_ids(&points);
         let vectors_upserted = self.upsert_points(points)?;
-        self.delete_stale_vectors(None, &point_ids)?;
+        let delete_operations_issued = self.delete_stale_vectors(None, &point_ids)?;
 
         Ok(self.output(
             CodeSymbolVectorLifecycleAction::Rebuild,
             None,
             symbols.len(),
             vectors_upserted,
-            1,
+            delete_operations_issued,
         ))
     }
 
@@ -169,7 +168,7 @@ impl CodeSymbolVectorLifecycle {
         file_path: Option<String>,
         symbols: usize,
         vectors_upserted: usize,
-        vectors_deleted: usize,
+        delete_operations_issued: usize,
     ) -> CodeSymbolVectorLifecycleOutput {
         CodeSymbolVectorLifecycleOutput {
             project_id: self.project_id.clone(),
@@ -178,9 +177,9 @@ impl CodeSymbolVectorLifecycle {
             file_path,
             symbols,
             vectors_upserted,
-            vectors_deleted,
+            delete_operations_issued,
             summary: format!(
-                "{vectors_upserted} vector(s) upserted, {vectors_deleted} delete operation(s) issued"
+                "{vectors_upserted} vector(s) upserted, {delete_operations_issued} delete operation(s) issued"
             ),
         }
     }
@@ -282,7 +281,7 @@ impl CodeSymbolVectorLifecycle {
         Ok(())
     }
 
-    fn delete_vectors(&self, file_path: Option<&str>) -> Result<(), VectorLifecycleError> {
+    fn delete_vectors(&self, file_path: Option<&str>) -> Result<usize, VectorLifecycleError> {
         delete_vectors_for_filter(
             &self.client,
             &self.qdrant,
@@ -290,14 +289,14 @@ impl CodeSymbolVectorLifecycle {
             &self.project_id,
             file_path,
         )
-        .map(|_| ())
+        .map(usize::from)
     }
 
     fn delete_stale_vectors(
         &self,
         file_path: Option<&str>,
         keep_point_ids: &[String],
-    ) -> Result<(), VectorLifecycleError> {
+    ) -> Result<usize, VectorLifecycleError> {
         delete_vectors_for_filter_excluding_ids(
             &self.client,
             &self.qdrant,
@@ -306,7 +305,7 @@ impl CodeSymbolVectorLifecycle {
             file_path,
             keep_point_ids,
         )
-        .map(|_| ())
+        .map(usize::from)
     }
 
     fn upsert_points(&self, points: Vec<UpsertRequest>) -> Result<usize, VectorLifecycleError> {

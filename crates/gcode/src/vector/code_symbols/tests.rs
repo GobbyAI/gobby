@@ -160,7 +160,7 @@ fn clear_project_vectors_does_not_touch_memory_vector_collections() {
     let cleared = lifecycle.clear_project_vectors().expect("clear vectors");
     let requests = handle.join().expect("qdrant requests");
 
-    assert_eq!(cleared.vectors_deleted, 1);
+    assert_eq!(cleared.delete_operations_issued, 1);
     assert_eq!(requests.len(), 2);
     assert!(requests[0].contains("GET /collections/code_symbols_project-1 HTTP/1.1"));
     assert!(

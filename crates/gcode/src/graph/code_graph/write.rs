@@ -294,9 +294,7 @@ where
 }
 
 fn usize_value(value: usize) -> TypedValue {
-    let value = i64::try_from(value)
-        .unwrap_or_else(|_| panic!("usize value {value} exceeds i64::MAX for FalkorDB integer"));
-    TypedValue::Integer(value)
+    TypedValue::Integer(i64::try_from(value).unwrap_or(i64::MAX))
 }
 
 fn optional_string_value(value: Option<&str>) -> TypedValue {

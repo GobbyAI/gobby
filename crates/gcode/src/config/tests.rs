@@ -206,7 +206,12 @@ fn vector_dim_setting_reads_ai_config_no_env() {
             assert_eq!(settings.vector_dim, Some(2048));
         });
 
-        let legacy_values = std::collections::HashMap::from([(legacy_keys[7].as_str(), "1536")]);
+        let legacy_vector_dim_key = legacy_keys
+            .iter()
+            .find(|key| key.as_str() == "embeddings.vector_dim")
+            .expect("legacy embeddings.vector_dim key should be present");
+        let legacy_values =
+            std::collections::HashMap::from([(legacy_vector_dim_key.as_str(), "1536")]);
         let settings = resolve_code_vector_settings_from_values(config_value_for(&legacy_values))
             .expect("legacy vector dim ignored");
         assert_eq!(settings.vector_dim, None);

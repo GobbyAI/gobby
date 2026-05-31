@@ -289,6 +289,11 @@ pub fn write_synthesized_page(
                     path: Some(page.path.clone()),
                     source: error,
                 })?;
+            file.sync_all().map_err(|error| WikiError::Io {
+                action: "write synthesized wiki page",
+                path: Some(page.path.clone()),
+                source: error,
+            })?;
             PageWriteKind::Created
         }
         WritePolicy::AllowOverwriteAfterMerge => {

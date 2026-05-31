@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::time::Instant;
 
 use postgres::Client;
@@ -13,8 +13,8 @@ use super::file::{
     index_file,
 };
 use super::lifecycle::{
-    attach_projection_sync, cleanup_deleted_file_projections, current_file_hashes,
-    get_orphan_files, get_stale_files, refresh_project_stats,
+    attach_projection_sync, cleanup_deleted_file_projections, current_file_state, get_orphan_files,
+    get_stale_files, refresh_project_stats,
 };
 use super::overlay::index_overlay_files;
 use super::types::{IndexOutcome, IndexRequest};
@@ -64,10 +64,10 @@ fn index_discovered_files(
     let mut semantic_resolver =
         create_semantic_resolver_if_needed(root_path, &candidates, request.require_cpp_semantics)?;
 
-    // Build current hash map for incremental detection and orphan cleanup.
-    let current_hashes = current_file_hashes(root_path, &candidates, &content_only);
-    let stale: Option<HashMap<String, ()>> = if !request.full {
-        Some(get_stale_files(conn, project_id, &current_hashes))
+    // Build current file state for incremental detection and orphan cleanup.
+    let current_files = current_file_state(root_path, &candidates, &content_only);
+    let stale: Option<HashSet<String>> = if !request.full {
+        Some(get_stale_files(conn, project_id, &current_files.hashes)?)
     } else {
         None
     };
@@ -75,7 +75,7 @@ fn index_discovered_files(
     // Clean orphans only during whole-project scans. Filtered scans do not know
     // about files outside the requested subtree.
     if request.path_filter.is_none() {
-        let orphans = get_orphan_files(conn, project_id, &current_hashes);
+        let orphans = get_orphan_files(conn, project_id, &current_files.present_paths)?;
         for orphan in &orphans {
             cleanup_deleted_file_projections(ctx, orphan, &mut outcome);
             api::delete_file_facts(conn, project_id, orphan)?;
@@ -87,7 +87,7 @@ fn index_discovered_files(
             .iter()
             .chain(content_only.iter())
             .filter_map(|path| relative_path(path, root_path).ok())
-            .filter(|rel| stale_map.contains_key(rel))
+            .filter(|rel| stale_map.contains(rel))
             .count()
     } else {
         discovered_files
@@ -103,7 +103,7 @@ fn index_discovered_files(
         };
 
         if let Some(ref stale_map) = stale
-            && !stale_map.contains_key(&rel)
+            && !stale_map.contains(&rel)
         {
             outcome.skipped_files += 1;
             continue;
@@ -131,7 +131,7 @@ fn index_discovered_files(
             Err(_) => continue,
         };
         if let Some(ref stale_map) = stale
-            && !stale_map.contains_key(&rel)
+            && !stale_map.contains(&rel)
         {
             outcome.skipped_files += 1;
             continue;

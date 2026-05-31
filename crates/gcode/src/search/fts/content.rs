@@ -297,13 +297,16 @@ pub(super) fn make_snippet(content: &str, query: &str) -> String {
     }
     let match_at = match_at.unwrap_or(0);
     let start = match_at.saturating_sub(60);
-    let end = (match_at + 120).min(content.chars().count());
+    let content_len = content.chars().count();
+    let end = match_at.saturating_add(120).min(content_len);
     content.chars().skip(start).take(end - start).collect()
 }
 
 fn lowercase_with_original_char_map(content: &str) -> (String, Vec<usize>) {
-    let mut lower = String::with_capacity(content.len());
-    let mut lower_byte_to_original_char = Vec::with_capacity(content.len());
+    // Unicode lowercase expansion can produce more bytes than the source.
+    let reserve = content.len().saturating_mul(2);
+    let mut lower = String::with_capacity(reserve);
+    let mut lower_byte_to_original_char = Vec::with_capacity(reserve);
     for (original_char_index, ch) in content.chars().enumerate() {
         for lower_ch in ch.to_lowercase() {
             let mut buf = [0; 4];

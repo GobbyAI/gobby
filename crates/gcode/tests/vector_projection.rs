@@ -152,7 +152,7 @@ fn clear_and_rebuild_delete_project_and_upsert_current_symbols() {
     let embedding_requests = embedding_handle.join().expect("embedding requests");
     let qdrant_requests = qdrant_handle.join().expect("qdrant requests");
 
-    assert_eq!(cleared.vectors_deleted, 1);
+    assert_eq!(cleared.delete_operations_issued, 1);
     assert_eq!(rebuilt.vectors_upserted, 1);
     assert_eq!(embedding_requests.len(), 1);
     assert!(

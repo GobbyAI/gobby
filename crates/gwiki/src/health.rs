@@ -231,19 +231,35 @@ fn source_reference_is_present(markdown: &str, needle: &str) -> bool {
 
 fn markdown_without_fenced_code(markdown: &str) -> String {
     let mut output = String::new();
-    let mut in_fence = false;
+    let mut active_fence = None;
     for line in markdown.lines() {
         let trimmed = line.trim_start();
-        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-            in_fence = !in_fence;
-            continue;
+        if let Some(fence) = fence_delimiter(trimmed) {
+            if active_fence == Some(fence) {
+                active_fence = None;
+                continue;
+            }
+            if active_fence.is_none() {
+                active_fence = Some(fence);
+                continue;
+            }
         }
-        if !in_fence {
+        if active_fence.is_none() {
             output.push_str(line);
             output.push('\n');
         }
     }
     output
+}
+
+fn fence_delimiter(line: &str) -> Option<&'static str> {
+    if line.starts_with("```") {
+        Some("```")
+    } else if line.starts_with("~~~") {
+        Some("~~~")
+    } else {
+        None
+    }
 }
 
 fn markdown_link_target_matches(markdown: &str, needle: &str) -> bool {
@@ -424,6 +440,15 @@ mod tests {
             "[Example](https://example.test/source)",
             "https://example.test/source"
         ));
+    }
+
+    #[test]
+    fn fenced_code_closes_only_on_matching_delimiter() {
+        let markdown = "before\n~~~\nhttps://example.test/source\n```\nstill fenced\n~~~\nafter\n";
+
+        let without_fences = markdown_without_fenced_code(markdown);
+
+        assert_eq!(without_fences, "before\nafter\n");
     }
 
     fn write_page(root: &Path, relative: &str, markdown: &str) {

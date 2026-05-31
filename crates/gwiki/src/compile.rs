@@ -578,11 +578,25 @@ fn note_path(root: &Path, path: &Path) -> PathBuf {
 }
 
 fn path_is_in_scope(path: &Path, root: &Path) -> bool {
-    let Ok(root) = root.canonicalize() else {
-        return false;
+    let root = match root.canonicalize() {
+        Ok(root) => root,
+        Err(error) => {
+            log::warn!(
+                "failed to canonicalize wiki scope root {} for scope check: {error}",
+                root.display()
+            );
+            return false;
+        }
     };
-    let Ok(path) = path.canonicalize() else {
-        return false;
+    let path = match path.canonicalize() {
+        Ok(path) => path,
+        Err(error) => {
+            log::warn!(
+                "failed to canonicalize wiki path {} for scope check: {error}",
+                path.display()
+            );
+            return false;
+        }
     };
     path.starts_with(root)
 }

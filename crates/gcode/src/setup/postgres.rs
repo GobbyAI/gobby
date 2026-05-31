@@ -40,10 +40,10 @@ pub fn run_standalone_setup(
         };
         setup.create(&mut ctx)
     };
-    let report = match setup_result {
+    let mut report = match setup_result {
         Ok(report) => report,
         Err(err) => {
-            let _ = rollback_postgres_transaction(client, "standalone setup rollback");
+            rollback_postgres_transaction(client, "standalone setup rollback")?;
             return Err(err);
         }
     };
@@ -51,6 +51,8 @@ pub fn run_standalone_setup(
         commit_postgres_transaction(client)?;
     } else {
         rollback_postgres_transaction(client, "standalone setup rollback")?;
+        report.created.clear();
+        report.skipped.clear();
     }
 
     Ok(standalone_setup_status(&setup, report))

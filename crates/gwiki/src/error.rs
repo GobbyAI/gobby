@@ -63,8 +63,8 @@ impl WikiError {
             Self::Registry { .. } => "registry_error",
             Self::Daemon { .. } => "daemon_error",
             Self::InvalidInput { .. } => "invalid_input",
-            Self::Index { .. } => "invalid_input",
-            Self::Search { .. } => "invalid_input",
+            Self::Index { .. } => "index_error",
+            Self::Search { .. } => "search_error",
         }
     }
 }
@@ -166,5 +166,18 @@ mod tests {
 
         assert!(error.source().is_some());
         assert!(error.to_string().contains("parse fixture failed"));
+    }
+
+    #[test]
+    fn wrapped_error_codes_are_specific() {
+        let index = WikiError::Index {
+            source: indexer::IndexError::Walk("walk failed".to_string()),
+        };
+        let search = WikiError::Search {
+            source: search::SearchError::Backend("backend failed".to_string()),
+        };
+
+        assert_eq!(index.code(), "index_error");
+        assert_eq!(search.code(), "search_error");
     }
 }

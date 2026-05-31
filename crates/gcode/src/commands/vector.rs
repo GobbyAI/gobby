@@ -104,7 +104,7 @@ pub(crate) struct VectorLifecycleJsonPayload {
     pub error: Option<crate::projection::sync::ProjectionSyncError>,
     pub symbols: usize,
     pub vectors_upserted: usize,
-    pub vectors_deleted: usize,
+    pub delete_operations_issued: usize,
     pub summary: String,
 }
 
@@ -125,7 +125,7 @@ pub(crate) fn lifecycle_json_payload(
         error: report.error,
         symbols: output.symbols,
         vectors_upserted: output.vectors_upserted,
-        vectors_deleted: output.vectors_deleted,
+        delete_operations_issued: output.delete_operations_issued,
         summary: output.summary.clone(),
     }
 }
@@ -183,7 +183,7 @@ mod tests {
             file_path: Some("src/lib.rs".to_string()),
             symbols: 2,
             vectors_upserted: 2,
-            vectors_deleted: 1,
+            delete_operations_issued: 1,
             summary: "2 vector(s) upserted, 1 delete operation(s) issued".to_string(),
         };
 
@@ -212,7 +212,7 @@ mod tests {
                 "error": null,
                 "symbols": 2,
                 "vectors_upserted": 2,
-                "vectors_deleted": 1,
+                "delete_operations_issued": 1,
                 "summary": "2 vector(s) upserted, 1 delete operation(s) issued"
             })
         );

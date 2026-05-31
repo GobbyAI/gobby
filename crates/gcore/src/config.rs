@@ -525,6 +525,7 @@ mod tests {
     }
 
     fn leak(value: String) -> &'static str {
+        // Test fixtures need stable borrowed keys; leaking these tiny strings is intentional.
         Box::leak(value.into_boxed_str())
     }
 

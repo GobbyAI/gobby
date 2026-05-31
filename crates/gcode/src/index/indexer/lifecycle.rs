@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use postgres::Client;
@@ -183,74 +183,93 @@ pub(super) fn get_stale_files(
     conn: &mut Client,
     project_id: &str,
     current_hashes: &HashMap<String, String>,
-) -> HashMap<String, ()> {
-    let mut stale = HashMap::new();
+) -> Result<HashSet<String>, postgres::Error> {
+    let mut stale = HashSet::new();
     let mut indexed = HashMap::new();
-    if let Ok(rows) = conn.query(
-        "SELECT file_path, content_hash FROM code_indexed_files WHERE project_id = $1",
-        &[&project_id],
-    ) {
-        for row in rows {
-            if let (Ok(file_path), Ok(content_hash)) = (
-                row.try_get::<_, String>("file_path"),
-                row.try_get::<_, String>("content_hash"),
-            ) {
-                indexed.insert(file_path, content_hash);
-            }
+    let rows = conn
+        .query(
+            "SELECT file_path, content_hash FROM code_indexed_files WHERE project_id = $1",
+            &[&project_id],
+        )
+        .map_err(|error| {
+            log::error!(
+                "failed to query indexed files for stale detection for project {project_id}: {error}"
+            );
+            error
+        })?;
+    for row in rows {
+        if let (Ok(file_path), Ok(content_hash)) = (
+            row.try_get::<_, String>("file_path"),
+            row.try_get::<_, String>("content_hash"),
+        ) {
+            indexed.insert(file_path, content_hash);
         }
     }
 
     for (path, hash) in current_hashes {
         if indexed.get(path) != Some(hash) {
-            stale.insert(path.clone(), ());
+            stale.insert(path.clone());
         }
     }
-    stale
+    Ok(stale)
 }
 
-pub(super) fn current_file_hashes(
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(super) struct CurrentFileState {
+    pub(super) hashes: HashMap<String, String>,
+    pub(super) present_paths: HashSet<String>,
+}
+
+pub(super) fn current_file_state(
     root_path: &Path,
     candidates: &[std::path::PathBuf],
     content_only: &[std::path::PathBuf],
-) -> HashMap<String, String> {
-    let mut current_hashes = HashMap::new();
+) -> CurrentFileState {
+    let mut state = CurrentFileState::default();
     for path in candidates.iter().chain(content_only.iter()) {
         if let Ok(rel) = relative_path(path, root_path) {
-            let hash = match hasher::file_content_hash(path) {
-                Ok(hash) => hash,
+            state.present_paths.insert(rel.clone());
+            match hasher::file_content_hash(path) {
+                Ok(hash) => {
+                    state.hashes.insert(rel, hash);
+                }
                 Err(error) => {
                     eprintln!(
                         "Warning: failed to hash {} for incremental index detection: {error}",
                         path.display()
                     );
-                    String::new()
                 }
-            };
-            current_hashes.insert(rel, hash);
+            }
         }
     }
-    current_hashes
+    state
 }
 
 pub(super) fn get_orphan_files(
     conn: &mut Client,
     project_id: &str,
-    current_hashes: &HashMap<String, String>,
-) -> Vec<String> {
+    present_paths: &HashSet<String>,
+) -> Result<Vec<String>, postgres::Error> {
     let mut orphans = Vec::new();
-    if let Ok(rows) = conn.query(
-        "SELECT file_path FROM code_indexed_files WHERE project_id = $1",
-        &[&project_id],
-    ) {
-        for row in rows {
-            if let Ok(file_path) = row.try_get::<_, String>("file_path")
-                && !current_hashes.contains_key(&file_path)
-            {
-                orphans.push(file_path);
-            }
+    let rows = conn
+        .query(
+            "SELECT file_path FROM code_indexed_files WHERE project_id = $1",
+            &[&project_id],
+        )
+        .map_err(|error| {
+            log::error!(
+                "failed to query indexed files for orphan detection for project {project_id}: {error}"
+            );
+            error
+        })?;
+    for row in rows {
+        if let Ok(file_path) = row.try_get::<_, String>("file_path")
+            && !present_paths.contains(&file_path)
+        {
+            orphans.push(file_path);
         }
     }
-    orphans
+    Ok(orphans)
 }
 
 fn count_rows(conn: &mut Client, table: &str, project_id: &str) -> usize {

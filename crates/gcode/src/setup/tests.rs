@@ -225,6 +225,10 @@ fn overwrite_recreates_incompatible_code_index_and_preserves_sentinel_table() {
         );
         return;
     };
+    if let Err(reason) = destructive_postgres_test_allowed(&database_url) {
+        eprintln!("skipping PostgreSQL overwrite test: {reason}");
+        return;
+    }
     let database_url = database_url_with_connect_timeout(&database_url);
     let mut client = Client::connect(&database_url, NoTls).expect("connect test PostgreSQL hub");
     cleanup_code_index_relations(&mut client);
@@ -284,6 +288,26 @@ fn overwrite_recreates_incompatible_code_index_and_preserves_sentinel_table() {
         .expect("cleanup sentinel");
 }
 
+fn destructive_postgres_test_allowed(database_url: &str) -> Result<(), String> {
+    if destructive_postgres_test_override_enabled() {
+        return Ok(());
+    }
+    let config = database_url
+        .parse::<postgres::Config>()
+        .map_err(|error| format!("database URL could not be parsed: {error}"))?;
+    match config.get_dbname() {
+        Some(name) if name.ends_with("_test") => Ok(()),
+        Some(name) => Err(format!("database name `{name}` does not end with `_test`")),
+        None => Err("database URL does not include a database name".to_string()),
+    }
+}
+
+fn destructive_postgres_test_override_enabled() -> bool {
+    std::env::var("GCODE_POSTGRES_TEST_ALLOW_DESTRUCTIVE")
+        .ok()
+        .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+}
+
 fn database_url_with_connect_timeout(database_url: &str) -> String {
     if database_url.contains("connect_timeout=") {
         return database_url.to_string();
@@ -297,4 +321,32 @@ fn cleanup_code_index_relations(client: &mut Client) {
     client
         .batch_execute(&sql)
         .expect("cleanup code index objects");
+}
+
+#[test]
+#[serial_test::serial]
+fn destructive_postgres_guard_requires_test_database_name() {
+    temp_env::with_var(
+        "GCODE_POSTGRES_TEST_ALLOW_DESTRUCTIVE",
+        Option::<&str>::None,
+        || {
+            assert!(destructive_postgres_test_allowed("postgresql://localhost/gcode_test").is_ok());
+            let error = destructive_postgres_test_allowed("postgresql://localhost/gcode")
+                .expect_err("non-test database is rejected");
+            assert!(error.contains("does not end with `_test`"));
+        },
+    );
+}
+
+#[test]
+#[serial_test::serial]
+fn destructive_postgres_guard_accepts_explicit_override_values() {
+    for value in ["1", "true", "TRUE"] {
+        temp_env::with_var("GCODE_POSTGRES_TEST_ALLOW_DESTRUCTIVE", Some(value), || {
+            assert!(destructive_postgres_test_allowed("postgresql://localhost/gcode").is_ok());
+        });
+    }
+    temp_env::with_var("GCODE_POSTGRES_TEST_ALLOW_DESTRUCTIVE", Some("0"), || {
+        assert!(destructive_postgres_test_allowed("postgresql://localhost/gcode").is_err());
+    });
 }

@@ -124,7 +124,7 @@ pub struct CodeSymbolVectorLifecycleOutput {
     pub file_path: Option<String>,
     pub symbols: usize,
     pub vectors_upserted: usize,
-    pub vectors_deleted: usize,
+    pub delete_operations_issued: usize,
     pub summary: String,
 }
 

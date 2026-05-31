@@ -992,6 +992,7 @@ dependencies = [
  "gobby-core",
  "html-escape",
  "log",
+ "percent-encoding",
  "postgres",
  "regex",
  "reqwest",

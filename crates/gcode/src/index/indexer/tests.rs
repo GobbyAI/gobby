@@ -1,5 +1,5 @@
 use super::file::{ExplicitFileRoute, explicit_file_route, write_parsed_file_facts};
-use super::lifecycle::cleanup_deleted_file_projections;
+use super::lifecycle::{cleanup_deleted_file_projections, current_file_state};
 use super::overlay::{IndexedFileState, OverlayReconcileAction, overlay_reconcile_action};
 use super::sink::CodeFactSink;
 use super::util::DEFAULT_EXCLUDES;
@@ -73,6 +73,27 @@ fn invalidate_postgres_deletes_are_project_scoped() {
     let drop_table = ["DROP", " TABLE"].concat();
     assert!(!source.contains(&truncate_code));
     assert!(!source.contains(&drop_table));
+}
+
+#[test]
+fn current_file_state_keeps_unhashable_paths_present() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    write_file(temp.path(), "src/lib.rs", b"fn main() {}\n");
+    std::fs::create_dir_all(temp.path().join("src/unreadable")).expect("create directory");
+
+    let state = current_file_state(
+        temp.path(),
+        &[
+            temp.path().join("src/lib.rs"),
+            temp.path().join("src/unreadable"),
+        ],
+        &[],
+    );
+
+    assert!(state.present_paths.contains("src/lib.rs"));
+    assert!(state.present_paths.contains("src/unreadable"));
+    assert!(state.hashes.contains_key("src/lib.rs"));
+    assert!(!state.hashes.contains_key("src/unreadable"));
 }
 
 #[derive(Default)]

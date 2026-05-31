@@ -186,9 +186,6 @@ pub fn rank_link_neighborhood(
             else {
                 continue;
             };
-            if !document_paths.contains(&target_path) {
-                continue;
-            }
 
             let candidate = if &link.source_path == seed_path {
                 Some((target_path, seed_score))

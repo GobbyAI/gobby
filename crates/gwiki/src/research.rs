@@ -419,6 +419,7 @@ fn append_raw_index(vault_root: &Path, title: &str, note_path: &Path) -> Result<
         contents.push_str("# Raw sources\n\n");
     }
     contents.push_str(&format!("- [{title}]({relative})\n"));
+    // Keep the lock handle alive through the full read-modify-write sequence.
     write_file_atomically(&index_path, contents.as_bytes(), "raw index")
 }
 

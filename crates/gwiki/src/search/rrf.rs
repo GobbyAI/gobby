@@ -50,28 +50,22 @@ pub fn fuse_sources(
             result.sources = fused
                 .sources
                 .iter()
-                .filter_map(|source| {
-                    debug_assert!(
-                        SearchSource::from_source_name(source).is_some(),
-                        "RRF returned unknown source name: {source}"
-                    );
+                .map(|source| {
                     SearchSource::from_source_name(source)
+                        .expect("RRF returned unknown source name")
                 })
                 .collect();
             result.explanations = fused
                 .explanations
                 .iter()
-                .filter_map(|explanation| {
-                    debug_assert!(
-                        SearchSource::from_source_name(&explanation.source).is_some(),
-                        "RRF returned unknown explanation source: {}",
-                        explanation.source
-                    );
-                    Some(SearchSourceExplanation {
-                        source: SearchSource::from_source_name(&explanation.source)?,
+                .map(|explanation| {
+                    let source = SearchSource::from_source_name(&explanation.source)
+                        .expect("RRF returned unknown explanation source");
+                    SearchSourceExplanation {
+                        source,
                         rank: explanation.rank,
                         score: explanation.score,
-                    })
+                    }
                 })
                 .collect();
             Some(result)

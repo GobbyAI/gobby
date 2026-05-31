@@ -221,6 +221,10 @@ pub(super) fn split_top_level(text: &str, delimiter: char) -> Result<Vec<&str>, 
 }
 
 pub(super) fn is_ruby_constant_name(name: &str) -> bool {
+    is_uppercase_ascii_alnum_underscore_name(name)
+}
+
+fn is_uppercase_ascii_alnum_underscore_name(name: &str) -> bool {
     name.chars()
         .next()
         .is_some_and(|ch| ch.is_ascii_uppercase())
@@ -244,12 +248,7 @@ pub(super) fn dart_import_alias(text: &str) -> Option<String> {
 }
 
 pub(super) fn is_elixir_alias(name: &str) -> bool {
-    name.chars()
-        .next()
-        .is_some_and(|ch| ch.is_ascii_uppercase())
-        && name
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    is_uppercase_ascii_alnum_underscore_name(name)
 }
 
 pub(super) fn is_elixir_alias_path(path: &str) -> bool {

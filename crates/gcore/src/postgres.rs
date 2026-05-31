@@ -137,10 +137,33 @@ fn is_no_tls_native_tls_error(error: &(dyn std::error::Error + 'static)) -> bool
 
 fn is_no_tls_error_message(error: &(dyn std::error::Error + 'static)) -> bool {
     let message = error.to_string().to_ascii_lowercase();
-    message.contains("server does not support tls")
-        || message.contains("the server does not support ssl")
-        || message.contains("tls not supported")
-        || message.contains("ssl is not enabled")
+    let tokens = message
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .collect::<Vec<_>>();
+    let mentions_tls = tokens.iter().any(|token| matches!(*token, "tls" | "ssl"));
+    mentions_tls && has_no_tls_support_signal(&tokens)
+}
+
+fn has_no_tls_support_signal(tokens: &[&str]) -> bool {
+    // Server wording varies, so keep this token-based. It is still limited to
+    // TLS/SSL messages with explicit no-support or disabled-service language.
+    tokens
+        .windows(2)
+        .any(|window| window[0] == "not" && matches!(window[1], "supported" | "enabled"))
+        || tokens.windows(3).any(|window| {
+            matches!(window[0], "does" | "do" | "is")
+                && window[1] == "not"
+                && matches!(window[2], "support" | "supported" | "enabled")
+        })
+        || tokens.windows(3).any(|window| {
+            window[0] == "no" && matches!(window[1], "tls" | "ssl") && window[2] == "support"
+        })
+        || tokens.windows(3).any(|window| {
+            matches!(window[0], "tls" | "ssl")
+                && window[1] == "not"
+                && matches!(window[2], "supported" | "enabled")
+        })
 }
 
 fn run_schema_validator<C>(
@@ -227,6 +250,22 @@ mod tests {
         )));
         assert!(!is_no_tls_server_error(&anyhow::anyhow!(
             "certificate verify failed"
+        )));
+    }
+
+    #[test]
+    fn no_tls_error_message_uses_tls_tokens_and_no_support_signal() {
+        assert!(is_no_tls_error_message(&std::io::Error::other(
+            "server: TLS is not supported"
+        )));
+        assert!(is_no_tls_error_message(&std::io::Error::other(
+            "SSL is not enabled on this server"
+        )));
+        assert!(!is_no_tls_error_message(&std::io::Error::other(
+            "certificate verify failed"
+        )));
+        assert!(!is_no_tls_error_message(&std::io::Error::other(
+            "unsupported certificate algorithm for SSL"
         )));
     }
 }
