@@ -1,4 +1,4 @@
-"""Live activity overlays for active agent-run status responses."""
+"""Transcript activity overlays for agent-run status responses."""
 
 from __future__ import annotations
 
@@ -6,8 +6,6 @@ import logging
 from typing import Any
 
 logger = logging.getLogger(__name__)
-
-_ACTIVE_STATUSES = {"running", "pending"}
 
 
 def _count(value: Any) -> int | None:
@@ -20,10 +18,8 @@ def _count(value: Any) -> int | None:
 
 
 async def overlay_live_activity(run: Any, transcript_reader: Any | None) -> Any:
-    """Overlay live transcript-derived counters on an active agent run."""
+    """Overlay transcript-derived counters on an agent run."""
     if transcript_reader is None or run is None:
-        return run
-    if getattr(run, "status", None) not in _ACTIVE_STATUSES:
         return run
 
     session_id = getattr(run, "child_session_id", None) or getattr(run, "parent_session_id", None)

@@ -180,6 +180,50 @@ async def test_wait_for_agent_timeout_overlays_transcript_activity(
 
 
 @pytest.mark.asyncio
+async def test_wait_for_agent_terminal_error_overlays_transcript_activity(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict,
+) -> None:
+    """wait_for_agent terminal payload preserves transcript activity."""
+    parent_id = _register_session(session_manager, sample_project, "mcp-parent-terminal")
+    child_id = _register_session(
+        session_manager,
+        sample_project,
+        "mcp-child-terminal",
+        parent_session_id=parent_id,
+    )
+    run_storage = LocalAgentRunManager(temp_db)
+    run = run_storage.create(
+        parent_session_id=parent_id,
+        child_session_id=child_id,
+        provider="claude",
+        prompt="terminal with live counters",
+        agent_name="planner",
+    )
+    run_storage.start(run.id)
+    run_storage.fail(run.id, "idle after max reprompt attempts")
+
+    runner = MagicMock()
+    runner.run_storage = run_storage
+    runner.get_run.side_effect = lambda run_id: run_storage.get(run_id)
+    transcript_reader = _FakeTranscriptReader(
+        {"message_count": 41, "turn_count": 5, "tool_call_count": 17}
+    )
+    registry = create_agents_registry(runner, transcript_reader=transcript_reader)
+    wait_for_agent = registry._tools["wait_for_agent"].func
+
+    result = await wait_for_agent(run.id, timeout_seconds=0, poll_interval_seconds=0.1)
+
+    assert result["success"] is True
+    assert result["completed"] is True
+    assert result["status"] == "error"
+    assert result["tool_calls_count"] == 17
+    assert result["turns_used"] == 5
+    assert transcript_reader.session_ids == [child_id]
+
+
+@pytest.mark.asyncio
 async def test_list_running_agents_default_scope_sees_non_child_runs(
     temp_db: HubDatabase,
     session_manager: SessionManager,

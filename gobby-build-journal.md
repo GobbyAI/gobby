@@ -90,3 +90,20 @@ After the de-escalation above, the daemon relaunched planner agent `run-b4b3d734
 For a short period, target task `#354` still showed `planning:in_progress` and was claimed by the ended child session even though `get_build_status` listed no active agents. I did not tick the dispatcher or manually mutate the target task. On the next automation interval, the daemon recovered on its own and launched replacement planner `run-b49368ec5915` for the same target task.
 
 Resolution: the target build is running again under the replacement planner. The contradictory terminal telemetry is being treated as a separate Gobby bug candidate because live status showed real tool calls but the completed wait result fell back to zero.
+
+## 2026-05-31 04:25 CDT - Repeated queued-continuation planner failure
+
+Replacement planner `run-b49368ec5915` reached the same Claude prompt state: the pane showed Gobby's "Continue working on your task" reminder sitting in Claude's queued messages, with the prompt line saying the queued messages could be edited. The run later failed with `Agent idle: idle after max reprompt attempts`, and target build task `#354` escalated again with `Failed 3 dispatch attempts`. This is still not a user decision; it is a Gobby terminal automation bug.
+
+I opened and claimed Gobby bug task `#15393` under coordination epic `#15385`. The fix being validated teaches the lifecycle monitor to detect visible queued Gobby continuation prompts and press Enter specifically for that stuck state on every lifecycle pass, instead of relying only on the generic periodic Enter heartbeat. Initial focused validation passed with `GOBBY_TEST_PROTECT=1 uv run pytest tests/agents/test_lifecycle_monitor_extra.py -q` (35 tests).
+
+The same task also fixed the terminal telemetry edge observed during the failure: completed `wait_for_agent` payloads now overlay transcript-derived counts too, so a failed run does not report zero tool calls when the transcript shows real activity.
+
+Validation passed:
+
+- `GOBBY_TEST_PROTECT=1 uv run pytest tests/agents/test_lifecycle_monitor_extra.py tests/mcp_proxy/tools/test_agent_live_stats.py -q` - passed, 41 tests
+- `uv run ruff check src/gobby/agents/prompt_detector.py src/gobby/agents/terminal_prompt_monitor.py src/gobby/agents/lifecycle_monitor.py src/gobby/mcp_proxy/tools/agent_live_activity.py tests/agents/test_lifecycle_monitor_extra.py tests/mcp_proxy/tools/test_agent_live_stats.py` - passed
+- `uv run ruff format --check src/gobby/agents/prompt_detector.py src/gobby/agents/terminal_prompt_monitor.py src/gobby/agents/lifecycle_monitor.py src/gobby/mcp_proxy/tools/agent_live_activity.py tests/agents/test_lifecycle_monitor_extra.py tests/mcp_proxy/tools/test_agent_live_stats.py` - passed
+- `uv run mypy src/gobby/agents/prompt_detector.py src/gobby/agents/terminal_prompt_monitor.py src/gobby/agents/lifecycle_monitor.py src/gobby/mcp_proxy/tools/agent_live_activity.py --no-incremental --strict` - passed
+- `uv run gobby test-quality audit tests/agents/test_lifecycle_monitor_extra.py tests/mcp_proxy/tools/test_agent_live_stats.py --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity high` - passed
+- `git diff --check` - passed

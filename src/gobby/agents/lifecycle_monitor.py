@@ -245,6 +245,7 @@ class AgentLifecycleMonitor:
                 await self.check_trust_prompts()
                 await self.check_loop_prompts()
                 await self.check_approval_prompts()
+                await self.check_queued_continuation_prompts()
                 await self.check_periodic_enters()
                 await self.check_unhealthy_agents()
                 await self.expire_terminal_run_sessions()
@@ -294,6 +295,10 @@ class AgentLifecycleMonitor:
     async def check_approval_prompts(self) -> int:
         """Check for approval prompts and send Enter when explicitly permitted."""
         return await self._terminal_prompt_monitor.check_approval_prompts()
+
+    async def check_queued_continuation_prompts(self) -> int:
+        """Submit queued Gobby continuation prompts."""
+        return await self._terminal_prompt_monitor.check_queued_continuation_prompts()
 
     async def check_periodic_enters(self) -> int:
         """Periodically send Enter to active autonomous terminal agents."""

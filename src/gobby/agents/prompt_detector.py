@@ -73,6 +73,14 @@ class PromptDetector:
     # Key sequence to approve prompts whose visible text says Enter approves/proceeds.
     APPROVAL_DISMISS_KEYS = "\n"
     ENTER_KEY = "Enter"
+    QUEUED_CONTINUATION_PATTERNS: tuple[re.Pattern[str], ...] = (
+        re.compile(r"Continue working on your task", re.IGNORECASE),
+        re.compile(r"active Gobby step workflow is not complete", re.IGNORECASE),
+    )
+    QUEUED_MESSAGE_PROMPT_PATTERNS: tuple[re.Pattern[str], ...] = (
+        re.compile(r"queued messages", re.IGNORECASE),
+        re.compile(r"Press up to edit queued messages", re.IGNORECASE),
+    )
 
     def __init__(self) -> None:
         self._dismissed: set[str] = set()
@@ -103,6 +111,19 @@ class PromptDetector:
             return False
 
         return any(pattern.search(pane_output) for pattern in self.APPROVAL_ENTER_PATTERNS)
+
+    def detect_queued_continuation_prompt(self, pane_output: str) -> bool:
+        """Return True when a Gobby continuation message is queued at a CLI prompt."""
+        if not pane_output:
+            return False
+
+        has_continuation = any(
+            pattern.search(pane_output) for pattern in self.QUEUED_CONTINUATION_PATTERNS
+        )
+        if not has_continuation:
+            return False
+
+        return any(pattern.search(pane_output) for pattern in self.QUEUED_MESSAGE_PROMPT_PATTERNS)
 
     def record_loop_dismiss(self, run_id: str) -> int:
         """Record loop prompt dismissal. Returns the new count."""

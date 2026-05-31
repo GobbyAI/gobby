@@ -742,6 +742,45 @@ class TestPeriodicAgentTerminalEnter:
         )
 
     @pytest.mark.asyncio
+    async def test_submits_visible_queued_gobby_continuation_prompt(self) -> None:
+        mock_run_mgr = MagicMock()
+        mock_tmux = AsyncMock()
+        monitor = self._monitor(mock_run_mgr, mock_tmux, interval=30)
+        mock_run_mgr.list_active.return_value = [
+            self._run(run_id="run-claude", tmux_session_name="gobby-claude", provider="claude"),
+        ]
+        mock_tmux.capture_pane.return_value = (
+            "Continue working on your task. Your active Gobby step workflow is not complete.\n"
+            "Workflow: planner-steps. Current step: plan.\n"
+            "Press up to edit queued messages\n"
+        )
+        mock_tmux.send_keys.return_value = True
+
+        handled = await monitor.check_queued_continuation_prompts()
+        periodic_handled = await monitor.check_periodic_enters()
+
+        assert handled == 1
+        assert periodic_handled == 0
+        mock_tmux.send_keys.assert_called_once_with(
+            "gobby-claude",
+            PromptDetector.ENTER_KEY,
+            literal=False,
+        )
+
+    @pytest.mark.asyncio
+    async def test_queued_message_prompt_without_gobby_continuation_is_ignored(self) -> None:
+        mock_run_mgr = MagicMock()
+        mock_tmux = AsyncMock()
+        monitor = self._monitor(mock_run_mgr, mock_tmux)
+        mock_run_mgr.list_active.return_value = [self._run()]
+        mock_tmux.capture_pane.return_value = "Press up to edit queued messages\n"
+
+        handled = await monitor.check_queued_continuation_prompts()
+
+        assert handled == 0
+        mock_tmux.send_keys.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_periodic_enter_respects_interval_per_run(self) -> None:
         mock_run_mgr = MagicMock()
         mock_tmux = AsyncMock()
