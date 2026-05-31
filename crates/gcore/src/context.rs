@@ -86,7 +86,8 @@ impl CoreContext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{EnvOnlySource, TEST_ENV_LOCK};
+    use crate::config::{EnvOnlySource, TEST_ENV_LOCK, embedding_keys};
+    use std::collections::HashMap;
     use std::sync::MutexGuard;
 
     struct EnvGuard {
@@ -129,6 +130,31 @@ mod tests {
     impl Drop for EnvGuard {
         fn drop(&mut self) {
             self.clear();
+        }
+    }
+
+    struct TestConfigSource {
+        values: HashMap<&'static str, String>,
+    }
+
+    impl TestConfigSource {
+        fn with_values(values: impl IntoIterator<Item = (&'static str, &'static str)>) -> Self {
+            Self {
+                values: values
+                    .into_iter()
+                    .map(|(key, value)| (key, value.to_string()))
+                    .collect(),
+            }
+        }
+    }
+
+    impl ConfigSource for TestConfigSource {
+        fn config_value(&mut self, key: &str) -> Option<String> {
+            self.values.get(key).cloned()
+        }
+
+        fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
+            Ok(value.to_string())
         }
     }
 
@@ -179,9 +205,26 @@ mod tests {
             context.qdrant().and_then(|c| c.url.as_deref()),
             Some("http://env-qdrant:6333")
         );
-        let embedding = context.embedding().expect("embedding config");
-        assert_eq!(embedding.api_base, "http://env-embedding:11434");
-        assert_eq!(embedding.model, "env-model");
+        assert!(context.embedding().is_none());
         assert!(!context.daemon_url().is_empty());
+    }
+
+    #[test]
+    fn build_with_config_source_embedding() {
+        let env = EnvGuard::new();
+        env.set("GOBBY_EMBEDDING_URL", "http://env-embedding:11434");
+        env.set("GOBBY_EMBEDDING_MODEL", "env-model");
+
+        let mut source = TestConfigSource::with_values([
+            (embedding_keys::AI_API_BASE, "http://config-embedding:11434"),
+            (embedding_keys::AI_MODEL, "config-model"),
+        ]);
+        let root = std::path::PathBuf::from("/tmp/gobby-project");
+
+        let context = CoreContext::build(root, "project-id".to_string(), None, &mut source);
+
+        let embedding = context.embedding().expect("embedding config");
+        assert_eq!(embedding.api_base, "http://config-embedding:11434");
+        assert_eq!(embedding.model, "config-model");
     }
 }
