@@ -411,12 +411,13 @@ def _infer_from_config_or_none(*, dim: Any, api_key: Any, model: Any, api_base: 
     normalized_api_key = _strip_config_string(api_key)
     normalized_model = _strip_config_string(model)
     normalized_api_base = _strip_config_string(api_base)
+    dim_int = normalized_dim if isinstance(normalized_dim, int) else None
     if isinstance(normalized_dim, str) and normalized_dim:
         try:
-            normalized_dim = int(normalized_dim)
+            dim_int = int(normalized_dim)
         except ValueError:
             pass
-    if normalized_dim == 0:
+    if dim_int == 0:
         return "none"
     if normalized_api_base in (None, "") and normalized_api_key:
         from gobby.search.embeddings import is_openai_cloud_embedding_model

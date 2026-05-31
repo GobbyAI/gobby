@@ -333,12 +333,12 @@ class TranscriptReader:
 
         try:
             resolved = await self._resolve_windowable(session, session_id)
-        except DecompressionError as e:
-            logger.warning(f"Failed to read archive for session {session_id}: {e}")
+            if resolved.kind == "native":
+                return len(await self._get_parsed_messages_from_file(session_id))
+        except (DecompressionError, TranscriptTooLargeError) as e:
+            logger.warning(f"Failed to count transcript messages for session {session_id}: {e}")
             return 0
 
-        if resolved.kind == "native":
-            return len(await self._get_parsed_messages_from_file(session_id))
         if resolved.index is not None:
             return resolved.index.parsed_message_count
         return 0

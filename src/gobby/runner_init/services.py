@@ -7,7 +7,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from gobby.config.persistence import is_falkordb_enabled
+from gobby.config.embedding_keys import AI_EMBEDDING_API_BASE_KEY, AI_EMBEDDING_API_KEY_KEY
+from gobby.config.persistence import EmbeddingsConfig, is_falkordb_enabled
 from gobby.llm import create_llm_service
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.memory.manager import MemoryManager
@@ -48,25 +49,17 @@ def _init_llm_service(runner: GobbyRunner) -> None:
         logger.error(f"Failed to initialize LLM service: {e}")
 
 
-def _validate_memory_embedding_config(emb_cfg: Any) -> None:
-    model = getattr(emb_cfg, "model", "")
-    api_key = getattr(emb_cfg, "api_key", None)
-    api_base = getattr(emb_cfg, "api_base", None)
-    if not isinstance(model, str):
-        model = ""
-    if not isinstance(api_key, str):
-        api_key = None
-    if not isinstance(api_base, str):
-        api_base = None
+def _validate_memory_embedding_config(emb_cfg: EmbeddingsConfig) -> None:
     if is_embedding_configured(
-        model=model,
-        api_key=api_key,
-        api_base=api_base,
+        model=emb_cfg.model,
+        api_key=emb_cfg.api_key,
+        api_base=emb_cfg.api_base,
     ):
         return
     raise ValueError(
         "Embedding configuration is incomplete for memory embeddings: set "
-        "embeddings.api_base for local embeddings or embeddings.api_key for OpenAI embeddings"
+        f"{AI_EMBEDDING_API_BASE_KEY} for local embeddings or "
+        f"{AI_EMBEDDING_API_KEY_KEY} for OpenAI embeddings"
     )
 
 

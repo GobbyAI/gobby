@@ -80,6 +80,85 @@ def test_embeddings_namespace_migration_is_idempotent(temp_db: HubDatabase) -> N
     assert copied == {"id": expected_id, "encrypted_value": "encrypted-value"}
 
 
+def test_embeddings_namespace_migration_preserves_existing_canonical_values(
+    temp_db: HubDatabase,
+) -> None:
+    store = ConfigStore(temp_db)
+    for key, value in {
+        "embeddings.api_base": "http://legacy.local/v1",
+        "embeddings.model": "legacy-model",
+        "embeddings.dim": 768,
+    }.items():
+        temp_db.execute(
+            """
+            INSERT INTO config_store (key, value, source, is_secret, updated_at)
+            VALUES (%s, %s, 'legacy', FALSE, NOW())
+            """,
+            (key, json.dumps(value)),
+        )
+    store.set_many(
+        {
+            "ai.embeddings.api_base": "http://canonical.local/v1",
+            "ai.embeddings.model": "canonical-model",
+            "ai.embeddings.dim": 1024,
+            "ai.embeddings.api_key": "$secret:canonical_key",
+        }
+    )
+    temp_db.execute(
+        """
+        INSERT INTO secrets (id, name, encrypted_value, category, description, created_at, updated_at)
+        VALUES ('legacy-secret', 'embeddings_api_key', 'encrypted-value', 'general', 'legacy', NOW(), NOW())
+        """
+    )
+    temp_db.execute(
+        """
+        INSERT INTO config_store (key, value, source, is_secret, updated_at)
+        VALUES (%s, %s, 'legacy', TRUE, NOW())
+        """,
+        ("embeddings.api_key", json.dumps("$secret:embeddings_api_key")),
+    )
+
+    migration = (MIGRATIONS_DIR / "271_embeddings_namespace_to_ai_embeddings.sql").read_text(
+        encoding="utf-8"
+    )
+    with temp_db.transaction() as txn:
+        _execute_sql_script(txn, migration)
+
+    assert store.get("ai.embeddings.api_base") == "http://canonical.local/v1"
+    assert store.get("ai.embeddings.model") == "canonical-model"
+    assert store.get("ai.embeddings.dim") == 1024
+    assert store.get("ai.embeddings.api_key") == "$secret:canonical_key"
+    assert not any(key.startswith("embeddings.") for key in store.list_keys())
+
+
+def test_embeddings_namespace_migration_creates_config_for_secret_only_state(
+    temp_db: HubDatabase,
+) -> None:
+    store = ConfigStore(temp_db)
+    temp_db.execute(
+        """
+        INSERT INTO secrets (id, name, encrypted_value, category, description, created_at, updated_at)
+        VALUES ('legacy-secret', 'embeddings_api_key', 'encrypted-value', 'general', 'legacy', NOW(), NOW())
+        """
+    )
+
+    migration = (MIGRATIONS_DIR / "271_embeddings_namespace_to_ai_embeddings.sql").read_text(
+        encoding="utf-8"
+    )
+    with temp_db.transaction() as txn:
+        _execute_sql_script(txn, migration)
+
+    assert store.get("ai.embeddings.api_key") == "$secret:embeddings_api_key"
+    row = temp_db.fetchone(
+        """
+        SELECT key, is_secret
+        FROM config_store
+        WHERE key = 'ai.embeddings.api_key'
+        """
+    )
+    assert row == {"key": "ai.embeddings.api_key", "is_secret": True}
+
+
 def test_embedding_provider_cleanup_migration_is_idempotent(temp_db: HubDatabase) -> None:
     store = ConfigStore(temp_db)
     for key in ("ai.embeddings.provider", "embeddings.provider"):
@@ -92,9 +171,9 @@ def test_embedding_provider_cleanup_migration_is_idempotent(temp_db: HubDatabase
         )
     store.set("ai.embeddings.model", "nomic-embed-text")
 
-    migration = (
-        Path("src/gobby/storage/migrations/272_drop_embedding_provider_config.sql")
-    ).read_text(encoding="utf-8")
+    migration = (MIGRATIONS_DIR / "272_drop_embedding_provider_config.sql").read_text(
+        encoding="utf-8"
+    )
     for _ in range(2):
         with temp_db.transaction() as txn:
             _execute_sql_script(txn, migration)

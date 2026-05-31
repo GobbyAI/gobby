@@ -66,11 +66,12 @@ def _log_session_start_timing(
         key=lambda item: item[1],
         default=("total", timings.get("total", 0)),
     )
-    if timings["total"] >= SLOW_SESSION_START_THRESHOLD_MS:
+    total_ms = timings.get("total", 0)
+    if total_ms >= SLOW_SESSION_START_THRESHOLD_MS:
         handler.logger.info(
             "SESSION_START slow: "
             f"component={slow_component} duration={slow_ms}ms "
-            f"total={timings['total']}ms source={session_source} session={session_id}",
+            f"total={total_ms}ms source={session_source} session={session_id}",
         )
     else:
         handler.logger.debug(timing_message)

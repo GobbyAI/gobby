@@ -13,7 +13,6 @@ from pydantic import ValidationError
 from gobby.config.app import DaemonConfig, deep_merge
 from gobby.config.embedding_keys import (
     runtime_embedding_config_entries_to_storage,
-    runtime_embedding_config_keys_to_storage,
     storage_embedding_config_entries_to_runtime,
 )
 from gobby.servers.routes.configuration_context import ConfigurationRouteContext
@@ -74,7 +73,6 @@ def _apply_transactional_changes(
     plain_entries: dict[str, Any],
 ) -> tuple[int, int]:
     config_store = context.get_config_store()
-    storage_masked_secret_keys = runtime_embedding_config_keys_to_storage(masked_secret_keys)
     storage_secret_reference_entries = runtime_embedding_config_entries_to_storage(
         secret_reference_entries
     )
@@ -82,7 +80,7 @@ def _apply_transactional_changes(
     storage_plain_entries = runtime_embedding_config_entries_to_storage(plain_entries)
     count = 0
     with config_store.db.transaction():
-        deleted_count = delete_all_except(config_store, storage_masked_secret_keys)
+        deleted_count = delete_all_except(config_store, masked_secret_keys)
         if storage_secret_reference_entries:
             count += config_store.set_many(storage_secret_reference_entries, source="user")
             mark_secret_keys(config_store, set(storage_secret_reference_entries))

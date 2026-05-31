@@ -1095,3 +1095,32 @@ class TestTranscriptReaderWindowed:
 
         with pytest.raises(TranscriptTooLargeError):
             await reader.get_messages("sess-1", limit=50)
+
+    @pytest.mark.asyncio
+    async def test_count_native_json_size_guard_returns_zero(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        json_path = tmp_path / "session-big.json"
+        json_path.write_text(
+            json.dumps(
+                {
+                    "sessionId": "big-uuid",
+                    "messages": [
+                        {"type": "user", "content": "hi", "timestamp": "2025-03-23T10:00:00Z"},
+                    ],
+                }
+            )
+        )
+        session = MagicMock()
+        session.source = "gemini"
+        session.transcript_path = str(json_path)
+        session.external_id = None
+        session_manager = MagicMock()
+        session_manager.get.return_value = session
+
+        monkeypatch.setattr("gobby.sessions.transcript_reader.NATIVE_JSON_MAX_BYTES", 1)
+        reader = TranscriptReader(session_manager)
+
+        assert await reader.count_messages("sess-1") == 0

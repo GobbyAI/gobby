@@ -39,6 +39,11 @@ AI_EMBEDDING_CONFIG_KEYS = (
     AI_EMBEDDING_DIM_KEY,
     AI_EMBEDDING_QUERY_PREFIX_KEY,
 )
+RUNTIME_EMBEDDING_CONFIG_KEYS = tuple(
+    f"{RUNTIME_EMBEDDINGS_CONFIG_PREFIX}.{field}" for field in EMBEDDING_CONFIG_FIELDS
+)
+AI_EMBEDDING_CONFIG_KEY_SET = frozenset(AI_EMBEDDING_CONFIG_KEYS)
+RUNTIME_EMBEDDING_CONFIG_KEY_SET = frozenset(RUNTIME_EMBEDDING_CONFIG_KEYS)
 
 EMBEDDING_API_KEY_SECRET_NAME = "embeddings_api_key"
 EMBEDDING_API_KEY_SECRET_REF = f"$secret:{EMBEDDING_API_KEY_SECRET_NAME}"
@@ -58,11 +63,11 @@ def runtime_embedding_key(field: str) -> str:
 
 
 def is_runtime_embedding_config_key(key: str) -> bool:
-    return key in {runtime_embedding_key(field) for field in EMBEDDING_CONFIG_FIELDS}
+    return key in RUNTIME_EMBEDDING_CONFIG_KEY_SET
 
 
 def is_ai_embedding_config_key(key: str) -> bool:
-    return key in {canonical_embedding_key(field) for field in EMBEDDING_CONFIG_FIELDS}
+    return key in AI_EMBEDDING_CONFIG_KEY_SET
 
 
 def is_removed_embedding_config_store_key(key: str) -> bool:

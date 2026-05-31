@@ -48,11 +48,7 @@ WHERE key IN (
     'embeddings.query_prefix',
     'embeddings.provider'
 )
-ON CONFLICT (key) DO UPDATE SET
-    value = EXCLUDED.value,
-    source = EXCLUDED.source,
-    is_secret = EXCLUDED.is_secret,
-    updated_at = EXCLUDED.updated_at;
+ON CONFLICT (key) DO NOTHING;
 
 INSERT INTO config_store (key, value, source, is_secret, updated_at)
 SELECT
@@ -63,11 +59,18 @@ SELECT
     NOW()
 FROM config_store
 WHERE key = 'embeddings.api_key'
-ON CONFLICT (key) DO UPDATE SET
-    value = EXCLUDED.value,
-    source = EXCLUDED.source,
-    is_secret = TRUE,
-    updated_at = EXCLUDED.updated_at;
+ON CONFLICT (key) DO NOTHING;
+
+INSERT INTO config_store (key, value, source, is_secret, updated_at)
+SELECT
+    'ai.embeddings.api_key',
+    '"$secret:embeddings_api_key"',
+    'user',
+    TRUE,
+    NOW()
+FROM secrets
+WHERE name = 'embeddings_api_key'
+ON CONFLICT (key) DO NOTHING;
 
 DELETE FROM config_store
 WHERE key IN (

@@ -1,6 +1,7 @@
 """Tests for ConfigStore CRUD operations and flatten/unflatten utilities."""
 
 from contextlib import nullcontext
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -133,12 +134,12 @@ class TestConfigStore:
     @pytest.mark.parametrize("key", [runtime_embedding_key("api_key"), "ai.embeddings.provider"])
     def test_set_secret_rejects_removed_embedding_keys(self, store: ConfigStore, key: str):
         with pytest.raises(ValueError, match="Embedding"):
-            store.set_secret(key, "secret", object())  # type: ignore[arg-type]
+            store.set_secret(key, "secret", MagicMock())
 
     @pytest.mark.parametrize("key", [runtime_embedding_key("api_key"), "ai.embeddings.provider"])
     def test_clear_secret_rejects_removed_embedding_keys(self, store: ConfigStore, key: str):
         with pytest.raises(ValueError, match="Embedding"):
-            store.clear_secret(key, object())  # type: ignore[arg-type]
+            store.clear_secret(key, MagicMock())
 
     def test_set_allows_secret_reference(self, store: ConfigStore):
         store.set(AI_EMBEDDING_API_KEY_KEY, "$secret:embeddings_api_key")

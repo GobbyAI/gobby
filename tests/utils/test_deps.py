@@ -453,6 +453,22 @@ def test_get_configured_embedding_provider_detects_disabled_state(temp_db) -> No
 
 
 @pytest.mark.unit
+def test_get_configured_embedding_provider_ignores_invalid_dim_string(temp_db) -> None:
+    from gobby.storage.config_store import ConfigStore
+
+    store = ConfigStore(temp_db)
+    store.set_many(
+        {
+            AI_EMBEDDING_API_BASE_KEY: None,
+            AI_EMBEDDING_DIM_KEY: "invalid",
+        }
+    )
+
+    with _patch_runtime_hub_database(temp_db):
+        assert deps.get_configured_embedding_provider() is None
+
+
+@pytest.mark.unit
 def test_get_configured_embedding_provider_returns_none_when_db_missing(
     monkeypatch, tmp_path
 ) -> None:

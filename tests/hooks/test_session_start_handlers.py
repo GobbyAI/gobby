@@ -13,6 +13,7 @@ import pytest
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.event_handlers._session_start import AgentActivationResult
 from gobby.hooks.event_handlers._session_start.context import classify_session_start_context
+from gobby.hooks.event_handlers._session_start.flow import _log_session_start_timing
 from gobby.hooks.events import HookEventType
 from gobby.workflows.state_manager import SessionVariableManager
 
@@ -44,6 +45,27 @@ def _session_variable_handler(db: Any) -> MagicMock:
     handler._session_manager = SimpleNamespace(db=db)
     handler.logger = MagicMock()
     return handler
+
+
+def test_log_session_start_timing_tolerates_missing_total() -> None:
+    debug_messages: list[str] = []
+    info_messages: list[str] = []
+    handler = SimpleNamespace(
+        logger=SimpleNamespace(
+            debug=debug_messages.append,
+            info=info_messages.append,
+        )
+    )
+
+    _log_session_start_timing(
+        handler,
+        session_source="codex",
+        session_id="sess-1",
+        timings={"resolve": 5},
+    )
+
+    assert debug_messages == ["SESSION_START timing [codex]: resolve=5ms"]
+    assert info_messages == []
 
 
 class TestSessionHandlers:
