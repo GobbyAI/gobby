@@ -82,3 +82,11 @@ Committed the final follow-up fix as `943814fb2` and closed task `#15389`. I war
 Planning attempt 3 used planner agent `run-fd30a0aa500a` on target task `#354`. The agent became idle at a Claude prompt after Gobby had queued "continue working" reminders. The agent eventually failed with `Agent idle: idle after max reprompt attempts`, and the target task escalated with reason `planning_work_failed:max`. This was not a real user decision: the planner was expected to continue or be relaunched by automation.
 
 I de-escalated target task `#354` in `gobby-cli` with `reset_stage_attempts=true`, leaving the planning stage `ready` with `review_round_count=2` and `max_review_rounds=99`. `explain_dispatch` then reported the task eligible and proposed `start_stage`, with no active mutex and no active agents. I did not tick the dispatcher manually; the daemon should relaunch the planner on its next automation loop.
+
+## 2026-05-31 04:14 CDT - Planner workflow failure recovered by automation
+
+After the de-escalation above, the daemon relaunched planner agent `run-b4b3d7343347` for planning round 3. Live agent telemetry showed the run had made progress, increasing from 13 to 18 tool calls, but the terminal pane later showed the planner at a Claude prompt with queued "Continue working" messages. The run then ended with `Agent session ended before step workflow completed; workflow=planner-steps; current_step=plan` and its terminal `wait_for_agent` result reported zero tool calls and zero turns.
+
+For a short period, target task `#354` still showed `planning:in_progress` and was claimed by the ended child session even though `get_build_status` listed no active agents. I did not tick the dispatcher or manually mutate the target task. On the next automation interval, the daemon recovered on its own and launched replacement planner `run-b49368ec5915` for the same target task.
+
+Resolution: the target build is running again under the replacement planner. The contradictory terminal telemetry is being treated as a separate Gobby bug candidate because live status showed real tool calls but the completed wait result fell back to zero.
