@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from collections.abc import AsyncGenerator
 from types import SimpleNamespace
@@ -10,6 +11,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedResponse
+from qdrant_client.models import Distance, VectorParams
 
 from gobby.memory import vectorstore as vectorstore_module
 from gobby.memory.vectorstore import (
@@ -51,6 +53,39 @@ async def vector_store(tmp_path) -> AsyncGenerator[VectorStore]:
 def _make_embedding(seed: float = 1.0, dim: int = 4) -> list[float]:
     """Create a deterministic embedding vector."""
     return [seed * (i + 1) / dim for i in range(dim)]
+
+
+def _collection_info(dim: int) -> SimpleNamespace:
+    return SimpleNamespace(
+        config=SimpleNamespace(
+            params=SimpleNamespace(
+                vectors=VectorParams(size=dim, distance=Distance.COSINE),
+            ),
+        ),
+    )
+
+
+class _TrackingAsyncLock:
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+        self.enter_count = 0
+        self.active_count = 0
+        self.max_active_count = 0
+
+    async def __aenter__(self) -> None:
+        await self._lock.acquire()
+        self.enter_count += 1
+        self.active_count += 1
+        self.max_active_count = max(self.max_active_count, self.active_count)
+
+    async def __aexit__(
+        self,
+        exc_type: object,
+        exc: object,
+        traceback: object,
+    ) -> None:
+        self.active_count -= 1
+        self._lock.release()
 
 
 @pytest.mark.asyncio
@@ -321,6 +356,152 @@ async def test_rebuild(vector_store: VectorStore) -> None:
     # Old data should be gone, new data present
     assert await vector_store.count() == 2
     assert call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_rebuild_same_dimension_does_not_recreate_collection(
+    vector_store: VectorStore,
+) -> None:
+    await vector_store.upsert(MEM_1, _make_embedding(1.0), {"content": "old"})
+    client = vector_store._client
+    assert client is not None
+
+    async def embed_fn(_text: str) -> list[float]:
+        return _make_embedding()
+
+    with (
+        patch.object(client, "delete_collection", wraps=client.delete_collection) as delete_spy,
+        patch.object(client, "create_collection", wraps=client.create_collection) as create_spy,
+    ):
+        await vector_store.rebuild([{"id": MEM_A, "content": "alpha"}], embed_fn)
+
+    assert set(await vector_store.scroll_ids()) == {MEM_A}
+    assert await vector_store.count() == 1
+    delete_spy.assert_not_called()
+    create_spy.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_rebuild_calls_are_serialized() -> None:
+    store = VectorStore(collection_name="mock_memories", embedding_dim=4)
+    tracking_lock = _TrackingAsyncLock()
+    store._rebuild_lock = tracking_lock
+    client = MagicMock()
+    client.collection_exists.return_value = True
+    client.get_collection.return_value = _collection_info(4)
+    client.scroll.return_value = ([], None)
+    store._client = client
+
+    first_embed_started = asyncio.Event()
+    release_first_embed = asyncio.Event()
+    embed_call_count = 0
+
+    async def embed_fn(_text: str) -> list[float]:
+        nonlocal embed_call_count
+        embed_call_count += 1
+        if embed_call_count == 1:
+            first_embed_started.set()
+            await release_first_embed.wait()
+        return _make_embedding()
+
+    first_rebuild = asyncio.create_task(
+        store.rebuild([{"id": MEM_A, "content": "alpha"}], embed_fn)
+    )
+    await first_embed_started.wait()
+    second_rebuild = asyncio.create_task(
+        store.rebuild([{"id": MEM_B, "content": "beta"}], embed_fn)
+    )
+    release_first_embed.set()
+    await asyncio.gather(first_rebuild, second_rebuild)
+
+    assert tracking_lock.enter_count == 2
+    assert tracking_lock.max_active_count == 1
+    assert client.upsert.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_create_collection_conflict_is_idempotent_for_expected_dimension() -> None:
+    store = VectorStore(collection_name="mock_memories", embedding_dim=4)
+    client = MagicMock()
+    client.collection_exists.return_value = False
+    client.create_collection.side_effect = UnexpectedResponse(
+        409,
+        "Conflict",
+        b"exists",
+        httpx.Headers(),
+    )
+    client.get_collection.return_value = _collection_info(4)
+    store._client = client
+
+    await store.ensure_collection("mock_memories", embedding_dim=4)
+
+    assert store._client is client
+    assert store._next_retry_at == 0.0
+    client.get_collection.assert_called_once_with("mock_memories")
+
+
+@pytest.mark.asyncio
+async def test_create_collection_conflict_rejects_unexpected_dimension() -> None:
+    store = VectorStore(collection_name="mock_memories", embedding_dim=4)
+    client = MagicMock()
+    client.collection_exists.return_value = False
+    client.create_collection.side_effect = UnexpectedResponse(
+        409,
+        "Conflict",
+        b"exists",
+        httpx.Headers(),
+    )
+    client.get_collection.return_value = _collection_info(5)
+    store._client = client
+
+    with pytest.raises(UnexpectedResponse) as exc_info:
+        await store.ensure_collection("mock_memories", embedding_dim=4)
+    assert exc_info.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_rebuild_same_dimension_removes_stale_point_ids(
+    vector_store: VectorStore,
+) -> None:
+    await vector_store.upsert(MEM_1, _make_embedding(1.0), {"content": "stale"})
+    await vector_store.upsert(MEM_2, _make_embedding(2.0), {"content": "keep old"})
+
+    async def embed_fn(_text: str) -> list[float]:
+        return _make_embedding(3.0)
+
+    await vector_store.rebuild([{"id": MEM_2, "content": "keep new"}], embed_fn)
+
+    assert set(await vector_store.scroll_ids()) == {MEM_2}
+    assert await vector_store.count() == 1
+
+
+@pytest.mark.asyncio
+async def test_rebuild_dimension_mismatch_recreates_under_lifecycle_lock() -> None:
+    store = VectorStore(collection_name="mock_memories", embedding_dim=4)
+    client = MagicMock()
+    client.collection_exists.return_value = True
+    client.get_collection.return_value = _collection_info(3)
+    store._client = client
+
+    def delete_collection(*, collection_name: str) -> None:
+        assert collection_name == "mock_memories"
+        assert store._collection_lifecycle_lock.locked()
+
+    def create_collection(*, collection_name: str, vectors_config: VectorParams) -> None:
+        assert collection_name == "mock_memories"
+        assert vectors_config.size == 4
+        assert store._collection_lifecycle_lock.locked()
+
+    client.delete_collection.side_effect = delete_collection
+    client.create_collection.side_effect = create_collection
+
+    async def embed_fn(_text: str) -> list[float]:
+        return _make_embedding()
+
+    await store.rebuild([], embed_fn)
+
+    client.delete_collection.assert_called_once_with(collection_name="mock_memories")
+    client.create_collection.assert_called_once()
 
 
 @pytest.mark.asyncio

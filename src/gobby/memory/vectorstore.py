@@ -115,6 +115,8 @@ class VectorStore:
         self._embedding_dim = embedding_dim
         self._client: QdrantClient | None = None
         self._init_lock = asyncio.Lock()
+        self._rebuild_lock = asyncio.Lock()
+        self._collection_lifecycle_lock = asyncio.Lock()
         self._retry_backoff_seconds = _INITIAL_RETRY_BACKOFF_SECONDS
         self._next_retry_at = 0.0
 
@@ -144,39 +146,41 @@ class VectorStore:
             else:
                 self._client = await asyncio.to_thread(QdrantClient, path=self._path)
 
-        # Check if collection exists; create if not
         client = self._client
         if client is None:
             raise RuntimeError(_UNINITIALIZED_MESSAGE)
-        exists = await asyncio.to_thread(client.collection_exists, self._collection_name)
-        if not exists:
-            await asyncio.to_thread(
-                client.create_collection,
-                collection_name=self._collection_name,
-                vectors_config=VectorParams(size=self._embedding_dim, distance=Distance.COSINE),
-            )
-            logger.info(
-                f"Created Qdrant collection '{self._collection_name}' "
-                f"(dim={self._embedding_dim}, distance=cosine)"
-            )
-        else:
-            # Check for dimension mismatch between config and existing collection
-            try:
-                info = await asyncio.to_thread(client.get_collection, self._collection_name)
-                vectors_cfg = info.config.params.vectors
-                existing_dim = _vector_size(vectors_cfg)
-                if existing_dim is not None and existing_dim != self._embedding_dim:
-                    logger.error(
-                        f"Embedding dimension mismatch for collection '{self._collection_name}': "
-                        f"configured={self._embedding_dim}, existing={existing_dim}. "
-                        f"Either change embedding_dim in config to {existing_dim}, "
-                        f"or run 'gobby memory rebuild' to re-embed with the new model."
-                    )
-            except Exception as e:
-                self._raise_if_recoverable(e)
-                logger.warning(
-                    f"Could not verify collection dimensions for '{self._collection_name}': {e}"
+        async with self._collection_lifecycle_lock:
+            exists = await asyncio.to_thread(client.collection_exists, self._collection_name)
+            if not exists:
+                created = await self._create_collection(
+                    client,
+                    self._collection_name,
+                    self._embedding_dim,
                 )
+                if created:
+                    logger.info(
+                        f"Created Qdrant collection '{self._collection_name}' "
+                        f"(dim={self._embedding_dim}, distance=cosine)"
+                    )
+            else:
+                # Check for dimension mismatch between config and existing collection.
+                try:
+                    existing_dim = await self._read_collection_dimension(
+                        client,
+                        self._collection_name,
+                    )
+                    if existing_dim is not None and existing_dim != self._embedding_dim:
+                        logger.error(
+                            f"Embedding dimension mismatch for collection '{self._collection_name}': "
+                            f"configured={self._embedding_dim}, existing={existing_dim}. "
+                            f"Either change embedding_dim in config to {existing_dim}, "
+                            f"or run 'gobby memory rebuild' to re-embed with the new model."
+                        )
+                except Exception as e:
+                    self._raise_if_recoverable(e)
+                    logger.warning(
+                        f"Could not verify collection dimensions for '{self._collection_name}': {e}"
+                    )
 
     async def _ensure_initialized(self) -> QdrantClient:
         """Return an initialized client, lazily retrying after recoverable failures."""
@@ -233,6 +237,62 @@ class VectorStore:
     def _reset_retry(self) -> None:
         self._retry_backoff_seconds = _INITIAL_RETRY_BACKOFF_SECONDS
         self._next_retry_at = 0.0
+
+    async def _read_collection_dimension(
+        self,
+        client: QdrantClient,
+        collection_name: str,
+    ) -> int | None:
+        info = await asyncio.to_thread(client.get_collection, collection_name)
+        return _vector_size(info.config.params.vectors)
+
+    async def _collection_has_expected_dimension(
+        self,
+        client: QdrantClient,
+        collection_name: str,
+        dim: int,
+    ) -> bool:
+        try:
+            return await self._read_collection_dimension(client, collection_name) == dim
+        except Exception as exc:
+            logger.warning(
+                "Could not verify Qdrant collection '%s' after create conflict: %s",
+                collection_name,
+                exc,
+            )
+            return False
+
+    async def _create_collection(
+        self,
+        client: QdrantClient,
+        collection_name: str,
+        dim: int,
+    ) -> bool:
+        try:
+            await asyncio.to_thread(
+                client.create_collection,
+                collection_name=collection_name,
+                vectors_config=VectorParams(size=dim, distance=Distance.COSINE),
+            )
+            return True
+        except UnexpectedResponse as exc:
+            is_create_conflict = getattr(exc, "status_code", None) == 409
+            if is_create_conflict and await self._collection_has_expected_dimension(
+                client,
+                collection_name,
+                dim,
+            ):
+                logger.info(
+                    "Qdrant collection '%s' already exists with expected dim=%s",
+                    collection_name,
+                    dim,
+                )
+                return False
+            self._raise_if_recoverable(exc)
+            raise
+        except Exception as exc:
+            self._raise_if_recoverable(exc)
+            raise
 
     async def upsert(
         self,
@@ -448,7 +508,7 @@ class VectorStore:
         client = await self._ensure_initialized()
         resolved_name = collection_name or self._collection_name
         try:
-            info = await asyncio.to_thread(client.get_collection, resolved_name)
+            return await self._read_collection_dimension(client, resolved_name)
         except Exception as exc:
             self._raise_if_recoverable(exc)
             logger.warning(
@@ -457,7 +517,48 @@ class VectorStore:
                 exc,
             )
             return None
-        return _vector_size(info.config.params.vectors)
+
+    async def _prepare_collection_for_rebuild(self, client: QdrantClient) -> bool:
+        """Ensure rebuild collection exists; return true when it is known empty."""
+        try:
+            exists = await asyncio.to_thread(client.collection_exists, self._collection_name)
+            if not exists:
+                created = await self._create_collection(
+                    client,
+                    self._collection_name,
+                    self._embedding_dim,
+                )
+                if created:
+                    logger.info(
+                        "Created Qdrant collection '%s' for rebuild (dim=%s)",
+                        self._collection_name,
+                        self._embedding_dim,
+                    )
+                return created
+
+            existing_dim = await self._read_collection_dimension(client, self._collection_name)
+            if existing_dim is not None and existing_dim != self._embedding_dim:
+                await asyncio.to_thread(
+                    client.delete_collection,
+                    collection_name=self._collection_name,
+                )
+                created = await self._create_collection(
+                    client,
+                    self._collection_name,
+                    self._embedding_dim,
+                )
+                if created:
+                    logger.info(
+                        "Recreated Qdrant collection '%s' (dim changed %s->%s)",
+                        self._collection_name,
+                        existing_dim,
+                        self._embedding_dim,
+                    )
+                return created
+        except Exception as exc:
+            self._raise_if_recoverable(exc)
+            raise
+        return False
 
     async def ensure_collection(
         self,
@@ -476,65 +577,59 @@ class VectorStore:
         """
         client = await self._ensure_initialized()
         dim = embedding_dim or self._embedding_dim
-        try:
-            exists = await asyncio.to_thread(client.collection_exists, collection_name)
-        except Exception as exc:
-            self._raise_if_recoverable(exc)
-            raise
-        if not exists:
+        async with self._collection_lifecycle_lock:
             try:
-                await asyncio.to_thread(
-                    client.create_collection,
-                    collection_name=collection_name,
-                    vectors_config=VectorParams(size=dim, distance=Distance.COSINE),
-                )
+                exists = await asyncio.to_thread(client.collection_exists, collection_name)
             except Exception as exc:
                 self._raise_if_recoverable(exc)
                 raise
-            logger.info(f"Created Qdrant collection '{collection_name}' (dim={dim})")
-        else:
-            try:
-                info = await asyncio.to_thread(client.get_collection, collection_name)
-                vectors_cfg = info.config.params.vectors
-                existing_dim = _vector_size(vectors_cfg)
-                if existing_dim is not None and existing_dim != dim:
-                    if not recreate_on_mismatch:
-                        logger.warning(
-                            "Qdrant collection '%s' dimension mismatch "
-                            "(expected_dim=%s, observed_dim=%s); leaving unchanged",
-                            collection_name,
-                            dim,
-                            existing_dim,
+            if not exists:
+                created = await self._create_collection(client, collection_name, dim)
+                if created:
+                    logger.info(f"Created Qdrant collection '{collection_name}' (dim={dim})")
+            else:
+                try:
+                    existing_dim = await self._read_collection_dimension(client, collection_name)
+                    if existing_dim is not None and existing_dim != dim:
+                        if not recreate_on_mismatch:
+                            logger.warning(
+                                "Qdrant collection '%s' dimension mismatch "
+                                "(expected_dim=%s, observed_dim=%s); leaving unchanged",
+                                collection_name,
+                                dim,
+                                existing_dim,
+                            )
+                            return
+                        await asyncio.to_thread(
+                            client.delete_collection,
+                            collection_name=collection_name,
                         )
-                        return
-                    # Auto-recreate with correct dimensions
-                    await asyncio.to_thread(
-                        client.delete_collection, collection_name=collection_name
-                    )
-                    await asyncio.to_thread(
-                        client.create_collection,
-                        collection_name=collection_name,
-                        vectors_config=VectorParams(size=dim, distance=Distance.COSINE),
-                    )
-                    logger.info(
-                        f"Recreated Qdrant collection '{collection_name}' "
-                        f"(dim changed {existing_dim}→{dim})"
-                    )
-            except Exception as e:
-                self._raise_if_recoverable(e)
-                logger.warning(f"Could not verify collection '{collection_name}': {e}")
+                        created = await self._create_collection(client, collection_name, dim)
+                        if created:
+                            logger.info(
+                                "Recreated Qdrant collection '%s' (dim changed %s->%s)",
+                                collection_name,
+                                existing_dim,
+                                dim,
+                            )
+                except VectorStoreUnavailableError:
+                    raise
+                except Exception as e:
+                    self._raise_if_recoverable(e)
+                    logger.warning(f"Could not verify collection '{collection_name}': {e}")
 
     async def delete_collection(self, collection_name: str) -> None:
         """Delete a collection by name."""
         client = await self._ensure_initialized()
-        try:
-            await asyncio.to_thread(
-                client.delete_collection,
-                collection_name=collection_name,
-            )
-        except Exception as exc:
-            self._raise_if_recoverable(exc)
-            raise
+        async with self._collection_lifecycle_lock:
+            try:
+                await asyncio.to_thread(
+                    client.delete_collection,
+                    collection_name=collection_name,
+                )
+            except Exception as exc:
+                self._raise_if_recoverable(exc)
+                raise
 
     async def count(self) -> int:
         """Return the number of points in the collection."""
@@ -571,51 +666,49 @@ class VectorStore:
     ) -> None:
         """Rebuild the collection from a list of memories.
 
-        Deletes all existing points and re-embeds from the provided memory list.
+        Re-embeds the provided memory list and removes stale existing points.
 
         Args:
             memories: List of dicts with at least 'id' and 'content' keys.
                       Other keys are stored as payload.
             embed_fn: Async function that takes content text and returns embedding.
         """
-        client = await self._ensure_initialized()
+        async with self._rebuild_lock:
+            client = await self._ensure_initialized()
+            async with self._collection_lifecycle_lock:
+                collection_reset = await self._prepare_collection_for_rebuild(client)
 
-        # Delete and recreate collection for clean rebuild
-        try:
-            await asyncio.to_thread(client.delete_collection, collection_name=self._collection_name)
-            await asyncio.to_thread(
-                client.create_collection,
-                collection_name=self._collection_name,
-                vectors_config=VectorParams(size=self._embedding_dim, distance=Distance.COSINE),
-            )
-        except Exception as exc:
-            self._raise_if_recoverable(exc)
-            raise
+            existing_ids = set[str]()
+            if not collection_reset:
+                existing_ids = set(await self.scroll_ids())
 
-        if not memories:
-            return
+            batch_size = 500
+            total = 0
+            incoming_ids: set[str] = set()
+            batch: list[tuple[str, list[float], dict[str, Any]]] = []
+            for mem in memories:
+                memory_id = mem["id"]
+                incoming_ids.add(memory_id)
+                content = mem["content"]
+                embedding = await embed_fn(content)
+                payload = {k: v for k, v in mem.items() if k not in ("id",)}
+                batch.append((memory_id, embedding, payload))
 
-        # Embed and upsert in batches (chunked to stay under Qdrant request size limit)
-        batch_size = 500
-        total = 0
-        batch: list[tuple[str, list[float], dict[str, Any]]] = []
-        for mem in memories:
-            content = mem["content"]
-            embedding = await embed_fn(content)
-            payload = {k: v for k, v in mem.items() if k not in ("id",)}
-            batch.append((mem["id"], embedding, payload))
+                if len(batch) >= batch_size:
+                    await self.batch_upsert(batch)
+                    total += len(batch)
+                    logger.info(f"Rebuild progress: {total}/{len(memories)} vectors")
+                    batch = []
 
-            if len(batch) >= batch_size:
+            if batch:
                 await self.batch_upsert(batch)
                 total += len(batch)
-                logger.info(f"Rebuild progress: {total}/{len(memories)} vectors")
-                batch = []
 
-        if batch:
-            await self.batch_upsert(batch)
-            total += len(batch)
+            stale_ids = sorted(existing_ids - incoming_ids)
+            if stale_ids:
+                await self.delete_many(stale_ids)
 
-        logger.info(f"Rebuilt {total} vectors in '{self._collection_name}'")
+            logger.info(f"Rebuilt {total} vectors in '{self._collection_name}'")
 
     async def scroll_ids(self, batch_size: int = 1000) -> list[str]:
         """Return all point IDs in the collection."""
