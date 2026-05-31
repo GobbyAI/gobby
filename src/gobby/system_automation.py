@@ -27,6 +27,8 @@ AUTOMATION_ENABLED_KEY = "system_loops.automation.enabled"
 AUTOMATION_INTERVAL_KEY = "system_loops.automation.interval_seconds"
 LEGACY_AUTOMATION_CRON_JOB_NAMES = ("gobby:dispatcher", "gobby:pipeline-heartbeat")
 DEFAULT_DIRECT_TICK_BURST = 3
+AUTOMATION_TICK_TIMEOUT_SECONDS = 120.0
+PROJECT_DISPATCH_TIMEOUT_SECONDS = 120.0
 
 
 @dataclass(frozen=True)
@@ -227,6 +229,26 @@ class SystemAutomationLoop:
             self._record_tick(summary, started)
             return summary
 
+        timeout_seconds = AUTOMATION_TICK_TIMEOUT_SECONDS
+        try:
+            return await asyncio.wait_for(
+                self._run_once_enabled(reason=reason, started=started),
+                timeout=timeout_seconds,
+            )
+        except TimeoutError:
+            error = f"automation_tick_timeout:{timeout_seconds:g}s"
+            logger.error("System automation tick timed out after %ss", timeout_seconds)
+            summary = AutomationTickSummary(reason=reason, error=error)
+            self._record_tick(summary, started)
+            self._last_error = error
+            return summary
+
+    async def _run_once_enabled(
+        self,
+        *,
+        reason: str,
+        started: float,
+    ) -> AutomationTickSummary:
         async with self._tick_lock:
             try:
                 maintenance = await self._run_pre_dispatch_maintenance()
@@ -278,6 +300,37 @@ class SystemAutomationLoop:
         if not await self._project_automation_enabled(project_id):
             return DispatcherTickSummary(reason="project_automation_paused")
 
+        timeout_seconds = PROJECT_DISPATCH_TIMEOUT_SECONDS
+        try:
+            return await asyncio.wait_for(
+                self._dispatch_project_once_enabled(
+                    project_id=project_id,
+                    reason=reason,
+                    max_ticks=max_ticks,
+                    max_actions=max_actions,
+                    max_active_agents=max_active_agents,
+                ),
+                timeout=timeout_seconds,
+            )
+        except TimeoutError:
+            logger.error(
+                "System automation project dispatch timed out after %ss",
+                timeout_seconds,
+                extra={"project_id": project_id, "reason": reason},
+            )
+            return DispatcherTickSummary(
+                reason=f"project_dispatch_timeout:{timeout_seconds:g}s",
+            )
+
+    async def _dispatch_project_once_enabled(
+        self,
+        *,
+        project_id: str,
+        reason: str,
+        max_ticks: int | None = None,
+        max_actions: int | None = None,
+        max_active_agents: int | None = None,
+    ) -> DispatcherTickSummary:
         await self._run_db_call(recover_safe_build_claims, self.db, project_id)
         summary = DispatcherTickSummary()
         for _ in range(max_ticks or DEFAULT_DIRECT_TICK_BURST):
@@ -346,6 +399,8 @@ class SystemAutomationLoop:
             "last_error": self._last_error,
             "last_tick": _tick_payload(last_tick) if last_tick is not None else None,
             "pending_projects": sorted(self._project_tasks.keys()),
+            "tick_timeout_seconds": AUTOMATION_TICK_TIMEOUT_SECONDS,
+            "project_dispatch_timeout_seconds": PROJECT_DISPATCH_TIMEOUT_SECONDS,
         }
 
     async def _run_loop(self) -> None:

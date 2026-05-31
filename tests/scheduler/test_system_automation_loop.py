@@ -130,6 +130,71 @@ async def test_eligible_project_work_calls_run_heartbeat(
 
 
 @pytest.mark.asyncio
+async def test_automation_tick_timeout_records_failure_and_releases_lock(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db: HubDatabase,
+) -> None:
+    monkeypatch.setattr("gobby.system_automation.AUTOMATION_TICK_TIMEOUT_SECONDS", 0.01)
+    loop = SystemAutomationLoop(
+        db=temp_db,
+        config=DaemonConfig(),
+        services=SimpleNamespace(startup_ready=True, shutdown_in_progress=False),
+        run_db=_run_inline,
+    )
+    release = asyncio.Event()
+
+    async def hang_pre_dispatch() -> object:
+        await release.wait()
+        return object()
+
+    loop._run_pre_dispatch_maintenance = hang_pre_dispatch  # type: ignore[method-assign]
+
+    summary = await loop.run_once(reason="timeout-test")
+
+    assert summary.error == "automation_tick_timeout:0.01s"
+    status = loop.status_snapshot()
+    assert status["last_error"] == "automation_tick_timeout:0.01s"
+    assert status["last_tick"]["error"] == "automation_tick_timeout:0.01s"
+    assert status["tick_count"] == 1
+
+    release.set()
+
+    async with asyncio.timeout(1):
+        async with loop._tick_lock:
+            pass
+
+
+@pytest.mark.asyncio
+async def test_project_dispatch_timeout_returns_summary(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db: HubDatabase,
+) -> None:
+    monkeypatch.setattr("gobby.system_automation.PROJECT_DISPATCH_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr("gobby.system_automation.is_project_automation_enabled", lambda *_: True)
+    monkeypatch.setattr("gobby.system_automation.recover_safe_build_claims", lambda *_: None)
+    loop = SystemAutomationLoop(
+        db=temp_db,
+        config=DaemonConfig(),
+        services=SimpleNamespace(startup_ready=True, shutdown_in_progress=False),
+        run_db=_run_inline,
+    )
+    release = asyncio.Event()
+
+    async def run_heartbeat(**kwargs: Any) -> object:
+        await release.wait()
+        return object()
+
+    monkeypatch.setattr("gobby.system_automation.run_heartbeat", run_heartbeat)
+
+    summary = await loop.dispatch_project_once(project_id="project-1", reason="timeout-test")
+
+    assert summary.reason == "project_dispatch_timeout:0.01s"
+    assert summary.ticks == 0
+    assert loop.status_snapshot()["dispatch_count"] == 0
+    release.set()
+
+
+@pytest.mark.asyncio
 async def test_multiple_projects_fan_out_independently(
     monkeypatch: pytest.MonkeyPatch,
     temp_db: HubDatabase,
