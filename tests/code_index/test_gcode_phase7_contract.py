@@ -124,11 +124,33 @@ def _assert_neo4j_transition_state(config: str, context: str) -> None:
 
 def test_phase7_config_tracks_falkordb_and_neo4j_cutover() -> None:
     """FalkorDB config is required; Neo4j config is transitional until 7.4."""
-    config = _read("crates/gcode/src/config.rs")
+    config = "\n".join(
+        (
+            _read("crates/gcode/src/config/context.rs"),
+            _read("crates/gcode/src/config/services.rs"),
+        )
+    )
+    config_facade = _read("crates/gcode/src/config.rs")
     context = _struct_body(config, "Context")
 
     _assert_falkordb_config(config, context)
     _assert_neo4j_transition_state(config, context)
+    _assert_contains_all(
+        config_facade,
+        (
+            "mod context;",
+            "pub use context::{",
+            "Context",
+            "FALKORDB_GRAPH_NAME",
+            "FALKORDB_HOST_CONFIG_KEY",
+            "FALKORDB_PASSWORD_CONFIG_KEY",
+            "FALKORDB_PORT_CONFIG_KEY",
+            "FalkorConfig",
+            "GOBBY_FALKORDB_HOST_ENV",
+            "GOBBY_FALKORDB_PASSWORD_ENV",
+            "GOBBY_FALKORDB_PORT_ENV",
+        ),
+    )
 
 
 def test_phase7_falkor_client_pins_core_graph_client_facade_contract() -> None:
@@ -189,7 +211,8 @@ def test_phase7_ports_all_eight_read_queries_without_unbound_numeric_params() ->
     """Phase 7.3 ports every Rust graph read helper to FalkorDB query semantics."""
     falkor = _read("crates/gcode/src/falkor.rs")
     production = _without_rust_unit_tests(falkor)
-    code_graph = _without_rust_unit_tests(_read("crates/gcode/src/graph/code_graph.rs"))
+    code_graph_facade = _read("crates/gcode/src/graph/code_graph.rs")
+    graph_read = _without_rust_unit_tests(_read("crates/gcode/src/graph/code_graph/read.rs"))
     typed_query = _without_rust_unit_tests(_read("crates/gcode/src/graph/typed_query.rs"))
 
     read_helpers = (
@@ -205,12 +228,21 @@ def test_phase7_ports_all_eight_read_queries_without_unbound_numeric_params() ->
     for function in read_helpers:
         assert re.search(
             rf"pub\s+fn\s+{function}\(\s*ctx:\s*&Context\b",
-            production,
+            graph_read,
         ), f"missing public read helper {function}(ctx: &Context, ...)"
+        assert function in code_graph_facade
         assert f"crate::graph::code_graph::{function}" in production
 
     _assert_contains_all(
-        code_graph,
+        code_graph_facade,
+        (
+            "mod read;",
+            "pub use read::{",
+            "pub(crate) use read::{",
+        ),
+    )
+    _assert_contains_all(
+        graph_read,
         (
             "target:CodeSymbol OR target:UnresolvedCallee OR target:ExternalSymbol",
             "depth.clamp(1, 5)",
@@ -231,7 +263,7 @@ def test_phase7_ports_all_eight_read_queries_without_unbound_numeric_params() ->
             r"pub\s+fn\s+clamp_limit\(limit:\s*usize,\s*max:\s*usize\)\s*->\s*usize",
         ),
     )
-    assert re.search(r"fn\s+blast_radius_query\(depth:\s*usize,\s*limit:\s*usize\)", code_graph)
-    assert "$offset" not in code_graph
-    assert "$limit" not in code_graph
-    assert "$ids" not in code_graph
+    assert re.search(r"fn\s+blast_radius_query\(depth:\s*usize,\s*limit:\s*usize\)", graph_read)
+    assert "$offset" not in graph_read
+    assert "$limit" not in graph_read
+    assert "$ids" not in graph_read

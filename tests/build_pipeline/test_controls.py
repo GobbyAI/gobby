@@ -719,7 +719,7 @@ def test_successful_merge_cleanup_deletes_integrated_dirty_closed_descendant(
                     return _git_result()
                 case ["branch", "--show-current"]:
                     return _git_result(stdout="task-dirty-closed-integrated\n")
-                case ["status", "--porcelain"]:
+                case ["status", "--porcelain", "--untracked-files=all"]:
                     return _git_result(stdout=" M app.py\nA  cached.py\n?? scratch.txt\n")
                 case ["diff", "--cached", "--stat"]:
                     return _git_result(stdout=" cached.py | 1 +\n")

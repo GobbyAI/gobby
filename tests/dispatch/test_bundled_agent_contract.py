@@ -134,6 +134,8 @@ def test_bundled_agents_use_end_agent_run_for_self_termination() -> None:
 
     for path in _all_agent_yaml_files():
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        if data.get("enabled") is False or data.get("deprecated") is True:
+            continue
         agent_blocked_tools = set(_mcp_tool_refs(data.get("blocked_mcp_tools")))
         if path.name == "default.yaml":
             if "gobby-agents:kill_agent" in agent_blocked_tools:
