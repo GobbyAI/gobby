@@ -453,6 +453,24 @@ def test_get_configured_embedding_provider_detects_disabled_state(temp_db) -> No
 
 
 @pytest.mark.unit
+def test_get_configured_embedding_provider_disabled_state_overrides_stale_api_base(
+    temp_db,
+) -> None:
+    from gobby.storage.config_store import ConfigStore
+
+    store = ConfigStore(temp_db)
+    store.set_many(
+        {
+            AI_EMBEDDING_API_BASE_KEY: "https://stale.example.test/v1",
+            AI_EMBEDDING_DIM_KEY: 0,
+        }
+    )
+
+    with _patch_runtime_hub_database(temp_db):
+        assert deps.get_configured_embedding_provider() == "none"
+
+
+@pytest.mark.unit
 def test_get_configured_embedding_provider_ignores_invalid_dim_string(temp_db) -> None:
     from gobby.storage.config_store import ConfigStore
 

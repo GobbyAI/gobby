@@ -110,9 +110,13 @@ def _schedule_tmux_window_rename_for_session(handler: Any, session: Any) -> None
 
     title = getattr(session, "title", None) or ""
     handler.logger.info(
-        "Scheduling tmux window rename for %s pane=%s title=%r",
+        "Scheduling tmux window rename for %s pane=%s",
         getattr(session, "ref", "?"),
         pane,
+    )
+    handler.logger.debug(
+        "Scheduling tmux window rename title for %s: %r",
+        getattr(session, "ref", "?"),
         title,
     )
     _compat_module().schedule_tmux_window_rename(

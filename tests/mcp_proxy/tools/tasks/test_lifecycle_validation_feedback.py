@@ -230,3 +230,42 @@ async def test_valid_llm_result_with_zero_failure_feedback_remains_valid() -> No
         validation_status="valid",
         validation_feedback="tests: 10 passed, 0 failed",
     )
+
+
+async def test_pending_llm_result_with_success_feedback_is_not_promoted() -> None:
+    """Pending/error statuses stay blocking even when feedback contains success text."""
+    update_task = MagicMock()
+    task = SimpleNamespace(
+        id="task-1",
+        title="Task",
+        description="Description",
+        validation_criteria="Tests pass",
+        category="code",
+    )
+    validator = SimpleNamespace(
+        validate_task=AsyncMock(
+            return_value=TaskValidationResult(
+                status="pending",
+                feedback="Validation failed: could not parse response. All criteria satisfied.",
+            )
+        )
+    )
+    ctx = SimpleNamespace(task_manager=SimpleNamespace(update_task=update_task))
+
+    result = await validate_leaf_task_with_llm(
+        task,
+        validator,
+        "diff context",
+        None,
+        ctx,
+        "task-1",
+        None,
+    )
+
+    assert result.can_close is False
+    assert result.extra == {"validation_status": "pending"}
+    update_task.assert_called_once_with(
+        "task-1",
+        validation_status="pending",
+        validation_feedback="Validation failed: could not parse response. All criteria satisfied.",
+    )

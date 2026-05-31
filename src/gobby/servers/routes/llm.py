@@ -162,22 +162,33 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
 def _write_temp_image(image_bytes: bytes, filename: str | None) -> Path:
     suffix = _image_suffix(filename)
     temp_dir = _vision_temp_dir()
-    with NamedTemporaryFile(
-        delete=False,
-        prefix="vision-",
-        suffix=suffix,
-        dir=temp_dir,
-    ) as temp_file:
-        temp_file.write(image_bytes)
-        # Extraction runs in the daemon process, so uploaded images stay owner-only.
-        os.chmod(temp_file.name, stat.S_IRUSR | stat.S_IWUSR)
-        return Path(temp_file.name)
+    image_path: Path | None = None
+    try:
+        with NamedTemporaryFile(
+            delete=False,
+            prefix="vision-",
+            suffix=suffix,
+            dir=temp_dir,
+        ) as temp_file:
+            image_path = Path(temp_file.name)
+            temp_file.write(image_bytes)
+            # Extraction runs in the daemon process, so uploaded images stay owner-only.
+            os.chmod(temp_file.name, stat.S_IRUSR | stat.S_IWUSR)
+            return image_path
+    except OSError as exc:
+        if image_path is not None:
+            try:
+                image_path.unlink(missing_ok=True)
+            except OSError:
+                logger.debug("Failed to remove incomplete vision temp file %s", image_path)
+        raise RuntimeError(f"Failed to write vision temp image in {str(temp_dir)!r}") from exc
 
 
 def _vision_temp_dir() -> Path:
     try:
         temp_dir = Path(tempfile.gettempdir()) / _VISION_TEMP_DIR_NAME
         temp_dir.mkdir(mode=stat.S_IRWXU, exist_ok=True)
+        os.chmod(temp_dir, stat.S_IRWXU)
         return temp_dir
     except OSError as exc:
         logger.error("Failed to prepare vision temp directory %s", _VISION_TEMP_DIR_NAME)

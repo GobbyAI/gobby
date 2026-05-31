@@ -276,6 +276,19 @@ def test_write_temp_image_uses_dedicated_restrictive_dir(
         image_path.unlink(missing_ok=True)
 
 
+def test_vision_temp_dir_enforces_restrictive_mode_on_existing_dir(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    temp_dir = tmp_path / "gobby-vision"
+    temp_dir.mkdir(mode=0o755)
+    temp_dir.chmod(0o755)
+    monkeypatch.setattr(llm_module.tempfile, "gettempdir", lambda: str(tmp_path))
+
+    assert llm_module._vision_temp_dir() == temp_dir
+    assert stat.S_IMODE(temp_dir.stat().st_mode) == 0o700
+
+
 def test_write_temp_image_raises_contextual_error_on_temp_dir_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -285,6 +298,21 @@ def test_write_temp_image_raises_contextual_error_on_temp_dir_failure(
     monkeypatch.setattr(llm_module.tempfile, "gettempdir", fail_gettempdir)
 
     with pytest.raises(RuntimeError, match="gobby-vision"):
+        llm_module._write_temp_image(b"image bytes", "screen.jpg")
+
+
+def test_write_temp_image_wraps_temp_file_write_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(llm_module.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(
+        llm_module,
+        "NamedTemporaryFile",
+        MagicMock(side_effect=OSError("disk full")),
+    )
+
+    with pytest.raises(RuntimeError, match="Failed to write vision temp image"):
         llm_module._write_temp_image(b"image bytes", "screen.jpg")
 
 

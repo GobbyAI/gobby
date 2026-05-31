@@ -33,7 +33,7 @@ def doctor(ctx: click.Context) -> None:
 
 
 def _doctor_payload(config: Any) -> dict[str, Any]:
-    namespace_resolved = _resolved_namespace()
+    namespace_resolved = bool(_resolved_namespace())
     embeddings_config = getattr(config, "embeddings", None)
     api_key = getattr(embeddings_config, "api_key", None)
 

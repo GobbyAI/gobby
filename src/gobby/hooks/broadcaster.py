@@ -176,7 +176,10 @@ class HookEventBroadcaster:
                     raw_input["tool_name"] = candidate
                     return
 
-        metadata = response.metadata if response else None
+        if response is None:
+            return
+
+        metadata = response.metadata
         if isinstance(metadata, Mapping):
             candidate = metadata.get("_normalized_tool_name")
             if cls._is_non_empty_string(candidate):

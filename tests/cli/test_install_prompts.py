@@ -370,7 +370,6 @@ class TestInstallCommandSharedStores:
                 voice_flag=False,
                 project_flag=False,
                 embedding_url=None,
-                embedding_api_key=None,
                 embedding_provider="lmstudio",
                 embedding_model=None,
                 embedding_dim=None,
@@ -428,7 +427,6 @@ class TestInstallCommandSharedStores:
                 voice_flag=False,
                 project_flag=False,
                 embedding_url=None,
-                embedding_api_key=None,
                 embedding_provider=None,
                 embedding_model=None,
                 embedding_dim=None,
@@ -501,7 +499,6 @@ class TestInstallCommandSharedStores:
                 voice_flag=False,
                 project_flag=False,
                 embedding_url="http://lan:1234/v1",
-                embedding_api_key="sk-embed",
                 embedding_provider="lmstudio",
                 embedding_model=None,
                 embedding_dim=None,
@@ -512,7 +509,7 @@ class TestInstallCommandSharedStores:
         mock_db_cls.assert_called_once_with(apply_migrations=False)
         mock_store_cls.assert_called_once_with(db)
         assert mock_embedding.call_args.kwargs["api_base_override"] == "http://lan:1234/v1"
-        assert mock_embedding.call_args.kwargs["embedding_api_key"] == "sk-embed"
+        assert "embedding_api_key" not in mock_embedding.call_args.kwargs
         assert mock_embedding.call_args.kwargs["provider_override"] == "lmstudio"
         assert mock_voice_install.call_args.kwargs["db"] is db
         assert mock_voice_install.call_args.kwargs["secret_store"] is secret_store

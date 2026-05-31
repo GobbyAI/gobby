@@ -159,8 +159,9 @@ class VectorStore:
                 )
                 if created:
                     logger.info(
-                        f"Created Qdrant collection '{self._collection_name}' "
-                        f"(dim={self._embedding_dim}, distance=cosine)"
+                        "Created Qdrant collection '%s' (dim=%s, distance=cosine)",
+                        self._collection_name,
+                        self._embedding_dim,
                     )
             else:
                 # Check for dimension mismatch between config and existing collection.
@@ -586,7 +587,11 @@ class VectorStore:
             if not exists:
                 created = await self._create_collection(client, collection_name, dim)
                 if created:
-                    logger.info(f"Created Qdrant collection '{collection_name}' (dim={dim})")
+                    logger.info(
+                        "Created Qdrant collection '%s' (dim=%s)",
+                        collection_name,
+                        dim,
+                    )
             else:
                 try:
                     existing_dim = await self._read_collection_dimension(client, collection_name)
@@ -697,7 +702,7 @@ class VectorStore:
                     if len(batch) >= batch_size:
                         await self.batch_upsert(batch)
                         total += len(batch)
-                        logger.info(f"Rebuild progress: {total}/{len(memories)} vectors")
+                        logger.info("Rebuild progress: %s/%s vectors", total, len(memories))
                         batch = []
 
                 if batch:
@@ -708,7 +713,7 @@ class VectorStore:
                 if stale_ids:
                     await self.delete_many(stale_ids)
 
-                logger.info(f"Rebuilt {total} vectors in '{self._collection_name}'")
+                logger.info("Rebuilt %s vectors in '%s'", total, self._collection_name)
 
     async def scroll_ids(self, batch_size: int = 1000) -> list[str]:
         """Return all point IDs in the collection."""

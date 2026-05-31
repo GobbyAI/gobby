@@ -446,19 +446,17 @@ def get_configured_embedding_provider() -> str | None:
             api_key = _strip_config_string(store.get(AI_EMBEDDING_API_KEY_KEY))
             dim = _strip_config_string(store.get(AI_EMBEDDING_DIM_KEY))
 
-            if api_base == "":
-                return _infer_from_config_or_none(
-                    dim=dim, api_key=api_key, model=model, api_base=api_base
-                )
+            inferred_from_config = _infer_from_config_or_none(
+                dim=dim, api_key=api_key, model=model, api_base=api_base
+            )
+            if inferred_from_config == "none":
+                return inferred_from_config
 
             provider = _infer_embedding_provider_from_api_base(api_base)
             if provider is not None:
                 return provider
 
-            if api_base is None:
-                return _infer_from_config_or_none(
-                    dim=dim, api_key=api_key, model=model, api_base=api_base
-                )
+            return inferred_from_config
     except Exception:
         logger.debug(
             "Failed to resolve configured embeddings provider from persisted config", exc_info=True

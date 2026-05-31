@@ -214,6 +214,7 @@ class TestInstallCommand:
         assert "--droid" in result.output
         assert "--hooks" in result.output
         assert "--all" in result.output
+        assert "--embedding-api-key" not in result.output
         assert "--embedding-provider" in result.output
         assert "LM Studio-compatible defaults" in result.output
         assert "openai-compatible uses generic OpenAI-" in result.output

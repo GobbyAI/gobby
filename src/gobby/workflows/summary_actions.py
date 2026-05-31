@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -25,6 +26,8 @@ from gobby.workflows.git_utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+_UNRESOLVED_SESSION_REF_RE = re.compile(r"(?<![a-z0-9_])#?\{?session_ref\}?(?![a-z0-9_])")
 
 
 def _get_result_truncation_limit(content_str: str) -> int:
@@ -359,7 +362,7 @@ def _path_basename_title(value: Any) -> str | None:
 
 
 def _contains_unresolved_session_ref(value: Any) -> bool:
-    return isinstance(value, str) and "session_ref" in value.lower()
+    return isinstance(value, str) and _UNRESOLVED_SESSION_REF_RE.search(value.lower()) is not None
 
 
 def _session_ref_for_window_title(session: Any) -> str | None:

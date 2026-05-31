@@ -211,12 +211,6 @@ def _raise_graph_backend_removed() -> None:
     help="Override the embedding provider's API base URL (e.g. for LM Studio on a LAN IP)",
 )
 @click.option(
-    "--embedding-api-key",
-    "embedding_api_key",
-    default=None,
-    help="API key for the configured embedding endpoint.",
-)
-@click.option(
     "--embedding-provider",
     "embedding_provider",
     type=click.Choice(["lmstudio", "ollama", "openai-compatible"]),
@@ -270,7 +264,6 @@ def install(
     voice_flag: bool,
     project_flag: bool,
     embedding_url: str | None,
-    embedding_api_key: str | None,
     embedding_provider: str | None,
     embedding_model: str | None,
     embedding_dim: int | None,
@@ -446,7 +439,6 @@ def install(
                 results,
                 no_interactive=no_interactive_flag,
                 api_base_override=embedding_url,
-                embedding_api_key=embedding_api_key,
                 model_override=embedding_model,
                 dim_override=embedding_dim,
                 provider_override=embedding_provider,

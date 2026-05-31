@@ -38,7 +38,7 @@ def test_doctor_json_redacts_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
         "dim": 768,
         "api_key_present": True,
         "api_key_fingerprint": hashlib.sha256(b"sk-test").hexdigest()[:8],
-        "namespace_resolved": AI_EMBEDDINGS_CONFIG_PREFIX,
+        "namespace_resolved": True,
         "source": "config_store",
         "agrees": None,
         "drift": None,
@@ -54,4 +54,4 @@ def test_doctor_exits_10_when_namespace_missing(monkeypatch: pytest.MonkeyPatch)
 
     assert result.exit_code == 10
     payload = json.loads(result.output)
-    assert payload["namespace_resolved"] is None
+    assert payload["namespace_resolved"] is False

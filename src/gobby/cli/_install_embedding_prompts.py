@@ -295,7 +295,6 @@ def _run_embedding_install(
     model_override: str | None = None,
     dim_override: int | None = None,
     provider_override: str | None = None,
-    embedding_api_key: str | None = None,
 ) -> str:
     """Interactive embedding provider setup.
 
@@ -312,7 +311,6 @@ def _run_embedding_install(
         dim_override: Override the embedding dim. Triggers a probe when omitted
             and either ``api_base_override`` or ``model_override`` is set.
         provider_override: Explicit compatibility mode for custom endpoints.
-        embedding_api_key: API key for the embedding endpoint.
 
     Returns:
         The provider name chosen: "lmstudio" | "ollama" |
@@ -332,7 +330,8 @@ def _run_embedding_install(
     if not should_install:
         return provider
 
-    if provider == "openai" and embedding_api_key is None:
+    embedding_api_key: str | None = None
+    if provider == "openai":
         embedding_api_key = _get_embedding_api_key(
             no_interactive=no_interactive,
             results=results,

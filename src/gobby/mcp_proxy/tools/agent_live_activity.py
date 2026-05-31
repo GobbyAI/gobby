@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 def _count(value: Any) -> int | None:
+    """Return a non-negative integer count, or None when the value is absent/invalid."""
     if value is None:
         return None
     try:

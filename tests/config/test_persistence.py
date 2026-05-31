@@ -316,7 +316,7 @@ class TestEmbeddingsConfigFields:
         """provider is no longer part of the runtime embedding config surface."""
         from gobby.config.persistence import EmbeddingsConfig
 
-        config = EmbeddingsConfig(provider="lmstudio")
+        config = EmbeddingsConfig()
 
         assert "provider" not in EmbeddingsConfig.model_fields
         assert not hasattr(config, "provider")

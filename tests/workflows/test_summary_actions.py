@@ -406,6 +406,13 @@ class TestRenameTmuxWindow:
         manager = _RecordingTmuxManager.instances[0]
         assert manager.rename_calls == [("%42", "#99: gobby")]
 
+    def test_unresolved_session_ref_detection_requires_placeholder_token(self) -> None:
+        from gobby.workflows.summary_actions import _contains_unresolved_session_ref
+
+        assert _contains_unresolved_session_ref("#session_ref gobby") is True
+        assert _contains_unresolved_session_ref("{session_ref}: gobby") is True
+        assert _contains_unresolved_session_ref("session_reference: gobby") is False
+
     @pytest.mark.asyncio
     async def test_unresolved_title_falls_back_before_prefixing(self) -> None:
         """A stored placeholder title is replaced with the fallback basename."""

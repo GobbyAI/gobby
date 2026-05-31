@@ -300,12 +300,13 @@ async def tmux_window_name_repair_loop(
     named it), repairing already-stuck windows and self-healing any
     session-start miss. Windows Gobby has already named are skipped.
     """
+    default_session_list_limit = 200
     try:
         normalized_session_list_limit = int(session_list_limit)
     except (TypeError, ValueError):
-        normalized_session_list_limit = 200
+        normalized_session_list_limit = default_session_list_limit
     if normalized_session_list_limit < 1:
-        normalized_session_list_limit = 200
+        normalized_session_list_limit = default_session_list_limit
 
     async def _repair_once() -> None:
         if session_manager is None:

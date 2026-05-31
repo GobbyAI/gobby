@@ -395,7 +395,7 @@ async def validate_leaf_task_with_llm(
             result.feedback,
         )
         validation_status = "invalid"
-    elif result.status != "valid" and matched_success_pattern is not None:
+    elif result.status == "invalid" and matched_success_pattern is not None:
         logger.warning(
             "Overriding validation status for task %s: LLM returned %r but feedback "
             "says validation criteria are satisfied. Pattern: %s. Feedback: %s",
