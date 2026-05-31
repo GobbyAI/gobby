@@ -2,7 +2,7 @@ use super::contracts::{OVERWRITE_GUIDANCE, code_index_index_names, code_index_ta
 use super::identifiers::quote_identifier;
 use super::postgres::postgres_overwrite_reset_sql;
 use super::*;
-use gobby_core::setup::{StandaloneSetup, StoreKind};
+use gobby_core::setup::{SetupContext, StandaloneSetup, StoreKind};
 use postgres::{Client, NoTls};
 
 #[test]
@@ -78,6 +78,24 @@ fn standalone_setup_uses_gobby_core_contract() {
             .iter()
             .any(|object| object.name == "pg_search extension")
     );
+}
+
+#[test]
+fn standalone_setup_create_propagates_owned_object_errors() {
+    let setup = GcodeStandaloneSetup::new("a".repeat(64));
+    let mut ctx = SetupContext {
+        pg: None,
+        falkor_config: None,
+        qdrant_config: None,
+        non_interactive: true,
+    };
+
+    let error = setup
+        .create(&mut ctx)
+        .expect_err("invalid owned object declaration propagates");
+
+    assert!(error.to_string().contains("schema identifier"));
+    assert!(error.to_string().contains("at most 63 bytes"));
 }
 
 #[test]

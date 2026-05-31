@@ -40,10 +40,16 @@ pub fn search_bm25<B>(
 where
     B: Bm25SearchBackend,
 {
-    let mut results = backend.search_bm25(&request)?;
+    if request.limit == 0 {
+        return Ok(Vec::new());
+    }
+    let backend_request = Bm25SearchRequest {
+        limit: request.limit.saturating_mul(4).max(request.limit),
+        ..request.clone()
+    };
+    let mut results = backend.search_bm25(&backend_request)?;
     results.retain(|result| {
-        result.scope == request.scope
-            && is_keyword_searchable_path(&result.path.to_string_lossy())
+        is_keyword_searchable_path(&result.path.to_string_lossy())
             && result.sources.contains(&SearchSource::Bm25)
     });
     results.truncate(request.limit);
@@ -308,10 +314,12 @@ mod tests {
     use std::collections::BTreeSet;
 
     #[test]
-    fn bm25_is_scope_filtered() {
+    fn bm25_filters_to_keyword_searchable_results() {
+        let mut unsearchable = memory_hit("hit-topic", SearchScope::topic("rust"));
+        unsearchable.path = "raw/private-note.md".into();
         let mut backend = MemoryBm25Backend::new(vec![
             memory_hit("hit-project", SearchScope::project("project-1")),
-            memory_hit("hit-topic", SearchScope::topic("rust")),
+            unsearchable,
         ]);
 
         let results = search_bm25(

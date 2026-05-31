@@ -138,7 +138,10 @@ fn daemon_is_reachable(daemon_url: &str) -> bool {
     let endpoint = format!("{}{}", daemon_url.trim_end_matches('/'), HEALTH_ENDPOINT);
     match ureq::get(&endpoint).timeout(HEALTH_TIMEOUT).call() {
         Ok(_) | Err(ureq::Error::Status(_, _)) => true,
-        Err(ureq::Error::Transport(_)) => false,
+        Err(ureq::Error::Transport(error)) => {
+            log::debug!("daemon health probe transport error for {endpoint}: {error}");
+            false
+        }
     }
 }
 

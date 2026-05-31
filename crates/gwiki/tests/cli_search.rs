@@ -144,6 +144,7 @@ fn configured_postgres_index_feeds_configured_search() {
     let hub = tmp.path().join("hub");
     let suffix = unique_suffix();
     let topic = format!("rust-{suffix}");
+    let _cleanup = GwikiScopeCleanup::new(database_url.clone(), "topic", topic.clone());
     let unique_term = format!("durablebm25{suffix}");
     let wiki_page = hub
         .join("topics")
@@ -202,8 +203,6 @@ fn configured_postgres_index_feeds_configured_search() {
         "search did not return indexed wiki page\nstdout:\n{}",
         String::from_utf8_lossy(&search.stdout)
     );
-
-    cleanup_gwiki_scope(&database_url, "topic", &topic);
 }
 
 fn postgres_test_database_url() -> Option<String> {
@@ -239,5 +238,27 @@ fn cleanup_gwiki_scope(database_url: &str, scope_kind: &str, scope_id: &str) {
         // a closed whitelist of gwiki-owned table names above.
         let sql = format!("DELETE FROM {table} WHERE scope_kind = $1 AND scope_id = $2");
         let _ = client.execute(&sql, &[&scope_kind, &scope_id]);
+    }
+}
+
+struct GwikiScopeCleanup {
+    database_url: String,
+    scope_kind: &'static str,
+    scope_id: String,
+}
+
+impl GwikiScopeCleanup {
+    fn new(database_url: String, scope_kind: &'static str, scope_id: String) -> Self {
+        Self {
+            database_url,
+            scope_kind,
+            scope_id,
+        }
+    }
+}
+
+impl Drop for GwikiScopeCleanup {
+    fn drop(&mut self) {
+        cleanup_gwiki_scope(&self.database_url, self.scope_kind, &self.scope_id);
     }
 }

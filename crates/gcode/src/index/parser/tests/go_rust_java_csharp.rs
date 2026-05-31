@@ -116,7 +116,11 @@ serde_json = { version = "1" }
     let parse_call = parsed
         .calls
         .iter()
-        .find(|call| call.callee_name == "from_str")
+        .find(|call| {
+            call.callee_name == "from_str"
+                && call.callee_target_kind.as_str() == "external"
+                && call.callee_external_module.as_deref() == Some("serde_json")
+        })
         .expect("from_str call");
     assert_eq!(parse_call.callee_target_kind.as_str(), "external");
     assert_eq!(

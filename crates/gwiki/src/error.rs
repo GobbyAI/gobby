@@ -30,7 +30,7 @@ pub enum WikiError {
     Yaml {
         action: &'static str,
         path: Option<PathBuf>,
-        source: serde_norway::Error,
+        source: serde_yaml::Error,
     },
     Registry {
         detail: String,
@@ -74,41 +74,17 @@ impl fmt::Display for WikiError {
                 action,
                 path,
                 source,
-            } => match path {
-                Some(path) => write!(
-                    f,
-                    "{action} failed for {}: {source} ({})",
-                    path.display(),
-                    self.code()
-                ),
-                None => write!(f, "{action} failed: {source} ({})", self.code()),
-            },
+            } => format_action_error(f, action, path.as_ref(), source, self.code()),
             Self::Json {
                 action,
                 path,
                 source,
-            } => match path {
-                Some(path) => write!(
-                    f,
-                    "{action} failed for {}: {source} ({})",
-                    path.display(),
-                    self.code()
-                ),
-                None => write!(f, "{action} failed: {source} ({})", self.code()),
-            },
+            } => format_action_error(f, action, path.as_ref(), source, self.code()),
             Self::Yaml {
                 action,
                 path,
                 source,
-            } => match path {
-                Some(path) => write!(
-                    f,
-                    "{action} failed for {}: {source} ({})",
-                    path.display(),
-                    self.code()
-                ),
-                None => write!(f, "{action} failed: {source} ({})", self.code()),
-            },
+            } => format_action_error(f, action, path.as_ref(), source, self.code()),
             Self::Daemon { endpoint, message } => {
                 write!(f, "{endpoint}: {message} ({})", self.code())
             }
@@ -116,6 +92,23 @@ impl fmt::Display for WikiError {
                 write!(f, "{field}: {message} ({})", self.code())
             }
         }
+    }
+}
+
+fn format_action_error(
+    f: &mut fmt::Formatter<'_>,
+    action: &str,
+    path: Option<&PathBuf>,
+    source: &dyn std::error::Error,
+    code: &str,
+) -> fmt::Result {
+    match path {
+        Some(path) => write!(
+            f,
+            "{action} failed for {}: {source} ({code})",
+            path.display()
+        ),
+        None => write!(f, "{action} failed: {source} ({code})"),
     }
 }
 
@@ -158,7 +151,7 @@ pub(crate) fn setup_error_to_wiki_error(error: SetupError) -> WikiError {
 
 pub(crate) fn index_error_to_wiki_error(error: indexer::IndexError) -> WikiError {
     WikiError::InvalidInput {
-        field: "vault_root",
+        field: "index",
         message: error.to_string(),
     }
 }

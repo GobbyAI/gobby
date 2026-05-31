@@ -2,8 +2,8 @@ use std::path::Path;
 
 use crate::WikiError;
 use crate::ingest::{
-    IngestResult, index_after_ingest, markdown_metadata, markdown_title, single_line, write_asset,
-    write_raw_markdown,
+    IngestResult, index_after_ingest, markdown_metadata, markdown_title, path_to_string,
+    single_line, write_asset, write_raw_markdown,
 };
 use crate::sources::{CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest};
 use crate::store::WikiIndexStore;
@@ -64,7 +64,7 @@ fn render_pdf_markdown(
         ("source_location", snapshot.location.clone()),
         ("fetched_at", snapshot.fetched_at.clone()),
         ("source_hash", source_hash.to_string()),
-        ("source_asset", asset_path.display().to_string()),
+        ("source_asset", path_to_string(asset_path)),
     ]);
     markdown.push_str("# ");
     markdown.push_str(title);

@@ -158,12 +158,23 @@ fn sync_graph_files(ctx: &Context, file_paths: &[String]) -> anyhow::Result<Proj
 
     let conn = db::connect_readwrite(&ctx.database_url)?;
     let mut state = GraphProjectionState { ctx, conn };
-    Ok(sync_files_with_state(
+    let report = sync_files_with_state(
         file_paths,
         &mut state,
         GraphProjectionState::sync_file,
         GraphProjectionState::mark_synced,
-    ))
+    );
+    if report.synced_files > 0
+        && let Err(error) = code_graph::cleanup_orphans(ctx)
+        && report.error.is_none()
+    {
+        return Ok(ProjectionSyncReport::degraded_from_error(
+            &error,
+            report.synced_files,
+            report.synced_symbols,
+        ));
+    }
+    Ok(report)
 }
 
 fn sync_vector_files(ctx: &Context, file_paths: &[String]) -> anyhow::Result<ProjectionSyncReport> {
@@ -216,6 +227,7 @@ impl GraphProjectionState<'_> {
             &facts.imports,
             &facts.definitions,
             &facts.calls,
+            false,
         )?;
         Ok(facts.definitions.len())
     }

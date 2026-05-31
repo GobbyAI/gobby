@@ -47,6 +47,9 @@ pub(crate) fn execute_ingest_file(
     let scope = resolve_command_scope(&selection)?;
     vault::initialize(&scope)?;
     let output_scope = resolved_scope_identity(&scope);
+    let fetched_at = collect_timestamp().map_err(|error| WikiError::Config {
+        detail: format!("failed to read system clock: {error}"),
+    })?;
     if let Some(database_url) = database_url_from_env() {
         let mut conn = gobby_core::postgres::connect_readwrite(&database_url).map_err(|error| {
             WikiError::Config {
@@ -57,14 +60,14 @@ pub(crate) fn execute_ingest_file(
         let result = {
             let mut store =
                 store::PostgresWikiStore::new(&mut conn, store_scope_for_search(&search_scope));
-            ingest::file::ingest_path(scope.root(), &mut store, &path, &collect_timestamp())?
+            ingest::file::ingest_path(scope.root(), &mut store, &path, &fetched_at)?
         };
         let counts = postgres_index_counts(&mut conn, &search_scope)?;
         return Ok(render_ingest_file(&path, output_scope, &result, counts));
     }
 
     let mut store = store::MemoryWikiStore::default();
-    let result = ingest::file::ingest_path(scope.root(), &mut store, &path, &collect_timestamp())?;
+    let result = ingest::file::ingest_path(scope.root(), &mut store, &path, &fetched_at)?;
     let counts = index_counts(&store);
     Ok(render_ingest_file(&path, output_scope, &result, counts))
 }

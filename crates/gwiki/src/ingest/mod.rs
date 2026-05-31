@@ -10,6 +10,7 @@ pub mod url;
 pub mod video;
 pub mod wayback;
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::WikiError;
@@ -58,7 +59,7 @@ pub(crate) fn index_after_ingest(
     store: &mut impl WikiIndexStore,
 ) -> Result<(), WikiError> {
     indexer::index_vault(vault_root, store).map_err(|error| WikiError::InvalidInput {
-        field: "vault_root",
+        field: "index",
         message: error.to_string(),
     })
 }
@@ -110,25 +111,6 @@ pub(crate) fn path_to_string(path: &Path) -> String {
 
 fn write_immutable(vault_root: &Path, relative: &Path, bytes: &[u8]) -> Result<(), WikiError> {
     let path = vault_root.join(relative);
-    if path.exists() {
-        let existing_hash =
-            gobby_core::indexing::file_content_hash(&path).map_err(|error| WikiError::Io {
-                action: "hash existing raw source",
-                path: Some(path.clone()),
-                source: error,
-            })?;
-        if existing_hash == gobby_core::indexing::content_hash(bytes) {
-            return Ok(());
-        }
-        return Err(WikiError::InvalidInput {
-            field: "raw_path",
-            message: format!(
-                "immutable raw source already exists at {}",
-                relative.display()
-            ),
-        });
-    }
-
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| WikiError::Io {
             action: "create raw source directory",
@@ -136,11 +118,40 @@ fn write_immutable(vault_root: &Path, relative: &Path, bytes: &[u8]) -> Result<(
             source: error,
         })?;
     }
-    std::fs::write(&path, bytes).map_err(|error| WikiError::Io {
-        action: "write raw source",
-        path: Some(path),
-        source: error,
-    })
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+    {
+        Ok(mut file) => file.write_all(bytes).map_err(|error| WikiError::Io {
+            action: "write raw source",
+            path: Some(path),
+            source: error,
+        }),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let existing_hash =
+                gobby_core::indexing::file_content_hash(&path).map_err(|error| WikiError::Io {
+                    action: "hash existing raw source",
+                    path: Some(path.clone()),
+                    source: error,
+                })?;
+            if existing_hash == gobby_core::indexing::content_hash(bytes) {
+                return Ok(());
+            }
+            Err(WikiError::InvalidInput {
+                field: "raw_path",
+                message: format!(
+                    "immutable raw source already exists at {}",
+                    relative.display()
+                ),
+            })
+        }
+        Err(error) => Err(WikiError::Io {
+            action: "create raw source",
+            path: Some(path),
+            source: error,
+        }),
+    }
 }
 
 fn sanitize_extension(extension: &str) -> String {

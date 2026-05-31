@@ -174,6 +174,7 @@ fn sync_file_graph(
         &facts.imports,
         &facts.definitions,
         &facts.calls,
+        true,
     )?;
     db::mark_graph_synced(&mut conn, &ctx.project_id, file_path)?;
     Ok(GraphFileSyncOutcome::Synced {
@@ -233,6 +234,7 @@ fn rebuild_project_graph(ctx: &Context) -> anyhow::Result<GraphLifecycleOutput> 
                         &facts.imports,
                         &facts.definitions,
                         &facts.calls,
+                        false,
                     )?;
                     db::mark_graph_synced(&mut conn, &ctx.project_id, file_path)?;
                     Ok(facts.definitions.len())
@@ -245,6 +247,11 @@ fn rebuild_project_graph(ctx: &Context) -> anyhow::Result<GraphLifecycleOutput> 
             };
         files_synced += 1;
         symbols_synced += synced_symbols;
+    }
+    if files_synced > 0
+        && let Err(err) = code_graph::cleanup_orphans(ctx)
+    {
+        errors.push(format!("cleanup_orphans: {err}"));
     }
 
     let report = if errors.is_empty() {

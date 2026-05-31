@@ -164,11 +164,13 @@ fn load_indexed_chunks(
             content: row.try_get("content")?,
         });
     }
-    chunks.sort_by(|a, b| {
-        a.file_path
-            .cmp(&b.file_path)
-            .then_with(|| a.line_start.cmp(&b.line_start))
-    });
+    if matches!(&ctx.index_scope, ProjectIndexScope::Overlay { .. }) {
+        chunks.sort_by(|a, b| {
+            a.file_path
+                .cmp(&b.file_path)
+                .then_with(|| a.line_start.cmp(&b.line_start))
+        });
+    }
     Ok(chunks)
 }
 

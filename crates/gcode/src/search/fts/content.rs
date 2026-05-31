@@ -58,7 +58,7 @@ pub fn search_content(
     let hits = match conn.query(&sql, &refs) {
         Ok(rows) => content_hits_from_rows(&rows, query),
         Err(error) => {
-            eprintln!("gcode: content BM25 search failed; falling back to LIKE: {error}");
+            eprintln!("gcode: content BM25 search failed; falling back to ILIKE: {error}");
             Vec::new()
         }
     };
@@ -117,7 +117,7 @@ pub fn search_content_visible(
     let hits = match conn.query(&sql, &refs) {
         Ok(rows) => content_hits_from_rows(&rows, query),
         Err(error) => {
-            eprintln!("gcode: visible content BM25 search failed; falling back to LIKE: {error}");
+            eprintln!("gcode: visible content BM25 search failed; falling back to ILIKE: {error}");
             Vec::new()
         }
     };
@@ -144,7 +144,7 @@ fn search_content_like(
     let like_placeholder = push_param(&mut params, like_query);
     let mut conditions = vec![
         format!("c.project_id = {project_placeholder}"),
-        format!("c.content LIKE {like_placeholder} ESCAPE '\\'"),
+        format!("c.content ILIKE {like_placeholder} ESCAPE '\\'"),
     ];
     if let Some(lang) = language {
         let placeholder = push_param(&mut params, lang.to_string());
@@ -171,7 +171,7 @@ fn search_content_like(
     match conn.query(&sql, &refs) {
         Ok(rows) => content_hits_from_rows(&rows, query),
         Err(error) => {
-            eprintln!("gcode: content LIKE search failed: {error}");
+            eprintln!("gcode: content ILIKE search failed: {error}");
             Vec::new()
         }
     }
@@ -190,7 +190,7 @@ fn search_content_visible_like(
     let mut params = Vec::new();
     let visible_files_sql = visible_files_sql(ctx, &mut params);
     let like_placeholder = push_param(&mut params, like_query);
-    let mut conditions = vec![format!("c.content LIKE {like_placeholder} ESCAPE '\\'")];
+    let mut conditions = vec![format!("c.content ILIKE {like_placeholder} ESCAPE '\\'")];
     if let Some(lang) = language {
         let placeholder = push_param(&mut params, lang.to_string());
         conditions.push(format!("c.language = {placeholder}"));
@@ -217,7 +217,7 @@ fn search_content_visible_like(
     match conn.query(&sql, &refs) {
         Ok(rows) => content_hits_from_rows(&rows, query),
         Err(error) => {
-            eprintln!("gcode: visible content LIKE search failed: {error}");
+            eprintln!("gcode: visible content ILIKE search failed: {error}");
             Vec::new()
         }
     }

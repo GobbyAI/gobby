@@ -9,7 +9,7 @@ use gobby_core::degradation::ServiceState;
 use gobby_core::qdrant::UpsertRequest;
 
 use super::embedding::{
-    dimension_probe_text, embed_text, embedding_client, vector_text_for_symbol,
+    dimension_probe_text, embed_text, embed_text_batch, embedding_client, vector_text_for_symbol,
 };
 use super::qdrant::{
     VECTOR_DISTANCE_COSINE, collection_name, collection_path, delete_vectors_for_filter,
@@ -330,14 +330,15 @@ impl CodeSymbolVectorLifecycle {
         &self,
         symbols: &[Symbol],
     ) -> Result<Vec<UpsertRequest>, VectorLifecycleError> {
+        let texts = symbols
+            .iter()
+            .map(vector_text_for_symbol)
+            .collect::<Vec<_>>();
+        let vectors = embed_text_batch(&self.client, &self.embedding, &texts)?;
         symbols
             .iter()
-            .map(|symbol| {
-                let vector = embed_text(
-                    &self.client,
-                    &self.embedding,
-                    &vector_text_for_symbol(symbol),
-                )?;
+            .zip(vectors)
+            .map(|(symbol, vector)| {
                 let payload = payload_map(CodeSymbolVectorPayload::from_symbol(symbol))?;
                 Ok(UpsertRequest {
                     id: symbol.id.clone(),

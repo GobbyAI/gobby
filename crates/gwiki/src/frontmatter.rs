@@ -234,7 +234,7 @@ fn parse_yaml(raw: &str) -> Result<Value, FrontmatterError> {
         return Ok(Value::Object(Map::new()));
     }
 
-    let value: serde_norway::Value = serde_norway::from_str(raw).map_err(|error| {
+    let value: serde_yaml::Value = serde_yaml::from_str(raw).map_err(|error| {
         FrontmatterError::new(format!("failed to parse YAML frontmatter: {error}"))
     })?;
     serde_json::to_value(value).map_err(|error| {

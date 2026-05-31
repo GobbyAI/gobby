@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use serde::{Deserialize, Serialize};
 
 use crate::models::{ProjectionMetadata, ProjectionProvenance};
@@ -9,6 +11,8 @@ pub struct GraphPayload {
     pub links: Vec<GraphLink>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub center: Option<String>,
+    #[serde(skip)]
+    node_ids: HashSet<String>,
 }
 
 impl GraphPayload {
@@ -17,14 +21,31 @@ impl GraphPayload {
             nodes: vec![],
             links: vec![],
             center: Some(center.into()),
+            node_ids: HashSet::new(),
         }
     }
 
     pub fn push_node(&mut self, node: GraphNode) {
-        if node.id.is_empty() || self.nodes.iter().any(|existing| existing.id == node.id) {
+        if node.id.is_empty() {
+            return;
+        }
+        self.refresh_node_cache_if_needed();
+        if !self.node_ids.insert(node.id.clone()) {
             return;
         }
         self.nodes.push(node);
+    }
+
+    fn refresh_node_cache_if_needed(&mut self) {
+        if self.node_ids.len() == self.nodes.len() {
+            return;
+        }
+        self.node_ids = self
+            .nodes
+            .iter()
+            .filter(|node| !node.id.is_empty())
+            .map(|node| node.id.clone())
+            .collect();
     }
 }
 
@@ -75,18 +96,19 @@ impl GraphNode {
     /// Fallback key priority is id: `id`, `node_id`; name: `name`,
     /// `node_name`, then id; type: `type`, `node_type`, then `default_type`.
     pub(super) fn from_row(row: &Row, default_type: &str) -> Option<Self> {
-        let id = row_string(row, &["id", "node_id"])?;
+        let id = row_string_owned(row, &["id", "node_id"])?;
         let mut node = Self::new(
             id.clone(),
-            row_string(row, &["name", "node_name"]).unwrap_or(id),
-            row_string(row, &["type", "node_type"]).unwrap_or_else(|| default_type.to_string()),
+            row_string_owned(row, &["name", "node_name"]).unwrap_or(id),
+            row_string_owned(row, &["type", "node_type"])
+                .unwrap_or_else(|| default_type.to_string()),
         );
-        node.kind = row_string(row, &["kind"]);
-        node.file_path = row_string(row, &["file_path"]);
+        node.kind = row_string_owned(row, &["kind"]);
+        node.file_path = row_string_owned(row, &["file_path"]);
         node.line_start = row_usize(row, &["line_start", "line"]);
-        node.signature = row_string(row, &["signature"]);
+        node.signature = row_string_owned(row, &["signature"]);
         node.symbol_count = row_usize(row, &["symbol_count"]);
-        node.language = row_string(row, &["language"]);
+        node.language = row_string_owned(row, &["language"]);
         node.blast_distance = row_usize(row, &["blast_distance", "distance"]);
         Some(node)
     }
@@ -144,16 +166,16 @@ impl GraphLink {
         }
     }
 
-    pub fn from_row(row: &Row) -> Self {
+    pub fn from_row(row: &Row) -> Option<Self> {
         let mut link = Self::new(
-            row_string(row, &["source"]).unwrap_or_default(),
-            row_string(row, &["target"]).unwrap_or_default(),
-            row_string(row, &["type", "rel_type"]).unwrap_or_else(|| "CALLS".to_string()),
+            row_string_owned(row, &["source"])?,
+            row_string_owned(row, &["target"])?,
+            row_string_owned(row, &["type", "rel_type"]).unwrap_or_else(|| "CALLS".to_string()),
         );
         link.line = row_usize(row, &["line"]);
         link.distance = row_usize(row, &["distance"]);
         link.metadata = row_to_projection_metadata(row);
-        link
+        Some(link)
     }
 }
 
@@ -185,7 +207,7 @@ pub(super) fn row_to_projection_metadata(row: &Row) -> Option<ProjectionMetadata
 
     let mut metadata = ProjectionMetadata::new(provenance, source_system);
     metadata.confidence = row.get("confidence").and_then(|v| v.as_f64());
-    metadata.source_file_path = row_string(row, &["metadata_source_file_path"]);
+    metadata.source_file_path = row_string_owned(row, &["metadata_source_file_path"]);
     metadata.source_line = row
         .get("source_line")
         .or_else(|| row.get("line"))
@@ -204,11 +226,7 @@ pub(super) fn row_to_projection_metadata(row: &Row) -> Option<ProjectionMetadata
     Some(metadata)
 }
 
-pub(super) fn row_string(row: &Row, keys: &[&str]) -> Option<String> {
-    row_string_owned(row, keys)
-}
-
-fn row_string_owned(row: &Row, keys: &[&str]) -> Option<String> {
+pub(super) fn row_string_owned(row: &Row, keys: &[&str]) -> Option<String> {
     keys.iter()
         .find_map(|key| row.get(*key).and_then(|value| value.as_str()))
         .filter(|value| !value.is_empty())
@@ -238,11 +256,9 @@ fn row_usize_owned(row: &Row, keys: &[&str]) -> Option<usize> {
 }
 
 pub(super) fn add_link_from_row(payload: &mut GraphPayload, row: &Row) {
-    let link = GraphLink::from_row(row);
-    if link.source.is_empty() || link.target.is_empty() {
-        return;
+    if let Some(link) = GraphLink::from_row(row) {
+        payload.links.push(link);
     }
-    payload.links.push(link);
 }
 
 pub(super) fn add_node_from_row(payload: &mut GraphPayload, row: &Row, default_type: &str) {

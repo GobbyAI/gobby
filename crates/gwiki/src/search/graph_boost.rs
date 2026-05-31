@@ -5,6 +5,8 @@ use crate::search::{
     bm25::is_keyword_searchable_path,
 };
 
+const GRAPH_SOURCE_KIND: &str = "graph";
+
 pub fn graph_boost_hits(
     scope: SearchScope,
     ranked_paths: Vec<(PathBuf, f64)>,
@@ -23,7 +25,7 @@ fn graph_result(scope: &SearchScope, path: PathBuf, score: f64) -> WikiSearchRes
     let provenance = SearchProvenance {
         document_path: path.clone(),
         source_path: path.clone(),
-        source_kind: "graph".to_string(),
+        source_kind: GRAPH_SOURCE_KIND.to_string(),
         content_hash: None,
     };
     WikiSearchResult {

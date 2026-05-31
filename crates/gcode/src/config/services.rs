@@ -46,9 +46,17 @@ impl ConfigSource for FallbackConfigSource<'_> {
 
 pub(super) fn read_standalone_config() -> Option<StandaloneConfig> {
     let home = db::gobby_home().ok()?;
-    StandaloneConfig::read_at(&home.join(GCORE_CONFIG_FILENAME))
-        .ok()
-        .flatten()
+    let path = home.join(GCORE_CONFIG_FILENAME);
+    match StandaloneConfig::read_at(&path) {
+        Ok(config) => config,
+        Err(error) => {
+            log::warn!(
+                "failed to read standalone gcode config at {}: {error}",
+                path.display()
+            );
+            None
+        }
+    }
 }
 
 #[cfg(test)]
@@ -135,6 +143,8 @@ where
 }
 
 /// Resolve FalkorDB configuration from config_store + env vars.
+///
+/// `_quiet` is reserved for future verbosity control; config resolution is currently silent.
 pub(super) fn resolve_falkordb_config(
     conn: &mut Client,
     standalone: Option<StandaloneConfig>,
@@ -159,6 +169,8 @@ fn resolve_falkordb_config_from_source(source: &mut impl ConfigSource) -> Option
 }
 
 /// Resolve Qdrant configuration from config_store + env vars.
+///
+/// `_quiet` is reserved for future verbosity control; config resolution is currently silent.
 pub(super) fn resolve_qdrant_config(
     conn: &mut Client,
     standalone: Option<StandaloneConfig>,
@@ -174,6 +186,8 @@ pub(super) fn resolve_qdrant_config(
 /// Resolve embedding API configuration from config_store + env vars.
 ///
 /// Returns None if no api_base is found (BM25 only).
+///
+/// `_quiet` is reserved for future verbosity control; config resolution is currently silent.
 pub(super) fn resolve_embedding_config(
     conn: &mut Client,
     standalone: Option<StandaloneConfig>,

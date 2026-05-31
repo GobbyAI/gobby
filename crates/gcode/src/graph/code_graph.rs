@@ -38,7 +38,7 @@ pub(crate) use lifecycle::{
 pub(crate) use read::row_to_graph_result;
 
 #[cfg(test)]
-use payload::{row_string, row_to_projection_metadata, row_usize};
+use payload::{row_string_owned, row_to_projection_metadata, row_usize};
 #[cfg(test)]
 use read::{dedupe_limited_blast_rows, file_calls_query};
 #[cfg(test)]

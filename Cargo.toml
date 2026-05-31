@@ -17,3 +17,6 @@ opt-level = "z"
 
 [profile.release.package.gobby-hooks]
 opt-level = "z"
+
+[profile.release.package.gobby-wiki]
+opt-level = "z"

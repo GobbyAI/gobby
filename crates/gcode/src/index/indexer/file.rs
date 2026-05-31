@@ -117,7 +117,13 @@ pub(super) fn index_content_only(
 
     let source = match std::fs::read(path) {
         Ok(s) => s,
-        Err(_) => return Ok(None),
+        Err(error) => {
+            log::debug!(
+                "skipping content-only index for unreadable file {}: {error}",
+                path.display()
+            );
+            return Ok(None);
+        }
     };
 
     let lang = walker::content_language(path);

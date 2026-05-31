@@ -8,12 +8,12 @@ pub(crate) fn query_tokens(query: &str) -> Vec<String> {
     query
         .split(|ch: char| !ch.is_alphanumeric())
         .filter(|token| !token.is_empty())
-        .map(str::to_ascii_lowercase)
+        .map(str::to_lowercase)
         .collect()
 }
 
 pub(crate) fn keyword_score(text: &str, tokens: &[String]) -> usize {
-    let haystack = text.to_ascii_lowercase();
+    let haystack = text.to_lowercase();
     tokens
         .iter()
         .map(|token| haystack.matches(token).count())

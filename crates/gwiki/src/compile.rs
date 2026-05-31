@@ -13,9 +13,8 @@ use crate::session::{CompileState, ResearchSession};
 use crate::sources::{CompileStatus, SourceManifest};
 use crate::synthesis::{
     ArticleKind, PageWriteOutcome, SynthesisInput, SynthesisPrompt, SynthesisSource,
-    SynthesizedPage, WritePolicy, build_synthesis_prompt, ensure_page_write_allowed, relative_path,
-    slugify as page_slugify, synthesize_article, synthesize_source_pages, wiki_link,
-    write_synthesized_page,
+    SynthesizedPage, WritePolicy, build_synthesis_prompt, relative_path, slugify as page_slugify,
+    synthesize_article, synthesize_source_pages, wiki_link, write_synthesized_page,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -155,10 +154,6 @@ pub fn compile_to_wiki_with_options(
     } else {
         WritePolicy::RequireMergeIntent
     };
-    for page in &pages {
-        ensure_page_write_allowed(page, policy)?;
-    }
-
     let mut page_writes = Vec::with_capacity(pages.len());
     for page in &pages {
         page_writes.push(write_synthesized_page(page, policy)?);

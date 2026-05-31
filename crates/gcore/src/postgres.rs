@@ -6,7 +6,7 @@
 //! schema-agnostic; consumers supply any table or index validation.
 
 use anyhow::Context;
-use postgres::{Client, NoTls, config::SslMode};
+use postgres::{Client, NoTls, config::SslMode, error::SqlState};
 use postgres_native_tls::MakeTlsConnector;
 
 /// Connect to the PostgreSQL hub in read-only mode.
@@ -88,7 +88,7 @@ fn connect(database_url: &str) -> anyhow::Result<Client> {
         };
     }
     if ssl_mode == SslMode::Require {
-        return connect_with_tls_unverified(&config);
+        return connect_with_tls_verification(&config, true);
     }
     connect_with_tls_verification(&config, true)
 }
@@ -115,13 +115,35 @@ fn connect_with_tls_verification(
 }
 
 fn is_no_tls_server_error(error: &anyhow::Error) -> bool {
-    error.chain().any(|cause| {
-        let message = cause.to_string().to_ascii_lowercase();
-        message.contains("server does not support tls")
-            || message.contains("the server does not support ssl")
-            || message.contains("tls not supported")
-            || message.contains("ssl is not enabled")
-    })
+    error.chain().any(is_no_tls_postgres_error)
+        || error.chain().any(is_no_tls_native_tls_error)
+        || error.chain().any(is_no_tls_error_message)
+}
+
+fn is_no_tls_postgres_error(error: &(dyn std::error::Error + 'static)) -> bool {
+    error
+        .downcast_ref::<postgres::Error>()
+        .and_then(postgres::Error::as_db_error)
+        .is_some_and(|db_error| {
+            matches!(
+                *db_error.code(),
+                SqlState::INVALID_PARAMETER_VALUE | SqlState::CONNECTION_FAILURE
+            ) && is_no_tls_error_message(error)
+        })
+}
+
+fn is_no_tls_native_tls_error(error: &(dyn std::error::Error + 'static)) -> bool {
+    error
+        .downcast_ref::<native_tls::Error>()
+        .is_some_and(|_| is_no_tls_error_message(error))
+}
+
+fn is_no_tls_error_message(error: &(dyn std::error::Error + 'static)) -> bool {
+    let message = error.to_string().to_ascii_lowercase();
+    message.contains("server does not support tls")
+        || message.contains("the server does not support ssl")
+        || message.contains("tls not supported")
+        || message.contains("ssl is not enabled")
 }
 
 fn run_schema_validator<C>(

@@ -303,6 +303,8 @@ fn git_status_relative_paths(root_path: &Path) -> anyhow::Result<HashSet<String>
     }
 
     let mut paths = HashSet::new();
+    // Porcelain v1 `-z` entries are NUL-delimited records with two status
+    // bytes, a separating space, then the changed path.
     for entry in output.stdout.split(|b| *b == 0) {
         if entry.len() < 4 || entry[2] != b' ' {
             continue;

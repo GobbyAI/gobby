@@ -24,13 +24,14 @@ pub fn ingest_page(
     snapshot: MediaWikiPageSnapshot,
 ) -> Result<IngestResult, WikiError> {
     let title = markdown_title(&snapshot.title);
+    let source_url = single_line(&snapshot.source_url);
     let draft = SourceDraft {
-        location: snapshot.source_url.clone(),
+        location: source_url.clone(),
         kind: SourceKind::MediaWiki,
         fetched_at: snapshot.fetched_at.clone(),
         content: snapshot.wikitext.as_bytes().to_vec(),
         title: Some(title.clone()),
-        citation: Some(snapshot.source_url.clone()),
+        citation: Some(source_url),
         license: None,
         ingestion_method: IngestionMethod::Manual,
         compile_status: CompileStatus::Pending,
@@ -120,7 +121,7 @@ mod tests {
         assert_eq!(entry.title.as_deref(), Some("Gobby Editor"));
         assert_eq!(
             entry.citation.as_deref(),
-            Some("https://wiki.example.test/wiki/Gobby\nEditor")
+            Some("https://wiki.example.test/wiki/Gobby Editor")
         );
         assert_eq!(entry.fetched_at, "2026-05-29T18:00:00Z");
     }

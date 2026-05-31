@@ -59,18 +59,19 @@ pub fn ingest_audio_with_transcription(
     endpoint: TranscriptionEndpoint<'_>,
 ) -> Result<AudioIngestResult, WikiError> {
     let title = markdown_title(&snapshot.file_name);
+    let content_hash = gobby_core::indexing::content_hash(&snapshot.bytes);
     let draft = SourceDraft {
         location: snapshot.location.clone(),
         kind: SourceKind::Audio,
         fetched_at: snapshot.fetched_at.clone(),
-        content: snapshot.bytes.clone(),
+        content: Vec::new(),
         title: Some(title),
         citation: Some(snapshot.location.clone()),
         license: None,
         ingestion_method: IngestionMethod::Manual,
         compile_status: CompileStatus::Pending,
     };
-    let record = SourceManifest::register(vault_root, draft)?;
+    let record = SourceManifest::register_with_content_hash(vault_root, draft, content_hash)?;
     let asset_path = write_asset(vault_root, &record, &snapshot.file_name, &snapshot.bytes)?;
     let raw_markdown = render_raw_audio_markdown(&snapshot, &record.content_hash, &asset_path);
     let raw_path = write_raw_markdown(vault_root, &record, &raw_markdown)?;

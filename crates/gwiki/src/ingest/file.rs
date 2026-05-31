@@ -113,6 +113,7 @@ fn detect_source_kind(path: &Path) -> SourceKind {
         .as_deref()
     {
         Some("pdf") => SourceKind::Pdf,
+        Some("mp3" | "wav" | "m4a" | "aac" | "flac" | "ogg" | "opus") => SourceKind::Audio,
         Some("mp4" | "mov" | "m4v" | "webm" | "mkv") => SourceKind::Video,
         Some("md" | "markdown") => SourceKind::Markdown,
         Some("txt" | "text") => SourceKind::Text,
@@ -133,7 +134,10 @@ fn source_location(vault_root: &Path, path: &Path) -> String {
 }
 
 fn should_store_asset(kind: &SourceKind) -> bool {
-    matches!(kind, SourceKind::Pdf | SourceKind::Video | SourceKind::File)
+    matches!(
+        kind,
+        SourceKind::Audio | SourceKind::Pdf | SourceKind::Video | SourceKind::File
+    )
 }
 
 fn render_file_markdown(
@@ -234,5 +238,19 @@ mod tests {
         let raw_stdin = std::fs::read_to_string(temp.path().join(stdin_result.raw_path))
             .expect("stdin raw markdown");
         assert!(raw_stdin.contains("stdin source text"));
+    }
+
+    #[test]
+    fn common_audio_extensions_ingest_as_audio_assets() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let file_path = temp.path().join("interview.mp3");
+        std::fs::write(&file_path, b"audio bytes").expect("write local file");
+        let mut store = MemoryWikiStore::default();
+
+        let result = ingest_path(temp.path(), &mut store, &file_path, "2026-05-29T16:47:00Z")
+            .expect("ingest audio file");
+
+        assert_eq!(result.record.kind, SourceKind::Audio);
+        assert!(result.asset_path.is_some());
     }
 }

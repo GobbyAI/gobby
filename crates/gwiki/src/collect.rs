@@ -1,4 +1,5 @@
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -11,6 +12,7 @@ use crate::ingest::{
 };
 use crate::sources::{CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest};
 use crate::store::WikiIndexStore;
+use crate::support::env::max_inbox_item_bytes_from_env;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CollectReport {
@@ -40,6 +42,14 @@ enum InboxKind {
 }
 
 pub fn collect_inbox(vault_root: &Path, fetched_at: &str) -> Result<CollectReport, WikiError> {
+    collect_inbox_with_limit(vault_root, fetched_at, max_inbox_item_bytes_from_env())
+}
+
+fn collect_inbox_with_limit(
+    vault_root: &Path,
+    fetched_at: &str,
+    max_item_bytes: u64,
+) -> Result<CollectReport, WikiError> {
     ensure_collect_paths(vault_root)?;
 
     let inbox = vault_root.join("inbox");
@@ -78,6 +88,21 @@ pub fn collect_inbox(vault_root: &Path, fetched_at: &str) -> Result<CollectRepor
                 relative,
                 path,
                 "unsupported inbox item type",
+                &mut report,
+            )?;
+            continue;
+        }
+
+        let metadata = entry
+            .metadata()
+            .map_err(|error| io_error("read inbox item metadata", &path, error))?;
+        if metadata.len() > max_item_bytes {
+            skip_item(
+                vault_root,
+                fetched_at,
+                relative,
+                path,
+                format!("inbox item exceeds {max_item_bytes} byte limit"),
                 &mut report,
             )?;
             continue;
@@ -142,6 +167,9 @@ fn classify_inbox_item(path: &Path, bytes: &[u8]) -> Result<InboxKind, &'static 
             .map(InboxKind::Url)
             .ok_or("url drop did not contain an http(s) URL"),
         Some("pdf") => Ok(InboxKind::File(SourceKind::Pdf)),
+        Some("mp3" | "wav" | "m4a" | "aac" | "flac" | "ogg" | "opus") => {
+            Ok(InboxKind::File(SourceKind::Audio))
+        }
         Some("mp4" | "mov" | "m4v" | "webm" | "mkv") => Ok(InboxKind::File(SourceKind::Video)),
         Some("md" | "markdown") => Ok(InboxKind::File(SourceKind::Markdown)),
         Some("txt" | "text") => Ok(InboxKind::File(SourceKind::Text)),
@@ -238,7 +266,7 @@ fn skip_item(
     fetched_at: &str,
     relative: String,
     path: PathBuf,
-    reason: &'static str,
+    reason: impl Into<String>,
     report: &mut CollectReport,
 ) -> Result<(), WikiError> {
     let action = CollectAction {
@@ -246,7 +274,7 @@ fn skip_item(
         status: CollectStatus::Skipped,
         kind: None,
         raw_path: None,
-        reason: Some(reason.to_string()),
+        reason: Some(reason.into()),
     };
     write_status_sidecar(vault_root, fetched_at, &path, &action)?;
     report.skipped.push(action);
@@ -342,12 +370,11 @@ fn append_log(
     report: &CollectReport,
 ) -> Result<(), WikiError> {
     let log_path = vault_root.join("log.md");
-    let mut log = if log_path.exists() {
-        fs::read_to_string(&log_path).map_err(|error| io_error("read log", &log_path, error))?
+    let write_header = fs::metadata(&log_path).map_or(true, |metadata| metadata.len() == 0);
+    let mut log = String::new();
+    if write_header {
+        log.push_str("# Log\n\n");
     } else {
-        "# Log\n\n".to_string()
-    };
-    if !log.ends_with('\n') {
         log.push('\n');
     }
     for action in &report.accepted {
@@ -377,7 +404,13 @@ fn append_log(
         log.push_str(action.reason.as_deref().unwrap_or("skipped"));
         log.push('\n');
     }
-    fs::write(&log_path, log).map_err(|error| io_error("write log", &log_path, error))
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .map_err(|error| io_error("open log", &log_path, error))?;
+    file.write_all(log.as_bytes())
+        .map_err(|error| io_error("write log", &log_path, error))
 }
 
 fn extract_url(text: &str) -> Option<String> {
@@ -418,7 +451,10 @@ fn is_http_url(value: &str) -> bool {
 }
 
 fn should_store_asset(kind: &SourceKind) -> bool {
-    matches!(kind, SourceKind::Pdf | SourceKind::Video | SourceKind::File)
+    matches!(
+        kind,
+        SourceKind::Audio | SourceKind::Pdf | SourceKind::Video | SourceKind::File
+    )
 }
 
 fn is_status_sidecar(path: &Path) -> bool {
@@ -485,14 +521,22 @@ mod tests {
             b"# Notes\n\nMarkdown source.\n",
         );
         write_file(temp.path(), "inbox/plain.txt", b"plain source text\n");
+        write_file(temp.path(), "inbox/interview.wav", b"RIFF....WAVEaudio");
         write_file(temp.path(), "inbox/data.csv", b"name,value\nalpha,1\n");
 
         let report =
             collect_inbox(temp.path(), "2026-05-29T18:00:00Z").expect("collect inbox items");
 
-        assert_eq!(report.accepted.len(), 5);
+        assert_eq!(report.accepted.len(), 6);
         assert!(report.skipped.is_empty());
-        for name in ["link.url", "paper.pdf", "notes.md", "plain.txt", "data.csv"] {
+        for name in [
+            "link.url",
+            "paper.pdf",
+            "notes.md",
+            "plain.txt",
+            "interview.wav",
+            "data.csv",
+        ] {
             assert!(
                 !temp.path().join("inbox").join(name).exists(),
                 "accepted inbox item should move out: {name}"
@@ -510,6 +554,7 @@ mod tests {
             SourceKind::Pdf,
             SourceKind::Markdown,
             SourceKind::Text,
+            SourceKind::Audio,
             SourceKind::File,
         ] {
             assert!(kinds.contains(&kind), "manifest contains {kind}");
@@ -589,5 +634,22 @@ mod tests {
         assert!(log.contains("inbox/note.txt"));
         assert!(log.contains("2026-05-29T18:10:00Z collect skipped"));
         assert!(log.contains("inbox/mystery"));
+    }
+
+    #[test]
+    fn oversized_items_are_skipped_before_reading() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_file(temp.path(), "inbox/large.txt", b"too large");
+
+        let report = collect_inbox_with_limit(temp.path(), "2026-05-29T18:12:00Z", 3)
+            .expect("collect inbox items");
+
+        assert!(report.accepted.is_empty());
+        assert_eq!(report.skipped.len(), 1);
+        assert_eq!(
+            report.skipped[0].reason.as_deref(),
+            Some("inbox item exceeds 3 byte limit")
+        );
+        assert!(temp.path().join("inbox/large.txt").is_file());
     }
 }

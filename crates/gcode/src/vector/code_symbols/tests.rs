@@ -252,6 +252,38 @@ fn embedding_request_response() {
 }
 
 #[test]
+fn embedding_batch_preserves_response_index_order() {
+    let (base_url, handle) = spawn_http_responses(vec![(
+        200,
+        json!({
+            "data": [
+                {"index": 1, "embedding": [0.2, 0.22]},
+                {"index": 0, "embedding": [0.1, 0.11]}
+            ]
+        }),
+    )]);
+    let config = EmbeddingConfig {
+        api_base: format!("{base_url}/v1"),
+        model: "embed-small".to_string(),
+        api_key: None,
+        query_prefix: None,
+        timeout_seconds: 10,
+    };
+    let client = embedding_client(&config).expect("embedding client");
+
+    let embeddings = embed_text_batch(
+        &client,
+        &config,
+        &["first".to_string(), "second".to_string()],
+    )
+    .expect("batch embedding response");
+    let requests = handle.join().expect("server thread");
+
+    assert_eq!(embeddings, vec![vec![0.1, 0.11], vec![0.2, 0.22]]);
+    assert!(requests[0].contains(r#""input":["first","second"]"#));
+}
+
+#[test]
 fn ensure_collection_resolves_vector_size_and_distance() {
     let (embedding_url, embedding_handle) = spawn_http_responses(vec![(
         200,

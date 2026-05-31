@@ -144,10 +144,20 @@ fn index_file(
 ) -> Result<(), IndexError> {
     let content_hash = current_hashes
         .get(&path)
-        .expect("index event path exists in current hash snapshot")
+        .ok_or_else(|| {
+            IndexError::Walk(format!(
+                "index event path {} was missing from current hash snapshot",
+                path.display()
+            ))
+        })?
         .clone();
     let body = std::fs::read_to_string(vault_root.join(&path))?;
-    let kind = document_kind(&path).expect("indexable path has a document kind");
+    let kind = document_kind(&path).ok_or_else(|| {
+        IndexError::Walk(format!(
+            "indexable path {} had no document kind",
+            path.display()
+        ))
+    })?;
     let parsed = parse_wiki_document(&path, kind, content_hash.clone(), body);
 
     store.upsert_document(parsed.document)?;
@@ -302,8 +312,16 @@ fn first_heading(body: &str) -> Option<String> {
 fn parse_heading(line: &str) -> Option<String> {
     let trimmed = line.trim_end();
     let hashes = trimmed.bytes().take_while(|byte| *byte == b'#').count();
-    if (1..=6).contains(&hashes) && trimmed.as_bytes().get(hashes) == Some(&b' ') {
-        let heading = trimmed[hashes + 1..].trim();
+    if !(1..=6).contains(&hashes) {
+        return None;
+    }
+    let after_hashes = &trimmed[hashes..];
+    if after_hashes
+        .bytes()
+        .next()
+        .is_some_and(|byte| byte.is_ascii_whitespace())
+    {
+        let heading = after_hashes.trim_start_matches(|ch: char| ch.is_ascii_whitespace());
         if !heading.is_empty() {
             return Some(heading.to_string());
         }

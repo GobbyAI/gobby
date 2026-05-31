@@ -8,7 +8,7 @@ use gobby_core::falkor::Row;
 use super::connection::with_required_core_graph;
 use super::payload::{
     GraphBlastRadiusTarget, GraphLink, GraphNode, GraphPayload, add_link_from_row,
-    add_node_from_row, add_prefixed_node_from_row, row_string, row_to_projection_metadata,
+    add_node_from_row, add_prefixed_node_from_row, row_string_owned, row_to_projection_metadata,
     row_usize,
 };
 
@@ -448,20 +448,20 @@ pub(super) fn dedupe_limited_blast_rows(mut rows: Vec<Row>, limit: usize) -> Vec
             .unwrap_or(usize::MAX)
             .cmp(&row_usize(right, &["distance"]).unwrap_or(usize::MAX))
             .then_with(|| {
-                row_string(left, &["node_name"])
+                row_string_owned(left, &["node_name"])
                     .unwrap_or_default()
-                    .cmp(&row_string(right, &["node_name"]).unwrap_or_default())
+                    .cmp(&row_string_owned(right, &["node_name"]).unwrap_or_default())
             })
             .then_with(|| {
-                row_string(left, &["node_id"])
+                row_string_owned(left, &["node_id"])
                     .unwrap_or_default()
-                    .cmp(&row_string(right, &["node_id"]).unwrap_or_default())
+                    .cmp(&row_string_owned(right, &["node_id"]).unwrap_or_default())
             })
     });
 
     let mut seen = HashSet::new();
     rows.retain(|row| {
-        let Some(node_id) = row_string(row, &["node_id"]) else {
+        let Some(node_id) = row_string_owned(row, &["node_id"]) else {
             return false;
         };
         seen.insert(node_id)
@@ -507,7 +507,7 @@ pub fn project_overview_graph(ctx: &Context, limit: usize) -> anyhow::Result<Gra
             project_overview_imports_query(&ctx.project_id, &file_paths, link_limit);
         for row in client.query(&query, Some(params))? {
             add_link_from_row(&mut payload, &row);
-            if let Some(module_id) = row_string(&row, &["target"]) {
+            if let Some(module_id) = row_string_owned(&row, &["target"]) {
                 payload.push_node(GraphNode::new(module_id.clone(), module_id, "module"));
             }
             if payload.nodes.len() >= max_nodes {
@@ -519,14 +519,15 @@ pub fn project_overview_graph(ctx: &Context, limit: usize) -> anyhow::Result<Gra
             project_overview_defines_query(&ctx.project_id, &file_paths, link_limit);
         for row in client.query(&query, Some(params))? {
             add_link_from_row(&mut payload, &row);
-            if let Some(symbol_id) = row_string(&row, &["target"]) {
+            if let Some(symbol_id) = row_string_owned(&row, &["target"]) {
                 let mut node = GraphNode::new(
                     symbol_id.clone(),
-                    row_string(&row, &["symbol_name"]).unwrap_or(symbol_id),
-                    row_string(&row, &["symbol_kind"]).unwrap_or_else(|| "function".to_string()),
+                    row_string_owned(&row, &["symbol_name"]).unwrap_or(symbol_id),
+                    row_string_owned(&row, &["symbol_kind"])
+                        .unwrap_or_else(|| "function".to_string()),
                 );
-                node.kind = row_string(&row, &["symbol_kind"]);
-                node.file_path = row_string(&row, &["symbol_file_path", "source"]);
+                node.kind = row_string_owned(&row, &["symbol_kind"]);
+                node.file_path = row_string_owned(&row, &["symbol_file_path", "source"]);
                 node.line_start = row_usize(&row, &["line_start"]);
                 payload.push_node(node);
             }
@@ -539,14 +540,15 @@ pub fn project_overview_graph(ctx: &Context, limit: usize) -> anyhow::Result<Gra
             project_overview_calls_query(&ctx.project_id, &file_paths, link_limit);
         for row in client.query(&query, Some(params))? {
             add_link_from_row(&mut payload, &row);
-            if let Some(target_id) = row_string(&row, &["target"]) {
+            if let Some(target_id) = row_string_owned(&row, &["target"]) {
                 let mut node = GraphNode::new(
                     target_id.clone(),
-                    row_string(&row, &["target_name"]).unwrap_or(target_id),
-                    row_string(&row, &["target_type"]).unwrap_or_else(|| "unresolved".to_string()),
+                    row_string_owned(&row, &["target_name"]).unwrap_or(target_id),
+                    row_string_owned(&row, &["target_type"])
+                        .unwrap_or_else(|| "unresolved".to_string()),
                 );
-                node.kind = row_string(&row, &["target_kind"]);
-                node.file_path = row_string(&row, &["target_file_path"]);
+                node.kind = row_string_owned(&row, &["target_kind"]);
+                node.file_path = row_string_owned(&row, &["target_file_path"]);
                 node.line_start = row_usize(&row, &["target_line_start"]);
                 payload.push_node(node);
             }
@@ -569,7 +571,7 @@ pub fn file_graph(ctx: &Context, file_path: &str) -> anyhow::Result<GraphPayload
         let (query, params) = file_symbols_query(&ctx.project_id, file_path);
         for row in client.query(&query, Some(params))? {
             add_node_from_row(&mut payload, &row, "function");
-            if let Some(symbol_id) = row_string(&row, &["id"]) {
+            if let Some(symbol_id) = row_string_owned(&row, &["id"]) {
                 let mut link = GraphLink::new(file_path, symbol_id, "DEFINES");
                 link.metadata = row_to_projection_metadata(&row);
                 payload.links.push(link);
@@ -607,10 +609,10 @@ pub fn symbol_neighbors(
 
         for row in rows {
             add_node_from_row(&mut payload, &row, "unresolved");
-            let Some(neighbor_id) = row_string(&row, &["id"]) else {
+            let Some(neighbor_id) = row_string_owned(&row, &["id"]) else {
                 continue;
             };
-            let direction = row_string(&row, &["direction"]).unwrap_or_default();
+            let direction = row_string_owned(&row, &["direction"]).unwrap_or_default();
             let mut link = if direction == "outgoing" {
                 GraphLink::new(symbol_id, neighbor_id, "CALLS")
             } else {
@@ -668,21 +670,22 @@ pub fn blast_radius_graph(
         payload.push_node(center_node);
 
         for row in rows {
-            let Some(node_id) = row_string(&row, &["node_id"]) else {
+            let Some(node_id) = row_string_owned(&row, &["node_id"]) else {
                 continue;
             };
             let mut node = GraphNode::new(
                 node_id.clone(),
-                row_string(&row, &["node_name"]).unwrap_or_else(|| node_id.clone()),
-                row_string(&row, &["node_type"]).unwrap_or_else(|| "function".to_string()),
+                row_string_owned(&row, &["node_name"]).unwrap_or_else(|| node_id.clone()),
+                row_string_owned(&row, &["node_type"]).unwrap_or_else(|| "function".to_string()),
             );
-            node.kind = row_string(&row, &["kind"]);
-            node.file_path = row_string(&row, &["file_path"]);
+            node.kind = row_string_owned(&row, &["kind"]);
+            node.file_path = row_string_owned(&row, &["file_path"]);
             node.line_start = row_usize(&row, &["line"]);
             node.blast_distance = row_usize(&row, &["distance"]);
             payload.push_node(node);
 
-            let relation = row_string(&row, &["rel_type"]).unwrap_or_else(|| "call".to_string());
+            let relation =
+                row_string_owned(&row, &["rel_type"]).unwrap_or_else(|| "call".to_string());
             let mut link = GraphLink::new(
                 node_id,
                 &center_id,

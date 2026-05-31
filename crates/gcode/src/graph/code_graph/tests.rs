@@ -47,7 +47,9 @@ fn read_apis_return_node_link_payloads_with_link_metadata() {
         ("source_line".to_string(), json!(12)),
         ("source_symbol_id".to_string(), json!("symbol-1")),
     ]);
-    payload.links.push(GraphLink::from_row(&link_row));
+    payload
+        .links
+        .push(GraphLink::from_row(&link_row).expect("link row has endpoints"));
 
     let encoded = serde_json::to_value(&payload).expect("payload serializes");
 
@@ -110,7 +112,7 @@ fn file_blast_rows_are_deduped_and_limited_after_merge() {
 
     assert_eq!(rows.len(), 1);
     assert_eq!(
-        row_string(&rows[0], &["node_id"]).as_deref(),
+        row_string_owned(&rows[0], &["node_id"]).as_deref(),
         Some("symbol-1")
     );
     assert_eq!(row_usize(&rows[0], &["distance"]), Some(1));

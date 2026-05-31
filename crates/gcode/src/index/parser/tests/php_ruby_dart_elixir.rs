@@ -125,7 +125,11 @@ end
     let json_call = parsed
         .calls
         .iter()
-        .find(|call| call.callee_name == "parse")
+        .find(|call| {
+            call.callee_name == "parse"
+                && call.callee_target_kind.as_str() == "external"
+                && call.callee_external_module.as_deref() == Some("json")
+        })
         .expect("json call");
     assert_eq!(json_call.callee_target_kind.as_str(), "external");
     assert_eq!(json_call.callee_external_module.as_deref(), Some("json"));
@@ -201,7 +205,11 @@ dependencies:
     let json_call = parsed
         .calls
         .iter()
-        .find(|call| call.callee_name == "jsonDecode")
+        .find(|call| {
+            call.callee_name == "jsonDecode"
+                && call.callee_target_kind.as_str() == "external"
+                && call.callee_external_module.as_deref() == Some("dart:convert")
+        })
         .expect("jsonDecode call");
     assert_eq!(json_call.callee_target_kind.as_str(), "external");
     assert_eq!(

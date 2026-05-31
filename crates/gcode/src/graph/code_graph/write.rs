@@ -31,6 +31,7 @@ impl<'a> CodeGraph<'a> {
         imports: &[ImportRelation],
         definitions: &[Symbol],
         calls: &[CallRelation],
+        cleanup_orphans: bool,
     ) -> anyhow::Result<usize> {
         self.ensure_file_node(file_path, definitions.len())?;
         let current_symbol_ids = definitions
@@ -43,7 +44,9 @@ impl<'a> CodeGraph<'a> {
         relationship_count += self.add_imports(file_path, imports)?;
         relationship_count += self.add_definitions(file_path, definitions)?;
         relationship_count += self.add_calls(file_path, calls)?;
-        self.cleanup_orphans()?;
+        if cleanup_orphans {
+            self.cleanup_orphans()?;
+        }
         Ok(relationship_count)
     }
 
@@ -150,9 +153,16 @@ pub fn sync_file_graph(
     imports: &[ImportRelation],
     definitions: &[Symbol],
     calls: &[CallRelation],
+    cleanup_orphans: bool,
 ) -> anyhow::Result<usize> {
     with_required_core_graph(ctx, |client| {
-        CodeGraph::new(&ctx.project_id, client).sync_file(file_path, imports, definitions, calls)
+        CodeGraph::new(&ctx.project_id, client).sync_file(
+            file_path,
+            imports,
+            definitions,
+            calls,
+            cleanup_orphans,
+        )
     })
 }
 

@@ -44,6 +44,74 @@ pub fn embed_text(
         "input": text,
     });
 
+    let data = send_embedding_request(client, config, body)?;
+    data.get("data")
+        .and_then(Value::as_array)
+        .and_then(|values| values.first())
+        .ok_or_else(|| {
+            VectorLifecycleError::EmbeddingResponse("missing data[0] object".to_string())
+        })
+        .and_then(parse_embedding)
+}
+
+pub fn embed_text_batch(
+    client: &reqwest::blocking::Client,
+    config: &EmbeddingConfig,
+    texts: &[String],
+) -> Result<Vec<Vec<f32>>, VectorLifecycleError> {
+    if texts.is_empty() {
+        return Ok(Vec::new());
+    }
+    let body = json!({
+        "model": config.model,
+        "input": texts,
+    });
+
+    let data = send_embedding_request(client, config, body)?;
+    let data = data
+        .get("data")
+        .and_then(Value::as_array)
+        .ok_or_else(|| VectorLifecycleError::EmbeddingResponse("missing data array".to_string()))?;
+    if data.len() != texts.len() {
+        return Err(VectorLifecycleError::EmbeddingResponse(format!(
+            "embedding response returned {} vector(s) for {} input(s)",
+            data.len(),
+            texts.len()
+        )));
+    }
+
+    let mut ordered = vec![None; texts.len()];
+    for (position, item) in data.iter().enumerate() {
+        let index = item
+            .get("index")
+            .and_then(Value::as_u64)
+            .and_then(|index| usize::try_from(index).ok())
+            .unwrap_or(position);
+        if index >= texts.len() || ordered[index].is_some() {
+            return Err(VectorLifecycleError::EmbeddingResponse(
+                "embedding response contained an invalid index".to_string(),
+            ));
+        }
+        ordered[index] = Some(parse_embedding(item)?);
+    }
+
+    ordered
+        .into_iter()
+        .map(|embedding| {
+            embedding.ok_or_else(|| {
+                VectorLifecycleError::EmbeddingResponse(
+                    "embedding response omitted an input index".to_string(),
+                )
+            })
+        })
+        .collect()
+}
+
+fn send_embedding_request(
+    client: &reqwest::blocking::Client,
+    config: &EmbeddingConfig,
+    body: Value,
+) -> Result<Value, VectorLifecycleError> {
     let url = format!("{}/embeddings", config.api_base.trim_end_matches('/'));
     let mut req = client.post(&url).json(&body);
 
@@ -60,17 +128,16 @@ pub fn embed_text(
         return Err(VectorLifecycleError::EmbeddingHttp { status, body });
     }
 
-    let data: Value = resp
-        .json()
-        .map_err(|err| VectorLifecycleError::EmbeddingResponse(err.to_string()))?;
-    let embedding: Vec<f32> = data
-        .get("data")
-        .and_then(Value::as_array)
-        .and_then(|values| values.first())
-        .and_then(|value| value.get("embedding"))
+    resp.json()
+        .map_err(|err| VectorLifecycleError::EmbeddingResponse(err.to_string()))
+}
+
+fn parse_embedding(value: &Value) -> Result<Vec<f32>, VectorLifecycleError> {
+    let embedding = value
+        .get("embedding")
         .and_then(Value::as_array)
         .ok_or_else(|| {
-            VectorLifecycleError::EmbeddingResponse("missing data[0].embedding array".to_string())
+            VectorLifecycleError::EmbeddingResponse("missing embedding array".to_string())
         })?
         .iter()
         .map(|value| {
@@ -83,12 +150,11 @@ pub fn embed_text(
         .collect::<Result<Vec<_>, _>>()?;
 
     if embedding.is_empty() {
-        Err(VectorLifecycleError::EmbeddingResponse(
+        return Err(VectorLifecycleError::EmbeddingResponse(
             "embedding vector was empty".to_string(),
-        ))
-    } else {
-        Ok(embedding)
+        ));
     }
+    Ok(embedding)
 }
 
 pub fn embed_query(config: &EmbeddingConfig, text: &str) -> Option<Vec<f32>> {
