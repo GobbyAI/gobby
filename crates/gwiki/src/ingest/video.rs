@@ -61,15 +61,21 @@ pub fn ingest_video(
     };
     let record = SourceManifest::register_with_content_hash(vault_root, draft, content_hash)?;
     let asset_path = write_asset(vault_root, &record, &snapshot.file_name, &snapshot.bytes)?;
-    let raw_markdown = render_raw_video_markdown(&snapshot, &record.content_hash, &asset_path);
+    let frame_interval_seconds = snapshot
+        .frame_interval_seconds
+        .unwrap_or(DEFAULT_FRAME_INTERVAL_SECONDS);
+    let raw_markdown = render_raw_video_markdown(
+        &snapshot,
+        &record.content_hash,
+        &asset_path,
+        frame_interval_seconds,
+    );
     let raw_path = write_raw_markdown(vault_root, &record, &raw_markdown)?;
     let frame_samples = crate::video::sample_frames(
         &asset_path,
         FrameSamplingPlan {
             duration_seconds: snapshot.duration_seconds,
-            interval_seconds: snapshot
-                .frame_interval_seconds
-                .unwrap_or(DEFAULT_FRAME_INTERVAL_SECONDS),
+            interval_seconds: frame_interval_seconds,
         },
     );
     let VideoMarkdownResult {
@@ -85,6 +91,7 @@ pub fn ingest_video(
             asset_path: &asset_path,
             raw_path: &raw_path,
             duration_seconds: snapshot.duration_seconds,
+            frame_interval_seconds,
             frame_samples: &frame_samples,
             frame_descriptions: &snapshot.frame_descriptions,
             transcript_segments: &snapshot.transcript_segments,
@@ -116,6 +123,7 @@ fn render_raw_video_markdown(
     snapshot: &VideoSnapshot,
     source_hash: &str,
     asset_path: &Path,
+    frame_interval_seconds: u32,
 ) -> String {
     let asset_path = path_to_string(asset_path);
     let mut fields = vec![
@@ -131,12 +139,10 @@ fn render_raw_video_markdown(
     if let Some(duration_seconds) = snapshot.duration_seconds {
         fields.push(("video_duration_seconds", duration_seconds.to_string()));
     }
-    if let Some(frame_interval_seconds) = snapshot.frame_interval_seconds {
-        fields.push((
-            "video_frame_interval_seconds",
-            frame_interval_seconds.to_string(),
-        ));
-    }
+    fields.push((
+        "video_frame_interval_seconds",
+        frame_interval_seconds.to_string(),
+    ));
     fields.push((
         "video_frame_description_count",
         snapshot.frame_descriptions.len().to_string(),
@@ -224,6 +230,7 @@ mod tests {
         assert!(raw.contains("source_asset: raw/assets/"));
         assert!(raw.contains("video_mime_type: video/mp4"));
         assert!(raw.contains("video_duration_seconds: 8"));
+        assert!(raw.contains("video_frame_interval_seconds: 4"));
 
         let manifest = SourceManifest::read(temp.path()).expect("read source manifest");
         assert_eq!(manifest.entries.len(), 1);
@@ -252,6 +259,7 @@ mod tests {
         assert!(document.body.contains("source_kind: video"));
         assert!(document.body.contains("source_asset: raw/assets/"));
         assert!(document.body.contains("source_raw: raw/"));
+        assert!(document.body.contains("video_frame_interval_seconds: 4"));
         assert!(document.body.contains("scope_kind: project"));
         assert!(document.body.contains("scope_id: project-123"));
         assert!(document.body.contains("Original video: `raw/assets/"));

@@ -171,7 +171,10 @@ fn parse_python_import_statement(
     extracted: &mut ExtractedImports,
 ) {
     if let Some(rest) = text.strip_prefix("import ") {
-        for entry in split_top_level(rest, ',') {
+        let Ok(entries) = split_top_level(rest, ',') else {
+            return;
+        };
+        for entry in entries {
             let entry = entry.trim();
             if entry.is_empty() {
                 continue;
@@ -222,7 +225,10 @@ fn parse_python_import_statement(
     }
 
     let imported = imported.trim().trim_matches(|ch| matches!(ch, '(' | ')'));
-    for entry in split_top_level(imported, ',') {
+    let Ok(entries) = split_top_level(imported, ',') else {
+        return;
+    };
+    for entry in entries {
         let entry = entry.trim();
         if entry.is_empty() || entry == "*" {
             continue;
@@ -275,7 +281,10 @@ fn parse_js_import_statement(
         return;
     }
 
-    for part in split_top_level(clause, ',') {
+    let Ok(parts) = split_top_level(clause, ',') else {
+        return;
+    };
+    for part in parts {
         let part = part.trim();
         if part.is_empty() {
             continue;
@@ -292,7 +301,10 @@ fn parse_js_import_statement(
         }
         if part.starts_with('{') && part.ends_with('}') {
             let inner = &part[1..part.len() - 1];
-            for item in split_top_level(inner, ',') {
+            let Ok(items) = split_top_level(inner, ',') else {
+                return;
+            };
+            for item in items {
                 let item = item.trim();
                 if item.is_empty() || item.starts_with("type ") {
                     continue;
@@ -432,7 +444,10 @@ fn register_rust_group_imports(
     import_context: &ImportResolutionContext,
     extracted: &mut ExtractedImports,
 ) {
-    for item in split_top_level(group, ',') {
+    let Ok(items) = split_top_level(group, ',') else {
+        return;
+    };
+    for item in items {
         if item.is_empty() {
             continue;
         }
@@ -651,6 +666,7 @@ fn parse_php_import_statement(
     };
 
     if split_top_level(rest, ',')
+        .unwrap_or_default()
         .into_iter()
         .any(|item| item.trim() == "*")
     {
@@ -662,7 +678,10 @@ fn parse_php_import_statement(
     }
 
     if let Some((base, group)) = split_php_use_group(rest) {
-        for item in split_top_level(group, ',') {
+        let Ok(items) = split_top_level(group, ',') else {
+            return;
+        };
+        for item in items {
             if let Some(target) = php_join_use_path(base, item) {
                 register_php_import_item(&target, kind, rel_path, import_context, extracted);
             }
@@ -678,7 +697,10 @@ fn parse_php_import_statement(
         return;
     }
 
-    for item in split_top_level(rest, ',') {
+    let Ok(items) = split_top_level(rest, ',') else {
+        return;
+    };
+    for item in items {
         register_php_import_item(item, kind, rel_path, import_context, extracted);
     }
 }

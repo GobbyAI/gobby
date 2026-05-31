@@ -143,6 +143,14 @@ fn quoted_string_ignores_escaped_quote_terminators() {
 }
 
 #[test]
+fn quoted_template_skips_interpolation_backticks() {
+    assert_eq!(
+        extract_quoted_string(r#"import `./${name ? `inner` : "fallback"}/view.js`"#).as_deref(),
+        Some(r#"./${name ? `inner` : "fallback"}/view.js"#)
+    );
+}
+
+#[test]
 fn rust_grouped_imports_register_named_bare_bindings() {
     let mut extracted = ExtractedImports::default();
 
@@ -389,7 +397,8 @@ fn js_builtin_submodules_are_external_without_package_fallback() {
 #[test]
 fn split_top_level_ignores_delimiters_inside_quotes_and_groups() {
     assert_eq!(
-        split_top_level(r#"one, call("two, three"), map[a, b], {c, d}"#, ','),
+        split_top_level(r#"one, call("two, three"), map[a, b], {c, d}"#, ',')
+            .expect("balanced split"),
         vec!["one", r#"call("two, three")"#, "map[a, b]", "{c, d}"]
     );
 }
@@ -397,9 +406,15 @@ fn split_top_level_ignores_delimiters_inside_quotes_and_groups() {
 #[test]
 fn split_top_level_preserves_escaped_quotes_inside_strings() {
     assert_eq!(
-        split_top_level(r#"first, "two, \"still string\"", third"#, ','),
+        split_top_level(r#"first, "two, \"still string\"", third"#, ',').expect("balanced split"),
         vec!["first", r#""two, \"still string\"""#, "third"]
     );
+}
+
+#[test]
+fn split_top_level_rejects_unbalanced_delimiters() {
+    assert!(split_top_level("one, call(two, three", ',').is_err());
+    assert!(split_top_level("one, two]", ',').is_err());
 }
 
 #[test]

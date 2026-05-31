@@ -41,20 +41,13 @@ pub(crate) fn path_exists_in_current_project(ctx: &Context, file_path: &str) -> 
     abs.starts_with(root)
 }
 
-pub(crate) fn indexed_file_exists(conn: &mut Client, ctx: &Context, file_path: &str) -> bool {
-    visibility::indexed_file_exists(conn, ctx, file_path)
-}
-
-pub(crate) fn content_chunks_exist(conn: &mut Client, ctx: &Context, file_path: &str) -> bool {
-    visibility::content_chunks_exist(conn, ctx, file_path)
-}
-
 pub(crate) fn current_indexed_path_is_valid(
     conn: &mut Client,
     ctx: &Context,
     file_path: &str,
 ) -> bool {
-    indexed_file_exists(conn, ctx, file_path) && path_exists_in_current_project(ctx, file_path)
+    visibility::indexed_file_exists(conn, ctx, file_path)
+        && path_exists_in_current_project(ctx, file_path)
 }
 
 pub(crate) fn other_project_for_path(

@@ -423,10 +423,14 @@ fn spawn_http_responses(responses: Vec<(u16, Value)>) -> (String, thread::JoinHa
                 accept_with_timeout(&listener, Duration::from_secs(5)).expect("accept request");
             requests.push(read_http_request(&mut stream));
 
+            let reason = reqwest::StatusCode::from_u16(status)
+                .ok()
+                .and_then(|status| status.canonical_reason())
+                .unwrap_or("OK");
             let body = body.to_string();
             write!(
                     stream,
-                    "HTTP/1.1 {status} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                     body.len()
                 )
                 .expect("write response");

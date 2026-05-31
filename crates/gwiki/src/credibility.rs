@@ -37,7 +37,7 @@ pub struct CredibilityScore {
 
 impl CredibilityScore {
     pub fn evaluate(input: CredibilityInput) -> Self {
-        let mut raw_score = 50;
+        let mut raw_score: i16 = 50;
         let signals = vec![
             source_type_signal(input.source_type),
             freshness_signal(input.age_days),

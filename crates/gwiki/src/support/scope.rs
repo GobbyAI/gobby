@@ -48,6 +48,9 @@ pub(crate) fn resolve_selection_context(
     })
 }
 
+/// Convert a resolved vault scope into the search/store scope used by the
+/// in-memory index. Topic scopes take precedence over project scopes because a
+/// topic vault may still live inside a project checkout.
 pub(crate) fn search_scope_for_resolved(scope: &wiki_scope::ResolvedScope) -> search::SearchScope {
     if let Some(topic) = scope.topic_name() {
         return search::SearchScope::topic(topic);

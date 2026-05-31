@@ -65,7 +65,7 @@ pub fn outline(ctx: &Context, file: &str, format: Format, verbose: bool) -> anyh
 
 fn outline_missing_diagnostic(conn: &mut postgres::Client, ctx: &Context, file: &str) -> String {
     if scope::path_exists_in_current_project(ctx, file) {
-        if scope::indexed_file_exists(conn, ctx, file) {
+        if visibility::indexed_file_exists(conn, ctx, file) {
             return format!("file has no indexed symbols in current project: {file}");
         }
         return format!("file not indexed in current project: {file}");
@@ -80,7 +80,9 @@ fn outline_missing_diagnostic(conn: &mut postgres::Client, ctx: &Context, file: 
         );
     }
 
-    if scope::indexed_file_exists(conn, ctx, file) || scope::content_chunks_exist(conn, ctx, file) {
+    if visibility::indexed_file_exists(conn, ctx, file)
+        || visibility::content_chunks_exist(conn, ctx, file)
+    {
         return format!("indexed path missing from current checkout: {file}; run gcode index");
     }
 

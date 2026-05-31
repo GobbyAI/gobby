@@ -212,7 +212,7 @@ pub(super) fn row_to_projection_metadata(row: &Row) -> Option<ProjectionMetadata
         .get("source_line")
         .or_else(|| row.get("line"))
         .and_then(|v| v.as_u64())
-        .map(|line| line as usize);
+        .and_then(|line| usize::try_from(line).ok());
     metadata.source_symbol_id = row
         .get("source_symbol_id")
         .or_else(|| row.get("caller_id"))

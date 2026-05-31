@@ -153,10 +153,12 @@ fn overwrite_guidance_names_flag() {
 fn standalone_setup_request_redacts_password_in_json() {
     let mut request = StandaloneSetupRequest::new(true, None, None);
     request.falkordb_password = Some("secret".to_string());
+    request.database_url = Some("postgresql://user:secret@localhost/gcode".to_string());
 
     let encoded = serde_json::to_string(&request).expect("serialize request");
 
     assert!(!encoded.contains("falkordb_password"));
+    assert!(!encoded.contains("database_url"));
     assert!(!encoded.contains("secret"));
 }
 
@@ -176,16 +178,34 @@ fn standalone_setup_request_redacts_database_url_in_json() {
 
 #[test]
 fn standalone_setup_request_debug_redacts_database_url() {
-    let request = StandaloneSetupRequest::new(
+    let mut request = StandaloneSetupRequest::new(
         true,
         Some("postgresql://user:secret@localhost/gcode".to_string()),
         None,
     );
+    request.falkordb_password = Some("secret2".to_string());
 
     let debug = format!("{request:?}");
 
     assert!(debug.contains("<redacted>"));
     assert!(!debug.contains("secret"));
+    assert!(!debug.contains("secret2"));
+}
+
+#[test]
+fn setup_test_database_url_adds_connect_timeout() {
+    assert_eq!(
+        database_url_with_connect_timeout("postgresql://localhost/gcode"),
+        "postgresql://localhost/gcode?connect_timeout=5"
+    );
+    assert_eq!(
+        database_url_with_connect_timeout("postgresql://localhost/gcode?sslmode=require"),
+        "postgresql://localhost/gcode?sslmode=require&connect_timeout=5"
+    );
+    assert_eq!(
+        database_url_with_connect_timeout("postgresql://localhost/gcode?connect_timeout=2"),
+        "postgresql://localhost/gcode?connect_timeout=2"
+    );
 }
 
 #[test]
@@ -205,6 +225,7 @@ fn overwrite_recreates_incompatible_code_index_and_preserves_sentinel_table() {
         );
         return;
     };
+    let database_url = database_url_with_connect_timeout(&database_url);
     let mut client = Client::connect(&database_url, NoTls).expect("connect test PostgreSQL hub");
     cleanup_code_index_relations(&mut client);
     client
@@ -261,6 +282,14 @@ fn overwrite_recreates_incompatible_code_index_and_preserves_sentinel_table() {
                  DROP TABLE IF EXISTS public.gobby_owned_sentinel;",
         )
         .expect("cleanup sentinel");
+}
+
+fn database_url_with_connect_timeout(database_url: &str) -> String {
+    if database_url.contains("connect_timeout=") {
+        return database_url.to_string();
+    }
+    let separator = if database_url.contains('?') { '&' } else { '?' };
+    format!("{database_url}{separator}connect_timeout=5")
 }
 
 fn cleanup_code_index_relations(client: &mut Client) {

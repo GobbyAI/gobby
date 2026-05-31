@@ -86,39 +86,8 @@ pub fn render_text(report: &HealthReport) -> String {
     render_paths(&mut text, "Stale pages", &report.stale_pages);
     render_sources(&mut text, "Stale citations", &report.stale_citations);
     render_sources(&mut text, "Uncited sources", &report.uncited_sources);
-    text.push_str("\nBroken links:\n");
-    if report.broken_links.is_empty() {
-        text.push_str("- none\n");
-    } else {
-        for issue in &report.broken_links {
-            text.push_str("- ");
-            text.push_str(&issue.path.display().to_string());
-            text.push(':');
-            text.push_str(&issue.line.to_string());
-            text.push_str(" -> ");
-            text.push_str(&issue.target);
-            text.push('\n');
-        }
-    }
-    if report.duplicate_concepts.is_empty() {
-        text.push_str("\nDuplicate concepts:\n- none\n");
-    } else {
-        text.push_str("\nDuplicate concepts:\n");
-        for duplicate in &report.duplicate_concepts {
-            text.push_str("- ");
-            text.push_str(&duplicate.title);
-            text.push_str(": ");
-            text.push_str(
-                &duplicate
-                    .paths
-                    .iter()
-                    .map(|path| path.display().to_string())
-                    .collect::<Vec<_>>()
-                    .join(", "),
-            );
-            text.push('\n');
-        }
-    }
+    render_broken_links(&mut text, &report.broken_links);
+    render_duplicate_concepts(&mut text, &report.duplicate_concepts);
     render_sources(&mut text, "Uncompiled sources", &report.uncompiled_sources);
     text
 }
@@ -200,6 +169,8 @@ fn fetched_year(value: &str) -> Option<u64> {
 }
 
 fn approximate_current_year() -> u64 {
+    // Health checks only need a coarse stale-citation window; using the average
+    // Gregorian year keeps this dependency-free and avoids timezone handling.
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| 1970 + duration.as_secs() / AVERAGE_GREGORIAN_YEAR_SECONDS)
@@ -299,6 +270,45 @@ fn render_sources(text: &mut String, heading: &str, sources: &[HealthSourceIssue
         text.push_str(" (");
         text.push_str(&source.location);
         text.push_str(")\n");
+    }
+}
+
+fn render_broken_links(text: &mut String, issues: &[crate::lint::LinkIssue]) {
+    text.push_str("\nBroken links:\n");
+    if issues.is_empty() {
+        text.push_str("- none\n");
+        return;
+    }
+    for issue in issues {
+        text.push_str("- ");
+        text.push_str(&issue.path.display().to_string());
+        text.push(':');
+        text.push_str(&issue.line.to_string());
+        text.push_str(" -> ");
+        text.push_str(&issue.target);
+        text.push('\n');
+    }
+}
+
+fn render_duplicate_concepts(text: &mut String, duplicates: &[DuplicateConcept]) {
+    text.push_str("\nDuplicate concepts:\n");
+    if duplicates.is_empty() {
+        text.push_str("- none\n");
+        return;
+    }
+    for duplicate in duplicates {
+        text.push_str("- ");
+        text.push_str(&duplicate.title);
+        text.push_str(": ");
+        text.push_str(
+            &duplicate
+                .paths
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+        text.push('\n');
     }
 }
 

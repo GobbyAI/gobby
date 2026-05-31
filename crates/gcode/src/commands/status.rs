@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashSet};
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use crate::config;
@@ -90,35 +91,33 @@ pub fn run(ctx: &Context, format: Format) -> anyhow::Result<()> {
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_else(|| s.id.clone());
                 let mut text = String::new();
-                text.push_str(&format!("{} ({})\n", name, short_id(&s.id)));
-                text.push_str(&format!("  Root:     {}\n", s.root_path));
-                text.push_str(&format!(
+                writeln!(text, "{} ({})", name, short_id(&s.id))?;
+                writeln!(text, "  Root:     {}", s.root_path)?;
+                writeln!(
+                    text,
                     "  Files:    {}",
                     format_coverage(s.total_files, s.total_eligible_files)
-                ));
-                text.push('\n');
-                text.push_str(&format!("  Symbols:  {}\n", s.total_symbols));
-                text.push_str(&format!(
-                    "  Indexed:  {}\n",
-                    format_timestamp(&s.last_indexed_at)
-                ));
-                text.push_str(&format!("  Duration: {}ms", s.index_duration_ms));
+                )?;
+                writeln!(text, "  Symbols:  {}", s.total_symbols)?;
+                writeln!(text, "  Indexed:  {}", format_timestamp(&s.last_indexed_at))?;
+                write!(text, "  Duration: {}ms", s.index_duration_ms)?;
                 if let crate::config::ProjectIndexScope::Overlay {
                     parent_project_id,
                     parent_root,
                     ..
                 } = &ctx.index_scope
                 {
-                    text.push('\n');
-                    text.push_str(&format!(
+                    writeln!(text)?;
+                    write!(
+                        text,
                         "  Overlay:  parent {} ({})",
                         parent_root.display(),
                         short_id(parent_project_id)
-                    ));
+                    )?;
                     let tombstones = visibility::tombstone_count(&mut conn, ctx);
                     if tombstones > 0 {
-                        text.push('\n');
-                        text.push_str(&format!("  Deletes:  {tombstones}"));
+                        writeln!(text)?;
+                        write!(text, "  Deletes:  {tombstones}")?;
                     }
                 }
                 output::print_text(&text)

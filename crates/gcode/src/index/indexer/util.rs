@@ -77,7 +77,7 @@ pub(super) fn epoch_secs_str() -> String {
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    format!("{secs}")
+    secs.to_string()
 }
 
 #[cfg(test)]

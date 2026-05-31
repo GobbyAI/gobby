@@ -5,6 +5,8 @@ use std::fmt;
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StandaloneSetupRequest {
     pub standalone: bool,
+    /// Setup-only PostgreSQL URL. It is passed to the live connection path,
+    /// redacted from `Debug`, and never persisted to JSON output.
     #[serde(skip_serializing)]
     pub database_url: Option<String>,
     pub no_services: bool,
@@ -17,6 +19,8 @@ pub struct StandaloneSetupRequest {
     pub embedding_api_key_env: Option<String>,
     pub falkordb_host: Option<String>,
     pub falkordb_port: Option<u16>,
+    /// Setup-only FalkorDB secret. It is used during provisioning, redacted
+    /// from `Debug`, and never persisted to JSON output.
     #[serde(skip_serializing)]
     pub falkordb_password: Option<String>,
     pub qdrant_url: Option<String>,

@@ -21,18 +21,66 @@ pub(super) fn extract_quoted_string(text: &str) -> Option<String> {
     let quote_char = text[quote..].chars().next()?;
     let after_quote = &text[quote + quote_char.len_utf8()..];
     let mut escaped = false;
-    for (idx, ch) in after_quote.char_indices() {
+    let mut idx = 0;
+    while idx < after_quote.len() {
+        let ch = after_quote[idx..].chars().next()?;
         if escaped {
             escaped = false;
+            idx += ch.len_utf8();
             continue;
         }
         if ch == '\\' {
             escaped = true;
+            idx += ch.len_utf8();
+            continue;
+        }
+        if quote_char == '`' && ch == '$' && after_quote[idx + ch.len_utf8()..].starts_with('{') {
+            idx = skip_template_interpolation(after_quote, idx + ch.len_utf8() + 1)?;
             continue;
         }
         if ch == quote_char {
             return Some(after_quote[..idx].to_string());
         }
+        idx += ch.len_utf8();
+    }
+    None
+}
+
+fn skip_template_interpolation(text: &str, mut idx: usize) -> Option<usize> {
+    let mut brace_depth = 1usize;
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut in_backtick = false;
+    let mut escaped = false;
+
+    while idx < text.len() {
+        let ch = text[idx..].chars().next()?;
+        if escaped {
+            escaped = false;
+            idx += ch.len_utf8();
+            continue;
+        }
+        if (in_single || in_double || in_backtick) && ch == '\\' {
+            escaped = true;
+            idx += ch.len_utf8();
+            continue;
+        }
+        match ch {
+            '\'' if !in_double && !in_backtick => in_single = !in_single,
+            '"' if !in_single && !in_backtick => in_double = !in_double,
+            '`' if !in_single && !in_double => in_backtick = !in_backtick,
+            '{' if !in_single && !in_double && !in_backtick => brace_depth += 1,
+            '}' if !in_single && !in_double && !in_backtick => {
+                brace_depth -= 1;
+                idx += ch.len_utf8();
+                if brace_depth == 0 {
+                    return Some(idx);
+                }
+                continue;
+            }
+            _ => {}
+        }
+        idx += ch.len_utf8();
     }
     None
 }
@@ -115,7 +163,7 @@ pub(super) fn rust_join_use_path(prefix: &str, item: &str) -> Option<String> {
     })
 }
 
-pub(super) fn split_top_level(text: &str, delimiter: char) -> Vec<&str> {
+pub(super) fn split_top_level(text: &str, delimiter: char) -> Result<Vec<&str>, &'static str> {
     let mut parts = Vec::new();
     let mut start = 0;
     let mut paren_depth = 0usize;
@@ -139,10 +187,13 @@ pub(super) fn split_top_level(text: &str, delimiter: char) -> Vec<&str> {
             '"' if !in_single => in_double = !in_double,
             '(' if !in_single && !in_double => paren_depth += 1,
             ')' if !in_single && !in_double && paren_depth > 0 => paren_depth -= 1,
+            ')' if !in_single && !in_double => return Err("unbalanced closing parenthesis"),
             '{' if !in_single && !in_double => brace_depth += 1,
             '}' if !in_single && !in_double && brace_depth > 0 => brace_depth -= 1,
+            '}' if !in_single && !in_double => return Err("unbalanced closing brace"),
             '[' if !in_single && !in_double => bracket_depth += 1,
             ']' if !in_single && !in_double && bracket_depth > 0 => bracket_depth -= 1,
+            ']' if !in_single && !in_double => return Err("unbalanced closing bracket"),
             ch if ch == delimiter
                 && !in_single
                 && !in_double
@@ -159,7 +210,14 @@ pub(super) fn split_top_level(text: &str, delimiter: char) -> Vec<&str> {
 
     parts.push(text[start..].trim());
 
-    parts
+    if in_single || in_double {
+        return Err("unterminated string literal");
+    }
+    if paren_depth != 0 || brace_depth != 0 || bracket_depth != 0 {
+        return Err("unbalanced opening delimiter");
+    }
+
+    Ok(parts)
 }
 
 pub(super) fn is_ruby_constant_name(name: &str) -> bool {

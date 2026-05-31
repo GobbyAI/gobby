@@ -337,7 +337,9 @@ fn normalize_path_components(parent: &str, target: &str) -> String {
         .filter(|part| !part.is_empty() && *part != ".")
     {
         if part == ".." {
-            parts.pop();
+            if !parts.is_empty() {
+                parts.pop();
+            }
         } else {
             parts.push(part);
         }
@@ -509,6 +511,14 @@ mod tests {
         assert_eq!(
             report.orphan_pages,
             vec![PathBuf::from("wiki/topics/orphan.md")]
+        );
+    }
+
+    #[test]
+    fn relative_markdown_links_clamp_traversal_at_vault_root() {
+        assert_eq!(
+            normalize_path_components("wiki/topics", "../../../outside.md"),
+            "outside.md"
         );
     }
 

@@ -4,6 +4,10 @@ use std::path::{Path, PathBuf};
 
 use serde_json::json;
 
+pub const MAX_MEMORY_INDEX_BYTES_ENV: &str = "GWIKI_MAX_MEMORY_INDEX_BYTES";
+const MAX_ID_LEN: usize = 63;
+const HASH_SUFFIX_LEN: usize = 12;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WikiDocumentKind {
     SourceCatalog,
@@ -143,6 +147,12 @@ pub trait WikiIndexStore {
     fn delete_derived_rows(&mut self, path: &Path) -> Result<(), StoreError>;
 }
 
+/// In-memory wiki index used by local shell commands and tests.
+///
+/// Large vaults can consume substantial memory because documents, chunks,
+/// links, and source metadata are retained together. Set
+/// `GWIKI_MAX_MEMORY_INDEX_BYTES` to cap the markdown bytes accepted by this
+/// path before indexing.
 #[derive(Debug, Default)]
 pub struct MemoryWikiStore {
     pub documents: BTreeMap<PathBuf, WikiDocument>,
@@ -664,7 +674,24 @@ fn scoped_text_id(prefix: &str, scope: &WikiStoreScope, path: &Path, suffixes: &
         id.push(':');
         id.push_str(suffix);
     }
-    id
+    cap_scoped_id(id)
+}
+
+fn cap_scoped_id(id: String) -> String {
+    if id.len() <= MAX_ID_LEN {
+        return id;
+    }
+
+    let hash = gobby_core::indexing::content_hash(id.as_bytes());
+    let prefix_len = MAX_ID_LEN - HASH_SUFFIX_LEN - 1;
+    let mut prefix = String::new();
+    for ch in id.chars() {
+        if prefix.len() + ch.len_utf8() > prefix_len {
+            break;
+        }
+        prefix.push(ch);
+    }
+    format!("{prefix}-{}", &hash[..HASH_SUFFIX_LEN])
 }
 
 fn document_kind_name(kind: WikiDocumentKind) -> &'static str {
@@ -687,9 +714,76 @@ fn ingestion_status(event: WikiIngestionEvent) -> &'static str {
 }
 
 fn link_kind(target: &str) -> &'static str {
-    if target.contains("://") || target.starts_with('#') {
+    if target.starts_with("//") || has_uri_scheme(target) {
         "markdown"
     } else {
         "wiki"
+    }
+}
+
+fn has_uri_scheme(target: &str) -> bool {
+    let Some(colon) = target.find(':') else {
+        return false;
+    };
+    let scheme = &target[..colon];
+    !scheme.is_empty()
+        && scheme
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '-' | '.'))
+        && scheme
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_alphabetic())
+}
+
+pub fn configured_memory_index_limit_bytes() -> Option<u64> {
+    match std::env::var(MAX_MEMORY_INDEX_BYTES_ENV) {
+        Ok(raw) => raw
+            .parse::<u64>()
+            .ok()
+            .filter(|value| *value > 0)
+            .or_else(|| {
+                eprintln!("warning: ignoring invalid {MAX_MEMORY_INDEX_BYTES_ENV}={raw}");
+                None
+            }),
+        Err(_) => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn link_kind_classifies_uri_schemes_and_fragments() {
+        assert_eq!(link_kind("https://example.test"), "markdown");
+        assert_eq!(link_kind("mailto:hello@example.test"), "markdown");
+        assert_eq!(link_kind("//example.test/path"), "markdown");
+        assert_eq!(link_kind("#local-section"), "wiki");
+        assert_eq!(link_kind("Concept Page"), "wiki");
+    }
+
+    #[test]
+    fn scoped_ids_are_capped_with_deterministic_hash_suffix() {
+        let scope = WikiStoreScope::project("project-with-a-very-long-identifier");
+        let id = scoped_text_id(
+            "chunk",
+            &scope,
+            Path::new("wiki/topics/a-very-long-path-name-that-keeps-going.md"),
+            &["1234567890"],
+        );
+        let id_again = scoped_text_id(
+            "chunk",
+            &scope,
+            Path::new("wiki/topics/a-very-long-path-name-that-keeps-going.md"),
+            &["1234567890"],
+        );
+
+        assert!(id.len() <= MAX_ID_LEN);
+        assert_eq!(id, id_again);
+        assert!(
+            id.rsplit_once('-')
+                .is_some_and(|(_, suffix)| suffix.len() == HASH_SUFFIX_LEN)
+        );
     }
 }

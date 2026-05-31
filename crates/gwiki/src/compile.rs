@@ -1,6 +1,9 @@
 use std::fs;
 use std::fs::OpenOptions;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
@@ -16,6 +19,9 @@ use crate::synthesis::{
     SynthesizedPage, WritePolicy, build_synthesis_prompt, relative_path, slugify as page_slugify,
     synthesize_article, synthesize_source_pages, wiki_link, write_synthesized_page,
 };
+
+const INDEX_LOCK_TIMEOUT_ENV: &str = "GWIKI_INDEX_LOCK_TIMEOUT_MS";
+const DEFAULT_INDEX_LOCK_TIMEOUT_MS: u64 = 5_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompileRequest {
@@ -272,11 +278,7 @@ fn update_wiki_index(vault_root: &Path, article: &SynthesizedPage) -> Result<(),
             path: Some(lock_path.clone()),
             source: error,
         })?;
-    fs4::FileExt::lock(&lock).map_err(|error| WikiError::Io {
-        action: "lock wiki index",
-        path: Some(lock_path.clone()),
-        source: error,
-    })?;
+    lock_wiki_index(&lock, &lock_path)?;
 
     let index_path = vault_root.join("_index.md");
     let mut index = if index_path.exists() {
@@ -572,11 +574,60 @@ fn note_path(root: &Path, path: &Path) -> PathBuf {
 }
 
 fn path_is_in_scope(path: &Path, root: &Path) -> bool {
-    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
-    if let Ok(path) = path.canonicalize() {
-        return path.starts_with(root);
-    }
+    let Ok(root) = root.canonicalize() else {
+        return false;
+    };
+    let Ok(path) = path.canonicalize() else {
+        return false;
+    };
     path.starts_with(root)
+}
+
+fn lock_wiki_index(lock: &fs::File, lock_path: &Path) -> Result<(), WikiError> {
+    let timeout = index_lock_timeout();
+    let started = Instant::now();
+
+    loop {
+        match fs4::FileExt::try_lock(lock) {
+            Ok(()) => return Ok(()),
+            Err(fs4::TryLockError::WouldBlock) => {
+                let elapsed = started.elapsed();
+                if elapsed >= timeout {
+                    return Err(WikiError::Io {
+                        action: "lock wiki index",
+                        path: Some(lock_path.to_path_buf()),
+                        source: std::io::Error::new(
+                            ErrorKind::TimedOut,
+                            format!("timed out after {}ms", timeout.as_millis()),
+                        ),
+                    });
+                }
+                thread::sleep(Duration::from_millis(25).min(timeout - elapsed));
+            }
+            Err(error) => {
+                return Err(WikiError::Io {
+                    action: "lock wiki index",
+                    path: Some(lock_path.to_path_buf()),
+                    source: error.into(),
+                });
+            }
+        }
+    }
+}
+
+fn index_lock_timeout() -> Duration {
+    match std::env::var(INDEX_LOCK_TIMEOUT_ENV) {
+        Ok(raw) => raw
+            .parse::<u64>()
+            .ok()
+            .filter(|value| *value > 0)
+            .map(Duration::from_millis)
+            .unwrap_or_else(|| {
+                eprintln!("warning: ignoring invalid {INDEX_LOCK_TIMEOUT_ENV}={raw}");
+                Duration::from_millis(DEFAULT_INDEX_LOCK_TIMEOUT_MS)
+            }),
+        Err(_) => Duration::from_millis(DEFAULT_INDEX_LOCK_TIMEOUT_MS),
+    }
 }
 
 fn render_bundle(bundle: &CompileBundle) -> String {

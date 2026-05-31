@@ -123,26 +123,6 @@ impl std::error::Error for WikiError {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::error::Error;
-
-    #[test]
-    fn typed_error_sources_are_preserved() {
-        let source =
-            serde_json::from_str::<serde_json::Value>("{").expect_err("invalid JSON should fail");
-        let error = WikiError::Json {
-            action: "parse fixture",
-            path: None,
-            source,
-        };
-
-        assert!(error.source().is_some());
-        assert!(error.to_string().contains("parse fixture failed"));
-    }
-}
-
 pub(crate) fn setup_error_to_wiki_error(error: SetupError) -> WikiError {
     WikiError::Config {
         detail: format!("gwiki setup failed: {error}"),
@@ -160,5 +140,25 @@ pub(crate) fn search_error_to_wiki_error(error: search::SearchError) -> WikiErro
     WikiError::InvalidInput {
         field: "query",
         message: error.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::error::Error;
+
+    #[test]
+    fn typed_error_sources_are_preserved() {
+        let source =
+            serde_json::from_str::<serde_json::Value>("{").expect_err("invalid JSON should fail");
+        let error = WikiError::Json {
+            action: "parse fixture",
+            path: None,
+            source,
+        };
+
+        assert!(error.source().is_some());
+        assert!(error.to_string().contains("parse fixture failed"));
     }
 }

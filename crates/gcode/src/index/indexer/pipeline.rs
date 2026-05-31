@@ -171,8 +171,6 @@ fn index_explicit_files_with_connection(
     outcome.scanned_files = request.explicit_files.len();
 
     let excludes: Vec<String> = DEFAULT_EXCLUDES.iter().map(|s| s.to_string()).collect();
-    let (candidates, _content_only) = walker::discover_files(root_path, &excludes);
-    let import_context = parser::build_import_resolution_context(root_path, &candidates);
     let mut routed_files = Vec::new();
     let mut ast_files = Vec::new();
 
@@ -203,6 +201,17 @@ fn index_explicit_files_with_connection(
             }
         }
     }
+
+    let mut import_candidates = db::list_indexed_file_paths(conn, project_id)?
+        .into_iter()
+        .map(|path| root_path.join(path))
+        .collect::<Vec<_>>();
+    for path in &ast_files {
+        if !import_candidates.iter().any(|candidate| candidate == path) {
+            import_candidates.push(path.clone());
+        }
+    }
+    let import_context = parser::build_import_resolution_context(root_path, &import_candidates);
 
     let mut semantic_resolver =
         create_semantic_resolver_if_needed(root_path, &ast_files, request.require_cpp_semantics)?;

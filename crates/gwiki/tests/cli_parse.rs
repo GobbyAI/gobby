@@ -47,4 +47,9 @@ fn core_commands_parse_scope_flags() {
             String::from_utf8_lossy(&output.stderr)
         );
     }
+
+    let quiet = gwiki(&["--quiet", "status", "--topic", "rust"]);
+    assert!(quiet.status.success());
+    assert_eq!(String::from_utf8_lossy(&quiet.stderr), "");
+    assert!(String::from_utf8_lossy(&quiet.stdout).contains("\"status\": \"shell-ready\""));
 }

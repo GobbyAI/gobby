@@ -3,7 +3,7 @@ use crate::cli::{Cli, effective_format};
 use clap::Parser;
 
 #[test]
-fn setup_runs_before_context_resolve() {
+fn setup_early_dispatch_uses_parsed_request_without_context() {
     let project = tempfile::tempdir().expect("temp project");
     let cli = Cli::try_parse_from([
         "gcode",

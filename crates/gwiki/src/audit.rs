@@ -255,6 +255,11 @@ struct ClaimLine {
     text: String,
 }
 
+/// Extract auditable prose claims from markdown body lines.
+///
+/// Frontmatter is skipped, headings update ignored-section state, empty lines
+/// and markdown-only structural lines are ignored, and lines with inline
+/// source support are treated as already supported.
 fn claim_lines(page: &WikiPage, options: &AuditOptions) -> Vec<ClaimLine> {
     let mut claims = Vec::new();
     let mut offset = 0;

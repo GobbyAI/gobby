@@ -139,10 +139,11 @@ pub(super) fn index_overlay_files(
         let Some(path) = ast_by_rel.get(rel) else {
             continue;
         };
-        if parent_files
-            .get(rel)
-            .is_none_or(|parent| hash_by_rel.get(rel) != Some(&parent.content_hash))
-        {
+        let differs_from_parent = match (hash_by_rel.get(rel), parent_files.get(rel)) {
+            (Some(hash), Some(parent)) => hash != &parent.content_hash,
+            _ => true,
+        };
+        if differs_from_parent {
             ast_reindex.push(path.clone());
         }
     }
@@ -306,7 +307,7 @@ fn git_status_relative_paths(root_path: &Path) -> anyhow::Result<HashSet<String>
     // Porcelain v1 `-z` entries are NUL-delimited records with two status
     // bytes, a separating space, then the changed path.
     for entry in output.stdout.split(|b| *b == 0) {
-        if entry.len() < 4 || entry[2] != b' ' {
+        if !is_porcelain_status_entry(entry) {
             continue;
         }
         let path = String::from_utf8_lossy(&entry[3..]);
@@ -322,15 +323,29 @@ fn git_status_relative_paths(root_path: &Path) -> anyhow::Result<HashSet<String>
     Ok(paths)
 }
 
+fn is_porcelain_status_entry(entry: &[u8]) -> bool {
+    entry.len() >= 4
+        && valid_porcelain_status_byte(entry[0])
+        && valid_porcelain_status_byte(entry[1])
+        && entry[2] == b' '
+}
+
+pub(super) fn valid_porcelain_status_byte(byte: u8) -> bool {
+    matches!(
+        byte,
+        b' ' | b'M' | b'A' | b'D' | b'R' | b'C' | b'U' | b'?' | b'!'
+    )
+}
+
 fn rel_matches_filter(root_path: &Path, path_filter: &Path, rel: &str) -> bool {
     let filter_abs = if path_filter.is_absolute() {
         path_filter.to_path_buf()
     } else {
         root_path.join(path_filter)
     };
-    // Deleted and newly-created overlay files may not canonicalize; compare the
-    // lexical absolute fallback so path filters still work before filesystem
-    // state and indexed state converge.
+    // Deleted and newly-created overlay files may not canonicalize. The lexical
+    // absolute fallback keeps filters usable during that drift, with the known
+    // tradeoff that symlink resolution is unavailable until paths exist again.
     let filter_abs = filter_abs.canonicalize().unwrap_or(filter_abs);
     let abs = root_path.join(rel);
     let abs = abs.canonicalize().unwrap_or(abs);

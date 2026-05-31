@@ -11,7 +11,7 @@ fn render(scope: ScopeIdentity) -> CommandOutcome {
     let payload = json!({
         "command": "status",
         "scope": scope,
-        "status": "ready",
+        "status": "shell-ready",
         "daemon_url": daemon_url,
     });
     let text = format!(

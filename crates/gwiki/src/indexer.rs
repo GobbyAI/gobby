@@ -8,7 +8,7 @@ use gobby_core::indexing::{
 
 use crate::store::{
     StoreError, WikiChunk, WikiDocument, WikiDocumentKind, WikiIndexStore, WikiIngestion,
-    WikiIngestionEvent, WikiLink, WikiSource,
+    WikiIngestionEvent, WikiLink, WikiSource, configured_memory_index_limit_bytes,
 };
 
 #[derive(Debug)]
@@ -17,6 +17,7 @@ pub enum IndexError {
     Walk(String),
     Store(StoreError),
     PathOutsideVault { path: PathBuf, vault_root: PathBuf },
+    MemoryIndexTooLarge { total_bytes: u64, limit_bytes: u64 },
 }
 
 impl fmt::Display for IndexError {
@@ -30,6 +31,13 @@ impl fmt::Display for IndexError {
                 "wiki index path {} is outside vault {}",
                 path.display(),
                 vault_root.display()
+            ),
+            Self::MemoryIndexTooLarge {
+                total_bytes,
+                limit_bytes,
+            } => write!(
+                f,
+                "wiki memory index input is {total_bytes} bytes, exceeding {limit_bytes} bytes from GWIKI_MAX_MEMORY_INDEX_BYTES"
             ),
         }
     }
@@ -112,6 +120,8 @@ pub fn index_vault(
 fn discover_indexable_hashes(vault_root: &Path) -> Result<BTreeMap<PathBuf, String>, IndexError> {
     let mut current_hashes = BTreeMap::new();
     let walker = WalkerSettings::new(vault_root).into_walker().build();
+    let memory_limit = configured_memory_index_limit_bytes();
+    let mut total_indexable_bytes = 0u64;
 
     for entry in walker {
         let entry = entry.map_err(|error| IndexError::Walk(error.to_string()))?;
@@ -128,6 +138,15 @@ fn discover_indexable_hashes(vault_root: &Path) -> Result<BTreeMap<PathBuf, Stri
             })?;
 
         if is_indexable_vault_path(relative) {
+            total_indexable_bytes = total_indexable_bytes.saturating_add(path.metadata()?.len());
+            if let Some(limit_bytes) = memory_limit
+                && total_indexable_bytes > limit_bytes
+            {
+                return Err(IndexError::MemoryIndexTooLarge {
+                    total_bytes: total_indexable_bytes,
+                    limit_bytes,
+                });
+            }
             current_hashes.insert(relative.to_path_buf(), file_content_hash(path)?);
         }
     }
@@ -419,6 +438,7 @@ fn extract_markdown_links(path: &Path, body: &str, links: &mut Vec<WikiLink>) {
 #[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};
+    use std::sync::{Mutex, MutexGuard};
 
     use gobby_core::indexing::content_hash;
 
@@ -426,6 +446,41 @@ mod tests {
     use crate::store::{
         MemoryWikiStore, WikiDocument, WikiDocumentKind, WikiIngestionEvent, WikiLink, WikiSource,
     };
+
+    static TEST_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct ScopedEnvVar {
+        key: &'static str,
+        previous: Option<String>,
+        _lock: MutexGuard<'static, ()>,
+    }
+
+    impl ScopedEnvVar {
+        fn set(key: &'static str, value: &str) -> Self {
+            let lock = TEST_ENV_LOCK
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let previous = std::env::var(key).ok();
+            // SAFETY: tests serialize environment mutation with TEST_ENV_LOCK.
+            unsafe { std::env::set_var(key, value) };
+            Self {
+                key,
+                previous,
+                _lock: lock,
+            }
+        }
+    }
+
+    impl Drop for ScopedEnvVar {
+        fn drop(&mut self) {
+            match &self.previous {
+                // SAFETY: ScopedEnvVar holds TEST_ENV_LOCK until restoration completes.
+                Some(value) => unsafe { std::env::set_var(self.key, value) },
+                // SAFETY: ScopedEnvVar holds TEST_ENV_LOCK until restoration completes.
+                None => unsafe { std::env::remove_var(self.key) },
+            }
+        }
+    }
 
     fn write_file(root: &Path, relative: &str, contents: &str) {
         let path = root.join(relative);
@@ -573,5 +628,17 @@ mod tests {
                 .event,
             WikiIngestionEvent::Unchanged
         );
+    }
+
+    #[test]
+    fn memory_index_limit_rejects_large_vaults() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_file(temp.path(), "wiki/topics/large.md", "# Large\n\nabcdef\n");
+        let mut store = MemoryWikiStore::default();
+        let _env = ScopedEnvVar::set("GWIKI_MAX_MEMORY_INDEX_BYTES", "4");
+
+        let error = index_vault(temp.path(), &mut store).expect_err("limit rejects vault");
+
+        assert!(matches!(error, IndexError::MemoryIndexTooLarge { .. }));
     }
 }

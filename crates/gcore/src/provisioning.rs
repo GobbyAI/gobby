@@ -706,6 +706,7 @@ mod tests {
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             let previous = std::env::var(key).ok();
+            // SAFETY: tests serialize environment mutation with TEST_ENV_LOCK.
             unsafe { std::env::set_var(key, value) };
             Self {
                 key,
@@ -718,7 +719,9 @@ mod tests {
     impl Drop for ScopedEnvVar {
         fn drop(&mut self) {
             match &self.previous {
+                // SAFETY: ScopedEnvVar holds TEST_ENV_LOCK until restoration completes.
                 Some(value) => unsafe { std::env::set_var(self.key, value) },
+                // SAFETY: ScopedEnvVar holds TEST_ENV_LOCK until restoration completes.
                 None => unsafe { std::env::remove_var(self.key) },
             }
         }

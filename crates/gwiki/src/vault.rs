@@ -8,7 +8,7 @@ use crate::scope::ResolvedScope;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VaultPaths {
     pub directories: &'static [&'static str],
-    pub files: Vec<&'static str>,
+    pub files: &'static [&'static str],
 }
 
 const DIRECTORIES: &[&str] = &[
@@ -31,10 +31,12 @@ pub const DEFAULT_FILES: &[(&str, &str)] = &[
     ("log.md", "# Log\n\n"),
 ];
 
+const DEFAULT_FILE_PATHS: &[&str] = &["raw/INDEX.md", "_index.md", "log.md"];
+
 pub fn required_paths() -> VaultPaths {
     VaultPaths {
         directories: DIRECTORIES,
-        files: DEFAULT_FILES.iter().map(|(path, _)| *path).collect(),
+        files: DEFAULT_FILE_PATHS,
     }
 }
 
@@ -136,13 +138,7 @@ mod tests {
         initialize(&scope).expect("initialize");
         let required = required_paths();
 
-        assert_eq!(
-            required.files,
-            DEFAULT_FILES
-                .iter()
-                .map(|(path, _)| *path)
-                .collect::<Vec<_>>()
-        );
+        assert_eq!(required.files, DEFAULT_FILE_PATHS);
         for (path, contents) in DEFAULT_FILES {
             assert_eq!(
                 std::fs::read_to_string(root.join(path)).expect("read default file"),

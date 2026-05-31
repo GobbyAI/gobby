@@ -154,6 +154,7 @@ pub struct VideoMarkdownRequest<'a> {
     pub asset_path: &'a Path,
     pub raw_path: &'a Path,
     pub duration_seconds: Option<u32>,
+    pub frame_interval_seconds: u32,
     pub frame_samples: &'a [VideoFrameSample],
     pub frame_descriptions: &'a [VideoFrameDescription],
     pub transcript_segments: &'a [TranscriptSegment],
@@ -230,6 +231,10 @@ fn render_video_derived_markdown(
         ("fetched_at".to_string(), record.fetched_at.clone()),
         ("scope_kind".to_string(), scope.kind.clone()),
         ("scope_id".to_string(), scope.id.clone()),
+        (
+            "video_frame_interval_seconds".to_string(),
+            request.frame_interval_seconds.to_string(),
+        ),
         (
             "video_frame_sample_count".to_string(),
             request.frame_samples.len().to_string(),

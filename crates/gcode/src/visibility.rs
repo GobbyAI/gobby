@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use postgres::Client;
 
@@ -246,11 +246,111 @@ pub fn visible_symbols_by_ids(
     let mut seen = HashSet::new();
     for row in conn.query(&sql, &params)? {
         let symbol = Symbol::from_row(&row)?;
-        if seen.insert(symbol.id.clone()) && symbol_is_visible(conn, ctx, &symbol) {
+        if seen.insert(symbol.id.clone()) {
             out.push(symbol);
         }
     }
-    Ok(out)
+    filter_visible_symbols(conn, ctx, out)
+}
+
+fn filter_visible_symbols(
+    conn: &mut Client,
+    ctx: &Context,
+    symbols: Vec<Symbol>,
+) -> anyhow::Result<Vec<Symbol>> {
+    if symbols.is_empty() {
+        return Ok(symbols);
+    }
+
+    let mut project_ids = symbols
+        .iter()
+        .map(|symbol| symbol.project_id.clone())
+        .collect::<HashSet<_>>();
+    if let ProjectIndexScope::Overlay {
+        overlay_project_id,
+        parent_project_id,
+        ..
+    } = &ctx.index_scope
+    {
+        project_ids.insert(overlay_project_id.clone());
+        project_ids.insert(parent_project_id.clone());
+    }
+    let project_ids = project_ids.into_iter().collect::<Vec<_>>();
+    let file_paths = symbols
+        .iter()
+        .map(|symbol| symbol.file_path.clone())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let file_languages = indexed_file_languages(conn, &project_ids, &file_paths)?;
+
+    Ok(symbols
+        .into_iter()
+        .filter(|symbol| symbol_visible_from_file_languages(ctx, symbol, &file_languages))
+        .collect())
+}
+
+fn indexed_file_languages(
+    conn: &mut Client,
+    project_ids: &[String],
+    file_paths: &[String],
+) -> anyhow::Result<HashMap<(String, String), String>> {
+    if project_ids.is_empty() || file_paths.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let rows = conn.query(
+        "SELECT project_id, file_path, language
+         FROM code_indexed_files
+         WHERE project_id = ANY($1) AND file_path = ANY($2)",
+        &[&project_ids, &file_paths],
+    )?;
+    rows.into_iter()
+        .map(|row| {
+            Ok((
+                (
+                    row.try_get::<_, String>("project_id")?,
+                    row.try_get::<_, String>("file_path")?,
+                ),
+                row.try_get::<_, String>("language")?,
+            ))
+        })
+        .collect()
+}
+
+fn symbol_visible_from_file_languages(
+    ctx: &Context,
+    symbol: &Symbol,
+    file_languages: &HashMap<(String, String), String>,
+) -> bool {
+    match &ctx.index_scope {
+        ProjectIndexScope::Single => {
+            symbol.project_id == ctx.project_id
+                && indexed_language_is_visible(
+                    file_languages.get(&(ctx.project_id.clone(), symbol.file_path.clone())),
+                )
+        }
+        ProjectIndexScope::Overlay {
+            overlay_project_id, ..
+        } if symbol.project_id == *overlay_project_id => indexed_language_is_visible(
+            file_languages.get(&(overlay_project_id.clone(), symbol.file_path.clone())),
+        ),
+        ProjectIndexScope::Overlay {
+            overlay_project_id,
+            parent_project_id,
+            ..
+        } if symbol.project_id == *parent_project_id => {
+            let overlay_key = (overlay_project_id.clone(), symbol.file_path.clone());
+            let parent_key = (parent_project_id.clone(), symbol.file_path.clone());
+            !file_languages.contains_key(&overlay_key)
+                && indexed_language_is_visible(file_languages.get(&parent_key))
+        }
+        ProjectIndexScope::Overlay { .. } => false,
+    }
+}
+
+fn indexed_language_is_visible(language: Option<&String>) -> bool {
+    language.is_some_and(|language| !is_tombstone_language(language))
 }
 
 pub fn visible_symbols_for_file(

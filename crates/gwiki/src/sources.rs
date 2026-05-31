@@ -168,7 +168,7 @@ impl SourceManifest {
                 continue;
             };
             let json_start = marker_start + SOURCE_MARKER.len();
-            let Some(marker_end) = line[json_start..].find("-->") else {
+            let Some(marker_end) = line[json_start..].rfind("-->") else {
                 return Err(WikiError::Json {
                     action: "parse raw source index marker",
                     path: Some(index_path),

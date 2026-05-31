@@ -47,7 +47,7 @@ pub fn ingest_snapshot(
 }
 
 fn render_url_markdown(snapshot: &UrlSnapshot, canonical_url: &str, title: &str) -> String {
-    let mut markdown = markdown_metadata(&[
+    let mut fields = vec![
         ("source_kind", "url".to_string()),
         ("source_url", snapshot.final_url.clone()),
         ("requested_url", snapshot.requested_url.clone()),
@@ -57,7 +57,11 @@ fn render_url_markdown(snapshot: &UrlSnapshot, canonical_url: &str, title: &str)
             "source_hash",
             gobby_core::indexing::content_hash(&snapshot.body),
         ),
-    ]);
+    ];
+    if let Some(content_type) = &snapshot.content_type {
+        fields.push(("content_type", content_type.clone()));
+    }
+    let mut markdown = markdown_metadata(&fields);
     markdown.push_str("# ");
     markdown.push_str(&markdown_title(title));
     markdown.push_str("\n\n");
@@ -188,6 +192,7 @@ mod tests {
         assert!(raw.contains("# Durable Wikis"));
         assert!(raw.contains("canonical_url: https://example.com/docs/wiki"));
         assert!(raw.contains("fetched_at: 2026-05-29T16:00:00Z"));
+        assert!(raw.contains("content_type: text/html"));
         assert!(raw.contains(&format!("source_hash: {expected_hash}")));
         assert!(raw.contains("Capture source material."));
 

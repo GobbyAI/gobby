@@ -7,7 +7,7 @@ use serde::Serialize;
 
 use crate::WikiError;
 
-const MAX_SLUG_TRIES: usize = 10_000;
+const MAX_SLUG_TRIES: usize = 500;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]

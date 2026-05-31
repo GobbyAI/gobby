@@ -44,7 +44,7 @@ where
         return Ok(Vec::new());
     }
     let backend_request = Bm25SearchRequest {
-        limit: request.limit.saturating_mul(4).max(request.limit),
+        limit: request.limit.saturating_mul(4),
         ..request.clone()
     };
     let mut results = backend.search_bm25(&backend_request)?;
@@ -236,14 +236,23 @@ fn row_to_result(row: postgres::Row, scope: &SearchScope) -> Result<WikiSearchRe
         read_optional_i64(&row, "byte_start"),
         read_optional_i64(&row, "byte_end"),
     ) {
-        (Some(chunk_index), Some(byte_start), Some(byte_end)) => Some(ChunkProvenance {
-            chunk_index: chunk_index as usize,
-            byte_start: byte_start as usize,
-            byte_end: byte_end as usize,
-            heading: row
-                .try_get::<_, Option<String>>("heading")
-                .map_err(|error| SearchError::Backend(error.to_string()))?,
-        }),
+        (Some(chunk_index), Some(byte_start), Some(byte_end)) => {
+            match (
+                usize::try_from(chunk_index),
+                usize::try_from(byte_start),
+                usize::try_from(byte_end),
+            ) {
+                (Ok(chunk_index), Ok(byte_start), Ok(byte_end)) => Some(ChunkProvenance {
+                    chunk_index,
+                    byte_start,
+                    byte_end,
+                    heading: row
+                        .try_get::<_, Option<String>>("heading")
+                        .map_err(|error| SearchError::Backend(error.to_string()))?,
+                }),
+                _ => None,
+            }
+        }
         _ => None,
     };
 

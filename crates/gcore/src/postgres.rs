@@ -88,7 +88,7 @@ fn connect(database_url: &str) -> anyhow::Result<Client> {
         };
     }
     if ssl_mode == SslMode::Require {
-        return connect_with_tls_verification(&config, true);
+        return connect_with_tls_unverified(&config);
     }
     connect_with_tls_verification(&config, true)
 }
