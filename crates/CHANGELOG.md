@@ -9,6 +9,111 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.9] — gcode
+
+### Added
+
+#### gcode
+
+- **Embeddings doctor** — new diagnostics surface for the `ai.embeddings.*`
+  configuration namespace, including API base, model, query prefix, timeout,
+  and legacy-key migration checks.
+- **Isolated worktree overlay indexing** — linked worktrees and isolated roots
+  now get filesystem-derived code-index identity and overlay-aware visibility
+  counts instead of inheriting parent project state.
+
+### Changed
+
+#### gcode
+
+- **Embeddings namespace contract** — embedding configuration now resolves from
+  `ai.embeddings.*` keys only; legacy `embeddings.*` keys are reported by
+  diagnostics instead of silently winning configuration resolution.
+- **Large-module decomposition** — CLI dispatch, config resolution, setup,
+  parser call extraction, import resolution, indexing, graph reads/reports,
+  FTS, and vector code-symbol lifecycle were split into focused modules with
+  expanded tests.
+- **Indexing policy** — Markdown and `.mjs` files are no longer parsed as
+  source-language symbol inputs; safe repo text remains available through
+  content search where supported.
+
+### Fixed
+
+#### gcode
+
+- **Search and graph hardening** — graph payloads, graph read rows, projection
+  sync reporting, semantic search limits, indexed grep output, and Qdrant
+  vector lifecycle paths were tightened across review follow-up fixes.
+- **Setup preflights** — standalone setup and embedding provisioning now
+  report namespace and datastore compatibility problems more explicitly before
+  mutating gcode-owned projection state.
+
+## [0.3.0] — gobby-core
+
+### Added
+
+#### gobby-core
+
+- **Embedding config contract** — shared `ai.embeddings.*` key constants,
+  namespace-aware resolution, `query_prefix`, and `timeout_seconds` now live in
+  `gobby-core` for consumers that need consistent embedding service behavior.
+- **Search primitives** — shared search/fusion result types moved into the
+  foundation crate for Rust consumers.
+
+### Changed
+
+#### gobby-core
+
+- **Legacy embedding keys retired** — `resolve_embedding_config` no longer
+  honors `embeddings.*` keys; callers get the new namespace or no embedding
+  config.
+- **Provisioning contracts** — setup/provisioning types now carry the
+  embedding namespace migration state used by `gcode setup` and diagnostics.
+
+### Fixed
+
+#### gobby-core
+
+- **Datastore adapter hardening** — PostgreSQL, FalkorDB, and Qdrant helpers
+  gained stricter diagnostics and degradation behavior for release consumers.
+
+## [0.4.5] — gobby-hooks
+
+### Changed
+
+#### gobby-hooks
+
+- **Shared foundation floor** — `gobby-hooks` now requires `gobby-core 0.3.0`.
+
+### Fixed
+
+#### gobby-hooks
+
+- **Planned-shutdown diagnostics** — daemon health-probe transport errors are
+  logged at debug level during planned Stop handling instead of disappearing.
+- **Test isolation** — tmux environment tests now use scoped environment
+  mutation through `temp-env`.
+
+## [0.4.5] — gobby-squeeze
+
+### Changed
+
+#### gobby-squeeze
+
+- **YAML dependency refresh** — the manifest now uses the maintained
+  `yaml_serde 0.10.4` package while keeping the public `serde_yaml` dependency
+  name and config-file format unchanged.
+
+## [0.1.3] — gobby-local
+
+### Changed
+
+#### gobby-local
+
+- **YAML dependency refresh** — the manifest now uses the maintained
+  `yaml_serde 0.10.4` package while keeping the public `serde_yaml` dependency
+  name and config-file format unchanged.
+
 ## [0.9.8] — gcode
 
 ### Changed

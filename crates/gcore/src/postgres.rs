@@ -201,8 +201,10 @@ mod tests {
 
     #[test]
     fn validate_schema_accepts_postgres_client_validators() {
-        let _validate: fn(&mut Client, fn(&mut Client) -> Vec<SchemaCheck>) -> Vec<SchemaCheck> =
-            validate_schema;
+        type ClientSchemaValidator = fn(&mut Client) -> Vec<SchemaCheck>;
+        type ValidateSchema = fn(&mut Client, ClientSchemaValidator) -> Vec<SchemaCheck>;
+
+        let _validate: ValidateSchema = validate_schema;
     }
 
     #[test]

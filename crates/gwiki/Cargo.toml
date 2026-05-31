@@ -24,7 +24,7 @@ name = "gwiki"
 path = "src/main.rs"
 
 [dependencies]
-gobby-core = { path = "../gcore", version = "0.2.2", features = ["postgres", "falkor", "qdrant", "indexing", "search"] }
+gobby-core = { path = "../gcore", version = "0.3.0", features = ["postgres", "falkor", "qdrant", "indexing", "search"] }
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
 postgres = "0.19"
