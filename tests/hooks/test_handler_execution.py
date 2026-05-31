@@ -44,7 +44,9 @@ class TestReturnValues:
         assert hasattr(response, "decision")
         assert hasattr(response, "context")
 
-    def test_context_is_string(self, event_handlers: EventHandlers) -> None:
+    def test_context_is_string(
+        self, event_handlers: EventHandlers, mock_empty_session_variable_manager
+    ) -> None:
         """Test context is always a string."""
         event = make_event(HookEventType.SESSION_START)
         response = event_handlers.handle_session_start(event)

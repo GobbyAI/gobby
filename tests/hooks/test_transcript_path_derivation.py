@@ -118,7 +118,9 @@ class TestTranscriptPathDerivation:
             / "updates.jsonl"
         )
 
-    def test_session_start_derives_gemini_transcript(self, mock_dependencies: dict) -> None:
+    def test_session_start_derives_gemini_transcript(
+        self, mock_dependencies: dict, mock_empty_session_variable_manager
+    ) -> None:
         """SESSION_START should derive transcript_path for Gemini when not provided natively."""
         handlers = EventHandlers(**mock_dependencies)
         mock_dependencies["session_storage"].get.return_value = None

@@ -338,7 +338,7 @@ class TestHandleSessionEnd:
 class TestSessionStartAndHelpers:
     """Tests for handle_session_start and its internal helpers."""
 
-    def test_handle_session_start_basic(self) -> None:
+    def test_handle_session_start_basic(self, mock_empty_session_variable_manager) -> None:
         handler = _TestHandler()
         event = _make_event(
             event_type=HookEventType.SESSION_START, session_id="ext-1", data={"cwd": "/tmp"}
@@ -456,7 +456,7 @@ class TestSessionStartAndHelpers:
             for call in mock_sv_mgr.set_variable.call_args_list:
                 assert call[0][1] != "code_index_available"
 
-    def test_handle_pre_created_session_logic(self) -> None:
+    def test_handle_pre_created_session_logic(self, mock_empty_session_variable_manager) -> None:
         handler = _TestHandler()
         event = _make_event(event_type=HookEventType.SESSION_START)
         mock_session = MagicMock()

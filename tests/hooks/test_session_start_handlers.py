@@ -50,7 +50,10 @@ class TestSessionHandlers:
     """Test SESSION_START and SESSION_END handlers."""
 
     def test_session_start_allows(
-        self, event_handlers: EventHandlers, mock_dependencies: dict
+        self,
+        event_handlers: EventHandlers,
+        mock_dependencies: dict,
+        mock_empty_session_variable_manager,
     ) -> None:
         """Test SESSION_START handler allows by default."""
         event = make_event(HookEventType.SESSION_START, session_id="ext-123")
@@ -142,7 +145,9 @@ class TestSessionStartContextClaim:
 class TestSessionStartPreCreatedSession:
     """Test SESSION_START handling for pre-created sessions (terminal mode agents)."""
 
-    def test_pre_created_session_found_and_updated(self, mock_dependencies: dict) -> None:
+    def test_pre_created_session_found_and_updated(
+        self, mock_dependencies: dict, mock_empty_session_variable_manager
+    ) -> None:
         """Test pre-created session is found and updated."""
         # Create a mock session object
         mock_session = MagicMock()
@@ -169,7 +174,9 @@ class TestSessionStartPreCreatedSession:
         assert response.metadata.get("session_id") == "sess-pre-123"
         mock_dependencies["session_storage"].update.assert_called_once()
 
-    def test_pre_created_session_backfills_terminal_context(self, mock_dependencies: dict) -> None:
+    def test_pre_created_session_backfills_terminal_context(
+        self, mock_dependencies: dict, mock_empty_session_variable_manager
+    ) -> None:
         """Pre-created sessions should persist terminal metadata from runtime hooks."""
         mock_session = MagicMock()
         mock_session.id = "sess-pre-123"
@@ -222,7 +229,7 @@ class TestSessionStartPreCreatedSession:
         assert response.metadata.get("terminal_tmux_pane") == "%77"
 
     def test_pre_created_session_renames_empty_title_with_cwd(
-        self, mock_dependencies: dict
+        self, mock_dependencies: dict, mock_empty_session_variable_manager
     ) -> None:
         """Pre-created SessionStart should rename panes using cwd fallback."""
         mock_session = MagicMock()
@@ -282,7 +289,9 @@ class TestSessionStartPreCreatedSession:
             loop=mock_dependencies["session_coordinator"]._event_loop,
         )
 
-    def test_pre_created_session_with_parent(self, mock_dependencies: dict) -> None:
+    def test_pre_created_session_with_parent(
+        self, mock_dependencies: dict, mock_empty_session_variable_manager
+    ) -> None:
         """Test pre-created session with parent session ID includes parent context."""
         mock_session = MagicMock()
         mock_session.id = "sess-child-123"
@@ -308,7 +317,9 @@ class TestSessionStartPreCreatedSession:
         assert response.metadata["parent_session_id"] == "sess-parent-456"
         assert response.metadata.get("is_pre_created") is True
 
-    def test_pre_created_session_with_agent_run_id(self, mock_dependencies: dict) -> None:
+    def test_pre_created_session_with_agent_run_id(
+        self, mock_dependencies: dict, mock_empty_session_variable_manager
+    ) -> None:
         """Test pre-created session with agent_run_id starts the agent run."""
         mock_session = MagicMock()
         mock_session.id = "sess-agent-123"
@@ -331,7 +342,9 @@ class TestSessionStartPreCreatedSession:
         assert response.decision == "allow"
         mock_dependencies["session_coordinator"].start_agent_run.assert_called_once_with("run-456")
 
-    def test_pre_created_session_agent_run_start_error(self, mock_dependencies: dict) -> None:
+    def test_pre_created_session_agent_run_start_error(
+        self, mock_dependencies: dict, mock_empty_session_variable_manager
+    ) -> None:
         """Test error starting agent run is handled gracefully."""
         mock_session = MagicMock()
         mock_session.id = "sess-agent-123"
@@ -358,7 +371,7 @@ class TestSessionStartPreCreatedSession:
         assert response.decision == "allow"
 
     def test_pre_created_session_registers_with_message_processor(
-        self, mock_dependencies: dict
+        self, mock_dependencies: dict, mock_empty_session_variable_manager
     ) -> None:
         """Test pre-created session registers with message processor."""
         mock_session = MagicMock()
@@ -385,7 +398,9 @@ class TestSessionStartPreCreatedSession:
         assert mock_dependencies["message_processor"].register_session.call_count == 1
         assert mock_dependencies["message_processor"].register_session.call_args is not None
 
-    def test_pre_created_session_message_processor_error(self, mock_dependencies: dict) -> None:
+    def test_pre_created_session_message_processor_error(
+        self, mock_dependencies: dict, mock_empty_session_variable_manager
+    ) -> None:
         """Test error registering with message processor is handled gracefully."""
         mock_session = MagicMock()
         mock_session.id = "sess-123"
@@ -411,7 +426,9 @@ class TestSessionStartPreCreatedSession:
         # Should still allow despite error
         assert response.decision == "allow"
 
-    def test_existing_web_chat_session_found_by_external_id(self, mock_dependencies: dict) -> None:
+    def test_existing_web_chat_session_found_by_external_id(
+        self, mock_dependencies: dict, mock_empty_session_variable_manager
+    ) -> None:
         """Codex thread-start events should reuse the durable web-chat row."""
         mock_session = MagicMock()
         mock_session.id = "sess-web-123"
@@ -450,7 +467,9 @@ class TestSessionStartPreCreatedSession:
             source="claude",
         )
 
-    def test_pre_created_session_coordinator_error(self, mock_dependencies: dict) -> None:
+    def test_pre_created_session_coordinator_error(
+        self, mock_dependencies: dict, mock_empty_session_variable_manager
+    ) -> None:
         """Test error registering session with coordinator is handled."""
         mock_session = MagicMock()
         mock_session.id = "sess-123"
@@ -711,7 +730,9 @@ class TestSessionStartNewSession:
             "parent-sess-123"
         )
 
-    def test_startup_session_does_not_adopt_stale_parent(self, mock_dependencies: dict) -> None:
+    def test_startup_session_does_not_adopt_stale_parent(
+        self, mock_dependencies: dict, mock_empty_session_variable_manager
+    ) -> None:
         """Test that fresh startup sessions never search for handoff parents."""
         mock_parent = MagicMock()
         mock_parent.id = "stale-parent-123"
@@ -740,7 +761,9 @@ class TestSessionStartNewSession:
             call_kwargs[1].get("parent_session_id") is None if call_kwargs[1] else True
         )
 
-    def test_new_session_start_renames_captured_tmux_pane(self, mock_dependencies: dict) -> None:
+    def test_new_session_start_renames_captured_tmux_pane(
+        self, mock_dependencies: dict, mock_empty_session_variable_manager
+    ) -> None:
         """New SessionStart should persist cwd and rename captured panes immediately."""
         new_session = MagicMock()
         new_session.id = "new-sess-456"
@@ -782,7 +805,9 @@ class TestSessionStartNewSession:
             loop=mock_dependencies["session_coordinator"]._event_loop,
         )
 
-    def test_new_session_parent_lookup_error(self, mock_dependencies: dict) -> None:
+    def test_new_session_parent_lookup_error(
+        self, mock_dependencies: dict, mock_empty_session_variable_manager
+    ) -> None:
         """Test error looking up parent session is handled gracefully."""
         mock_dependencies["session_storage"].get.return_value = None
         mock_dependencies["session_storage"].find_parent.side_effect = Exception("Lookup error")
@@ -834,7 +859,9 @@ class TestSessionStartNewSession:
         assert response.decision == "allow"
         assert mock_dependencies["session_manager"].mark_session_expired.call_count == 1
 
-    def test_new_session_coordinator_registration_error(self, mock_dependencies: dict) -> None:
+    def test_new_session_coordinator_registration_error(
+        self, mock_dependencies: dict, mock_empty_session_variable_manager
+    ) -> None:
         """Test error registering session with coordinator is handled."""
         mock_dependencies["session_storage"].get.return_value = None
         mock_dependencies["session_manager"].register_session.return_value = "new-sess-456"
@@ -854,7 +881,9 @@ class TestSessionStartNewSession:
         # Should still allow despite error
         assert response.decision == "allow"
 
-    def test_new_session_message_processor_registration(self, mock_dependencies: dict) -> None:
+    def test_new_session_message_processor_registration(
+        self, mock_dependencies: dict, mock_empty_session_variable_manager
+    ) -> None:
         """Test new session registers with message processor."""
         mock_dependencies["session_storage"].get.return_value = None
         mock_dependencies["session_manager"].register_session.return_value = "new-sess-456"
@@ -874,7 +903,9 @@ class TestSessionStartNewSession:
         assert mock_dependencies["message_processor"].register_session.call_count == 1
         assert mock_dependencies["message_processor"].register_session.call_args is not None
 
-    def test_new_session_message_processor_error(self, mock_dependencies: dict) -> None:
+    def test_new_session_message_processor_error(
+        self, mock_dependencies: dict, mock_empty_session_variable_manager
+    ) -> None:
         """Test error registering with message processor is handled."""
         mock_dependencies["session_storage"].get.return_value = None
         mock_dependencies["session_manager"].register_session.return_value = "new-sess-456"

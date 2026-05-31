@@ -35,6 +35,19 @@ def mock_dependencies() -> dict[str, Any]:
 
 
 @pytest.fixture
+def mock_empty_session_variable_manager(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+    """Patch session variables for session-start routing tests that do not persist them."""
+    manager = MagicMock()
+    manager.get_variables.return_value = {}
+    manager.merge_variables.return_value = True
+    manager.claim_startup_context.return_value = "full"
+
+    manager_cls = MagicMock(return_value=manager)
+    monkeypatch.setattr("gobby.workflows.state_manager.SessionVariableManager", manager_cls)
+    return manager
+
+
+@pytest.fixture
 def event_handlers(mock_dependencies: dict[str, Any]) -> EventHandlers:
     """Create EventHandlers instance with mocks."""
     return EventHandlers(**mock_dependencies)
