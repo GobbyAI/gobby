@@ -61,3 +61,16 @@ Validation passed:
 - `uv run mypy src/gobby/sessions/mailbox.py src/gobby/mcp_proxy/tools/agent_messaging.py --no-incremental --strict` - passed
 - `uv run gobby test-quality audit tests/mcp_proxy/tools/test_agent_messaging.py --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity high` - passed
 - `git diff --check` - passed
+
+Post-restart validation found the first fix was incomplete. The daemon loaded the new schema and `send_message` advertised `project_id`, but a live build-scoped message with `target_id="#354"` and `project_id="gobby-cli"` still resolved `#354` in the coordinator's Gobby project and delivered to zero agents. I reopened and reclaimed bug task `#15389` to continue the fix instead of leaving the partial behavior in place.
+
+Root cause: the MCP `call_tool` wrapper intentionally hoists `project_id` out of nested tool arguments and strips it before dispatch, so optional target-tool arguments named `project_id` do not receive it. The follow-up fix makes `send_message` use the wrapper's ambient project context when its direct `project_id` parameter is absent, and normalizes mailbox project references by resolving project names to ids before build and direct-recipient checks.
+
+Follow-up validation passed:
+
+- `GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/test_agent_messaging.py -v` - passed, 31 tests
+- `uv run ruff check src/gobby/mcp_proxy/tools/agent_messaging.py src/gobby/sessions/mailbox.py tests/mcp_proxy/tools/test_agent_messaging.py` - passed
+- `uv run ruff format --check src/gobby/mcp_proxy/tools/agent_messaging.py src/gobby/sessions/mailbox.py tests/mcp_proxy/tools/test_agent_messaging.py` - passed
+- `uv run mypy src/gobby/mcp_proxy/tools/agent_messaging.py src/gobby/sessions/mailbox.py --no-incremental --strict` - passed
+- `uv run gobby test-quality audit tests/mcp_proxy/tools/test_agent_messaging.py --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity high` - passed
+- `git diff --check` - passed

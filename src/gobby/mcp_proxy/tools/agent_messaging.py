@@ -159,6 +159,13 @@ def add_messaging_tools(
                     }
 
             from_id = _resolve(from_session)
+            if project_id is None:
+                from gobby.utils.project_context import get_project_context
+
+                ctx = get_project_context()
+                context_project_id = ctx.get("id") if ctx else None
+                if isinstance(context_project_id, str):
+                    project_id = context_project_id
 
             resolved_target_id = target_id
             if normalized_target == "session":

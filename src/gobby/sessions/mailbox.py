@@ -312,7 +312,7 @@ class MailboxService:
 
     def _resolve_project_id(self, from_session_id: str, project_id: str | None) -> str:
         if project_id:
-            return project_id
+            return self._resolve_project_ref(project_id)
         sender: Session | None = self._session_manager.get(from_session_id)
         if sender is None:
             raise ValueError(f"Sender session not found: {from_session_id}")
@@ -350,7 +350,7 @@ class MailboxService:
         if recipient is None:
             raise ValueError(f"Recipient session not found: {to_session_id}")
 
-        if project_id and recipient.project_id != project_id:
+        if project_id and recipient.project_id != self._resolve_project_ref(project_id):
             raise ValueError("Recipient session is outside the target project")
         # System-originated messages are internal daemon notifications scoped by
         # explicit project_id, so they bypass sender/recipient project equality.
@@ -571,7 +571,7 @@ class MailboxService:
             (target_id,),
         )
         if run_row is not None:
-            if project_id and str(run_row["project_id"]) != project_id:
+            if project_id and str(run_row["project_id"]) != sender_project_id:
                 raise ValueError("Build target is outside the target project")
             root_task_id = self._resolve_build_run_root_task(
                 run_row=run_row,

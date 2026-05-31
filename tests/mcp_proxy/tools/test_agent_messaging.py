@@ -486,20 +486,24 @@ class TestSendMessage:
         ]
 
     @pytest.mark.asyncio
-    async def test_send_message_build_target_scopes_cross_project_coordinator(
+    async def test_send_message_build_target_uses_context_project_for_coordinator(
         self,
         messaging_registry,
         mock_session_manager,
         mock_message_manager,
         mock_db,
     ) -> None:
-        """Build targets honor project_id and authorized cross-project coordinators."""
+        """Wrapper project context scopes build targets for cross-project coordinators."""
+        from gobby.utils.project_context import reset_project_context, set_project_context
+
         mock_session_manager.get.side_effect = lambda sid: {
             "s-coord": MockSession(id="s-coord", project_id="proj-coord"),
             "s-child": MockSession(id="s-child", project_id="proj-target"),
         }.get(sid)
 
         def fetchone(sql: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | None:
+            if "FROM projects" in sql:
+                return {"id": params[0]} if params and params[0] == "proj-target" else None
             if "FROM build_runs WHERE id = %s" in sql:
                 return None
             if "SELECT id FROM tasks WHERE project_id = %s AND seq_num = %s" in sql:
@@ -554,16 +558,19 @@ class TestSendMessage:
             metadata_json=kwargs["metadata_json"],
         )
 
-        result = await messaging_registry.call(
-            "send_message",
-            {
-                "from_session": "s-coord",
-                "target": "build",
-                "target_id": "#354",
-                "project_id": "proj-target",
-                "content": "daemon restart warning",
-            },
-        )
+        token = set_project_context({"id": "proj-target", "name": "Target"})
+        try:
+            result = await messaging_registry.call(
+                "send_message",
+                {
+                    "from_session": "s-coord",
+                    "target": "build",
+                    "target_id": "#354",
+                    "content": "daemon restart warning",
+                },
+            )
+        finally:
+            reset_project_context(token)
 
         assert result["success"] is True
         assert result["recipient_session_ids"] == ["s-child"]
@@ -585,6 +592,8 @@ class TestSendMessage:
         }.get(sid)
 
         def fetchone(sql: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | None:
+            if "FROM projects" in sql:
+                return {"id": params[0]} if params and params[0] == "proj-target" else None
             if "FROM agent_runs ar" in sql:
                 return {
                     "id": "run-1",
