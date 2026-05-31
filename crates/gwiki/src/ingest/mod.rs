@@ -240,8 +240,12 @@ fn sanitize_extension(extension: &str) -> String {
 mod tests {
     use std::path::{Path, PathBuf};
 
+    use gobby_core::ai_context::AiContext;
+    use gobby_core::config::EnvOnlySource;
     use gobby_core::indexing::content_hash;
 
+    use crate::ScopeIdentity;
+    use crate::api::IngestFileOptions;
     use crate::ingest::file;
     use crate::ingest::wayback::{self, WaybackCaptureSnapshot};
     use crate::sources::{CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest};
@@ -249,6 +253,17 @@ mod tests {
         MemoryWikiStore, StoreError, WikiChunk, WikiDocument, WikiIndexStore, WikiIngestion,
         WikiIngestionEvent, WikiLink, WikiSource,
     };
+
+    fn no_ai_context() -> AiContext {
+        let mut source = EnvOnlySource;
+        let mut context = AiContext::resolve(None, &mut source);
+        IngestFileOptions {
+            no_ai: true,
+            ..IngestFileOptions::default()
+        }
+        .apply_to_ai_context(&mut context);
+        context
+    }
 
     fn write_file(root: &std::path::Path, relative: &str, contents: &str) {
         let path = root.join(relative);
@@ -273,10 +288,19 @@ mod tests {
         );
         let before = std::fs::read_to_string(temp.path().join("wiki/topics/existing.md"))
             .expect("read existing before");
+        let scope = ScopeIdentity::global();
+        let ai_context = no_ai_context();
+        let options = IngestFileOptions {
+            no_ai: true,
+            ..IngestFileOptions::default()
+        };
 
         let result = file::ingest_path(
             temp.path(),
             &mut store,
+            &scope,
+            &ai_context,
+            &options,
             &source_path,
             "2026-05-29T17:00:00Z",
         )

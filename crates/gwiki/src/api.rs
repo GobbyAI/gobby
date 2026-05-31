@@ -1,6 +1,9 @@
 use std::fmt;
 use std::path::PathBuf;
 
+use gobby_core::ai_context::AiContext;
+use gobby_core::config::AiRouting;
+
 use crate::{exports, research, synthesis};
 
 /// Parsed gwiki command passed in from the binary.
@@ -21,6 +24,7 @@ pub enum Command {
     IngestFile {
         path: PathBuf,
         scope: ScopeSelection,
+        options: IngestFileOptions,
     },
     Search {
         query: String,
@@ -60,6 +64,45 @@ pub enum Command {
     Status {
         scope: ScopeSelection,
     },
+}
+
+/// AI and media policy options for `ingest-file`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct IngestFileOptions {
+    pub no_ai: bool,
+    pub translate: bool,
+    pub target_lang: Option<String>,
+    pub video_frame_interval_seconds: Option<u32>,
+    pub transcription_routing: Option<AiRouting>,
+    pub vision_routing: Option<AiRouting>,
+    pub text_routing: Option<AiRouting>,
+}
+
+impl IngestFileOptions {
+    pub fn apply_to_ai_context(&self, context: &mut AiContext) {
+        if !self.no_ai {
+            if let Some(routing) = self.transcription_routing {
+                context.bindings.audio_transcribe.routing = routing;
+                context.bindings.audio_translate.routing = routing;
+            }
+            if let Some(routing) = self.vision_routing {
+                context.bindings.vision_extract.routing = routing;
+            }
+            if let Some(routing) = self.text_routing {
+                context.bindings.text_generate.routing = routing;
+            }
+            if let Some(target_lang) = &self.target_lang {
+                context.bindings.audio_translate.target_lang = Some(target_lang.clone());
+            }
+            return;
+        }
+
+        context.bindings.embed.routing = AiRouting::Off;
+        context.bindings.audio_transcribe.routing = AiRouting::Off;
+        context.bindings.audio_translate.routing = AiRouting::Off;
+        context.bindings.vision_extract.routing = AiRouting::Off;
+        context.bindings.text_generate.routing = AiRouting::Off;
+    }
 }
 
 /// Shared scope flags accepted by shell commands.

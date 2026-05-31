@@ -1,6 +1,12 @@
 use std::path::{Path, PathBuf};
 
-use crate::WikiError;
+use gobby_core::ai_context::AiContext;
+use gobby_core::config::{AiCapability, AiRouting};
+
+use crate::api::IngestFileOptions;
+use crate::ingest::audio::{AudioSnapshot, ingest_audio_with_transcription};
+use crate::ingest::image::{ImageSnapshot, ingest_image_with_vision};
+use crate::ingest::video::{VideoFileSnapshot, ingest_video_file};
 use crate::ingest::{
     IngestResult, index_after_ingest, markdown_metadata, markdown_title, path_to_string,
     text_from_utf8_lossy, write_asset, write_raw_markdown,
@@ -9,6 +15,11 @@ use crate::sources::{
     CompileStatus, IngestionMethod, SourceDraft, SourceDraftRef, SourceKind, SourceManifest,
 };
 use crate::store::WikiIndexStore;
+use crate::transcribe::{TranscriptionDegradation, TranscriptionEndpoint};
+use crate::vision::{VisionDegradation, VisionEndpoint};
+use crate::{ScopeIdentity, WikiError};
+
+const TEXT_INLINE_LIMIT_BYTES: usize = 256 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StdinSnapshot {
@@ -20,21 +31,80 @@ pub struct StdinSnapshot {
 pub fn ingest_path(
     vault_root: &Path,
     store: &mut impl WikiIndexStore,
+    scope: &ScopeIdentity,
+    ai_context: &AiContext,
+    options: &IngestFileOptions,
     path: &Path,
     fetched_at: &str,
 ) -> Result<IngestResult, WikiError> {
-    let bytes = std::fs::read(path).map_err(|error| WikiError::Io {
-        action: "read source file",
-        path: Some(path.to_path_buf()),
-        source: error,
-    })?;
     let kind = detect_source_kind(path);
     let file_name = path
         .file_name()
         .and_then(|value| value.to_str())
         .unwrap_or("source");
-    let title = markdown_title(file_name);
     let location = source_location(vault_root, path);
+    match kind {
+        SourceKind::Audio => {
+            let bytes = read_source_file(path)?;
+            return ingest_audio_with_transcription(
+                vault_root,
+                store,
+                scope.clone(),
+                AudioSnapshot {
+                    location,
+                    file_name: file_name.to_string(),
+                    fetched_at: fetched_at.to_string(),
+                    bytes,
+                    mime_type: None,
+                    duration_seconds: None,
+                },
+                transcription_endpoint(ai_context, options),
+            )
+            .map(Into::into);
+        }
+        SourceKind::Image => {
+            let bytes = read_source_file(path)?;
+            return ingest_image_with_vision(
+                vault_root,
+                store,
+                scope.clone(),
+                ImageSnapshot {
+                    location,
+                    file_name: file_name.to_string(),
+                    fetched_at: fetched_at.to_string(),
+                    bytes,
+                    mime_type: None,
+                    width: None,
+                    height: None,
+                },
+                vision_endpoint(ai_context),
+            )
+            .map(Into::into);
+        }
+        SourceKind::Video => {
+            return ingest_video_file(
+                vault_root,
+                store,
+                scope.clone(),
+                VideoFileSnapshot {
+                    location,
+                    file_name: file_name.to_string(),
+                    fetched_at: fetched_at.to_string(),
+                    path: path.to_path_buf(),
+                    mime_type: None,
+                    duration_seconds: None,
+                    frame_interval_seconds: options.video_frame_interval_seconds,
+                    frame_descriptions: Vec::new(),
+                    transcript_segments: Vec::new(),
+                },
+            )
+            .map(Into::into);
+        }
+        _ => {}
+    }
+
+    let bytes = read_source_file(path)?;
+    let title = markdown_title(file_name);
     let record = SourceManifest::register_borrowed(
         vault_root,
         SourceDraftRef {
@@ -49,7 +119,7 @@ pub fn ingest_path(
             compile_status: CompileStatus::Pending,
         },
     )?;
-    let asset_path = should_store_asset(&kind)
+    let asset_path = should_store_asset(&kind, bytes.len())
         .then(|| write_asset(vault_root, &record, file_name, &bytes))
         .transpose()?;
     let markdown = render_file_markdown(
@@ -68,6 +138,14 @@ pub fn ingest_path(
         record,
         raw_path,
         asset_path,
+    })
+}
+
+fn read_source_file(path: &Path) -> Result<Vec<u8>, WikiError> {
+    std::fs::read(path).map_err(|error| WikiError::Io {
+        action: "read source file",
+        path: Some(path.to_path_buf()),
+        source: error,
     })
 }
 
@@ -117,10 +195,15 @@ fn detect_source_kind(path: &Path) -> SourceKind {
         .as_deref()
     {
         Some("pdf") => SourceKind::Pdf,
+        Some("docx" | "xlsx" | "xls" | "ods" | "pptx") => SourceKind::Office,
+        Some("html" | "htm") => SourceKind::Html,
         Some("mp3" | "wav" | "m4a" | "aac" | "flac" | "ogg" | "opus") => SourceKind::Audio,
+        Some("png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "tiff") => SourceKind::Image,
         Some("mp4" | "mov" | "m4v" | "webm" | "mkv") => SourceKind::Video,
         Some("md" | "markdown") => SourceKind::Markdown,
-        Some("txt" | "text") => SourceKind::Text,
+        Some(
+            "txt" | "text" | "csv" | "json" | "jsonl" | "xml" | "yaml" | "yml" | "toml" | "log",
+        ) => SourceKind::Text,
         _ => SourceKind::File,
     }
 }
@@ -137,11 +220,18 @@ fn source_location(vault_root: &Path, path: &Path) -> String {
     display_path.to_string_lossy().replace('\\', "/")
 }
 
-fn should_store_asset(kind: &SourceKind) -> bool {
-    matches!(
-        kind,
-        SourceKind::Audio | SourceKind::Pdf | SourceKind::Video | SourceKind::File
-    )
+fn should_store_asset(kind: &SourceKind, byte_len: usize) -> bool {
+    matches!(kind, SourceKind::Text if byte_len > TEXT_INLINE_LIMIT_BYTES)
+        || matches!(
+            kind,
+            SourceKind::Audio
+                | SourceKind::Image
+                | SourceKind::Video
+                | SourceKind::Pdf
+                | SourceKind::Office
+                | SourceKind::Html
+                | SourceKind::File
+        )
 }
 
 fn render_file_markdown(
@@ -168,8 +258,8 @@ fn render_file_markdown(
     markdown.push_str(title);
     markdown.push_str("\n\n");
 
-    match kind {
-        SourceKind::Markdown | SourceKind::Text | SourceKind::Stdin => {
+    match (kind, asset_path) {
+        (SourceKind::Markdown | SourceKind::Text | SourceKind::Stdin, None) => {
             markdown.push_str(&text_from_utf8_lossy(bytes));
             if !markdown.ends_with('\n') {
                 markdown.push('\n');
@@ -191,13 +281,83 @@ fn render_file_markdown(
     markdown
 }
 
+fn transcription_endpoint(
+    context: &AiContext,
+    options: &IngestFileOptions,
+) -> TranscriptionEndpoint<'static> {
+    let capability = if options.translate {
+        AiCapability::AudioTranslate
+    } else {
+        AiCapability::AudioTranscribe
+    };
+    TranscriptionEndpoint::Unavailable(transcription_degradation(
+        context.binding(capability).routing,
+        options.translate,
+    ))
+}
+
+fn transcription_degradation(routing: AiRouting, translate: bool) -> TranscriptionDegradation {
+    let action = if translate {
+        "translation"
+    } else {
+        "transcription"
+    };
+    let reason = match routing {
+        AiRouting::Off => "disabled",
+        AiRouting::Auto | AiRouting::Daemon | AiRouting::Direct => "missing_endpoint",
+    };
+    TranscriptionDegradation {
+        reason: reason.to_string(),
+        fallback: format!("Keep raw audio assets and skip daemon {action}."),
+    }
+}
+
+fn vision_endpoint(context: &AiContext) -> VisionEndpoint<'static> {
+    VisionEndpoint::Unavailable(vision_degradation(
+        context.binding(AiCapability::VisionExtract).routing,
+    ))
+}
+
+fn vision_degradation(routing: AiRouting) -> VisionDegradation {
+    let reason = match routing {
+        AiRouting::Off => "disabled",
+        AiRouting::Auto | AiRouting::Daemon | AiRouting::Direct => "missing_endpoint",
+    };
+    VisionDegradation {
+        reason: reason.to_string(),
+        fallback: "Keep raw image assets and surface filename/metadata only.".to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use gobby_core::ai_context::AiContext;
+    use gobby_core::config::EnvOnlySource;
     use gobby_core::indexing::content_hash;
 
     use super::*;
+    use crate::api::IngestFileOptions;
     use crate::sources::{SourceKind, SourceManifest};
     use crate::store::MemoryWikiStore;
+
+    fn no_ai_context() -> AiContext {
+        let mut source = EnvOnlySource;
+        let mut context = AiContext::resolve(None, &mut source);
+        IngestFileOptions {
+            no_ai: true,
+            ..IngestFileOptions::default()
+        }
+        .apply_to_ai_context(&mut context);
+        context
+    }
+
+    fn ingest_options() -> IngestFileOptions {
+        IngestFileOptions {
+            no_ai: true,
+            video_frame_interval_seconds: Some(0),
+            ..IngestFileOptions::default()
+        }
+    }
 
     #[test]
     fn file_and_stdin_ingest_hash_sources() {
@@ -207,9 +367,20 @@ mod tests {
         std::fs::write(&file_path, file_bytes).expect("write local file");
         let stdin_bytes = b"stdin source text\n".to_vec();
         let mut store = MemoryWikiStore::default();
+        let scope = ScopeIdentity::global();
+        let ai_context = no_ai_context();
+        let options = ingest_options();
 
-        let file_result = ingest_path(temp.path(), &mut store, &file_path, "2026-05-29T16:45:00Z")
-            .expect("ingest local file");
+        let file_result = ingest_path(
+            temp.path(),
+            &mut store,
+            &scope,
+            &ai_context,
+            &options,
+            &file_path,
+            "2026-05-29T16:45:00Z",
+        )
+        .expect("ingest local file");
         let stdin_result = ingest_stdin(
             temp.path(),
             &mut store,
@@ -250,11 +421,197 @@ mod tests {
         let file_path = temp.path().join("interview.mp3");
         std::fs::write(&file_path, b"audio bytes").expect("write local file");
         let mut store = MemoryWikiStore::default();
+        let scope = ScopeIdentity::global();
+        let ai_context = no_ai_context();
+        let options = ingest_options();
 
-        let result = ingest_path(temp.path(), &mut store, &file_path, "2026-05-29T16:47:00Z")
-            .expect("ingest audio file");
+        let result = ingest_path(
+            temp.path(),
+            &mut store,
+            &scope,
+            &ai_context,
+            &options,
+            &file_path,
+            "2026-05-29T16:47:00Z",
+        )
+        .expect("ingest audio file");
 
         assert_eq!(result.record.kind, SourceKind::Audio);
         assert!(result.asset_path.is_some());
+    }
+
+    #[test]
+    fn detects_audio_and_image_extensions() {
+        for extension in ["mp3", "wav", "m4a", "flac", "ogg", "aac", "opus"] {
+            assert_eq!(
+                detect_source_kind(Path::new(&format!("sample.{extension}"))),
+                SourceKind::Audio
+            );
+        }
+
+        for extension in ["png", "jpg", "jpeg", "gif", "webp", "bmp", "tiff"] {
+            assert_eq!(
+                detect_source_kind(Path::new(&format!("sample.{extension}"))),
+                SourceKind::Image
+            );
+        }
+    }
+
+    #[test]
+    fn dispatches_media_to_orchestrators() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let scope = ScopeIdentity::global();
+        let ai_context = no_ai_context();
+        let options = ingest_options();
+
+        for (name, kind, expected_fragment) in [
+            (
+                "interview.mp3",
+                SourceKind::Audio,
+                "## Transcription Unavailable",
+            ),
+            ("diagram.png", SourceKind::Image, "## Vision Unavailable"),
+            ("walkthrough.mp4", SourceKind::Video, "## Frame Samples"),
+        ] {
+            let path = temp.path().join(name);
+            std::fs::write(&path, format!("{name} bytes")).expect("write media file");
+            let mut store = MemoryWikiStore::default();
+
+            let result = ingest_path(
+                temp.path(),
+                &mut store,
+                &scope,
+                &ai_context,
+                &options,
+                &path,
+                "2026-05-29T16:48:00Z",
+            )
+            .expect("ingest media file");
+
+            assert_eq!(result.record.kind, kind);
+            assert!(result.asset_path.is_some());
+            assert!(
+                store
+                    .documents
+                    .values()
+                    .any(|document| document.body.contains(expected_fragment)),
+                "{name} should be handled by its media orchestrator"
+            );
+        }
+    }
+
+    #[test]
+    fn no_ai_dispatch_degrades() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let file_path = temp.path().join("diagram.png");
+        std::fs::write(&file_path, b"image bytes").expect("write local file");
+        let mut store = MemoryWikiStore::default();
+        let scope = ScopeIdentity::global();
+        let ai_context = no_ai_context();
+        let options = ingest_options();
+
+        let result = ingest_path(
+            temp.path(),
+            &mut store,
+            &scope,
+            &ai_context,
+            &options,
+            &file_path,
+            "2026-05-29T16:49:00Z",
+        )
+        .expect("ingest image file");
+
+        assert!(result.asset_path.is_some());
+        assert!(
+            store
+                .documents
+                .values()
+                .any(|document| document.body.contains("## Vision Unavailable"))
+        );
+    }
+
+    #[test]
+    fn media_dispatch_registers_once() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let file_path = temp.path().join("interview.mp3");
+        std::fs::write(&file_path, b"audio bytes").expect("write local file");
+        let mut store = MemoryWikiStore::default();
+        let scope = ScopeIdentity::global();
+        let ai_context = no_ai_context();
+        let options = ingest_options();
+
+        ingest_path(
+            temp.path(),
+            &mut store,
+            &scope,
+            &ai_context,
+            &options,
+            &file_path,
+            "2026-05-29T16:50:00Z",
+        )
+        .expect("ingest audio file");
+
+        let manifest = SourceManifest::read(temp.path()).expect("read source manifest");
+        assert_eq!(manifest.entries.len(), 1);
+        assert_eq!(manifest.entries[0].kind, SourceKind::Audio);
+    }
+
+    #[test]
+    fn detects_documents_and_inlines_structured_text() {
+        assert_eq!(detect_source_kind(Path::new("report.pdf")), SourceKind::Pdf);
+        for extension in ["docx", "xlsx", "xls", "ods", "pptx"] {
+            assert_eq!(
+                detect_source_kind(Path::new(&format!("office.{extension}"))),
+                SourceKind::Office
+            );
+        }
+        for extension in ["html", "htm"] {
+            assert_eq!(
+                detect_source_kind(Path::new(&format!("page.{extension}"))),
+                SourceKind::Html
+            );
+        }
+        for extension in ["csv", "json", "jsonl", "xml", "yaml", "yml", "toml", "log"] {
+            assert_eq!(
+                detect_source_kind(Path::new(&format!("data.{extension}"))),
+                SourceKind::Text
+            );
+        }
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let scope = ScopeIdentity::global();
+        let ai_context = no_ai_context();
+        let options = ingest_options();
+        let mut store = MemoryWikiStore::default();
+
+        let small_csv = temp.path().join("data.csv");
+        std::fs::write(&small_csv, b"city,count\nDuluth,3\n").expect("write csv");
+        let small_result = ingest_path(
+            temp.path(),
+            &mut store,
+            &scope,
+            &ai_context,
+            &options,
+            &small_csv,
+            "2026-05-29T16:51:00Z",
+        )
+        .expect("ingest small csv");
+        assert_eq!(small_result.record.kind, SourceKind::Text);
+        assert!(small_result.asset_path.is_none());
+
+        let large_json = temp.path().join("large.json");
+        std::fs::write(&large_json, vec![b'a'; 262_145]).expect("write large json");
+        let large_result = ingest_path(
+            temp.path(),
+            &mut store,
+            &scope,
+            &ai_context,
+            &options,
+            &large_json,
+            "2026-05-29T16:52:00Z",
+        )
+        .expect("ingest large json");
+        assert_eq!(large_result.record.kind, SourceKind::Text);
+        assert!(large_result.asset_path.is_some());
     }
 }

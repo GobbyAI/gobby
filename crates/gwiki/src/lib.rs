@@ -69,6 +69,9 @@ pub(crate) mod video;
 #[allow(dead_code)]
 pub(crate) mod vision;
 
-pub use api::{Command, CommandOutcome, CommandResult, ScopeIdentity, ScopeKind, ScopeSelection};
+pub use api::{
+    Command, CommandOutcome, CommandResult, IngestFileOptions, ScopeIdentity, ScopeKind,
+    ScopeSelection,
+};
 pub use error::WikiError;
 pub use runner::{resolve_research_scope, run};
