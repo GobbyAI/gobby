@@ -12,7 +12,6 @@ from gobby.llm import create_llm_service
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.memory.manager import MemoryManager
 from gobby.memory.vectorstore import VectorStore
-from gobby.runner_init.helpers import resolve_embedding_api_key
 from gobby.search.embeddings import generate_embedding
 from gobby.sessions.processor import SessionMessageProcessor
 from gobby.storage.clones import LocalCloneManager
@@ -65,12 +64,9 @@ def _init_memory_stack(runner: GobbyRunner) -> None:
             if runner.llm_service:
                 from functools import partial
 
-                _mem_api_key = emb_cfg.api_key or resolve_embedding_api_key(
-                    runner.secret_store, emb_cfg.model
-                )
                 _mem_embed_kwargs: dict[str, Any] = {
                     "model": emb_cfg.model,
-                    "api_key": _mem_api_key,
+                    "api_key": emb_cfg.api_key,
                 }
                 if emb_cfg.api_base:
                     _mem_embed_kwargs["api_base"] = emb_cfg.api_base

@@ -156,13 +156,6 @@ _API_KEY_PROMPTS = [
         "description": "Brave Search MCP server authentication",
     },
     {
-        "secret_name": "openai_api_key",
-        "env_var": "OPENAI_API_KEY",
-        "label": "OpenAI API Key",
-        "category": "llm",
-        "description": "OpenAI embeddings and LLM execution",
-    },
-    {
         "secret_name": "context7_api_key",
         "env_var": "CONTEXT7_API_KEY",
         "label": "Context7 API Key",
@@ -674,7 +667,6 @@ def _echo_install_summary(
         click.echo("  Configure API keys to enable external integrations:")
         click.echo("    gobby secrets set github_personal_access_token")
         click.echo("    gobby secrets set linear_api_key")
-        click.echo("    gobby secrets set openai_api_key")
         click.echo("    gobby secrets set context7_api_key")
         click.echo("  Or set environment variables (GITHUB_PERSONAL_ACCESS_TOKEN, etc.)")
         click.echo("  Restart the daemon after setting: gobby restart")

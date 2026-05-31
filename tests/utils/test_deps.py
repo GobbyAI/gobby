@@ -331,7 +331,7 @@ def test_get_configured_embedding_provider_detects_lmstudio(temp_db) -> None:
 
 
 @pytest.mark.unit
-def test_get_configured_embedding_provider_detects_openai_secret(
+def test_get_configured_embedding_provider_detects_embedding_api_key(
     temp_db, mock_machine_id, tmp_path
 ) -> None:
     from gobby.storage.config_store import ConfigStore
@@ -340,6 +340,7 @@ def test_get_configured_embedding_provider_detects_openai_secret(
     store = ConfigStore(temp_db)
     store.set_many(
         {
+            "embeddings.model": "text-embedding-3-small",
             "embeddings.api_base": None,
             "embeddings.dim": 1536,
         }
@@ -350,10 +351,11 @@ def test_get_configured_embedding_provider_detects_openai_secret(
         patch("gobby.storage.secrets.SALT_FILE", salt_file),
         _patch_runtime_hub_database(temp_db),
     ):
-        SecretStore(temp_db).set(
-            name="openai_api_key",
-            plaintext_value="sk-test",
-            category="llm",
+        store.set_secret(
+            "embeddings.api_key",
+            "sk-test",
+            SecretStore(temp_db),
+            source="test",
         )
         assert deps.get_configured_embedding_provider() == "openai"
 
@@ -395,7 +397,7 @@ def test_get_configured_embedding_provider_detects_disabled_state(temp_db) -> No
 
 
 @pytest.mark.unit
-def test_get_configured_embedding_provider_falls_back_to_env_when_db_missing(
+def test_get_configured_embedding_provider_returns_none_when_db_missing(
     monkeypatch, tmp_path
 ) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-env")
@@ -404,7 +406,7 @@ def test_get_configured_embedding_provider_falls_back_to_env_when_db_missing(
         "gobby.storage.hub.runtime.runtime_hub_database",
         side_effect=RuntimeError(f"missing runtime hub at {tmp_path / 'missing.db'}"),
     ):
-        assert deps.get_configured_embedding_provider() == "openai"
+        assert deps.get_configured_embedding_provider() is None
 
 
 def test_check_config_mismatches() -> None:

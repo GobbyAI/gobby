@@ -13,7 +13,6 @@ from gobby.config.app import load_config
 from gobby.runner_init.helpers import (
     _ensure_headless_settings,
     init_hub_database,
-    resolve_embedding_api_key,
 )
 from gobby.runner_init.stale_config import check_stale_neo4j_config
 from gobby.shutdown_intent import ShutdownIntent
@@ -94,13 +93,6 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
         config_store=runner.config_store,
         resolve_database_url=True,
     )
-
-    if hasattr(runner.config, "embeddings") and not runner.config.embeddings.api_key:
-        resolved_key = resolve_embedding_api_key(
-            runner.secret_store, runner.config.embeddings.model
-        )
-        if resolved_key:
-            runner.config.embeddings.api_key = resolved_key
 
     from gobby.storage.model_costs import ModelCostStore
 

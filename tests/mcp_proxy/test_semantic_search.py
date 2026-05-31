@@ -22,7 +22,7 @@ pytestmark = pytest.mark.unit
 @pytest.fixture
 def semantic_search(temp_db: HubDatabase) -> SemanticToolSearch:
     """Create a SemanticToolSearch instance with temp database."""
-    return SemanticToolSearch(temp_db, openai_api_key="sk-test-fake-key")
+    return SemanticToolSearch(temp_db, embedding_api_key="sk-test-fake-key")
 
 
 @pytest.fixture
@@ -121,7 +121,7 @@ class TestSemanticToolSearchApiBase:
         search = SemanticToolSearch(
             temp_db,
             api_base="http://localhost:11434/v1",
-            openai_api_key="sk-test",
+            embedding_api_key="sk-test",
             embedding_model="text-embedding-3-small",
             embedding_dim=1536,
         )
@@ -557,7 +557,7 @@ class TestSearchTools:
         mock_vs.search_with_payload = AsyncMock(return_value=[])
         return SemanticToolSearch(
             temp_db,
-            openai_api_key="sk-test",
+            embedding_api_key="sk-test",
             vector_store=mock_vs,
         )
 

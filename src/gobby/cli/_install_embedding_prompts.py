@@ -153,42 +153,52 @@ def _select_embedding_provider(
     return options[choice - 1][0], True
 
 
-def _get_openai_key(
+def _get_embedding_api_key(
     *,
     no_interactive: bool,
     results: dict[str, dict[str, Any]],
+    required: bool,
 ) -> str | None:
-    """Load or prompt for an OpenAI API key used by cloud embeddings.
+    """Load or prompt for the canonical embedding API key.
 
     Expected import, OS, and database failures are logged and fall through to
-    the prompt/skip path. Programming and configuration errors propagate. In
-    non-interactive mode a missing key records a failed embedding result.
+    the prompt/skip path. Programming and configuration errors propagate.
+    Required non-interactive missing keys record a failed embedding result.
     """
-    openai_api_key: str | None = None
+    embedding_api_key: str | None = None
     try:
+        from gobby.storage.config_store import ConfigStore, config_key_to_secret_name
         from gobby.storage.hub.runtime import runtime_hub_database
         from gobby.storage.secrets import SecretStore
 
         with runtime_hub_database(apply_migrations=False) as db:
+            store = ConfigStore(db)
             secrets = SecretStore(db)
-            if secrets.exists("openai_api_key"):
-                existing = secrets.get("openai_api_key")
-                openai_api_key = existing
-                click.echo("Using existing OpenAI API key from secrets")
+            configured = store.get("embeddings.api_key")
+            secret_name = config_key_to_secret_name("embeddings.api_key")
+            if isinstance(configured, str) and configured.startswith("$secret:"):
+                secret_name = configured.removeprefix("$secret:")
+            if secrets.exists(secret_name):
+                existing = secrets.get(secret_name)
+                embedding_api_key = existing
+                click.echo("Using existing embedding API key from secrets")
     except (ImportError, OSError, RuntimeError, psycopg.Error) as e:
-        logger.warning("Failed to read existing openai_api_key: %s", e, exc_info=True)
+        logger.warning("Failed to read existing embeddings.api_key: %s", e, exc_info=True)
 
-    if openai_api_key:
-        return openai_api_key
+    if embedding_api_key:
+        return embedding_api_key
+
+    if not required:
+        return None
 
     if no_interactive:
-        click.echo("OpenAI API key not set - skipping embedding setup")
-        results["embedding"] = {"success": False, "error": "OpenAI API key not available"}
+        click.echo("Embedding API key not set - skipping embedding setup")
+        results["embedding"] = {"success": False, "error": "Embedding API key not available"}
         return None
 
     try:
-        openai_api_key = click.prompt(
-            "  OpenAI API Key",
+        embedding_api_key = click.prompt(
+            "  Embedding API Key",
             default="",
             hide_input=True,
             show_default=False,
@@ -197,11 +207,11 @@ def _get_openai_key(
         click.echo("")
         results["embedding"] = {"success": False, "error": "API key prompt aborted"}
         return None
-    if not openai_api_key.strip():
+    if not embedding_api_key.strip():
         click.echo("No API key provided - skipping")
         results["embedding"] = {"success": False, "error": "No API key provided"}
         return None
-    return openai_api_key.strip()
+    return embedding_api_key.strip()
 
 
 def _prompt_customization(
@@ -284,6 +294,7 @@ def _run_embedding_install(
     model_override: str | None = None,
     dim_override: int | None = None,
     provider_override: str | None = None,
+    embedding_api_key: str | None = None,
 ) -> str:
     """Interactive embedding provider setup.
 
@@ -300,6 +311,7 @@ def _run_embedding_install(
         dim_override: Override the embedding dim. Triggers a probe when omitted
             and either ``api_base_override`` or ``model_override`` is set.
         provider_override: Explicit compatibility mode for custom endpoints.
+        embedding_api_key: API key for the embedding endpoint.
 
     Returns:
         The provider name chosen: "lmstudio" | "ollama" |
@@ -319,10 +331,13 @@ def _run_embedding_install(
     if not should_install:
         return provider
 
-    openai_api_key: str | None = None
-    if provider == "openai":
-        openai_api_key = _get_openai_key(no_interactive=no_interactive, results=results)
-        if not openai_api_key:
+    if provider == "openai" and embedding_api_key is None:
+        embedding_api_key = _get_embedding_api_key(
+            no_interactive=no_interactive,
+            results=results,
+            required=True,
+        )
+        if not embedding_api_key:
             return provider
 
     api_base_override, model_override, dim_override = _prompt_customization(
@@ -345,7 +360,7 @@ def _run_embedding_install(
     try:
         result = installer(
             provider=provider,
-            openai_api_key=openai_api_key,
+            embedding_api_key=embedding_api_key,
             model_override=model_override,
             api_base_override=api_base_override,
             dim_override=dim_override,

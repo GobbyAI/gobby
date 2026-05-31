@@ -55,7 +55,7 @@ _OLLAMA_MODEL_NAME = "nomic-embed-text"
 
 def install_embedding(
     provider: str,
-    openai_api_key: str | None = None,
+    embedding_api_key: str | None = None,
     *,
     model_override: str | None = None,
     api_base_override: str | None = None,
@@ -65,7 +65,8 @@ def install_embedding(
 
     Args:
         provider: One of "lmstudio", "ollama", "openai", "openai-compatible", "none"
-        openai_api_key: Required when provider="openai"
+        embedding_api_key: Required when provider="openai"; optional for any
+            embedding endpoint that requires authentication.
         model_override: Override the provider's default model id
         api_base_override: Override the provider's default ``api_base`` URL
         dim_override: Override the embedding dimension. When omitted and the
@@ -94,8 +95,8 @@ def install_embedding(
             "skipped": True,
         }
 
-    if provider == "openai" and not openai_api_key:
-        return {"success": False, "error": "OpenAI API key required for openai provider"}
+    if provider == "openai" and not embedding_api_key:
+        return {"success": False, "error": "Embedding API key required for openai provider"}
     if provider == "openai-compatible" and not api_base_override:
         return {
             "success": False,
@@ -122,7 +123,7 @@ def install_embedding(
     if dim_override is not None:
         dim = dim_override
     elif model_override is not None or api_base_override is not None:
-        probed = _probe_embedding_dim(model=model, api_base=api_base, api_key=openai_api_key)
+        probed = _probe_embedding_dim(model=model, api_base=api_base, api_key=embedding_api_key)
         if probed is not None:
             dim = probed
         use_provider_default_fallback = (
@@ -154,7 +155,7 @@ def install_embedding(
     health_ok = _health_check_embedding(
         model=model,
         api_base=api_base,
-        api_key=openai_api_key,
+        api_key=embedding_api_key,
         expected_dim=dim,
     )
     if not health_ok:
@@ -173,7 +174,7 @@ def install_embedding(
             api_base=api_base,
             dim=dim,
             provider=provider,
-            openai_api_key=openai_api_key,
+            embedding_api_key=embedding_api_key,
         )
     except Exception as e:
         return {"success": False, "error": f"Failed to persist config: {e}"}
@@ -331,14 +332,14 @@ def _persist_embedding_config(
     api_base: str | None,
     dim: int,
     provider: str,
-    openai_api_key: str | None = None,
+    embedding_api_key: str | None = None,
 ) -> None:
     """Write embedding config to the unified embeddings.* namespace via ConfigStore.
 
     Sets: embeddings.model, embeddings.api_base, embeddings.dim
 
     For the "none" provider, writes null/zero values to disable semantic search.
-    If openai_api_key is provided, stores it in SecretStore.
+    If embedding_api_key is provided, stores it encrypted as embeddings.api_key.
     """
     from gobby.storage.config_store import ConfigStore
     from gobby.storage.hub.runtime import runtime_hub_database
@@ -363,14 +364,13 @@ def _persist_embedding_config(
 
         store.set_many(entries, source="install")
 
-        # Store OpenAI API key in SecretStore
-        if openai_api_key:
+        if embedding_api_key:
             secret_store = SecretStore(db)
-            secret_store.set(
-                name="openai_api_key",
-                plaintext_value=openai_api_key,
-                category="llm",
-                description="OpenAI API key for embeddings (set by gobby install)",
+            store.set_secret(
+                "embeddings.api_key",
+                embedding_api_key,
+                secret_store,
+                source="install",
             )
 
 

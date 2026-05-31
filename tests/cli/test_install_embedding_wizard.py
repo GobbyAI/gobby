@@ -10,7 +10,7 @@ import pytest
 from click.testing import CliRunner
 
 from gobby.cli._detectors import _is_lmstudio_available, _is_ollama_available
-from gobby.cli._install_embedding_prompts import _get_openai_key
+from gobby.cli._install_embedding_prompts import _get_embedding_api_key
 from gobby.cli._install_prompts import _infer_embedding_provider_from_url, _run_embedding_install
 
 pytestmark = [pytest.mark.unit]
@@ -100,7 +100,7 @@ class TestRunEmbeddingInstallNoInteractive:
         assert provider == "lmstudio"
         installer.assert_called_once_with(
             provider="lmstudio",
-            openai_api_key=None,
+            embedding_api_key=None,
             model_override=None,
             api_base_override=None,
             dim_override=None,
@@ -192,7 +192,7 @@ class TestRunEmbeddingInstallNoInteractive:
         assert provider == "lmstudio"
         installer.assert_called_once_with(
             provider="lmstudio",
-            openai_api_key=None,
+            embedding_api_key=None,
             model_override="text-embedding-qwen3-embedding-4b",
             api_base_override="http://lan:1234/v1",
             dim_override=2560,
@@ -227,7 +227,7 @@ class TestRunEmbeddingInstallNoInteractive:
         assert provider == "ollama"
         installer.assert_called_once_with(
             provider="ollama",
-            openai_api_key=None,
+            embedding_api_key=None,
             model_override=None,
             api_base_override="http://custom-host:11434/v1",
             dim_override=768,
@@ -263,7 +263,7 @@ class TestRunEmbeddingInstallNoInteractive:
         assert provider == "openai-compatible"
         installer.assert_called_once_with(
             provider="openai-compatible",
-            openai_api_key=None,
+            embedding_api_key=None,
             model_override="vendor-embed",
             api_base_override="https://embeddings.example.test/v1",
             dim_override=1024,
@@ -365,7 +365,7 @@ class TestRunEmbeddingInstallNoInteractive:
         results: dict = {}
 
         with patch(
-            "gobby.cli._install_embedding_prompts._get_openai_key",
+            "gobby.cli._install_embedding_prompts._get_embedding_api_key",
             return_value=None,
         ) as mock_get_key:
             provider = _run_embedding_install(
@@ -377,7 +377,11 @@ class TestRunEmbeddingInstallNoInteractive:
 
         assert provider == "openai"
         assert results == {}
-        mock_get_key.assert_called_once_with(no_interactive=True, results=results)
+        mock_get_key.assert_called_once_with(
+            no_interactive=True,
+            results=results,
+            required=True,
+        )
         installer.assert_not_called()
 
 
@@ -489,7 +493,7 @@ class TestRunEmbeddingInstallOverrides:
         assert result.exit_code == 0
         installer.assert_called_once_with(
             provider="lmstudio",
-            openai_api_key=None,
+            embedding_api_key=None,
             model_override="text-embedding-qwen3-embedding-4b",
             api_base_override="http://lan:1234/v1",
             dim_override=2560,
@@ -528,7 +532,7 @@ class TestRunEmbeddingInstallOverrides:
         assert "Customize endpoint URL" not in result.output
         installer.assert_called_once_with(
             provider="lmstudio",
-            openai_api_key=None,
+            embedding_api_key=None,
             model_override=None,
             api_base_override=None,
             dim_override=None,
@@ -652,17 +656,17 @@ class TestRunEmbeddingInstallOverrides:
         assert "stored=False" in result.output
 
 
-class TestOpenAIKeyLookup:
-    """OpenAI key lookup should only suppress expected storage failures."""
+class TestEmbeddingKeyLookup:
+    """Embedding key lookup should only suppress expected storage failures."""
 
     @patch("gobby.storage.hub.runtime.runtime_hub_database", side_effect=RuntimeError("bug"))
     def test_runtime_hub_error_skips_noninteractive(self, mock_database: MagicMock) -> None:
         results: dict[str, dict[str, object]] = {}
 
-        key = _get_openai_key(no_interactive=True, results=results)
+        key = _get_embedding_api_key(no_interactive=True, results=results, required=True)
 
         assert key is None
         assert results["embedding"] == {
             "success": False,
-            "error": "OpenAI API key not available",
+            "error": "Embedding API key not available",
         }

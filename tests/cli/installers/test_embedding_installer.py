@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+from contextlib import nullcontext
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -59,7 +60,7 @@ class TestInstallEmbedding:
         assert "Unknown provider" in result["error"]
 
     def test_openai_without_key_returns_error(self) -> None:
-        result = install_embedding(provider="openai", openai_api_key=None)
+        result = install_embedding(provider="openai", embedding_api_key=None)
         assert result["success"] is False
         assert "API key" in result["error"]
 
@@ -114,14 +115,14 @@ class TestInstallEmbedding:
     def test_openai_with_key_skips_local_setup(
         self, mock_health: MagicMock, mock_persist: MagicMock
     ) -> None:
-        result = install_embedding(provider="openai", openai_api_key="sk-abc")
+        result = install_embedding(provider="openai", embedding_api_key="sk-abc")
         assert result["success"] is True
         assert result["provider"] == "openai"
         assert result["model"] == "text-embedding-3-small"
         assert result["dim"] == 1536
         # Verify the key was passed through to persist
         call_kwargs = mock_persist.call_args.kwargs
-        assert call_kwargs["openai_api_key"] == "sk-abc"
+        assert call_kwargs["embedding_api_key"] == "sk-abc"
 
 
 class TestInstallEmbeddingOverrides:
@@ -575,43 +576,43 @@ class TestPersistEmbeddingConfig:
         assert mock_db.close.call_count == 1
         assert mock_db.close.call_args is not None
 
-    @patch("gobby.storage.secrets.SecretStore")
-    @patch("gobby.storage.config_store.ConfigStore")
-    @patch("gobby.storage.hub.runtime.open_runtime_hub_database")
-    @patch("gobby.config.app.load_config")
-    def test_openai_key_stored_in_secrets(
+    def test_embedding_key_stored_with_config_secret(
         self,
-        mock_load_config: MagicMock,
-        mock_db_class: MagicMock,
-        mock_store_class: MagicMock,
-        mock_secret_class: MagicMock,
+        temp_db,
         tmp_path,
     ) -> None:
         from gobby.cli.installers.embedding import _persist_embedding_config
+        from gobby.storage.config_store import ConfigStore
+        from gobby.storage.secrets import SecretStore
 
-        mock_config = MagicMock()
-        mock_config.database_url = str(tmp_path / "test.db")
-        mock_load_config.return_value = mock_config
-        mock_db = mock_db_class.return_value
-        mock_db.__enter__ = MagicMock(return_value=mock_db)
-        mock_db.__exit__ = MagicMock(return_value=False)
-        mock_secret = MagicMock()
-        mock_secret_class.return_value = mock_secret
+        with (
+            patch(
+                "gobby.storage.hub.runtime.runtime_hub_database",
+                return_value=nullcontext(temp_db),
+            ),
+            patch("gobby.storage.secrets.SALT_FILE", tmp_path / ".secret_salt"),
+            patch("gobby.storage.secrets.get_machine_id", return_value="test-machine"),
+        ):
+            _persist_embedding_config(
+                model="text-embedding-3-small",
+                api_base=None,
+                dim=1536,
+                provider="openai",
+                embedding_api_key="sk-xxx",
+            )
 
-        _persist_embedding_config(
-            model="text-embedding-3-small",
-            api_base=None,
-            dim=1536,
-            provider="openai",
-            openai_api_key="sk-xxx",
-        )
+            store = ConfigStore(temp_db)
+            secret_store = SecretStore(temp_db)
+            row = temp_db.fetchone(
+                "SELECT encrypted_value FROM secrets WHERE name = %s",
+                ("api_key",),
+            )
 
-        mock_secret.set.assert_called_once()
-        call_kwargs = mock_secret.set.call_args.kwargs
-        assert call_kwargs["name"] == "openai_api_key"
-        assert call_kwargs["plaintext_value"] == "sk-xxx"
-        assert call_kwargs["category"] == "llm"
-        mock_db.close.assert_called_once()
+            assert store.get("embeddings.api_key") == "$secret:api_key"
+            assert secret_store.get("api_key") == "sk-xxx"
+            assert row is not None
+            assert row["encrypted_value"] != "sk-xxx"
+            assert row["encrypted_value"].startswith("gAAAAA")
 
     @patch("gobby.storage.secrets.SecretStore")
     @patch("gobby.storage.config_store.ConfigStore")
@@ -641,7 +642,7 @@ class TestPersistEmbeddingConfig:
             api_base=None,
             dim=1536,
             provider="openai",
-            openai_api_key="sk-xxx",
+            embedding_api_key="sk-xxx",
         )
 
         entries = mock_store.set_many.call_args.args[0]

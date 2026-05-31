@@ -27,37 +27,6 @@ class DatabasePathConfig(Protocol):
     database_url: str | None
 
 
-def resolve_embedding_api_key(secret_store: Any, model: str) -> str | None:
-    """Resolve the API key for an embedding model from the secret store.
-
-    Maps model prefixes to well-known secret names so users don't need
-    to manually wire $secret: references for standard embedding providers.
-    """
-    prefix_to_secret: dict[str, str] = {
-        "openai/": "openai_api_key",
-        "gemini/": "gemini_api_key",
-        "mistral/": "mistral_api_key",
-        "azure/": "azure_api_key",
-        "cohere/": "cohere_api_key",
-    }
-
-    for prefix, secret_name in prefix_to_secret.items():
-        if model.startswith(prefix):
-            result: str | None = secret_store.get(secret_name)
-            return result
-
-    if model.startswith(("local/", "ollama/")):
-        return None
-
-    from gobby.search.embeddings import is_openai_cloud_embedding_model
-
-    if is_openai_cloud_embedding_model(model):
-        openai_key: str | None = secret_store.get("openai_api_key")
-        return openai_key
-
-    return None
-
-
 _HEADLESS_SETTINGS = Path.home() / ".gobby" / "settings" / "headless.json"
 
 _HEADLESS_HOOKS: dict[str, dict[str, list[str]]] = {

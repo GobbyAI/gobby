@@ -126,7 +126,7 @@ class SemanticToolSearch:
         db: HubDatabase,
         embedding_model: str = DEFAULT_EMBEDDING_MODEL,
         embedding_dim: int = DEFAULT_EMBEDDING_DIM,
-        openai_api_key: str | None = None,
+        embedding_api_key: str | None = None,
         api_base: str | None = None,
         vector_store: VectorStore | None = None,
     ):
@@ -137,14 +137,14 @@ class SemanticToolSearch:
             db: Database connection (used for tool metadata lookups in search)
             embedding_model: Model name for embeddings
             embedding_dim: Dimension of embedding vectors
-            openai_api_key: API key (not needed for local/ models)
+            embedding_api_key: API key for the configured embedding endpoint
             api_base: API base URL for embedding endpoint
             vector_store: Qdrant vector store for embedding storage/search
         """
         self.db = db
         self.embedding_model = embedding_model
         self.embedding_dim = embedding_dim
-        self._openai_api_key = openai_api_key
+        self._embedding_api_key = embedding_api_key
         self._api_base = api_base
         self._vector_store = vector_store
 
@@ -369,7 +369,7 @@ class SemanticToolSearch:
             text=text,
             model=self.embedding_model,
             api_base=self._api_base,
-            api_key=self._openai_api_key,
+            api_key=self._embedding_api_key,
             is_query=is_query,
             expected_dim=self.embedding_dim,
         )

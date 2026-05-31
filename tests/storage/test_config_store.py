@@ -111,6 +111,18 @@ class TestConfigStore:
         assert store.get("b") is True
         assert store.get("c") == "str"
 
+    def test_set_rejects_plaintext_secret_key(self, store: ConfigStore):
+        with pytest.raises(ValueError, match="ConfigStore.set_secret"):
+            store.set("embeddings.api_key", "sk-plaintext")
+
+    def test_set_many_rejects_plaintext_secret_key(self, store: ConfigStore):
+        with pytest.raises(ValueError, match="ConfigStore.set_secret"):
+            store.set_many({"embeddings.api_key": "sk-plaintext"})
+
+    def test_set_allows_secret_reference(self, store: ConfigStore):
+        store.set("embeddings.api_key", "$secret:api_key")
+        assert store.get("embeddings.api_key") == "$secret:api_key"
+
     def test_delete_existing(self, store: ConfigStore):
         store.set("key", "val")
         assert store.delete("key") is True
@@ -200,6 +212,9 @@ class TestConfigStore:
 class TestSecretKeyDetection:
     def test_requirepass_is_a_secret_suffix(self) -> None:
         assert "requirepass" in _SECRET_SUFFIXES
+
+    def test_bare_api_key_is_secret_key_name(self) -> None:
+        assert is_secret_key_name("embeddings.api_key") is True
 
     def test_falkordb_requirepass_is_secret_key_name(self) -> None:
         assert is_secret_key_name("databases.falkordb.requirepass") is True

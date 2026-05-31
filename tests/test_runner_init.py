@@ -11,7 +11,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.runner import GobbyRunner
-from gobby.runner_init import resolve_embedding_api_key
 from tests.runner_helpers import create_base_patches, set_mock_default
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("fast_stop_hook_grace_window")]
@@ -567,72 +566,6 @@ class TestGobbyRunnerInitialization:
             runner = GobbyRunner()
             assert runner.llm_service is None
             assert runner.task_validator is None
-
-
-class TestResolveEmbeddingApiKey:
-    """Tests for resolve_embedding_api_key (runner_init.py)."""
-
-    @pytest.fixture
-    def mock_secret_store(self):
-        """Create a mock secret store."""
-        store = MagicMock()
-        store.get = MagicMock(
-            side_effect=lambda name: {
-                "openai_api_key": "sk-test-openai",
-                "gemini_api_key": "gemini-test-key",
-                "mistral_api_key": "mistral-test-key",
-            }.get(name)
-        )
-        return store
-
-    def test_default_model_resolves_openai(self, mock_secret_store) -> None:
-        """text-embedding-3-small (no prefix) should resolve to openai_api_key."""
-        key = resolve_embedding_api_key(mock_secret_store, "text-embedding-3-small")
-        assert key == "sk-test-openai"
-        mock_secret_store.get.assert_called_with("openai_api_key")
-
-    def test_openai_prefix_resolves_openai(self, mock_secret_store) -> None:
-        """openai/text-embedding-3-small should resolve to openai_api_key."""
-        key = resolve_embedding_api_key(mock_secret_store, "openai/text-embedding-3-small")
-        assert key == "sk-test-openai"
-        mock_secret_store.get.assert_called_with("openai_api_key")
-
-    def test_gemini_prefix_resolves_gemini(self, mock_secret_store) -> None:
-        """gemini/ prefix should resolve to gemini_api_key."""
-        key = resolve_embedding_api_key(mock_secret_store, "gemini/text-embedding-004")
-        assert key == "gemini-test-key"
-        mock_secret_store.get.assert_called_with("gemini_api_key")
-
-    def test_mistral_prefix_resolves_mistral(self, mock_secret_store) -> None:
-        """mistral/ prefix should resolve to mistral_api_key."""
-        key = resolve_embedding_api_key(mock_secret_store, "mistral/mistral-embed")
-        assert key == "mistral-test-key"
-        mock_secret_store.get.assert_called_with("mistral_api_key")
-
-    def test_local_returns_none(self, mock_secret_store) -> None:
-        """local/ models don't need an API key."""
-        key = resolve_embedding_api_key(mock_secret_store, "local/nomic-embed-text-v1.5")
-        assert key is None
-        mock_secret_store.get.assert_not_called()
-
-    def test_ollama_returns_none(self, mock_secret_store) -> None:
-        """ollama/ models don't need an API key."""
-        key = resolve_embedding_api_key(mock_secret_store, "ollama/nomic-embed-text")
-        assert key is None
-        mock_secret_store.get.assert_not_called()
-
-    def test_unprefixed_local_nomic_does_not_resolve_openai(self, mock_secret_store) -> None:
-        """Unprefixed local models must not inherit the OpenAI secret."""
-        key = resolve_embedding_api_key(mock_secret_store, "nomic-embed-text")
-        assert key is None
-        mock_secret_store.get.assert_not_called()
-
-    def test_missing_secret_returns_none(self) -> None:
-        """Returns None when the secret doesn't exist."""
-        store = MagicMock()
-        store.get = MagicMock(return_value=None)
-        key = resolve_embedding_api_key(store, "text-embedding-3-small")
-        assert key is None
 
 
 class TestGobbyRunnerInitEdgeCases:

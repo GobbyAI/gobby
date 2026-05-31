@@ -215,8 +215,7 @@ class EmbeddingsConfig(BaseModel):
         default=None,
         description=(
             "Explicit API key for the embedding endpoint. "
-            "Overrides auto-resolved key from secrets/env. "
-            "Supports ${ENV_VAR} pattern for env var expansion at load time."
+            "Installers store this as an encrypted $secret: reference in config_store."
         ),
     )
 

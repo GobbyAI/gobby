@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 # Suffixes that indicate a key holds a secret value
 _SECRET_SUFFIXES = (
+    "api_key",
     "_api_key",
     "_api_token",
     "_api_secret",
@@ -49,6 +50,19 @@ def is_secret_key_name(key: str) -> bool:
     """Check if a config key name matches common secret patterns."""
     last_part = key.rsplit(".", 1)[-1].lower()
     return any(last_part.endswith(suffix) for suffix in _SECRET_SUFFIXES)
+
+
+def _is_secret_reference(value: Any) -> bool:
+    return isinstance(value, str) and value.startswith("$secret:")
+
+
+def _reject_plaintext_secret_value(key: str, value: Any) -> None:
+    if not is_secret_key_name(key) or value in (None, "") or _is_secret_reference(value):
+        return
+    raise ValueError(
+        f"Config key '{key}' looks like a secret. Use ConfigStore.set_secret() "
+        "to store the value encrypted at rest."
+    )
 
 
 class ConfigStore:
@@ -78,6 +92,7 @@ class ConfigStore:
 
     def set(self, key: str, value: Any, source: str = "user") -> None:
         """Upsert a single config value (JSON-encoded)."""
+        _reject_plaintext_secret_value(key, value)
         now = datetime.now(UTC).isoformat()
         json_value = json.dumps(value)
         self.db.execute(
@@ -92,6 +107,8 @@ class ConfigStore:
 
     def set_many(self, entries: dict[str, Any], source: str = "user") -> int:
         """Bulk upsert config entries. Returns count of entries written."""
+        for key, value in entries.items():
+            _reject_plaintext_secret_value(key, value)
         now = datetime.now(UTC).isoformat()
         count = 0
         for key, value in entries.items():

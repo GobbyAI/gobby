@@ -12,10 +12,7 @@ import re
 import shutil
 import subprocess  # nosec B404 # needed for version detection
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from gobby.storage.hub.protocol import HubDatabase
+from typing import Any
 
 from gobby.utils.native_bin import local_native_bin_path, resolve_native_bin
 
@@ -400,22 +397,10 @@ def _infer_embedding_provider_from_api_base(api_base: Any) -> str | None:
     return None
 
 
-def _detect_openai(db: HubDatabase | None = None) -> str | None:
-    """Detect OpenAI embeddings from stored or environment credentials."""
-    if db is not None:
-        try:
-            from gobby.storage.secrets import SecretStore
-
-            if SecretStore(db).get("openai_api_key"):
-                return "openai"
-        except (OSError, RuntimeError, ValueError):
-            logger.debug("Failed to read openai_api_key from SecretStore", exc_info=True)
-
-    return "openai" if os.environ.get("OPENAI_API_KEY") else None
-
-
-def _infer_from_env_or_none(dim: Any, db: HubDatabase | None = None) -> str | None:
-    """Return the env-backed OpenAI provider, or explicit disabled state, or None."""
+def _infer_from_config_or_none(
+    *, dim: Any, api_key: Any, model: Any, api_base: Any
+) -> str | None:
+    """Infer provider from configured embeddings.* values, or explicit disabled state."""
     normalized_dim = dim
     if isinstance(dim, str):
         stripped = dim.strip()
@@ -426,7 +411,12 @@ def _infer_from_env_or_none(dim: Any, db: HubDatabase | None = None) -> str | No
                 normalized_dim = stripped
     if normalized_dim == 0:
         return "none"
-    return _detect_openai(db)
+    if api_base in (None, "") and api_key:
+        from gobby.search.embeddings import is_openai_cloud_embedding_model
+
+        if isinstance(model, str) and is_openai_cloud_embedding_model(model):
+            return "openai"
+    return None
 
 
 def get_configured_embedding_provider() -> str | None:
@@ -437,23 +427,29 @@ def get_configured_embedding_provider() -> str | None:
 
         with runtime_hub_database(apply_migrations=False) as db:
             store = ConfigStore(db)
+            model = store.get("embeddings.model")
             api_base = store.get("embeddings.api_base")
+            api_key = store.get("embeddings.api_key")
             dim = store.get("embeddings.dim")
 
             if api_base == "":
-                return _infer_from_env_or_none(dim=dim, db=db)
+                return _infer_from_config_or_none(
+                    dim=dim, api_key=api_key, model=model, api_base=api_base
+                )
 
             provider = _infer_embedding_provider_from_api_base(api_base)
             if provider is not None:
                 return provider
 
             if api_base is None:
-                return _infer_from_env_or_none(dim=dim, db=db)
+                return _infer_from_config_or_none(
+                    dim=dim, api_key=api_key, model=model, api_base=api_base
+                )
     except Exception:
         logger.debug(
             "Failed to resolve configured embeddings provider from persisted config", exc_info=True
         )
-    return _detect_openai()
+    return None
 
 
 # ---------------------------------------------------------------------------

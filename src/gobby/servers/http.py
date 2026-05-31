@@ -228,7 +228,7 @@ class HTTPServer:
             _emb_cfg = services.config.embeddings if services.config else None
             semantic_search = SemanticToolSearch(
                 db=services.mcp_db_manager.db,
-                openai_api_key=_emb_cfg.api_key if _emb_cfg else None,
+                embedding_api_key=_emb_cfg.api_key if _emb_cfg else None,
                 embedding_model=_emb_cfg.model if _emb_cfg else DEFAULT_EMBEDDING_MODEL,
                 embedding_dim=_emb_cfg.dim if _emb_cfg else DEFAULT_EMBEDDING_DIM,
                 api_base=_emb_cfg.api_base if _emb_cfg else None,
