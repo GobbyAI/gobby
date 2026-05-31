@@ -28,3 +28,19 @@ The requested build command completed its initial dispatch successfully.
 - Planning review cap confirmed: `max_review_rounds=99`
 
 No anomaly at launch. The shell did not expose `GOBBY_SESSION_ID`, so the launch set `GOBBY_SESSION_ID=8081ad75-d559-4a99-9a85-3af8c6904ca2` in the process environment to make `--coordinator current` resolve to this coordinator session.
+
+## 2026-05-31 02:43 CDT - Agent telemetry counters were stale
+
+While monitoring planner run `run-53b2c8840260`, `gobby-agents:list_running_agents` and `gobby-agents:wait_for_agent` reported `tool_calls_count=0` and `turns_used=0`. The child session terminal and transcript clearly showed many tool calls and assistant turns. That made the build look idle even though the planner was actively reading and revising the plan.
+
+Opened build-system bug task `#15388` under coordination epic `#15385`. The fix teaches the agent MCP status tools to overlay live transcript activity from the active child session instead of relying only on stale aggregate session counters. It adds `TranscriptReader.get_activity_counts()`, passes the transcript reader into the agent registry, and applies the overlay to `list_running_agents`, `get_running_agent`, and `wait_for_agent`.
+
+Validation run before commit:
+
+- `GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/test_agent_live_stats.py -v` - passed, 5 tests
+- `uv run ruff check src/gobby/mcp_proxy/tools/agent_live_activity.py src/gobby/mcp_proxy/tools/agents.py src/gobby/mcp_proxy/registries.py src/gobby/sessions/transcript_reader.py tests/mcp_proxy/tools/test_agent_live_stats.py` - passed
+- `uv run ruff format --check src/gobby/mcp_proxy/tools/agent_live_activity.py src/gobby/mcp_proxy/tools/agents.py src/gobby/mcp_proxy/registries.py src/gobby/sessions/transcript_reader.py` - passed
+- `uv run mypy src/gobby/mcp_proxy/tools/agent_live_activity.py src/gobby/mcp_proxy/tools/agents.py src/gobby/mcp_proxy/registries.py src/gobby/sessions/transcript_reader.py --no-incremental --strict` - passed
+- `uv run gobby test-quality audit tests/mcp_proxy/tools/test_agent_live_stats.py --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity high` - passed
+
+Resolution note: the running daemon still shows stale counters until it is restarted with this fix loaded.

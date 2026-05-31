@@ -266,6 +266,7 @@ def setup_internal_registries(
             lifecycle_monitor=agent_lifecycle_monitor,
             daemon_config=_config,
             code_index=code_index,
+            transcript_reader=transcript_reader,
         )
 
         # Add inter-agent messaging tools if dependencies are available

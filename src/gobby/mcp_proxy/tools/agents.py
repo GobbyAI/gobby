@@ -26,6 +26,10 @@ from gobby.mcp_proxy.tools.agent_cancellation import (
     stop_agent_run,
     terminalize_killed_agent_run,
 )
+from gobby.mcp_proxy.tools.agent_live_activity import (
+    overlay_live_activity,
+    overlay_runs_live_activity,
+)
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.agents import AgentRunStatus, LocalAgentRunManager
 
@@ -239,6 +243,7 @@ def create_agents_registry(
     running_registry: Any | None = None,
     daemon_config: Any | None = None,
     code_index: Any | None = None,
+    transcript_reader: Any | None = None,
 ) -> InternalToolRegistry:
     """
     Create an agent tool registry with all agent-related tools.
@@ -333,7 +338,9 @@ def create_agents_registry(
             if not run:
                 return {"success": False, "error": f"Agent run {run_id} not found"}
 
-            payload = _agent_result_payload(run, include_prompt=False)
+            payload = _agent_result_payload(
+                await overlay_live_activity(run, transcript_reader), include_prompt=False
+            )
             if run.status in _TERMINAL_AGENT_STATUSES:
                 return {"success": True, "completed": True, **payload}
 
@@ -772,6 +779,7 @@ def create_agents_registry(
             runs = agent_run_manager.list_running(limit=limit)
         else:
             runs = agent_run_manager.list_by_status(status="pending", limit=limit)
+        runs = await overlay_runs_live_activity(runs, transcript_reader)
 
         return {
             "success": True,
@@ -799,6 +807,7 @@ def create_agents_registry(
         run = agent_run_manager.get(run_id)
         if not run or run.status not in ("running", "pending"):
             return {"success": False, "error": f"No running agent found with ID {run_id}"}
+        run = await overlay_live_activity(run, transcript_reader)
 
         return {"success": True, "agent": run.to_dict()}
 

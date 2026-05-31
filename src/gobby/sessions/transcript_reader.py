@@ -87,6 +87,26 @@ class _Windowable:
     size: int = 0
 
 
+def _activity_counts_from_index(index: TranscriptIndex) -> dict[str, int]:
+    return {
+        "message_count": index.parsed_message_count,
+        "turn_count": sum(1 for boundary in index.boundaries if boundary.role == "assistant"),
+        "tool_call_count": len(index.tool_first_open),
+    }
+
+
+def _activity_counts_from_messages(messages: list[ParsedMessage]) -> dict[str, int]:
+    return {
+        "message_count": len(messages),
+        "turn_count": sum(1 for msg in messages if msg.role == "assistant"),
+        "tool_call_count": sum(
+            1
+            for msg in messages
+            if msg.content_type in ("tool_use", "mcp_tool_use") and msg.tool_use_id
+        ),
+    }
+
+
 class TranscriptReader:
     """Unified read layer: live transcript first, gzip archive fallback."""
 
@@ -322,6 +342,26 @@ class TranscriptReader:
         if resolved.index is not None:
             return resolved.index.parsed_message_count
         return 0
+
+    async def get_activity_counts(self, session_id: str) -> dict[str, int]:
+        """Count rendered turns and tool calls from the latest transcript snapshot."""
+        session = self._session_manager.get(session_id)
+        if not session:
+            return {"message_count": 0, "turn_count": 0, "tool_call_count": 0}
+
+        try:
+            resolved = await self._resolve_windowable(session, session_id)
+        except DecompressionError as e:
+            logger.warning(f"Failed to read archive for session {session_id}: {e}")
+            return {"message_count": 0, "turn_count": 0, "tool_call_count": 0}
+
+        if resolved.kind == "native":
+            return _activity_counts_from_messages(
+                await self._get_parsed_messages_from_file(session_id)
+            )
+        if resolved.index is not None:
+            return _activity_counts_from_index(resolved.index)
+        return {"message_count": 0, "turn_count": 0, "tool_call_count": 0}
 
     async def get_transcript_status(self, session_id: str) -> dict[str, Any]:
         """Report transcript availability and parseability for a session."""

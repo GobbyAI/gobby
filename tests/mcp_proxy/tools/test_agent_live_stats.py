@@ -13,6 +13,16 @@ from gobby.utils.session_context import session_context_for_test
 pytestmark = pytest.mark.unit
 
 
+class _FakeTranscriptReader:
+    def __init__(self, counts: dict[str, int]) -> None:
+        self.counts = counts
+        self.session_ids: list[str] = []
+
+    async def get_activity_counts(self, session_id: str) -> dict[str, int]:
+        self.session_ids.append(session_id)
+        return self.counts
+
+
 def _register_session(
     session_manager: SessionManager,
     sample_project: dict,
@@ -85,6 +95,88 @@ async def test_list_running_agents_includes_live_activity_counters(
     assert result["agents"][0]["agent_name"] == "merge-worker"
     assert result["agents"][0]["tool_calls_count"] == 22
     assert result["agents"][0]["turns_used"] == 13
+
+
+@pytest.mark.asyncio
+async def test_list_running_agents_overlays_transcript_activity_when_session_stats_lag(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict,
+) -> None:
+    """Active agent lists use transcript counts when aggregate session stats lag."""
+    parent_id = _register_session(session_manager, sample_project, "mcp-parent-transcript")
+    child_id = _register_session(
+        session_manager,
+        sample_project,
+        "mcp-child-transcript",
+        parent_session_id=parent_id,
+    )
+    run_storage = LocalAgentRunManager(temp_db)
+    run = run_storage.create(
+        parent_session_id=parent_id,
+        child_session_id=child_id,
+        provider="claude",
+        prompt="surface transcript counters",
+        agent_name="planner",
+    )
+    run_storage.start(run.id)
+
+    runner = MagicMock()
+    runner.run_storage = run_storage
+    transcript_reader = _FakeTranscriptReader(
+        {"message_count": 78, "turn_count": 6, "tool_call_count": 19}
+    )
+    registry = create_agents_registry(runner, transcript_reader=transcript_reader)
+    list_running = registry._tools["list_running_agents"].func
+
+    result = await list_running(parent_session_id=parent_id)
+
+    assert result["success"] is True
+    assert result["agents"][0]["tool_calls_count"] == 19
+    assert result["agents"][0]["turns_used"] == 6
+    assert transcript_reader.session_ids == [child_id]
+
+
+@pytest.mark.asyncio
+async def test_wait_for_agent_timeout_overlays_transcript_activity(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict,
+) -> None:
+    """wait_for_agent timeout payload includes live transcript activity."""
+    parent_id = _register_session(session_manager, sample_project, "mcp-parent-wait")
+    child_id = _register_session(
+        session_manager,
+        sample_project,
+        "mcp-child-wait",
+        parent_session_id=parent_id,
+    )
+    run_storage = LocalAgentRunManager(temp_db)
+    run = run_storage.create(
+        parent_session_id=parent_id,
+        child_session_id=child_id,
+        provider="claude",
+        prompt="wait with live counters",
+        agent_name="planner",
+    )
+    run_storage.start(run.id)
+
+    runner = MagicMock()
+    runner.run_storage = run_storage
+    runner.get_run.side_effect = lambda run_id: run_storage.get(run_id)
+    transcript_reader = _FakeTranscriptReader(
+        {"message_count": 41, "turn_count": 5, "tool_call_count": 17}
+    )
+    registry = create_agents_registry(runner, transcript_reader=transcript_reader)
+    wait_for_agent = registry._tools["wait_for_agent"].func
+
+    result = await wait_for_agent(run.id, timeout_seconds=0, poll_interval_seconds=0.1)
+
+    assert result["success"] is True
+    assert result["completed"] is False
+    assert result["tool_calls_count"] == 17
+    assert result["turns_used"] == 5
+    assert transcript_reader.session_ids == [child_id]
 
 
 @pytest.mark.asyncio
