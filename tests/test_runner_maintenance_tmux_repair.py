@@ -49,6 +49,34 @@ async def test_repair_loop_enforces_only_paned_sessions() -> None:
 
 
 @pytest.mark.asyncio
+async def test_repair_loop_uses_configured_session_list_limit() -> None:
+    """The repair sweep honors the configured session list limit."""
+    session_manager = _SessionManager([])
+
+    await tmux_window_name_repair_loop(
+        session_manager,
+        lambda: True,
+        session_list_limit=50,
+    )
+
+    assert session_manager.calls == [(["active", "paused"], 50)]
+
+
+@pytest.mark.asyncio
+async def test_repair_loop_normalizes_nonpositive_session_list_limit() -> None:
+    """Nonpositive limits fall back to the default list bound."""
+    session_manager = _SessionManager([])
+
+    await tmux_window_name_repair_loop(
+        session_manager,
+        lambda: True,
+        session_list_limit=0,
+    )
+
+    assert session_manager.calls == [(["active", "paused"], 200)]
+
+
+@pytest.mark.asyncio
 async def test_repair_loop_handles_no_session_manager() -> None:
     """A missing session manager is a no-op, not a crash."""
     shutdown_checks = 0

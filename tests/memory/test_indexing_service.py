@@ -24,6 +24,8 @@ def _memory(memory_id: str, content: str, project_id: str = "project-1") -> Memo
 class _MemoryStorage:
     def __init__(self, memories: list[Memory]) -> None:
         self.memories = memories
+        self.db = MagicMock()
+        self.db.execute.return_value.rowcount = 0
 
     def list_memories(
         self,
@@ -41,8 +43,6 @@ class _MemoryStorage:
 
 
 class _VectorStore:
-    collection_name = "memories"
-
     def __init__(self) -> None:
         self.ids: list[str] = []
         self.rebuild = AsyncMock(side_effect=self._rebuild)
@@ -50,6 +50,10 @@ class _VectorStore:
         self.delete = AsyncMock()
         self.batch_upsert = AsyncMock()
         self.delete_collection = AsyncMock()
+
+    @property
+    def collection_name(self) -> str:
+        return "memories"
 
     async def _rebuild(
         self,
@@ -145,3 +149,15 @@ async def test_global_reindex_rebuilds_when_vector_ids_do_not_match_snapshot() -
     assert second["embeddings_generated"] == 1
     assert second["skipped"] is False
     assert vector_store.rebuild.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_clear_indices_uses_vector_store_collection_name_method() -> None:
+    storage = _MemoryStorage([])
+    vector_store = _VectorStore()
+    service = _service(storage, vector_store)
+
+    result = await service.clear_indices()
+
+    vector_store.delete_collection.assert_awaited_once_with("memories")
+    assert result["vectors_cleared"] is True

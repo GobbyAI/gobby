@@ -75,7 +75,9 @@ start_docker_postgres_test_database() {
     fi
 
     local container_id
-    container_id=$(docker_compose -f docker-compose.test.yml ps -q postgres-test 2>/dev/null || true)
+    container_id=$(
+        docker_compose -f docker-compose.test.yml ps --status running -q postgres-test 2>/dev/null || true
+    )
     if [ -z "$container_id" ]; then
         echo "Could not find the postgres-test container after startup." >&2
         return 1

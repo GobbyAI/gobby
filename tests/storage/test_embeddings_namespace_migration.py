@@ -12,6 +12,8 @@ from gobby.storage.migrations import _execute_sql_script
 
 pytestmark = pytest.mark.unit
 
+MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "src/gobby/storage/migrations"
+
 
 def test_embeddings_namespace_migration_is_idempotent(temp_db: HubDatabase) -> None:
     store = ConfigStore(temp_db)
@@ -41,9 +43,9 @@ def test_embeddings_namespace_migration_is_idempotent(temp_db: HubDatabase) -> N
         ("embeddings.api_key", json.dumps("$secret:api_key")),
     )
 
-    migration = (
-        Path("src/gobby/storage/migrations/271_embeddings_namespace_to_ai_embeddings.sql")
-    ).read_text(encoding="utf-8")
+    migration = (MIGRATIONS_DIR / "271_embeddings_namespace_to_ai_embeddings.sql").read_text(
+        encoding="utf-8"
+    )
     for _ in range(2):
         with temp_db.transaction() as txn:
             _execute_sql_script(txn, migration)

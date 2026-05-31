@@ -385,11 +385,19 @@ def _normalize_embedding_provider(provider: Any) -> str | None:
     return None
 
 
+def _strip_config_string(value: Any) -> Any:
+    """Strip configured string values while preserving non-string typed values."""
+    if isinstance(value, str):
+        return value.strip()
+    return value
+
+
 def _infer_embedding_provider_from_api_base(api_base: Any) -> str | None:
     """Infer a local embeddings provider from the configured API base."""
-    if not isinstance(api_base, str):
+    normalized_api_base = _strip_config_string(api_base)
+    if not isinstance(normalized_api_base, str):
         return None
-    api_base_lower = api_base.lower()
+    api_base_lower = normalized_api_base.lower()
     if ":1234" in api_base_lower:
         return "lmstudio"
     if ":11434" in api_base_lower:
@@ -399,20 +407,21 @@ def _infer_embedding_provider_from_api_base(api_base: Any) -> str | None:
 
 def _infer_from_config_or_none(*, dim: Any, api_key: Any, model: Any, api_base: Any) -> str | None:
     """Infer provider from configured embedding values, or explicit disabled state."""
-    normalized_dim = dim
-    if isinstance(dim, str):
-        stripped = dim.strip()
-        if stripped:
-            try:
-                normalized_dim = int(stripped)
-            except ValueError:
-                normalized_dim = stripped
+    normalized_dim = _strip_config_string(dim)
+    normalized_api_key = _strip_config_string(api_key)
+    normalized_model = _strip_config_string(model)
+    normalized_api_base = _strip_config_string(api_base)
+    if isinstance(normalized_dim, str) and normalized_dim:
+        try:
+            normalized_dim = int(normalized_dim)
+        except ValueError:
+            pass
     if normalized_dim == 0:
         return "none"
-    if api_base in (None, "") and api_key:
+    if normalized_api_base in (None, "") and normalized_api_key:
         from gobby.search.embeddings import is_openai_cloud_embedding_model
 
-        if isinstance(model, str) and is_openai_cloud_embedding_model(model):
+        if isinstance(normalized_model, str) and is_openai_cloud_embedding_model(normalized_model):
             return "openai"
     return None
 
@@ -431,10 +440,10 @@ def get_configured_embedding_provider() -> str | None:
 
         with runtime_hub_database(apply_migrations=False) as db:
             store = ConfigStore(db)
-            model = store.get(AI_EMBEDDING_MODEL_KEY)
-            api_base = store.get(AI_EMBEDDING_API_BASE_KEY)
-            api_key = store.get(AI_EMBEDDING_API_KEY_KEY)
-            dim = store.get(AI_EMBEDDING_DIM_KEY)
+            model = _strip_config_string(store.get(AI_EMBEDDING_MODEL_KEY))
+            api_base = _strip_config_string(store.get(AI_EMBEDDING_API_BASE_KEY))
+            api_key = _strip_config_string(store.get(AI_EMBEDDING_API_KEY_KEY))
+            dim = _strip_config_string(store.get(AI_EMBEDDING_DIM_KEY))
 
             if api_base == "":
                 return _infer_from_config_or_none(

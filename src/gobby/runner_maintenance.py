@@ -287,6 +287,7 @@ async def tmux_window_name_repair_loop(
     session_manager: _TmuxRepairSessionManager | None,
     is_shutdown_requested: Callable[[], bool],
     interval_seconds: int = 120,
+    session_list_limit: int = 200,
 ) -> None:
     """Ensure active tmux-backed sessions have Gobby-named windows.
 
@@ -299,12 +300,21 @@ async def tmux_window_name_repair_loop(
     named it), repairing already-stuck windows and self-healing any
     session-start miss. Windows Gobby has already named are skipped.
     """
+    try:
+        normalized_session_list_limit = int(session_list_limit)
+    except (TypeError, ValueError):
+        normalized_session_list_limit = 200
+    if normalized_session_list_limit < 1:
+        normalized_session_list_limit = 200
 
     async def _repair_once() -> None:
         if session_manager is None:
             return
         try:
-            sessions = session_manager.list(statuses=["active", "paused"], limit=200)
+            sessions = session_manager.list(
+                statuses=["active", "paused"],
+                limit=normalized_session_list_limit,
+            )
         except Exception as e:
             logger.warning(f"tmux window repair: failed to list sessions: {e}")
             return

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 from contextlib import nullcontext
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -23,6 +24,7 @@ from gobby.config.embedding_keys import (
     EMBEDDING_API_KEY_SECRET_NAME,
 )
 from gobby.search.embeddings import EmbeddingGenerationError
+from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = [pytest.mark.unit]
 
@@ -584,8 +586,8 @@ class TestPersistEmbeddingConfig:
 
     def test_embedding_key_stored_with_config_secret(
         self,
-        temp_db,
-        tmp_path,
+        temp_db: HubDatabase,
+        tmp_path: Path,
     ) -> None:
         from gobby.cli.installers.embedding import _persist_embedding_config
         from gobby.storage.config_store import ConfigStore

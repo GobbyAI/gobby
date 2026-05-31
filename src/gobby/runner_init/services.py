@@ -12,7 +12,7 @@ from gobby.llm import create_llm_service
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.memory.manager import MemoryManager
 from gobby.memory.vectorstore import VectorStore
-from gobby.search.embeddings import generate_embedding
+from gobby.search.embeddings import generate_embedding, is_embedding_configured
 from gobby.sessions.processor import SessionMessageProcessor
 from gobby.storage.clones import LocalCloneManager
 from gobby.storage.mcp import LocalMCPManager
@@ -48,6 +48,28 @@ def _init_llm_service(runner: GobbyRunner) -> None:
         logger.error(f"Failed to initialize LLM service: {e}")
 
 
+def _validate_memory_embedding_config(emb_cfg: Any) -> None:
+    model = getattr(emb_cfg, "model", "")
+    api_key = getattr(emb_cfg, "api_key", None)
+    api_base = getattr(emb_cfg, "api_base", None)
+    if not isinstance(model, str):
+        model = ""
+    if not isinstance(api_key, str):
+        api_key = None
+    if not isinstance(api_base, str):
+        api_base = None
+    if is_embedding_configured(
+        model=model,
+        api_key=api_key,
+        api_base=api_base,
+    ):
+        return
+    raise ValueError(
+        "Embedding configuration is incomplete for memory embeddings: set "
+        "embeddings.api_base for local embeddings or embeddings.api_key for OpenAI embeddings"
+    )
+
+
 def _init_memory_stack(runner: GobbyRunner) -> None:
     runner.vector_store = None
     runner.memory_manager = None
@@ -55,6 +77,8 @@ def _init_memory_stack(runner: GobbyRunner) -> None:
         try:
             db_cfg = runner.config.databases
             emb_cfg = runner.config.embeddings
+            if runner.llm_service:
+                _validate_memory_embedding_config(emb_cfg)
             runner.vector_store = VectorStore(
                 url=db_cfg.qdrant.url,
                 api_key=db_cfg.qdrant.api_key,

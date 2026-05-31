@@ -168,3 +168,42 @@ def test_runner_memory_stack_uses_canonical_falkordb_enablement_and_kwargs() -> 
     assert kwargs["falkordb_rrf_k"] == 71
     assert "neo4j_url" not in kwargs
     assert "neo4j_auth" not in kwargs
+
+
+def test_runner_memory_stack_fails_fast_when_embedding_config_incomplete() -> None:
+    """A configured LLM service cannot install a deferred failing embed function."""
+    runner = SimpleNamespace(
+        config=SimpleNamespace(
+            memory=MemoryConfig(),
+            embeddings=SimpleNamespace(
+                dim=768,
+                model="nomic-embed-text",
+                api_key=None,
+                api_base=None,
+            ),
+            databases=SimpleNamespace(
+                qdrant=SimpleNamespace(
+                    url="http://qdrant:6333",
+                    api_key=None,
+                    collection_prefix="code_",
+                ),
+            ),
+        ),
+        database=MagicMock(),
+        db_executor=SimpleNamespace(run=AsyncMock()),
+        llm_service=MagicMock(),
+        secret_store=MagicMock(),
+        vector_store=None,
+        memory_manager=None,
+    )
+
+    with (
+        patch("gobby.runner_init.services.VectorStore") as vector_store_cls,
+        patch("gobby.runner_init.services.MemoryManager") as memory_manager_cls,
+    ):
+        services._init_memory_stack(runner)
+
+    vector_store_cls.assert_not_called()
+    memory_manager_cls.assert_not_called()
+    assert runner.vector_store is None
+    assert runner.memory_manager is None

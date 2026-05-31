@@ -367,6 +367,56 @@ def test_get_configured_embedding_provider_detects_embedding_api_key(
 
 
 @pytest.mark.unit
+def test_get_configured_embedding_provider_strips_whitespace_values(temp_db) -> None:
+    from gobby.storage.config_store import ConfigStore
+
+    store = ConfigStore(temp_db)
+    store.set_many(
+        {
+            AI_EMBEDDING_MODEL_KEY: " text-embedding-3-small ",
+            AI_EMBEDDING_API_BASE_KEY: "   ",
+            AI_EMBEDDING_DIM_KEY: " 1536 ",
+        }
+    )
+    temp_db.execute(
+        """
+        INSERT INTO config_store (key, value, source, is_secret, updated_at)
+        VALUES (%s, %s, 'test', TRUE, NOW())
+        """,
+        (AI_EMBEDDING_API_KEY_KEY, json.dumps(" sk-test ")),
+    )
+
+    with _patch_runtime_hub_database(temp_db):
+        assert deps.get_configured_embedding_provider() == "openai"
+
+
+@pytest.mark.unit
+def test_get_configured_embedding_provider_ignores_whitespace_only_api_key(
+    temp_db,
+) -> None:
+    from gobby.storage.config_store import ConfigStore
+
+    store = ConfigStore(temp_db)
+    store.set_many(
+        {
+            AI_EMBEDDING_MODEL_KEY: "text-embedding-3-small",
+            AI_EMBEDDING_API_BASE_KEY: "",
+            AI_EMBEDDING_DIM_KEY: 1536,
+        }
+    )
+    temp_db.execute(
+        """
+        INSERT INTO config_store (key, value, source, is_secret, updated_at)
+        VALUES (%s, %s, 'test', TRUE, NOW())
+        """,
+        (AI_EMBEDDING_API_KEY_KEY, json.dumps("   ")),
+    )
+
+    with _patch_runtime_hub_database(temp_db):
+        assert deps.get_configured_embedding_provider() is None
+
+
+@pytest.mark.unit
 def test_get_configured_embedding_provider_returns_none_without_secret(
     temp_db, monkeypatch
 ) -> None:

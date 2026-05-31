@@ -253,9 +253,7 @@ async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
     if claude_mcp_config.exists():
         claude_mcp_path = str(claude_mcp_config)
         strict_mcp = True
-        cmd.extend(["--mcp-config", claude_mcp_path])
-    if strict_mcp:
-        cmd.append("--strict-mcp-config")
+        cmd.extend(["--mcp-config", claude_mcp_path, "--strict-mcp-config"])
 
     # Resolve sandbox config if provided
     sandbox_config = _sandbox_config_for_spawn(request.sandbox_config, spawn_context.env_vars)
