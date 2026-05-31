@@ -32,8 +32,13 @@ _VALIDATION_GATE_WORDS = (
     r")"
 )
 _VALIDATION_FAILURE_WORDS = r"(?:failed|failing|not\s+clean|did\s+not\s+pass|not\s+pass(?:ed|ing)?)"
+_SAME_SENTENCE_PROXIMITY = r"[^.!?]{0,100}"
 _ZERO_FAILURE_TOKEN_RE = re.compile(
     r"\b(?:0\s+fail(?:ed|ures?)|zero\s+failures?|fail(?:ed|ures?)\s*[=:]\s*0)\b",
+    _FAILURE_FEEDBACK_FLAGS,
+)
+_QUOTED_FEEDBACK_FRAGMENT_RE = re.compile(
+    r"(?:\"[^\"]{1,240}\"|`[^`]{1,240}`|(?<!\w)'[^']{1,240}'(?!\w))",
     _FAILURE_FEEDBACK_FLAGS,
 )
 _NONZERO_FAILURE_COUNT_RE = re.compile(
@@ -57,12 +62,12 @@ _FAILURE_THEN_ACCEPTANCE_CRITERIA_RE = re.compile(
 )
 _VALIDATION_GATE_THEN_FAILURE_RE = re.compile(
     # Example: "Required validation gate did not pass."
-    rf"\b{_VALIDATION_GATE_WORDS}\b.{{0,100}}\b{_VALIDATION_FAILURE_WORDS}\b",
+    rf"\b{_VALIDATION_GATE_WORDS}\b{_SAME_SENTENCE_PROXIMITY}\b{_VALIDATION_FAILURE_WORDS}\b",
     _FAILURE_FEEDBACK_FLAGS,
 )
 _FAILURE_THEN_VALIDATION_GATE_RE = re.compile(
     # Example: "Tests are failing in the required validation check."
-    rf"\b{_VALIDATION_FAILURE_WORDS}\b.{{0,100}}\b{_VALIDATION_GATE_WORDS}\b",
+    rf"\b{_VALIDATION_FAILURE_WORDS}\b{_SAME_SENTENCE_PROXIMITY}\b{_VALIDATION_GATE_WORDS}\b",
     _FAILURE_FEEDBACK_FLAGS,
 )
 _VALIDATION_GATE_THEN_ERRORS_REMAIN_RE = re.compile(
@@ -141,8 +146,9 @@ def matched_required_validation_failure_pattern(feedback: str | None) -> re.Patt
         return None
 
     normalized_feedback = _ZERO_FAILURE_TOKEN_RE.sub("", " ".join(feedback.split()))
+    searchable_feedback = _QUOTED_FEEDBACK_FRAGMENT_RE.sub("", normalized_feedback)
     for pattern in _REQUIRED_FAILURE_FEEDBACK_PATTERNS:
-        if pattern.search(normalized_feedback) is not None:
+        if pattern.search(searchable_feedback) is not None:
             return pattern
     return None
 

@@ -40,6 +40,7 @@ def test_feedback_admits_required_validation_failure_across_languages(feedback: 
         ("The criteria not satisfied by the delivered implementation.", True),
         ("Validation errors remain unresolved in the frontend package.", True),
         ("Mypy found incomplete type hints in the service boundary.", True),
+        ("The script's validation gate failed.", True),
         ("The implementation mentions criteria and satisfied users.", False),
         ("Errors were documented and resolved before closure.", False),
         ("Mypy hints were improved and all work is complete.", False),
@@ -77,6 +78,38 @@ def test_matched_pattern_helper_returns_none_for_non_failures(feedback: str | No
 )
 def test_feedback_without_failure_admission_is_allowed(feedback: str) -> None:
     """Mentioning validation concepts alone is not treated as an admitted failure."""
+    assert feedback_admits_required_validation_failure(feedback) is False
+
+
+def test_successful_guard_feedback_does_not_match_across_sentence_boundary() -> None:
+    """Success feedback can describe fail-fast guard behavior without admitting failure."""
+    feedback = (
+        "All acceptance criteria are met. pre-push-test.sh resolves DATABASE_URL via a "
+        "three-tier fallback (env -> bootstrap config -> docker-compose.test.yml) through "
+        "resolve_pytest_database_url(), exports it into the isolated pytest environment as "
+        'DATABASE_URL="$PYTEST_DATABASE_URL", and check_pytest_postgres_skip_guard() scans '
+        "the pytest report for the Postgres DSN skip reason, failing the run clearly if "
+        "found. Two new CI contract tests "
+        "(test_pre_push_resolves_and_exports_postgres_database_url_for_pytest, "
+        "test_pre_push_fails_if_postgres_skip_reason_reaches_pytest_report) structurally "
+        "verify the script's resolution chain and skip guard. Verification evidence confirms "
+        "ruff check/format clean and both test_postgres_test_stack.py and "
+        "test_postgres_safety.py pass under GOBBY_TEST_PROTECT=1."
+    )
+
+    assert matched_required_validation_failure_pattern(feedback) is None
+    assert feedback_admits_required_validation_failure(feedback) is False
+
+
+def test_quoted_failure_examples_do_not_admit_failure() -> None:
+    """Quoted examples from validation criteria are not treated as actual failures."""
+    feedback = (
+        "All acceptance criteria are met. Existing parametrized tests for same-sentence "
+        "failures ('Tests are failing in the required check.', "
+        "'The validation gate did not pass.') remain in place and still match."
+    )
+
+    assert matched_required_validation_failure_pattern(feedback) is None
     assert feedback_admits_required_validation_failure(feedback) is False
 
 
