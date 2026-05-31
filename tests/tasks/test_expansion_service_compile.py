@@ -187,7 +187,8 @@ def test_compile_12898_contract_plan_preserves_manifest_deliverables(
 ) -> None:
     parent = _parent(service, sample_project)
     plan_path = (
-        Path(__file__).resolve().parents[2] / ".gobby/plans/task-12898-memory-recall-helper.md"
+        Path(__file__).resolve().parents[2]
+        / ".gobby/plans/completed/task-12898-memory-recall-helper.md"
     )
     spec = service.compile_plan_to_spec(parse_plan(plan_path, parse_mode="expansion"), parent)
 
