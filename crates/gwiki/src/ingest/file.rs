@@ -5,6 +5,8 @@ use gobby_core::config::{AiCapability, AiRouting};
 
 use crate::api::IngestFileOptions;
 use crate::ingest::audio::{AudioSnapshot, ingest_audio_with_transcription};
+#[cfg(feature = "documents")]
+use crate::ingest::document::{DocumentSnapshot, ingest_document};
 use crate::ingest::image::{ImageSnapshot, ingest_image_with_vision};
 use crate::ingest::video::{VideoFileSnapshot, ingest_video_file};
 use crate::ingest::{
@@ -96,6 +98,23 @@ pub fn ingest_path(
                     frame_interval_seconds: options.video_frame_interval_seconds,
                     frame_descriptions: Vec::new(),
                     transcript_segments: Vec::new(),
+                },
+            )
+            .map(Into::into);
+        }
+        #[cfg(feature = "documents")]
+        SourceKind::Office | SourceKind::Html => {
+            let bytes = read_source_file(path)?;
+            return ingest_document(
+                vault_root,
+                store,
+                scope.clone(),
+                DocumentSnapshot {
+                    location,
+                    file_name: file_name.to_string(),
+                    fetched_at: fetched_at.to_string(),
+                    bytes,
+                    kind,
                 },
             )
             .map(Into::into);
@@ -613,5 +632,71 @@ mod tests {
         .expect("ingest large json");
         assert_eq!(large_result.record.kind, SourceKind::Text);
         assert!(large_result.asset_path.is_some());
+    }
+
+    #[cfg(feature = "documents")]
+    #[test]
+    fn dispatches_office_html_to_document() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let file_path = temp.path().join("page.html");
+        std::fs::write(
+            &file_path,
+            b"<!doctype html><html><head><title>Dispatch Doc</title></head><body><main><p>Document dispatch body.</p></main></body></html>",
+        )
+        .expect("write html");
+        let mut store = MemoryWikiStore::default();
+        let scope = ScopeIdentity::global();
+        let ai_context = no_ai_context();
+        let options = ingest_options();
+
+        let result = ingest_path(
+            temp.path(),
+            &mut store,
+            &scope,
+            &ai_context,
+            &options,
+            &file_path,
+            "2026-05-31T20:01:00Z",
+        )
+        .expect("ingest html");
+
+        assert_eq!(result.record.kind, SourceKind::Html);
+        assert!(result.asset_path.is_some());
+        assert!(
+            store
+                .documents
+                .values()
+                .any(|document| document.body.contains("Document dispatch body."))
+        );
+        let manifest = SourceManifest::read(temp.path()).expect("read source manifest");
+        assert_eq!(manifest.entries.len(), 1);
+    }
+
+    #[cfg(not(feature = "documents"))]
+    #[test]
+    fn office_html_store_as_asset_without_documents_feature() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let file_path = temp.path().join("page.html");
+        std::fs::write(&file_path, b"<html><body>stored only</body></html>").expect("write html");
+        let mut store = MemoryWikiStore::default();
+        let scope = ScopeIdentity::global();
+        let ai_context = no_ai_context();
+        let options = ingest_options();
+
+        let result = ingest_path(
+            temp.path(),
+            &mut store,
+            &scope,
+            &ai_context,
+            &options,
+            &file_path,
+            "2026-05-31T20:02:00Z",
+        )
+        .expect("ingest html without documents");
+
+        assert_eq!(result.record.kind, SourceKind::Html);
+        assert!(result.asset_path.is_some());
+        let raw = std::fs::read_to_string(temp.path().join(result.raw_path)).expect("raw source");
+        assert!(raw.contains("Original artifact stored under"));
     }
 }
