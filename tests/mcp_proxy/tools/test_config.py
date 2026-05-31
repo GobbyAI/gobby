@@ -616,6 +616,24 @@ class TestSetConfigBatch:
         assert config_state["config"].local.url == "http://localhost:1234/v1"
         assert config_state["config"].local.model == "qwen2.5-coder-7b"
 
+    def test_batch_set_reports_original_canonical_embedding_keys(
+        self, config_registry, config_store: ConfigStore
+    ) -> None:
+        """Batch responses should echo caller keys, not internal runtime keys."""
+        tool = config_registry.get_tool("set_config_batch")
+        result = tool(
+            entries=[
+                {"key": "ai.embeddings.api_base", "value": "http://localhost:11434/v1"},
+                {"key": "ai.embeddings.model", "value": "nomic-embed-text"},
+            ]
+        )
+
+        assert result["success"] is True
+        assert result["count"] == 2
+        assert result["keys_set"] == ["ai.embeddings.api_base", "ai.embeddings.model"]
+        assert config_store.get("ai.embeddings.api_base") == "http://localhost:11434/v1"
+        assert config_store.get("ai.embeddings.model") == "nomic-embed-text"
+
     def test_batch_set_local_single_key_fails(self, config_registry) -> None:
         """Setting only local.url without local.model fails validation."""
         tool = config_registry.get_tool("set_config_batch")

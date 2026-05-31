@@ -126,7 +126,7 @@ def runtime_embedding_config_key_to_storage_key(key: str) -> str:
             raise ValueError(_embedding_key_error(key))
         return canonical_embedding_key(field)
     if key == AI_EMBEDDINGS_CONFIG_PREFIX:
-        return key
+        raise ValueError(_embedding_key_error(key))
     if key.startswith(f"{AI_EMBEDDINGS_CONFIG_PREFIX}."):
         validate_embedding_storage_config_key(key)
     return key

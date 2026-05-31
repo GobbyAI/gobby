@@ -476,6 +476,37 @@ async def test_rebuild_same_dimension_removes_stale_point_ids(
 
 
 @pytest.mark.asyncio
+async def test_rebuild_same_dimension_reads_and_deletes_stale_ids_under_lifecycle_lock() -> None:
+    store = VectorStore(collection_name="mock_memories", embedding_dim=4)
+    client = MagicMock()
+    client.collection_exists.return_value = True
+    client.get_collection.return_value = _collection_info(4)
+    store._client = client
+
+    scroll_lock_states: list[bool] = []
+    delete_lock_states: list[bool] = []
+
+    def scroll(**_kwargs: object) -> tuple[list[SimpleNamespace], None]:
+        scroll_lock_states.append(store._collection_lifecycle_lock.locked())
+        return ([SimpleNamespace(id=MEM_1)], None)
+
+    def delete(**_kwargs: object) -> None:
+        delete_lock_states.append(store._collection_lifecycle_lock.locked())
+
+    client.scroll.side_effect = scroll
+    client.delete.side_effect = delete
+
+    async def embed_fn(_text: str) -> list[float]:
+        return _make_embedding()
+
+    await store.rebuild([{"id": MEM_2, "content": "keep"}], embed_fn)
+
+    assert scroll_lock_states == [True]
+    assert delete_lock_states == [True]
+    client.delete.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_rebuild_dimension_mismatch_recreates_under_lifecycle_lock() -> None:
     store = VectorStore(collection_name="mock_memories", embedding_dim=4)
     client = MagicMock()

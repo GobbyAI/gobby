@@ -38,6 +38,16 @@ def test_provider_is_not_a_canonical_embedding_key() -> None:
     assert "ai.embeddings.provider" not in AI_EMBEDDING_CONFIG_KEYS
 
 
+def test_runtime_mapping_rejects_bare_storage_embedding_prefix() -> None:
+    from gobby.config.embedding_keys import (
+        AI_EMBEDDINGS_CONFIG_PREFIX,
+        runtime_embedding_config_key_to_storage_key,
+    )
+
+    with pytest.raises(ValueError, match=r"ai\.embeddings"):
+        runtime_embedding_config_key_to_storage_key(AI_EMBEDDINGS_CONFIG_PREFIX)
+
+
 @pytest.mark.parametrize(
     "literal",
     [

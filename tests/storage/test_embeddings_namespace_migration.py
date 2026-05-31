@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from gobby.config.persistence import EmbeddingsConfig
+from gobby.search.embeddings import is_embedding_configured
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.migrations import _execute_sql_script
@@ -157,6 +159,43 @@ def test_embeddings_namespace_migration_creates_config_for_secret_only_state(
         """
     )
     assert row == {"key": "ai.embeddings.api_key", "is_secret": True}
+
+
+def test_embeddings_namespace_migration_skips_api_key_when_no_source_secret(
+    temp_db: HubDatabase,
+) -> None:
+    store = ConfigStore(temp_db)
+    migration = (MIGRATIONS_DIR / "271_embeddings_namespace_to_ai_embeddings.sql").read_text(
+        encoding="utf-8"
+    )
+
+    with temp_db.transaction() as txn:
+        _execute_sql_script(txn, migration)
+
+    assert temp_db.fetchone("SELECT id FROM secrets WHERE name = 'embeddings_api_key'") is None
+    assert (
+        temp_db.fetchone(
+            """
+        SELECT key
+        FROM config_store
+        WHERE key = 'ai.embeddings.api_key'
+        """
+        )
+        is None
+    )
+
+    emb_cfg = EmbeddingsConfig(
+        api_base=store.get("ai.embeddings.api_base"),
+        api_key=store.get("ai.embeddings.api_key"),
+    )
+    assert (
+        is_embedding_configured(
+            model=emb_cfg.model,
+            api_key=emb_cfg.api_key,
+            api_base=emb_cfg.api_base,
+        )
+        is False
+    )
 
 
 def test_embedding_provider_cleanup_migration_is_idempotent(temp_db: HubDatabase) -> None:

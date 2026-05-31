@@ -232,7 +232,7 @@ async def test_broadcast_event_unified(
 
 
 @pytest.mark.asyncio
-async def test_broadcast_event_with_response(mock_websocket_server, default_config):
+async def test_broadcast_event_with_response(mock_websocket_server, default_config) -> None:
     """Test broadcast_event with HookResponse."""
     from datetime import UTC, datetime
 
@@ -649,7 +649,7 @@ async def test_broadcast_event_after_tool_failure_backfills_tool_name_from_respo
 
 
 @pytest.mark.asyncio
-async def test_broadcast_event_unknown_type(mock_websocket_server, default_config):
+async def test_broadcast_event_unknown_type(mock_websocket_server, default_config) -> None:
     """Test broadcast_event with unknown event type."""
     from datetime import UTC, datetime
     from unittest.mock import MagicMock

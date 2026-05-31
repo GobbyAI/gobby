@@ -7,7 +7,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from gobby.config.embedding_keys import AI_EMBEDDING_API_BASE_KEY, AI_EMBEDDING_API_KEY_KEY
 from gobby.config.persistence import EmbeddingsConfig, is_falkordb_enabled
 from gobby.llm import create_llm_service
 from gobby.mcp_proxy.manager import MCPClientManager
@@ -58,8 +57,8 @@ def _validate_memory_embedding_config(emb_cfg: EmbeddingsConfig) -> None:
         return
     raise ValueError(
         "Embedding configuration is incomplete for memory embeddings: set "
-        f"{AI_EMBEDDING_API_BASE_KEY} for local embeddings or "
-        f"{AI_EMBEDDING_API_KEY_KEY} for OpenAI embeddings"
+        "embedding API base for local embeddings or "
+        "embedding API key for OpenAI embeddings"
     )
 
 

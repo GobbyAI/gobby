@@ -11,6 +11,8 @@ import pytest
 from gobby.memory.services.indexing import IndexingService
 from gobby.storage.memories import Memory
 
+pytestmark = pytest.mark.unit
+
 
 def _memory(memory_id: str, content: str, project_id: str = "project-1") -> Memory:
     return Memory(

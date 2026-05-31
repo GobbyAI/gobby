@@ -10,6 +10,7 @@ import pytest
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import (
     feedback_admits_required_validation_failure,
     matched_required_validation_failure_pattern,
+    matched_successful_validation_pattern,
     validate_leaf_task_with_llm,
 )
 from gobby.tasks.validation import ValidationResult as TaskValidationResult
@@ -66,6 +67,17 @@ def test_matched_pattern_helper_returns_the_triggering_pattern() -> None:
 def test_matched_pattern_helper_returns_none_for_non_failures(feedback: str | None) -> None:
     """Empty or successful feedback does not report a matched pattern."""
     assert matched_required_validation_failure_pattern(feedback) is None
+
+
+@pytest.mark.parametrize(
+    "feedback",
+    [
+        "Not all acceptance criteria are met.",
+        "not ALL validation criteria are satisfied.",
+    ],
+)
+def test_successful_validation_pattern_ignores_not_all_feedback(feedback: str) -> None:
+    assert matched_successful_validation_pattern(feedback) is None
 
 
 @pytest.mark.parametrize(

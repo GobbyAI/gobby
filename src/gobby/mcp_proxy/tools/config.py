@@ -271,6 +271,7 @@ def create_config_registry(
             # Collect and validate entry shapes
             flat_updates: dict[str, Any] = {}
             explicit_secret_keys: set[str] = set()
+            original_keys: set[str] = set()
             for entry in entries:
                 key = entry.get("key")
                 value = entry.get("value")
@@ -282,6 +283,7 @@ def create_config_registry(
                         "error": f"Cannot set '{key}' to a {type(value).__name__}. "
                         "Use dotted keys for nested values.",
                     }
+                original_keys.add(key)
                 runtime_key = external_embedding_config_key_to_runtime_key(key)
                 flat_updates[runtime_key] = value
                 if bool(entry.get("is_secret", False)):
@@ -324,7 +326,6 @@ def create_config_registry(
 
             # Persist all keys atomically
             storage_plain_updates = runtime_embedding_config_entries_to_storage(plain_updates)
-            storage_all_updates = runtime_embedding_config_entries_to_storage(flat_updates)
             if secret_updates and db is not None:
                 from gobby.storage.secrets import SecretStore as SecretStoreCls
 
@@ -344,7 +345,7 @@ def create_config_registry(
 
             result: dict[str, Any] = {
                 "success": True,
-                "keys_set": sorted(storage_all_updates.keys()),
+                "keys_set": sorted(original_keys),
                 "count": len(flat_updates),
             }
             _add_restart_metadata(result, before_config, new_config)
