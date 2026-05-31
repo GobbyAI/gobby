@@ -661,14 +661,11 @@ def _raise_turn_record_contract_error(
     reason: str, response_text: str, exchange_count: int
 ) -> NoReturn:
     logger.debug(
-        "memory.turn_record malformed response: %s",
-        response_text,
-    )
-    logger.warning(
-        "memory.turn_record contract failed: %s (response_chars=%d, exchanges=%d)",
+        "memory.turn_record malformed response (reason=%s, response_chars=%d, exchanges=%d): %s",
         reason,
         len(response_text),
         exchange_count,
+        response_text,
     )
     raise ValueError(f"memory.turn_record returned invalid JSON contract: {reason}")
 

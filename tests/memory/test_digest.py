@@ -3,6 +3,7 @@
 Relocated from tests/workflows/test_memory_actions.py as part of dead-code cleanup.
 """
 
+import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -562,6 +563,37 @@ class TestBuildTurnAndDigest:
             mock_session_manager.persist_digest_state.call_args.kwargs["title"]
             == "Retry Digest JSON"
         )
+
+    @pytest.mark.asyncio
+    async def test_contract_failure_logs_single_warning_per_retry(
+        self,
+        mock_memory_manager,
+        mock_session_manager,
+        mock_llm_service,
+        caplog,
+    ):
+        """One retried contract failure emits a single WARNING, not a duplicate pair."""
+        provider = mock_llm_service.get_default_provider.return_value
+        provider.generate_text = AsyncMock(
+            side_effect=[
+                "not json",
+                _turn_record_json("User asked for a fix. Agent recovered.", "Recovered"),
+            ]
+        )
+
+        with caplog.at_level(logging.WARNING, logger="gobby.memory.digest"):
+            result = await build_turn_and_digest(
+                memory_manager=mock_memory_manager,
+                session_manager=mock_session_manager,
+                session_id="session-123",
+                prompt_text="Fix the authentication bug in auth.py",
+                llm_service=mock_llm_service,
+            )
+
+        assert "error" not in result
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert sum("retrying after contract failure" in r.getMessage() for r in warnings) == 1
+        assert not any("contract failed" in r.getMessage() for r in warnings)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
