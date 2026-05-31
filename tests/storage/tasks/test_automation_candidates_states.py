@@ -100,3 +100,29 @@ def test_list_automation_candidates_precomputes_holistic_gate_once_per_task(
     assert {first.id, second.id} <= candidate_ids
     assert calls.count(first.id) == 1
     assert calls.count(second.id) == 1
+
+
+def test_list_automation_candidates_sorts_holistic_descendant_gates_first(
+    temp_db,
+    sample_project,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    without_gate = _task_at_stage(temp_db, sample_project, "ready")
+    with_gate = _task_at_stage(temp_db, sample_project, "ready")
+
+    def fake_find_holistic_descendant_gate(db, task):
+        return object() if task.id == with_gate.id else None
+
+    monkeypatch.setattr(
+        _automation,
+        "find_holistic_descendant_gate",
+        fake_find_holistic_descendant_gate,
+    )
+
+    ordered_candidate_ids = [
+        task.id
+        for task in list_automation_candidates(temp_db, project_id=sample_project["id"])
+        if task.id in {with_gate.id, without_gate.id}
+    ]
+
+    assert ordered_candidate_ids == [with_gate.id, without_gate.id]

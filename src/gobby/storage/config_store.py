@@ -98,8 +98,8 @@ class ConfigStore:
 
     def set(self, key: str, value: Any, source: str = "user") -> None:
         """Upsert a single config value (JSON-encoded)."""
-        key = canonicalize_embedding_config_key(key)
         _reject_plaintext_secret_value(key, value)
+        key = canonicalize_embedding_config_key(key)
         now = datetime.now(UTC).isoformat()
         json_value = json.dumps(value)
         self.db.execute(
@@ -114,9 +114,9 @@ class ConfigStore:
 
     def set_many(self, entries: dict[str, Any], source: str = "user") -> int:
         """Bulk upsert config entries. Returns count of entries written."""
-        entries = {canonicalize_embedding_config_key(key): value for key, value in entries.items()}
         for key, value in entries.items():
             _reject_plaintext_secret_value(key, value)
+        entries = {canonicalize_embedding_config_key(key): value for key, value in entries.items()}
         now = datetime.now(UTC).isoformat()
         count = 0
         for key, value in entries.items():

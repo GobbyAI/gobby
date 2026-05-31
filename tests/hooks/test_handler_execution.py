@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -18,7 +19,7 @@ class TestErrorIsolation:
     """Test handler error isolation."""
 
     def test_workflow_error_handled(
-        self, event_handlers: EventHandlers, mock_dependencies: dict
+        self, event_handlers: EventHandlers, mock_dependencies: dict[str, Any]
     ) -> None:
         """Test workflow errors are handled gracefully."""
         mock_dependencies["workflow_handler"].evaluate.side_effect = Exception("Workflow error")
@@ -45,7 +46,9 @@ class TestReturnValues:
         assert hasattr(response, "context")
 
     def test_context_is_string(
-        self, event_handlers: EventHandlers, mock_empty_session_variable_manager
+        self,
+        event_handlers: EventHandlers,
+        mock_empty_session_variable_manager: MagicMock,
     ) -> None:
         """Test context is always a string."""
         event = make_event(HookEventType.SESSION_START)

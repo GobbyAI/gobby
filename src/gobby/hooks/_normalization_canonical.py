@@ -77,10 +77,10 @@ def _truncate_positional_paths(parts: list[str]) -> list[str]:
             continue
         if part in _SHELL_CONTROL_TOKENS or not part:
             continue
-        if part in {"-s", "--size"}:
+        if part in {"-s", "--size", "-r", "--reference"}:
             skip_next = True
             continue
-        if part.startswith("--size=") or part.startswith("-"):
+        if part.startswith(("--size=", "--reference=")) or part.startswith("-"):
             continue
         positional.append(part)
     return [candidate for candidate in positional if _looks_path_target(candidate)]

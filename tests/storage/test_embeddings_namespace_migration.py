@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -68,6 +69,10 @@ def test_embeddings_namespace_migration_is_idempotent(temp_db: HubDatabase) -> N
         }
     ]
     copied = temp_db.fetchone(
-        "SELECT encrypted_value FROM secrets WHERE name = 'embeddings_api_key'"
+        "SELECT id, encrypted_value FROM secrets WHERE name = 'embeddings_api_key'"
     )
-    assert copied == {"encrypted_value": "encrypted-value"}
+    expected_id = (
+        "secret-"
+        + hashlib.md5(b"legacy-secret:embeddings_api_key", usedforsecurity=False).hexdigest()
+    )
+    assert copied == {"id": expected_id, "encrypted_value": "encrypted-value"}

@@ -10,16 +10,17 @@ import asyncio
 import logging
 import os
 import signal
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from random import SystemRandom
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.cli.utils import get_gobby_home
 from gobby.config.bin_freshness import BinFreshnessConfig
 from gobby.servers.chat_attachment_files import unlink_stale_attachment_file_sync
 from gobby.shutdown_intent import ShutdownIntent
 from gobby.storage.sql_dialect import older_than_now_expr
+from gobby.workflows.summary_actions import enforce_window_name_if_unmanaged
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.metrics import ToolMetricsManager
@@ -30,6 +31,10 @@ logger = logging.getLogger(__name__)
 _JITTER_RANDOM = SystemRandom()
 _ISOLATION_CLEANUP_SCAN_LIMIT = 1000
 _CHAT_ATTACHMENT_CLEANUP_BATCH_LIMIT = 500
+
+
+class _TmuxRepairSessionManager(Protocol):
+    def list(self, *, statuses: list[str], limit: int) -> Sequence[Any]: ...
 
 
 def _positive_int_or_default(value: Any, default: int) -> int:
@@ -279,7 +284,7 @@ async def cleanup_zombie_messages_loop(
 
 
 async def tmux_window_name_repair_loop(
-    session_manager: Any,
+    session_manager: _TmuxRepairSessionManager | None,
     is_shutdown_requested: Callable[[], bool],
     interval_seconds: int = 120,
 ) -> None:
@@ -294,7 +299,6 @@ async def tmux_window_name_repair_loop(
     named it), repairing already-stuck windows and self-healing any
     session-start miss. Windows Gobby has already named are skipped.
     """
-    from gobby.workflows.summary_actions import enforce_window_name_if_unmanaged
 
     async def _repair_once() -> None:
         if session_manager is None:
@@ -313,7 +317,7 @@ async def tmux_window_name_repair_loop(
                 if await enforce_window_name_if_unmanaged(session):
                     renamed += 1
             except Exception:
-                logger.debug(
+                logger.warning(
                     "tmux window repair: rename failed for session %s",
                     getattr(session, "ref", "?"),
                     exc_info=True,

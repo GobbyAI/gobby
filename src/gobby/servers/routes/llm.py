@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import stat
@@ -31,6 +32,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 _VISION_TEMP_DIR_NAME = "gobby-vision"
 _VISION_TEMP_MAX_AGE_SECONDS = 24 * 60 * 60
+_VISION_TEMP_CLEANUP_INTERVAL_SECONDS = max(60.0, min(3600.0, _VISION_TEMP_MAX_AGE_SECONDS / 2))
+_VISION_TEMP_CLEANUP_TASK_ATTR = "vision_temp_cleanup_task"
 
 
 class TextGeneratePayload(BaseModel):
@@ -46,7 +49,7 @@ class TextGeneratePayload(BaseModel):
 
 def create_llm_router(server: HTTPServer) -> APIRouter:
     """Create daemon AI capability routes."""
-    _cleanup_stale_vision_temp_files()
+    _run_vision_temp_cleanup_once()
     router = APIRouter(prefix="/api/llm", tags=["llm"])
 
     @router.get("/status")
@@ -115,7 +118,12 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
             raise HTTPException(status_code=503, detail="Daemon config not found")
 
         image_bytes = await file.read()
-        image_path = _write_temp_image(image_bytes, file.filename)
+        try:
+            image_path = _write_temp_image(image_bytes, file.filename)
+        except RuntimeError as e:
+            logger.error("Vision upload preparation failed: %s", e)
+            raise HTTPException(status_code=500, detail="Vision upload failed") from e
+
         try:
             service = build_daemon_vision_extract_service(config)
             result = await service.extract(
@@ -145,7 +153,8 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
             logger.error("Vision extraction failed", exc_info=True)
             raise HTTPException(status_code=500, detail="Vision extraction failed") from e
         finally:
-            image_path.unlink(missing_ok=True)
+            if image_path is not None:
+                image_path.unlink(missing_ok=True)
 
     return router
 
@@ -160,14 +169,21 @@ def _write_temp_image(image_bytes: bytes, filename: str | None) -> Path:
         dir=temp_dir,
     ) as temp_file:
         temp_file.write(image_bytes)
+        # Extraction runs in the daemon process, so uploaded images stay owner-only.
         os.chmod(temp_file.name, stat.S_IRUSR | stat.S_IWUSR)
         return Path(temp_file.name)
 
 
 def _vision_temp_dir() -> Path:
-    temp_dir = Path(tempfile.gettempdir()) / _VISION_TEMP_DIR_NAME
-    temp_dir.mkdir(mode=stat.S_IRWXU, exist_ok=True)
-    return temp_dir
+    try:
+        temp_dir = Path(tempfile.gettempdir()) / _VISION_TEMP_DIR_NAME
+        temp_dir.mkdir(mode=stat.S_IRWXU, exist_ok=True)
+        return temp_dir
+    except OSError as exc:
+        logger.error("Failed to prepare vision temp directory %s", _VISION_TEMP_DIR_NAME)
+        raise RuntimeError(
+            f"Failed to prepare vision temp directory {_VISION_TEMP_DIR_NAME!r}"
+        ) from exc
 
 
 def _cleanup_stale_vision_temp_files(now: float | None = None) -> None:
@@ -185,6 +201,43 @@ def _cleanup_stale_vision_temp_files(now: float | None = None) -> None:
             logger.debug("Failed to remove stale vision temp file %s", path, exc_info=True)
 
 
+def _run_vision_temp_cleanup_once() -> None:
+    try:
+        _cleanup_stale_vision_temp_files()
+    except OSError:
+        logger.debug("Failed to scan vision temp directory", exc_info=True)
+
+
+async def _vision_temp_cleanup_loop() -> None:
+    while True:
+        _run_vision_temp_cleanup_once()
+        await asyncio.sleep(_VISION_TEMP_CLEANUP_INTERVAL_SECONDS)
+
+
+def start_vision_temp_cleanup_task(app: Any) -> None:
+    _run_vision_temp_cleanup_once()
+    existing = getattr(app.state, _VISION_TEMP_CLEANUP_TASK_ATTR, None)
+    if existing is not None and not existing.done():
+        return
+    setattr(
+        app.state,
+        _VISION_TEMP_CLEANUP_TASK_ATTR,
+        asyncio.create_task(_vision_temp_cleanup_loop()),
+    )
+
+
+async def stop_vision_temp_cleanup_task(app: Any) -> None:
+    task = getattr(app.state, _VISION_TEMP_CLEANUP_TASK_ATTR, None)
+    if task is None:
+        return
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    setattr(app.state, _VISION_TEMP_CLEANUP_TASK_ATTR, None)
+
+
 def _image_suffix(filename: str | None) -> str:
     suffix = Path(filename or "").suffix.lower()
     if suffix in {".jpg", ".jpeg", ".png", ".gif", ".webp"}:
@@ -192,4 +245,4 @@ def _image_suffix(filename: str | None) -> str:
     return ".png"
 
 
-__all__ = ["create_llm_router"]
+__all__ = ["create_llm_router", "start_vision_temp_cleanup_task", "stop_vision_temp_cleanup_task"]

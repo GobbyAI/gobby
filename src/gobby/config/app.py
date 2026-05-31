@@ -663,6 +663,7 @@ def _normalize_ai_embeddings_config(config_dict: dict[str, Any]) -> dict[str, An
     ai_embeddings = ai_section.get(RUNTIME_EMBEDDINGS_CONFIG_SECTION)
     if isinstance(ai_embeddings, dict):
         config_dict[RUNTIME_EMBEDDINGS_CONFIG_SECTION] = dict(ai_embeddings)
+        ai_section.pop(RUNTIME_EMBEDDINGS_CONFIG_SECTION, None)
     return config_dict
 
 

@@ -4,7 +4,7 @@ from contextlib import nullcontext
 
 import pytest
 
-from gobby.config.embedding_keys import AI_EMBEDDING_API_KEY_KEY
+from gobby.config.embedding_keys import AI_EMBEDDING_API_KEY_KEY, runtime_embedding_key
 from gobby.storage.config_store import (
     _SECRET_SUFFIXES,
     ConfigStore,
@@ -113,12 +113,12 @@ class TestConfigStore:
         assert store.get("c") == "str"
 
     def test_set_rejects_plaintext_secret_key(self, store: ConfigStore):
-        with pytest.raises(ValueError, match="ConfigStore.set_secret"):
-            store.set(AI_EMBEDDING_API_KEY_KEY, "sk-plaintext")
+        with pytest.raises(ValueError, match=r"Config key 'embeddings\.api_key'"):
+            store.set(runtime_embedding_key("api_key"), "sk-plaintext")
 
     def test_set_many_rejects_plaintext_secret_key(self, store: ConfigStore):
-        with pytest.raises(ValueError, match="ConfigStore.set_secret"):
-            store.set_many({AI_EMBEDDING_API_KEY_KEY: "sk-plaintext"})
+        with pytest.raises(ValueError, match=r"Config key 'embeddings\.api_key'"):
+            store.set_many({runtime_embedding_key("api_key"): "sk-plaintext"})
 
     def test_set_allows_secret_reference(self, store: ConfigStore):
         store.set(AI_EMBEDDING_API_KEY_KEY, "$secret:embeddings_api_key")

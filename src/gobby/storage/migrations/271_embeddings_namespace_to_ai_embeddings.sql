@@ -12,7 +12,7 @@ WITH source_secret AS (
 )
 INSERT INTO secrets (id, name, encrypted_value, category, description, created_at, updated_at)
 SELECT
-    source_secret.id || ':embeddings_api_key',
+    'secret-' || md5(source_secret.id || ':embeddings_api_key'),
     'embeddings_api_key',
     source_secret.encrypted_value,
     source_secret.category,
@@ -20,7 +20,11 @@ SELECT
     source_secret.created_at,
     NOW()
 FROM source_secret
-WHERE NOT EXISTS (SELECT 1 FROM secrets WHERE name = 'embeddings_api_key')
+WHERE NOT EXISTS (
+    SELECT 1
+    FROM secrets
+    WHERE name = 'embeddings_api_key'
+)
 ON CONFLICT (name) DO NOTHING;
 
 INSERT INTO config_store (key, value, source, is_secret, updated_at)
@@ -53,7 +57,7 @@ ON CONFLICT (key) DO UPDATE SET
 INSERT INTO config_store (key, value, source, is_secret, updated_at)
 SELECT
     'ai.embeddings.api_key',
-    to_json('$secret:embeddings_api_key'::text)::text,
+    '"$secret:embeddings_api_key"',
     source,
     TRUE,
     NOW()

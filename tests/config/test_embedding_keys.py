@@ -29,4 +29,4 @@ def test_embedding_keys_centralized_and_guarded() -> None:
                 if EMBEDDING_CONFIG_KEY_PATTERN.search(node.value):
                     offenders.append(f"{path.relative_to(SRC_ROOT)}:{node.lineno}")
 
-    assert offenders == []
+    assert offenders == [], f"Embedding config key literals outside central module: {offenders}"

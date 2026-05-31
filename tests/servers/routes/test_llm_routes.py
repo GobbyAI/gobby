@@ -248,6 +248,17 @@ def test_vision_extract_rejects_unproven_provider(client: TestClient) -> None:
     }
 
 
+def test_vision_extract_temp_write_failure_returns_500(client: TestClient) -> None:
+    with patch.object(llm_module, "_write_temp_image", side_effect=RuntimeError("temp failed")):
+        response = client.post(
+            "/api/llm/vision/extract",
+            files={"file": ("screen.png", b"fake image", "image/png")},
+        )
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Vision upload failed"
+
+
 def test_write_temp_image_uses_dedicated_restrictive_dir(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -263,6 +274,18 @@ def test_write_temp_image_uses_dedicated_restrictive_dir(
         assert stat.S_IMODE(image_path.stat().st_mode) == 0o600
     finally:
         image_path.unlink(missing_ok=True)
+
+
+def test_write_temp_image_raises_contextual_error_on_temp_dir_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_gettempdir() -> str:
+        raise OSError("no temp")
+
+    monkeypatch.setattr(llm_module.tempfile, "gettempdir", fail_gettempdir)
+
+    with pytest.raises(RuntimeError, match="gobby-vision"):
+        llm_module._write_temp_image(b"image bytes", "screen.jpg")
 
 
 def test_cleanup_stale_vision_temp_files(
@@ -285,3 +308,22 @@ def test_cleanup_stale_vision_temp_files(
 
     assert not old_file.exists()
     assert new_file.exists()
+
+
+@pytest.mark.asyncio
+async def test_vision_temp_cleanup_task_cancels_on_shutdown(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(llm_module.tempfile, "gettempdir", lambda: str(tmp_path))
+    app = FastAPI()
+
+    llm_module.start_vision_temp_cleanup_task(app)
+    task = app.state.vision_temp_cleanup_task
+
+    assert not task.done()
+
+    await llm_module.stop_vision_temp_cleanup_task(app)
+
+    assert app.state.vision_temp_cleanup_task is None
+    assert task.cancelled()

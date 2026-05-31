@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import importlib
 import logging
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, File, Form, Query, UploadFile
 
@@ -103,10 +103,10 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
     async def transcribe_audio(
         file: UploadFile = File(...),
         capability: str = Form(default=AICapability.AUDIO_TRANSCRIBE.value),
-        provider: Optional[str] = Form(default=None),  # noqa: UP045
-        model: Optional[str] = Form(default=None),  # noqa: UP045
-        language: Optional[str] = Form(default=None),  # noqa: UP045
-        prompt: Optional[str] = Form(default=None),  # noqa: UP045
+        provider: str | None = Form(default=None),
+        model: str | None = Form(default=None),
+        language: str | None = Form(default=None),
+        prompt: str | None = Form(default=None),
     ) -> dict[str, Any]:
         """One-shot audio transcription (for testing).
 

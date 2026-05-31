@@ -843,8 +843,9 @@ async def test_close_task_uses_commit_diff_when_commits_linked(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_close_task_includes_latest_thirty_verification_commands(
-    mock_task_manager, mock_task_validator
-):
+    mock_task_manager: MagicMock,
+    mock_task_validator: AsyncMock,
+) -> None:
     """close_task should pass a useful evidence window to LLM validation."""
     task = _task(
         id="t1",

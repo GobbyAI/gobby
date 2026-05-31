@@ -133,7 +133,9 @@ def test_embedding_namespace_migration_uses_namespaced_secret_reference() -> Non
 
     assert "ai.embeddings.api_key" in migration
     assert "embeddings_api_key" in migration
-    assert "to_json('$secret:embeddings_api_key'::text)::text" in migration
+    assert """'"$secret:embeddings_api_key"'""" in migration
+    assert "to_json('$secret:embeddings_api_key'::text)::text" not in migration
+    assert "'secret-' || md5(source_secret.id || ':embeddings_api_key')" in migration
     assert "DELETE FROM config_store" in migration
 
 

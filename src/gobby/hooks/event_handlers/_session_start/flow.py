@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from typing import Any, cast
 
@@ -63,6 +64,7 @@ def _log_session_start_timing(
     slow_component, slow_ms = max(
         ((name, duration) for name, duration in timings.items() if name != "total"),
         key=lambda item: item[1],
+        default=("total", timings.get("total", 0)),
     )
     if timings["total"] >= SLOW_SESSION_START_THRESHOLD_MS:
         handler.logger.info(
@@ -130,7 +132,7 @@ def _reset_agent_context_injection(handler: Any, session_id: str | None) -> None
             session_id,
             {"_agent_context_injected": False},
         )
-    except psycopg.Error as e:
+    except (json.JSONDecodeError, TypeError, psycopg.Error) as e:
         handler.logger.warning(f"Failed to reset agent context injection flag: {e}")
 
 
@@ -406,12 +408,15 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     if event.task_id and session_id and handler._session_manager:
         task_title = event.metadata.get("_task_title", "Unknown Task")
         task_context_str = f"You are working on task: {task_title} ({event.task_id})"
-        from gobby.workflows.state_manager import SessionVariableManager
+        try:
+            from gobby.workflows.state_manager import SessionVariableManager
 
-        SessionVariableManager(handler._session_manager.db).merge_variables(
-            session_id,
-            {"task_context": task_context_str},
-        )
+            SessionVariableManager(handler._session_manager.db).merge_variables(
+                session_id,
+                {"task_context": task_context_str},
+            )
+        except (json.JSONDecodeError, TypeError, psycopg.Error) as e:
+            handler.logger.warning(f"Failed to persist task context: {e}")
 
     if event.task_id:
         task_title = event.metadata.get("_task_title", "Unknown Task")

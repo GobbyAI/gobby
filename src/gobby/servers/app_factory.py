@@ -273,6 +273,9 @@ def create_app(server: "HTTPServer") -> FastAPI:
 
         # Store server instance for dependency injection
         app.state.server = server
+        from gobby.servers.routes.llm import start_vision_temp_cleanup_task
+
+        start_vision_temp_cleanup_task(app)
 
         runtime_manager = getattr(server.services, "web_chat_runtime_manager", None)
         if runtime_manager is not None:
@@ -395,6 +398,10 @@ def create_app(server: "HTTPServer") -> FastAPI:
                 logger.debug("Voice resources cleaned up")
             except Exception as e:
                 logger.warning(f"Failed to clean up voice resources: {e}")
+
+        from gobby.servers.routes.llm import stop_vision_temp_cleanup_task
+
+        await stop_vision_temp_cleanup_task(app)
 
         # Cleanup CodexAdapter and stop app-server client
         if getattr(app.state, "codex_sync_task", None):

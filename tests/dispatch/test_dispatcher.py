@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
+import psycopg
 import pytest
 
 from gobby.dispatch.actions import (
@@ -169,7 +170,7 @@ async def test_append_audit_marker_returns_false_on_db_failure(
     from gobby.dispatch import dispatcher
 
     broken_db = MagicMock()
-    broken_db.fetchone.side_effect = RuntimeError("database unavailable")
+    broken_db.fetchone.side_effect = psycopg.OperationalError("database unavailable")
     caplog.set_level(logging.WARNING, logger="gobby.dispatch.audit")
 
     assert await dispatcher.append_audit_marker(broken_db, "task-1", "Dispatch", "marker") is False

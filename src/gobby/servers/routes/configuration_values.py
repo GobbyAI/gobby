@@ -67,42 +67,44 @@ def register_value_routes(router: APIRouter, context: ConfigurationRouteContext)
         try:
             config_store = context.get_config_store()
             existing_secret_keys = set(config_store.get_secret_keys())
-            flat_updates = runtimeize_embedding_config_entries(flatten_config(request.values))
-            storage_updates = canonicalize_embedding_config_entries(flat_updates)
+            runtime_updates = runtimeize_embedding_config_entries(flatten_config(request.values))
+            storage_updates = canonicalize_embedding_config_entries(runtime_updates)
             runtime_key_by_storage_key = {
                 canonicalize_embedding_config_key(runtime_key): runtime_key
-                for runtime_key in flat_updates
+                for runtime_key in runtime_updates
             }
 
             secret_entries: dict[str, Any] = {}
             normal_entries: dict[str, Any] = {}
-            for key, value in storage_updates.items():
-                runtime_key = runtime_key_by_storage_key[key]
+            for storage_key, value in storage_updates.items():
+                runtime_key = runtime_key_by_storage_key[storage_key]
                 if (
-                    is_secret_key_name(key)
-                    or key in existing_secret_keys
+                    is_secret_key_name(storage_key)
+                    or storage_key in existing_secret_keys
                     or runtime_key in existing_secret_keys
                 ):
                     if value == MASKED_SECRET:
                         continue
-                    secret_entries[key] = value
+                    secret_entries[storage_key] = value
                 else:
-                    normal_entries[key] = value
+                    normal_entries[storage_key] = value
 
             try:
-                for key, value in secret_entries.items():
+                for storage_key, value in secret_entries.items():
                     if value not in (None, ""):
-                        validate_falkordb_secret(key, value)
+                        validate_falkordb_secret(storage_key, value)
             except ValueError as e:
                 return falkordb_validation_response(e)
 
-            validation_flat = dict(flat_updates)
-            for key in secret_entries:
-                runtime_key = runtime_key_by_storage_key[key]
-                if secret_entries[key] == "" or secret_entries[key] is None:
+            validation_flat = dict(runtime_updates)
+            for storage_key in secret_entries:
+                runtime_key = runtime_key_by_storage_key[storage_key]
+                if secret_entries[storage_key] == "" or secret_entries[storage_key] is None:
                     validation_flat.pop(runtime_key, None)
                 else:
-                    validation_flat[runtime_key] = f"$secret:{config_key_to_secret_name(key)}"
+                    validation_flat[runtime_key] = (
+                        f"$secret:{config_key_to_secret_name(storage_key)}"
+                    )
             validation_flat = {k: v for k, v in validation_flat.items() if v != MASKED_SECRET}
 
             current = context.current_config_values()
@@ -119,15 +121,16 @@ def register_value_routes(router: APIRouter, context: ConfigurationRouteContext)
                 if normal_entries:
                     count = config_store.set_many(normal_entries, source="user")
 
-                for key, value in secret_entries.items():
+                for storage_key, value in secret_entries.items():
                     if value is None or value == "":
-                        config_store.clear_secret(key, secret_store)
+                        config_store.clear_secret(storage_key, secret_store)
                     elif not isinstance(value, str):
                         raise HTTPException(
-                            400, f"Secret '{key}' must be a string, got {type(value).__name__}"
+                            400,
+                            f"Secret '{storage_key}' must be a string, got {type(value).__name__}",
                         )
                     else:
-                        config_store.set_secret(key, value, secret_store, source="user")
+                        config_store.set_secret(storage_key, value, secret_store, source="user")
                         count += 1
 
             logger.info("Config saved to DB (%d keys)", count)
@@ -135,7 +138,7 @@ def register_value_routes(router: APIRouter, context: ConfigurationRouteContext)
             resolved = context.current_config_values()
             deep_merge(
                 resolved,
-                unflatten_config({k: v for k, v in flat_updates.items() if v != MASKED_SECRET}),
+                unflatten_config({k: v for k, v in runtime_updates.items() if v != MASKED_SECRET}),
             )
             try:
                 runtime_config = DaemonConfig(**resolved)
@@ -158,9 +161,9 @@ def register_value_routes(router: APIRouter, context: ConfigurationRouteContext)
         """Validate config without saving."""
         try:
             current = context.current_config_values()
-            flat_updates = runtimeize_embedding_config_entries(flatten_config(request.values))
+            runtime_updates = runtimeize_embedding_config_entries(flatten_config(request.values))
             unmasked_updates = {
-                key: value for key, value in flat_updates.items() if value != MASKED_SECRET
+                key: value for key, value in runtime_updates.items() if value != MASKED_SECRET
             }
             deep_merge(current, unflatten_config(unmasked_updates))
             DaemonConfig(**current)

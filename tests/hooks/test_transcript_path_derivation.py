@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from typing import Any
+from unittest.mock import MagicMock
+
 import pytest
 
 from gobby.hooks.event_handlers import EventHandlers
@@ -119,7 +122,9 @@ class TestTranscriptPathDerivation:
         )
 
     def test_session_start_derives_gemini_transcript(
-        self, mock_dependencies: dict, mock_empty_session_variable_manager
+        self,
+        mock_dependencies: dict[str, Any],
+        mock_empty_session_variable_manager: MagicMock,
     ) -> None:
         """SESSION_START should derive transcript_path for Gemini when not provided natively."""
         handlers = EventHandlers(**mock_dependencies)

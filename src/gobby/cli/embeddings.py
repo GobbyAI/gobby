@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from typing import Any
 
 import click
+import psycopg
 
 from gobby.config.embedding_keys import AI_EMBEDDING_CONFIG_KEYS, AI_EMBEDDINGS_CONFIG_PREFIX
 
 HEALTHY = 0
 CONFIG_NOT_RESOLVED = 10
+logger = logging.getLogger(__name__)
 
 
 @click.group()
@@ -54,7 +57,8 @@ def _resolved_namespace() -> str | None:
 
         with runtime_hub_database(apply_migrations=False) as db:
             keys = set(ConfigStore(db).list_keys(prefix=AI_EMBEDDINGS_CONFIG_PREFIX))
-    except Exception:
+    except (ImportError, OSError, RuntimeError, TypeError, ValueError, psycopg.Error) as exc:
+        logger.debug("Failed to resolve embedding config namespace: %s", exc, exc_info=True)
         return None
     return AI_EMBEDDINGS_CONFIG_PREFIX if keys.intersection(AI_EMBEDDING_CONFIG_KEYS) else None
 

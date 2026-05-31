@@ -826,7 +826,7 @@ class TestCanonicalToolMetadata:
     def test_exec_command_truncate_sets_all_canonical_write_paths(self) -> None:
         data = {
             "tool_name": "exec_command",
-            "tool_input": {"command": "truncate -s 0 a.txt b.txt c.txt"},
+            "tool_input": {"command": "truncate -r ref.txt a.txt b.txt c.txt"},
         }
 
         normalize_tool_fields(data)

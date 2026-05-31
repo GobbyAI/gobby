@@ -52,8 +52,8 @@ class TestSessionHandlers:
     def test_session_start_allows(
         self,
         event_handlers: EventHandlers,
-        mock_dependencies: dict,
-        mock_empty_session_variable_manager,
+        mock_dependencies: dict[str, Any],
+        mock_empty_session_variable_manager: MagicMock,
     ) -> None:
         """Test SESSION_START handler allows by default."""
         event = make_event(HookEventType.SESSION_START, session_id="ext-123")
@@ -146,7 +146,7 @@ class TestSessionStartPreCreatedSession:
     """Test SESSION_START handling for pre-created sessions (terminal mode agents)."""
 
     def test_pre_created_session_found_and_updated(
-        self, mock_dependencies: dict, mock_empty_session_variable_manager
+        self, mock_dependencies: dict[str, Any], mock_empty_session_variable_manager: MagicMock
     ) -> None:
         """Test pre-created session is found and updated."""
         # Create a mock session object
@@ -175,7 +175,7 @@ class TestSessionStartPreCreatedSession:
         mock_dependencies["session_storage"].update.assert_called_once()
 
     def test_pre_created_session_backfills_terminal_context(
-        self, mock_dependencies: dict, mock_empty_session_variable_manager
+        self, mock_dependencies: dict[str, Any], mock_empty_session_variable_manager: MagicMock
     ) -> None:
         """Pre-created sessions should persist terminal metadata from runtime hooks."""
         mock_session = MagicMock()
@@ -229,7 +229,7 @@ class TestSessionStartPreCreatedSession:
         assert response.metadata.get("terminal_tmux_pane") == "%77"
 
     def test_pre_created_session_renames_empty_title_with_cwd(
-        self, mock_dependencies: dict, mock_empty_session_variable_manager
+        self, mock_dependencies: dict[str, Any], mock_empty_session_variable_manager: MagicMock
     ) -> None:
         """Pre-created SessionStart should rename panes using cwd fallback."""
         mock_session = MagicMock()
@@ -290,7 +290,7 @@ class TestSessionStartPreCreatedSession:
         )
 
     def test_pre_created_session_with_parent(
-        self, mock_dependencies: dict, mock_empty_session_variable_manager
+        self, mock_dependencies: dict[str, Any], mock_empty_session_variable_manager: MagicMock
     ) -> None:
         """Test pre-created session with parent session ID includes parent context."""
         mock_session = MagicMock()
@@ -318,7 +318,7 @@ class TestSessionStartPreCreatedSession:
         assert response.metadata.get("is_pre_created") is True
 
     def test_pre_created_session_with_agent_run_id(
-        self, mock_dependencies: dict, mock_empty_session_variable_manager
+        self, mock_dependencies: dict[str, Any], mock_empty_session_variable_manager: MagicMock
     ) -> None:
         """Test pre-created session with agent_run_id starts the agent run."""
         mock_session = MagicMock()
@@ -343,7 +343,7 @@ class TestSessionStartPreCreatedSession:
         mock_dependencies["session_coordinator"].start_agent_run.assert_called_once_with("run-456")
 
     def test_pre_created_session_agent_run_start_error(
-        self, mock_dependencies: dict, mock_empty_session_variable_manager
+        self, mock_dependencies: dict[str, Any], mock_empty_session_variable_manager: MagicMock
     ) -> None:
         """Test error starting agent run is handled gracefully."""
         mock_session = MagicMock()
@@ -371,7 +371,7 @@ class TestSessionStartPreCreatedSession:
         assert response.decision == "allow"
 
     def test_pre_created_session_registers_with_message_processor(
-        self, mock_dependencies: dict, mock_empty_session_variable_manager
+        self, mock_dependencies: dict[str, Any], mock_empty_session_variable_manager: MagicMock
     ) -> None:
         """Test pre-created session registers with message processor."""
         mock_session = MagicMock()
@@ -399,7 +399,7 @@ class TestSessionStartPreCreatedSession:
         assert mock_dependencies["message_processor"].register_session.call_args is not None
 
     def test_pre_created_session_message_processor_error(
-        self, mock_dependencies: dict, mock_empty_session_variable_manager
+        self, mock_dependencies: dict[str, Any], mock_empty_session_variable_manager: MagicMock
     ) -> None:
         """Test error registering with message processor is handled gracefully."""
         mock_session = MagicMock()
@@ -427,7 +427,7 @@ class TestSessionStartPreCreatedSession:
         assert response.decision == "allow"
 
     def test_existing_web_chat_session_found_by_external_id(
-        self, mock_dependencies: dict, mock_empty_session_variable_manager
+        self, mock_dependencies: dict[str, Any], mock_empty_session_variable_manager: MagicMock
     ) -> None:
         """Codex thread-start events should reuse the durable web-chat row."""
         mock_session = MagicMock()
@@ -468,7 +468,7 @@ class TestSessionStartPreCreatedSession:
         )
 
     def test_pre_created_session_coordinator_error(
-        self, mock_dependencies: dict, mock_empty_session_variable_manager
+        self, mock_dependencies: dict[str, Any], mock_empty_session_variable_manager: MagicMock
     ) -> None:
         """Test error registering session with coordinator is handled."""
         mock_session = MagicMock()
@@ -499,7 +499,7 @@ class TestSessionStartPreCreatedSession:
     def test_live_pre_created_session_omits_startup_persona(
         self,
         mock_svm_cls: MagicMock,
-        mock_dependencies: dict,
+        mock_dependencies: dict[str, Any],
     ) -> None:
         """Resumed sessions with prior context get live context, not startup persona."""
         mock_session = MagicMock()
@@ -563,7 +563,7 @@ class TestSessionStartPreCreatedSession:
     def test_first_pre_created_pickup_defers_startup_persona_to_first_prompt(
         self,
         mock_svm_cls: MagicMock,
-        mock_dependencies: dict,
+        mock_dependencies: dict[str, Any],
     ) -> None:
         """Pre-created sessions without prior context evidence reset first-prompt injection."""
         mock_session = MagicMock()
@@ -633,7 +633,7 @@ class TestSessionStartPreCreatedSession:
         mock_svm_cls: MagicMock,
         source: str,
         pending_reset: bool,
-        mock_dependencies: dict,
+        mock_dependencies: dict[str, Any],
     ) -> None:
         """Explicit context-loss starts reset first-prompt injection."""
         mock_session = MagicMock()
@@ -694,7 +694,7 @@ class TestSessionStartNewSession:
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     def test_new_session_with_parent_on_handoff(
-        self, mock_sv_mgr_cls: MagicMock, mock_dependencies: dict
+        self, mock_sv_mgr_cls: MagicMock, mock_dependencies: dict[str, Any]
     ) -> None:
         """Test new session finds parent when source is 'clear'."""
         mock_sv_mgr_cls.return_value = MagicMock(get_variables=MagicMock(return_value={}))
@@ -731,7 +731,7 @@ class TestSessionStartNewSession:
         )
 
     def test_startup_session_does_not_adopt_stale_parent(
-        self, mock_dependencies: dict, mock_empty_session_variable_manager
+        self, mock_dependencies: dict[str, Any], mock_empty_session_variable_manager: MagicMock
     ) -> None:
         """Test that fresh startup sessions never search for handoff parents."""
         mock_parent = MagicMock()
@@ -762,7 +762,7 @@ class TestSessionStartNewSession:
         )
 
     def test_new_session_start_renames_captured_tmux_pane(
-        self, mock_dependencies: dict, mock_empty_session_variable_manager
+        self, mock_dependencies: dict[str, Any], mock_empty_session_variable_manager: MagicMock
     ) -> None:
         """New SessionStart should persist cwd and rename captured panes immediately."""
         new_session = MagicMock()
@@ -806,7 +806,7 @@ class TestSessionStartNewSession:
         )
 
     def test_new_session_parent_lookup_error(
-        self, mock_dependencies: dict, mock_empty_session_variable_manager
+        self, mock_dependencies: dict[str, Any], mock_empty_session_variable_manager: MagicMock
     ) -> None:
         """Test error looking up parent session is handled gracefully."""
         mock_dependencies["session_storage"].get.return_value = None
@@ -827,7 +827,7 @@ class TestSessionStartNewSession:
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     def test_new_session_mark_parent_expired_error(
-        self, mock_sv_mgr_cls: MagicMock, mock_dependencies: dict
+        self, mock_sv_mgr_cls: MagicMock, mock_dependencies: dict[str, Any]
     ) -> None:
         """Test error marking parent as expired is handled gracefully."""
         mock_sv_mgr_cls.return_value = MagicMock(get_variables=MagicMock(return_value={}))
@@ -860,7 +860,7 @@ class TestSessionStartNewSession:
         assert mock_dependencies["session_manager"].mark_session_expired.call_count == 1
 
     def test_new_session_coordinator_registration_error(
-        self, mock_dependencies: dict, mock_empty_session_variable_manager
+        self, mock_dependencies: dict[str, Any], mock_empty_session_variable_manager: MagicMock
     ) -> None:
         """Test error registering session with coordinator is handled."""
         mock_dependencies["session_storage"].get.return_value = None
@@ -882,7 +882,7 @@ class TestSessionStartNewSession:
         assert response.decision == "allow"
 
     def test_new_session_message_processor_registration(
-        self, mock_dependencies: dict, mock_empty_session_variable_manager
+        self, mock_dependencies: dict[str, Any], mock_empty_session_variable_manager: MagicMock
     ) -> None:
         """Test new session registers with message processor."""
         mock_dependencies["session_storage"].get.return_value = None
@@ -904,7 +904,7 @@ class TestSessionStartNewSession:
         assert mock_dependencies["message_processor"].register_session.call_args is not None
 
     def test_new_session_message_processor_error(
-        self, mock_dependencies: dict, mock_empty_session_variable_manager
+        self, mock_dependencies: dict[str, Any], mock_empty_session_variable_manager: MagicMock
     ) -> None:
         """Test error registering with message processor is handled."""
         mock_dependencies["session_storage"].get.return_value = None
@@ -927,7 +927,7 @@ class TestSessionStartNewSession:
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     def test_new_session_with_task_id_context(
-        self, mock_sv_mgr_cls: MagicMock, mock_dependencies: dict
+        self, mock_sv_mgr_cls: MagicMock, mock_dependencies: dict[str, Any]
     ) -> None:
         """Test new session includes task context when task_id present."""
         mock_sv_mgr = MagicMock()

@@ -567,11 +567,11 @@ class TestBuildTurnAndDigest:
     @pytest.mark.asyncio
     async def test_contract_failure_logs_single_warning_per_retry(
         self,
-        mock_memory_manager,
-        mock_session_manager,
-        mock_llm_service,
-        caplog,
-    ):
+        mock_memory_manager: MagicMock,
+        mock_session_manager: MagicMock,
+        mock_llm_service: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
         """One retried contract failure emits a single WARNING, not a duplicate pair."""
         provider = mock_llm_service.get_default_provider.return_value
         provider.generate_text = AsyncMock(
