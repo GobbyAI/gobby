@@ -12,6 +12,9 @@ priority: 20
 provider: claude
 model: sonnet
 reasoning_effort: high
+blocked_tools:
+  - "Workflow"
+  - "Task"
 blocked_mcp_tools:
   - "gobby-agents:kill_agent"
 

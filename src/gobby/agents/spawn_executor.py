@@ -59,6 +59,10 @@ _CODEX_PREAPPROVED_GOBBY_TOOLS = [
     "set_variable",
 ]
 
+# Gobby-managed Claude agents must use Gobby's spawn/session controls. Native Claude
+# delegation bypasses project context, depth limits, sandbox metadata, and task ownership.
+_CLAUDE_MANAGED_AGENT_DISALLOWED_TOOLS = ["Workflow", "Task"]
+
 
 def _tmux_spawner_for_request(request: SpawnRequest) -> TmuxSpawner:
     daemon_config = request.daemon_config
@@ -246,6 +250,7 @@ async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
         auto_approve=True,
         model=request.model,
         reasoning_effort=request.effective_reasoning_effort,
+        disallowed_tools=_CLAUDE_MANAGED_AGENT_DISALLOWED_TOOLS,
     )
     claude_mcp_config = Path(request.cwd) / ".mcp.json"
     claude_mcp_path: str | None = None

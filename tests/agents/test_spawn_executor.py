@@ -11,6 +11,7 @@ from gobby.agents.constants import CARGO_HOME, UV_CACHE_DIR
 from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.spawn_cache_policy import PATH_ENV_VAR, hook_inbox_dir, managed_tool_bin_dir
 from gobby.agents.spawn_executor import (
+    _CLAUDE_MANAGED_AGENT_DISALLOWED_TOOLS,
     _CODEX_PREAPPROVED_GOBBY_TOOLS,
     SpawnRequest,
     SpawnResult,
@@ -1388,6 +1389,54 @@ class TestExecuteSpawnErrorPaths:
         assert command[command.index("--mcp-config") + 1] == mcp_config_path
         assert "--strict-mcp-config" in command
         assert command.index("--strict-mcp-config") < command.index("Test")
+
+    @pytest.mark.asyncio
+    async def test_claude_terminal_disallows_native_delegation_tools(self) -> None:
+        """Managed Claude agents must not escape into native Workflow or Task delegation."""
+        request = SpawnRequest(
+            prompt="Test",
+            cwd="/path",
+            provider="claude",
+            session_id="sess",
+            run_id="run",
+            parent_session_id="parent",
+            project_id="proj",
+            session_manager=MagicMock(),
+            machine_id="m",
+        )
+
+        mock_spawn_context = MagicMock()
+        mock_spawn_context.session_id = "child"
+        mock_spawn_context.agent_run_id = "run-1"
+        mock_spawn_context.env_vars = {}
+
+        mock_spawner = MagicMock()
+        mock_spawner.spawn.return_value = MagicMock(
+            success=True,
+            pid=99,
+            terminal_type="tmux",
+        )
+
+        with (
+            patch(
+                "gobby.agents.spawn_executor.prepare_terminal_spawn",
+                return_value=mock_spawn_context,
+            ),
+            patch(
+                "gobby.agents.spawn_executor.TmuxSpawner",
+                return_value=mock_spawner,
+            ),
+        ):
+            result = await execute_spawn(request)
+
+        command = mock_spawner.spawn.call_args.kwargs["command"]
+        assert result.success is True
+        assert "--disallowedTools" in command
+        start = command.index("--disallowedTools") + 1
+        stop = start + len(_CLAUDE_MANAGED_AGENT_DISALLOWED_TOOLS)
+        assert command[start:stop] == _CLAUDE_MANAGED_AGENT_DISALLOWED_TOOLS
+        assert command.index("--disallowedTools") < command.index("--dangerously-skip-permissions")
+        assert command.index("--dangerously-skip-permissions") < command.index("Test")
 
     @pytest.mark.asyncio
     async def test_claude_terminal_tmux_session_name_in_result(self) -> None:

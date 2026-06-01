@@ -21,6 +21,7 @@ def build_cli_command(
     output_format: str | None = None,
     env_overrides: dict[str, str] | None = None,
     config_overrides: list[str] | None = None,
+    disallowed_tools: list[str] | None = None,
 ) -> tuple[list[str], dict[str, str]]:
     """
     Build the CLI command and env for any provider.
@@ -62,6 +63,8 @@ def build_cli_command(
             for merging inherited environment variables if needed.
         config_overrides: CLI configuration overrides for providers that
             support `-c key=value` flags. Currently used by Codex.
+        disallowed_tools: Provider-native tool names to remove from the toolset.
+            Currently supported for Claude.
 
     Returns:
         Tuple of (command list, env dict) for subprocess execution
@@ -82,6 +85,8 @@ def build_cli_command(
             command.extend(["--model", model])
         if reasoning_effort:
             command.extend(["--effort", reasoning_effort])
+        if disallowed_tools:
+            command.extend(["--disallowedTools", *disallowed_tools])
         if auto_approve:
             command.append("--dangerously-skip-permissions")
         if mode == "interactive":

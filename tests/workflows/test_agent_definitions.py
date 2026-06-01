@@ -43,6 +43,12 @@ def _blocked_mcp_tools(step: dict[str, Any]) -> set[str]:
     return set(value)
 
 
+def _blocked_tools(agent: dict[str, Any]) -> set[str]:
+    value = agent.get("blocked_tools") or []
+    assert isinstance(value, list)
+    return set(value)
+
+
 def test_build_smoke_agent_runtime_mappings() -> None:
     expected = {
         "backend-developer": ("codex", "gpt-5.5", "high"),
@@ -63,6 +69,11 @@ def test_build_smoke_agent_runtime_mappings() -> None:
         assert agent["provider"] == provider
         assert agent["model"] == model
         assert agent["reasoning_effort"] == reasoning_effort
+
+
+def test_merge_worker_blocks_native_delegation_tools() -> None:
+    blocked_tools = _blocked_tools(_agent("merge-worker"))
+    assert {"Workflow", "Task"} <= blocked_tools
 
 
 def test_restricted_skill_load_steps_use_gobby_proxy_guidance() -> None:
