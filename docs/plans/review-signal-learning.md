@@ -56,17 +56,27 @@ Keep these distinct or the system gets noisy:
 
 - **Lesson storage** → `gobby-memory`, `memory_type="pattern"` + tags
   (`src/gobby/memory/manager.py`, `src/gobby/storage/memories.py`).
-- **Recall/injection** → `MemoryRecallRunner` already injects relevant memories at `turn_start`
+- **Recall/injection** → `MemoryRecallRunner` still handles broad `turn_start` memory injection
   through an LLM relevance gate (`src/gobby/memory/recall.py`, rule
-  `memory-recall-on-prompt.yaml`). Lessons-as-memories ride this. **No new injection rule in v1.**
-- **Search** → reuse `gobby-memory.search_memories` with a tag filter. No new search tool.
+  `memory-recall-on-prompt.yaml`). Lessons-as-memories ride this for ordinary prompts. **No new
+  global injection rule in v1.**
+- **Review-time recall** → review producers must call deterministic `recall_review_context`
+  during triage, before any `fix`/`no-fix` decision is finalized. This is the guard against known
+  local conventions being missed by generic prompt recall.
+- **Search** → reuse `gobby-memory.search_memories` behind the review-learning service. No new
+  memory search server.
 - **Guardrail work items** → `gobby-tasks` with labels (`src/gobby/storage/tasks/_models.py`).
   No new task type.
 
-The only new code is **one deterministic tool**, `record_review_lesson`, plus the
-service/fingerprint/promotion logic. `search_review_lessons`, `promote_review_lesson`, and
-`summarize_review_batch` are **dropped from v1**. **The core recorder takes no `llm_service`**;
-producers/agents do any generalizing/summarizing while they still hold full context.
+The new tool surface is **two deterministic tools**:
+
+- `recall_review_context` — targeted recall before review triage decisions, so local memory can
+  veto bad reviewer suggestions.
+- `record_review_lesson` — durable learning after a confirmed fix or no-fix-policy decision.
+
+`search_review_lessons`, `promote_review_lesson`, and `summarize_review_batch` are **dropped from
+v1**. **The core service takes no `llm_service`**; producers/agents do any
+generalizing/summarizing while they still hold full context.
 
 ### Two key constraints
 
@@ -81,7 +91,37 @@ producers/agents do any generalizing/summarizing while they still hold full cont
 
 ## Tool surface
 
-Collapsed signature — diagnostic/pattern detail lives inside `finding` so the API ages well:
+### `recall_review_context`
+
+Targeted pre-triage recall. Producers call this after ingesting review findings and before
+finalizing the finding table:
+
+```python
+recall_review_context(
+    findings,                    # list[dict], same diagnostic core as record_review_lesson
+    proposed_changes=None,       # optional free-form text/dict/list of intended fixes
+    source=None,                 # coderabbit|copilot|claude|github-actions|qa-reviewer|...
+    source_kind=None,            # review_comment|agent_review|qa_rejection|...
+    session_id=None,             # resolves project_id
+    repo=None,
+    language=None,
+)
+```
+
+For each finding, the service builds focused memory queries from `title`/`message`, `suggestion`,
+`path`, `symbol`, `rule_id`, `query_hints`, and proposed-fix terms. It searches ordinary project
+memories and `review-lesson` memories, then returns matches grouped by finding:
+`{finding_index, memory_id, content_snippet, tags, reason}`.
+
+The review plan's finding table must include a **Relevant memory/lesson** column. If recalled memory
+contradicts the review recommendation, the local memory wins unless current code disproves it. For
+example, a finding saying "SQL placeholder should use `$1`" must surface the existing psycopg `%s`
+placeholder memory and reject or rewrite the `$1` recommendation.
+
+### `record_review_lesson`
+
+Collapsed recording signature — diagnostic/pattern detail lives inside `finding` so the API ages
+well:
 
 ```python
 record_review_lesson(
@@ -191,39 +231,44 @@ Split to stay under the 1,000-line monolith rule:
 - `src/gobby/review_learning/promotion.py` — count distinct `occurrence_key`s per `pattern_id`,
   branch on `decision`, resolve target+tier, category mapping, `list_tasks` lookup, create-vs-update.
 - `src/gobby/review_learning/service.py` — `ReviewLearningService(memory_manager, task_manager)`
-  `.record(...)`: resolve project from `session_id` → normalize → fingerprint → occurrence
-  preflight → decision/CI guards → write pattern memory via `MemoryManager` (with `project_id` +
-  `source_session_id`) → promote → return `{lesson_id?, pattern_id, finding_fingerprint,
-  occurrence_key, decision, promotable, tier, guardrail_target?, task_ref?, skipped_reason?}`.
+  `.recall_context(...)`: resolve project → build per-finding queries → search ordinary memories
+  plus `review-lesson` memories → return grouped matches and fail open with empty results on search
+  errors. `.record(...)`: resolve project from `session_id` → normalize → fingerprint →
+  occurrence preflight → decision/CI guards → write pattern memory via `MemoryManager` (with
+  `project_id` + `source_session_id`) → promote → return `{lesson_id?, pattern_id,
+  finding_fingerprint, occurrence_key, decision, promotable, tier, guardrail_target?, task_ref?,
+  skipped_reason?}`.
 
-### 2. `gobby-review-learning` MCP registry (new, one tool)
+### 2. `gobby-review-learning` MCP registry (new, two tools)
 
 `src/gobby/mcp_proxy/tools/review_learning.py` —
 `create_review_learning_registry(memory_manager, task_manager)` returning an
-`InternalToolRegistry` named `gobby-review-learning` (pattern: `tools/metrics.py`), exposing the
-collapsed `record_review_lesson` above. Registered in `setup_internal_registries()`
+`InternalToolRegistry` named `gobby-review-learning` (pattern: `tools/metrics.py`), exposing
+`recall_review_context` and `record_review_lesson`. Registered in `setup_internal_registries()`
 (`src/gobby/mcp_proxy/registries.py`) with `memory_manager` + `task_manager` (**no `llm_service`**).
 
 ### 3. `review-learning` skill (new — owns generic source policy)
 
 `src/gobby/install/shared/skills/review-learning/SKILL.md` owns: the `finding` payload contract
 (incl. producer-supplied `pattern_id`/`principle`/`root_cause`/`prevention`/`query_hints`), seed
-`lesson_type` examples, decision/CI-guard record-vs-skip rules, the promotion ladder +
-`guardrail_target` semantics, guardrail task wording, the instruction to record via
+`lesson_type` examples, targeted recall before triage decisions, the required
+Relevant-memory/lesson table column, decision/CI-guard record-vs-skip rules, the promotion ladder +
+`guardrail_target` semantics, guardrail task wording, the instruction to call
 `gobby-review-learning`, and the **gcode sibling sweep** using `query_hints`. `metadata.gobby`
 frontmatter for bundled-skill sync (`src/gobby/skills/sync.py`).
 
 ### 4. Wire v1 producers — inline calls while the producer has full context
 
-Reviewers/agents call `record_review_lesson` **inline during their flow** (they hold the finding
-context and can generalize `pattern_id`). No post-parsing of `reject_review` notes.
+Reviewers/agents call `recall_review_context` before triage decisions and
+`record_review_lesson` **inline after confirmed outcomes** (they hold the finding context and can
+generalize `pattern_id`). No post-parsing of `reject_review` notes.
 
 | Producer | File | Hook |
 | --- | --- | --- |
-| coderabbit | `skills/coderabbit/SKILL.md` | `REQUIRED SKILL: review-learning` + post-triage step: record each confirmed / no-fix-policy pattern |
-| code-reviewer | `skills/code-reviewer/SKILL.md` | on confirming a material finding, record inline (`source_kind=agent_review`) |
-| holistic-review | `skills/holistic-review/SKILL.md` | when a `request_changes` finding is a reusable pattern, record inline **before** the verdict (`source_kind=qa_rejection`) |
-| qa-reviewer | `workflows/agents/qa-reviewer.yaml` | record the reusable pattern inline **before** `reject_review` (`source_kind=qa_rejection`) |
+| coderabbit | `skills/coderabbit/SKILL.md` | `REQUIRED SKILL: review-learning`; targeted recall before the finding table; record each confirmed / no-fix-policy pattern after triage |
+| code-reviewer | `skills/code-reviewer/SKILL.md` | targeted recall before deciding material findings; record confirmed reusable findings inline (`source_kind=agent_review`) |
+| holistic-review | `skills/holistic-review/SKILL.md` | targeted recall before `request_changes`; record reusable rejection patterns inline **before** the verdict (`source_kind=qa_rejection`) |
+| qa-reviewer | `workflows/agents/qa-reviewer.yaml` | targeted recall before `reject_review`; record reusable rejection patterns inline **before** the verdict (`source_kind=qa_rejection`) |
 | nightly-linter | `workflows/agents/nightly-linter.yaml` | after a **verified** ruff/mypy/bandit fix, record (`source_kind=static_analysis`, fix commit in evidence) |
 | nightly-test-fixer | `workflows/agents/nightly-test-fixer.yaml` | after a **verified** pytest fix (never the raw failure), record (`source_kind=test_failure`, fix commit in evidence) |
 
@@ -244,7 +289,8 @@ context and can generalize `pattern_id`). No post-parsing of `reject_review` not
 - `src/gobby/install/shared/skills/{coderabbit,code-reviewer,holistic-review}/SKILL.md` — hooks
 - `src/gobby/install/shared/workflows/agents/{qa-reviewer,nightly-linter,nightly-test-fixer}.yaml` — hooks
 
-No new injection rule (existing recall covers resurfacing in v1).
+No new global injection rule. Existing recall covers ordinary prompt resurfacing; targeted
+review-time recall runs inside producer flows.
 
 ---
 
@@ -261,19 +307,29 @@ Prefix every run with `GOBBY_TEST_PROTECT=1`; never run the full suite.
   confirmed ladder + high-risk; **no-fix-policy → checklist/tool-config only**; category mapping
   by target; **occurrence-tag preflight idempotency**; create-vs-`update_task` (description/
   validation_criteria/labels) on an existing open `pattern:<key>` task; non-promotable never counts.
+- `tests/review_learning/test_recall_context.py` — query construction includes finding text,
+  suggestion, path, symbol, rule id, query hints, and proposed-change terms; ordinary memories and
+  `review-lesson` memories are eligible; memory-search failures fail open with empty grouped
+  matches; CodeRabbit "`$1` placeholder" input returns the psycopg `%s` placeholder memory.
 - `tests/review_learning/test_ci_guard.py` — `ci_check`/`static_analysis`/`test_failure` without a
   verified-fix ref records nothing; with it, records.
-- `tests/mcp_proxy/tools/test_review_learning.py` — collapsed signature (`finding` dict);
-  `session_id`→`project_id` resolution + `source_session_id` preserved; `stale`/`invalid` no-ops;
-  writes via `MemoryManager` directly (speculative-redirect bypass); **constructed without `llm_service`**.
+- `tests/mcp_proxy/tools/test_review_learning.py` — `recall_review_context` groups matches per
+  finding and resolves `session_id`→`project_id`; `record_review_lesson` keeps the collapsed
+  signature (`finding` dict), preserves `source_session_id`, handles `stale`/`invalid` no-ops,
+  writes via `MemoryManager` directly (speculative-redirect bypass); registry is **constructed
+  without `llm_service`**.
 - `tests/skills/test_review_learning_skill.py` — skill contract (payload, seed lesson-types,
-  record/skip rules, ladder, target/category semantics).
-- `tests/skills/test_coderabbit_skill.py` (extend) — `REQUIRED SKILL: review-learning` + post-triage step.
+  targeted recall before triage decisions, Relevant-memory/lesson table column, record/skip rules,
+  ladder, target/category semantics).
+- `tests/skills/test_coderabbit_skill.py` (extend) — `REQUIRED SKILL: review-learning`, targeted
+  recall before triage decisions, Relevant-memory/lesson table column, and post-triage recording.
 - `tests/skills/scenarios/review-learning/` — fake-source proof: confirmed → memory;
   stale/invalid → none; raw CI failure → none; verified-fix → memory; same finding across 2 reviews
-  → 2 occurrences → promotes; same finding twice in 1 run → 1 (occurrence preflight).
+  → 2 occurrences → promotes; same finding twice in 1 run → 1 (occurrence preflight); CodeRabbit
+  recommends `$1` while memory says psycopg `%s` → triage rejects or rewrites the recommendation.
 - Producer hook contract tests — inline-record instruction present in code-reviewer /
-  holistic-review skills and qa-reviewer / nightly agent YAMLs.
+  holistic-review skills and qa-reviewer / nightly agent YAMLs; targeted recall instruction present
+  in review producers.
 
 ---
 
@@ -281,23 +337,26 @@ Prefix every run with `GOBBY_TEST_PROTECT=1`; never run the full suite.
 
 1. `uv sync`; `uv run ruff check src/`; `uv run mypy src/`.
 2. `GOBBY_TEST_PROTECT=1 uv run pytest tests/review_learning/ tests/mcp_proxy/tools/test_review_learning.py tests/skills/test_review_learning_skill.py tests/skills/test_coderabbit_skill.py -v`.
-3. Isolated test daemon: `gobby-review-learning` + `record_review_lesson` appear via
+3. Isolated test daemon: `gobby-review-learning` + `recall_review_context` +
+   `record_review_lesson` appear via
    `list_mcp_servers()` / `list_tools`.
-4. Record the same `confirmed` finding (same fingerprint) from two reviews → 2 occurrences → a
+4. Recall a CodeRabbit finding that suggests `$1` SQL placeholders in Gobby storage code → the
+   existing psycopg `%s` memory is returned and the triage table records it.
+5. Record the same `confirmed` finding (same fingerprint) from two reviews → 2 occurrences → a
    `test`-category guardrail task with evidence memory IDs; a third → escalates the **same** task
    via `update_task`; re-record same run → occurrence preflight skips, no dup.
-5. Record a `no-fix-policy` pattern twice → only a `checklist`/`tool-config` task.
-6. Record a raw `test_failure` with no fix ref → nothing; again with a verified fix ref → stored.
-7. Pass `session_id` → lesson lands in the resolved project with `source_session_id` set.
-8. `search_memories(tags_all=["review-lesson"])` returns lessons; a fresh `turn_start` matching the
+6. Record a `no-fix-policy` pattern twice → only a `checklist`/`tool-config` task.
+7. Record a raw `test_failure` with no fix ref → nothing; again with a verified fix ref → stored.
+8. Pass `session_id` → lesson lands in the resolved project with `source_session_id` set.
+9. `search_memories(tags_all=["review-lesson"])` returns lessons; a fresh `turn_start` matching the
    pattern injects via existing recall; unrelated prompt does not.
 
 ## Notes / Risks
 
 - **Four identities stay separate** — provenance / finding / occurrence / pattern.
 - **No direct rule mutation** — enforcement ships only by completing a guardrail task.
-- **Load-bearing, pin with tests**: CI-flake guard, occurrence-tag idempotency, fingerprint
-  stability, non-promotable fallback, deterministic core (no `llm_service`), `MemoryManager`-direct
-  write.
+- **Load-bearing, pin with tests**: targeted recall before triage, local-memory precedence over
+  bad review suggestions, CI-flake guard, occurrence-tag idempotency, fingerprint stability,
+  non-promotable fallback, deterministic core (no `llm_service`), `MemoryManager`-direct write.
 - Implementation claims/creates a Gobby task per file edit (CLAUDE.md rule 3); each new `.py` stays
   under 1,000 lines.
