@@ -4,7 +4,9 @@ use gobby_core::ai_context::AiContext;
 use gobby_core::config::{AiCapability, AiRouting};
 
 use crate::api::IngestFileOptions;
-use crate::ingest::audio::{AudioSnapshot, ingest_audio_with_transcription};
+use crate::ingest::audio::{
+    AudioSnapshot, ingest_audio_with_transcription, production_transcription_endpoint,
+};
 #[cfg(feature = "documents")]
 use crate::ingest::document::{DocumentSnapshot, ingest_document};
 use crate::ingest::image::{ImageSnapshot, ingest_image_with_production_vision};
@@ -17,6 +19,7 @@ use crate::sources::{
     CompileStatus, IngestionMethod, SourceDraft, SourceDraftRef, SourceKind, SourceManifest,
 };
 use crate::store::WikiIndexStore;
+use crate::vision::{VisionDegradation, VisionEndpoint};
 use crate::transcribe::{TranscriptionDegradation, TranscriptionEndpoint};
 use crate::{ScopeIdentity, WikiError};
 
@@ -59,7 +62,7 @@ pub fn ingest_path(
                     mime_type: None,
                     duration_seconds: None,
                 },
-                transcription_endpoint(ai_context, options),
+                production_transcription_endpoint(ai_context, options.translate),
             )
             .map(Into::into);
         }
@@ -299,6 +302,23 @@ fn render_file_markdown(
     markdown
 }
 
+fn vision_endpoint(context: &AiContext) -> VisionEndpoint<'static> {
+    VisionEndpoint::Unavailable(vision_degradation(
+        context.binding(AiCapability::VisionExtract).routing,
+    ))
+}
+
+fn vision_degradation(routing: AiRouting) -> VisionDegradation {
+    let reason = match routing {
+        AiRouting::Off => "disabled",
+        AiRouting::Auto | AiRouting::Daemon | AiRouting::Direct => "missing_endpoint",
+    };
+    VisionDegradation {
+        reason: reason.to_string(),
+        fallback: "Keep raw image assets and surface filename/metadata only.".to_string(),
+    }
+}
+
 fn transcription_endpoint(
     context: &AiContext,
     options: &IngestFileOptions,
@@ -319,10 +339,6 @@ fn transcription_degradation(routing: AiRouting, translate: bool) -> Transcripti
         "translation"
     } else {
         "transcription"
-    };
-    let reason = match routing {
-        AiRouting::Off => "disabled",
-        AiRouting::Auto | AiRouting::Daemon | AiRouting::Direct => "missing_endpoint",
     };
     TranscriptionDegradation {
         reason: reason.to_string(),

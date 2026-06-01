@@ -1,5 +1,10 @@
 use std::path::{Path, PathBuf};
 
+use gobby_core::ai_context::AiContext;
+use gobby_core::config::{AiCapability, AiRouting};
+
+#[cfg(feature = "ai")]
+use crate::ai::clients::ProductionTranscriptionClient;
 use crate::ingest::{
     IngestResult, index_after_ingest, markdown_metadata, markdown_title, path_to_string,
     write_asset, write_raw_markdown,
@@ -7,8 +12,8 @@ use crate::ingest::{
 use crate::sources::{CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest};
 use crate::store::WikiIndexStore;
 use crate::transcribe::{
-    TranscriptionDegradation, TranscriptionEndpoint, TranscriptionRequest,
-    write_audio_transcript_markdown,
+    TranscriptionDegradation, TranscriptionEndpoint, TranscriptionMarkdownInput,
+    TranscriptionRequest, write_audio_transcript_markdown,
 };
 use crate::{ScopeIdentity, WikiError};
 
@@ -36,19 +41,64 @@ pub fn ingest_audio(
     store: &mut impl WikiIndexStore,
     scope: ScopeIdentity,
     snapshot: AudioSnapshot,
+    ai_context: &AiContext,
 ) -> Result<AudioIngestResult, WikiError> {
     ingest_audio_with_transcription(
         vault_root,
         store,
         scope,
         snapshot,
-        TranscriptionEndpoint::Unavailable(TranscriptionDegradation {
-            reason: "missing_endpoint".to_string(),
-            fallback:
-                "Keep raw audio assets and require supplied transcripts; skip daemon transcription."
-                    .to_string(),
-        }),
+        production_transcription_endpoint(ai_context, false),
     )
+}
+
+pub fn production_transcription_endpoint(
+    context: &AiContext,
+    translate: bool,
+) -> TranscriptionEndpoint<'static> {
+    let capability = if translate {
+        AiCapability::AudioTranslate
+    } else {
+        AiCapability::AudioTranscribe
+    };
+    let route = resolved_transcription_route(context, capability);
+    if translate {
+        TranscriptionEndpoint::Unavailable(transcription_degradation(route, translate))
+    } else if matches!(route, AiRouting::Daemon | AiRouting::Direct) {
+        available_production_transcription_endpoint(context, route, translate)
+    } else {
+        TranscriptionEndpoint::Unavailable(transcription_degradation(route, translate))
+    }
+}
+
+#[cfg(feature = "ai")]
+fn resolved_transcription_route(context: &AiContext, capability: AiCapability) -> AiRouting {
+    gobby_core::ai::effective_route(context, capability)
+}
+
+#[cfg(not(feature = "ai"))]
+fn resolved_transcription_route(context: &AiContext, capability: AiCapability) -> AiRouting {
+    context.binding(capability).routing
+}
+
+#[cfg(feature = "ai")]
+fn available_production_transcription_endpoint(
+    context: &AiContext,
+    _route: AiRouting,
+    _translate: bool,
+) -> TranscriptionEndpoint<'static> {
+    TranscriptionEndpoint::Available(Box::new(ProductionTranscriptionClient::new(
+        context.clone(),
+    )))
+}
+
+#[cfg(not(feature = "ai"))]
+fn available_production_transcription_endpoint(
+    _context: &AiContext,
+    route: AiRouting,
+    translate: bool,
+) -> TranscriptionEndpoint<'static> {
+    TranscriptionEndpoint::Unavailable(transcription_degradation(route, translate))
 }
 
 pub fn ingest_audio_with_transcription(
@@ -75,17 +125,18 @@ pub fn ingest_audio_with_transcription(
     let asset_path = write_asset(vault_root, &record, &snapshot.file_name, &snapshot.bytes)?;
     let raw_markdown = render_raw_audio_markdown(&snapshot, &record.content_hash, &asset_path);
     let raw_path = write_raw_markdown(vault_root, &record, &raw_markdown)?;
+    let request = TranscriptionRequest {
+        file_name: &snapshot.file_name,
+        mime_type: snapshot.mime_type.as_deref(),
+        asset_path: &asset_path,
+        bytes: &snapshot.bytes,
+    };
     let transcript = write_audio_transcript_markdown(
         vault_root,
         &scope,
         &record,
-        TranscriptionRequest {
-            file_name: &snapshot.file_name,
-            mime_type: snapshot.mime_type.as_deref(),
-            asset_path: &asset_path,
-            bytes: &snapshot.bytes,
-        },
-        endpoint,
+        request,
+        transcribe_for_markdown(&request, endpoint),
     )?;
     index_after_ingest(vault_root, store)?;
 
@@ -96,6 +147,42 @@ pub fn ingest_audio_with_transcription(
         transcript_path: transcript.path,
         transcription_degradation: transcript.degradation,
     })
+}
+
+fn transcribe_for_markdown(
+    request: &TranscriptionRequest<'_>,
+    endpoint: TranscriptionEndpoint<'_>,
+) -> TranscriptionMarkdownInput {
+    match endpoint {
+        TranscriptionEndpoint::Available(client) => match client.transcribe(request) {
+            Ok(output) => TranscriptionMarkdownInput::Transcribed(output),
+            Err(error) => TranscriptionMarkdownInput::Degraded(TranscriptionDegradation {
+                reason: "transcription_error".to_string(),
+                fallback: format!(
+                    "Transcription failed: {error}; keep raw audio assets and require supplied transcripts."
+                ),
+            }),
+        },
+        TranscriptionEndpoint::Unavailable(degradation) => {
+            TranscriptionMarkdownInput::Degraded(degradation)
+        }
+    }
+}
+
+fn transcription_degradation(routing: AiRouting, translate: bool) -> TranscriptionDegradation {
+    let action = if translate {
+        "translation"
+    } else {
+        "transcription"
+    };
+    let reason = match routing {
+        AiRouting::Off => "disabled",
+        AiRouting::Auto | AiRouting::Daemon | AiRouting::Direct => "missing_endpoint",
+    };
+    TranscriptionDegradation {
+        reason: reason.to_string(),
+        fallback: format!("Keep raw audio assets and skip daemon {action}."),
+    }
 }
 
 impl From<AudioIngestResult> for IngestResult {
@@ -140,6 +227,17 @@ fn render_raw_audio_markdown(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "ai")]
+    use std::io::{Read, Write};
+    #[cfg(feature = "ai")]
+    use std::net::TcpListener;
+    #[cfg(feature = "ai")]
+    use std::thread;
+    #[cfg(feature = "ai")]
+    use std::time::Duration;
+
+    use gobby_core::ai_context::{AiBindings, AiContext, AiLimiter};
+    use gobby_core::config::{AiRouting, AiTuning, CapabilityBinding};
     use gobby_core::indexing::content_hash;
 
     use super::*;
@@ -175,8 +273,170 @@ mod tests {
                 }],
                 language: Some("en".to_string()),
                 model: Some("fake-stt".to_string()),
+                source_language: Some("en".to_string()),
+                task: Some("transcribe".to_string()),
+                target_language: None,
+                translated: false,
+                partial: false,
+                completed_ranges: Vec::new(),
+                missing_ranges: Vec::new(),
             })
         }
+    }
+
+    fn test_context(routing: AiRouting, api_base: Option<String>) -> AiContext {
+        let binding = CapabilityBinding {
+            routing,
+            transport: None,
+            api_base,
+            api_key: None,
+            model: Some("whisper-1".to_string()),
+            provider: None,
+            task: None,
+            language: None,
+            target_lang: None,
+        };
+        AiContext {
+            bindings: AiBindings {
+                embed: binding.clone(),
+                audio_transcribe: binding.clone(),
+                audio_translate: binding.clone(),
+                vision_extract: binding.clone(),
+                text_generate: binding,
+            },
+            tuning: AiTuning {
+                max_concurrency: 1,
+                keep_alive: None,
+            },
+            limiter: AiLimiter::new(1),
+            project_id: None,
+        }
+    }
+
+    #[cfg(feature = "ai")]
+    fn spawn_transcription_server(response: &'static str) -> (String, thread::JoinHandle<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let api_base = format!("http://{}", listener.local_addr().expect("local addr"));
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .expect("set timeout");
+            let request = read_http_request(&mut stream);
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                response.len(),
+                response
+            )
+            .expect("write response");
+            request
+        });
+        (api_base, handle)
+    }
+
+    #[cfg(feature = "ai")]
+    fn read_http_request(stream: &mut impl Read) -> String {
+        let mut request = Vec::new();
+        let mut chunk = [0_u8; 1024];
+        loop {
+            let read = stream.read(&mut chunk).expect("read request");
+            if read == 0 {
+                break;
+            }
+            request.extend_from_slice(&chunk[..read]);
+            if let Some(header_end) = find_header_end(&request) {
+                let header = String::from_utf8_lossy(&request[..header_end]);
+                if let Some(content_length) = content_length(&header) {
+                    let body_len = request.len().saturating_sub(header_end + 4);
+                    if body_len >= content_length {
+                        break;
+                    }
+                }
+            }
+        }
+        String::from_utf8(request).expect("utf8 request")
+    }
+
+    #[cfg(feature = "ai")]
+    fn find_header_end(request: &[u8]) -> Option<usize> {
+        request.windows(4).position(|window| window == b"\r\n\r\n")
+    }
+
+    #[cfg(feature = "ai")]
+    fn content_length(header: &str) -> Option<usize> {
+        header.lines().find_map(|line| {
+            line.strip_prefix("content-length: ")
+                .or_else(|| line.strip_prefix("Content-Length: "))
+                .and_then(|value| value.trim().parse().ok())
+        })
+    }
+
+    #[cfg(feature = "ai")]
+    #[test]
+    fn production_transcription_writes_fields() {
+        let response = r#"{"text":"Production routed transcript.","source_language":"es","language":"en","model":"whisper-prod","task":"transcribe","translated":false,"segments":[{"start":0.0,"end":1.25,"text":"Production routed transcript."}]}"#;
+        let (api_base, request) = spawn_transcription_server(response);
+        let context = test_context(AiRouting::Direct, Some(api_base));
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut store = MemoryWikiStore::default();
+
+        let result = ingest_audio(
+            temp.path(),
+            &mut store,
+            ScopeIdentity::topic("field-work"),
+            sample_snapshot(),
+            &context,
+        )
+        .expect("ingest audio with production transcript");
+
+        let request = request.join().expect("request");
+        assert!(request.starts_with("POST /v1/audio/transcriptions HTTP/1.1"));
+        assert!(result.transcription_degradation.is_none());
+
+        let markdown =
+            std::fs::read_to_string(temp.path().join(&result.transcript_path)).expect("markdown");
+        assert!(markdown.contains("transcription_status: transcribed"));
+        assert!(markdown.contains("transcription_language: en"));
+        assert!(markdown.contains("transcription_source_language: es"));
+        assert!(markdown.contains("transcription_model: whisper-prod"));
+        assert!(markdown.contains("transcription_task: transcribe"));
+        assert!(markdown.contains("translated: false"));
+        assert!(markdown.contains("[00:00:00] Production routed transcript."));
+    }
+
+    #[test]
+    fn off_routing_degrades() {
+        let context = test_context(AiRouting::Off, None);
+        let temp = tempfile::tempdir().expect("tempdir");
+        let snapshot = sample_snapshot();
+        let mut store = MemoryWikiStore::default();
+
+        let result = ingest_audio(
+            temp.path(),
+            &mut store,
+            ScopeIdentity::topic("field-work"),
+            snapshot.clone(),
+            &context,
+        )
+        .expect("ingest degraded audio");
+
+        assert_eq!(
+            std::fs::read(temp.path().join(&result.asset_path)).expect("asset bytes"),
+            snapshot.bytes
+        );
+        assert_eq!(
+            result
+                .transcription_degradation
+                .as_ref()
+                .map(|degradation| degradation.reason.as_str()),
+            Some("disabled")
+        );
+        let markdown =
+            std::fs::read_to_string(temp.path().join(&result.transcript_path)).expect("markdown");
+        assert!(markdown.contains("transcription_status: unavailable"));
+        assert!(markdown.contains("transcription_degradation: disabled"));
+        assert!(markdown.contains("Keep raw audio assets"));
     }
 
     #[test]
@@ -185,12 +445,14 @@ mod tests {
         let snapshot = sample_snapshot();
         let expected_hash = content_hash(&snapshot.bytes);
         let mut store = MemoryWikiStore::default();
+        let context = test_context(AiRouting::Off, None);
 
         let result = ingest_audio(
             temp.path(),
             &mut store,
             ScopeIdentity::topic("field-work"),
             snapshot.clone(),
+            &context,
         )
         .expect("ingest audio");
 
@@ -225,7 +487,7 @@ mod tests {
             &mut store,
             ScopeIdentity::project("project-123"),
             sample_snapshot(),
-            TranscriptionEndpoint::Available(&FakeTranscriptionClient),
+            TranscriptionEndpoint::Available(Box::new(FakeTranscriptionClient)),
         )
         .expect("ingest audio with transcript");
 

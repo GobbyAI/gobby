@@ -121,6 +121,8 @@ fn ai_error_to_wiki_error(error: AiError) -> WikiError {
 }
 
 fn transcription_output_from_core(result: CoreTranscriptionResult) -> TranscriptionOutput {
+    let source_language = result.source_language;
+    let language = result.language.or_else(|| source_language.clone());
     TranscriptionOutput {
         segments: result
             .segments
@@ -131,8 +133,15 @@ fn transcription_output_from_core(result: CoreTranscriptionResult) -> Transcript
                 text: segment.text,
             })
             .collect(),
-        language: result.language.or(result.source_language),
+        language,
         model: result.model,
+        source_language,
+        task: result.task,
+        target_language: result.target_language,
+        translated: result.translated,
+        partial: false,
+        completed_ranges: Vec::new(),
+        missing_ranges: Vec::new(),
     }
 }
 
