@@ -8,9 +8,23 @@
 
 Add Gobby daemon, MCP, and web-chat integration for the `gwiki` Rust CLI after the `gobby-cli` `gwiki` plan lands its JSON command contracts. The daemon does not own wiki domain behavior, schema, vault layout, synthesis, or indexing internals. It wraps `gwiki --format json`, exposes API and MCP surfaces, and gives web chat a Wiki Activity panel plus chat actions for search, read, attach, ingest, compile, audit, and health checks.
 
-This plan lives in the Gobby repo because it changes daemon routes, MCP tools, scheduling, watchers, and web UI. It depends on `gobby-cli/.gobby/plans/gwiki.md` for the Rust CLI/library contract.
+This plan lives in the Gobby repo because it changes daemon routes, MCP tools, scheduling,
+watchers, and web UI. It depends on upstream Plan ID `gwiki`
+(`gobby-cli/.gobby/plans/completed/gwiki.md`) for the Rust CLI/library contract.
 
 Daemon AI/multimodal capability routes, structured capability errors, text-generation adoption, and `gwiki_*` hub adoption are covered by the companion plan `.gobby/plans/gwiki-daemon-ai-contract.md`.
+
+## S1: Source Contract
+
+`kind: framing`
+
+The upstream CLI JSON-command contract is `gobby-cli/.gobby/plans/completed/gwiki.md`
+(Plan ID `gwiki`), especially `## P2: Indexing And Search` / `### 2.4 Add core CLI
+surfaces`, plus the `P3`-`P5` command deliverables for research, ingest, collect, compile,
+audit, and health behavior. This daemon plan consumes those `gwiki --format json` contracts
+through `GwikiGateway`; wiki parsing, vault semantics, command ownership, and AI capability
+routing remain outside this web/gateway scope. The AI capability source contract is tracked in
+`.gobby/plans/gwiki-daemon-ai-contract.md`.
 
 ## C1: Constraints
 

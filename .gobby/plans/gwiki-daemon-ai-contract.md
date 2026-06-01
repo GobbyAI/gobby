@@ -14,6 +14,26 @@ adoption work needed for gwiki and gcode to consume one capability vocabulary.
 The sibling `.gobby/plans/gwiki-daemon-web.md` remains focused on `gwiki` gateway, wiki API,
 MCP, web-chat, watchers, update coordination, and scheduled wiki behavior.
 
+## S1: Source Contract
+
+`kind: framing`
+
+This plan implements the daemon side of upstream `gobby-cli` Plan ID
+`gwiki-multimodal-ai`, `## P6: Daemon capability-registry contract (sibling repo)`,
+`### 6.1 Author the daemon capability contract (CLI side)`. It cross-references upstream
+P6 D1-D5 only; this repo's deliverables and acceptance criteria below remain authoritative for
+daemon files, route behavior, and tests.
+
+- Voice status/transcribe route contract maps to upstream P6 D1. Local owners: P1.1, P1.2,
+  and P3.1.
+- Vision extract/status route contract maps to upstream P6 D2. Local owners: P2.2 and P3.1.
+- Text generate/status route contract maps to upstream P6 D3. Local owners: P2.1, P3.1,
+  and P4.1.
+- `/api/providers/models` discovery-only behavior and status-route truth-source precedence map
+  to upstream P6 D4. Local owners: C1, P1.1, P2.1, P2.2, and AC1.
+- Additive daemon hub adoption that preserves existing `code_*` and `gwiki_*` data maps to
+  upstream P6 D5. Local owner: P4.2.
+
 ## C1: Scope And Constraints
 
 `kind: framing`
