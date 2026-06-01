@@ -82,10 +82,18 @@ universal `ok` / `degraded` / `paths` envelope across every command.
 
 `gwiki read --format json` must return a scoped wiki page/document payload suitable for
 daemon pass-through and normalization, including requested path/title identity, resolved wiki
-path, content or rendered text, and structured degradation/error guidance when available.
+path, Markdown `content`, and structured degradation/error guidance when available. The
+current daemon/web contract consumes Markdown content as returned by upstream; any future
+`rendered_text` field is additive and must not become a prerequisite for daemon/web
+implementation. Read lookup accepts exactly one selector, `--path` or `--title`; title lookup
+is exact first-heading resolution until the upstream CLI intentionally expands matching to
+frontmatter aliases or wikilinks.
+
 `GwikiGateway` normalizes command-specific CLI JSON into daemon HTTP/MCP response envelopes.
-On nonzero exits, gateway errors must preserve stderr and include parsed structured guidance
-from stdout or stderr when available.
+For `gwiki read`, payload statuses such as `not_found`, `invalid_request`, and `ambiguous`
+are successful subprocess JSON payloads and must flow through the gateway as command results,
+not typed subprocess failures. On nonzero exits, gateway errors must preserve stderr and
+include parsed structured guidance from stdout or stderr when available.
 
 ## P1: Gateway And Contract Probe
 
@@ -117,7 +125,9 @@ Add a single async wrapper around `gwiki --format json` with methods for `status
 `search`, `read`, `backlinks`, `ingest_file`, `collect`, `research`, `compile`, `audit`, and
 `health`. The gateway resolves the binary path, passes project/topic scope, enforces
 timeouts, parses JSON stdout, captures stderr, normalizes command-specific CLI JSON into
-daemon envelopes, and raises typed errors on non-zero exits.
+daemon envelopes, and raises typed errors on non-zero exits. `read` must pass exactly one of
+`--path` or `--title`; upstream read statuses `not_found`, `invalid_request`, and `ambiguous`
+are parsed JSON command results, not subprocess failures.
 
 **Acceptance:**
 
@@ -125,6 +135,7 @@ daemon envelopes, and raises typed errors on non-zero exits.
 - 1.2.2 - Gateway parses JSON stdout and preserves stderr on failure. test: `tests/test_gwiki_gateway.py::test_error_preserves_stderr`.
 - 1.2.3 - Gateway enforces per-command timeout and reports structured degradation. test: `tests/test_gwiki_gateway.py::test_timeout_degrades`.
 - 1.2.4 - No route, MCP tool, watcher, or cron path invokes `gwiki` outside `GwikiGateway`. behavior: "grep for create_subprocess_exec gwiki has only gateway hits" in `src/gobby/`.
+- 1.2.5 - `GwikiGateway.read` passes exactly one selector (`--path` or `--title`) and treats `not_found`, `invalid_request`, and `ambiguous` statuses as successful JSON command payloads. test: `tests/test_gwiki_gateway.py::test_read_status_payloads_are_not_subprocess_failures`.
 
 ## P2: API And MCP Surfaces
 
@@ -154,8 +165,10 @@ Add HTTP routes backed by `GwikiGateway`:
 - `POST /api/wiki/audit`
 
 `GET /api/wiki/read` calls `GwikiGateway.read` and depends on upstream
-`gwiki read --format json`; daemon code must not parse vault files directly. `POST
-/api/wiki/attach` accepts and stages uploads in daemon code, then calls
+`gwiki read --format json`; daemon code must not parse vault files directly. The route
+accepts exactly one read selector (`path` or `title`) and returns upstream Markdown `content`
+plus read status payloads directly through the daemon envelope. `POST /api/wiki/attach`
+accepts and stages uploads in daemon code, then calls
 `GwikiGateway.ingest_file` / `gwiki ingest-file --format json`; it must not require an
 upstream `gwiki attach` command. `POST /api/wiki/ingest` also calls
 `GwikiGateway.ingest_file`. Explicit write routes trigger immediate indexing when the `gwiki`
@@ -177,7 +190,9 @@ Expose MCP tools for `wiki_search`, `wiki_read`, `wiki_attach`, `wiki_ingest`,
 `wiki_compile`, `wiki_audit`, and `wiki_health`. Tools use the gateway and return structured
 JSON with scope identity, command payloads, citations, and path/degradation metadata when
 present. `wiki_read` depends on `GwikiGateway.read` / `gwiki read --format json`.
-`wiki_attach` stages daemon uploads and maps to `GwikiGateway.ingest_file`.
+`wiki_read` accepts exactly one of `path` or `title` and returns Markdown `content` plus
+upstream read status payloads. `wiki_attach` stages daemon uploads and maps to
+`GwikiGateway.ingest_file`.
 
 **Acceptance:**
 
@@ -214,8 +229,10 @@ Targets: `web/src/components/chat/`, `web/src/hooks/useWiki.ts`
 Add chat actions for search, read, attach, ingest, compile, audit, and health. Actions call
 HTTP routes, render progress and results in chat, and link back to the Wiki Activity panel
 state. Read actions call `/api/wiki/read`, which depends on upstream
-`gwiki read --format json`. Attach actions call `/api/wiki/attach`, which stages uploads in
-the daemon and maps to `gwiki ingest-file` through `GwikiGateway.ingest_file`.
+`gwiki read --format json`; chat renders or previews Markdown `content` supplied by upstream,
+and `rendered_text` is not required for the first daemon/web implementation. Attach actions
+call `/api/wiki/attach`, which stages uploads in the daemon and maps to `gwiki ingest-file`
+through `GwikiGateway.ingest_file`.
 
 **Acceptance:**
 
@@ -344,6 +361,7 @@ Implementation validation after expansion:
     - covers:gwiki-daemon-web:1.2:1.2.2
     - covers:gwiki-daemon-web:1.2:1.2.3
     - covers:gwiki-daemon-web:1.2:1.2.4
+    - covers:gwiki-daemon-web:1.2:1.2.5
   implementation_domain: backend
   tdd: true
   source_section: "1.2"
