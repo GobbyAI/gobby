@@ -73,6 +73,59 @@ def test_idle_check_handler_receives_monitor_database(
     assert monitor._idle_check_handler.db is temp_db
 
 
+async def test_refresh_active_run_dispatch_mutexes_extends_expired_attached_mutex(
+    agent_run_manager: LocalAgentRunManager,
+    session_manager: SessionManager,
+    sample_session: dict,
+    sample_project: dict,
+    temp_db: HubDatabase,
+) -> None:
+    child = session_manager.register(
+        external_id="child-refresh-dispatch-mutex",
+        machine_id="machine-1",
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    task_manager = LocalTaskManager(temp_db)
+    task, run, mutexes = _make_dispatched_stage_run(
+        agent_run_manager=agent_run_manager,
+        task_manager=task_manager,
+        temp_db=temp_db,
+        sample_project=sample_project,
+        parent_session_id=sample_session["id"],
+        child_session_id=child.id,
+        run_id="run-refresh-dispatch-mutex",
+        tmux_session_name="gobby-refresh-dispatch-mutex",
+    )
+    past = datetime.now(UTC) - timedelta(minutes=10)
+    assert mutexes.acquire_mutex(
+        task.id,
+        holder="dispatcher",
+        kind="heartbeat",
+        ttl_seconds=60,
+        run_id=run.id,
+        now=past,
+    )
+    stale = mutexes.get_mutex(task.id)
+    assert stale is not None
+    assert datetime.fromisoformat(stale.lease_until) < datetime.now(UTC)
+
+    monitor = AgentLifecycleMonitor(
+        agent_run_manager=agent_run_manager,
+        db=temp_db,
+        check_interval_seconds=1.0,
+    )
+
+    before_refresh = datetime.now(UTC)
+    assert await monitor.refresh_active_run_dispatch_mutexes() == 1
+
+    refreshed = mutexes.get_mutex(task.id)
+    assert refreshed is not None
+    assert refreshed.run_id == run.id
+    assert refreshed.lease_holder == "dispatcher"
+    assert datetime.fromisoformat(refreshed.lease_until) > before_refresh
+
+
 def _make_terminal_run(
     agent_run_manager: LocalAgentRunManager,
     sample_session: dict,

@@ -173,6 +173,31 @@ class TaskDispatchMutexManager:
             )
             return cursor.rowcount > 0
 
+    def refresh_mutex_for_run(
+        self,
+        task_id: str,
+        run_id: str,
+        ttl_seconds: int,
+        now: datetime | str | None = None,
+    ) -> bool:
+        now_iso = _coerce_timestamp(now)
+        lease_until = _coerce_timestamp(
+            datetime.fromisoformat(now_iso) + timedelta(seconds=ttl_seconds)
+        )
+
+        with self.db.transaction_immediate(DispatchMutexRow(task_id=task_id)) as conn:
+            cursor = conn.execute(
+                """
+                UPDATE task_dispatch_mutex
+                   SET lease_until = %s,
+                       updated_at = %s
+                 WHERE task_id = %s
+                   AND run_id = %s
+                """,
+                (lease_until, now_iso, task_id, run_id),
+            )
+            return cursor.rowcount > 0
+
     def sweep_expired(self, *, now: datetime | str | None = None) -> int:
         now_iso = _coerce_timestamp(now)
         with self.db.transaction() as conn:
@@ -228,6 +253,21 @@ def clear_by_run_id(db: HubDatabase, run_id: str) -> int:
 
 def attach_run_id(db: HubDatabase, mutex_id: str, run_id: str) -> bool:
     return TaskDispatchMutexManager(db).attach_run_id(mutex_id, run_id)
+
+
+def refresh_mutex_for_run(
+    db: HubDatabase,
+    task_id: str,
+    run_id: str,
+    ttl_seconds: int,
+    now: datetime | str | None = None,
+) -> bool:
+    return TaskDispatchMutexManager(db).refresh_mutex_for_run(
+        task_id,
+        run_id=run_id,
+        ttl_seconds=ttl_seconds,
+        now=now,
+    )
 
 
 def sweep_expired(db: HubDatabase, *, now: datetime | str | None = None) -> int:

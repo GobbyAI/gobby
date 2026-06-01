@@ -27,6 +27,7 @@ from gobby.agents.task_recovery import TaskRecoveryHandler
 from gobby.agents.terminal_prompt_monitor import TerminalPromptMonitor
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
+from gobby.storage.tasks import TaskDispatchMutexManager
 
 if TYPE_CHECKING:
     from gobby.events.completion_registry import CompletionEventRegistry
@@ -41,6 +42,8 @@ if TYPE_CHECKING:
     from gobby.storage.worktrees import LocalWorktreeManager
 
 logger = logging.getLogger(__name__)
+
+DISPATCH_MUTEX_REFRESH_TTL_SECONDS = 600
 
 
 class AgentLifecycleMonitor:
@@ -252,6 +255,7 @@ class AgentLifecycleMonitor:
                 await self.check_initialization_timeout()
                 await self.check_idle_agents()
                 await self.check_provider_stalls()
+                await self.refresh_active_run_dispatch_mutexes()
 
                 if iteration > 0 and iteration % 10 == 0:
                     try:
@@ -319,6 +323,30 @@ class AgentLifecycleMonitor:
     async def check_provider_stalls(self) -> int:
         """Check tmux agents for provider-side stalls (rate limits, outages)."""
         return await self._health_monitor.check_provider_stalls()
+
+    async def refresh_active_run_dispatch_mutexes(self) -> int:
+        """Extend dispatch mutex leases for active runs that already own one."""
+
+        def _refresh() -> int:
+            storage = TaskDispatchMutexManager(self._db)
+            refreshed = 0
+            for run in self._agent_run_manager.list_active(limit=1000):
+                if not run.task_id:
+                    continue
+                if storage.refresh_mutex_for_run(
+                    run.task_id,
+                    run.id,
+                    ttl_seconds=DISPATCH_MUTEX_REFRESH_TTL_SECONDS,
+                ):
+                    refreshed += 1
+            return refreshed
+
+        try:
+            refreshed = await self._run_db(_refresh)
+            return cast(int, refreshed)
+        except Exception as e:
+            logger.warning("Failed to refresh active run dispatch mutexes: %s", e)
+            return 0
 
     async def _checkpoint_and_kill_looping_agent(self, run: AgentRun) -> None:
         """Checkpoint work, kill tmux, then full cleanup for a doom-looping agent."""

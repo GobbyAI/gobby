@@ -153,6 +153,61 @@ def test_attach_run_id_links_run_to_lease(temp_db, sample_project) -> None:
     assert manager.get_mutex(task.id) is None
 
 
+def test_refresh_mutex_for_run_extends_matching_lease_only(temp_db, sample_project) -> None:
+    task_manager = LocalTaskManager(temp_db)
+    task = task_manager.create_task(project_id=sample_project["id"], title="Refresh mutex")
+    other = task_manager.create_task(project_id=sample_project["id"], title="Other mutex")
+    manager = _manager_class()(temp_db)
+    past = datetime(2026, 1, 1, tzinfo=UTC)
+    refresh_at = past + timedelta(minutes=10)
+
+    assert manager.acquire_mutex(
+        task.id,
+        holder="dispatcher",
+        kind="heartbeat",
+        run_id="run-123",
+        ttl_seconds=60,
+        now=past,
+    )
+    assert manager.acquire_mutex(
+        other.id,
+        holder="dispatcher",
+        kind="heartbeat",
+        run_id="run-456",
+        ttl_seconds=60,
+        now=past,
+    )
+
+    assert (
+        manager.refresh_mutex_for_run(
+            task.id,
+            "wrong-run",
+            ttl_seconds=600,
+            now=refresh_at,
+        )
+        is False
+    )
+    assert (
+        manager.refresh_mutex_for_run(
+            task.id,
+            "run-123",
+            ttl_seconds=600,
+            now=refresh_at,
+        )
+        is True
+    )
+
+    mutex = manager.get_mutex(task.id)
+    assert mutex is not None
+    assert datetime.fromisoformat(mutex.lease_until) == refresh_at + timedelta(seconds=600)
+    assert mutex.lease_holder == "dispatcher"
+    assert mutex.action_kind == "heartbeat"
+
+    other_mutex = manager.get_mutex(other.id)
+    assert other_mutex is not None
+    assert datetime.fromisoformat(other_mutex.lease_until) == past + timedelta(seconds=60)
+
+
 def test_ensure_table_creates_run_id_index(temp_db) -> None:
     manager = _manager_class()(temp_db)
 

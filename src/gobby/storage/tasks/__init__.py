@@ -32,6 +32,7 @@ from gobby.storage.tasks._dispatch_mutex import (
     clear_by_run_id,
     force_release,
     get_mutex,
+    refresh_mutex_for_run,
     release_mutex,
     sweep_expired,
 )
@@ -122,6 +123,7 @@ __all__ = [
     "acquire_mutex",
     "attach_run_id",
     "force_release",
+    "refresh_mutex_for_run",
     "release_mutex",
     "clear_by_run_id",
     "sweep_expired",
