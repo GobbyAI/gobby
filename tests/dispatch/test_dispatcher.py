@@ -722,6 +722,80 @@ async def test_spawn_action_links_run_id(
 
 
 @pytest.mark.asyncio
+async def test_spawn_attach_failure_terminalizes_created_run(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
+    """Mutex attach failure cannot leak an active spawned run."""
+    from gobby.dispatch import dispatcher
+    from gobby.storage.agents import LocalAgentRunManager
+    from gobby.storage.sessions import SYSTEM_SESSION_ID
+
+    task_manager = LocalTaskManager(temp_db)
+    task = _task(temp_db, sample_project, stage_state="in_progress")
+    storage = _mutex_storage(temp_db)
+    action = SpawnAgentAction(task.id, f"#{task.seq_num}", "backend-developer", "go")
+    run_storage = LocalAgentRunManager(temp_db)
+    killed: list[str] = []
+
+    def fake_spawn_agent(*_args: object, **_kwargs: object) -> str:
+        run = run_storage.create(
+            parent_session_id=SYSTEM_SESSION_ID,
+            provider="codex",
+            prompt="go",
+            agent_name="backend-developer",
+            task_id=task.id,
+            run_id="run-attach-race",
+        )
+        run_storage.start(run.id)
+        return run.id
+
+    async def fake_cleanup_unattached_spawned_run(
+        run_id: str,
+        *,
+        db: HubDatabase,
+        error: str,
+    ) -> None:
+        killed.append(run_id)
+        assert db is temp_db
+        assert "disappeared before attach" in error
+        run_storage.fail(run_id, error=f"dispatch mutex attach failed: {error}")
+
+    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    monkeypatch.setattr(dispatcher, "spawn_agent", fake_spawn_agent)
+    monkeypatch.setattr(
+        dispatcher,
+        "_cleanup_unattached_spawned_run",
+        fake_cleanup_unattached_spawned_run,
+    )
+
+    def fail_attach_run_id(
+        self: TaskDispatchMutexManager,
+        mutex_id: str,
+        _run_id: str,
+    ) -> bool:
+        assert mutex_id == task.id
+        self.force_release(mutex_id)
+        return False
+
+    monkeypatch.setattr(TaskDispatchMutexManager, "attach_run_id", fail_attach_run_id)
+
+    result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+
+    run = run_storage.get("run-attach-race")
+    updated = get_task(temp_db, task.id)
+    assert result.executed == 1
+    assert killed == ["run-attach-race"]
+    assert run is not None
+    assert run.status == "error"
+    assert storage.get_mutex(task.id) is None
+    assert task_manager.stage_states.get(task.id, "development").state == "ready"
+    assert updated.dispatch_failure_count == 1
+    assert "dispatch_mutex_attach_failed" in updated.description
+
+
+@pytest.mark.asyncio
 async def test_spawn_action_uses_services_and_records_agent_run(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:

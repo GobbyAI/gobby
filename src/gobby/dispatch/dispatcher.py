@@ -449,10 +449,52 @@ async def _execute_spawn_action(
             mutex.release()
         raise
     if raw_run_id:
-        mutex.attach(str(raw_run_id))
-        return str(raw_run_id)
+        run_id = str(raw_run_id)
+        try:
+            mutex.attach(run_id)
+        except RuntimeDispatchMutexError as exc:
+            await _cleanup_unattached_spawned_run(run_id, db=db, error=str(exc))
+            await _handle_spawn_failure(
+                action,
+                mutex=mutex,
+                db=db,
+                context=context,
+                error=f"dispatch_mutex_attach_failed:{exc}",
+            )
+            return None
+        return run_id
     await _handle_spawn_failure(action, mutex=mutex, db=db, context=context, error="missing run_id")
     return None
+
+
+async def _cleanup_unattached_spawned_run(
+    run_id: str,
+    *,
+    db: HubDatabase,
+    error: str,
+) -> None:
+    run_storage = LocalAgentRunManager(db)
+    run = run_storage.get(run_id)
+    if run is None or run.status not in ("pending", "running"):
+        return
+
+    try:
+        from gobby.agents.kill import kill_agent
+
+        await kill_agent(run, db, close_terminal=True)
+    except Exception:
+        logger.warning(
+            "Failed to kill unattached spawned agent run %s after mutex attach failure",
+            run_id,
+            exc_info=True,
+        )
+
+    failed = run_storage.fail(run_id, error=f"dispatch mutex attach failed: {error}")
+    if failed is None:
+        logger.debug(
+            "Unattached spawned agent run %s was already terminal during attach-failure cleanup",
+            run_id,
+        )
 
 
 async def execute_action(
