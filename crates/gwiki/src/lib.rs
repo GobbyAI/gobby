@@ -1,3 +1,6 @@
+#[cfg(feature = "ai")]
+#[allow(dead_code)]
+pub(crate) mod ai;
 mod api;
 mod error;
 mod runner;

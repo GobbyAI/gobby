@@ -169,7 +169,8 @@ mod tests {
         ) -> Result<TranscriptionOutput, WikiError> {
             Ok(TranscriptionOutput {
                 segments: vec![TranscriptSegment {
-                    timestamp: "00:00:02".to_string(),
+                    start_ms: 2_000,
+                    end_ms: 4_000,
                     text: "Scope searchable hydrophone transcript phrase.".to_string(),
                 }],
                 language: Some("en".to_string()),

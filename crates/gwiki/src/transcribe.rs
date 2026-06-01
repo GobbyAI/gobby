@@ -6,7 +6,8 @@ use crate::{ScopeIdentity, WikiError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TranscriptSegment {
-    pub timestamp: String,
+    pub start_ms: u64,
+    pub end_ms: u64,
     pub text: String,
 }
 
@@ -176,7 +177,7 @@ fn render_audio_transcript_markdown(
         markdown.push_str("## Transcript\n\n");
         for segment in output.segments {
             markdown.push('[');
-            markdown.push_str(&single_line(&segment.timestamp));
+            markdown.push_str(&format_timestamp_ms(segment.start_ms));
             markdown.push_str("] ");
             markdown.push_str(&single_line(&segment.text));
             markdown.push('\n');
@@ -205,6 +206,14 @@ fn render_audio_transcript_markdown(
     markdown
 }
 
+fn format_timestamp_ms(timestamp_ms: u64) -> String {
+    let total_seconds = timestamp_ms / 1_000;
+    let hours = total_seconds / 3_600;
+    let minutes = (total_seconds % 3_600) / 60;
+    let seconds = total_seconds % 60;
+    format!("{hours:02}:{minutes:02}:{seconds:02}")
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
@@ -225,11 +234,13 @@ mod tests {
             Ok(TranscriptionOutput {
                 segments: vec![
                     TranscriptSegment {
-                        timestamp: "00:00:01".to_string(),
+                        start_ms: 1_000,
+                        end_ms: 3_500,
                         text: "First field recording sentence.".to_string(),
                     },
                     TranscriptSegment {
-                        timestamp: "00:00:04".to_string(),
+                        start_ms: 4_000,
+                        end_ms: 5_250,
                         text: "Second timestamped observation.".to_string(),
                     },
                 ],

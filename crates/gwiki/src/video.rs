@@ -102,7 +102,7 @@ pub fn align_transcript_and_frames(
 
     if aligned.is_empty() {
         for segment in transcript_segments {
-            let timestamp_seconds = timestamp_seconds_or_zero(&segment.timestamp, "transcript");
+            let timestamp_seconds = transcript_start_seconds(segment);
             aligned
                 .entry(timestamp_seconds)
                 .or_insert_with(|| AlignedVideoSegment {
@@ -119,7 +119,7 @@ pub fn align_transcript_and_frames(
     // Non-empty: the early return above handles the no-frame case.
     let frame_timestamps = aligned.keys().copied().collect::<Vec<_>>();
     for segment in transcript_segments {
-        let timestamp_seconds = timestamp_seconds_or_zero(&segment.timestamp, "transcript");
+        let timestamp_seconds = transcript_start_seconds(segment);
         let aligned_timestamp = frame_timestamps
             .iter()
             .copied()
@@ -139,6 +139,11 @@ pub fn align_transcript_and_frames(
     }
 
     aligned.into_values().collect()
+}
+
+fn transcript_start_seconds(segment: &TranscriptSegment) -> u32 {
+    let seconds = segment.start_ms / 1_000;
+    seconds.min(u64::from(u32::MAX)) as u32
 }
 
 fn timestamp_seconds_or_zero(value: &str, label: &str) -> u32 {
@@ -324,7 +329,7 @@ fn render_video_derived_markdown(
                 markdown.push_str("Transcript:\n\n");
                 for transcript in &segment.transcript_segments {
                     markdown.push_str("- [");
-                    markdown.push_str(&single_line(&transcript.timestamp));
+                    markdown.push_str(&format_timestamp(transcript_start_seconds(transcript)));
                     markdown.push_str("] ");
                     markdown.push_str(&single_line(&transcript.text));
                     markdown.push('\n');
@@ -453,11 +458,51 @@ mod tests {
         ];
         let transcript_segments = vec![
             TranscriptSegment {
-                timestamp: "00:00:02".to_string(),
+                start_ms: 2_000,
+                end_ms: 3_500,
                 text: "The speaker introduces the data collection setup.".to_string(),
             },
             TranscriptSegment {
-                timestamp: "00:00:06".to_string(),
+                start_ms: 6_000,
+                end_ms: 7_500,
+                text: "The diagram shows transcript and frame alignment.".to_string(),
+            },
+        ];
+
+        let aligned = align_transcript_and_frames(&transcript_segments, &frame_descriptions);
+
+        assert_eq!(aligned.len(), 2);
+        assert_eq!(aligned[0].timestamp, "00:00:00");
+        assert_eq!(aligned[0].frame_descriptions[0], frame_descriptions[0]);
+        assert_eq!(aligned[0].transcript_segments[0], transcript_segments[0]);
+        assert_eq!(aligned[1].timestamp, "00:00:05");
+        assert_eq!(aligned[1].frame_descriptions[0], frame_descriptions[1]);
+        assert_eq!(aligned[1].transcript_segments[0], transcript_segments[1]);
+    }
+
+    #[test]
+    fn aligns_on_numeric_start_ms() {
+        let frame_descriptions = vec![
+            VideoFrameDescription {
+                timestamp: "00:00:00".to_string(),
+                source_reference: "raw/assets/lecture.mp4#t=00:00:00".to_string(),
+                description: "Wide shot of the speaker at the podium.".to_string(),
+            },
+            VideoFrameDescription {
+                timestamp: "00:00:05".to_string(),
+                source_reference: "raw/assets/lecture.mp4#t=00:00:05".to_string(),
+                description: "Slide with the alignment diagram.".to_string(),
+            },
+        ];
+        let transcript_segments = vec![
+            TranscriptSegment {
+                start_ms: 2_450,
+                end_ms: 4_950,
+                text: "The speaker introduces the data collection setup.".to_string(),
+            },
+            TranscriptSegment {
+                start_ms: 5_000,
+                end_ms: 7_250,
                 text: "The diagram shows transcript and frame alignment.".to_string(),
             },
         ];

@@ -12,7 +12,8 @@ keywords = ["gobby", "wiki", "cli"]
 categories = ["command-line-utilities", "development-tools"]
 
 [features]
-default = ["rustls", "documents"]
+default = ["rustls", "documents", "ai"]
+ai = ["gobby-core/ai"]
 documents = ["dep:calamine", "dep:quick-xml", "dep:zip"]
 rustls = ["dep:reqwest"]
 

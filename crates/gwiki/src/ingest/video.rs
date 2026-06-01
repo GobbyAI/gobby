@@ -283,11 +283,13 @@ mod tests {
             ],
             transcript_segments: vec![
                 TranscriptSegment {
-                    timestamp: "00:00:01".to_string(),
+                    start_ms: 1_000,
+                    end_ms: 3_000,
                     text: "We start by recording the scene.".to_string(),
                 },
                 TranscriptSegment {
-                    timestamp: "00:00:05".to_string(),
+                    start_ms: 5_000,
+                    end_ms: 7_000,
                     text: "Each transcript segment lines up with sampled frames.".to_string(),
                 },
             ],
