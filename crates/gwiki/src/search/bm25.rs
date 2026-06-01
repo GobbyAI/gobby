@@ -352,6 +352,14 @@ mod tests {
     #[test]
     fn sanitizer_escapes_leading_minus_tokens() {
         assert_eq!(sanitize_pg_search_query("-draft stable"), r"\-draft stable");
+        assert_eq!(
+            sanitize_pg_search_query(r#"title:"Draft notes" + tag:(rust)"#),
+            r#"title:"Draft notes" + tag:(rust)"#
+        );
+        assert_eq!(
+            sanitize_pg_search_query(r"\-draft -stable"),
+            r"\-draft \-stable"
+        );
     }
 
     #[test]

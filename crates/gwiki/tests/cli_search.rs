@@ -213,11 +213,15 @@ fn postgres_test_database_url() -> Option<String> {
 }
 
 fn unique_suffix() -> String {
-    SystemTime::now()
+    let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system time after epoch")
-        .as_nanos()
-        .to_string()
+        .as_nanos();
+    format!(
+        "{}-{nanos}-{}",
+        std::process::id(),
+        uuid::Uuid::new_v4().simple()
+    )
 }
 
 fn assert_command_success(command: &str, output: &std::process::Output) {

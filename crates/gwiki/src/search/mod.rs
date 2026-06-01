@@ -186,6 +186,7 @@ where
         seed_paths,
         limit: request.limit,
     })?;
+    let graph_degraded = graph_outcome.degradation.is_some();
 
     let mut degradations = Vec::new();
     let mut unavailable_sources = Vec::new();
@@ -199,7 +200,11 @@ where
     }
     if !unavailable_sources.is_empty() {
         degradations.push(DegradationKind::PartialSearch {
-            available: available_sources(request.include_semantic, semantic_degraded),
+            available: available_sources(
+                request.include_semantic,
+                semantic_degraded,
+                graph_degraded,
+            ),
             unavailable: unavailable_sources,
         });
     }
@@ -232,8 +237,15 @@ fn graph_seed_paths(
     paths
 }
 
-fn available_sources(include_semantic: bool, semantic_degraded: bool) -> Vec<String> {
+fn available_sources(
+    include_semantic: bool,
+    semantic_degraded: bool,
+    graph_degraded: bool,
+) -> Vec<String> {
     let mut available = vec![SearchSource::Bm25.as_str().to_string()];
+    if !graph_degraded {
+        available.push(SearchSource::Graph.as_str().to_string());
+    }
     if include_semantic && !semantic_degraded {
         available.push(SearchSource::Semantic.as_str().to_string());
     }
@@ -282,7 +294,7 @@ mod tests {
                 gobby_core::degradation::DegradationKind::PartialSearch {
                     available,
                     unavailable
-                } if available.as_slice() == ["bm25"]
+                } if available.as_slice() == ["bm25", "graph"]
                     && unavailable.as_slice() == ["semantic"]
             )
         }));

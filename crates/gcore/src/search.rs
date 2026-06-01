@@ -100,16 +100,16 @@ pub fn rrf_merge(sources: Vec<(&str, Vec<String>)>) -> Vec<SearchResult> {
 
 /// Sanitize user input for pg_search's BM25 query DSL.
 pub fn sanitize_pg_search_query(query: &str) -> String {
-    let cleaned: String = query
+    let cleaned = query
         .chars()
-        .map(|ch| {
-            if ch.is_alphanumeric() || matches!(ch, ' ' | '_' | '-') {
-                ch
+        .filter_map(|ch| {
+            if ch.is_control() {
+                ch.is_whitespace().then_some(' ')
             } else {
-                ' '
+                Some(ch)
             }
         })
-        .collect();
+        .collect::<String>();
 
     cleaned
         .split_whitespace()
@@ -155,10 +155,14 @@ mod tests {
     fn sanitize_pg_search_query_matches_gobby_rules() {
         assert_eq!(
             sanitize_pg_search_query("foo::bar baz-qux _id + \"drop\""),
-            "foo bar baz-qux _id drop"
+            "foo::bar baz-qux _id + \"drop\""
         );
         assert_eq!(sanitize_pg_search_query("-draft stable"), "\\-draft stable");
-        assert_eq!(sanitize_pg_search_query(":: + ()"), "");
+        assert_eq!(
+            sanitize_pg_search_query(r"\-draft -stable"),
+            r"\-draft \-stable"
+        );
+        assert_eq!(sanitize_pg_search_query(":: + ()"), ":: + ()");
     }
 
     #[test]

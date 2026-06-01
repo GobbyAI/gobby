@@ -11,15 +11,12 @@ fn gwiki(args: &[&str]) -> Output {
     fs::write(project.join("README.md"), "# Parse fixture\n").expect("write ingest fixture");
     if args.first().is_none_or(|command| *command != "init") {
         if args.contains(&"--topic") {
-            let output = Command::new(env!("CARGO_BIN_EXE_gwiki"))
+            let mut command = Command::new(env!("CARGO_BIN_EXE_gwiki"));
+            strip_db_env(&mut command)
                 .args(["init", "--topic", "rust"])
                 .env("GOBBY_WIKI_HUB", &hub)
-                .env_remove("GWIKI_DATABASE_URL")
-                .env_remove("GOBBY_POSTGRES_DSN")
-                .env_remove("GCODE_DATABASE_URL")
-                .current_dir(&project)
-                .output()
-                .expect("gwiki topic init runs");
+                .current_dir(&project);
+            let output = command.output().expect("gwiki topic init runs");
             assert!(
                 output.status.success(),
                 "topic init fixture failed\nstdout:\n{}\nstderr:\n{}",
@@ -27,15 +24,12 @@ fn gwiki(args: &[&str]) -> Output {
                 String::from_utf8_lossy(&output.stderr)
             );
         } else if args.contains(&"--project") {
-            let output = Command::new(env!("CARGO_BIN_EXE_gwiki"))
+            let mut command = Command::new(env!("CARGO_BIN_EXE_gwiki"));
+            strip_db_env(&mut command)
                 .args(["init", "--project"])
                 .env("GOBBY_WIKI_HUB", &hub)
-                .env_remove("GWIKI_DATABASE_URL")
-                .env_remove("GOBBY_POSTGRES_DSN")
-                .env_remove("GCODE_DATABASE_URL")
-                .current_dir(&project)
-                .output()
-                .expect("gwiki project init runs");
+                .current_dir(&project);
+            let output = command.output().expect("gwiki project init runs");
             assert!(
                 output.status.success(),
                 "project init fixture failed\nstdout:\n{}\nstderr:\n{}",
@@ -45,15 +39,21 @@ fn gwiki(args: &[&str]) -> Output {
         }
     }
 
-    Command::new(env!("CARGO_BIN_EXE_gwiki"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_gwiki"));
+    strip_db_env(&mut command)
         .args(args)
         .env("GOBBY_WIKI_HUB", &hub)
+        .current_dir(&project);
+    command.output().expect("gwiki binary runs")
+}
+
+fn strip_db_env(command: &mut Command) -> &mut Command {
+    command
         .env_remove("GWIKI_DATABASE_URL")
         .env_remove("GOBBY_POSTGRES_DSN")
         .env_remove("GCODE_DATABASE_URL")
-        .current_dir(&project)
-        .output()
-        .expect("gwiki binary runs")
+        .env_remove("GWIKI_POSTGRES_TEST_DATABASE_URL")
+        .env_remove("GCODE_POSTGRES_TEST_DATABASE_URL")
 }
 
 #[test]

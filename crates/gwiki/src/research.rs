@@ -2,7 +2,7 @@ use std::fs::{self, OpenOptions};
 use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use serde::Serialize;
 
@@ -13,6 +13,10 @@ use crate::session::{AcceptedResearchNote, DaemonDispatch, ResearchScope, Resear
 use crate::{ScopeSelection, WikiError};
 
 const MAX_RESEARCH_NOTE_SUFFIX_ATTEMPTS: usize = 1000;
+const RESEARCH_NOTE_MARKER_STALE_AFTER: Duration = Duration::from_secs(15 * 60);
+const RESEARCH_NOTE_NAMESPACE: uuid::Uuid = uuid::Uuid::from_bytes([
+    0x9c, 0x51, 0x3a, 0x5b, 0x35, 0x92, 0x4d, 0x6d, 0x8e, 0x5f, 0x42, 0x1f, 0x20, 0xb7, 0x8a, 0xe4,
+]);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AcceptedNoteDraft {
@@ -87,17 +91,25 @@ pub fn run_with_dispatcher(
 
     for note in &options.accepted_notes {
         let accepted = write_accepted_note(session.scope.root(), &session.session_id, note)?;
-        monitor.append_event(&SessionEvent {
-            session_id: session.session_id.clone(),
-            dispatch_id: session
-                .dispatch
-                .as_ref()
-                .map(|dispatch| dispatch.dispatch_id.clone()),
-            kind: "note_accepted".to_string(),
-            message: format!("accepted research note {}", accepted.title),
-            timestamp_ms: unix_timestamp_ms()?,
-        })?;
-        session.accepted_notes.push(accepted);
+        if accepted.created {
+            monitor.append_event(&SessionEvent {
+                session_id: session.session_id.clone(),
+                dispatch_id: session
+                    .dispatch
+                    .as_ref()
+                    .map(|dispatch| dispatch.dispatch_id.clone()),
+                kind: "note_accepted".to_string(),
+                message: format!("accepted research note {}", accepted.note.title),
+                timestamp_ms: unix_timestamp_ms()?,
+            })?;
+        }
+        if !session
+            .accepted_notes
+            .iter()
+            .any(|note| note.path == accepted.note.path)
+        {
+            session.accepted_notes.push(accepted.note);
+        }
     }
 
     session.save_checkpoint()?;
@@ -260,9 +272,16 @@ struct AgentSpawnResponse {
 struct AcceptedNoteFrontmatter<'a> {
     title: &'a str,
     research_session: &'a str,
+    research_note_id: &'a str,
+    research_status: &'a str,
     indexable: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     source: Option<&'a str>,
+}
+
+struct AcceptedNoteWrite {
+    note: AcceptedResearchNote,
+    created: bool,
 }
 
 fn worker_prompt(session: &ResearchSession, worker_number: usize) -> String {
@@ -296,7 +315,7 @@ fn write_accepted_note(
     vault_root: &Path,
     session_id: &str,
     note: &AcceptedNoteDraft,
-) -> Result<AcceptedResearchNote, WikiError> {
+) -> Result<AcceptedNoteWrite, WikiError> {
     let research_dir = vault_root.join("raw").join("research");
     fs::create_dir_all(&research_dir).map_err(|error| WikiError::Io {
         action: "create raw research directory",
@@ -304,15 +323,81 @@ fn write_accepted_note(
         source: error,
     })?;
 
+    let draft_id = accepted_note_draft_id(note);
+    if let Some(path) = find_completed_accepted_note(&research_dir, &draft_id)? {
+        return Ok(AcceptedNoteWrite {
+            note: AcceptedResearchNote {
+                title: note.title.clone(),
+                path,
+            },
+            created: false,
+        });
+    }
+
+    let path = match create_materializing_research_note(&research_dir, session_id, note, &draft_id)?
+    {
+        AcceptedNoteSlot::Existing(path) => {
+            return Ok(AcceptedNoteWrite {
+                note: AcceptedResearchNote {
+                    title: note.title.clone(),
+                    path,
+                },
+                created: false,
+            });
+        }
+        AcceptedNoteSlot::Materializing(path) => path,
+    };
+
+    let body = render_accepted_note_body(session_id, note, &draft_id, "completed", true)?;
+    if let Err(error) = write_file_atomically(&path, body.as_bytes(), "accepted research note") {
+        let _ = fs::remove_file(&path);
+        return Err(error);
+    }
+
+    if let Err(error) = append_raw_index(vault_root, &note.title, &path) {
+        let _ = fs::remove_file(&path);
+        return Err(error);
+    }
+
+    Ok(AcceptedNoteWrite {
+        note: AcceptedResearchNote {
+            title: note.title.clone(),
+            path,
+        },
+        created: true,
+    })
+}
+
+enum AcceptedNoteSlot {
+    Existing(PathBuf),
+    Materializing(PathBuf),
+}
+
+enum ResearchNoteFileState {
+    Missing,
+    CompletedMatching,
+    MaterializingMatching { stale: bool },
+    Occupied,
+}
+
+fn render_accepted_note_body(
+    session_id: &str,
+    note: &AcceptedNoteDraft,
+    draft_id: &str,
+    status: &str,
+    indexable: bool,
+) -> Result<String, WikiError> {
     let frontmatter = serde_yaml::to_string(&AcceptedNoteFrontmatter {
         title: &note.title,
         research_session: session_id,
-        indexable: true,
+        research_note_id: draft_id,
+        research_status: status,
+        indexable,
         source: note.source.as_deref(),
     })
     .map_err(|error| WikiError::Yaml {
         action: "serialize accepted research note frontmatter",
-        path: Some(research_dir.clone()),
+        path: None,
         source: error,
     })?;
     let mut body = String::new();
@@ -321,41 +406,16 @@ fn write_accepted_note(
     body.push_str("---\n\n");
     body.push_str(note.body.trim());
     body.push('\n');
-
-    let (path, mut file) = create_new_research_note(&research_dir, &note.title)?;
-    if let Err(error) = file.write_all(body.as_bytes()) {
-        let _ = fs::remove_file(&path);
-        return Err(WikiError::Io {
-            action: "write accepted research note",
-            path: Some(path),
-            source: error,
-        });
-    }
-    if let Err(error) = file.sync_all() {
-        let _ = fs::remove_file(&path);
-        return Err(WikiError::Io {
-            action: "sync accepted research note",
-            path: Some(path),
-            source: error,
-        });
-    }
-    drop(file);
-
-    if let Err(error) = append_raw_index(vault_root, &note.title, &path) {
-        let _ = fs::remove_file(&path);
-        return Err(error);
-    }
-
-    Ok(AcceptedResearchNote {
-        title: note.title.clone(),
-        path,
-    })
+    Ok(body)
 }
 
-fn create_new_research_note(
+fn create_materializing_research_note(
     research_dir: &Path,
-    title: &str,
-) -> Result<(PathBuf, fs::File), WikiError> {
+    session_id: &str,
+    note: &AcceptedNoteDraft,
+    draft_id: &str,
+) -> Result<AcceptedNoteSlot, WikiError> {
+    let title = &note.title;
     let slug = slugify(title);
     for attempt in 1..=MAX_RESEARCH_NOTE_SUFFIX_ATTEMPTS {
         let file_name = if attempt == 1 {
@@ -364,12 +424,55 @@ fn create_new_research_note(
             format!("{slug}-{attempt}.md")
         };
         let path = research_dir.join(file_name);
+        match research_note_file_state(&path, draft_id)? {
+            ResearchNoteFileState::CompletedMatching => {
+                return Ok(AcceptedNoteSlot::Existing(path));
+            }
+            ResearchNoteFileState::MaterializingMatching { stale } if stale => {
+                fs::remove_file(&path).map_err(|error| WikiError::Io {
+                    action: "remove stale accepted research note marker",
+                    path: Some(path.clone()),
+                    source: error,
+                })?;
+            }
+            ResearchNoteFileState::MaterializingMatching { .. } => {
+                return Err(WikiError::InvalidInput {
+                    field: "accepted_note",
+                    message: format!(
+                        "accepted research note `{title}` is already materializing at {}",
+                        path.display()
+                    ),
+                });
+            }
+            ResearchNoteFileState::Occupied => continue,
+            ResearchNoteFileState::Missing => {}
+        }
+
+        let marker = render_accepted_note_body(session_id, note, draft_id, "materializing", false)?;
         match OpenOptions::new().write(true).create_new(true).open(&path) {
-            Ok(file) => return Ok((path, file)),
+            Ok(mut file) => {
+                if let Err(error) = file.write_all(marker.as_bytes()) {
+                    let _ = fs::remove_file(&path);
+                    return Err(WikiError::Io {
+                        action: "write accepted research note marker",
+                        path: Some(path),
+                        source: error,
+                    });
+                }
+                if let Err(error) = file.sync_all() {
+                    let _ = fs::remove_file(&path);
+                    return Err(WikiError::Io {
+                        action: "sync accepted research note marker",
+                        path: Some(path),
+                        source: error,
+                    });
+                }
+                return Ok(AcceptedNoteSlot::Materializing(path));
+            }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(error) => {
                 return Err(WikiError::Io {
-                    action: "create accepted research note",
+                    action: "create accepted research note marker",
                     path: Some(path),
                     source: error,
                 });
@@ -380,6 +483,111 @@ fn create_new_research_note(
         field: "title",
         message: format!("could not allocate unique research note path for `{title}`"),
     })
+}
+
+fn accepted_note_draft_id(note: &AcceptedNoteDraft) -> String {
+    let mut key = String::new();
+    key.push_str(note.title.trim());
+    key.push('\0');
+    key.push_str(note.body.trim());
+    key.push('\0');
+    if let Some(source) = &note.source {
+        key.push_str(source.trim());
+    }
+    uuid::Uuid::new_v5(&RESEARCH_NOTE_NAMESPACE, key.as_bytes()).to_string()
+}
+
+fn find_completed_accepted_note(
+    research_dir: &Path,
+    draft_id: &str,
+) -> Result<Option<PathBuf>, WikiError> {
+    let entries = match fs::read_dir(research_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(WikiError::Io {
+                action: "read raw research directory",
+                path: Some(research_dir.to_path_buf()),
+                source: error,
+            });
+        }
+    };
+
+    for entry in entries {
+        let entry = entry.map_err(|error| WikiError::Io {
+            action: "read raw research directory entry",
+            path: Some(research_dir.to_path_buf()),
+            source: error,
+        })?;
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("md") {
+            continue;
+        }
+        if matches!(
+            research_note_file_state(&path, draft_id)?,
+            ResearchNoteFileState::CompletedMatching
+        ) {
+            return Ok(Some(path));
+        }
+    }
+    Ok(None)
+}
+
+fn research_note_file_state(
+    path: &Path,
+    draft_id: &str,
+) -> Result<ResearchNoteFileState, WikiError> {
+    let contents = match fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            return Ok(ResearchNoteFileState::Missing);
+        }
+        Err(error) => {
+            return Err(WikiError::Io {
+                action: "read accepted research note",
+                path: Some(path.to_path_buf()),
+                source: error,
+            });
+        }
+    };
+    let Some(frontmatter) = frontmatter_block(&contents) else {
+        return Ok(ResearchNoteFileState::Occupied);
+    };
+    if !yaml_field_eq(frontmatter, "research_note_id", draft_id) {
+        return Ok(ResearchNoteFileState::Occupied);
+    }
+    if yaml_field_eq(frontmatter, "research_status", "completed") {
+        return Ok(ResearchNoteFileState::CompletedMatching);
+    }
+    if yaml_field_eq(frontmatter, "research_status", "materializing") {
+        return Ok(ResearchNoteFileState::MaterializingMatching {
+            stale: materializing_marker_is_stale(path),
+        });
+    }
+    Ok(ResearchNoteFileState::Occupied)
+}
+
+fn frontmatter_block(markdown: &str) -> Option<&str> {
+    let rest = markdown.strip_prefix("---\n")?;
+    let end = rest.find("\n---")?;
+    Some(&rest[..end])
+}
+
+fn yaml_field_eq(frontmatter: &str, key: &str, value: &str) -> bool {
+    let plain = format!("{key}: {value}");
+    let quoted = format!("{key}: \"{value}\"");
+    frontmatter
+        .lines()
+        .map(str::trim)
+        .any(|line| line == plain || line == quoted)
+}
+
+fn materializing_marker_is_stale(path: &Path) -> bool {
+    fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .ok()
+        .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+        .is_some_and(|age| age >= RESEARCH_NOTE_MARKER_STALE_AFTER)
 }
 
 fn append_raw_index(vault_root: &Path, title: &str, note_path: &Path) -> Result<(), WikiError> {
@@ -655,6 +863,8 @@ mod tests {
 
         let note_text = std::fs::read_to_string(&note.path).expect("note written");
         assert!(note_text.contains("title: Session event monitoring"));
+        assert!(note_text.contains("research_status: completed"));
+        assert!(note_text.contains("research_note_id:"));
         assert!(note_text.contains("Durable event logs are appended as JSONL."));
 
         let index = std::fs::read_to_string(scope.root().join("raw/INDEX.md"))
@@ -688,13 +898,34 @@ mod tests {
         .expect("second note");
 
         assert_eq!(
-            first.path.file_name().and_then(|name| name.to_str()),
+            first.note.path.file_name().and_then(|name| name.to_str()),
             Some("same-title.md")
         );
         assert_eq!(
-            second.path.file_name().and_then(|name| name.to_str()),
+            second.note.path.file_name().and_then(|name| name.to_str()),
             Some("same-title-2.md")
         );
+    }
+
+    #[test]
+    fn accepted_notes_are_idempotent_by_draft_id() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        let draft = AcceptedNoteDraft {
+            title: "Same title".to_string(),
+            body: "same body".to_string(),
+            source: Some("same source".to_string()),
+        };
+
+        let first = write_accepted_note(root, "research-1", &draft).expect("first note");
+        let second = write_accepted_note(root, "research-1", &draft).expect("second note");
+
+        assert!(first.created);
+        assert!(!second.created);
+        assert_eq!(first.note.path, second.note.path);
+        let index = std::fs::read_to_string(root.join("raw/INDEX.md")).expect("raw index");
+        assert_eq!(index.matches("raw/research/same-title.md").count(), 1);
+        assert!(!root.join("raw/research/same-title-2.md").exists());
     }
 
     #[test]

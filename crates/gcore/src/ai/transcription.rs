@@ -2,6 +2,9 @@ use crate::ai_context::AiContext;
 use crate::ai_types::{AiError, TranscriptionResult};
 use crate::config::AiCapability;
 
+use std::io::{self, Read};
+use std::sync::Arc;
+
 use reqwest::blocking::{RequestBuilder, multipart};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,6 +47,7 @@ pub fn transcribe(
     let transport = super::AiTransport::new(cfg)?;
     let capability = task.capability();
     let url = endpoint_url(cfg, task)?;
+    let bytes: Arc<[u8]> = bytes.into();
     let file_name = file_name.to_string();
     let mime = mime.to_string();
     let language = language.map(str::to_string);
@@ -98,13 +102,16 @@ fn build_request(
     transport: &super::AiTransport<'_>,
     capability: AiCapability,
     url: &str,
-    bytes: Vec<u8>,
+    bytes: Arc<[u8]>,
     file_name: &str,
     mime: &str,
     language: Option<&str>,
 ) -> Result<RequestBuilder, AiError> {
     let binding = transport.context.binding(capability);
-    let file_part = multipart::Part::bytes(bytes)
+    let file_len = u64::try_from(bytes.len()).map_err(|_| {
+        AiError::parse_failure("transcription payload is too large to send".to_string())
+    })?;
+    let file_part = multipart::Part::reader_with_length(SharedBytesReader::new(bytes), file_len)
         .file_name(file_name.to_string())
         .mime_str(mime)
         .map_err(|error| {
@@ -132,6 +139,27 @@ fn build_request(
             .multipart(form),
         binding,
     ))
+}
+
+struct SharedBytesReader {
+    bytes: Arc<[u8]>,
+    offset: usize,
+}
+
+impl SharedBytesReader {
+    fn new(bytes: Arc<[u8]>) -> Self {
+        Self { bytes, offset: 0 }
+    }
+}
+
+impl Read for SharedBytesReader {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        let remaining = &self.bytes[self.offset..];
+        let len = remaining.len().min(buffer.len());
+        buffer[..len].copy_from_slice(&remaining[..len]);
+        self.offset += len;
+        Ok(len)
+    }
 }
 
 #[cfg(test)]

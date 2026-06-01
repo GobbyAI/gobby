@@ -77,7 +77,8 @@ where
         return Ok(degraded("qdrant", ServiceState::NotConfigured));
     }
 
-    let vector = match embedder.embed_query(embedding, &request.query) {
+    let embedding_query = semantic_embedding_query(embedding, &request.query);
+    let vector = match embedder.embed_query(embedding, &embedding_query) {
         Ok(vector) if !vector.is_empty() => vector,
         Ok(_) => return Ok(degraded("embeddings", ServiceState::NotConfigured)),
         Err(error) => {
@@ -120,6 +121,13 @@ where
         hits,
         degradation: None,
     })
+}
+
+fn semantic_embedding_query(config: &EmbeddingConfig, query: &str) -> String {
+    match config.query_prefix.as_deref() {
+        Some(prefix) if !prefix.trim().is_empty() => format!("{prefix}{query}"),
+        _ => query.to_string(),
+    }
 }
 
 pub fn collection_for_scope(scope: &SearchScope) -> String {
@@ -395,16 +403,30 @@ impl SemanticSearchBackend for UnavailableSemanticBackend {
 }
 
 #[cfg(test)]
-struct FixedEmbedder(Vec<f32>);
+struct FixedEmbedder {
+    vector: Vec<f32>,
+    queries: Vec<String>,
+}
+
+#[cfg(test)]
+impl FixedEmbedder {
+    fn new(vector: Vec<f32>) -> Self {
+        Self {
+            vector,
+            queries: Vec::new(),
+        }
+    }
+}
 
 #[cfg(test)]
 impl QueryEmbedder for FixedEmbedder {
     fn embed_query(
         &mut self,
         _config: &EmbeddingConfig,
-        _query: &str,
+        query: &str,
     ) -> Result<Vec<f32>, SearchError> {
-        Ok(self.0.clone())
+        self.queries.push(query.to_string());
+        Ok(self.vector.clone())
     }
 }
 
@@ -453,14 +475,14 @@ mod tests {
             api_base: "http://embeddings.local/v1".to_string(),
             model: "embed-model".to_string(),
             api_key: None,
-            query_prefix: None,
+            query_prefix: Some("query: ".to_string()),
             timeout_seconds: 10,
         };
         let qdrant = QdrantConfig {
             url: Some("http://qdrant.local".to_string()),
             api_key: None,
         };
-        let mut embedder = FixedEmbedder(vec![0.1, 0.2, 0.3]);
+        let mut embedder = FixedEmbedder::new(vec![0.1, 0.2, 0.3]);
         let mut vector = RecordingVectorBackend::new(vec![
             vector_hit("doc-1", "project", "project-1"),
             vector_hit("doc-2", "topic", "rust"),
@@ -483,6 +505,7 @@ mod tests {
         assert_eq!(outcome.hits[0].id, "doc-1");
         assert_eq!(outcome.hits[0].sources, vec![SearchSource::Semantic]);
         assert!(outcome.degradation.is_none());
+        assert_eq!(embedder.queries, vec!["query: ownership"]);
 
         assert_eq!(
             vector.collection,

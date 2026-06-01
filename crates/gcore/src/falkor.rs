@@ -213,30 +213,6 @@ where
         .collect()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn existing_index_errors_are_recognized_case_insensitively() {
-        for message in [
-            "Index already exists",
-            "node property is already indexed",
-            "ERR index already exists for label",
-        ] {
-            let error = anyhow::anyhow!(message);
-            assert!(is_existing_index_error(&error), "{message}");
-        }
-    }
-
-    #[test]
-    fn unrelated_index_errors_are_not_suppressed() {
-        let error = anyhow::anyhow!("syntax error near CREATE INDEX");
-
-        assert!(!is_existing_index_error(&error));
-    }
-}
-
 fn falkor_value_to_json(value: FalkorValue) -> Value {
     match value {
         FalkorValue::String(value) => Value::String(value),
@@ -456,5 +432,24 @@ mod tests {
             },
             graph_name,
         ))
+    }
+
+    #[test]
+    fn existing_index_errors_are_recognized_case_insensitively() {
+        for message in [
+            "Index already exists",
+            "node property is already indexed",
+            "ERR index already exists for label",
+        ] {
+            let error = anyhow::anyhow!(message);
+            assert!(is_existing_index_error(&error), "{message}");
+        }
+    }
+
+    #[test]
+    fn unrelated_index_errors_are_not_suppressed() {
+        let error = anyhow::anyhow!("syntax error near CREATE INDEX");
+
+        assert!(!is_existing_index_error(&error));
     }
 }

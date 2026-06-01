@@ -26,7 +26,9 @@ pub fn ingest_capture(
     store: &mut impl WikiIndexStore,
     snapshot: WaybackCaptureSnapshot,
 ) -> Result<IngestResult, WikiError> {
-    let title = wayback_title(&snapshot);
+    let html = text_from_utf8_lossy(&snapshot.body);
+    let document = Html::parse_document(&html);
+    let title = wayback_title(&snapshot, &document);
     let draft = SourceDraft {
         location: snapshot.capture_url.clone(),
         kind: SourceKind::Wayback,
@@ -39,20 +41,18 @@ pub fn ingest_capture(
         compile_status: CompileStatus::Pending,
     };
     let record = SourceManifest::register(vault_root, draft)?;
-    let markdown = render_wayback_markdown(&snapshot, &title, &record.content_hash);
+    let markdown = render_wayback_markdown(&snapshot, &document, &title, &record.content_hash);
     write_raw_then_index(vault_root, store, record, &markdown, None)
 }
 
-fn wayback_title(snapshot: &WaybackCaptureSnapshot) -> String {
-    html_title(&snapshot.body)
+fn wayback_title(snapshot: &WaybackCaptureSnapshot, document: &Html) -> String {
+    html_title(document)
         .or_else(|| title_from_url_path(&snapshot.original_url))
         .or_else(|| url_host(&snapshot.original_url).map(|host| markdown_title(&host)))
         .unwrap_or_else(|| markdown_title(&snapshot.original_url))
 }
 
-fn html_title(bytes: &[u8]) -> Option<String> {
-    let html = text_from_utf8_lossy(bytes);
-    let document = Html::parse_document(&html);
+fn html_title(document: &Html) -> Option<String> {
     let title_selector = Selector::parse("title").expect("title selector parses");
     document
         .select(&title_selector)
@@ -95,6 +95,7 @@ fn percent_decode_lossy(value: &str) -> String {
 
 fn render_wayback_markdown(
     snapshot: &WaybackCaptureSnapshot,
+    document: &Html,
     title: &str,
     source_hash: &str,
 ) -> String {
@@ -114,17 +115,15 @@ fn render_wayback_markdown(
     markdown.push_str("# ");
     markdown.push_str(title);
     markdown.push_str("\n\n");
-    markdown.push_str(&html_to_text(&snapshot.body));
+    markdown.push_str(&html_to_text(document));
     if !markdown.ends_with('\n') {
         markdown.push('\n');
     }
     markdown
 }
 
-fn html_to_text(bytes: &[u8]) -> String {
-    let html = text_from_utf8_lossy(bytes);
-    let document = Html::parse_document(&html);
-    let output = extract_html_text(&document);
+fn html_to_text(document: &Html) -> String {
+    let output = extract_html_text(document);
     output
         .lines()
         .map(single_line)
@@ -212,8 +211,10 @@ mod tests {
     #[test]
     fn wayback_extracts_body_text_without_head_metadata() {
         let body = b"<html><head><title>Archive Shell</title></head><body><script>ignore()</script><p>Visible &amp; decoded.</p></body></html>";
+        let html = text_from_utf8_lossy(body);
+        let document = Html::parse_document(&html);
 
-        let text = html_to_text(body);
+        let text = html_to_text(&document);
 
         assert_eq!(text, "Visible & decoded.");
         assert!(!text.contains("Archive Shell"));
@@ -241,17 +242,32 @@ mod tests {
             ..with_title.clone()
         };
 
-        assert_eq!(wayback_title(&with_title), "Readable Title");
-        assert_eq!(wayback_title(&without_title), "hello world");
-        assert_eq!(wayback_title(&host_only), "example.com");
+        assert_eq!(
+            wayback_title(&with_title, &document_for(&with_title.body)),
+            "Readable Title"
+        );
+        assert_eq!(
+            wayback_title(&without_title, &document_for(&without_title.body)),
+            "hello world"
+        );
+        assert_eq!(
+            wayback_title(&host_only, &document_for(&host_only.body)),
+            "example.com"
+        );
     }
 
     #[test]
     fn wayback_does_not_decode_entities_twice() {
         let body = b"<html><body><p>Use &amp;amp; literally.</p></body></html>";
+        let document = document_for(body);
 
-        let text = html_to_text(body);
+        let text = html_to_text(&document);
 
         assert_eq!(text, "Use &amp; literally.");
+    }
+
+    fn document_for(bytes: &[u8]) -> Html {
+        let html = text_from_utf8_lossy(bytes);
+        Html::parse_document(&html)
     }
 }

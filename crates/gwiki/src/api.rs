@@ -109,7 +109,9 @@ impl IngestFileOptions {
             if let Some(routing) = self.text_routing {
                 context.bindings.text_generate.routing = routing;
             }
-            if let Some(target_lang) = &self.target_lang {
+            if self.translate
+                && let Some(target_lang) = &self.target_lang
+            {
                 context.bindings.audio_translate.target_lang = Some(target_lang.clone());
             }
             return;
@@ -246,7 +248,9 @@ pub struct CommandResult {
 
 #[cfg(test)]
 mod tests {
-    use super::ScopeSelection;
+    use super::{IngestFileOptions, ScopeSelection};
+    use gobby_core::ai_context::AiContext;
+    use gobby_core::config::EnvOnlySource;
 
     #[test]
     fn scope_selection_constructors_express_allowed_states() {
@@ -264,6 +268,30 @@ mod tests {
         let topic = ScopeSelection::topic("ops");
         assert!(!topic.is_project());
         assert_eq!(topic.topic_name(), Some("ops"));
+    }
+
+    #[test]
+    fn target_lang_requires_translate_flag() {
+        let mut source = EnvOnlySource;
+        let mut context = AiContext::resolve(None, &mut source);
+
+        IngestFileOptions {
+            target_lang: Some("fr".to_string()),
+            ..IngestFileOptions::default()
+        }
+        .apply_to_ai_context(&mut context);
+        assert!(context.bindings.audio_translate.target_lang.is_none());
+
+        IngestFileOptions {
+            translate: true,
+            target_lang: Some("fr".to_string()),
+            ..IngestFileOptions::default()
+        }
+        .apply_to_ai_context(&mut context);
+        assert_eq!(
+            context.bindings.audio_translate.target_lang.as_deref(),
+            Some("fr")
+        );
     }
 
     #[test]

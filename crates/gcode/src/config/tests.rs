@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use super::context::escape_like;
+use super::context::project_name_suffixes;
 use super::context::resolve_daemon_url;
 use super::context::resolve_project_id;
 use super::services::{
@@ -145,8 +145,11 @@ fn adapter_env_precedence_and_json_decode() {
 }
 
 #[test]
-fn project_name_like_lookup_escapes_wildcards() {
-    assert_eq!(escape_like(r"api\_%"), r"api\\\_\%");
+fn project_name_lookup_suffixes_cover_unix_and_windows_paths() {
+    assert_eq!(
+        project_name_suffixes("api_%"),
+        ("/api_%".to_string(), r"\api_%".to_string())
+    );
 }
 
 #[test]

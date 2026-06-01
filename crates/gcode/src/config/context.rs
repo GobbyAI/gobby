@@ -400,13 +400,15 @@ pub fn warn_project_identity(identity: &ProjectIdentity, quiet: bool) {
 /// Matches against the basename of `root_path` in the PostgreSQL hub.
 fn resolve_project_by_name(name: &str, database_url: &str) -> anyhow::Result<PathBuf> {
     let mut conn = db::connect_readonly(database_url)?;
-    let escaped_name = escape_like(name);
+    let (slash_suffix, backslash_suffix) = project_name_suffixes(name);
     let rows = conn.query(
         "SELECT root_path FROM code_indexed_projects
-         WHERE root_path = $1 OR root_path LIKE '%' || '/' || $2 ESCAPE '\\'
+         WHERE root_path = $1
+            OR right(root_path, length($2)) = $2
+            OR right(root_path, length($3)) = $3
          ORDER BY last_indexed_at DESC NULLS LAST
          LIMIT 1",
-        &[&name, &escaped_name],
+        &[&name, &slash_suffix, &backslash_suffix],
     )?;
 
     if let Some(row) = rows.first() {
@@ -423,15 +425,8 @@ fn resolve_project_by_name(name: &str, database_url: &str) -> anyhow::Result<Pat
     )
 }
 
-pub(super) fn escape_like(value: &str) -> String {
-    let mut escaped = String::with_capacity(value.len());
-    for ch in value.chars() {
-        if matches!(ch, '\\' | '%' | '_') {
-            escaped.push('\\');
-        }
-        escaped.push(ch);
-    }
-    escaped
+pub(super) fn project_name_suffixes(name: &str) -> (String, String) {
+    (format!("/{name}"), format!("\\{name}"))
 }
 
 /// Detect project root by walking up the directory tree.

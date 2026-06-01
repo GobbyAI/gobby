@@ -641,13 +641,10 @@ fn resolve_ai_non_empty(source: &mut impl ConfigSource, value: &str) -> Option<S
     if trimmed.is_empty() {
         return None;
     }
-    if trimmed.starts_with("$secret:") {
-        return source
-            .resolve_value(trimmed)
-            .ok()
-            .filter(|resolved| !resolved.trim().is_empty());
-    }
-    Some(value.to_string())
+    source
+        .resolve_value(trimmed)
+        .ok()
+        .filter(|resolved| !resolved.trim().is_empty())
 }
 
 fn resolve_setting(
@@ -967,6 +964,7 @@ mod tests {
             "GOBBY_AI_TEXT_GENERATE_API_BASE",
             "http://env-text:11434/v1",
         );
+        env.set("GOBBY_TEST_PRESENT", "interpolated-text-model");
 
         let mut source = LayeredTestSource::with_layers(
             [
@@ -979,7 +977,7 @@ mod tests {
             ],
             [
                 (ai_keys::TEXT_GENERATE_API_BASE, "http://yaml-text:11434/v1"),
-                (ai_keys::TEXT_GENERATE_MODEL, "yaml-text-model"),
+                (ai_keys::TEXT_GENERATE_MODEL, "${GOBBY_TEST_PRESENT}"),
                 (ai_keys::TEXT_GENERATE_API_KEY, "yaml-local-key"),
                 (ai_keys::KEEP_ALIVE, "30s"),
             ],
@@ -992,7 +990,7 @@ mod tests {
             binding.api_base.as_deref(),
             Some("http://store-text:11434/v1")
         );
-        assert_eq!(binding.model.as_deref(), Some("yaml-text-model"));
+        assert_eq!(binding.model.as_deref(), Some("interpolated-text-model"));
         assert_eq!(binding.api_key.as_deref(), Some("resolved-TEXT_KEY"));
         assert_eq!(tuning.max_concurrency, 3);
         assert_eq!(tuning.keep_alive.as_deref(), Some("30s"));
@@ -1199,7 +1197,7 @@ mod tests {
             config.api_key.as_deref(),
             Some("secret::$secret:OPENAI_API_KEY")
         );
-        assert_eq!(conn.secret_reads, 1);
+        assert_eq!(conn.secret_reads, 2);
     }
 
     #[test]

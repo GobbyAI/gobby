@@ -232,6 +232,11 @@ pub fn synthesize_source_pages(
         .collect()
 }
 
+/// Advisory preflight for callers that want to fail before expensive synthesis.
+///
+/// The actual race-free protection lives in `write_synthesized_page`, which
+/// uses `create_new` for `RequireMergeIntent` and atomic replacement for
+/// overwrite-after-merge writes.
 pub fn ensure_page_write_allowed(
     page: &SynthesizedPage,
     policy: WritePolicy,

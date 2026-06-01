@@ -290,22 +290,23 @@ fn frontmatter_from_object(mut object: Map<String, Value>) -> WikiFrontmatter {
 }
 
 fn string_value(value: &Value) -> Option<String> {
-    value.as_str().map(str::trim).and_then(|value| {
-        if value.is_empty() {
-            None
-        } else {
-            Some(value.to_string())
-        }
-    })
+    value.as_str().and_then(string_value_str)
 }
 
 fn string_list(value: &Value) -> Vec<String> {
     match value {
-        Value::String(value) => string_value(&Value::String(value.clone()))
-            .into_iter()
-            .collect(),
+        Value::String(value) => string_value_str(value).into_iter().collect(),
         Value::Array(values) => values.iter().filter_map(string_value).collect(),
         _ => Vec::new(),
+    }
+}
+
+fn string_value_str(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_string())
     }
 }
 

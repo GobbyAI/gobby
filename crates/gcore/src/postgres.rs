@@ -6,7 +6,7 @@
 //! schema-agnostic; consumers supply any table or index validation.
 
 use anyhow::Context;
-use postgres::{Client, NoTls, config::SslMode, error::SqlState};
+use postgres::{Client, NoTls, config::SslMode};
 use postgres_native_tls::MakeTlsConnector;
 
 /// Connect to the PostgreSQL hub in read-only mode.
@@ -80,15 +80,14 @@ fn connect(database_url: &str) -> anyhow::Result<Client> {
             .context("failed to connect to the Gobby PostgreSQL hub"),
         RequestedSslMode::Prefer => match connect_with_tls_unverified(&config) {
             Ok(client) => Ok(client),
-            Err(error) if is_no_tls_server_error(&error) => {
+            Err(error) => {
                 log::debug!(
-                    "PostgreSQL sslmode=prefer TLS attempt failed with no-TLS server signal; retrying without TLS: {error}"
+                    "PostgreSQL sslmode=prefer TLS attempt failed; retrying without TLS: {error}"
                 );
                 config
                     .connect(NoTls)
                     .context("failed to connect to the Gobby PostgreSQL hub")
             }
-            Err(error) => Err(error),
         },
         // libpq `sslmode=require` requires encryption without CA or hostname
         // verification. `verify-ca` keeps CA verification while allowing
@@ -164,15 +163,14 @@ fn normalize_sslmode_query_pair(pair: &str) -> String {
     let Some((key, value)) = pair.split_once('=') else {
         return pair.to_string();
     };
-    if key == "sslmode"
-        && matches!(
-            normalize_sslmode_token(value).as_str(),
-            "verify-ca" | "verify-full"
-        )
-    {
+    if key != "sslmode" {
+        return pair.to_string();
+    }
+    let token = normalize_sslmode_token(value);
+    if matches!(token.as_str(), "verify-ca" | "verify-full") {
         "sslmode=require".to_string()
     } else {
-        pair.to_string()
+        format!("sslmode={token}")
     }
 }
 
@@ -180,15 +178,14 @@ fn normalize_sslmode_keyword_pair(part: &str) -> String {
     let Some((key, value)) = part.split_once('=') else {
         return part.to_string();
     };
-    if key == "sslmode"
-        && matches!(
-            normalize_sslmode_token(value).as_str(),
-            "verify-ca" | "verify-full"
-        )
-    {
+    if key != "sslmode" {
+        return part.to_string();
+    }
+    let token = normalize_sslmode_token(value);
+    if matches!(token.as_str(), "verify-ca" | "verify-full") {
         "sslmode=require".to_string()
     } else {
-        part.to_string()
+        format!("sslmode={token}")
     }
 }
 
@@ -229,61 +226,6 @@ fn connect_with_tls_verification(
     config
         .connect(MakeTlsConnector::new(connector))
         .context("failed to connect to the Gobby PostgreSQL hub")
-}
-
-fn is_no_tls_server_error(error: &anyhow::Error) -> bool {
-    error.chain().any(is_no_tls_postgres_error)
-        || error.chain().any(is_no_tls_native_tls_error)
-        || error.chain().any(is_no_tls_error_message)
-}
-
-fn is_no_tls_postgres_error(error: &(dyn std::error::Error + 'static)) -> bool {
-    error
-        .downcast_ref::<postgres::Error>()
-        .and_then(postgres::Error::as_db_error)
-        .is_some_and(|db_error| {
-            matches!(
-                *db_error.code(),
-                SqlState::INVALID_PARAMETER_VALUE | SqlState::CONNECTION_FAILURE
-            ) && is_no_tls_error_message(error)
-        })
-}
-
-fn is_no_tls_native_tls_error(error: &(dyn std::error::Error + 'static)) -> bool {
-    error
-        .downcast_ref::<native_tls::Error>()
-        .is_some_and(|_| is_no_tls_error_message(error))
-}
-
-fn is_no_tls_error_message(error: &(dyn std::error::Error + 'static)) -> bool {
-    let message = error.to_string().to_ascii_lowercase();
-    let tokens = message
-        .split(|ch: char| !ch.is_ascii_alphanumeric())
-        .filter(|token| !token.is_empty())
-        .collect::<Vec<_>>();
-    let mentions_tls = tokens.iter().any(|token| matches!(*token, "tls" | "ssl"));
-    mentions_tls && has_no_tls_support_signal(&tokens)
-}
-
-fn has_no_tls_support_signal(tokens: &[&str]) -> bool {
-    // Server wording varies, so keep this token-based. It is still limited to
-    // TLS/SSL messages with explicit no-support or disabled-service language.
-    tokens
-        .windows(2)
-        .any(|window| window[0] == "not" && matches!(window[1], "supported" | "enabled"))
-        || tokens.windows(3).any(|window| {
-            matches!(window[0], "does" | "do" | "is")
-                && window[1] == "not"
-                && matches!(window[2], "support" | "supported" | "enabled")
-        })
-        || tokens.windows(3).any(|window| {
-            window[0] == "no" && matches!(window[1], "tls" | "ssl") && window[2] == "support"
-        })
-        || tokens.windows(3).any(|window| {
-            matches!(window[0], "tls" | "ssl")
-                && window[1] == "not"
-                && matches!(window[2], "supported" | "enabled")
-        })
 }
 
 fn run_schema_validator<C>(
@@ -374,38 +316,20 @@ mod tests {
             Some(RequestedSslMode::VerifyFull)
         );
         assert_eq!(
+            normalize_sslmode_for_parser("postgresql://localhost/db?sslmode='prefer'&x=1"),
+            "postgresql://localhost/db?sslmode=prefer&x=1"
+        );
+        assert_eq!(
             normalize_sslmode_for_parser("postgresql://localhost/db?sslmode='verify-ca'&x=1"),
             "postgresql://localhost/db?sslmode=require&x=1"
+        );
+        assert_eq!(
+            normalize_sslmode_for_parser("host=localhost sslmode='prefer' dbname=gobby"),
+            "host=localhost sslmode=prefer dbname=gobby"
         );
         assert_eq!(
             normalize_sslmode_for_parser("host=localhost sslmode='verify-full' dbname=gobby"),
             "host=localhost sslmode=require dbname=gobby"
         );
-    }
-
-    #[test]
-    fn prefer_mode_fallback_is_limited_to_no_tls_server_errors() {
-        assert!(is_no_tls_server_error(&anyhow::anyhow!(
-            "server does not support TLS"
-        )));
-        assert!(!is_no_tls_server_error(&anyhow::anyhow!(
-            "certificate verify failed"
-        )));
-    }
-
-    #[test]
-    fn no_tls_error_message_uses_tls_tokens_and_no_support_signal() {
-        assert!(is_no_tls_error_message(&std::io::Error::other(
-            "server: TLS is not supported"
-        )));
-        assert!(is_no_tls_error_message(&std::io::Error::other(
-            "SSL is not enabled on this server"
-        )));
-        assert!(!is_no_tls_error_message(&std::io::Error::other(
-            "certificate verify failed"
-        )));
-        assert!(!is_no_tls_error_message(&std::io::Error::other(
-            "unsupported certificate algorithm for SSL"
-        )));
     }
 }

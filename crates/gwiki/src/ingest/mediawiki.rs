@@ -69,11 +69,6 @@ fn render_mediawiki_markdown(
     markdown.push_str("# ");
     markdown.push_str(title);
     markdown.push_str("\n\n");
-    if let Some(category) = &snapshot.category {
-        markdown.push_str("Category: ");
-        markdown.push_str(&single_line(category));
-        markdown.push_str("\n\n");
-    }
     markdown.push_str(&snapshot.wikitext);
     if !markdown.ends_with('\n') {
         markdown.push('\n');
@@ -112,6 +107,7 @@ mod tests {
         assert!(raw.contains("revision_id: 123456"));
         assert!(raw.contains("revision_timestamp: 2026-05-29T12:00:00Z"));
         assert!(raw.contains("category: Software"));
+        assert!(!raw.contains("\n\nCategory: Software\n\n"));
         assert!(raw.contains("'''Gobby''' is a collaborative editor."));
 
         let manifest = SourceManifest::read(temp.path()).expect("read source manifest");

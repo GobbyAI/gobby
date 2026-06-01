@@ -615,17 +615,111 @@ fn collect_visible_text(element: ElementRef<'_>, parts: &mut Vec<String>) {
     if matches!(element.value().name(), "head" | "script" | "style") {
         return;
     }
+    let mut inline = String::new();
     for child in element.children() {
         match child.value() {
-            Node::Text(text) => parts.push(text.text.to_string()),
+            Node::Text(text) => append_inline_text(&mut inline, &text.text),
             Node::Element(_) => {
                 if let Some(child_element) = ElementRef::wrap(child) {
-                    collect_visible_text(child_element, parts);
+                    if is_block_element(child_element.value().name()) {
+                        push_visible_part(parts, &mut inline);
+                        collect_visible_text(child_element, parts);
+                    } else {
+                        let child_text = collect_inline_text(child_element);
+                        append_inline_text(&mut inline, &child_text);
+                    }
                 }
             }
             _ => {}
         }
     }
+    push_visible_part(parts, &mut inline);
+}
+
+fn collect_inline_text(element: ElementRef<'_>) -> String {
+    if matches!(element.value().name(), "head" | "script" | "style") {
+        return String::new();
+    }
+    let mut text = String::new();
+    for child in element.children() {
+        match child.value() {
+            Node::Text(node_text) => append_inline_text(&mut text, &node_text.text),
+            Node::Element(_) => {
+                if let Some(child_element) = ElementRef::wrap(child) {
+                    let child_text = collect_inline_text(child_element);
+                    append_inline_text(&mut text, &child_text);
+                }
+            }
+            _ => {}
+        }
+    }
+    text
+}
+
+fn append_inline_text(output: &mut String, text: &str) {
+    let text = text.trim();
+    if text.is_empty() {
+        return;
+    }
+    if !output.is_empty()
+        && output.chars().last().is_some_and(|ch| !ch.is_whitespace())
+        && !starts_with_closing_punctuation(text)
+    {
+        output.push(' ');
+    }
+    output.push_str(text);
+}
+
+fn starts_with_closing_punctuation(text: &str) -> bool {
+    text.chars()
+        .next()
+        .is_some_and(|ch| matches!(ch, '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '}'))
+}
+
+fn push_visible_part(parts: &mut Vec<String>, inline: &mut String) {
+    let part = single_line(inline);
+    if !part.is_empty() {
+        parts.push(part);
+    }
+    inline.clear();
+}
+
+fn is_block_element(name: &str) -> bool {
+    matches!(
+        name,
+        "address"
+            | "article"
+            | "aside"
+            | "blockquote"
+            | "br"
+            | "dd"
+            | "div"
+            | "dl"
+            | "dt"
+            | "figcaption"
+            | "figure"
+            | "footer"
+            | "h1"
+            | "h2"
+            | "h3"
+            | "h4"
+            | "h5"
+            | "h6"
+            | "header"
+            | "hr"
+            | "li"
+            | "main"
+            | "nav"
+            | "ol"
+            | "p"
+            | "pre"
+            | "section"
+            | "table"
+            | "td"
+            | "th"
+            | "tr"
+            | "ul"
+    )
 }
 
 fn normalize_markdown_text(text: &str) -> String {
@@ -908,5 +1002,15 @@ mod tests {
     #[test]
     fn markdown_table_handles_empty_rows() {
         assert_eq!(markdown_table(&[]), "");
+    }
+
+    #[test]
+    fn html_extraction_combines_inline_text_nodes() {
+        let extraction = extract_html_document(
+            b"<html><body><p>Hello <strong>world</strong>.</p><p>Next line.</p></body></html>",
+        )
+        .expect("html extracts");
+
+        assert_eq!(extraction.markdown, "Hello world.\n\nNext line.");
     }
 }

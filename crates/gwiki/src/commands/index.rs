@@ -145,6 +145,10 @@ fn ai_project_id(scope: &ScopeIdentity) -> Option<String> {
 }
 
 fn gobby_home() -> Result<PathBuf, WikiError> {
+    if let Some(home) = std::env::var_os("GOBBY_HOME") {
+        return Ok(PathBuf::from(home));
+    }
+
     dirs::home_dir()
         .map(|home| home.join(".gobby"))
         .ok_or_else(|| WikiError::Config {

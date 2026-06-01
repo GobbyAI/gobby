@@ -265,8 +265,15 @@ fn accept_item(
         if let Some(asset_path) = &asset_path {
             let _ = fs::remove_file(asset_path);
         }
-        previous_manifest.write(vault_root)?;
-        return Err(io_error("remove accepted inbox item", &path, error));
+        let original_error = io_error("remove accepted inbox item", &path, error);
+        if let Err(rollback_error) = previous_manifest.write(vault_root) {
+            return Err(WikiError::Config {
+                detail: format!(
+                    "failed to roll back source manifest after inbox removal failed: {rollback_error}; original error: {original_error}"
+                ),
+            });
+        }
+        return Err(original_error);
     }
     report.accepted.push(CollectAction {
         inbox_path: relative,

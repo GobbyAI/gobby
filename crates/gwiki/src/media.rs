@@ -323,7 +323,6 @@ fn missing_media_tool(tool: &str) -> WikiError {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::io::Write;
 
     use super::*;
 
@@ -397,6 +396,7 @@ fi
 
     #[cfg(unix)]
     fn write_executable(path: &Path, contents: &str) {
+        use std::io::Write;
         use std::os::unix::fs::PermissionsExt;
 
         let mut file = fs::File::create(path).expect("create executable");

@@ -18,7 +18,7 @@ const OVERLAY_VISIBILITY_PROJECT_TABLE: &str = "code_indexed_projects";
 fn sanitize_pg_search_query_matches_gobby_rules() {
     assert_eq!(
         sanitize_pg_search_query("foo::bar baz-qux _id + \"drop\""),
-        "foo bar baz-qux _id drop"
+        "foo::bar baz-qux _id + \"drop\""
     );
 }
 
@@ -32,8 +32,9 @@ fn sanitize_pg_search_query_escapes_leading_minus_per_token() {
 }
 
 #[test]
-fn sanitize_pg_search_query_drops_empty_queries() {
-    assert_eq!(sanitize_pg_search_query(":: + ()"), "");
+fn sanitize_pg_search_query_preserves_dsl_punctuation() {
+    assert_eq!(sanitize_pg_search_query(":: + ()"), ":: + ()");
+    assert_eq!(sanitize_pg_search_query(r"\-foo -bar"), r"\-foo \-bar");
 }
 
 #[test]
