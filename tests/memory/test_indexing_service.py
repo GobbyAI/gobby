@@ -103,6 +103,32 @@ def _service(storage: _MemoryStorage, vector_store: _VectorStore) -> IndexingSer
 
 
 @pytest.mark.asyncio
+async def test_project_reindex_logs_cumulative_batch_progress(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    storage = _MemoryStorage([_memory(f"mem-{index}", f"content {index}") for index in range(501)])
+    vector_store = _VectorStore()
+    service = _service(storage, vector_store)
+
+    with caplog.at_level(logging.INFO, logger="gobby.memory.services.indexing"):
+        result = await service.reindex_embeddings(project_id="project-1")
+
+    assert result["success"] is True
+    assert result["embeddings_generated"] == 501
+    assert vector_store.batch_upsert.await_count == 2
+    assert [len(call.args[0]) for call in vector_store.batch_upsert.await_args_list] == [500, 1]
+    assert [
+        record.message
+        for record in caplog.records
+        if record.name == "gobby.memory.services.indexing"
+        and record.message.startswith("Reindex progress:")
+    ] == [
+        "Reindex progress: 500/501 vectors",
+        "Reindex progress: 501/501 vectors",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_global_reindex_skips_unchanged_memory_snapshot() -> None:
     storage = _MemoryStorage(
         [

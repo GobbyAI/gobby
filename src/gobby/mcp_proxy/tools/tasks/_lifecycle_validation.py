@@ -143,7 +143,8 @@ def feedback_admits_required_validation_failure(feedback: str | None) -> bool:
 _SUCCESSFUL_VALIDATION_FEEDBACK_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(
         r"(?=.*\b(?:fixed|resolved|verified|re-?tested)\b).*?"
-        r"(?<!\bnot\s)\ball\s+(?:\w+\s+){0,6}"
+        r"(?<!\bnot\s)\ball\s+"
+        r"(?:(?!(?:previous|previously|prior|unmet|unsatisfied)\b)\w+\s+){0,3}"
         r"(?:validation\s+criteria|acceptance\s+criteria)\s+"
         r"(?:are\s+|were\s+)?(?:satisfied|met|passed)\b",
         re.IGNORECASE,

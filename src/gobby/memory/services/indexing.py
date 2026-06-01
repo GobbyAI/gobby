@@ -186,6 +186,7 @@ class IndexingService:
             memory_dicts = self._memory_dicts(memories)
             await self._vector_store.delete(filters={"project_id": project_id})
             batch: list[tuple[str, list[float], dict[str, Any]]] = []
+            processed = 0
             for mem in memory_dicts:
                 mem_id: str = mem["id"]
                 embedding = await self._embed_fn(mem["content"])
@@ -193,10 +194,13 @@ class IndexingService:
                 batch.append((mem_id, embedding, payload))
                 if len(batch) >= 500:
                     await self._vector_store.batch_upsert(batch)
-                    logger.info(f"Reindex progress: {len(batch)}/{total} vectors")
+                    processed += len(batch)
+                    logger.info(f"Reindex progress: {processed}/{total} vectors")
                     batch = []
             if batch:
                 await self._vector_store.batch_upsert(batch)
+                processed += len(batch)
+                logger.info(f"Reindex progress: {processed}/{total} vectors")
             generated = len(memory_dicts)
         except Exception as e:
             logger.error(f"Failed to rebuild vector store: {e}")

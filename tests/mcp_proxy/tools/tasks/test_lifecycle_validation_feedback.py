@@ -84,6 +84,7 @@ def test_successful_validation_pattern_ignores_not_all_feedback(feedback: str) -
     "feedback",
     [
         "Verified all validation criteria are satisfied.",
+        "Verified all required validation criteria are satisfied.",
         "Resolved: all acceptance criteria were met.",
         "All validation criteria passed after the workflow was re-tested.",
     ],
@@ -92,6 +93,21 @@ def test_successful_validation_pattern_requires_explicit_verified_success(
     feedback: str,
 ) -> None:
     assert matched_successful_validation_pattern(feedback) is not None
+
+
+@pytest.mark.parametrize(
+    "feedback",
+    [
+        "Verified all previous validation criteria are satisfied.",
+        "Resolved: all prior acceptance criteria were met.",
+        "Verified all previously unmet validation criteria are satisfied.",
+        "Re-tested: all unsatisfied validation criteria passed.",
+    ],
+)
+def test_successful_validation_pattern_rejects_historical_or_mixed_criteria(
+    feedback: str,
+) -> None:
+    assert matched_successful_validation_pattern(feedback) is None
 
 
 @pytest.mark.parametrize(
