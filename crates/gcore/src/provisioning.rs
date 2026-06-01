@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
+use anyhow::Context as _;
 use serde::Deserialize;
 
 use crate::config::{ConfigSource, embedding_keys, resolve_env_pattern};
@@ -158,6 +159,25 @@ pub fn default_database_url(port: u16) -> String {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnsureHubOptions {
+    pub gobby_home: PathBuf,
+    pub service_options: DockerServiceOptions,
+    pub candidate_database_urls: Vec<String>,
+    pub provision_services: bool,
+}
+
+impl EnsureHubOptions {
+    pub fn new(gobby_home: PathBuf) -> Self {
+        Self {
+            service_options: DockerServiceOptions::new(gobby_home.clone()),
+            gobby_home,
+            candidate_database_urls: Vec::new(),
+            provision_services: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DockerServiceOptions {
     pub gobby_home: PathBuf,
     pub postgres_port: u16,
@@ -297,6 +317,115 @@ impl DockerHealthChecker for TcpDockerHealthChecker {
         wait_for_tcp(host, port, self.retries, self.interval)
             .map_err(|err| anyhow::anyhow!("FalkorDB did not become reachable: {err}"))
     }
+}
+
+pub fn ensure_hub(
+    options: &EnsureHubOptions,
+) -> anyhow::Result<(String, Option<DockerProvisioningReport>)> {
+    ensure_hub_with(
+        options,
+        |name| std::env::var(name).ok(),
+        postgres_database_reachable,
+        provision_docker_services,
+    )
+}
+
+fn ensure_hub_with(
+    options: &EnsureHubOptions,
+    mut get_env: impl FnMut(&str) -> Option<String>,
+    mut database_reachable: impl FnMut(&str) -> bool,
+    provision: impl FnOnce(&DockerServiceOptions) -> anyhow::Result<DockerProvisioningReport>,
+) -> anyhow::Result<(String, Option<DockerProvisioningReport>)> {
+    for database_url in resolve_hub_database_urls(options, &mut get_env)? {
+        if database_reachable(&database_url) {
+            return Ok((database_url, None));
+        }
+    }
+
+    if !options.provision_services {
+        anyhow::bail!(
+            "no reachable Gobby PostgreSQL hub found and service provisioning is disabled"
+        );
+    }
+
+    let report = provision(&options.service_options).context("failed to provision Gobby hub")?;
+    Ok((
+        default_database_url(options.service_options.postgres_port),
+        Some(report),
+    ))
+}
+
+fn resolve_hub_database_urls(
+    options: &EnsureHubOptions,
+    get_env: &mut impl FnMut(&str) -> Option<String>,
+) -> anyhow::Result<Vec<String>> {
+    let mut urls = Vec::new();
+    urls.extend(
+        options
+            .candidate_database_urls
+            .iter()
+            .filter_map(|value| non_empty_trimmed(Some(value.clone()))),
+    );
+    if let Some(database_url) = non_empty_trimmed(get_env("GOBBY_POSTGRES_DSN")) {
+        urls.push(database_url);
+    }
+    if let Some(database_url) = resolve_database_url_from_gcore_config(&options.gobby_home)? {
+        urls.push(database_url);
+    }
+    if let Some(database_url) =
+        resolve_database_url_from_bootstrap_file(&options.gobby_home.join("bootstrap.yaml"))?
+    {
+        urls.push(database_url);
+    }
+    Ok(urls)
+}
+
+fn resolve_database_url_from_gcore_config(home: &Path) -> anyhow::Result<Option<String>> {
+    let Some(config) = StandaloneConfig::read_at(&gcore_config_path(home))? else {
+        return Ok(None);
+    };
+    Ok(config
+        .get("databases.postgres.dsn")
+        .and_then(|value| non_empty_trimmed(Some(value.to_string()))))
+}
+
+#[derive(Debug, Deserialize)]
+struct HubBootstrap {
+    hub_backend: Option<String>,
+    database_url: Option<String>,
+}
+
+fn resolve_database_url_from_bootstrap_file(path: &Path) -> anyhow::Result<Option<String>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let contents = fs::read_to_string(path)
+        .with_context(|| format!("failed to read Gobby bootstrap at {}", path.display()))?;
+    let bootstrap: HubBootstrap = serde_yaml::from_str(&contents)
+        .with_context(|| format!("failed to parse {}", path.display()))?;
+    if matches!(bootstrap.hub_backend.as_deref(), Some(backend) if backend != "postgres") {
+        return Ok(None);
+    }
+    Ok(non_empty_trimmed(bootstrap.database_url))
+}
+
+fn non_empty_trimmed(value: Option<String>) -> Option<String> {
+    let trimmed = value.as_ref()?.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+#[cfg(feature = "postgres")]
+fn postgres_database_reachable(database_url: &str) -> bool {
+    crate::postgres::connect_readonly(database_url).is_ok()
+}
+
+#[cfg(not(feature = "postgres"))]
+fn postgres_database_reachable(_database_url: &str) -> bool {
+    true
 }
 
 pub fn provision_docker_services(
@@ -716,6 +845,7 @@ mod tests {
                 "GOBBY_FALKORDB_HOST",
                 "GOBBY_FALKORDB_PORT",
                 "GOBBY_FALKORDB_PASSWORD",
+                "GOBBY_POSTGRES_DSN",
                 "GOBBY_QDRANT_URL",
                 "GOBBY_QDRANT_API_KEY",
                 "GOBBY_EMBEDDING_URL",
@@ -897,6 +1027,54 @@ databases.qdrant.url: http://localhost:6333
             fs::read_to_string(&report.env_file)
                 .expect("read env")
                 .contains("GOBBY_PG_SEARCH_VERSION=0.23.4")
+        );
+    }
+
+    #[test]
+    fn ensure_hub_reuses_then_provisions() {
+        let _env = EnvGuard::new();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let home = dir.path().join(".gobby");
+        fs::create_dir_all(&home).expect("create gobby home");
+        let mut config = StandaloneConfig::empty();
+        config.set("databases.postgres.dsn", "postgresql://reachable/gobby");
+        config
+            .write_at(&gcore_config_path(&home))
+            .expect("write gcore config");
+
+        let options = EnsureHubOptions::new(home.clone());
+        let (database_url, report) = ensure_hub_with(
+            &options,
+            |_| None,
+            |url| url == "postgresql://reachable/gobby",
+            |_| panic!("reachable DSN should not provision services"),
+        )
+        .expect("reuse reachable DSN");
+        assert_eq!(database_url, "postgresql://reachable/gobby");
+        assert!(report.is_none());
+
+        let mut options = EnsureHubOptions::new(home);
+        options.service_options.postgres_port = 15432;
+        options.candidate_database_urls = vec!["postgresql://unreachable/gobby".to_string()];
+        let (database_url, report) = ensure_hub_with(
+            &options,
+            |_| None,
+            |_| false,
+            |service_options| {
+                Ok(DockerProvisioningReport {
+                    services_dir: service_options.gobby_home.join("services"),
+                    compose_file: compose_file_path(&service_options.gobby_home),
+                    env_file: service_options.gobby_home.join("services/.env"),
+                    started_profiles: vec!["all".to_string()],
+                    health_checks: vec!["postgres".to_string()],
+                })
+            },
+        )
+        .expect("provision fallback hub");
+        assert_eq!(database_url, default_database_url(15432));
+        assert_eq!(
+            report.expect("provisioning report").health_checks,
+            vec!["postgres"]
         );
     }
 
