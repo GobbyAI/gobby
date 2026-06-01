@@ -8,7 +8,7 @@ enabled: true
 surfaces: [spawn, persona]
 provider: claude
 model: opus
-reasoning_effort: xhigh
+reasoning_effort: high
 blocked_mcp_tools:
   - "gobby-agents:kill_agent"
 

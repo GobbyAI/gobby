@@ -45,14 +45,14 @@ def _blocked_mcp_tools(step: dict[str, Any]) -> set[str]:
 
 def test_build_smoke_agent_runtime_mappings() -> None:
     expected = {
-        "backend-developer": ("codex", "gpt-5.5", "xhigh"),
-        "fullstack-developer": ("codex", "gpt-5.5", "xhigh"),
+        "backend-developer": ("codex", "gpt-5.5", "high"),
+        "fullstack-developer": ("codex", "gpt-5.5", "high"),
         "frontend-developer": ("codex", "gpt-5.5", "high"),
         "tech-writer": ("codex", "gpt-5.5", "high"),
-        "qa-reviewer": ("claude", "opus", "xhigh"),
-        "doc-reviewer": ("claude", "opus", "xhigh"),
-        "holistic-reviewer": ("codex", "gpt-5.5", "xhigh"),
-        "merge-orchestrator": ("claude", "opus", "xhigh"),
+        "qa-reviewer": ("claude", "opus", "high"),
+        "doc-reviewer": ("claude", "opus", "high"),
+        "holistic-reviewer": ("codex", "gpt-5.5", "high"),
+        "merge-orchestrator": ("claude", "opus", "high"),
         "merge-worker": ("claude", "sonnet", "high"),
     }
 

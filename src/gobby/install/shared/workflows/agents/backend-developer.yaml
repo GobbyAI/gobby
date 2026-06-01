@@ -10,7 +10,7 @@ priority: 30
 surfaces: [spawn, persona]
 provider: codex
 model: gpt-5.5
-reasoning_effort: xhigh
+reasoning_effort: high
 isolation: inherit
 blocked_mcp_tools:
   - "gobby-agents:kill_agent"
