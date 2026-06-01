@@ -1,5 +1,9 @@
+use std::collections::{BTreeMap, BTreeSet};
+#[cfg(feature = "documents")]
+use std::io::Cursor;
 use std::path::Path;
 
+use crate::ScopeIdentity;
 use crate::WikiError;
 use crate::ingest::{
     IngestResult, index_after_ingest, markdown_metadata, markdown_title, path_to_string,
@@ -7,6 +11,12 @@ use crate::ingest::{
 };
 use crate::sources::{CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest};
 use crate::store::WikiIndexStore;
+use crate::vision::{VisionEndpoint, VisionExtraction, VisionRequest};
+
+#[cfg(feature = "documents")]
+use pdfium_render::prelude::{PdfRenderConfig, Pdfium};
+
+const DEFAULT_PDF_RENDER_DPI: u16 = 150;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PdfPage {
@@ -23,10 +33,139 @@ pub struct PdfSnapshot {
     pub pages: Vec<PdfPage>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PdfFileSnapshot {
+    pub location: String,
+    pub file_name: String,
+    pub fetched_at: String,
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PdfRenderedPage {
+    pub number: usize,
+    pub bytes: Vec<u8>,
+    pub mime_type: String,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PdfIngestOptions {
+    pub render_dpi: u16,
+}
+
+impl Default for PdfIngestOptions {
+    fn default() -> Self {
+        Self {
+            render_dpi: DEFAULT_PDF_RENDER_DPI,
+        }
+    }
+}
+
+struct PdfPageMarkdown {
+    number: usize,
+    markdown: String,
+}
+
+struct PdfMarkdownSummary {
+    page_count: usize,
+    has_text_layer: bool,
+    vision_used: bool,
+    model: Option<String>,
+    degradations: Vec<String>,
+}
+
 pub fn ingest_pages(
     vault_root: &Path,
     store: &mut impl WikiIndexStore,
     snapshot: PdfSnapshot,
+) -> Result<IngestResult, WikiError> {
+    ingest_pages_with_vision(
+        vault_root,
+        store,
+        &ScopeIdentity::global(),
+        snapshot,
+        Vec::new(),
+        VisionEndpoint::Unavailable(crate::vision::VisionDegradation {
+            reason: "disabled".to_string(),
+            fallback: "Keep PDF text layer only.".to_string(),
+        }),
+    )
+}
+
+#[cfg(feature = "documents")]
+pub fn ingest_pdf_file(
+    vault_root: &Path,
+    store: &mut impl WikiIndexStore,
+    scope: &ScopeIdentity,
+    snapshot: PdfFileSnapshot,
+    endpoint: VisionEndpoint<'_>,
+    options: PdfIngestOptions,
+) -> Result<IngestResult, WikiError> {
+    let mut degradations = Vec::new();
+    let pages = match extract_text_layer_pages(&snapshot.bytes) {
+        Ok(pages) => pages,
+        Err(error) => {
+            degradations.push(error.to_string());
+            Vec::new()
+        }
+    };
+    let rendered_pages = match endpoint {
+        VisionEndpoint::Available(_) => match render_pdf_pages(&snapshot, options.render_dpi) {
+            Ok(pages) => pages,
+            Err(error) => {
+                degradations.push(error.to_string());
+                Vec::new()
+            }
+        },
+        VisionEndpoint::Unavailable(_) => Vec::new(),
+    };
+
+    ingest_pages_with_vision_inner(
+        vault_root,
+        store,
+        scope,
+        PdfSnapshot {
+            location: snapshot.location,
+            file_name: snapshot.file_name,
+            fetched_at: snapshot.fetched_at,
+            bytes: snapshot.bytes,
+            pages,
+        },
+        rendered_pages,
+        endpoint,
+        degradations,
+    )
+}
+
+pub fn ingest_pages_with_vision(
+    vault_root: &Path,
+    store: &mut impl WikiIndexStore,
+    scope: &ScopeIdentity,
+    snapshot: PdfSnapshot,
+    rendered_pages: Vec<PdfRenderedPage>,
+    endpoint: VisionEndpoint<'_>,
+) -> Result<IngestResult, WikiError> {
+    ingest_pages_with_vision_inner(
+        vault_root,
+        store,
+        scope,
+        snapshot,
+        rendered_pages,
+        endpoint,
+        Vec::new(),
+    )
+}
+
+fn ingest_pages_with_vision_inner(
+    vault_root: &Path,
+    store: &mut impl WikiIndexStore,
+    scope: &ScopeIdentity,
+    snapshot: PdfSnapshot,
+    rendered_pages: Vec<PdfRenderedPage>,
+    endpoint: VisionEndpoint<'_>,
+    mut degradations: Vec<String>,
 ) -> Result<IngestResult, WikiError> {
     let title = markdown_title(&snapshot.file_name);
     let draft = SourceDraft {
@@ -42,7 +181,30 @@ pub fn ingest_pages(
     };
     let record = SourceManifest::register(vault_root, draft)?;
     let asset_path = write_asset(vault_root, &record, &snapshot.file_name, &snapshot.bytes)?;
-    let markdown = render_pdf_markdown(&snapshot, &title, &record.content_hash, &asset_path);
+    if snapshot
+        .pages
+        .iter()
+        .all(|page| normalize_page_text(&page.text).is_empty())
+        && rendered_pages.is_empty()
+    {
+        degradations.push("no_extractable_pdf_content".to_string());
+    }
+    let (pages, summary) = merge_pdf_pages(
+        &snapshot,
+        &asset_path,
+        rendered_pages,
+        endpoint,
+        degradations,
+    );
+    let markdown = render_pdf_markdown(
+        scope,
+        &snapshot,
+        &title,
+        &record.content_hash,
+        &asset_path,
+        &pages,
+        &summary,
+    );
     let raw_path = write_raw_markdown(vault_root, &record, &markdown)?;
     index_after_ingest(vault_root, store)?;
 
@@ -54,43 +216,308 @@ pub fn ingest_pages(
 }
 
 fn render_pdf_markdown(
+    scope: &ScopeIdentity,
     snapshot: &PdfSnapshot,
     title: &str,
     source_hash: &str,
     asset_path: &Path,
+    pages: &[PdfPageMarkdown],
+    summary: &PdfMarkdownSummary,
 ) -> String {
-    let mut markdown = markdown_metadata(&[
+    let mut fields = vec![
         ("source_kind", "pdf".to_string()),
         ("source_location", snapshot.location.clone()),
         ("fetched_at", snapshot.fetched_at.clone()),
         ("source_hash", source_hash.to_string()),
         ("source_asset", path_to_string(asset_path)),
-    ]);
+        ("page_count", summary.page_count.to_string()),
+        ("has_text_layer", summary.has_text_layer.to_string()),
+        ("vision_used", summary.vision_used.to_string()),
+        (
+            "model",
+            summary.model.clone().unwrap_or_else(|| "none".to_string()),
+        ),
+        ("scope_kind", scope.kind.as_str().to_string()),
+        ("scope_id", scope.id.clone()),
+    ];
+    if !summary.degradations.is_empty() {
+        fields.push(("pdf_degradation", summary.degradations.join("; ")));
+    }
+    let mut markdown = markdown_metadata(&fields);
     markdown.push_str("# ");
     markdown.push_str(title);
     markdown.push_str("\n\n");
 
-    if snapshot.pages.is_empty() {
+    if pages.is_empty() {
         markdown.push_str("No extractable page text.\n");
         return markdown;
     }
 
-    for page in &snapshot.pages {
+    for page in pages {
         markdown.push_str("<!-- gwiki-page: ");
         markdown.push_str(&page.number.to_string());
         markdown.push_str(" -->\n\n");
         markdown.push_str("## Page ");
         markdown.push_str(&page.number.to_string());
         markdown.push_str("\n\n");
-        let body = normalize_page_text(&page.text);
-        if body.is_empty() {
+        if page.markdown.is_empty() {
             markdown.push_str("No extractable page text.");
         } else {
-            markdown.push_str(&body);
+            markdown.push_str(&page.markdown);
         }
         markdown.push_str("\n\n");
     }
     markdown
+}
+
+fn merge_pdf_pages(
+    snapshot: &PdfSnapshot,
+    asset_path: &Path,
+    rendered_pages: Vec<PdfRenderedPage>,
+    endpoint: VisionEndpoint<'_>,
+    degradations: Vec<String>,
+) -> (Vec<PdfPageMarkdown>, PdfMarkdownSummary) {
+    let text_pages = snapshot
+        .pages
+        .iter()
+        .map(|page| (page.number, page.text.as_str()))
+        .collect::<BTreeMap<_, _>>();
+    let rendered_pages = rendered_pages
+        .into_iter()
+        .map(|page| (page.number, page))
+        .collect::<BTreeMap<_, _>>();
+    let page_numbers = text_pages
+        .keys()
+        .chain(rendered_pages.keys())
+        .copied()
+        .collect::<BTreeSet<_>>();
+    let mut vision_used = false;
+    let mut models = BTreeSet::new();
+    let mut pages = Vec::with_capacity(page_numbers.len());
+
+    for number in page_numbers {
+        let text_layer = text_pages.get(&number).copied().unwrap_or_default();
+        let vision = rendered_pages.get(&number).and_then(|rendered| {
+            extract_vision_for_page(snapshot, asset_path, rendered, &endpoint)
+        });
+        if let Some(vision) = &vision {
+            vision_used = true;
+            if let Some(model) = vision_model(vision) {
+                models.insert(model.to_string());
+            }
+        }
+        pages.push(PdfPageMarkdown {
+            number,
+            markdown: merge_page_markdown(text_layer, vision.as_ref()),
+        });
+    }
+
+    let has_text_layer = snapshot
+        .pages
+        .iter()
+        .any(|page| !normalize_page_text(&page.text).is_empty());
+    (
+        pages,
+        PdfMarkdownSummary {
+            page_count: text_pages.len().max(rendered_pages.len()),
+            has_text_layer,
+            vision_used,
+            model: (!models.is_empty()).then(|| models.into_iter().collect::<Vec<_>>().join(", ")),
+            degradations,
+        },
+    )
+}
+
+fn extract_vision_for_page(
+    snapshot: &PdfSnapshot,
+    asset_path: &Path,
+    rendered: &PdfRenderedPage,
+    endpoint: &VisionEndpoint<'_>,
+) -> Option<VisionExtraction> {
+    let client = match endpoint {
+        VisionEndpoint::Available(client) => *client,
+        VisionEndpoint::Unavailable(_) => return None,
+    };
+    let file_name = rendered_page_file_name(&snapshot.file_name, rendered.number);
+    client
+        .extract(&VisionRequest {
+            file_name: &file_name,
+            mime_type: Some(rendered.mime_type.as_str()),
+            asset_path,
+            bytes: &rendered.bytes,
+            width: rendered.width,
+            height: rendered.height,
+        })
+        .ok()
+}
+
+fn merge_page_markdown(text_layer: &str, vision: Option<&VisionExtraction>) -> String {
+    let text = normalize_page_text(text_layer);
+    let mut sections = Vec::new();
+    if !text.is_empty() {
+        sections.push(text.clone());
+    }
+    if let Some(vision) = vision {
+        if let Some(ocr_text) = vision
+            .ocr_text
+            .as_deref()
+            .and_then(|ocr_text| dedupe_ocr_text(&text, ocr_text))
+        {
+            sections.push(format!("### OCR Text\n\n{ocr_text}"));
+        }
+        let description = single_line(&vision.description);
+        if !description.is_empty() {
+            sections.push(format!("### Visual Description\n\n{description}"));
+        }
+    }
+    sections.join("\n\n")
+}
+
+fn dedupe_ocr_text(text_layer: &str, ocr_text: &str) -> Option<String> {
+    let ocr = normalize_page_text(ocr_text);
+    if ocr.is_empty() {
+        return None;
+    }
+    let text_key = overlap_key(text_layer);
+    if text_key.is_empty() {
+        return Some(ocr);
+    }
+    let ocr_key = overlap_key(&ocr);
+    if text_key.contains(&ocr_key) {
+        return None;
+    }
+    let retained = ocr
+        .split("\n\n")
+        .filter(|paragraph| {
+            let key = overlap_key(paragraph);
+            !key.is_empty() && !text_key.contains(&key)
+        })
+        .collect::<Vec<_>>();
+    (!retained.is_empty()).then(|| retained.join("\n\n"))
+}
+
+fn overlap_key(value: &str) -> String {
+    single_line(value)
+        .chars()
+        .filter(|character| character.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn vision_model(vision: &VisionExtraction) -> Option<&str> {
+    vision.metadata.iter().find_map(|(key, value)| {
+        (key == "model" && !value.trim().is_empty()).then_some(value.as_str())
+    })
+}
+
+fn rendered_page_file_name(file_name: &str, page_number: usize) -> String {
+    let stem = file_name.strip_suffix(".pdf").unwrap_or(file_name);
+    format!("{stem}-page-{page_number}.png")
+}
+
+#[cfg(feature = "documents")]
+fn extract_text_layer_pages(bytes: &[u8]) -> Result<Vec<PdfPage>, WikiError> {
+    pdf_extract::extract_text_from_mem_by_pages(bytes)
+        .map(|pages| {
+            pages
+                .into_iter()
+                .enumerate()
+                .map(|(index, text)| PdfPage {
+                    number: index + 1,
+                    text,
+                })
+                .collect()
+        })
+        .map_err(|error| WikiError::InvalidInput {
+            field: "pdf",
+            message: format!("failed to extract PDF text layer: {error}"),
+        })
+}
+
+#[cfg(feature = "documents")]
+fn render_pdf_pages(
+    snapshot: &PdfFileSnapshot,
+    dpi: u16,
+) -> Result<Vec<PdfRenderedPage>, WikiError> {
+    let pdfium = bundled_pdfium()?;
+    let document = pdfium
+        .load_pdf_from_byte_vec(snapshot.bytes.clone(), None)
+        .map_err(pdfium_error)?;
+    let render_dpi = dpi.max(1);
+    let mut rendered_pages = Vec::with_capacity(document.pages().len() as usize);
+
+    for (index, page) in document.pages().iter().enumerate() {
+        let target_width = points_to_pixels(page.width().value, render_dpi);
+        let bitmap = page
+            .render_with_config(
+                &PdfRenderConfig::new()
+                    .set_target_width(target_width)
+                    .render_form_data(true)
+                    .render_annotations(true),
+            )
+            .map_err(pdfium_error)?;
+        let width = bitmap.width() as u32;
+        let height = bitmap.height() as u32;
+        let encoded = encode_png_rgba(width, height, &bitmap.as_rgba_bytes())?;
+        rendered_pages.push(PdfRenderedPage {
+            number: index + 1,
+            bytes: encoded,
+            mime_type: "image/png".to_string(),
+            width: Some(width),
+            height: Some(height),
+        });
+    }
+
+    Ok(rendered_pages)
+}
+
+#[cfg(feature = "documents")]
+fn bundled_pdfium() -> Result<Pdfium, WikiError> {
+    let path = pdfium_auto::ensure_pdfium_bundled().map_err(|error| WikiError::InvalidInput {
+        field: "pdf",
+        message: format!("failed to initialize bundled pdfium: {error}"),
+    })?;
+    Pdfium::bind_to_library(&path)
+        .map(Pdfium::new)
+        .map_err(|error| WikiError::InvalidInput {
+            field: "pdf",
+            message: format!("failed to initialize bundled pdfium: {error}"),
+        })
+}
+
+#[cfg(feature = "documents")]
+fn points_to_pixels(points: f32, dpi: u16) -> i32 {
+    ((points / 72.0) * f32::from(dpi)).round().max(1.0) as i32
+}
+
+#[cfg(feature = "documents")]
+fn encode_png_rgba(width: u32, height: u32, rgba: &[u8]) -> Result<Vec<u8>, WikiError> {
+    let mut encoded = Cursor::new(Vec::new());
+    let mut encoder = png::Encoder::new(&mut encoded, width, height);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder
+        .write_header()
+        .map_err(|error| WikiError::InvalidInput {
+            field: "pdf",
+            message: format!("failed to encode rendered PDF page: {error}"),
+        })?;
+    writer
+        .write_image_data(rgba)
+        .map_err(|error| WikiError::InvalidInput {
+            field: "pdf",
+            message: format!("failed to encode rendered PDF page: {error}"),
+        })?;
+    drop(writer);
+    Ok(encoded.into_inner())
+}
+
+#[cfg(feature = "documents")]
+fn pdfium_error(error: impl std::fmt::Display) -> WikiError {
+    WikiError::InvalidInput {
+        field: "pdf",
+        message: format!("failed to render PDF page: {error}"),
+    }
 }
 
 fn normalize_page_text(text: &str) -> String {
@@ -121,8 +548,94 @@ mod tests {
     use gobby_core::indexing::content_hash;
 
     use super::*;
+    use crate::ScopeIdentity;
     use crate::sources::{SourceKind, SourceManifest};
     use crate::store::MemoryWikiStore;
+    use crate::vision::{VisionClient, VisionEndpoint, VisionExtraction, VisionRequest};
+
+    struct FakePdfVisionClient;
+
+    impl VisionClient for FakePdfVisionClient {
+        fn extract(&self, request: &VisionRequest<'_>) -> Result<VisionExtraction, WikiError> {
+            assert_eq!(request.mime_type, Some("image/png"));
+            assert_eq!(request.width, Some(1200));
+            assert_eq!(request.height, Some(1600));
+            let page_2 = request.file_name.contains("page-2");
+
+            Ok(VisionExtraction {
+                description: format!("Visual description for {}.", request.file_name),
+                ocr_text: Some(if page_2 {
+                    "Scanned invoice total: $42".to_string()
+                } else {
+                    "First page fact.\n\nChart label: Growth".to_string()
+                }),
+                metadata: vec![("model".to_string(), "vision-test".to_string())],
+            })
+        }
+    }
+
+    #[test]
+    fn combines_text_layer_and_vision() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let bytes = b"%PDF-1.7\nsource bytes\n%%EOF\n".to_vec();
+        let snapshot = PdfSnapshot {
+            location: "/tmp/guide.pdf".to_string(),
+            file_name: "guide.pdf".to_string(),
+            fetched_at: "2026-05-29T16:30:00Z".to_string(),
+            bytes,
+            pages: vec![
+                PdfPage {
+                    number: 1,
+                    text: "First page fact.".to_string(),
+                },
+                PdfPage {
+                    number: 2,
+                    text: String::new(),
+                },
+            ],
+        };
+        let rendered_pages = vec![
+            PdfRenderedPage {
+                number: 1,
+                bytes: b"rendered-png-page-1".to_vec(),
+                mime_type: "image/png".to_string(),
+                width: Some(1200),
+                height: Some(1600),
+            },
+            PdfRenderedPage {
+                number: 2,
+                bytes: b"rendered-png-page-2".to_vec(),
+                mime_type: "image/png".to_string(),
+                width: Some(1200),
+                height: Some(1600),
+            },
+        ];
+        let vision = FakePdfVisionClient;
+        let mut store = MemoryWikiStore::default();
+
+        let result = ingest_pages_with_vision(
+            temp.path(),
+            &mut store,
+            &ScopeIdentity::global(),
+            snapshot,
+            rendered_pages,
+            VisionEndpoint::Available(&vision),
+        )
+        .expect("ingest combined pdf");
+
+        let raw = std::fs::read_to_string(temp.path().join(&result.raw_path))
+            .expect("raw markdown written");
+        assert!(raw.contains("page_count: 2"));
+        assert!(raw.contains("has_text_layer: true"));
+        assert!(raw.contains("vision_used: true"));
+        assert!(raw.contains("model: vision-test"));
+        assert!(raw.contains("First page fact."));
+        assert!(raw.contains("Chart label: Growth"));
+        assert!(raw.contains("Scanned invoice total: $42"));
+        assert_eq!(raw.matches("First page fact.").count(), 1);
+        assert!(raw.contains("Visual description for guide-page-1.png."));
+        assert!(raw.contains("Visual description for guide-page-2.png."));
+    }
 
     #[test]
     fn pdf_ingest_preserves_page_refs() {
