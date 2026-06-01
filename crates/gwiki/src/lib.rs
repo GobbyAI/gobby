@@ -40,6 +40,7 @@ pub(crate) mod lint;
 pub(crate) mod log;
 #[allow(dead_code)]
 pub(crate) mod markdown;
+pub mod media;
 pub mod models;
 pub mod output;
 #[allow(dead_code)]

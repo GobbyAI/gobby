@@ -13,12 +13,16 @@ pub mod provisioning;
 
 // Always available - lightweight foundation modules.
 pub mod ai_context;
+pub mod ai_types;
 pub mod config;
 pub mod context;
 pub mod degradation;
 pub mod setup;
 
 // Feature-gated modules.
+#[cfg(feature = "ai")]
+pub mod ai;
+
 #[cfg(feature = "postgres")]
 pub mod postgres;
 
