@@ -237,9 +237,16 @@ impl TryFrom<WireTranscriptionSegment> for TranscriptionSegment {
     type Error = AiError;
 
     fn try_from(value: WireTranscriptionSegment) -> Result<Self, Self::Error> {
+        let start_ms = seconds_to_ms(value.start)?;
+        let end_ms = seconds_to_ms(value.end)?;
+        if end_ms < start_ms {
+            return Err(AiError::parse_failure(
+                "transcription segment end time precedes start time",
+            ));
+        }
         Ok(Self {
-            start_ms: seconds_to_ms(value.start)?,
-            end_ms: seconds_to_ms(value.end)?,
+            start_ms,
+            end_ms,
             text: value.text,
         })
     }
@@ -324,5 +331,20 @@ mod tests {
         let error = TranscriptionResult::from_wire_json(json).expect_err("overflow rejected");
 
         assert!(error.to_string().contains("too large"));
+    }
+
+    #[test]
+    fn transcription_wire_seconds_reject_reversed_segments() {
+        let json = serde_json::json!({
+            "text": "bad segment",
+            "segments": [
+                { "start": 2.0, "end": 1.0, "text": "backwards" }
+            ]
+        });
+
+        let error = TranscriptionResult::from_wire_json(json).expect_err("segment rejected");
+
+        assert!(matches!(error, AiError::ParseFailure { .. }));
+        assert!(error.to_string().contains("precedes start"));
     }
 }

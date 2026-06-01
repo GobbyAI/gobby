@@ -267,7 +267,7 @@ pub fn write_synthesized_page(
 
     let kind = match policy {
         WritePolicy::RequireMergeIntent => {
-            let mut file = fs::OpenOptions::new()
+            let file = fs::OpenOptions::new()
                 .write(true)
                 .create_new(true)
                 .open(&page.path)
@@ -288,17 +288,7 @@ pub fn write_synthesized_page(
                         }
                     }
                 })?;
-            file.write_all(page.markdown.as_bytes())
-                .map_err(|error| WikiError::Io {
-                    action: "write synthesized wiki page",
-                    path: Some(page.path.clone()),
-                    source: error,
-                })?;
-            file.sync_all().map_err(|error| WikiError::Io {
-                action: "write synthesized wiki page",
-                path: Some(page.path.clone()),
-                source: error,
-            })?;
+            write_created_synthesized_page(file, &page.path, page.markdown.as_bytes())?;
             sync_parent_dir(&page.path)?;
             PageWriteKind::Created
         }
@@ -308,18 +298,8 @@ pub fn write_synthesized_page(
                 .create_new(true)
                 .open(&page.path)
             {
-                Ok(mut file) => {
-                    file.write_all(page.markdown.as_bytes())
-                        .map_err(|error| WikiError::Io {
-                            action: "write synthesized wiki page",
-                            path: Some(page.path.clone()),
-                            source: error,
-                        })?;
-                    file.sync_all().map_err(|error| WikiError::Io {
-                        action: "write synthesized wiki page",
-                        path: Some(page.path.clone()),
-                        source: error,
-                    })?;
+                Ok(file) => {
+                    write_created_synthesized_page(file, &page.path, page.markdown.as_bytes())?;
                     sync_parent_dir(&page.path)?;
                     PageWriteKind::Created
                 }
@@ -512,6 +492,32 @@ fn yaml_scalar(value: &str) -> String {
         }
     }
     format!("\"{escaped}\"")
+}
+
+fn write_created_synthesized_page(
+    mut file: fs::File,
+    path: &Path,
+    contents: &[u8],
+) -> Result<(), WikiError> {
+    if let Err(error) = file.write_all(contents) {
+        drop(file);
+        let _ = fs::remove_file(path);
+        return Err(WikiError::Io {
+            action: "write synthesized wiki page",
+            path: Some(path.to_path_buf()),
+            source: error,
+        });
+    }
+    if let Err(error) = file.sync_all() {
+        drop(file);
+        let _ = fs::remove_file(path);
+        return Err(WikiError::Io {
+            action: "write synthesized wiki page",
+            path: Some(path.to_path_buf()),
+            source: error,
+        });
+    }
+    Ok(())
 }
 
 fn write_synthesized_page_atomically(path: &Path, contents: &[u8]) -> Result<(), WikiError> {

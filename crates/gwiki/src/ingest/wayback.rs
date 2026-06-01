@@ -2,6 +2,7 @@ use std::path::Path;
 
 use percent_encoding::percent_decode_str;
 use scraper::{ElementRef, Html, Node, Selector};
+use url::Url;
 
 use crate::WikiError;
 use crate::ingest::{
@@ -62,16 +63,8 @@ fn html_title(document: &Html) -> Option<String> {
 }
 
 fn title_from_url_path(url: &str) -> Option<String> {
-    let without_fragment = url.split('#').next().unwrap_or(url);
-    let without_query = without_fragment
-        .split('?')
-        .next()
-        .unwrap_or(without_fragment);
-    let path = without_query
-        .split_once("://")
-        .and_then(|(_, rest)| rest.split_once('/').map(|(_, path)| path))
-        .unwrap_or(without_query);
-    let segment = path.trim_end_matches('/').rsplit('/').next()?.trim();
+    let url = Url::parse(url).ok()?;
+    let segment = url.path_segments()?.rfind(|segment| !segment.is_empty())?;
     if segment.is_empty() {
         return None;
     }
@@ -80,13 +73,11 @@ fn title_from_url_path(url: &str) -> Option<String> {
 }
 
 fn url_host(url: &str) -> Option<String> {
-    let host = url
-        .split_once("://")?
-        .1
-        .split(['/', '?', '#'])
-        .next()?
-        .trim();
-    (!host.is_empty()).then(|| host.to_string())
+    Url::parse(url)
+        .ok()?
+        .host_str()
+        .filter(|host| !host.is_empty())
+        .map(str::to_string)
 }
 
 fn percent_decode_lossy(value: &str) -> String {

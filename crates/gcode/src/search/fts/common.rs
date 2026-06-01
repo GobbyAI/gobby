@@ -37,7 +37,7 @@ pub(super) enum SymbolOrder {
 impl SymbolOrder {
     fn sql(self) -> &'static str {
         match self {
-            Self::Bm25Score => "pdb.score(cs.id) DESC, cs.id ASC",
+            Self::Bm25Score => "pg_search.score(cs.id) DESC, cs.id ASC",
             Self::FileLine => "cs.file_path ASC, cs.line_start ASC",
             Self::Name => "cs.name ASC, cs.file_path ASC, cs.line_start ASC",
         }
@@ -191,6 +191,7 @@ pub(super) fn push_path_filter(
     alias: &str,
     paths: &[String],
 ) -> bool {
+    let requires_post_filter = !paths.is_empty();
     let Some(prefixes) = path_like_prefixes(paths) else {
         for path in paths
             .iter()
@@ -200,10 +201,10 @@ pub(super) fn push_path_filter(
                 "omitting SQL path filter for alias `{alias}` because path filter `{path}` cannot be converted to a LIKE prefix; relying on post-query glob matching",
             );
         }
-        return true;
+        return requires_post_filter;
     };
     if prefixes.is_empty() {
-        return false;
+        return requires_post_filter;
     }
 
     let predicates = prefixes
@@ -214,7 +215,7 @@ pub(super) fn push_path_filter(
         })
         .collect::<Vec<_>>();
     conditions.push(format!("({})", predicates.join(" OR ")));
-    false
+    requires_post_filter
 }
 
 pub(super) fn push_symbol_filters(
@@ -262,6 +263,9 @@ pub(super) fn append_unique_symbols(
     symbols: Vec<Symbol>,
     limit: usize,
 ) {
+    if limit == 0 {
+        return;
+    }
     for symbol in symbols {
         if seen.insert(symbol.id.clone()) {
             out.push(symbol);

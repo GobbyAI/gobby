@@ -26,6 +26,6 @@ pub use symbols::{
 };
 
 #[cfg(test)]
-use common::{glob_to_like_prefix, path_like_prefixes};
+use common::{append_unique_symbols, glob_to_like_prefix, path_like_prefixes};
 #[cfg(test)]
 use content::make_snippet;

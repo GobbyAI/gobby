@@ -88,6 +88,40 @@ fn path_like_prefixes_escape_and_require_all_patterns() {
 }
 
 #[test]
+fn append_unique_symbols_respects_zero_limit() {
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    append_unique_symbols(
+        &mut out,
+        &mut seen,
+        vec![crate::models::Symbol {
+            id: "sym-1".to_string(),
+            project_id: "project-1".to_string(),
+            file_path: "src/lib.rs".to_string(),
+            name: "run".to_string(),
+            qualified_name: "run".to_string(),
+            kind: "function".to_string(),
+            language: "rust".to_string(),
+            byte_start: 0,
+            byte_end: 1,
+            line_start: 1,
+            line_end: 1,
+            signature: None,
+            docstring: None,
+            parent_symbol_id: None,
+            content_hash: "hash".to_string(),
+            summary: None,
+            created_at: String::new(),
+            updated_at: String::new(),
+        }],
+        0,
+    );
+
+    assert!(out.is_empty());
+    assert!(seen.is_empty());
+}
+
+#[test]
 fn snippet_centers_first_matching_token() {
     let content = "before ".repeat(20) + "target call here";
     let snippet = make_snippet(&content, "target");
@@ -128,7 +162,7 @@ fn overlay_visibility_counts_and_kinds_use_database_predicates() {
 
     let ids = OverlayFixtureIds::new(database_url);
     cleanup_overlay_visibility_fixture(&mut conn, &ids);
-    let _cleanup = OverlayFixtureCleanup {
+    let cleanup = OverlayFixtureCleanup {
         database_url: ids.database_url.clone(),
         parent_project_id: ids.parent_project_id.clone(),
         overlay_project_id: ids.overlay_project_id.clone(),
@@ -151,6 +185,10 @@ fn overlay_visibility_counts_and_kinds_use_database_predicates() {
         1
     );
     assert_eq!(count_content_visible(&mut conn, "++", &ctx, None, &[]), 3);
+
+    cleanup
+        .cleanup()
+        .expect("cleanup overlay visibility fixture");
 }
 
 fn connect_overlay_visibility_test_db() -> Option<(Client, String)> {
@@ -204,28 +242,14 @@ struct OverlayFixtureCleanup {
     overlay_project_id: String,
 }
 
-impl Drop for OverlayFixtureCleanup {
-    fn drop(&mut self) {
-        let mut conn = match Client::connect(&self.database_url, NoTls) {
-            Ok(conn) => conn,
-            Err(err) => {
-                eprintln!(
-                    "failed to connect to cleanup overlay visibility fixture at {}: {err}",
-                    self.database_url
-                );
-                return;
-            }
-        };
-        if let Err(err) = cleanup_overlay_visibility_projects(
+impl OverlayFixtureCleanup {
+    fn cleanup(&self) -> Result<(), postgres::Error> {
+        let mut conn = Client::connect(&self.database_url, NoTls)?;
+        cleanup_overlay_visibility_projects(
             &mut conn,
             &self.parent_project_id,
             &self.overlay_project_id,
-        ) {
-            eprintln!(
-                "failed to cleanup overlay visibility fixture at {}: {err}",
-                self.database_url
-            );
-        }
+        )
     }
 }
 

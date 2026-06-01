@@ -79,7 +79,8 @@ fn index_discovered_files(
     if request.path_filter.is_none() {
         let orphans = get_orphan_files(conn, project_id, &current_files.present_paths)?;
         for orphan in &orphans {
-            cleanup_deleted_file_projections(ctx, orphan, &mut outcome);
+            let file_vectors_synced = db::file_vectors_synced(conn, project_id, orphan)?;
+            cleanup_deleted_file_projections(ctx, orphan, &mut outcome, file_vectors_synced);
             api::delete_file_facts(conn, project_id, orphan)?;
         }
     }
@@ -186,7 +187,8 @@ fn index_explicit_files_with_connection(
 
         if !abs.exists() {
             let rel = requested_relative_path(root_path, fp);
-            cleanup_deleted_file_projections(ctx, &rel, &mut outcome);
+            let file_vectors_synced = db::file_vectors_synced(conn, project_id, &rel)?;
+            cleanup_deleted_file_projections(ctx, &rel, &mut outcome, file_vectors_synced);
             api::delete_file_facts(conn, project_id, &rel)?;
             continue;
         }
@@ -206,11 +208,13 @@ fn index_explicit_files_with_connection(
                     continue;
                 };
                 let file_facts_exist = api::file_facts_exist(conn, project_id, &rel)?;
+                let file_vectors_synced = db::file_vectors_synced(conn, project_id, &rel)?;
                 cleanup_skipped_explicit_file_if_indexed(
                     ctx,
                     &rel,
                     &mut outcome,
                     file_facts_exist,
+                    file_vectors_synced,
                     || api::delete_file_facts(conn, project_id, &rel),
                 )?;
             }
@@ -285,11 +289,12 @@ pub(super) fn cleanup_skipped_explicit_file_if_indexed(
     rel: &str,
     outcome: &mut IndexOutcome,
     file_facts_exist: bool,
+    file_vectors_synced: bool,
     delete_file_facts: impl FnOnce() -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     outcome.skipped_files += 1;
     if file_facts_exist {
-        cleanup_deleted_file_projections(ctx, rel, outcome);
+        cleanup_deleted_file_projections(ctx, rel, outcome, file_vectors_synced);
         delete_file_facts()?;
     }
     Ok(())

@@ -13,12 +13,25 @@ const QDRANT_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, thiserror::Error)]
 pub enum QdrantError {
-    #[error("Qdrant {operation} failed: HTTP {status}")]
+    #[error("Qdrant {operation} failed{context}: HTTP {status}", context = http_status_context(collection, request))]
     HttpStatus {
         operation: &'static str,
         status: reqwest::StatusCode,
         body: String,
+        collection: Option<String>,
+        request: Option<String>,
     },
+}
+
+fn http_status_context(collection: &Option<String>, request: &Option<String>) -> String {
+    match (collection.as_deref(), request.as_deref()) {
+        (Some(collection), Some(request)) => {
+            format!(" for collection `{collection}` during `{request}`")
+        }
+        (Some(collection), None) => format!(" for collection `{collection}`"),
+        (None, Some(request)) => format!(" during `{request}`"),
+        (None, None) => String::new(),
+    }
 }
 
 /// Scope for a Qdrant collection, allowing caller-controlled naming.
@@ -105,10 +118,9 @@ pub fn search(
         .timeout(QDRANT_TIMEOUT)
         .build()?;
 
-    let mut req = client.post(format!(
-        "{url}/collections/{}/points/search",
-        encoded_collection(collection)
-    ));
+    let collection_path = encoded_collection(collection);
+    let request_path = format!("/collections/{collection_path}/points/search");
+    let mut req = client.post(format!("{url}{request_path}"));
     if let Some(key) = &config.api_key {
         req = req.header("api-key", key);
     }
@@ -129,6 +141,8 @@ pub fn search(
             operation: "search",
             status,
             body,
+            collection: Some(collection.to_string()),
+            request: Some(format!("POST {request_path}")),
         }
         .into());
     }
@@ -175,10 +189,9 @@ pub fn upsert(
         .collect();
     let body = serde_json::json!({ "points": points });
 
-    let mut req = client.put(format!(
-        "{url}/collections/{}/points",
-        encoded_collection(collection)
-    ));
+    let collection_path = encoded_collection(collection);
+    let request_path = format!("/collections/{collection_path}/points");
+    let mut req = client.put(format!("{url}{request_path}"));
     if let Some(key) = &config.api_key {
         req = req.header("api-key", key);
     }
@@ -193,6 +206,8 @@ pub fn upsert(
             operation: "upsert",
             status,
             body,
+            collection: Some(collection.to_string()),
+            request: Some(format!("PUT {request_path}")),
         }
         .into());
     }
@@ -243,10 +258,8 @@ mod tests {
     use super::*;
     use crate::config::QdrantConfig;
     use crate::degradation::ServiceState;
+    use crate::test_http::{RequestHandle, spawn_json_response_with_status};
     use serde_json::{Map, Value, json};
-    use std::io::{Read, Write};
-    use std::net::TcpListener;
-    use std::thread;
 
     #[test]
     fn collection_name_covers_all_scopes() {
@@ -343,7 +356,7 @@ mod tests {
             },
         )
         .expect("search succeeds");
-        let request = request_handle.join().expect("request thread");
+        let request = request_handle.join().expect("request thread").unwrap();
 
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].id, "point-1");
@@ -377,7 +390,7 @@ mod tests {
             )
         })
         .expect("composed search");
-        request_handle.join().expect("request thread");
+        request_handle.join().expect("request thread").unwrap();
 
         assert_eq!(state, ServiceState::Available);
         assert_eq!(hits[0].id, "point-1");
@@ -423,13 +436,14 @@ mod tests {
             )
         })
         .expect("http errors degrade out of qdrant boundary");
-        request_handle.join().expect("request thread");
+        request_handle.join().expect("request thread").unwrap();
 
         assert!(hits.is_empty());
         assert!(matches!(
             state,
             ServiceState::Unreachable { ref message }
-                if message.contains("Qdrant search failed: HTTP 503")
+                if message.contains("Qdrant search failed for collection `collection`")
+                    && message.contains("HTTP 503")
         ));
     }
 
@@ -451,16 +465,26 @@ mod tests {
             },
         )
         .expect_err("search HTTP failure is typed");
-        search_handle.join().expect("search request thread");
+        search_handle
+            .join()
+            .expect("search request thread")
+            .unwrap();
         match err.downcast_ref::<QdrantError>() {
             Some(QdrantError::HttpStatus {
                 operation,
                 status,
                 body,
+                collection,
+                request,
             }) => {
                 assert_eq!(*operation, "search");
                 assert_eq!(*status, reqwest::StatusCode::SERVICE_UNAVAILABLE);
                 assert!(body.contains("service unavailable"));
+                assert_eq!(collection.as_deref(), Some("collection"));
+                assert_eq!(
+                    request.as_deref(),
+                    Some("POST /collections/collection/points/search")
+                );
             }
             None => panic!("expected QdrantError, got {err}"),
         }
@@ -480,16 +504,26 @@ mod tests {
             }],
         )
         .expect_err("upsert HTTP failure is typed");
-        upsert_handle.join().expect("upsert request thread");
+        upsert_handle
+            .join()
+            .expect("upsert request thread")
+            .unwrap();
         match err.downcast_ref::<QdrantError>() {
             Some(QdrantError::HttpStatus {
                 operation,
                 status,
                 body,
+                collection,
+                request,
             }) => {
                 assert_eq!(*operation, "upsert");
                 assert_eq!(*status, reqwest::StatusCode::INTERNAL_SERVER_ERROR);
                 assert!(body.contains("boom"));
+                assert_eq!(collection.as_deref(), Some("collection"));
+                assert_eq!(
+                    request.as_deref(),
+                    Some("PUT /collections/collection/points")
+                );
             }
             None => panic!("expected QdrantError, got {err}"),
         }
@@ -501,70 +535,22 @@ mod tests {
             operation: "search",
             status: reqwest::StatusCode::BAD_REQUEST,
             body: "bad request".to_string(),
+            collection: None,
+            request: None,
         });
         let server_error = anyhow::Error::new(QdrantError::HttpStatus {
             operation: "search",
             status: reqwest::StatusCode::INTERNAL_SERVER_ERROR,
             body: "boom".to_string(),
+            collection: None,
+            request: None,
         });
 
         assert!(!is_qdrant_unreachable(&client_error));
         assert!(is_qdrant_unreachable(&server_error));
     }
 
-    fn spawn_qdrant_response(status: u16, body: Value) -> (String, thread::JoinHandle<String>) {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
-        let addr = listener.local_addr().expect("local addr");
-        let handle = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().expect("accept request");
-            let request = read_http_request(&mut stream);
-
-            let body = body.to_string();
-            write!(
-                stream,
-                "HTTP/1.1 {status} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            )
-            .expect("write response");
-
-            request
-        });
-
-        (format!("http://{addr}"), handle)
-    }
-
-    fn read_http_request(stream: &mut impl Read) -> String {
-        let mut request = Vec::new();
-        let mut buffer = [0; 4096];
-        let mut expected_len = None;
-
-        loop {
-            let n = stream.read(&mut buffer).expect("read request");
-            if n == 0 {
-                break;
-            }
-            request.extend_from_slice(&buffer[..n]);
-
-            if expected_len.is_none()
-                && let Some(header_end) =
-                    request.windows(4).position(|window| window == b"\r\n\r\n")
-            {
-                let headers = String::from_utf8_lossy(&request[..header_end]);
-                let content_len = headers
-                    .lines()
-                    .find_map(|line| line.strip_prefix("content-length: "))
-                    .and_then(|value| value.parse::<usize>().ok())
-                    .unwrap_or(0);
-                expected_len = Some(header_end + 4 + content_len);
-            }
-
-            if let Some(expected_len) = expected_len
-                && request.len() >= expected_len
-            {
-                break;
-            }
-        }
-
-        String::from_utf8_lossy(&request).into_owned()
+    fn spawn_qdrant_response(status: u16, body: Value) -> (String, RequestHandle) {
+        spawn_json_response_with_status(status, body.to_string()).expect("spawn qdrant test server")
     }
 }

@@ -146,10 +146,7 @@ mod tests {
     use super::*;
     use crate::ai_context::{AiBindings, AiLimiter};
     use crate::config::{AiRouting, AiTuning, CapabilityBinding};
-    use std::io::{ErrorKind, Read, Write};
-    use std::net::TcpListener;
-    use std::thread;
-    use std::time::Duration;
+    use crate::test_http::{RequestHandle, spawn_json_response};
 
     #[test]
     fn builds_multipart_and_parses_segments() {
@@ -166,7 +163,7 @@ mod tests {
             Some("es"),
         )
         .unwrap();
-        let request = request.join().unwrap();
+        let request = request.join().unwrap().unwrap();
 
         assert!(request.starts_with("POST /v1/audio/translations HTTP/1.1"));
         assert!(request.contains("filename=\"clip.webm\""));
@@ -195,7 +192,7 @@ mod tests {
             None,
         )
         .unwrap();
-        let request = request.join().unwrap();
+        let request = request.join().unwrap().unwrap();
 
         assert!(request.starts_with("POST /v1/audio/transcriptions HTTP/1.1"));
         assert!(has_header(&request, "authorization", "Bearer test-token"));
@@ -203,68 +200,8 @@ mod tests {
         assert!(request.contains("Content-Type: audio/mp4"));
     }
 
-    fn spawn_server(response: &'static str) -> (String, thread::JoinHandle<String>) {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let api_base = format!("http://{}", listener.local_addr().unwrap());
-        let handle = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            stream
-                .set_read_timeout(Some(Duration::from_secs(2)))
-                .unwrap();
-            let request = read_http_request(&mut stream);
-            write!(
-                stream,
-                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
-                response.len(),
-                response
-            )
-            .unwrap();
-            request
-        });
-        (api_base, handle)
-    }
-
-    fn read_http_request(stream: &mut impl Read) -> String {
-        let mut request = Vec::new();
-        let mut chunk = [0_u8; 1024];
-        loop {
-            let read = match stream.read(&mut chunk) {
-                Ok(read) => read,
-                Err(error)
-                    if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) =>
-                {
-                    break;
-                }
-                Err(error) => panic!("read request: {error}"),
-            };
-            if read == 0 {
-                break;
-            }
-            request.extend_from_slice(&chunk[..read]);
-
-            if let Some(header_end) = find_header_end(&request) {
-                let header = String::from_utf8_lossy(&request[..header_end]);
-                if let Some(content_length) = content_length(&header) {
-                    let body_len = request.len().saturating_sub(header_end + 4);
-                    if body_len >= content_length {
-                        break;
-                    }
-                }
-            }
-        }
-        String::from_utf8(request).unwrap()
-    }
-
-    fn find_header_end(request: &[u8]) -> Option<usize> {
-        request.windows(4).position(|window| window == b"\r\n\r\n")
-    }
-
-    fn content_length(header: &str) -> Option<usize> {
-        header.lines().find_map(|line| {
-            line.strip_prefix("content-length: ")
-                .or_else(|| line.strip_prefix("Content-Length: "))
-                .and_then(|value| value.trim().parse().ok())
-        })
+    fn spawn_server(response: &'static str) -> (String, RequestHandle) {
+        spawn_json_response(response).expect("spawn test server")
     }
 
     fn has_header(request: &str, name: &str, value: &str) -> bool {

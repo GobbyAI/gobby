@@ -19,7 +19,7 @@ qdrant = ["dep:reqwest", "dep:urlencoding"]
 indexing = ["dep:ignore", "dep:sha2"]
 search = []
 local_backend = ["dep:ureq"]
-ai = ["dep:reqwest", "dep:base64", "dep:bytes", "dep:ureq", "reqwest/multipart"]
+ai = ["dep:reqwest", "dep:base64", "dep:bytes", "dep:httpdate", "local_backend", "reqwest/multipart"]
 full = ["postgres", "falkor", "qdrant", "indexing", "search", "ai"]
 
 [dependencies]
@@ -39,6 +39,7 @@ falkordb = { version = "0.2", optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"], optional = true }
 base64 = { version = "0.22", optional = true }
 bytes = { version = "1", optional = true }
+httpdate = { version = "1", optional = true }
 ureq = { version = "2", optional = true }
 ignore = { version = "0.4", optional = true }
 sha2 = { version = "0.10", optional = true }

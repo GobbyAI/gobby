@@ -315,13 +315,13 @@ fn merge_pdf_pages(
         .iter()
         .map(|page| (page.number, page.text.as_str()))
         .collect::<BTreeMap<_, _>>();
-    let rendered_pages = rendered_pages
+    let rendered_page_map = rendered_pages
         .into_iter()
         .map(|page| (page.number, page))
         .collect::<BTreeMap<_, _>>();
     let page_numbers = text_pages
         .keys()
-        .chain(rendered_pages.keys())
+        .chain(rendered_page_map.keys())
         .copied()
         .collect::<BTreeSet<_>>();
     let mut vision_used = false;
@@ -331,16 +331,15 @@ fn merge_pdf_pages(
 
     for number in page_numbers {
         let text_layer = text_pages.get(&number).copied().unwrap_or_default();
-        let vision =
-            rendered_pages.get(&number).and_then(|rendered| {
-                match extract_vision_for_page(snapshot, asset_path, rendered, &endpoint) {
-                    Ok(vision) => vision,
-                    Err(_) => {
-                        vision_failed = true;
-                        None
-                    }
+        let vision = rendered_page_map.get(&number).and_then(|rendered| {
+            match extract_vision_for_page(snapshot, asset_path, rendered, &endpoint) {
+                Ok(vision) => vision,
+                Err(_) => {
+                    vision_failed = true;
+                    None
                 }
-            });
+            }
+        });
         if let Some(vision) = &vision {
             vision_used = true;
             if let Some(model) = vision_model(vision) {
@@ -357,9 +356,9 @@ fn merge_pdf_pages(
         .pages
         .iter()
         .any(|page| !normalize_page_text(&page.text).is_empty());
-    let page_count = text_pages.len().max(rendered_pages.len());
+    let page_count = text_pages.len().max(rendered_page_map.len());
     let mut degradations = degradations;
-    if matches!(endpoint, VisionEndpoint::Unavailable(_)) && !rendered_pages.is_empty() {
+    if matches!(endpoint, VisionEndpoint::Unavailable(_)) && page_count > 0 {
         degradations.push(DocumentDegradation::new(
             DocumentFailureMode::PdfVisionUnavailable,
             DocumentUnitCount::pages(page_count),

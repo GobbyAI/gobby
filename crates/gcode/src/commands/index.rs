@@ -82,6 +82,8 @@ fn index_text(outcome: &IndexOutcome) -> String {
     text
 }
 
+/// Pluralizes only the status nouns emitted by this command; unknown nouns are
+/// returned unchanged so callers opt in deliberately.
 fn pluralize(count: usize, singular: &str) -> &str {
     match (count, singular) {
         (1, "file") => "file",
@@ -235,6 +237,19 @@ mod tests {
         ProjectionStatus, ProjectionSyncError, ProjectionSyncReport, ProjectionSyncReports,
     };
     use serde_json::{Value, json};
+
+    #[test]
+    fn pluralize_handles_index_status_nouns() {
+        assert_eq!(pluralize(1, "file"), "file");
+        assert_eq!(pluralize(2, "file"), "files");
+        assert_eq!(pluralize(1, "example"), "example");
+        assert_eq!(pluralize(0, "example"), "examples");
+    }
+
+    #[test]
+    fn pluralize_leaves_unknown_nouns_unchanged() {
+        assert_eq!(pluralize(2, "symbol"), "symbol");
+    }
 
     fn sample_outcome() -> IndexOutcome {
         IndexOutcome {

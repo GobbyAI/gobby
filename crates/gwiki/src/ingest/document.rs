@@ -1,4 +1,5 @@
-use std::io::{Cursor, Read};
+use std::fs::{self, File};
+use std::io::{Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 
 use calamine::{Data, Reader, open_workbook_auto_from_rs};
@@ -383,12 +384,76 @@ fn write_document_derived_markdown(
         extraction,
         degradation,
     );
-    std::fs::write(&path, markdown).map_err(|error| WikiError::Io {
-        action: "write document derived markdown",
-        path: Some(path),
+    write_document_markdown_atomic(&path, markdown.as_bytes())?;
+    Ok(relative_path)
+}
+
+fn write_document_markdown_atomic(path: &Path, contents: &[u8]) -> Result<(), WikiError> {
+    let temp_path = temp_sibling_path(path);
+    let mut file = File::create(&temp_path).map_err(|error| WikiError::Io {
+        action: "create document derived markdown temp file",
+        path: Some(temp_path.clone()),
         source: error,
     })?;
-    Ok(relative_path)
+    if let Err(error) = file.write_all(contents) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(WikiError::Io {
+            action: "write document derived markdown",
+            path: Some(temp_path),
+            source: error,
+        });
+    }
+    if let Err(error) = file.sync_all() {
+        let _ = fs::remove_file(&temp_path);
+        return Err(WikiError::Io {
+            action: "sync document derived markdown temp file",
+            path: Some(temp_path),
+            source: error,
+        });
+    }
+    drop(file);
+    if let Err(error) = fs::rename(&temp_path, path) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(WikiError::Io {
+            action: "write document derived markdown",
+            path: Some(path.to_path_buf()),
+            source: error,
+        });
+    }
+    sync_parent_dir(path)
+}
+
+fn temp_sibling_path(path: &Path) -> PathBuf {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("document.md");
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    path.with_file_name(format!(".{file_name}.{}.{nanos}.tmp", std::process::id()))
+}
+
+fn sync_parent_dir(path: &Path) -> Result<(), WikiError> {
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Ok(())
+    }
+    #[cfg(unix)]
+    {
+        let Some(parent) = path.parent() else {
+            return Ok(());
+        };
+        File::open(parent)
+            .and_then(|dir| dir.sync_all())
+            .map_err(|error| WikiError::Io {
+                action: "sync document derived markdown directory",
+                path: Some(parent.to_path_buf()),
+                source: error,
+            })
+    }
 }
 
 fn render_document_derived_markdown(

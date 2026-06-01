@@ -51,7 +51,9 @@ impl ConfigSource for PostgresConfigSource<'_> {
 
     fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
         if value.contains("$secret:") {
-            anyhow::bail!("secret resolution is not available in gwiki search config");
+            anyhow::bail!(
+                "gwiki search config from PostgreSQL config_store contains $secret:, but this CLI source cannot resolve daemon secrets; replace it with a resolved value or environment pattern before running gwiki search"
+            );
         }
 
         gobby_core::config::resolve_env_pattern(value)?
@@ -66,6 +68,7 @@ pub(crate) fn store_search_hits(
 ) -> Vec<search::WikiSearchResult> {
     let tokens = query_tokens(query);
     if tokens.is_empty() {
+        log::info!("support store search received an empty query; returning no results");
         return Vec::new();
     }
 

@@ -296,12 +296,16 @@ fn parse_json_response(response: Response) -> Result<serde_json::Value, AiError>
 }
 
 fn parse_retry_after(value: &str) -> Option<Duration> {
-    value
-        .trim()
-        .parse::<u64>()
-        .ok()
-        .map(Duration::from_secs)
-        .map(|duration| duration.min(MAX_BACKOFF))
+    let value = value.trim();
+    if let Ok(seconds) = value.parse::<u64>() {
+        return Some(Duration::from_secs(seconds).min(MAX_BACKOFF));
+    }
+
+    let date = httpdate::parse_http_date(value).ok()?;
+    let delay = date
+        .duration_since(SystemTime::now())
+        .unwrap_or(Duration::ZERO);
+    Some(delay.min(MAX_BACKOFF))
 }
 
 fn reqwest_error(error: reqwest::Error) -> AiError {
@@ -433,6 +437,22 @@ mod tests {
         assert_eq!(result.unwrap(), "ok");
         assert_eq!(attempts, 2);
         assert_eq!(delays, vec![Duration::from_millis(750)]);
+    }
+
+    #[test]
+    fn parse_retry_after_accepts_http_dates_and_clamps() {
+        let future = SystemTime::now() + MAX_BACKOFF + Duration::from_secs(60);
+        let past = SystemTime::UNIX_EPOCH + Duration::from_secs(784_111_777);
+
+        assert_eq!(
+            parse_retry_after(&httpdate::fmt_http_date(future)),
+            Some(MAX_BACKOFF)
+        );
+        assert_eq!(
+            parse_retry_after(&httpdate::fmt_http_date(past)),
+            Some(Duration::ZERO)
+        );
+        assert_eq!(parse_retry_after("120"), Some(MAX_BACKOFF));
     }
 
     #[test]

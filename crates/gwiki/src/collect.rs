@@ -7,8 +7,8 @@ use serde_json::json;
 
 use crate::WikiError;
 use crate::ingest::{
-    index_after_ingest, markdown_metadata, markdown_title, text_from_utf8_lossy, write_asset,
-    write_raw_markdown,
+    asset_path as source_asset_path, index_after_ingest, markdown_metadata, markdown_title,
+    text_from_utf8_lossy, write_asset, write_raw_markdown,
 };
 use crate::sources::{CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest};
 use crate::store::WikiIndexStore;
@@ -230,7 +230,19 @@ fn accept_item(
                 },
             )?;
             let markdown = render_url_markdown(&url, fetched_at, &record.content_hash);
-            let raw_path = write_raw_markdown(vault_root, &record, &markdown)?;
+            let raw_path = match write_raw_markdown(vault_root, &record, &markdown) {
+                Ok(raw_path) => raw_path,
+                Err(error) => {
+                    let predicted_raw_path = PathBuf::from("raw").join(format!("{}.md", record.id));
+                    return rollback_registered_collect_source(
+                        vault_root,
+                        &previous_manifest,
+                        Some(&predicted_raw_path),
+                        None,
+                        error,
+                    );
+                }
+            };
             (record.kind, raw_path, None)
         }
         InboxKind::File(kind) => {
@@ -253,9 +265,25 @@ fn accept_item(
                     compile_status: CompileStatus::Pending,
                 },
             )?;
-            let asset_path = should_store_asset(&kind)
-                .then(|| write_asset(vault_root, &record, file_name, &bytes))
-                .transpose()?;
+            let predicted_asset_path =
+                should_store_asset(&kind).then(|| source_asset_path(&record, file_name));
+            let asset_path = match predicted_asset_path.as_ref() {
+                Some(predicted_asset_path) => {
+                    match write_asset(vault_root, &record, file_name, &bytes) {
+                        Ok(asset_path) => Some(asset_path),
+                        Err(error) => {
+                            return rollback_registered_collect_source(
+                                vault_root,
+                                &previous_manifest,
+                                None,
+                                Some(predicted_asset_path),
+                                error,
+                            );
+                        }
+                    }
+                }
+                None => None,
+            };
             let markdown = render_file_markdown(
                 &title,
                 &relative,
@@ -265,15 +293,27 @@ fn accept_item(
                 &bytes,
                 asset_path.as_deref(),
             );
-            let raw_path = write_raw_markdown(vault_root, &record, &markdown)?;
+            let raw_path = match write_raw_markdown(vault_root, &record, &markdown) {
+                Ok(raw_path) => raw_path,
+                Err(error) => {
+                    let predicted_raw_path = PathBuf::from("raw").join(format!("{}.md", record.id));
+                    return rollback_registered_collect_source(
+                        vault_root,
+                        &previous_manifest,
+                        Some(&predicted_raw_path),
+                        asset_path.as_ref(),
+                        error,
+                    );
+                }
+            };
             (record.kind, raw_path, asset_path)
         }
     };
 
     if let Err(error) = fs::remove_file(&path) {
-        let _ = fs::remove_file(&raw_path);
+        let _ = fs::remove_file(vault_root.join(&raw_path));
         if let Some(asset_path) = &asset_path {
-            let _ = fs::remove_file(asset_path);
+            let _ = fs::remove_file(vault_root.join(asset_path));
         }
         let original_error = io_error("remove accepted inbox item", &path, error);
         if let Err(rollback_error) = previous_manifest.write(vault_root) {
@@ -293,6 +333,29 @@ fn accept_item(
         reason: None,
     });
     Ok(())
+}
+
+fn rollback_registered_collect_source<T>(
+    vault_root: &Path,
+    previous_manifest: &SourceManifest,
+    raw_path: Option<&PathBuf>,
+    asset_path: Option<&PathBuf>,
+    original_error: WikiError,
+) -> Result<T, WikiError> {
+    if let Some(raw_path) = raw_path {
+        let _ = fs::remove_file(vault_root.join(raw_path));
+    }
+    if let Some(asset_path) = asset_path {
+        let _ = fs::remove_file(vault_root.join(asset_path));
+    }
+    if let Err(rollback_error) = previous_manifest.write(vault_root) {
+        return Err(WikiError::Config {
+            detail: format!(
+                "failed to roll back source manifest after collect write failure: {rollback_error}; original error: {original_error}"
+            ),
+        });
+    }
+    Err(original_error)
 }
 
 fn skip_item(

@@ -521,9 +521,6 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
                 ],
             ) {
                 let error = StoreError::from(error);
-                eprintln!(
-                    "warning: failed to insert gwiki link for {path} -> {target_path}: {error}"
-                );
                 rollback_link_replacement(tx, &path_string);
                 return Err(error);
             }

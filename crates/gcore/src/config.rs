@@ -1336,6 +1336,11 @@ mod tests {
 
     #[test]
     fn embedding_keys_centralized() {
+        if std::env::var("RUN_SLOW_TESTS").is_err() {
+            eprintln!("skipping slow workspace embedding key scan; set RUN_SLOW_TESTS=1 to run");
+            return;
+        }
+
         let workspace = workspace_root();
         let offenders = embedding_key_literal_offenders(&workspace.join("crates"));
 

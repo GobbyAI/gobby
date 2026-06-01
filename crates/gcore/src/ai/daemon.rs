@@ -423,14 +423,11 @@ mod tests {
     use super::*;
     use crate::ai_context::{AiBindings, AiLimiter};
     use crate::config::{AiRouting, AiTuning, CapabilityBinding, TEST_ENV_LOCK};
+    use crate::test_http::{RequestHandle, spawn_json_response};
     use std::ffi::OsString;
     use std::fs;
-    use std::io::{ErrorKind, Read, Write};
-    use std::net::TcpListener;
     use std::path::Path;
     use std::sync::MutexGuard;
-    use std::thread;
-    use std::time::Duration;
 
     #[test]
     fn legacy_text_maps_to_single_segment() {
@@ -449,7 +446,7 @@ mod tests {
             DaemonTranscriptionOptions::default(),
         )
         .unwrap();
-        let _request = request.join().unwrap();
+        let _request = request.join().unwrap().unwrap();
 
         assert_eq!(result.text, "legacy transcript");
         assert_eq!(result.segments.len(), 1);
@@ -470,7 +467,7 @@ mod tests {
         let cfg = test_context(Some("project-123"));
 
         let result = generate_via_daemon(&cfg, "Write a title", Some("Be brief")).unwrap();
-        let request = request.join().unwrap();
+        let request = request.join().unwrap().unwrap();
         let body = request_body_json(&request);
 
         assert!(request.starts_with("POST /api/llm/generate HTTP/1.1"));
@@ -486,7 +483,7 @@ mod tests {
         let cfg = test_context(None);
 
         generate_via_daemon(&cfg, "No project", None).unwrap();
-        let request = request.join().unwrap();
+        let request = request.join().unwrap().unwrap();
         let body = request_body_json(&request);
 
         assert_eq!(body["provider"], "daemon-provider");
@@ -505,7 +502,7 @@ mod tests {
         let input = vec!["same".to_string(), "same".to_string()];
 
         let result = embed_via_daemon(&cfg, &input, true).unwrap();
-        let request = request.join().unwrap();
+        let request = request.join().unwrap().unwrap();
         let body = request_body_json(&request);
 
         assert!(request.starts_with("POST /api/embeddings HTTP/1.1"));
@@ -559,7 +556,7 @@ mod tests {
         let cfg = test_context(None);
 
         describe_image_via_daemon(&cfg, b"png bytes".to_vec(), "figure.png", "image/png").unwrap();
-        let request = request.join().unwrap();
+        let request = request.join().unwrap().unwrap();
 
         assert!(request.starts_with("POST /api/llm/vision/extract HTTP/1.1"));
         assert!(has_header(&request, "x-gobby-local-token", "local-secret"));
@@ -579,7 +576,7 @@ mod tests {
             DaemonTranscriptionOptions::default(),
         )
         .unwrap();
-        let request = request.join().unwrap();
+        let request = request.join().unwrap().unwrap();
 
         assert!(request.starts_with("POST /api/voice/transcribe HTTP/1.1"));
         assert!(has_header(&request, "x-gobby-local-token", "local-secret"));
@@ -608,7 +605,7 @@ mod tests {
             },
         )
         .unwrap();
-        let request = request.join().unwrap();
+        let request = request.join().unwrap().unwrap();
 
         assert!(multipart_has_field(
             &request,
@@ -632,7 +629,7 @@ mod tests {
             DaemonTranscriptionOptions::default(),
         )
         .unwrap();
-        let request = request.join().unwrap();
+        let request = request.join().unwrap().unwrap();
 
         assert!(multipart_has_field(
             &request,
@@ -642,68 +639,15 @@ mod tests {
         assert!(!multipart_has_field(&request, "capability", "transcribe"));
     }
 
-    fn spawn_server(response: &'static str) -> (u16, thread::JoinHandle<String>) {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let handle = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            stream
-                .set_read_timeout(Some(Duration::from_secs(2)))
-                .unwrap();
-            let request = read_http_request(&mut stream);
-            write!(
-                stream,
-                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
-                response.len(),
-                response
-            )
-            .unwrap();
-            request
-        });
+    fn spawn_server(response: &'static str) -> (u16, RequestHandle) {
+        let (api_base, handle) = spawn_json_response(response).expect("spawn test server");
+        let port = api_base
+            .rsplit(':')
+            .next()
+            .expect("server port")
+            .parse()
+            .expect("numeric server port");
         (port, handle)
-    }
-
-    fn read_http_request(stream: &mut impl Read) -> String {
-        let mut request = Vec::new();
-        let mut chunk = [0_u8; 1024];
-        loop {
-            let read = match stream.read(&mut chunk) {
-                Ok(read) => read,
-                Err(error)
-                    if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) =>
-                {
-                    break;
-                }
-                Err(error) => panic!("read request: {error}"),
-            };
-            if read == 0 {
-                break;
-            }
-            request.extend_from_slice(&chunk[..read]);
-
-            if let Some(header_end) = find_header_end(&request) {
-                let header = String::from_utf8_lossy(&request[..header_end]);
-                if let Some(content_length) = content_length(&header) {
-                    let body_len = request.len().saturating_sub(header_end + 4);
-                    if body_len >= content_length {
-                        break;
-                    }
-                }
-            }
-        }
-        String::from_utf8(request).unwrap()
-    }
-
-    fn find_header_end(request: &[u8]) -> Option<usize> {
-        request.windows(4).position(|window| window == b"\r\n\r\n")
-    }
-
-    fn content_length(header: &str) -> Option<usize> {
-        header.lines().find_map(|line| {
-            line.strip_prefix("content-length: ")
-                .or_else(|| line.strip_prefix("Content-Length: "))
-                .and_then(|value| value.trim().parse().ok())
-        })
     }
 
     fn request_body_json(request: &str) -> serde_json::Value {

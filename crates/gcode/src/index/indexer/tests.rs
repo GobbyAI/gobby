@@ -401,10 +401,17 @@ fn explicit_skip_cleanup_deletes_stale_facts_and_projections() {
     let mut outcome = IndexOutcome::new("project-1");
     let mut deleted = false;
 
-    cleanup_skipped_explicit_file_if_indexed(&ctx, "src/setup.mjs", &mut outcome, true, || {
-        deleted = true;
-        Ok(())
-    })
+    cleanup_skipped_explicit_file_if_indexed(
+        &ctx,
+        "src/setup.mjs",
+        &mut outcome,
+        true,
+        true,
+        || {
+            deleted = true;
+            Ok(())
+        },
+    )
     .expect("cleanup skipped explicit file");
 
     assert!(deleted);
@@ -444,9 +451,14 @@ fn explicit_skip_cleanup_ignores_never_indexed_files() {
     };
     let mut outcome = IndexOutcome::new("project-1");
 
-    cleanup_skipped_explicit_file_if_indexed(&ctx, "src/secret.txt", &mut outcome, false, || {
-        panic!("delete should not run for files without stale facts")
-    })
+    cleanup_skipped_explicit_file_if_indexed(
+        &ctx,
+        "src/secret.txt",
+        &mut outcome,
+        false,
+        false,
+        || panic!("delete should not run for files without stale facts"),
+    )
     .expect("cleanup skipped explicit file");
 
     assert_eq!(outcome.skipped_files, 1);
@@ -522,7 +534,7 @@ fn deleted_file_projection_cleanup_degrades_without_services() {
     };
     let mut outcome = IndexOutcome::new("project-1");
 
-    cleanup_deleted_file_projections(&ctx, "src/deleted.rs", &mut outcome);
+    cleanup_deleted_file_projections(&ctx, "src/deleted.rs", &mut outcome, true);
 
     assert_eq!(outcome.degraded.len(), 2);
     assert!(outcome.degraded.iter().any(|degradation| matches!(
@@ -542,5 +554,33 @@ fn deleted_file_projection_cleanup_degrades_without_services() {
             message,
         } if file_path == "src/deleted.rs"
             && message.contains("Qdrant config is required")
+    )));
+}
+
+#[test]
+fn deleted_file_projection_cleanup_skips_vectors_when_not_previously_synced() {
+    let ctx = Context {
+        database_url: "postgresql://localhost/nonexistent".to_string(),
+        project_root: PathBuf::from("/project"),
+        project_id: "project-1".to_string(),
+        quiet: true,
+        falkordb: None,
+        qdrant: None,
+        embedding: None,
+        code_vectors: crate::config::CodeVectorSettings { vector_dim: None },
+        daemon_url: None,
+        index_scope: crate::config::ProjectIndexScope::Single,
+    };
+    let mut outcome = IndexOutcome::new("project-1");
+
+    cleanup_deleted_file_projections(&ctx, "src/deleted.rs", &mut outcome, false);
+
+    assert_eq!(outcome.degraded.len(), 1);
+    assert!(outcome.degraded.iter().all(|degradation| matches!(
+        degradation,
+        IndexDegradation::ProjectionCleanupFailed {
+            target: ProjectionTarget::Graph,
+            ..
+        }
     )));
 }

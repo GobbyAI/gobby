@@ -4,8 +4,8 @@ use crate::output::{self, Format};
 use crate::projection::sync::{ProjectionStatus, ProjectionSyncReport};
 use crate::vector::code_symbols::{
     self, CodeSymbolVectorLifecycle, CodeSymbolVectorLifecycleAction,
-    CodeSymbolVectorLifecycleOutput, CodeSymbolVectorLifecycleStatus, VectorLifecycleError,
-    embedding_source_from_context,
+    CodeSymbolVectorLifecycleOutput, CodeSymbolVectorLifecycleStatus, EmbeddingSource,
+    VectorLifecycleError, embedding_source_from_context,
 };
 use serde::Serialize;
 
@@ -20,12 +20,18 @@ pub fn lifecycle_status(
 pub(crate) fn lifecycle_from_context(
     ctx: &Context,
 ) -> Result<CodeSymbolVectorLifecycle, VectorLifecycleError> {
+    lifecycle_from_resolved_embedding_source(ctx, embedding_source_from_context(ctx))
+}
+
+fn lifecycle_from_resolved_embedding_source(
+    ctx: &Context,
+    embedding: Option<EmbeddingSource>,
+) -> Result<CodeSymbolVectorLifecycle, VectorLifecycleError> {
     let qdrant = ctx
         .qdrant
         .clone()
         .ok_or(VectorLifecycleError::MissingQdrantConfig)?;
-    let embedding =
-        embedding_source_from_context(ctx).ok_or(VectorLifecycleError::MissingEmbeddingConfig)?;
+    let embedding = embedding.ok_or(VectorLifecycleError::MissingEmbeddingConfig)?;
     CodeSymbolVectorLifecycle::new(
         ctx.project_id.clone(),
         qdrant,
@@ -151,6 +157,31 @@ mod tests {
         }
     }
 
+    fn qdrant_config() -> crate::config::QdrantConfig {
+        crate::config::QdrantConfig {
+            url: Some("http://localhost:6333".to_string()),
+            api_key: None,
+        }
+    }
+
+    fn daemon_embedding_source() -> EmbeddingSource {
+        use gobby_core::ai_context::{
+            AiConfigSource, AiContext, AiContextOptions, NoPrimaryAiConfigSource,
+        };
+        use gobby_core::config::AiRouting;
+
+        let mut source = AiConfigSource::with_primary(NoPrimaryAiConfigSource, None);
+        let context = AiContext::resolve_with_options(
+            Some("project-1".to_string()),
+            &mut source,
+            AiContextOptions {
+                no_ai: false,
+                forced_routing: Some(AiRouting::Daemon),
+            },
+        );
+        EmbeddingSource::Daemon(Box::new(context))
+    }
+
     #[test]
     fn vector_lifecycle_requires_config() {
         let err = lifecycle_from_context(&make_ctx()).expect_err("missing config must fail");
@@ -160,17 +191,18 @@ mod tests {
         ));
 
         let ctx = Context {
-            qdrant: Some(crate::config::QdrantConfig {
-                url: Some("http://localhost:6333".to_string()),
-                api_key: None,
-            }),
+            qdrant: Some(qdrant_config()),
             ..make_ctx()
         };
-        let err = lifecycle_from_context(&ctx).expect_err("missing embedding must fail");
+        let err = lifecycle_from_resolved_embedding_source(&ctx, None)
+            .expect_err("missing embedding must fail");
         assert!(matches!(
             err,
             code_symbols::VectorLifecycleError::MissingEmbeddingConfig
         ));
+
+        lifecycle_from_resolved_embedding_source(&ctx, Some(daemon_embedding_source()))
+            .expect("daemon embedding source must satisfy lifecycle config");
     }
 
     #[test]

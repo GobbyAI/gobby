@@ -300,7 +300,7 @@ fn glob_to_pg_regex(pattern: &str) -> Option<String> {
                 }
             }
             '\\' => regex.push_str("\\\\"),
-            '.' | '+' | '(' | ')' | '|' | '^' | '$' | '{' | '}' => {
+            '.' | '+' | '(' | ')' | '|' | '^' | '$' | '{' | '}' | ']' => {
                 regex.push('\\');
                 regex.push(ch);
             }
@@ -468,6 +468,10 @@ mod tests {
         assert_eq!(
             glob_to_pg_regex("src/foo?.[ch]").as_deref(),
             Some("^src/foo.\\.[ch]$")
+        );
+        assert_eq!(
+            glob_to_pg_regex("src/literal].rs").as_deref(),
+            Some("^src/literal\\]\\.rs$")
         );
         assert_eq!(glob_to_pg_regex("src/["), None);
     }

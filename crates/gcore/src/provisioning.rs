@@ -498,11 +498,13 @@ pub fn resolve_recorded_hub_database_url(
                     identity_status: RecordedHubIdentityStatus::SingleReachable,
                 })),
                 (true, true) => {
+                    let existing_redacted = redact_database_url_for_error(&existing);
+                    let daemon_redacted = redact_database_url_for_error(&daemon);
                     let existing_identity = identity_probe(&existing).with_context(|| {
-                        format!("failed to probe PostgreSQL hub identity for {existing}")
+                        format!("failed to probe PostgreSQL hub identity for {existing_redacted}")
                     })?;
                     let daemon_identity = identity_probe(&daemon).with_context(|| {
-                        format!("failed to probe PostgreSQL hub identity for {daemon}")
+                        format!("failed to probe PostgreSQL hub identity for {daemon_redacted}")
                     })?;
 
                     match (existing_identity, daemon_identity) {
@@ -519,9 +521,9 @@ pub fn resolve_recorded_hub_database_url(
                             HubIdentityProbeResult::Known(existing_identity),
                             HubIdentityProbeResult::Known(daemon_identity),
                         ) => Err(CoreError::HubConflict {
-                            existing_database_url: existing,
+                            existing_database_url: existing_redacted,
                             existing_identity: existing_identity.display_label(),
-                            daemon_database_url: daemon,
+                            daemon_database_url: daemon_redacted,
                             daemon_identity: daemon_identity.display_label(),
                         }
                         .into()),
@@ -545,6 +547,23 @@ pub fn resolve_recorded_hub_database_url(
                 }
             }
         }
+    }
+}
+
+fn redact_database_url_for_error(database_url: &str) -> String {
+    let without_fragment = database_url
+        .split_once('#')
+        .map_or(database_url, |(head, _)| head);
+    let without_query = without_fragment
+        .split_once('?')
+        .map_or(without_fragment, |(head, _)| head);
+    if let Some((scheme, rest)) = without_query.split_once("://") {
+        let host_and_path = rest
+            .rsplit_once('@')
+            .map_or(rest, |(_, host_and_path)| host_and_path);
+        format!("{scheme}://{host_and_path}")
+    } else {
+        without_query.to_string()
     }
 }
 
@@ -1398,13 +1417,16 @@ databases.qdrant.url: http://localhost:6333
         let home = dir.path().join(".gobby");
         fs::create_dir_all(&home).expect("create gobby home");
         let mut config = StandaloneConfig::empty();
-        config.set("databases.postgres.dsn", "postgresql://standalone/gobby");
+        config.set(
+            "databases.postgres.dsn",
+            "postgresql://standalone:secret@standalone/gobby?sslmode=require",
+        );
         config
             .write_at(&gcore_config_path(&home))
             .expect("write gcore config");
         fs::write(
             home.join("bootstrap.yaml"),
-            "hub_backend: postgres\ndatabase_url: postgresql://daemon/gobby\n",
+            "hub_backend: postgres\ndatabase_url: postgresql://daemon:secret@daemon/gobby?application_name=gobby\n",
         )
         .expect("write bootstrap");
 
@@ -1414,15 +1436,17 @@ databases.qdrant.url: http://localhost:6333
             |url| {
                 matches!(
                     url,
-                    "postgresql://standalone/gobby" | "postgresql://daemon/gobby"
+                    "postgresql://standalone:secret@standalone/gobby?sslmode=require"
+                        | "postgresql://daemon:secret@daemon/gobby?application_name=gobby"
                 )
             },
             |url| {
-                let system_identifier = if url == "postgresql://standalone/gobby" {
-                    "cluster-a"
-                } else {
-                    "cluster-b"
-                };
+                let system_identifier =
+                    if url.starts_with("postgresql://standalone:secret@standalone/") {
+                        "cluster-a"
+                    } else {
+                        "cluster-b"
+                    };
                 Ok(HubIdentityProbeResult::Known(HubIdentity {
                     system_identifier: system_identifier.to_string(),
                     database_name: "gobby".to_string(),
@@ -1435,6 +1459,9 @@ databases.qdrant.url: http://localhost:6333
         let message = err.to_string();
         assert!(message.contains("postgresql://standalone/gobby"));
         assert!(message.contains("postgresql://daemon/gobby"));
+        assert!(!message.contains("secret"));
+        assert!(!message.contains("sslmode"));
+        assert!(!message.contains("application_name"));
     }
 
     #[test]

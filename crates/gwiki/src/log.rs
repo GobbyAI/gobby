@@ -1,6 +1,8 @@
+use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 use crate::{ScopeIdentity, WikiError};
 
@@ -134,6 +136,22 @@ fn same_file_identity(_left: &Path, _right: &Path) -> bool {
 }
 
 fn resolved_log_path(path: &Path) -> PathBuf {
+    static CACHE: OnceLock<Mutex<HashMap<PathBuf, PathBuf>>> = OnceLock::new();
+    let key = path.to_path_buf();
+    let mut cache = match CACHE.get_or_init(|| Mutex::new(HashMap::new())).lock() {
+        Ok(cache) => cache,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    if let Some(resolved) = cache.get(&key) {
+        return resolved.clone();
+    }
+
+    let resolved = resolve_log_path_uncached(path);
+    cache.insert(key, resolved.clone());
+    resolved
+}
+
+fn resolve_log_path_uncached(path: &Path) -> PathBuf {
     if let Ok(path) = path.canonicalize() {
         return path;
     }

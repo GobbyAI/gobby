@@ -183,6 +183,7 @@ jobs:
             gwiki-${{ matrix.target }}.zip
 
   publish:
+    name: Publish gobby-wiki to crates.io
     needs: [test, build]
     runs-on: ubuntu-latest
     permissions:

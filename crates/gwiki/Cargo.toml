@@ -45,6 +45,7 @@ regex = "1"
 scraper = "0.27"
 log = "0.4"
 percent-encoding = "2"
+url = "2"
 tempfile = "3"
 calamine = { version = "0.30", optional = true }
 pdf-extract = { version = "0.10", optional = true }

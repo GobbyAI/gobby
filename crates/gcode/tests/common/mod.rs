@@ -18,7 +18,7 @@ impl Drop for ProjectCleanup {
     fn drop(&mut self) {
         let database_url = self.database_url.clone();
         let project_id = self.project_id.clone();
-        let _ = std::thread::Builder::new()
+        let handle = std::thread::Builder::new()
             .name("gcode-test-project-cleanup".to_string())
             .spawn(move || {
                 let mut conn = match Client::connect(&database_url, NoTls) {
@@ -37,6 +37,16 @@ impl Drop for ProjectCleanup {
                     );
                 }
             });
+        match handle {
+            Ok(handle) => {
+                if handle.join().is_err() {
+                    eprintln!("ProjectCleanup cleanup thread panicked for project cleanup");
+                }
+            }
+            Err(err) => {
+                eprintln!("ProjectCleanup cleanup thread spawn failed: {err}");
+            }
+        }
     }
 }
 

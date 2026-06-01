@@ -196,9 +196,11 @@ fn transcribe_single_request(
     mode: ChunkTranscriptionMode<'_>,
 ) -> Result<TranscriptionOutput, WikiError> {
     match mode {
-        ChunkTranscriptionMode::Transcribe | ChunkTranscriptionMode::TranslateSegments { .. } => {
-            client.transcribe(request)
-        }
+        ChunkTranscriptionMode::Transcribe => client.transcribe(request),
+        ChunkTranscriptionMode::TranslateSegments {
+            target_lang,
+            language_hint,
+        } => translate::translate_audio(request, client, Some(target_lang), language_hint),
         ChunkTranscriptionMode::TranslateToEnglish { language_hint } => {
             translate::translate_audio(request, client, Some("en"), language_hint)
         }
@@ -393,6 +395,35 @@ mod tests {
     }
 
     #[test]
+    fn short_translate_segments_translates_without_chunking() {
+        let request = short_request();
+        let client = TranslatingClient {
+            transcribe_calls: Cell::new(0),
+            translate_calls: Cell::new(0),
+        };
+        let chunker = FakeChunker::new(Vec::new());
+
+        let output = transcribe_audio_request_with_chunker(
+            &request,
+            &client,
+            ChunkTranscriptionMode::TranslateSegments {
+                target_lang: "fr",
+                language_hint: Some("es"),
+            },
+            &chunker,
+        )
+        .expect("short translated transcription");
+
+        assert_eq!(chunker.calls.get(), 0);
+        assert_eq!(client.transcribe_calls.get(), 1);
+        assert_eq!(client.translate_calls.get(), 1);
+        assert_eq!(output.language.as_deref(), Some("fr"));
+        assert_eq!(output.target_language.as_deref(), Some("fr"));
+        assert!(output.translated);
+        assert_eq!(output.segments[0].text, "bonjour");
+    }
+
+    #[test]
     fn partial_chunk_outcome() {
         let request = long_request();
         let client = ScriptedClient::new(vec![
@@ -491,6 +522,34 @@ mod tests {
             _request: &TranscriptionRequest<'_>,
         ) -> Result<TranscriptionOutput, WikiError> {
             self.outputs.borrow_mut().remove(0)
+        }
+    }
+
+    struct TranslatingClient {
+        transcribe_calls: Cell<usize>,
+        translate_calls: Cell<usize>,
+    }
+
+    impl TranscriptionClient for TranslatingClient {
+        fn transcribe(
+            &self,
+            _request: &TranscriptionRequest<'_>,
+        ) -> Result<TranscriptionOutput, WikiError> {
+            self.transcribe_calls.set(self.transcribe_calls.get() + 1);
+            Ok(output("es", &[(0, 1_000, "hola")]))
+        }
+
+        fn translate_segments(
+            &self,
+            segments: &[TranscriptSegment],
+            source_lang: &str,
+            target_lang: &str,
+        ) -> Result<Vec<String>, WikiError> {
+            self.translate_calls.set(self.translate_calls.get() + 1);
+            assert_eq!(source_lang, "es");
+            assert_eq!(target_lang, "fr");
+            assert_eq!(segments.len(), 1);
+            Ok(vec!["bonjour".to_string()])
         }
     }
 

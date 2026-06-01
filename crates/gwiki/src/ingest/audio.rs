@@ -281,8 +281,12 @@ fn transcription_result_to_markdown(
 
 #[cfg(feature = "ai")]
 fn is_english_target(target_lang: &str) -> bool {
-    let normalized = target_lang.trim().to_ascii_lowercase();
-    normalized == "en" || normalized.starts_with("en-") || normalized.starts_with("en_")
+    target_lang
+        .trim()
+        .split(['-', '_'])
+        .next()
+        .unwrap_or("")
+        .eq_ignore_ascii_case("en")
 }
 
 fn transcription_degradation(routing: AiRouting, translate: bool) -> TranscriptionDegradation {
@@ -608,6 +612,16 @@ mod tests {
             completed_ranges: Vec::new(),
             missing_ranges: Vec::new(),
         }
+    }
+
+    #[cfg(feature = "ai")]
+    #[test]
+    fn english_target_uses_primary_language_subtag() {
+        assert!(is_english_target("en"));
+        assert!(is_english_target("EN-us"));
+        assert!(is_english_target("en_US"));
+        assert!(!is_english_target("eng"));
+        assert!(!is_english_target("fr-en"));
     }
 
     #[cfg(feature = "ai")]

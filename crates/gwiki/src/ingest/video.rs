@@ -361,10 +361,17 @@ fn describe_frame_images(
         VisionEndpoint::Unavailable(_) => None,
     };
 
-    for (index, (timestamp_ms, frame)) in frames.iter().enumerate() {
+    for (index, (timestamp_ms, frame)) in frames.into_iter().enumerate() {
         let timestamp_seconds = (timestamp_ms / 1_000).min(u64::from(u32::MAX)) as u32;
         let timestamp = format_timestamp(timestamp_seconds);
-        let path = frame.path().to_path_buf();
+        let path = frame
+            .into_temp_path()
+            .keep()
+            .map_err(|error| WikiError::Io {
+                action: "persist sampled video frame",
+                path: Some(error.path.to_path_buf()),
+                source: error.error,
+            })?;
         let source_reference = path_to_string(&path);
         samples.push(VideoFrameSample {
             timestamp_seconds,

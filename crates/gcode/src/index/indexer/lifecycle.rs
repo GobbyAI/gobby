@@ -17,6 +17,7 @@ pub(super) fn cleanup_deleted_file_projections(
     ctx: &Context,
     file_path: &str,
     outcome: &mut IndexOutcome,
+    file_vectors_synced: bool,
 ) {
     if let Err(error) = code_graph::delete_file_projection(ctx, file_path) {
         push_projection_cleanup_degradation(
@@ -40,12 +41,15 @@ pub(super) fn cleanup_deleted_file_projections(
                 );
             }
         }
-        None => push_projection_cleanup_degradation(
-            outcome,
-            file_path,
-            ProjectionTarget::Vectors,
-            "Qdrant config is required for deleted-file vector cleanup".to_string(),
-        ),
+        None if file_vectors_synced => {
+            push_projection_cleanup_degradation(
+                outcome,
+                file_path,
+                ProjectionTarget::Vectors,
+                "Qdrant config is required for deleted-file vector cleanup".to_string(),
+            );
+        }
+        None => {}
     }
 }
 

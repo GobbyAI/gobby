@@ -8,6 +8,7 @@ use postgres::Client;
 use wait_timeout::ChildExt;
 
 use crate::config::{Context, ProjectIndexScope};
+use crate::db;
 use crate::index::api;
 use crate::index::{hasher, parser, walker};
 use crate::models::IndexedFile;
@@ -168,6 +169,16 @@ pub(super) fn index_overlay_files(
         let indexable = ast_by_rel.contains_key(&rel) || content_by_rel.contains_key(&rel);
         let action =
             overlay_reconcile_action(abs.exists(), current_hash, parent, overlay, indexable);
+        let file_vectors_synced = if matches!(
+            action,
+            OverlayReconcileAction::Inherit
+                | OverlayReconcileAction::Tombstone
+                | OverlayReconcileAction::DeleteOverlay
+        ) {
+            db::file_vectors_synced(conn, overlay_project_id, &rel)?
+        } else {
+            false
+        };
 
         match action {
             OverlayReconcileAction::Index if ast_by_rel.contains_key(&rel) => {
@@ -191,17 +202,17 @@ pub(super) fn index_overlay_files(
                 }
             }
             OverlayReconcileAction::Inherit => {
-                cleanup_deleted_file_projections(ctx, &rel, &mut outcome);
+                cleanup_deleted_file_projections(ctx, &rel, &mut outcome, file_vectors_synced);
                 api::delete_file_facts(conn, overlay_project_id, &rel)?;
                 outcome.skipped_files += 1;
             }
             OverlayReconcileAction::Tombstone => {
-                cleanup_deleted_file_projections(ctx, &rel, &mut outcome);
+                cleanup_deleted_file_projections(ctx, &rel, &mut outcome, file_vectors_synced);
                 write_tombstone(conn, overlay_project_id, &rel)?;
                 outcome.tombstones_indexed += 1;
             }
             OverlayReconcileAction::DeleteOverlay => {
-                cleanup_deleted_file_projections(ctx, &rel, &mut outcome);
+                cleanup_deleted_file_projections(ctx, &rel, &mut outcome, file_vectors_synced);
                 api::delete_file_facts(conn, overlay_project_id, &rel)?;
             }
             OverlayReconcileAction::Index => {

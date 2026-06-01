@@ -203,10 +203,7 @@ fn row_to_result(row: postgres::Row, scope: &SearchScope) -> Result<WikiSearchRe
     let path = PathBuf::from(read_string(&row, "path")?);
     let source_path = PathBuf::from(read_string(&row, "source_path")?);
     let source_kind = read_string(&row, "source_kind")?;
-    let hit_kind = match read_string(&row, "hit_kind")?.as_str() {
-        "document" => SearchHitKind::Document,
-        _ => SearchHitKind::Chunk,
-    };
+    let hit_kind = parse_hit_kind(&read_string(&row, "hit_kind")?)?;
     let chunk = match (
         read_optional_i64(&row, "chunk_index"),
         read_optional_i64(&row, "byte_start"),
@@ -262,6 +259,16 @@ fn row_to_result(row: postgres::Row, scope: &SearchScope) -> Result<WikiSearchRe
 fn read_string(row: &postgres::Row, column: &str) -> Result<String, SearchError> {
     row.try_get::<_, String>(column)
         .map_err(|error| SearchError::Backend(error.to_string()))
+}
+
+fn parse_hit_kind(raw: &str) -> Result<SearchHitKind, SearchError> {
+    match raw {
+        "document" => Ok(SearchHitKind::Document),
+        "chunk" => Ok(SearchHitKind::Chunk),
+        other => Err(SearchError::Backend(format!(
+            "unknown BM25 hit_kind value `{other}`"
+        ))),
+    }
 }
 
 fn read_optional_i64(row: &postgres::Row, column: &str) -> Option<i64> {
@@ -329,6 +336,14 @@ mod tests {
         assert!(sql.sql.contains("@@@"));
         assert_eq!(sql.params.scope_kind, "project");
         assert_eq!(sql.params.scope_value, "project-1");
+    }
+
+    #[test]
+    fn parse_hit_kind_rejects_unknown_backend_values() {
+        let error = parse_hit_kind("mystery").expect_err("unknown hit kind rejected");
+
+        assert!(matches!(error, SearchError::Backend(_)));
+        assert!(error.to_string().contains("mystery"));
     }
 
     #[test]

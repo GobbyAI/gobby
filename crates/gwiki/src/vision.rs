@@ -247,7 +247,19 @@ fn write_vision_markdown_atomically(path: &Path, contents: &[u8]) -> Result<(), 
 }
 
 fn create_vision_temp_file(path: &Path) -> Result<NamedTempFile, WikiError> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    else {
+        return Err(WikiError::Io {
+            action: "create vision derived markdown temp file",
+            path: Some(path.to_path_buf()),
+            source: std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "vision derived markdown target has no parent directory",
+            ),
+        });
+    };
     let file_name = path
         .file_name()
         .and_then(|name| name.to_str())
@@ -511,5 +523,19 @@ mod tests {
                     .to_string_lossy()
                     .ends_with(".tmp"))
         );
+    }
+
+    #[test]
+    fn vision_temp_file_requires_parent_directory() {
+        let error = create_vision_temp_file(Path::new("vision.md"))
+            .expect_err("parentless target rejected");
+
+        assert!(matches!(
+            error,
+            WikiError::Io {
+                source,
+                ..
+            } if source.kind() == std::io::ErrorKind::InvalidInput
+        ));
     }
 }

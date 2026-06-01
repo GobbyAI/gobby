@@ -457,6 +457,24 @@ pub fn mark_project_vectors_synced(
     )?)
 }
 
+pub fn file_vectors_synced(
+    conn: &mut impl GenericClient,
+    project_id: &str,
+    file_path: &str,
+) -> anyhow::Result<bool> {
+    let synced = conn
+        .query_opt(
+            "SELECT vectors_synced
+             FROM code_indexed_files
+             WHERE project_id = $1 AND file_path = $2",
+            &[&project_id, &file_path],
+        )?
+        .map(|row| row.try_get::<_, bool>("vectors_synced"))
+        .transpose()?
+        .unwrap_or(false);
+    Ok(synced)
+}
+
 pub fn reset_vectors_sync_for_project(
     conn: &mut impl GenericClient,
     project_id: &str,

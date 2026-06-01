@@ -218,7 +218,7 @@ fn write_immutable_file(
     }
 }
 
-fn asset_path(record: &SourceRecord, file_name: &str) -> PathBuf {
+pub(crate) fn asset_path(record: &SourceRecord, file_name: &str) -> PathBuf {
     let extension = Path::new(file_name)
         .extension()
         .and_then(|value| value.to_str())

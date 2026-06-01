@@ -186,11 +186,8 @@ mod tests {
     use super::*;
     use crate::ai_context::{AiBindings, AiLimiter};
     use crate::config::{AiRouting, AiTuning, CapabilityBinding};
+    use crate::test_http::{RequestHandle, spawn_json_response};
     use serde_json::Value;
-    use std::io::{Read, Write};
-    use std::net::TcpListener;
-    use std::thread;
-    use std::time::Duration;
 
     #[test]
     fn sends_image_url_and_parses() {
@@ -199,7 +196,7 @@ mod tests {
         let cfg = test_context(&api_base, Some("vision-token"));
 
         let result = describe_image(&cfg, b"image".to_vec(), "image/png").unwrap();
-        let request = request.join().unwrap();
+        let request = request.join().unwrap().unwrap();
         let body = request_body_json(&request);
         let content = body["messages"][0]["content"].as_array().unwrap();
         let image_url = content
@@ -227,60 +224,8 @@ mod tests {
         assert_eq!(fallback.model.as_deref(), Some("fallback-model"));
     }
 
-    fn spawn_server(response: &'static str) -> (String, thread::JoinHandle<String>) {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let api_base = format!("http://{}", listener.local_addr().unwrap());
-        let handle = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            stream
-                .set_read_timeout(Some(Duration::from_secs(2)))
-                .unwrap();
-            let request = read_http_request(&mut stream);
-            write!(
-                stream,
-                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
-                response.len(),
-                response
-            )
-            .unwrap();
-            request
-        });
-        (api_base, handle)
-    }
-
-    fn read_http_request(stream: &mut impl Read) -> String {
-        let mut request = Vec::new();
-        let mut chunk = [0_u8; 1024];
-        loop {
-            let read = stream.read(&mut chunk).unwrap();
-            if read == 0 {
-                break;
-            }
-            request.extend_from_slice(&chunk[..read]);
-
-            if let Some(header_end) = find_header_end(&request) {
-                let header = String::from_utf8_lossy(&request[..header_end]);
-                if let Some(content_length) = content_length(&header) {
-                    let body_len = request.len().saturating_sub(header_end + 4);
-                    if body_len >= content_length {
-                        break;
-                    }
-                }
-            }
-        }
-        String::from_utf8(request).unwrap()
-    }
-
-    fn find_header_end(request: &[u8]) -> Option<usize> {
-        request.windows(4).position(|window| window == b"\r\n\r\n")
-    }
-
-    fn content_length(header: &str) -> Option<usize> {
-        header.lines().find_map(|line| {
-            line.strip_prefix("content-length: ")
-                .or_else(|| line.strip_prefix("Content-Length: "))
-                .and_then(|value| value.trim().parse().ok())
-        })
+    fn spawn_server(response: &'static str) -> (String, RequestHandle) {
+        spawn_json_response(response).expect("spawn test server")
     }
 
     fn request_body_json(request: &str) -> Value {

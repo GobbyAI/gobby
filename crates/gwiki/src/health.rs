@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -13,6 +13,7 @@ use crate::{ScopeIdentity, WikiError};
 
 const AVERAGE_GREGORIAN_YEAR_SECONDS: u64 = 31_556_952;
 const STALE_CITATION_YEARS_ENV: &str = "GWIKI_STALE_CITATION_YEARS";
+const REGEX_CACHE_CAPACITY: usize = 1_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct HealthReport {
@@ -273,8 +274,11 @@ fn bounded_text_matches(markdown: &str, needle: &str) -> bool {
 }
 
 fn cached_regex_is_match(pattern: String, haystack: &str) -> bool {
-    static CACHE: OnceLock<Mutex<HashMap<String, regex::Regex>>> = OnceLock::new();
-    let mut cache = match CACHE.get_or_init(|| Mutex::new(HashMap::new())).lock() {
+    static CACHE: OnceLock<Mutex<RegexCache>> = OnceLock::new();
+    let mut cache = match CACHE
+        .get_or_init(|| Mutex::new(RegexCache::default()))
+        .lock()
+    {
         Ok(cache) => cache,
         Err(poisoned) => {
             // Regex compilation is deterministic; recovering the cache keeps a
@@ -283,10 +287,14 @@ fn cached_regex_is_match(pattern: String, haystack: &str) -> bool {
         }
     };
     let regex = match cache.get(&pattern) {
-        Some(regex) => regex.clone(),
+        Some(regex) => regex,
         None => {
-            let Ok(regex) = regex::Regex::new(&pattern) else {
-                return false;
+            let regex = match regex::Regex::new(&pattern) {
+                Ok(regex) => regex,
+                Err(error) => {
+                    log::warn!("invalid health regex pattern `{pattern}`: {error}");
+                    return false;
+                }
             };
             cache.insert(pattern, regex.clone());
             regex
@@ -294,6 +302,41 @@ fn cached_regex_is_match(pattern: String, haystack: &str) -> bool {
     };
     drop(cache);
     regex.is_match(haystack)
+}
+
+#[derive(Default)]
+struct RegexCache {
+    entries: HashMap<String, regex::Regex>,
+    order: VecDeque<String>,
+}
+
+impl RegexCache {
+    fn get(&mut self, pattern: &str) -> Option<regex::Regex> {
+        let regex = self.entries.get(pattern)?.clone();
+        self.touch(pattern);
+        Some(regex)
+    }
+
+    fn insert(&mut self, pattern: String, regex: regex::Regex) {
+        if self.entries.contains_key(&pattern) {
+            self.entries.insert(pattern.clone(), regex);
+            self.touch(&pattern);
+            return;
+        }
+
+        self.entries.insert(pattern.clone(), regex);
+        self.order.push_back(pattern);
+        while self.entries.len() > REGEX_CACHE_CAPACITY {
+            if let Some(oldest) = self.order.pop_front() {
+                self.entries.remove(&oldest);
+            }
+        }
+    }
+
+    fn touch(&mut self, pattern: &str) {
+        self.order.retain(|key| key != pattern);
+        self.order.push_back(pattern.to_string());
+    }
 }
 
 fn source_issue(source: &SourceRecord) -> HealthSourceIssue {
@@ -460,6 +503,11 @@ mod tests {
             "[Example](https://example.test/source)",
             "https://example.test/source"
         ));
+    }
+
+    #[test]
+    fn cached_regex_returns_false_for_malformed_patterns() {
+        assert!(!cached_regex_is_match("[".to_string(), "anything"));
     }
 
     #[test]
