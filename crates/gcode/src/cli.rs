@@ -288,6 +288,15 @@ pub(crate) enum Command {
     Kinds,
     /// File tree with symbol counts
     Tree,
+    /// Generate vault-ready hierarchical code documentation
+    Codewiki {
+        /// Output directory for generated Markdown docs
+        #[arg(long)]
+        out: Option<String>,
+        /// Limit docs to indexed files under one or more paths
+        #[arg(long, num_args = 1.., value_name = "PATH")]
+        scope: Vec<String>,
+    },
 
     // ── Dependency Graph (requires Gobby) ──────────────────────────────
     /// Find callers of a symbol query, resolved to a canonical symbol ID [requires Gobby]

@@ -1,3 +1,4 @@
+pub mod codewiki;
 pub mod embeddings_doctor;
 pub mod graph;
 pub mod grep;
