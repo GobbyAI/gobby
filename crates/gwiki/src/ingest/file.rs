@@ -14,7 +14,7 @@ use crate::ingest::document::{DocumentSnapshot, ingest_document};
 use crate::ingest::image::{ImageSnapshot, ingest_image_with_production_vision};
 #[cfg(feature = "documents")]
 use crate::ingest::pdf::{PdfFileSnapshot, PdfIngestOptions, ingest_pdf_file};
-use crate::ingest::video::{VideoFileSnapshot, ingest_video_file};
+use crate::ingest::video::{VideoFileSnapshot, ingest_video_file_with_production_processing};
 use crate::ingest::{
     IngestResult, index_after_ingest, markdown_metadata, markdown_title, path_to_string,
     text_from_utf8_lossy, write_asset, write_raw_markdown,
@@ -91,10 +91,11 @@ pub fn ingest_path(
             .map(Into::into);
         }
         SourceKind::Video => {
-            return ingest_video_file(
+            return ingest_video_file_with_production_processing(
                 vault_root,
                 store,
                 scope.clone(),
+                ai_context,
                 VideoFileSnapshot {
                     location,
                     file_name: file_name.to_string(),
@@ -103,9 +104,13 @@ pub fn ingest_path(
                     mime_type: None,
                     duration_seconds: None,
                     frame_interval_seconds: options.video_frame_interval_seconds,
+                    frame_samples: Vec::new(),
+                    frame_image_paths: Vec::new(),
                     frame_descriptions: Vec::new(),
                     transcript_segments: Vec::new(),
+                    transcription: None,
                 },
+                options.translate,
             )
             .map(Into::into);
         }
