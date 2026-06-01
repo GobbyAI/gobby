@@ -45,6 +45,7 @@ interface MessageLoadResult {
 const PAGE = 50
 // Virtuoso prepend anchor — large so it can decrement as older pages load.
 const START_INDEX = 1_000_000
+const TAIL_REFRESH_DEBOUNCE_MS = 500
 
 function getBaseUrl(): string {
   return import.meta.env.VITE_API_BASE_URL || ''
@@ -197,9 +198,11 @@ export function useSessionDetail(sessionId: string | null) {
   const [transcriptDegradedReason, setTranscriptDegradedReason] = useState<string | null>(null)
 
   const messageSourceRef = useRef<'session' | 'chat' | null>(null)
+  const messagesRef = useRef<SessionMessage[]>([])
   const sessionIdRef = useRef(sessionId)
   const sessionRef = useRef<GobbySession | null>(null)
   const detailPollCleanupRef = useRef<(() => void) | null>(null)
+  const tailRefreshTimeoutRef = useRef<number | null>(null)
   const detailLoadVersionRef = useRef(0)
   // Mirrors of paging state read synchronously by loadMore / live append.
   const loadedCountRef = useRef(0)
@@ -215,6 +218,10 @@ export function useSessionDetail(sessionId: string | null) {
   }, [session])
 
   useEffect(() => {
+    messagesRef.current = messages
+  }, [messages])
+
+  useEffect(() => {
     loadedCountRef.current = loadedCount
   }, [loadedCount])
 
@@ -225,6 +232,13 @@ export function useSessionDetail(sessionId: string | null) {
   const clearDetailPolling = useCallback(() => {
     detailPollCleanupRef.current?.()
     detailPollCleanupRef.current = null
+  }, [])
+
+  const clearTailRefresh = useCallback(() => {
+    if (tailRefreshTimeoutRef.current !== null) {
+      window.clearTimeout(tailRefreshTimeoutRef.current)
+      tailRefreshTimeoutRef.current = null
+    }
   }, [])
 
   const resetPaging = useCallback(() => {
@@ -240,6 +254,7 @@ export function useSessionDetail(sessionId: string | null) {
 
   const applyClearedDetail = useCallback((error: string | null) => {
     setSession(null)
+    messagesRef.current = []
     setMessages([])
     setTranscriptStatus(null)
     setSessionError(error)
@@ -252,8 +267,9 @@ export function useSessionDetail(sessionId: string | null) {
   const resetSessionDetail = useCallback((error: string | null) => {
     detailLoadVersionRef.current += 1
     clearDetailPolling()
+    clearTailRefresh()
     applyClearedDetail(error)
-  }, [applyClearedDetail, clearDetailPolling])
+  }, [applyClearedDetail, clearDetailPolling, clearTailRefresh])
 
   const clearSessionError = useCallback(() => {
     setSessionError(null)
@@ -273,6 +289,7 @@ export function useSessionDetail(sessionId: string | null) {
   ) => {
     const loadVersion = detailLoadVersionRef.current + 1
     detailLoadVersionRef.current = loadVersion
+    clearTailRefresh()
     const isCurrent = () =>
       sessionIdRef.current === activeSessionId && detailLoadVersionRef.current === loadVersion
 
@@ -312,6 +329,7 @@ export function useSessionDetail(sessionId: string | null) {
 
         messageSourceRef.current = 'chat'
         setTranscriptStatus(null)
+        messagesRef.current = chatResult.mapped
         setMessages(chatResult.mapped)
         setTotalMessages(chatResult.totalCount)
 
@@ -329,6 +347,7 @@ export function useSessionDetail(sessionId: string | null) {
             ) {
               return
             }
+            messagesRef.current = nextChatResult.mapped
             setMessages(nextChatResult.mapped)
             setTotalMessages(nextChatResult.totalCount)
           } catch (error) {
@@ -354,6 +373,7 @@ export function useSessionDetail(sessionId: string | null) {
       }
 
       messageSourceRef.current = 'session'
+      messagesRef.current = renderedResult.mapped
       setMessages(renderedResult.mapped)
       setTotalMessages(renderedResult.totalCount)
       setLoadedCount(renderedResult.returnedCount)
@@ -381,11 +401,81 @@ export function useSessionDetail(sessionId: string | null) {
         setIsLoading(false)
       }
     }
-  }, [applyClearedDetail, clearDetailPolling, resetPaging])
+  }, [applyClearedDetail, clearDetailPolling, clearTailRefresh, resetPaging])
+
+  const applyRefreshedTailMessages = useCallback((result: MessageLoadResult) => {
+    const currentMessages = messagesRef.current
+    const currentIds = new Set(currentMessages.map((message) => message.id))
+    const refreshedById = new Map(result.mapped.map((message) => [message.id, message]))
+    let overlapCount = 0
+
+    const replacedMessages = currentMessages.map((message) => {
+      const refreshed = refreshedById.get(message.id)
+      if (!refreshed) return message
+      overlapCount += 1
+      return refreshed
+    })
+    const appendedMessages = result.mapped.filter((message) => !currentIds.has(message.id))
+    const nextMessages =
+      appendedMessages.length > 0
+        ? [...replacedMessages, ...appendedMessages]
+        : replacedMessages
+    const appendedCount = appendedMessages.length
+
+    messagesRef.current = nextMessages
+    setMessages(nextMessages)
+    setTotalMessages((prev) => Math.max(result.totalCount, prev + appendedCount))
+
+    const preservedLoadedCount = Math.max(loadedCountRef.current - overlapCount, 0)
+    const nextLoadedCount = preservedLoadedCount + result.returnedCount
+    const nextRenderedTotal = Math.max(
+      result.renderedTotal,
+      renderedTotalRef.current + appendedCount,
+      nextLoadedCount,
+    )
+    loadedCountRef.current = nextLoadedCount
+    renderedTotalRef.current = nextRenderedTotal
+    setLoadedCount(nextLoadedCount)
+    setRenderedTotal(nextRenderedTotal)
+    setTranscriptDegradedReason(result.degradedReason)
+    if (nextMessages.length > 0) {
+      setTranscriptStatus(null)
+    }
+  }, [])
+
+  const scheduleTailRefresh = useCallback((activeSessionId: string) => {
+    if (messageSourceRef.current !== 'session') return
+
+    clearTailRefresh()
+    tailRefreshTimeoutRef.current = window.setTimeout(() => {
+      tailRefreshTimeoutRef.current = null
+      if (sessionIdRef.current !== activeSessionId || messageSourceRef.current !== 'session') return
+
+      const refreshVersion = detailLoadVersionRef.current
+      void (async () => {
+        try {
+          const result = await fetchRenderedSessionMessages(activeSessionId, 0, 'tail')
+          if (
+            sessionIdRef.current !== activeSessionId ||
+            detailLoadVersionRef.current !== refreshVersion ||
+            messageSourceRef.current !== 'session' ||
+            !result.ok
+          ) {
+            return
+          }
+          applyRefreshedTailMessages(result)
+        } catch (error) {
+          if (sessionIdRef.current === activeSessionId) {
+            console.warn('Failed to refresh session tail messages:', error)
+          }
+        }
+      })()
+    }, TAIL_REFRESH_DEBOUNCE_MS)
+  }, [applyRefreshedTailMessages, clearTailRefresh])
 
   // Refresh only session metadata; reload the transcript only when its identity
-  // (path/source) changed, so a benign session_updated event doesn't discard
-  // loaded older pages and reset scroll.
+  // (path/source) changed. Otherwise debounce a tail-page refresh so missed
+  // session_message events don't leave the selected transcript stale.
   const refreshSessionMetadata = useCallback(async (activeSessionId: string) => {
     try {
       const meta = await fetchSessionMetadata(activeSessionId)
@@ -406,6 +496,7 @@ export function useSessionDetail(sessionId: string | null) {
         })
       } else {
         setSession(meta)
+        scheduleTailRefresh(activeSessionId)
       }
     } catch (error) {
       if (sessionIdRef.current !== activeSessionId) return
@@ -413,7 +504,7 @@ export function useSessionDetail(sessionId: string | null) {
       // Surface a non-clearing error; keep the loaded detail and scroll intact.
       setSessionError('Failed to refresh session metadata')
     }
-  }, [loadSessionDetail, resetSessionDetail])
+  }, [loadSessionDetail, resetSessionDetail, scheduleTailRefresh])
 
   // Load an older page (scroll-up). Prepends the oldest-first window above the
   // current messages and decrements the Virtuoso anchor by the actual count.
@@ -439,7 +530,11 @@ export function useSessionDetail(sessionId: string | null) {
       }
       if (!result.ok || result.mapped.length === 0) return
 
-      setMessages((prev) => [...result.mapped, ...prev])
+      setMessages((prev) => {
+        const next = [...result.mapped, ...prev]
+        messagesRef.current = next
+        return next
+      })
       setFirstItemIndex((prev) => prev - result.returnedCount)
       const nextLoaded = Math.max(
         loadedCountRef.current,
@@ -473,8 +568,9 @@ export function useSessionDetail(sessionId: string | null) {
     return () => {
       detailLoadVersionRef.current += 1
       clearDetailPolling()
+      clearTailRefresh()
     }
-  }, [clearDetailPolling, loadSessionDetail, resetSessionDetail, sessionId])
+  }, [clearDetailPolling, clearTailRefresh, loadSessionDetail, resetSessionDetail, sessionId])
 
   // Subscribe to real-time session_message events via WebSocket.
   // Broadcasts are RenderedMessage-shaped with content_blocks. Upsert by id;
@@ -496,6 +592,7 @@ export function useSessionDetail(sessionId: string | null) {
         // Upsert: replace existing message (in-progress turn update)
         const updated = [...prev]
         updated[existingIdx] = newMessage
+        messagesRef.current = updated
         return updated
       }
       // Genuinely new group: bump parsed total and the rendered-group counts.
@@ -510,7 +607,9 @@ export function useSessionDetail(sessionId: string | null) {
         renderedTotalRef.current = next
         return next
       })
-      return [...prev, newMessage]
+      const next = [...prev, newMessage]
+      messagesRef.current = next
+      return next
     })
   }, []))
 

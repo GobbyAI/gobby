@@ -203,10 +203,11 @@ describe('useSessionDetail', () => {
     expect(result.current.totalMessages).toBe(1)
   })
 
-  it('refreshes selected session metadata after matching session events', async () => {
+  it('refreshes selected session metadata and transcript tail after matching session events', async () => {
     await loadModule()
 
     let sessionFetchCount = 0
+    let tailFetchCount = 0
     mockFetch.fn.mockImplementation(async (input: RequestInfo | URL) => {
       const url =
         typeof input === 'string'
@@ -234,7 +235,8 @@ describe('useSessionDetail', () => {
       }
 
       if (url.includes('/api/sessions/sess-cli/messages?limit=50&offset=0&order=tail')) {
-        const content = sessionFetchCount === 1 ? 'Initial output' : 'Updated output'
+        tailFetchCount += 1
+        const content = tailFetchCount === 1 ? 'Initial output' : 'Updated output'
         return new Response(
           JSON.stringify({
             messages: [
@@ -246,6 +248,8 @@ describe('useSessionDetail', () => {
               },
             ],
             total_count: 1,
+            rendered_count: 1,
+            returned_count: 1,
           }),
           { status: 200, headers: { 'Content-Type': 'application/json' } },
         )
@@ -263,6 +267,145 @@ describe('useSessionDetail', () => {
 
     await waitFor(() => expect(result.current.isLoading).toBe(false))
     expect(result.current.session?.digest_markdown).toBeNull()
+    expect(result.current.messages[0].content).toBe('Initial output')
+
+    vi.useFakeTimers()
+
+    await act(async () => {
+      ws.simulateMessage({
+        type: 'session_event',
+        event: 'session_updated',
+        session_id: 'sess-cli',
+      })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(result.current.session?.digest_markdown).toBe('## Updated digest')
+    expect(result.current.session?.status).toBe('expired')
+    expect(result.current.messages[0].content).toBe('Initial output')
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500)
+    })
+
+    expect(result.current.messages).toHaveLength(1)
+    expect(result.current.messages[0].content).toBe('Updated output')
+    expect(result.current.totalMessages).toBe(1)
+    expect(tailFetchCount).toBe(2)
+  })
+
+  it('preserves older loaded messages while appending refreshed transcript tail', async () => {
+    await loadModule()
+
+    let tailFetchCount = 0
+    mockFetch.fn.mockImplementation(async (input: RequestInfo | URL) => {
+      const url =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url
+
+      if (/\/api\/sessions\/sess-cli$/.test(url)) {
+        return new Response(
+          JSON.stringify({
+            session: {
+              id: 'sess-cli',
+              external_id: 'cli-ext-1',
+              session_type: 'terminal',
+              status: 'active',
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+
+      if (url.includes('/api/sessions/sess-cli/messages?limit=50&offset=0&order=tail')) {
+        tailFetchCount += 1
+        const messages =
+          tailFetchCount === 1
+            ? [
+                {
+                  id: 'sess-msg-2',
+                  role: 'assistant',
+                  content: 'Tail output 2',
+                  timestamp: '2026-04-09T00:00:02Z',
+                },
+                {
+                  id: 'sess-msg-3',
+                  role: 'assistant',
+                  content: 'Tail output 3',
+                  timestamp: '2026-04-09T00:00:03Z',
+                },
+              ]
+            : [
+                {
+                  id: 'sess-msg-3',
+                  role: 'assistant',
+                  content: 'Tail output 3 refreshed',
+                  timestamp: '2026-04-09T00:00:03Z',
+                },
+                {
+                  id: 'sess-msg-4',
+                  role: 'assistant',
+                  content: 'Tail output 4',
+                  timestamp: '2026-04-09T00:00:04Z',
+                },
+              ]
+        return new Response(
+          JSON.stringify({
+            messages,
+            total_count: tailFetchCount === 1 ? 3 : 4,
+            rendered_count: tailFetchCount === 1 ? 3 : 4,
+            returned_count: 2,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+
+      if (url.includes('/api/sessions/sess-cli/messages?limit=50&offset=2&order=tail')) {
+        return new Response(
+          JSON.stringify({
+            messages: [
+              {
+                id: 'sess-msg-1',
+                role: 'assistant',
+                content: 'Older output 1',
+                timestamp: '2026-04-09T00:00:01Z',
+              },
+            ],
+            total_count: 3,
+            rendered_count: 3,
+            returned_count: 1,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+
+      return new Response(JSON.stringify({ error: 'no mock route matched' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+
+    const { result } = renderHook(() => useSessionDetail('sess-cli'))
+    const ws = mockWs.instances[0]
+    act(() => ws.simulateOpen())
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    expect(result.current.messages.map((message) => message.content)).toEqual([
+      'Tail output 2',
+      'Tail output 3',
+    ])
+
+    await act(async () => {
+      await result.current.loadMore()
+    })
+    await waitFor(() => expect(result.current.messages).toHaveLength(3))
+    const firstItemIndexAfterOlderPage = result.current.firstItemIndex
+
+    vi.useFakeTimers()
 
     act(() => {
       ws.simulateMessage({
@@ -272,13 +415,146 @@ describe('useSessionDetail', () => {
       })
     })
 
-    await waitFor(() => {
-      expect(result.current.session?.digest_markdown).toBe('## Updated digest')
-      expect(result.current.session?.status).toBe('expired')
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
     })
-    // session_updated refreshes metadata only — loaded messages are preserved
-    // (no transcript identity change), so older pages and scroll survive.
-    expect(result.current.messages[0].content).toBe('Initial output')
+
+    expect(result.current.messages.map((message) => message.content)).toEqual([
+      'Older output 1',
+      'Tail output 2',
+      'Tail output 3',
+    ])
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500)
+    })
+
+    expect(result.current.messages.map((message) => message.content)).toEqual([
+      'Older output 1',
+      'Tail output 2',
+      'Tail output 3 refreshed',
+      'Tail output 4',
+    ])
+    expect(result.current.firstItemIndex).toBe(firstItemIndexAfterOlderPage)
+    expect(result.current.totalMessages).toBe(4)
+    expect(result.current.hasMore).toBe(false)
+  })
+
+  it('ignores pending transcript tail refreshes after session change or unmount', async () => {
+    await loadModule()
+
+    const sessionFetchCounts: Record<string, number> = {}
+    const tailFetchCounts: Record<string, number> = {}
+    mockFetch.fn.mockImplementation(async (input: RequestInfo | URL) => {
+      const url =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url
+      const sessionMatch = url.match(/\/api\/sessions\/(sess-[ab])$/)
+      if (sessionMatch) {
+        const sessionId = sessionMatch[1]
+        sessionFetchCounts[sessionId] = (sessionFetchCounts[sessionId] ?? 0) + 1
+        return new Response(
+          JSON.stringify({
+            session: {
+              id: sessionId,
+              external_id: `${sessionId}-ext`,
+              session_type: 'terminal',
+              status: 'active',
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+
+      const messagesMatch = url.match(
+        /\/api\/sessions\/(sess-[ab])\/messages\?limit=50&offset=0&order=tail/,
+      )
+      if (messagesMatch) {
+        const sessionId = messagesMatch[1]
+        tailFetchCounts[sessionId] = (tailFetchCounts[sessionId] ?? 0) + 1
+        return new Response(
+          JSON.stringify({
+            messages: [
+              {
+                id: `${sessionId}-msg-1`,
+                role: 'assistant',
+                content: `${sessionId} initial output`,
+                timestamp: '2026-04-09T00:00:00Z',
+              },
+            ],
+            total_count: 1,
+            rendered_count: 1,
+            returned_count: 1,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+
+      return new Response(JSON.stringify({ error: 'no mock route matched' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+
+    const { result, rerender, unmount } = renderHook(
+      ({ selectedSessionId }) => useSessionDetail(selectedSessionId),
+      { initialProps: { selectedSessionId: 'sess-a' } },
+    )
+    const ws = mockWs.instances[0]
+    act(() => ws.simulateOpen())
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    expect(result.current.session?.id).toBe('sess-a')
+
+    vi.useFakeTimers()
+
+    act(() => {
+      ws.simulateMessage({
+        type: 'session_event',
+        event: 'session_updated',
+        session_id: 'sess-a',
+      })
+    })
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(sessionFetchCounts['sess-a']).toBe(2)
+
+    await act(async () => {
+      rerender({ selectedSessionId: 'sess-b' })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500)
+    })
+    expect(result.current.session?.id).toBe('sess-b')
+    expect(tailFetchCounts['sess-a']).toBe(1)
+    expect(result.current.messages[0].content).toBe('sess-b initial output')
+
+    act(() => {
+      ws.simulateMessage({
+        type: 'session_event',
+        event: 'session_updated',
+        session_id: 'sess-b',
+      })
+    })
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(sessionFetchCounts['sess-b']).toBe(2)
+
+    unmount()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500)
+    })
+    expect(tailFetchCounts['sess-b']).toBe(1)
   })
 
   it('shows an error and clears stale detail when selected session refresh disappears', async () => {
