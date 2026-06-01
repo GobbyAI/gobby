@@ -2,6 +2,8 @@ use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::path::Path;
 
+pub use gobby_core::local_backend::Backend;
+
 const DEFAULT_CONFIG: &str = include_str!("../config.yaml");
 
 /// The raw compiled-in config YAML, for `--init` to write to disk.
@@ -45,15 +47,6 @@ fn default_probe_timeout_ms() -> u64 {
 
 fn default_auto_load() -> bool {
     true
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct Backend {
-    pub name: String,
-    pub url: String,
-    pub probe: String,
-    #[serde(default)]
-    pub auth_token: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

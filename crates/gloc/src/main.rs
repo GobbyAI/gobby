@@ -4,6 +4,7 @@ mod exec;
 
 use clap::Parser;
 use config::Config;
+use gobby_core::local_backend;
 use std::path::Path;
 
 #[derive(Parser)]
@@ -179,7 +180,7 @@ fn resolve_backend(cli: &Cli, cfg: &Config) -> config::Backend {
             })
             .clone();
 
-        if !backend::validate_backend(&backend, cfg.settings.probe_timeout_ms) {
+        if !local_backend::validate_backend(&backend, cfg.settings.probe_timeout_ms) {
             eprintln!(
                 "gloc: backend '{}' at {} is not reachable",
                 name, backend.url
@@ -189,7 +190,7 @@ fn resolve_backend(cli: &Cli, cfg: &Config) -> config::Backend {
 
         backend
     } else {
-        match backend::detect_backend(&cfg.backends, cfg.settings.probe_timeout_ms) {
+        match local_backend::detect_backend(&cfg.backends, cfg.settings.probe_timeout_ms) {
             Some(backend) => {
                 eprintln!("gloc: detected {} at {}", backend.name, backend.url);
                 backend

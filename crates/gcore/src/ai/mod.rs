@@ -508,6 +508,48 @@ mod tests {
         );
     }
 
+    #[test]
+    fn direct_autodiscovers_local_endpoint() {
+        use crate::config::{AiRouting, AiTuning};
+
+        let mut bindings = crate::ai_context::AiBindings {
+            embed: binding(AiRouting::Auto, None),
+            audio_transcribe: binding(AiRouting::Auto, None),
+            audio_translate: binding(AiRouting::Auto, None),
+            vision_extract: binding(AiRouting::Auto, None),
+            text_generate: binding(AiRouting::Direct, None),
+        };
+        let backend = crate::local_backend::Backend {
+            name: "ollama".into(),
+            url: "http://localhost:11434".into(),
+            probe: "/api/tags".into(),
+            auth_token: "ollama".into(),
+        };
+
+        crate::ai_context::apply_discovered_local_backend(&mut bindings, &backend);
+        let context = AiContext {
+            bindings,
+            tuning: AiTuning {
+                max_concurrency: 1,
+                keep_alive: None,
+            },
+            limiter: crate::ai_context::AiLimiter::new(1),
+            project_id: None,
+        };
+
+        assert_eq!(
+            context
+                .binding(AiCapability::TextGenerate)
+                .api_base
+                .as_deref(),
+            Some("http://localhost:11434/v1")
+        );
+        assert_eq!(
+            effective_route_with_probe(&context, AiCapability::TextGenerate, |_| false),
+            AiRouting::Direct
+        );
+    }
+
     fn binding(routing: AiRouting, api_base: Option<&str>) -> CapabilityBinding {
         CapabilityBinding {
             routing,
