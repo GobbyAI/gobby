@@ -18,6 +18,64 @@ logger = logging.getLogger(__name__)
 RETIRED_SYSTEM_CRON_JOBS = ("gobby:conductor-tick",)
 
 
+async def _send_tmux_session_wake(
+    tmux_session_name: str,
+    message: str,
+    *,
+    submit: bool = False,
+    escape_before_submit: bool = False,
+) -> None:
+    from gobby.agents.tmux import get_tmux_session_manager
+    from gobby.agents.tmux.text_injection import TMUX_TEXT_ENTER_DELAY_SECONDS
+
+    mgr = get_tmux_session_manager()
+    if not submit:
+        if not await mgr.send_keys(tmux_session_name, message):
+            raise RuntimeError(f"tmux send-keys to {tmux_session_name} failed")
+        return
+
+    literal_text = message.rstrip("\n")
+    if escape_before_submit:
+        if not await mgr.send_keys(tmux_session_name, "Escape", literal=False):
+            raise RuntimeError(f"tmux send-keys to {tmux_session_name} failed")
+        if literal_text:
+            await asyncio.sleep(TMUX_TEXT_ENTER_DELAY_SECONDS)
+    if literal_text and not await mgr.send_keys(tmux_session_name, literal_text):
+        raise RuntimeError(f"tmux send-keys to {tmux_session_name} failed")
+    if literal_text:
+        await asyncio.sleep(TMUX_TEXT_ENTER_DELAY_SECONDS)
+    if not await mgr.send_keys(tmux_session_name, "Enter", literal=False):
+        raise RuntimeError(f"tmux send-keys to {tmux_session_name} failed")
+
+
+async def _send_tmux_pane_wake(
+    pane_id: str,
+    message: str,
+    tmux_socket_path: str | None,
+    *,
+    submit: bool = False,
+    escape_before_submit: bool = False,
+) -> None:
+    from gobby.agents.tmux.text_injection import (
+        send_literal_text_to_tmux_target,
+        submit_literal_text_to_tmux_target,
+    )
+
+    tmux_cmd = ["tmux"]
+    if tmux_socket_path:
+        tmux_cmd.extend(["-S", tmux_socket_path])
+
+    if submit:
+        await submit_literal_text_to_tmux_target(
+            pane_id,
+            message,
+            tmux_cmd=tmux_cmd,
+            escape_before_submit=escape_before_submit,
+        )
+    else:
+        await send_literal_text_to_tmux_target(pane_id, message, tmux_cmd=tmux_cmd)
+
+
 def init_orchestration(runner: GobbyRunner) -> None:
     """Initialize workflows, pipelines, agents, cron, and communications."""
     runner.workflow_loader = None
@@ -38,55 +96,11 @@ def init_orchestration(runner: GobbyRunner) -> None:
     ism_manager = InterSessionMessageManager(runner.database)
     agent_run_manager = LocalAgentRunManager(runner.database)
 
-    async def _tmux_send(
-        tmux_session_name: str,
-        message: str,
-        *,
-        submit: bool = False,
-    ) -> None:
-        from gobby.agents.tmux import get_tmux_session_manager
-        from gobby.agents.tmux.text_injection import TMUX_TEXT_ENTER_DELAY_SECONDS
-
-        mgr = get_tmux_session_manager()
-        if not submit:
-            if not await mgr.send_keys(tmux_session_name, message):
-                raise RuntimeError(f"tmux send-keys to {tmux_session_name} failed")
-            return
-
-        literal_text = message.rstrip("\n")
-        if literal_text and not await mgr.send_keys(tmux_session_name, literal_text):
-            raise RuntimeError(f"tmux send-keys to {tmux_session_name} failed")
-        if literal_text:
-            await asyncio.sleep(TMUX_TEXT_ENTER_DELAY_SECONDS)
-        if not await mgr.send_keys(tmux_session_name, "Enter", literal=False):
-            raise RuntimeError(f"tmux send-keys to {tmux_session_name} failed")
-
-    async def _tmux_pane_send(
-        pane_id: str,
-        message: str,
-        tmux_socket_path: str | None,
-        *,
-        submit: bool = False,
-    ) -> None:
-        from gobby.agents.tmux.text_injection import (
-            send_literal_text_to_tmux_target,
-            submit_literal_text_to_tmux_target,
-        )
-
-        tmux_cmd = ["tmux"]
-        if tmux_socket_path:
-            tmux_cmd.extend(["-S", tmux_socket_path])
-
-        if submit:
-            await submit_literal_text_to_tmux_target(pane_id, message, tmux_cmd=tmux_cmd)
-        else:
-            await send_literal_text_to_tmux_target(pane_id, message, tmux_cmd=tmux_cmd)
-
     runner.wake_dispatcher = WakeDispatcher(
         session_manager=runner.session_manager,
         ism_manager=ism_manager,
-        tmux_sender=_tmux_send,
-        tmux_pane_sender=_tmux_pane_send,
+        tmux_sender=_send_tmux_session_wake,
+        tmux_pane_sender=_send_tmux_pane_wake,
         agent_run_manager=agent_run_manager,
     )
 

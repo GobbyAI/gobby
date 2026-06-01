@@ -43,6 +43,7 @@ class TmuxSender(Protocol):
         message: str,
         *,
         submit: bool = False,
+        escape_before_submit: bool = False,
     ) -> Coroutine[Any, Any, None]: ...
 
 
@@ -54,6 +55,7 @@ class TmuxPaneSender(Protocol):
         tmux_socket_path: str | None,
         *,
         submit: bool = False,
+        escape_before_submit: bool = False,
     ) -> Coroutine[Any, Any, None]: ...
 
 
@@ -216,6 +218,7 @@ class WakeDispatcher:
                     CONTINUE_WAKE_MESSAGE,
                     tmux_socket_path,
                     submit=True,
+                    escape_before_submit=True,
                 )
                 self._record_live_wake(session_id, session)
                 return {
@@ -264,6 +267,7 @@ class WakeDispatcher:
                         tmux_session_name,
                         CONTINUE_WAKE_MESSAGE,
                         submit=True,
+                        escape_before_submit=True,
                     )
                     self._record_live_wake(session_id, session)
                     return {
@@ -287,6 +291,7 @@ class WakeDispatcher:
                         CONTINUE_WAKE_MESSAGE,
                         tmux_socket_path,
                         submit=True,
+                        escape_before_submit=True,
                     )
                     self._record_live_wake(session_id, session)
                     return {

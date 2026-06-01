@@ -99,7 +99,10 @@ class TestWakeDispatch:
         args = tmux_sender.call_args[0]
         assert args[0] == "gobby-agent-abc"  # tmux session name
         assert args[1] == CONTINUE_WAKE_MESSAGE
-        assert tmux_sender.call_args.kwargs == {"submit": True}
+        assert tmux_sender.call_args.kwargs == {
+            "submit": True,
+            "escape_before_submit": True,
+        }
         assert "Task completed" not in args[1]
         call_kwargs = ism_manager.create_message.call_args.kwargs
         assert call_kwargs["content"] == "Agent completed"
@@ -129,6 +132,7 @@ class TestWakeDispatch:
             "gobby-agent-abc",
             CONTINUE_WAKE_MESSAGE,
             submit=True,
+            escape_before_submit=True,
         )
         assert tmux_sender.await_count == 1
         assert tmux_sender.await_args is not None
@@ -167,6 +171,7 @@ class TestWakeDispatch:
             CONTINUE_WAKE_MESSAGE,
             "/tmp/tmux-501/gobby",
             submit=True,
+            escape_before_submit=True,
         )
         assert "Task completed" not in tmux_pane_sender.await_args.args[1]
 
@@ -198,6 +203,7 @@ class TestWakeDispatch:
             "gobby-agent-abc",
             CONTINUE_WAKE_MESSAGE,
             submit=True,
+            escape_before_submit=True,
         )
         assert failing_tmux.await_count == 1
         assert failing_tmux.await_args is not None
@@ -271,6 +277,7 @@ class TestWakeDispatch:
             "gobby-agent-parent",
             CONTINUE_WAKE_MESSAGE,
             submit=True,
+            escape_before_submit=True,
         )
 
     @pytest.mark.asyncio
@@ -328,6 +335,7 @@ class TestWakeDispatch:
             CONTINUE_WAKE_MESSAGE,
             None,
             submit=True,
+            escape_before_submit=True,
         )
         assert "Task completed" not in tmux_pane_sender.await_args.args[1]
         call_kwargs = ism_manager.create_message.call_args.kwargs
@@ -364,6 +372,7 @@ class TestWakeDispatch:
             CONTINUE_WAKE_MESSAGE,
             "/tmp/tmux-501/gobby",
             submit=True,
+            escape_before_submit=True,
         )
         assert tmux_pane_sender.await_count == 1
         assert tmux_pane_sender.await_args is not None
@@ -561,6 +570,7 @@ class TestWakeDispatch:
             CONTINUE_WAKE_MESSAGE,
             None,
             submit=True,
+            escape_before_submit=True,
         )
         assert ism_manager.create_message.call_count == 3
 
@@ -584,8 +594,10 @@ class TestWakeDispatch:
             _socket_path: str | None,
             *,
             submit: bool = False,
+            escape_before_submit: bool = False,
         ) -> None:
             assert submit is True
+            assert escape_before_submit is True
             send_started.set()
             await release_send.wait()
 
@@ -616,6 +628,7 @@ class TestWakeDispatch:
             CONTINUE_WAKE_MESSAGE,
             None,
             submit=True,
+            escape_before_submit=True,
         )
         assert ism_manager.create_message.call_count == 3
 
@@ -638,8 +651,10 @@ class TestWakeDispatch:
             _message: str,
             *,
             submit: bool = False,
+            escape_before_submit: bool = False,
         ) -> None:
             assert submit is True
+            assert escape_before_submit is True
             send_started.set()
             await release_send.wait()
 
@@ -669,6 +684,7 @@ class TestWakeDispatch:
             "gobby-agent-abc",
             CONTINUE_WAKE_MESSAGE,
             submit=True,
+            escape_before_submit=True,
         )
         assert ism_manager.create_message.call_count == 3
 

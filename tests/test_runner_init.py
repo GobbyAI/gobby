@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.runner import GobbyRunner
+from gobby.runner_init.orchestration import _send_tmux_pane_wake, _send_tmux_session_wake
 from tests.runner_helpers import create_base_patches, set_mock_default
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("fast_stop_hook_grace_window")]
@@ -56,6 +57,92 @@ class TestGobbyRunnerInit:
             assert runner._shutdown_requested is False
             mock_http_cls.assert_called_once()
             mock_ws_cls.assert_called_once()
+
+
+class TestWakeTmuxSenders:
+    """Tests for runner-level tmux wake sender wiring."""
+
+    @pytest.mark.asyncio
+    async def test_session_wake_can_escape_before_submit(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        calls: list[tuple[str, str, bool]] = []
+
+        class FakeTmuxManager:
+            async def send_keys(
+                self,
+                target: str,
+                keys: str,
+                *,
+                literal: bool = True,
+            ) -> bool:
+                calls.append((target, keys, literal))
+                return True
+
+        async def fake_sleep(_seconds: float) -> None:
+            return None
+
+        monkeypatch.setattr(
+            "gobby.agents.tmux.get_tmux_session_manager",
+            lambda: FakeTmuxManager(),
+        )
+        monkeypatch.setattr("gobby.runner_init.orchestration.asyncio.sleep", fake_sleep)
+
+        await _send_tmux_session_wake(
+            "gobby-agent-abc",
+            "Message from Gobby daemon: New activity available.",
+            submit=True,
+            escape_before_submit=True,
+        )
+
+        assert calls == [
+            ("gobby-agent-abc", "Escape", False),
+            (
+                "gobby-agent-abc",
+                "Message from Gobby daemon: New activity available.",
+                True,
+            ),
+            ("gobby-agent-abc", "Enter", False),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_pane_wake_forwards_escape_before_submit(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        calls: list[tuple[str, str, list[str], bool]] = []
+
+        async def fake_submit_literal_text_to_tmux_target(
+            pane_id: str,
+            message: str,
+            *,
+            tmux_cmd: list[str],
+            escape_before_submit: bool = False,
+        ) -> None:
+            calls.append((pane_id, message, tmux_cmd, escape_before_submit))
+
+        monkeypatch.setattr(
+            "gobby.agents.tmux.text_injection.submit_literal_text_to_tmux_target",
+            fake_submit_literal_text_to_tmux_target,
+        )
+
+        await _send_tmux_pane_wake(
+            "%12",
+            "Message from Gobby daemon: New activity available.",
+            "/tmp/tmux-501/gobby",
+            submit=True,
+            escape_before_submit=True,
+        )
+
+        assert calls == [
+            (
+                "%12",
+                "Message from Gobby daemon: New activity available.",
+                ["tmux", "-S", "/tmp/tmux-501/gobby"],
+                True,
+            )
+        ]
 
 
 class TestStaleNeo4jConfigStartup:

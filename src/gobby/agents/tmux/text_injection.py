@@ -173,10 +173,20 @@ async def submit_literal_text_to_tmux_target(
     tmux_cmd: Sequence[str] = ("tmux",),
     timeout: float = TMUX_TEXT_INJECTION_TIMEOUT_SECONDS,
     enter_delay_seconds: float = TMUX_TEXT_ENTER_DELAY_SECONDS,
+    escape_before_submit: bool = False,
 ) -> None:
     """Paste literal text into a tmux target, then submit it with a raw Enter key."""
     literal_text = text.rstrip("\n")
     base_cmd = tuple(tmux_cmd)
+
+    if escape_before_submit:
+        await send_escape_key_to_tmux_target(
+            target,
+            tmux_cmd=base_cmd,
+            timeout=timeout,
+        )
+        if literal_text and enter_delay_seconds > 0:
+            await asyncio.sleep(enter_delay_seconds)
 
     if literal_text:
         await send_literal_text_to_tmux_target(
@@ -192,6 +202,19 @@ async def submit_literal_text_to_tmux_target(
     await send_enter_key_to_tmux_target(
         target,
         tmux_cmd=base_cmd,
+        timeout=timeout,
+    )
+
+
+async def send_escape_key_to_tmux_target(
+    target: str,
+    *,
+    tmux_cmd: Sequence[str] = ("tmux",),
+    timeout: float = TMUX_TEXT_INJECTION_TIMEOUT_SECONDS,
+) -> None:
+    """Send Escape as a tmux key event, not pasted literal text."""
+    await _run_tmux_command(
+        (*tuple(tmux_cmd), "send-keys", "-t", target, "Escape"),
         timeout=timeout,
     )
 
