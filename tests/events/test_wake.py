@@ -12,13 +12,15 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from gobby.agents.tmux.text_injection import TmuxTargetUnavailableError
-from gobby.events.wake import CONTINUE_WAKE_SIGNAL, WakeDispatcher
+from gobby.events.wake import CONTINUE_WAKE_MESSAGE, CONTINUE_WAKE_SIGNAL, WakeDispatcher
 from tests._timing import drain_asyncio_tasks
 
 
 def test_live_wake_signal_is_neutral() -> None:
+    assert "Task completed" not in CONTINUE_WAKE_MESSAGE
     assert "Task completed" not in CONTINUE_WAKE_SIGNAL
-    assert CONTINUE_WAKE_SIGNAL == "Message from Gobby daemon: New activity available.\n"
+    assert CONTINUE_WAKE_MESSAGE == "Message from Gobby daemon: New activity available."
+    assert CONTINUE_WAKE_SIGNAL == f"{CONTINUE_WAKE_MESSAGE}\n"
 
 
 @dataclass
@@ -96,7 +98,8 @@ class TestWakeDispatch:
         tmux_sender.assert_called_once()
         args = tmux_sender.call_args[0]
         assert args[0] == "gobby-agent-abc"  # tmux session name
-        assert args[1] == CONTINUE_WAKE_SIGNAL
+        assert args[1] == CONTINUE_WAKE_MESSAGE
+        assert tmux_sender.call_args.kwargs == {"submit": True}
         assert "Task completed" not in args[1]
         call_kwargs = ism_manager.create_message.call_args.kwargs
         assert call_kwargs["content"] == "Agent completed"
@@ -122,7 +125,11 @@ class TestWakeDispatch:
 
         await dispatcher.wake("sess-1", "Agent completed", {"status": "success"})
 
-        tmux_sender.assert_awaited_once_with("gobby-agent-abc", CONTINUE_WAKE_SIGNAL)
+        tmux_sender.assert_awaited_once_with(
+            "gobby-agent-abc",
+            CONTINUE_WAKE_MESSAGE,
+            submit=True,
+        )
         assert tmux_sender.await_count == 1
         assert tmux_sender.await_args is not None
 
@@ -157,8 +164,9 @@ class TestWakeDispatch:
         tmux_sender.assert_not_awaited()
         tmux_pane_sender.assert_awaited_once_with(
             "%5",
-            CONTINUE_WAKE_SIGNAL,
+            CONTINUE_WAKE_MESSAGE,
             "/tmp/tmux-501/gobby",
+            submit=True,
         )
         assert "Task completed" not in tmux_pane_sender.await_args.args[1]
 
@@ -186,7 +194,11 @@ class TestWakeDispatch:
         ism_manager.create_message.assert_called_once()
         assert ism_manager.create_message.call_count == 1
         assert ism_manager.create_message.call_args is not None
-        failing_tmux.assert_awaited_once_with("gobby-agent-abc", CONTINUE_WAKE_SIGNAL)
+        failing_tmux.assert_awaited_once_with(
+            "gobby-agent-abc",
+            CONTINUE_WAKE_MESSAGE,
+            submit=True,
+        )
         assert failing_tmux.await_count == 1
         assert failing_tmux.await_args is not None
 
@@ -228,7 +240,7 @@ class TestWakeDispatch:
         )
         ism_manager.list_messages.return_value = []
         ism_manager.create_message.side_effect = lambda **_kwargs: events.append("ism")
-        tmux_sender = AsyncMock(side_effect=lambda *_args: events.append("wake"))
+        tmux_sender = AsyncMock(side_effect=lambda *_args, **_kwargs: events.append("wake"))
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
             ism_manager=ism_manager,
@@ -255,7 +267,11 @@ class TestWakeDispatch:
         assert call_kwargs["message_type"] == "completion_notification"
         assert '"completion_id": "run-1"' in call_kwargs["metadata_json"]
         assert '"task_id": "#12754"' in call_kwargs["metadata_json"]
-        tmux_sender.assert_awaited_once_with("gobby-agent-parent", CONTINUE_WAKE_SIGNAL)
+        tmux_sender.assert_awaited_once_with(
+            "gobby-agent-parent",
+            CONTINUE_WAKE_MESSAGE,
+            submit=True,
+        )
 
     @pytest.mark.asyncio
     async def test_completion_notification_dedupes_by_completion_id(
@@ -307,7 +323,12 @@ class TestWakeDispatch:
         ism_manager.create_message.assert_called_once()
         assert ism_manager.create_message.call_count == 1
         assert ism_manager.create_message.call_args is not None
-        tmux_pane_sender.assert_awaited_once_with("%12", CONTINUE_WAKE_SIGNAL, None)
+        tmux_pane_sender.assert_awaited_once_with(
+            "%12",
+            CONTINUE_WAKE_MESSAGE,
+            None,
+            submit=True,
+        )
         assert "Task completed" not in tmux_pane_sender.await_args.args[1]
         call_kwargs = ism_manager.create_message.call_args.kwargs
         assert call_kwargs["content"] == "Done"
@@ -340,8 +361,9 @@ class TestWakeDispatch:
 
         tmux_pane_sender.assert_awaited_once_with(
             "%12",
-            CONTINUE_WAKE_SIGNAL,
+            CONTINUE_WAKE_MESSAGE,
             "/tmp/tmux-501/gobby",
+            submit=True,
         )
         assert tmux_pane_sender.await_count == 1
         assert tmux_pane_sender.await_args is not None
@@ -534,7 +556,12 @@ class TestWakeDispatch:
         await dispatcher.wake("sess-1", "Done", {"status": "completed", "run_id": "r2"})
         await dispatcher.wake("sess-1", "Done", {"status": "completed", "run_id": "r3"})
 
-        tmux_pane_sender.assert_awaited_once_with("%12", CONTINUE_WAKE_SIGNAL, None)
+        tmux_pane_sender.assert_awaited_once_with(
+            "%12",
+            CONTINUE_WAKE_MESSAGE,
+            None,
+            submit=True,
+        )
         assert ism_manager.create_message.call_count == 3
 
     @pytest.mark.asyncio
@@ -555,7 +582,10 @@ class TestWakeDispatch:
             _pane_id: str,
             _message: str,
             _socket_path: str | None,
+            *,
+            submit: bool = False,
         ) -> None:
+            assert submit is True
             send_started.set()
             await release_send.wait()
 
@@ -581,7 +611,12 @@ class TestWakeDispatch:
         release_send.set()
         await wakes
 
-        tmux_pane_sender.assert_awaited_once_with("%12", CONTINUE_WAKE_SIGNAL, None)
+        tmux_pane_sender.assert_awaited_once_with(
+            "%12",
+            CONTINUE_WAKE_MESSAGE,
+            None,
+            submit=True,
+        )
         assert ism_manager.create_message.call_count == 3
 
     @pytest.mark.asyncio
@@ -598,7 +633,13 @@ class TestWakeDispatch:
             turn_count=8,
         )
 
-        async def slow_tmux_send(_tmux_session_name: str, _message: str) -> None:
+        async def slow_tmux_send(
+            _tmux_session_name: str,
+            _message: str,
+            *,
+            submit: bool = False,
+        ) -> None:
+            assert submit is True
             send_started.set()
             await release_send.wait()
 
@@ -624,7 +665,11 @@ class TestWakeDispatch:
         release_send.set()
         await wakes
 
-        tmux_sender.assert_awaited_once_with("gobby-agent-abc", CONTINUE_WAKE_SIGNAL)
+        tmux_sender.assert_awaited_once_with(
+            "gobby-agent-abc",
+            CONTINUE_WAKE_MESSAGE,
+            submit=True,
+        )
         assert ism_manager.create_message.call_count == 3
 
     @pytest.mark.asyncio

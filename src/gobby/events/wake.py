@@ -27,18 +27,35 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-CONTINUE_WAKE_SIGNAL = "Message from Gobby daemon: New activity available.\n"
+CONTINUE_WAKE_MESSAGE = "Message from Gobby daemon: New activity available."
+CONTINUE_WAKE_SIGNAL = f"{CONTINUE_WAKE_MESSAGE}\n"
 
 # Coalesce bursty completions targeting an interactive pane: while the user is
 # idle on the same turn, suppress redundant tmux send-keys after the first wake.
 # The 30s ceiling guarantees we resume nudging if turn_count signals get missed.
 PANE_WAKE_DEBOUNCE_SECONDS = 30.0
 
-# tmux_sender signature: (tmux_session_name: str, message: str) -> None
-TmuxSender = Callable[[str, str], Coroutine[Any, Any, None]]
 
-# tmux_pane_sender signature: (pane_id: str, message: str, socket_path: str | None) -> None
-TmuxPaneSender = Callable[[str, str, str | None], Coroutine[Any, Any, None]]
+class TmuxSender(Protocol):
+    def __call__(
+        self,
+        tmux_session_name: str,
+        message: str,
+        *,
+        submit: bool = False,
+    ) -> Coroutine[Any, Any, None]: ...
+
+
+class TmuxPaneSender(Protocol):
+    def __call__(
+        self,
+        pane_id: str,
+        message: str,
+        tmux_socket_path: str | None,
+        *,
+        submit: bool = False,
+    ) -> Coroutine[Any, Any, None]: ...
+
 
 # sdk_resumer signature: (sdk_session_id: str, message: str) -> None
 SdkResumer = Callable[[str, str], Coroutine[Any, Any, None]]
@@ -196,8 +213,9 @@ class WakeDispatcher:
             try:
                 await self._tmux_pane_sender(
                     tmux_pane,
-                    CONTINUE_WAKE_SIGNAL,
+                    CONTINUE_WAKE_MESSAGE,
                     tmux_socket_path,
+                    submit=True,
                 )
                 self._record_live_wake(session_id, session)
                 return {
@@ -242,7 +260,11 @@ class WakeDispatcher:
             tmux_session_name = self._parse_tmux_session(terminal_context)
             if tmux_session_name:
                 try:
-                    await self._tmux_sender(tmux_session_name, CONTINUE_WAKE_SIGNAL)
+                    await self._tmux_sender(
+                        tmux_session_name,
+                        CONTINUE_WAKE_MESSAGE,
+                        submit=True,
+                    )
                     self._record_live_wake(session_id, session)
                     return {
                         "session_id": session_id,
@@ -262,8 +284,9 @@ class WakeDispatcher:
                 try:
                     await self._tmux_pane_sender(
                         tmux_pane,
-                        CONTINUE_WAKE_SIGNAL,
+                        CONTINUE_WAKE_MESSAGE,
                         tmux_socket_path,
+                        submit=True,
                     )
                     self._record_live_wake(session_id, session)
                     return {

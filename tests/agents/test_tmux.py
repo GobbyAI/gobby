@@ -25,6 +25,7 @@ from gobby.agents.tmux.text_injection import (
     TmuxTextInjectionTimeout,
     classify_tmux_text_injection_error,
     send_literal_text_to_tmux_target,
+    submit_literal_text_to_tmux_target,
 )
 from gobby.config.tmux import TmuxConfig
 from gobby.config.tmux import TmuxConfig as TmuxConfigCanonical
@@ -177,6 +178,55 @@ class TestTmuxTextInjection:
         assert commands[2] == [*tmux_cmd, "delete-buffer", "-b", buffer_name]
         assert commands[3] == [*tmux_cmd, "send-keys", "-t", "%12", "Enter"]
         assert not any("send-keys" in command and "-l" in command for command in commands)
+
+    @pytest.mark.asyncio
+    async def test_submit_literal_text_sends_separate_enter_key(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        commands: list[list[str]] = []
+
+        async def fake_exec(*args: str, **_kwargs: object) -> MagicMock:
+            commands.append(list(args))
+            proc = MagicMock()
+            proc.returncode = 0
+            proc.communicate = AsyncMock(return_value=(b"", b""))
+            return proc
+
+        monkeypatch.setattr(
+            "gobby.agents.tmux.text_injection.asyncio.create_subprocess_exec",
+            fake_exec,
+        )
+
+        await submit_literal_text_to_tmux_target(
+            "%12",
+            "Message from Gobby daemon: New activity available.",
+            enter_delay_seconds=0,
+        )
+
+        buffer_name = commands[0][3]
+        assert commands == [
+            [
+                "tmux",
+                "set-buffer",
+                "-b",
+                buffer_name,
+                "--",
+                "Message from Gobby daemon: New activity available.",
+            ],
+            [
+                "tmux",
+                "paste-buffer",
+                "-d",
+                "-b",
+                buffer_name,
+                "-t",
+                "%12",
+            ],
+            ["tmux", "delete-buffer", "-b", buffer_name],
+            ["tmux", "send-keys", "-t", "%12", "Enter"],
+        ]
+        assert not any("\\n" in arg for command in commands for arg in command)
 
     @pytest.mark.asyncio
     async def test_paste_failure_still_deletes_tmux_buffer(

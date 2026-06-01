@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from gobby.events.completion_registry import CompletionEventRegistry
-from gobby.events.wake import CONTINUE_WAKE_SIGNAL, WakeDispatcher
+from gobby.events.wake import CONTINUE_WAKE_MESSAGE, CONTINUE_WAKE_SIGNAL, WakeDispatcher
 from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
@@ -150,7 +150,11 @@ class TestWakeDispatcherSdkResume:
 
         await dispatcher.wake("sess-1", "Done", {"status": "completed"})
 
-        tmux_sender.assert_awaited_once_with("agent-1", CONTINUE_WAKE_SIGNAL)
+        tmux_sender.assert_awaited_once_with(
+            "agent-1",
+            CONTINUE_WAKE_MESSAGE,
+            submit=True,
+        )
         assert tmux_sender.await_count == 1
         assert tmux_sender.await_args is not None
         sdk_resumer.assert_not_awaited()
@@ -181,7 +185,11 @@ class TestWakeDispatcherSdkResume:
 
         await dispatcher.wake("sess-1", "Done", {"status": "completed"})
 
-        tmux_sender.assert_awaited_once_with("agent-1", CONTINUE_WAKE_SIGNAL)
+        tmux_sender.assert_awaited_once_with(
+            "agent-1",
+            CONTINUE_WAKE_MESSAGE,
+            submit=True,
+        )
         assert tmux_sender.await_count == 1
         assert tmux_sender.await_args is not None
         sdk_resumer.assert_awaited_once_with("sdk-999", CONTINUE_WAKE_SIGNAL)
