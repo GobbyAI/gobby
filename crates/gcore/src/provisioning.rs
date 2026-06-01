@@ -16,6 +16,7 @@ use anyhow::Context as _;
 use serde::Deserialize;
 
 use crate::config::{ConfigSource, embedding_keys, resolve_env_pattern};
+use crate::degradation::CoreError;
 
 pub const GCORE_CONFIG_FILENAME: &str = "gcore.yaml";
 pub const SERVICES_DIRNAME: &str = "services";
@@ -319,27 +320,111 @@ impl DockerHealthChecker for TcpDockerHealthChecker {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HubIdentity {
+    pub system_identifier: String,
+    pub database_name: String,
+}
+
+impl HubIdentity {
+    fn display_label(&self) -> String {
+        format!(
+            "system_identifier={}, database={}",
+            self.system_identifier, self.database_name
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HubIdentityProbeResult {
+    Known(HubIdentity),
+    UnknownInsufficientPrivilege { message: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RecordedHubIdentityStatus {
+    SingleReachable,
+    VerifiedSameHub,
+    IdentityUnknownInsufficientPrivilege { message: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordedHubResolution {
+    pub database_url: String,
+    pub identity_status: RecordedHubIdentityStatus,
+}
+
 pub fn ensure_hub(
     options: &EnsureHubOptions,
 ) -> anyhow::Result<(String, Option<DockerProvisioningReport>)> {
-    ensure_hub_with(
+    ensure_hub_with_identity(
         options,
         |name| std::env::var(name).ok(),
         postgres_database_reachable,
+        probe_postgres_hub_identity,
         provision_docker_services,
     )
 }
 
+#[cfg(test)]
 fn ensure_hub_with(
+    options: &EnsureHubOptions,
+    get_env: impl FnMut(&str) -> Option<String>,
+    database_reachable: impl FnMut(&str) -> bool,
+    provision: impl FnOnce(&DockerServiceOptions) -> anyhow::Result<DockerProvisioningReport>,
+) -> anyhow::Result<(String, Option<DockerProvisioningReport>)> {
+    ensure_hub_with_identity(
+        options,
+        get_env,
+        database_reachable,
+        |_| {
+            Ok(HubIdentityProbeResult::UnknownInsufficientPrivilege {
+                message: "identity_unknown_insufficient_privilege: test probe not configured"
+                    .to_string(),
+            })
+        },
+        provision,
+    )
+}
+
+fn ensure_hub_with_identity(
     options: &EnsureHubOptions,
     mut get_env: impl FnMut(&str) -> Option<String>,
     mut database_reachable: impl FnMut(&str) -> bool,
+    mut identity_probe: impl FnMut(&str) -> anyhow::Result<HubIdentityProbeResult>,
     provision: impl FnOnce(&DockerServiceOptions) -> anyhow::Result<DockerProvisioningReport>,
 ) -> anyhow::Result<(String, Option<DockerProvisioningReport>)> {
-    for database_url in resolve_hub_database_urls(options, &mut get_env)? {
-        if database_reachable(&database_url) {
-            return Ok((database_url, None));
+    let mut gcore_database_url = None;
+    let mut bootstrap_database_url = None;
+
+    for candidate in resolve_hub_database_urls(options, &mut get_env)? {
+        match candidate.source {
+            HubDatabaseUrlSource::Candidate | HubDatabaseUrlSource::Env => {
+                if database_reachable(&candidate.database_url) {
+                    return Ok((candidate.database_url, None));
+                }
+            }
+            HubDatabaseUrlSource::GcoreConfig => {
+                gcore_database_url = Some(candidate.database_url);
+            }
+            HubDatabaseUrlSource::Bootstrap => {
+                bootstrap_database_url = Some(candidate.database_url);
+            }
         }
+    }
+
+    if let Some(resolution) = resolve_recorded_hub_database_url(
+        gcore_database_url.as_deref(),
+        bootstrap_database_url.as_deref(),
+        &mut database_reachable,
+        &mut identity_probe,
+    )? {
+        if let RecordedHubIdentityStatus::IdentityUnknownInsufficientPrivilege { message } =
+            &resolution.identity_status
+        {
+            log::warn!("{message}");
+        }
+        return Ok((resolution.database_url, None));
     }
 
     if !options.provision_services {
@@ -355,27 +440,223 @@ fn ensure_hub_with(
     ))
 }
 
+pub fn resolve_recorded_hub_database_url(
+    existing_database_url: Option<&str>,
+    daemon_database_url: Option<&str>,
+    mut database_reachable: impl FnMut(&str) -> bool,
+    mut identity_probe: impl FnMut(&str) -> anyhow::Result<HubIdentityProbeResult>,
+) -> anyhow::Result<Option<RecordedHubResolution>> {
+    let existing_database_url =
+        existing_database_url.and_then(|value| non_empty_trimmed(Some(value.to_string())));
+    let daemon_database_url =
+        daemon_database_url.and_then(|value| non_empty_trimmed(Some(value.to_string())));
+
+    match (existing_database_url, daemon_database_url) {
+        (None, None) => Ok(None),
+        (Some(existing), None) => {
+            if database_reachable(&existing) {
+                Ok(Some(RecordedHubResolution {
+                    database_url: existing,
+                    identity_status: RecordedHubIdentityStatus::SingleReachable,
+                }))
+            } else {
+                Ok(None)
+            }
+        }
+        (None, Some(daemon)) => {
+            if database_reachable(&daemon) {
+                Ok(Some(RecordedHubResolution {
+                    database_url: daemon,
+                    identity_status: RecordedHubIdentityStatus::SingleReachable,
+                }))
+            } else {
+                Ok(None)
+            }
+        }
+        (Some(existing), Some(daemon)) if existing == daemon => {
+            if database_reachable(&daemon) {
+                Ok(Some(RecordedHubResolution {
+                    database_url: daemon,
+                    identity_status: RecordedHubIdentityStatus::VerifiedSameHub,
+                }))
+            } else {
+                Ok(None)
+            }
+        }
+        (Some(existing), Some(daemon)) => {
+            let existing_reachable = database_reachable(&existing);
+            let daemon_reachable = database_reachable(&daemon);
+
+            match (existing_reachable, daemon_reachable) {
+                (false, false) => Ok(None),
+                (true, false) => Ok(Some(RecordedHubResolution {
+                    database_url: existing,
+                    identity_status: RecordedHubIdentityStatus::SingleReachable,
+                })),
+                (false, true) => Ok(Some(RecordedHubResolution {
+                    database_url: daemon,
+                    identity_status: RecordedHubIdentityStatus::SingleReachable,
+                })),
+                (true, true) => {
+                    let existing_identity = identity_probe(&existing).with_context(|| {
+                        format!("failed to probe PostgreSQL hub identity for {existing}")
+                    })?;
+                    let daemon_identity = identity_probe(&daemon).with_context(|| {
+                        format!("failed to probe PostgreSQL hub identity for {daemon}")
+                    })?;
+
+                    match (existing_identity, daemon_identity) {
+                        (
+                            HubIdentityProbeResult::Known(existing_identity),
+                            HubIdentityProbeResult::Known(daemon_identity),
+                        ) if existing_identity == daemon_identity => {
+                            Ok(Some(RecordedHubResolution {
+                                database_url: daemon,
+                                identity_status: RecordedHubIdentityStatus::VerifiedSameHub,
+                            }))
+                        }
+                        (
+                            HubIdentityProbeResult::Known(existing_identity),
+                            HubIdentityProbeResult::Known(daemon_identity),
+                        ) => Err(CoreError::HubConflict {
+                            existing_database_url: existing,
+                            existing_identity: existing_identity.display_label(),
+                            daemon_database_url: daemon,
+                            daemon_identity: daemon_identity.display_label(),
+                        }
+                        .into()),
+                        (
+                            HubIdentityProbeResult::UnknownInsufficientPrivilege { message },
+                            _,
+                        )
+                        | (
+                            _,
+                            HubIdentityProbeResult::UnknownInsufficientPrivilege { message },
+                        ) => Ok(Some(RecordedHubResolution {
+                            database_url: existing.clone(),
+                            identity_status:
+                                RecordedHubIdentityStatus::IdentityUnknownInsufficientPrivilege {
+                                    message: format!(
+                                        "identity_unknown_insufficient_privilege: preserving existing recorded hub {existing}; daemon hub {daemon} was not adopted because identity could not be verified ({message})"
+                                    ),
+                                },
+                        })),
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(feature = "postgres")]
+pub fn probe_postgres_hub_identity(database_url: &str) -> anyhow::Result<HubIdentityProbeResult> {
+    use anyhow::Context;
+    use postgres::error::SqlState;
+
+    fn insufficient_privilege(error: &postgres::Error) -> bool {
+        error.code() == Some(&SqlState::INSUFFICIENT_PRIVILEGE)
+    }
+
+    let mut conn = crate::postgres::connect_readonly(database_url)?;
+    let has_privilege = match conn.query_one(
+        "SELECT has_function_privilege(current_user, 'pg_control_system()', 'execute')",
+        &[],
+    ) {
+        Ok(row) => row.get::<_, bool>(0),
+        Err(error) if insufficient_privilege(&error) => {
+            return Ok(HubIdentityProbeResult::UnknownInsufficientPrivilege {
+                message: "identity_unknown_insufficient_privilege: current role cannot preflight pg_control_system()".to_string(),
+            });
+        }
+        Err(error) => {
+            return Err(error).context("failed to preflight pg_control_system() privilege");
+        }
+    };
+
+    if !has_privilege {
+        return Ok(HubIdentityProbeResult::UnknownInsufficientPrivilege {
+            message: "identity_unknown_insufficient_privilege: current role cannot execute pg_control_system()".to_string(),
+        });
+    }
+
+    let row = match conn.query_one(
+        "SELECT system_identifier::text AS system_identifier, current_database() AS database_name FROM pg_control_system()",
+        &[],
+    ) {
+        Ok(row) => row,
+        Err(error) if insufficient_privilege(&error) => {
+            return Ok(HubIdentityProbeResult::UnknownInsufficientPrivilege {
+                message: "identity_unknown_insufficient_privilege: current role cannot execute pg_control_system()".to_string(),
+            });
+        }
+        Err(error) => return Err(error).context("failed to query PostgreSQL hub identity"),
+    };
+
+    Ok(HubIdentityProbeResult::Known(HubIdentity {
+        system_identifier: row
+            .try_get("system_identifier")
+            .context("PostgreSQL hub identity did not include system_identifier")?,
+        database_name: row
+            .try_get("database_name")
+            .context("PostgreSQL hub identity did not include database_name")?,
+    }))
+}
+
+#[cfg(not(feature = "postgres"))]
+pub fn probe_postgres_hub_identity(_database_url: &str) -> anyhow::Result<HubIdentityProbeResult> {
+    Ok(HubIdentityProbeResult::UnknownInsufficientPrivilege {
+        message: "identity_unknown_insufficient_privilege: gobby-core was built without PostgreSQL support".to_string(),
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HubDatabaseUrlSource {
+    Candidate,
+    Env,
+    GcoreConfig,
+    Bootstrap,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HubDatabaseUrl {
+    source: HubDatabaseUrlSource,
+    database_url: String,
+}
+
 fn resolve_hub_database_urls(
     options: &EnsureHubOptions,
     get_env: &mut impl FnMut(&str) -> Option<String>,
-) -> anyhow::Result<Vec<String>> {
+) -> anyhow::Result<Vec<HubDatabaseUrl>> {
     let mut urls = Vec::new();
     urls.extend(
         options
             .candidate_database_urls
             .iter()
-            .filter_map(|value| non_empty_trimmed(Some(value.clone()))),
+            .filter_map(|value| non_empty_trimmed(Some(value.clone())))
+            .map(|database_url| HubDatabaseUrl {
+                source: HubDatabaseUrlSource::Candidate,
+                database_url,
+            }),
     );
     if let Some(database_url) = non_empty_trimmed(get_env("GOBBY_POSTGRES_DSN")) {
-        urls.push(database_url);
+        urls.push(HubDatabaseUrl {
+            source: HubDatabaseUrlSource::Env,
+            database_url,
+        });
     }
     if let Some(database_url) = resolve_database_url_from_gcore_config(&options.gobby_home)? {
-        urls.push(database_url);
+        urls.push(HubDatabaseUrl {
+            source: HubDatabaseUrlSource::GcoreConfig,
+            database_url,
+        });
     }
     if let Some(database_url) =
         resolve_database_url_from_bootstrap_file(&options.gobby_home.join("bootstrap.yaml"))?
     {
-        urls.push(database_url);
+        urls.push(HubDatabaseUrl {
+            source: HubDatabaseUrlSource::Bootstrap,
+            database_url,
+        });
     }
     Ok(urls)
 }
@@ -1076,6 +1357,123 @@ databases.qdrant.url: http://localhost:6333
             report.expect("provisioning report").health_checks,
             vec!["postgres"]
         );
+    }
+
+    #[test]
+    fn no_double_provision_when_reachable() {
+        let _env = EnvGuard::new();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let home = dir.path().join(".gobby");
+        fs::create_dir_all(&home).expect("create gobby home");
+        let mut config = StandaloneConfig::empty();
+        config.set("databases.postgres.dsn", "postgresql://recorded/gobby");
+        config
+            .write_at(&gcore_config_path(&home))
+            .expect("write gcore config");
+
+        let mut options = EnsureHubOptions::new(home);
+        options.service_options.postgres_port = 15432;
+        let (database_url, report) = ensure_hub_with_identity(
+            &options,
+            |_| None,
+            |url| url == "postgresql://recorded/gobby",
+            |_| {
+                Ok(HubIdentityProbeResult::Known(HubIdentity {
+                    system_identifier: "cluster-a".to_string(),
+                    database_name: "gobby".to_string(),
+                }))
+            },
+            |_| panic!("reachable recorded DSN should not provision services"),
+        )
+        .expect("reuse reachable recorded hub");
+
+        assert_eq!(database_url, "postgresql://recorded/gobby");
+        assert!(report.is_none());
+    }
+
+    #[test]
+    fn divergent_hubs_surface_conflict() {
+        let _env = EnvGuard::new();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let home = dir.path().join(".gobby");
+        fs::create_dir_all(&home).expect("create gobby home");
+        let mut config = StandaloneConfig::empty();
+        config.set("databases.postgres.dsn", "postgresql://standalone/gobby");
+        config
+            .write_at(&gcore_config_path(&home))
+            .expect("write gcore config");
+        fs::write(
+            home.join("bootstrap.yaml"),
+            "hub_backend: postgres\ndatabase_url: postgresql://daemon/gobby\n",
+        )
+        .expect("write bootstrap");
+
+        let err = ensure_hub_with_identity(
+            &EnsureHubOptions::new(home),
+            |_| None,
+            |url| {
+                matches!(
+                    url,
+                    "postgresql://standalone/gobby" | "postgresql://daemon/gobby"
+                )
+            },
+            |url| {
+                let system_identifier = if url == "postgresql://standalone/gobby" {
+                    "cluster-a"
+                } else {
+                    "cluster-b"
+                };
+                Ok(HubIdentityProbeResult::Known(HubIdentity {
+                    system_identifier: system_identifier.to_string(),
+                    database_name: "gobby".to_string(),
+                }))
+            },
+            |_| panic!("conflicting reachable hubs should not provision services"),
+        )
+        .expect_err("surface divergent hub conflict");
+
+        let message = err.to_string();
+        assert!(message.contains("postgresql://standalone/gobby"));
+        assert!(message.contains("postgresql://daemon/gobby"));
+    }
+
+    #[test]
+    fn insufficient_identity_privilege_preserves_hub() {
+        let _env = EnvGuard::new();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let home = dir.path().join(".gobby");
+        fs::create_dir_all(&home).expect("create gobby home");
+        let mut config = StandaloneConfig::empty();
+        config.set("databases.postgres.dsn", "postgresql://standalone/gobby");
+        config
+            .write_at(&gcore_config_path(&home))
+            .expect("write gcore config");
+        fs::write(
+            home.join("bootstrap.yaml"),
+            "hub_backend: postgres\ndatabase_url: postgresql://daemon/gobby\n",
+        )
+        .expect("write bootstrap");
+
+        let (database_url, report) = ensure_hub_with_identity(
+            &EnsureHubOptions::new(home),
+            |_| None,
+            |url| {
+                matches!(
+                    url,
+                    "postgresql://standalone/gobby" | "postgresql://daemon/gobby"
+                )
+            },
+            |_| {
+                Ok(HubIdentityProbeResult::UnknownInsufficientPrivilege {
+                    message: "identity_unknown_insufficient_privilege".to_string(),
+                })
+            },
+            |_| panic!("unknown identity for reachable hubs should not provision services"),
+        )
+        .expect("preserve existing recorded hub");
+
+        assert_eq!(database_url, "postgresql://standalone/gobby");
+        assert!(report.is_none());
     }
 
     #[derive(Default)]
