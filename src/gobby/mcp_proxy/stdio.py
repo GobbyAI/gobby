@@ -72,6 +72,7 @@ REMOVED_WORKFLOW_WAIT_TOOL = "wait_for_completion"
 DAEMON_HEALTH_ATTEMPTS = 30
 DAEMON_HEALTH_CHECK_TIMEOUT_SECONDS = 2.0
 DAEMON_HEALTH_RETRY_DELAY_SECONDS = 1.0
+DAEMON_PROXY_PREFLIGHT_TIMEOUT_SECONDS = 2.0
 
 
 __all__ = [
@@ -85,6 +86,17 @@ __all__ = [
 ]
 
 logger = logging.getLogger("gobby.mcp.stdio")
+
+
+def _daemon_unavailable_result(port: int, detail: str) -> dict[str, Any]:
+    return {
+        "success": False,
+        "error": (
+            f"Gobby daemon HTTP control plane is unavailable at localhost:{port}: {detail}. "
+            "Check `gobby status` or restart with `gobby restart --verbose`."
+        ),
+        "error_code": "DAEMON_UNAVAILABLE",
+    }
 
 
 def _removed_wait_for_completion_result() -> dict[str, Any]:
@@ -187,6 +199,7 @@ class DaemonProxy:
         timeout: float = 30.0,
         project_id: str | None = None,
         session_id: str | None = None,
+        preflight: bool = False,
     ) -> dict[str, Any]:
         """Make HTTP request to daemon."""
         if session_id:
@@ -204,6 +217,15 @@ class DaemonProxy:
         if effective_session_id:
             headers["X-Gobby-Session-Id"] = effective_session_id
 
+        if preflight and not await check_daemon_http_health(
+            self.port,
+            timeout=DAEMON_PROXY_PREFLIGHT_TIMEOUT_SECONDS,
+        ):
+            return _daemon_unavailable_result(
+                self.port,
+                f"health check did not respond within {DAEMON_PROXY_PREFLIGHT_TIMEOUT_SECONDS:g}s",
+            )
+
         try:
             async with httpx.AsyncClient() as client:
                 resp = await client.request(
@@ -220,7 +242,12 @@ class DaemonProxy:
                 else:
                     return {"success": False, "error": f"HTTP {resp.status_code}: {resp.text}"}
         except httpx.ConnectError:
-            return {"success": False, "error": "Daemon not running or not reachable"}
+            return _daemon_unavailable_result(self.port, "connection failed")
+        except httpx.TimeoutException:
+            return _daemon_unavailable_result(
+                self.port,
+                f"request timed out after {timeout:g}s while calling {path}",
+            )
         except Exception as e:
             error_msg = str(e) or f"{type(e).__name__}: (no message)"
             return {"success": False, "error": error_msg}
@@ -310,6 +337,7 @@ class DaemonProxy:
             "POST",
             f"/api/mcp/{server_name}/tools/{tool_name}",
             **request_kwargs,
+            preflight=True,
         )
 
     async def get_tool_schema(

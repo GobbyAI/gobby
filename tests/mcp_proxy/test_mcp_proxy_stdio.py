@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable, Coroutine
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from gobby.mcp_proxy.stdio import (
@@ -620,6 +621,46 @@ class TestDaemonProxy:
             assert result["error"] == "Exception: (no message)"
 
     @pytest.mark.asyncio
+    async def test_request_preflight_fails_fast_when_daemon_http_is_unavailable(self) -> None:
+        """preflight avoids hook-visible read timeouts when the daemon control plane is down."""
+        from gobby.mcp_proxy.stdio import DaemonProxy
+
+        proxy = DaemonProxy(60887)
+        with patch(
+            "gobby.mcp_proxy.stdio.check_daemon_http_health",
+            new_callable=AsyncMock,
+        ) as mock_health:
+            mock_health.return_value = False
+            with patch("gobby.mcp_proxy.stdio.httpx.AsyncClient") as mock_client_cls:
+                result = await proxy._request("GET", "/some/path", preflight=True)
+
+        assert result["success"] is False
+        assert result["error_code"] == "DAEMON_UNAVAILABLE"
+        assert "localhost:60887" in result["error"]
+        assert "gobby restart --verbose" in result["error"]
+        mock_client_cls.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_request_timeout_returns_daemon_unavailable(self) -> None:
+        """Daemon read timeouts should become actionable proxy errors."""
+        from gobby.mcp_proxy.stdio import DaemonProxy
+
+        proxy = DaemonProxy(60887)
+        with patch("gobby.mcp_proxy.stdio.httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.__aexit__.return_value = None
+            mock_client.request.side_effect = httpx.ReadTimeout("")
+            mock_client_cls.return_value = mock_client
+
+            result = await proxy._request("POST", "/api/mcp/gobby-agents/tools/list", timeout=5.0)
+
+        assert result["success"] is False
+        assert result["error_code"] == "DAEMON_UNAVAILABLE"
+        assert "request timed out after 5s" in result["error"]
+        assert "/api/mcp/gobby-agents/tools/list" in result["error"]
+
+    @pytest.mark.asyncio
     async def test_call_tool_uses_extended_timeout_for_expand_task(self) -> None:
         """Test call_tool uses extended timeout for expand_task."""
         from gobby.mcp_proxy.stdio import DaemonProxy
@@ -633,13 +674,21 @@ class TestDaemonProxy:
                 mock_request.return_value = {"success": True}
                 await proxy.call_tool("server", "normal_tool", {})
                 mock_request.assert_called_with(
-                    "POST", "/api/mcp/server/tools/normal_tool", json={}, timeout=30.0
+                    "POST",
+                    "/api/mcp/server/tools/normal_tool",
+                    json={},
+                    timeout=30.0,
+                    preflight=True,
                 )
                 assert mock_request.call_count >= 1
                 assert mock_request.call_args is not None
                 await proxy.call_tool("server", "expand_task", {})
                 mock_request.assert_called_with(
-                    "POST", "/api/mcp/server/tools/expand_task", json={}, timeout=300.0
+                    "POST",
+                    "/api/mcp/server/tools/expand_task",
+                    json={},
+                    timeout=300.0,
+                    preflight=True,
                 )
                 assert mock_request.call_count >= 1
                 assert mock_request.call_args is not None
@@ -668,6 +717,7 @@ class TestDaemonProxy:
                     "/api/mcp/gobby-merge/tools/merge_resolve",
                     json={"conflict_id": "mc-one", "use_ai": True},
                     timeout=300.0,
+                    preflight=True,
                 )
 
     @pytest.mark.asyncio
@@ -696,6 +746,7 @@ class TestDaemonProxy:
                     json={"rule_name": "build-coordinator-handoff"},
                     timeout=300.0,
                     session_id="#6074",
+                    preflight=True,
                 )
 
     @pytest.mark.asyncio
@@ -722,6 +773,7 @@ class TestDaemonProxy:
                     "/api/mcp/gobby-agents/tools/wait_for_agent",
                     json={"run_id": "run-123", "timeout_seconds": 120},
                     timeout=150.0,
+                    preflight=True,
                 )
 
     @pytest.mark.asyncio
@@ -742,6 +794,7 @@ class TestDaemonProxy:
                     "/api/mcp/gobby-tasks/tools/get_task",
                     json={"task_id": "#1"},
                     timeout=30.0,
+                    preflight=True,
                 )
 
 

@@ -158,6 +158,7 @@ def format_status_message(
     deps_info: dict[str, Any] | None = None,
     # Config mismatches
     config_issues: list[dict[str, str]] | None = None,
+    control_plane_error: str | None = None,
     **kwargs: Any,
 ) -> str:
     """Format the full operational health dashboard for gobby status."""
@@ -172,7 +173,10 @@ def format_status_message(
     # ---- Runtime ----
     lines.append("Runtime:")
     if running:
-        status_str = f"Running (PID: {pid})" if pid else "Running"
+        if control_plane_error:
+            status_str = f"Degraded (PID: {pid}; HTTP unavailable)" if pid else "Degraded"
+        else:
+            status_str = f"Running (PID: {pid})" if pid else "Running"
         lines.append(f"  {'Status:':<{_LW}}{status_str}")
 
         if service_info:
@@ -431,6 +435,9 @@ def format_status_message(
 
     # ---- Health Issues (only if problems exist) ----
     health_issues: list[str] = []
+
+    if control_plane_error:
+        health_issues.append(f"Daemon control plane: {control_plane_error}")
 
     # Config mismatches
     if config_issues:

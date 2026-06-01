@@ -302,6 +302,10 @@ class TestStatusCommand:
         result = runner.invoke(status, [], obj={"config": config}, catch_exceptions=False)
         assert result.exit_code == 0
         assert "Running PID 123" in result.output
+        assert _fmt.call_args.kwargs["control_plane_error"] == (
+            "HTTP control plane unavailable at localhost:60888; "
+            "PID exists but /api/admin/status did not respond"
+        )
 
     @patch("gobby.cli.daemon.format_status_message", return_value="Stale PID")
     @patch("gobby.cli.daemon.os.kill", side_effect=ProcessLookupError)

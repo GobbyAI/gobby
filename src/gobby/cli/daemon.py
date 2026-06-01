@@ -726,6 +726,12 @@ def status(ctx: click.Context) -> None:
 
     # Fetch API status data
     api_data = asyncio.run(fetch_rich_status(http_port, timeout=3.0))
+    control_plane_error = None
+    if not api_data:
+        control_plane_error = (
+            f"HTTP control plane unavailable at localhost:{http_port}; "
+            "PID exists but /api/admin/status did not respond"
+        )
 
     # Collect dependency/CLI version info
     from gobby.utils.deps import check_config_mismatches, collect_all_deps
@@ -764,6 +770,7 @@ def status(ctx: click.Context) -> None:
         log_files=str(log_dir),
         deps_info=deps_info,
         config_issues=config_issues,
+        control_plane_error=control_plane_error,
     )
     click.echo(message)
     sys.exit(0)

@@ -74,6 +74,19 @@ class TestStatusUtils:
         assert "100.0 MB" in msg
         assert "localhost:8080" in msg
 
+    def test_format_status_message_degraded_when_control_plane_unavailable(self) -> None:
+        msg = format_status_message(
+            running=True,
+            pid=1234,
+            http_port=8080,
+            control_plane_error="HTTP control plane unavailable at localhost:8080",
+        )
+
+        assert "Degraded (PID: 1234; HTTP unavailable)" in msg
+        assert "Health Issues:" in msg
+        assert "Daemon control plane:" in msg
+        assert "HTTP control plane unavailable at localhost:8080" in msg
+
     def test_format_status_message_stopped(self) -> None:
         msg = format_status_message(running=False)
         assert "Stopped" in msg

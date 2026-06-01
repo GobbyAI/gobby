@@ -92,15 +92,20 @@ async def test_call_tool_session_id_override_replaces_stale_cached_header() -> N
 
     with patch("gobby.mcp_proxy.stdio.load_config") as mock_config:
         mock_config.return_value = MagicMock(mcp_client_proxy=MagicMock(tool_timeouts={}))
-        with patch("gobby.mcp_proxy.stdio.httpx.AsyncClient") as mock_client_cls:
-            client = _mock_http_client(mock_client_cls)
+        with patch(
+            "gobby.mcp_proxy.stdio.check_daemon_http_health",
+            new_callable=AsyncMock,
+        ) as mock_health:
+            mock_health.return_value = True
+            with patch("gobby.mcp_proxy.stdio.httpx.AsyncClient") as mock_client_cls:
+                client = _mock_http_client(mock_client_cls)
 
-            await proxy.call_tool(
-                "gobby-tasks",
-                "list_tasks",
-                {"status": "open"},
-                session_id="new-session",
-            )
+                await proxy.call_tool(
+                    "gobby-tasks",
+                    "list_tasks",
+                    {"status": "open"},
+                    session_id="new-session",
+                )
 
     _, kwargs = client.request.call_args
     assert kwargs["headers"]["X-Gobby-Session-Id"] == "new-session"
@@ -115,16 +120,21 @@ async def test_call_tool_sends_caller_project_header_with_target_project_overrid
 
     with patch("gobby.mcp_proxy.stdio.load_config") as mock_config:
         mock_config.return_value = MagicMock(mcp_client_proxy=MagicMock(tool_timeouts={}))
-        with patch("gobby.mcp_proxy.stdio.httpx.AsyncClient") as mock_client_cls:
-            client = _mock_http_client(mock_client_cls)
+        with patch(
+            "gobby.mcp_proxy.stdio.check_daemon_http_health",
+            new_callable=AsyncMock,
+        ) as mock_health:
+            mock_health.return_value = True
+            with patch("gobby.mcp_proxy.stdio.httpx.AsyncClient") as mock_client_cls:
+                client = _mock_http_client(mock_client_cls)
 
-            await proxy.call_tool(
-                "gobby-tasks",
-                "list_tasks",
-                {},
-                project_id="target-project",
-                session_id="#7",
-            )
+                await proxy.call_tool(
+                    "gobby-tasks",
+                    "list_tasks",
+                    {},
+                    project_id="target-project",
+                    session_id="#7",
+                )
 
     _, kwargs = client.request.call_args
     assert kwargs["headers"]["X-Gobby-Project-Id"] == "target-project"
