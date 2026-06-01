@@ -10,6 +10,7 @@ import pytest
 
 from gobby.plans.parser import parse_plan
 from gobby.storage.tasks import LocalTaskManager
+from gobby.tasks.categories import AGENT_BY_IMPLEMENTATION_DOMAIN
 from gobby.tasks.expansion_service import ExpansionService
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
@@ -20,10 +21,11 @@ MIN_IMPL_OR_SINGLE_TASK_COUNT = 32
 MIN_ANNOTATED_DEPENDENCY_COUNT = 24
 
 PLAN_PATH = (
-    Path(__file__).resolve().parents[2] / ".gobby/plans/task-12725-lifecycle-dispatch-rev1.md"
+    Path(__file__).resolve().parents[2]
+    / ".gobby/plans/completed/task-12725-lifecycle-dispatch-rev1.md"
 )
 PLAN_PATH_MISSING_REASON = (
-    "required plan file .gobby/plans/task-12725-lifecycle-dispatch-rev1.md not found"
+    "required plan file .gobby/plans/completed/task-12725-lifecycle-dispatch-rev1.md not found"
 )
 
 
@@ -75,7 +77,11 @@ def test_plan_12725_compiles_clean(
                 section_id,
                 item.item_id,
             )
-        assert task["assigned_agent"] == entry.assigned_agent, section_id
+        expected_agent = entry.assigned_agent
+        if expected_agent is None and entry.implementation_domain is not None:
+            expected_agent = AGENT_BY_IMPLEMENTATION_DOMAIN[entry.implementation_domain]
+        assert task["assigned_agent"] == expected_agent, section_id
+        assert task["implementation_domain"] == entry.implementation_domain, section_id
         expected_labels = [*entry.labels, *(["tdd:required"] if entry.tdd else [])]
         assert sorted(task["labels"]) == sorted(expected_labels), section_id
 

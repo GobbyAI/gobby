@@ -28,7 +28,10 @@ _POSTGRES_TEST_IMAGE = "gobby-postgres-local:18-pgsearch"
 _POSTGRES_TEST_PASSWORD = "gobby_test"
 _POSTGRES_TEST_PORT = "60892"
 _POSTGRES_TEST_USER = "gobby_test"
-_POSTGRES_SKIP_REASON = "DATABASE_URL or configured bootstrap database_url is required"
+_POSTGRES_SKIP_REASONS = [
+    "DATABASE_URL or configured bootstrap database_url is required",
+    "PostgreSQL DSN required for hub runtime surface tests",
+]
 
 _PGAUDIT_COMMAND_OPTIONS = [
     "shared_preload_libraries=pg_search,pgaudit",
@@ -231,6 +234,7 @@ def test_pre_push_resolves_and_exports_postgres_database_url_for_pytest(
     assert "${GOBBY_POSTGRES_TEST_PORT:-60892}" in script
     assert "PYTEST_DATABASE_URL=$(resolve_pytest_database_url)" in script
     assert 'DATABASE_URL="$PYTEST_DATABASE_URL"' in script
+    assert 'GOBBY_POSTGRES_TEST_DSN="$PYTEST_DATABASE_URL"' in script
     _assert_before(
         script,
         "PYTEST_DATABASE_URL=$(resolve_pytest_database_url)",
@@ -243,11 +247,50 @@ def test_pre_push_fails_if_postgres_skip_reason_reaches_pytest_report(
 ) -> None:
     script = _load_pre_push_script(repo_root)
 
-    assert f'POSTGRES_SKIP_REASON="{_POSTGRES_SKIP_REASON}"' in script
+    assert "POSTGRES_SKIP_REASONS=(" in script
+    for reason in _POSTGRES_SKIP_REASONS:
+        assert reason in script
     assert "check_pytest_postgres_skip_guard()" in script
-    assert 'grep -q "$POSTGRES_SKIP_REASON" "$report_path"' in script
-    assert "uv run pytest -v --tb=line -rFEsw" in script
+    assert 'for reason in "${POSTGRES_SKIP_REASONS[@]}"; do' in script
+    assert 'grep -q "$reason" "$report_path"' in script
+    assert 'uv_run pytest "${PYTEST_SELECTION_ARGS[@]}" -v --tb=line -rFEsw' in script
     assert 'check_pytest_postgres_skip_guard "$PYTEST_REPORT"' in script
+
+
+def test_pre_push_supports_local_all_extras_uv_run_opt_in(repo_root: Path) -> None:
+    script = _load_pre_push_script(repo_root)
+
+    assert "UV_EXTRA_FLAGS=()" in script
+    assert 'if [ "${GOBBY_UV_ALL_EXTRAS:-}" = "1" ]; then' in script
+    assert "UV_EXTRA_FLAGS=(--all-extras)" in script
+    assert "uv_run()" in script
+    assert 'uv run "${UV_EXTRA_FLAGS[@]}" "$@"' in script
+    assert "uv_run ruff check src/ --fix --no-unsafe-fixes" in script
+    assert "uv_run mypy src/ --strict --no-incremental" in script
+    assert "uv_run bandit -c pyproject.toml -r src/ -q" in script
+    assert "uv_run pip-audit" in script
+    assert "uv_run gobby test-quality audit" in script
+
+
+def test_pre_push_excludes_live_opt_in_tests_by_default(repo_root: Path) -> None:
+    script = _load_pre_push_script(repo_root)
+
+    assert "PYTEST_SELECTION_ARGS=()" in script
+    assert "GOBBY_RUN_PRE_PUSH_SANDBOX" in script
+    assert "PYTEST_SELECTION_ARGS+=(--ignore=tests/integration/sandbox)" in script
+    assert "GOBBY_RUN_WHEEL_UI_SMOKE" in script
+    assert "tests/packaging/test_installed_wheel_ui_smoke.py" in script
+    assert "GOBBY_RUN_DROID_HOOK_INTEGRATION" in script
+    assert (
+        "tests/agents/test_spawn_executor_droid.py::"
+        "test_droid_worktree_spawn_fires_pre_tool_use_against_gobby_daemon"
+    ) in script
+    assert "GOBBY_RUN_BUILD_CANARY" in script
+    assert (
+        "tests/e2e/test_build_dispatcher_autonomy.py::test_real_small_gobby_build_canary" in script
+    )
+    assert "GOBBY_RUN_E2E_SESSION_LIFECYCLE" in script
+    assert "tests/sessions/test_e2e_session_tracking.py::test_full_lifecycle" in script
 
 
 def _load_yaml(path: Path) -> Mapping[str, Any]:

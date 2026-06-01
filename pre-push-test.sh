@@ -24,7 +24,42 @@ echo ""
 # Track failures
 FAILED=0
 PYTEST_ISOLATION_DIR=""
-POSTGRES_SKIP_REASON="DATABASE_URL or configured bootstrap database_url is required"
+UV_EXTRA_FLAGS=()
+if [ "${GOBBY_UV_ALL_EXTRAS:-}" = "1" ]; then
+    UV_EXTRA_FLAGS=(--all-extras)
+fi
+POSTGRES_SKIP_REASONS=(
+    "DATABASE_URL or configured bootstrap database_url is required"
+    "PostgreSQL DSN required for hub runtime surface tests"
+)
+PYTEST_SELECTION_ARGS=()
+if [ "${GOBBY_RUN_PRE_PUSH_SANDBOX:-}" = "1" ]; then
+    PYTEST_SELECTION_ARGS+=(--run-sandbox)
+else
+    PYTEST_SELECTION_ARGS+=(--ignore=tests/integration/sandbox)
+fi
+if [ "${GOBBY_RUN_WHEEL_UI_SMOKE:-}" != "1" ]; then
+    PYTEST_SELECTION_ARGS+=(--ignore=tests/packaging/test_installed_wheel_ui_smoke.py)
+fi
+if [ "${GOBBY_RUN_DROID_HOOK_INTEGRATION:-}" != "1" ]; then
+    PYTEST_SELECTION_ARGS+=(
+        --deselect=tests/agents/test_spawn_executor_droid.py::test_droid_worktree_spawn_fires_pre_tool_use_against_gobby_daemon
+    )
+fi
+if [ "${GOBBY_RUN_BUILD_CANARY:-}" != "1" ]; then
+    PYTEST_SELECTION_ARGS+=(
+        --deselect=tests/e2e/test_build_dispatcher_autonomy.py::test_real_small_gobby_build_canary
+    )
+fi
+if [ -z "${GOBBY_RUN_E2E_SESSION_LIFECYCLE:-}" ]; then
+    PYTEST_SELECTION_ARGS+=(
+        --deselect=tests/sessions/test_e2e_session_tracking.py::test_full_lifecycle
+    )
+fi
+
+uv_run() {
+    uv run "${UV_EXTRA_FLAGS[@]}" "$@"
+}
 
 cleanup() {
     if [ -n "${PYTEST_ISOLATION_DIR:-}" ] && [ -d "$PYTEST_ISOLATION_DIR" ]; then
@@ -44,7 +79,7 @@ docker_compose() {
 }
 
 read_bootstrap_database_url() {
-    uv run python - <<'PY'
+    uv_run python - <<'PY'
 from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
 
 try:
@@ -132,18 +167,21 @@ resolve_pytest_database_url() {
 
 check_pytest_postgres_skip_guard() {
     local report_path="$1"
-    if [ -f "$report_path" ] && grep -q "$POSTGRES_SKIP_REASON" "$report_path"; then
-        echo "✗ Pytest skipped PostgreSQL tests because no database URL was available"
-        echo "  Report contains: $POSTGRES_SKIP_REASON"
-        return 1
-    fi
+    local reason
+    for reason in "${POSTGRES_SKIP_REASONS[@]}"; do
+        if [ -f "$report_path" ] && grep -q "$reason" "$report_path"; then
+            echo "✗ Pytest skipped PostgreSQL tests because no database URL was available"
+            echo "  Report contains: $reason"
+            return 1
+        fi
+    done
     return 0
 }
 
 # Ruff - autofix safe changes only (no unsafe fixes)
 echo ">>> Running ruff check + format..."
-if uv run ruff check src/ --fix --no-unsafe-fixes 2>&1 | tee "$REPORTS_DIR/ruff-$TIMESTAMP.txt"; then
-    uv run ruff format src/
+if uv_run ruff check src/ --fix --no-unsafe-fixes 2>&1 | tee "$REPORTS_DIR/ruff-$TIMESTAMP.txt"; then
+    uv_run ruff format src/
     echo "✓ Ruff passed"
 else
     echo "✗ Ruff failed"
@@ -153,7 +191,7 @@ echo ""
 
 # Mypy - strict mode
 echo ">>> Running mypy (strict)..."
-if uv run mypy src/ --strict --no-incremental 2>&1 | tee "$REPORTS_DIR/mypy-$TIMESTAMP.txt"; then
+if uv_run mypy src/ --strict --no-incremental 2>&1 | tee "$REPORTS_DIR/mypy-$TIMESTAMP.txt"; then
     echo "✓ Mypy passed"
 else
     echo "✗ Mypy failed"
@@ -193,7 +231,7 @@ echo ""
 
 # Bandit - security linting
 echo ">>> Running bandit..."
-if uv run bandit -c pyproject.toml -r src/ -q 2>&1 | tee "$REPORTS_DIR/bandit-$TIMESTAMP.txt"; then
+if uv_run bandit -c pyproject.toml -r src/ -q 2>&1 | tee "$REPORTS_DIR/bandit-$TIMESTAMP.txt"; then
     echo "✓ Bandit passed"
 else
     echo "✗ Bandit failed"
@@ -203,7 +241,7 @@ echo ""
 
 # pip-audit - dependency CVE scanning
 echo ">>> Running pip-audit..."
-if uv run pip-audit 2>&1 | tee "$REPORTS_DIR/pip-audit-$TIMESTAMP.txt"; then
+if uv_run pip-audit 2>&1 | tee "$REPORTS_DIR/pip-audit-$TIMESTAMP.txt"; then
     echo "✓ pip-audit passed"
 else
     echo "✗ pip-audit failed"
@@ -213,7 +251,7 @@ echo ""
 
 # Test quality - static audit against tracked baseline
 echo ">>> Running test-quality audit..."
-if uv run gobby test-quality audit --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity high 2>&1 | tee "$REPORTS_DIR/test-quality-$TIMESTAMP.txt"; then
+if uv_run gobby test-quality audit --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity high 2>&1 | tee "$REPORTS_DIR/test-quality-$TIMESTAMP.txt"; then
     echo "✓ Test-quality audit passed"
 else
     echo "✗ Test-quality audit failed"
@@ -241,6 +279,7 @@ elif ! mkdir -p \
     echo "  Check directory permissions and available disk space."
     FAILED=1
 elif DATABASE_URL="$PYTEST_DATABASE_URL" \
+    GOBBY_POSTGRES_TEST_DSN="$PYTEST_DATABASE_URL" \
     GOBBY_TEST_PROTECT=1 \
     HOME="$PYTEST_ISOLATION_DIR/home" \
     GOBBY_HOME="$PYTEST_ISOLATION_DIR/gobby-home" \
@@ -252,7 +291,7 @@ elif DATABASE_URL="$PYTEST_DATABASE_URL" \
     GOBBY_LOGGING_MCP_SERVER="$PYTEST_ISOLATION_DIR/logs/mcp-server.log" \
     GOBBY_LOGGING_MCP_CLIENT="$PYTEST_ISOLATION_DIR/logs/mcp-client.log" \
     GOBBY_LOGGING_HOOK_MANAGER="$PYTEST_ISOLATION_DIR/logs/hook-manager.log" \
-    uv run pytest -v --tb=line -rFEsw --cov=gobby --cov-report=term-missing --cov-fail-under=80 2>&1 | timestamp | tee "$PYTEST_REPORT"; then
+    uv_run pytest "${PYTEST_SELECTION_ARGS[@]}" -v --tb=line -rFEsw --cov=gobby --cov-report=term-missing --cov-fail-under=80 2>&1 | timestamp | tee "$PYTEST_REPORT"; then
     if check_pytest_postgres_skip_guard "$PYTEST_REPORT"; then
         echo "✓ Pytest passed"
     else

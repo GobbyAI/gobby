@@ -1,16 +1,17 @@
 from __future__ import annotations
 
 import ast
-import os
 import re
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
 
+from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.hub.protocol import (
     DispatchMutexRow,
+    HubDatabase,
     LockAcquisitionOrderError,
     SessionRecoveryByProject,
     SessionRegistration,
@@ -23,26 +24,23 @@ from gobby.storage.tasks._crud import cascade_build_state_to_subtree
 pytestmark = pytest.mark.unit
 
 
-def _postgres_hub_or_skip() -> object:
-    dsn = os.getenv("GOBBY_POSTGRES_TEST_DSN")
-    if not dsn:
-        pytest.skip("PostgreSQL DSN required for hub runtime surface tests")
-
-    from gobby.storage.hub.postgres import PostgresHubDatabase
-
-    return PostgresHubDatabase(dsn)
+def _scoped_postgres_url(database_url: str, schema: str) -> str:
+    return database_url + f"?options=-csearch_path%3D{schema}"
 
 
-@pytest.fixture(params=["postgres"])
-def hub_db() -> Iterator[object]:
-    db = _postgres_hub_or_skip()
-    try:
-        yield db
-    finally:
-        db.close()
+@pytest.fixture
+def postgres_db_factory(
+    postgres_db: HubDatabase,
+    postgres_database_url: str,
+    postgres_schema: str,
+) -> Callable[[], PostgresHubDatabase]:
+    def create_db() -> PostgresHubDatabase:
+        return PostgresHubDatabase(_scoped_postgres_url(postgres_database_url, postgres_schema))
+
+    return create_db
 
 
-def test_local_task_manager_dual_backend(hub_db: object) -> None:
+def test_local_task_manager_dual_backend(hub_db: HubDatabase) -> None:
     db = hub_db
     db.execute(
         """
@@ -86,7 +84,7 @@ def test_local_task_manager_dual_backend(hub_db: object) -> None:
     }
 
 
-def test_ambient_transaction_groups_convenience_calls(hub_db: object) -> None:
+def test_ambient_transaction_groups_convenience_calls(hub_db: HubDatabase) -> None:
     db = hub_db
     db.execute("CREATE TABLE IF NOT EXISTS ambient_items (id INTEGER PRIMARY KEY, name TEXT)")
     db.execute("DELETE FROM ambient_items")
@@ -100,12 +98,15 @@ def test_ambient_transaction_groups_convenience_calls(hub_db: object) -> None:
     assert db.fetchall("SELECT id FROM ambient_items ORDER BY id") == []
 
 
-def test_ambient_transaction_isolated_per_adapter() -> None:
-    primary_db = _postgres_hub_or_skip()
-    other_db = _postgres_hub_or_skip()
+def test_ambient_transaction_isolated_per_adapter(
+    postgres_db_factory: Callable[[], PostgresHubDatabase],
+) -> None:
+    primary_db = postgres_db_factory()
+    other_db = postgres_db_factory()
     try:
-        primary_db.execute("CREATE TABLE ambient_items (id INTEGER PRIMARY KEY)")
-        other_db.execute("CREATE TABLE ambient_items (id INTEGER PRIMARY KEY)")
+        primary_db.execute("CREATE TABLE IF NOT EXISTS ambient_items (id INTEGER PRIMARY KEY)")
+        primary_db.execute("DELETE FROM ambient_items")
+        other_db.execute("CREATE TABLE IF NOT EXISTS ambient_items (id INTEGER PRIMARY KEY)")
 
         with pytest.raises(RuntimeError, match="rollback"):
             with primary_db.transaction():
@@ -113,15 +114,18 @@ def test_ambient_transaction_isolated_per_adapter() -> None:
                 other_db.execute("INSERT INTO ambient_items (id) VALUES (%s)", (2,))
                 raise RuntimeError("rollback")
 
-        assert primary_db.fetchall("SELECT id FROM ambient_items") == []
+        assert primary_db.fetchall("SELECT id FROM ambient_items") == [{"id": 2}]
         assert other_db.fetchall("SELECT id FROM ambient_items") == [{"id": 2}]
     finally:
         primary_db.close()
         other_db.close()
 
 
-def test_subtree_cascade_serializes_overlapping_subtrees(monkeypatch: pytest.MonkeyPatch) -> None:
-    db = _postgres_hub_or_skip()
+def test_subtree_cascade_serializes_overlapping_subtrees(
+    monkeypatch: pytest.MonkeyPatch,
+    postgres_db_factory: Callable[[], PostgresHubDatabase],
+) -> None:
+    db = postgres_db_factory()
     seen_locks: list[object] = []
     original_transaction_immediate = db.transaction_immediate
 
@@ -156,25 +160,24 @@ def test_subtree_cascade_serializes_overlapping_subtrees(monkeypatch: pytest.Mon
     try:
         db.execute(
             """
-            CREATE TABLE tasks (
-                id TEXT PRIMARY KEY,
-                project_id TEXT NOT NULL,
-                parent_task_id TEXT,
-                task_type TEXT NOT NULL,
-                closed_at TEXT,
-                allow_automation INTEGER,
-                unattended INTEGER,
-                isolation TEXT,
-                updated_at TEXT
-            )
-            """
+            INSERT INTO projects (id, name, repo_path, created_at, updated_at)
+            VALUES (%s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT (id) DO NOTHING
+            """,
+            ("project-1", "Project 1", "/tmp/project-1"),
         )
         db.executemany(
             """
-            INSERT INTO tasks (id, project_id, parent_task_id, task_type, closed_at)
-            VALUES (%s, %s, %s, %s, NULL)
+            INSERT INTO tasks (
+                id, project_id, parent_task_id, title, task_type, closed_at,
+                created_at, updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
-            [("root", "project-1", None, "epic"), ("child", "project-1", "root", "task")],
+            [
+                ("root", "project-1", None, "Root", "epic"),
+                ("child", "project-1", "root", "Child", "task"),
+            ],
         )
 
         updated = cascade_build_state_to_subtree(
@@ -193,8 +196,10 @@ def test_subtree_cascade_serializes_overlapping_subtrees(monkeypatch: pytest.Mon
         db.close()
 
 
-def test_nested_lock_target_acquires_both_lookup_branch() -> None:
-    db = _postgres_hub_or_skip()
+def test_nested_lock_target_acquires_both_lookup_branch(
+    postgres_db_factory: Callable[[], PostgresHubDatabase],
+) -> None:
+    db = postgres_db_factory()
     web_lock = WebChatSessionBootstrap("ext", "machine", "codex", "project", "web_chat")
     registration_lock = SessionRegistration("ext", "machine", "codex", "project", "web_chat")
     try:
@@ -205,8 +210,10 @@ def test_nested_lock_target_acquires_both_lookup_branch() -> None:
         db.close()
 
 
-def test_nested_lock_target_acquires_both_recovery_branch() -> None:
-    db = _postgres_hub_or_skip()
+def test_nested_lock_target_acquires_both_recovery_branch(
+    postgres_db_factory: Callable[[], PostgresHubDatabase],
+) -> None:
+    db = postgres_db_factory()
     web_lock = WebChatSessionBootstrap("ext", "machine", "codex", "project", "web_chat")
     recovery_lock = SessionRecoveryByProject(project_id="project")
     try:
@@ -217,8 +224,10 @@ def test_nested_lock_target_acquires_both_recovery_branch() -> None:
         db.close()
 
 
-def test_nested_lock_target_out_of_order_priority_raises() -> None:
-    db = _postgres_hub_or_skip()
+def test_nested_lock_target_out_of_order_priority_raises(
+    postgres_db_factory: Callable[[], PostgresHubDatabase],
+) -> None:
+    db = postgres_db_factory()
     web_lock = WebChatSessionBootstrap("ext", "machine", "codex", "project", "web_chat")
     try:
         with db.transaction_immediate(web_lock):
@@ -233,8 +242,10 @@ def test_nested_lock_target_out_of_order_priority_raises() -> None:
     assert "WebChatSessionBootstrap" in message
 
 
-def test_transaction_immediate_inside_non_immediate_transaction_raises() -> None:
-    db = _postgres_hub_or_skip()
+def test_transaction_immediate_inside_non_immediate_transaction_raises(
+    postgres_db_factory: Callable[[], PostgresHubDatabase],
+) -> None:
+    db = postgres_db_factory()
     try:
         with db.transaction():
             with pytest.raises(RuntimeError, match="non-immediate"):

@@ -23,6 +23,7 @@ from gobby.config.embedding_keys import (
     AI_EMBEDDING_MODEL_KEY,
     EMBEDDING_API_KEY_SECRET_NAME,
 )
+from gobby.prompts.sync import sync_bundled_prompts
 from gobby.servers.routes.configuration_import_export import _prompt_export_key
 from gobby.servers.routes.configuration_prompts import _normalize_variable_spec
 from gobby.servers.routes.configuration_secrets import MASKED_SECRET
@@ -795,6 +796,10 @@ class TestSecretsEndpoints:
 
 
 class TestPromptsEndpoints:
+    @pytest.fixture(autouse=True)
+    def _seed_bundled_prompts(self, temp_db: HubDatabase) -> None:
+        sync_bundled_prompts(temp_db)
+
     def test_list_prompts(self, client: TestClient) -> None:
         """Lists bundled prompts from real PromptLoader."""
         response = client.get("/api/config/prompts")
@@ -837,8 +842,7 @@ class TestPromptsEndpoints:
         # First, list to find a valid prompt path
         list_resp = client.get("/api/config/prompts")
         prompts = list_resp.json()["prompts"]
-        if not prompts:
-            pytest.skip("No bundled prompts found")
+        assert prompts
         path = prompts[0]["path"]
         response = client.get(f"/api/config/prompts/{path}")
         assert response.status_code == 200

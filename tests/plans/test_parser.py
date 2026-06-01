@@ -46,13 +46,22 @@ def _section_ids(document: PlanDocument) -> set[str]:
 
 
 def _fixture_plan(name: str) -> Path:
-    candidates = [Path(".gobby/plans") / name]
+    candidates = [
+        Path(".gobby/plans") / name,
+        Path(".gobby/plans/completed") / name,
+    ]
     project_config = Path(".gobby/project.json")
     if project_config.exists():
         data = json.loads(project_config.read_text(encoding="utf-8"))
         parent_project_path = data.get("parent_project_path")
         if parent_project_path:
-            candidates.append(Path(parent_project_path) / ".gobby/plans" / name)
+            parent_plans = Path(parent_project_path) / ".gobby/plans"
+            candidates.extend(
+                [
+                    parent_plans / name,
+                    parent_plans / "completed" / name,
+                ]
+            )
     for candidate in candidates:
         if candidate.exists():
             return candidate

@@ -7,7 +7,6 @@ size validation, MIME type mapping, and availability checks.
 from __future__ import annotations
 
 import asyncio
-import importlib.util
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -17,10 +16,6 @@ from gobby.voice.stt import WhisperSTT
 from tests._timing import wait_for_async_condition
 
 pytestmark = pytest.mark.unit
-
-
-def _has_faster_whisper() -> bool:
-    return importlib.util.find_spec("faster_whisper") is not None
 
 
 # ---------------------------------------------------------------------------
@@ -496,10 +491,6 @@ class TestMimeTypeMapping:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(
-    not _has_faster_whisper(),
-    reason="faster-whisper not installed (optional voice dep)",
-)
 class TestEnsureModel:
     @pytest.mark.asyncio
     async def test_lazy_loads_model_on_first_call(self) -> None:

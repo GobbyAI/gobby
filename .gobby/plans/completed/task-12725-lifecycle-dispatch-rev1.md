@@ -2930,7 +2930,6 @@ CLI tick-kick is a single explicit call to the state-dispatcher handler; the per
 - **Daemon-side `mark_task_review_rejected` formatting fix**: the rejection-append code in `src/gobby/storage/tasks/_transitions.py` emits a duplicate `## Adversary Findings — Round N` heading when `rejection_notes` already starts with that heading. Cosmetic only; filed as its own task. Not part of this lifecycle epic.
 
 ## M1 Task Manifest
-
 `kind: manifest`
 
 ```yaml
@@ -2945,9 +2944,9 @@ CLI tick-kick is a single explicit call to the state-dispatcher handler; the per
   - covers:task-12725-lifecycle-dispatch-rev1:1.3:1.3.3
   - covers:task-12725-lifecycle-dispatch-rev1:1.3:1.3.4
   - covers:task-12725-lifecycle-dispatch-rev1:1.3:1.3.5
-  assigned_agent: backend-developer
   tdd: true
   source_section: '1.3'
+  implementation_domain: backend
 - title: '`is_blocked_by_deps` predicate'
   category: code
   task_type: feature
@@ -2956,9 +2955,9 @@ CLI tick-kick is a single explicit call to the state-dispatcher handler; the per
   validation_criteria: src/gobby/storage/tasks/_dependencies.py
   labels:
   - covers:task-12725-lifecycle-dispatch-rev1:1.3a:1.3a.1
-  assigned_agent: backend-developer
   tdd: true
   source_section: 1.3a
+  implementation_domain: backend
 - title: Dispatcher mutex
   category: code
   task_type: feature
@@ -2969,9 +2968,9 @@ CLI tick-kick is a single explicit call to the state-dispatcher handler; the per
   - covers:task-12725-lifecycle-dispatch-rev1:1.4:1.4.1
   - covers:task-12725-lifecycle-dispatch-rev1:1.4:1.4.2
   - covers:task-12725-lifecycle-dispatch-rev1:1.4:1.4.3
-  assigned_agent: backend-developer
   tdd: true
   source_section: '1.4'
+  implementation_domain: backend
 - title: Register mutex-clearing event handlers
   category: code
   task_type: feature
@@ -2980,9 +2979,9 @@ CLI tick-kick is a single explicit call to the state-dispatcher handler; the per
   validation_criteria: src/gobby/hooks/event_handlers/_task.py
   labels:
   - covers:task-12725-lifecycle-dispatch-rev1:1.5:1.5.1
-  assigned_agent: backend-developer
   tdd: true
   source_section: '1.5'
+  implementation_domain: backend
 - title: Dispatch action wrappers
   category: code
   task_type: feature
@@ -2991,9 +2990,9 @@ CLI tick-kick is a single explicit call to the state-dispatcher handler; the per
   validation_criteria: src/gobby/dispatch/actions.py
   labels:
   - covers:task-12725-lifecycle-dispatch-rev1:1.6:1.6.1
-  assigned_agent: backend-developer
   tdd: true
   source_section: '1.6'
+  implementation_domain: backend
 - title: Prompt-builder registry
   category: code
   task_type: feature
@@ -3004,9 +3003,9 @@ CLI tick-kick is a single explicit call to the state-dispatcher handler; the per
   - covers:task-12725-lifecycle-dispatch-rev1:1.6a:1.6a.1
   - covers:task-12725-lifecycle-dispatch-rev1:1.6a:1.6a.2
   - covers:task-12725-lifecycle-dispatch-rev1:1.6a:1.6a.3
-  assigned_agent: backend-developer
   tdd: true
   source_section: 1.6a
+  implementation_domain: backend
 - title: Decision rules for all stages
   category: code
   task_type: feature
@@ -3021,9 +3020,9 @@ CLI tick-kick is a single explicit call to the state-dispatcher handler; the per
   - covers:task-12725-lifecycle-dispatch-rev1:1.7:1.7.4
   - covers:task-12725-lifecycle-dispatch-rev1:1.7:1.7.5
   - covers:task-12725-lifecycle-dispatch-rev1:1.7:1.7.6
-  assigned_agent: backend-developer
   tdd: true
   source_section: '1.7'
+  implementation_domain: backend
 - title: Lifecycle transitions in review tools
   category: code
   task_type: feature
@@ -3040,9 +3039,9 @@ CLI tick-kick is a single explicit call to the state-dispatcher handler; the per
   - covers:task-12725-lifecycle-dispatch-rev1:1.8:1.8.6b
   - covers:task-12725-lifecycle-dispatch-rev1:1.8:1.8.6c
   - covers:task-12725-lifecycle-dispatch-rev1:1.8:1.8.7
-  assigned_agent: backend-developer
   tdd: true
   source_section: '1.8'
+  implementation_domain: backend
 - title: Dispatcher scanner
   category: code
   task_type: feature
@@ -3059,9 +3058,9 @@ CLI tick-kick is a single explicit call to the state-dispatcher handler; the per
   - covers:task-12725-lifecycle-dispatch-rev1:1.9:1.9.5
   - covers:task-12725-lifecycle-dispatch-rev1:1.9:1.9.3
   - covers:task-12725-lifecycle-dispatch-rev1:1.9:1.9.4
-  assigned_agent: backend-developer
   tdd: true
   source_section: '1.9'
+  implementation_domain: backend
 - title: Cron handler registration
   category: code
   task_type: feature
@@ -3074,9 +3073,9 @@ CLI tick-kick is a single explicit call to the state-dispatcher handler; the per
   - covers:task-12725-lifecycle-dispatch-rev1:1.10:1.10.2
   - covers:task-12725-lifecycle-dispatch-rev1:1.10:1.10.4
   - covers:task-12725-lifecycle-dispatch-rev1:1.10:1.10.3
-  assigned_agent: backend-developer
   tdd: true
   source_section: '1.10'
+  implementation_domain: backend
 - title: 'Expansion: Agent Selection + profile-appropriate subtasks'
   category: code
   task_type: feature
@@ -3087,9 +3086,9 @@ CLI tick-kick is a single explicit call to the state-dispatcher handler; the per
   - covers:task-12725-lifecycle-dispatch-rev1:2.8:2.8.2
   - covers:task-12725-lifecycle-dispatch-rev1:2.8:2.8.3
   - covers:task-12725-lifecycle-dispatch-rev1:2.8:2.8.4
-  assigned_agent: backend-developer
   tdd: true
   source_section: '2.8'
+  implementation_domain: backend
 - title: Expose `start_expansion_run_impl` for in-process dispatcher use
   category: code
   task_type: feature
@@ -3098,9 +3097,9 @@ CLI tick-kick is a single explicit call to the state-dispatcher handler; the per
   labels:
   - covers:task-12725-lifecycle-dispatch-rev1:2.8b:2.8b.1
   - covers:task-12725-lifecycle-dispatch-rev1:2.8b:2.8b.2
-  assigned_agent: backend-developer
   tdd: true
   source_section: 2.8b
+  implementation_domain: backend
 - title: Split `expansion_service.py` monolith
   category: refactor
   task_type: feature
@@ -3113,9 +3112,9 @@ CLI tick-kick is a single explicit call to the state-dispatcher handler; the per
   - covers:task-12725-lifecycle-dispatch-rev1:2.8c:2.8c.2
   - covers:task-12725-lifecycle-dispatch-rev1:2.8c:2.8c.3
   - covers:task-12725-lifecycle-dispatch-rev1:2.8c:2.8c.4
-  assigned_agent: backend-developer
-  tdd: true
+  tdd: false
   source_section: 2.8c
+  assigned_agent: backend-developer
 - title: Expansion-QA transition contract
   category: config
   task_type: feature
@@ -3124,9 +3123,9 @@ CLI tick-kick is a single explicit call to the state-dispatcher handler; the per
   validation_criteria: src/gobby/install/shared/workflows/agents/expansion-qa.yaml
   labels:
   - covers:task-12725-lifecycle-dispatch-rev1:2.9:2.9.1
-  assigned_agent: developer
-  tdd: false
+  tdd: true
   source_section: '2.9'
+  assigned_agent: backend-developer
 - title: "Merge agent \u2014 lifecycle integration"
   category: config
   task_type: feature
@@ -3138,9 +3137,9 @@ CLI tick-kick is a single explicit call to the state-dispatcher handler; the per
   - covers:task-12725-lifecycle-dispatch-rev1:2.10:2.10.2
   - covers:task-12725-lifecycle-dispatch-rev1:2.10:2.10.3
   - covers:task-12725-lifecycle-dispatch-rev1:2.10:2.10.4
-  assigned_agent: developer
-  tdd: false
+  tdd: true
   source_section: '2.10'
+  assigned_agent: backend-developer
 - title: qa-reviewer agent (read-only)
   category: config
   task_type: feature
@@ -3154,9 +3153,9 @@ CLI tick-kick is a single explicit call to the state-dispatcher handler; the per
   - covers:task-12725-lifecycle-dispatch-rev1:2.11:2.11.3
   - covers:task-12725-lifecycle-dispatch-rev1:2.11:2.11.4
   - covers:task-12725-lifecycle-dispatch-rev1:2.11:2.11.5
-  assigned_agent: developer
-  tdd: false
+  tdd: true
   source_section: '2.11'
+  assigned_agent: backend-developer
 - title: holistic-reviewer three-outcome contract
   category: config
   task_type: feature
@@ -3171,9 +3170,9 @@ CLI tick-kick is a single explicit call to the state-dispatcher handler; the per
   - covers:task-12725-lifecycle-dispatch-rev1:2.12:2.12.3
   - covers:task-12725-lifecycle-dispatch-rev1:2.12:2.12.4
   - covers:task-12725-lifecycle-dispatch-rev1:2.12:2.12.5
-  assigned_agent: developer
-  tdd: false
+  tdd: true
   source_section: '2.12'
+  assigned_agent: backend-developer
 - title: expansion-qa as a multi-mode verification harness
   category: config
   task_type: feature
@@ -3186,9 +3185,9 @@ CLI tick-kick is a single explicit call to the state-dispatcher handler; the per
   - covers:task-12725-lifecycle-dispatch-rev1:2.13:2.13.3
   - covers:task-12725-lifecycle-dispatch-rev1:2.13:2.13.4
   - covers:task-12725-lifecycle-dispatch-rev1:2.13:2.13.5
-  assigned_agent: developer
-  tdd: false
+  tdd: true
   source_section: '2.13'
+  assigned_agent: backend-developer
 - title: Hook/rule scoping for autonomous build agents
   category: code
   task_type: feature
@@ -3202,9 +3201,9 @@ CLI tick-kick is a single explicit call to the state-dispatcher handler; the per
   - covers:task-12725-lifecycle-dispatch-rev1:2.14a:2.14a.3
   - covers:task-12725-lifecycle-dispatch-rev1:2.14a:2.14a.4
   - covers:task-12725-lifecycle-dispatch-rev1:2.14a:2.14a.5
-  assigned_agent: backend-developer
   tdd: true
   source_section: 2.14a
+  implementation_domain: backend
 - title: Deprecation pattern for retired agents and pipelines
   category: config
   task_type: feature
@@ -3218,9 +3217,9 @@ CLI tick-kick is a single explicit call to the state-dispatcher handler; the per
   - covers:task-12725-lifecycle-dispatch-rev1:2.14b:2.14b.5
   - covers:task-12725-lifecycle-dispatch-rev1:2.14b:2.14b.6
   - covers:task-12725-lifecycle-dispatch-rev1:2.14b:2.14b.7
-  assigned_agent: developer
-  tdd: false
+  tdd: true
   source_section: 2.14b
+  assigned_agent: backend-developer
 - title: DB-backed plan state + `gobby-plans` MCP/CLI
   category: code
   task_type: feature
@@ -3234,9 +3233,9 @@ CLI tick-kick is a single explicit call to the state-dispatcher handler; the per
   - covers:task-12725-lifecycle-dispatch-rev1:2.15:2.15.5
   - covers:task-12725-lifecycle-dispatch-rev1:2.15:2.15.6
   - covers:task-12725-lifecycle-dispatch-rev1:2.15:2.15.7
-  assigned_agent: backend-developer
   tdd: true
   source_section: '2.15'
+  implementation_domain: backend
 - title: Retire `.grandfathered`, `.grandfathered-task-state.yaml`, `.legacy-classification.yaml`
   category: code
   task_type: feature
@@ -3251,9 +3250,9 @@ CLI tick-kick is a single explicit call to the state-dispatcher handler; the per
   - covers:task-12725-lifecycle-dispatch-rev1:2.16:2.16.4
   - covers:task-12725-lifecycle-dispatch-rev1:2.16:2.16.5
   - covers:task-12725-lifecycle-dispatch-rev1:2.16:2.16.6
-  assigned_agent: backend-developer
   tdd: true
   source_section: '2.16'
+  implementation_domain: backend
 - title: System-managed coverage manifest lifecycle
   category: code
   task_type: feature
@@ -3266,9 +3265,9 @@ CLI tick-kick is a single explicit call to the state-dispatcher handler; the per
   - covers:task-12725-lifecycle-dispatch-rev1:2.17:2.17.3
   - covers:task-12725-lifecycle-dispatch-rev1:2.17:2.17.4
   - covers:task-12725-lifecycle-dispatch-rev1:2.17:2.17.5
-  assigned_agent: backend-developer
   tdd: true
   source_section: '2.17'
+  implementation_domain: backend
 - title: Auto-move plan files on epic terminal state
   category: code
   task_type: feature
@@ -3282,16 +3281,16 @@ CLI tick-kick is a single explicit call to the state-dispatcher handler; the per
   - covers:task-12725-lifecycle-dispatch-rev1:2.18:2.18.2
   - covers:task-12725-lifecycle-dispatch-rev1:2.18:2.18.3
   - covers:task-12725-lifecycle-dispatch-rev1:2.18:2.18.4
-  assigned_agent: backend-developer
   tdd: true
   source_section: '2.18'
+  implementation_domain: backend
 - title: Configurable retry caps via BuildConfig + `gobby build` CLI
   category: code
   task_type: feature
   depends_on:
   - '1.7'
   - '3.2'
-  validation_criteria: src/gobby/config/build.py, src/gobby/build/service.py, src/gobby/cli/build.py
+  validation_criteria: src/gobby/config/build.py`, `src/gobby/build/service.py`, `src/gobby/cli/build.py
   labels:
   - covers:task-12725-lifecycle-dispatch-rev1:2.19:2.19.1
   - covers:task-12725-lifecycle-dispatch-rev1:2.19:2.19.2
@@ -3300,9 +3299,9 @@ CLI tick-kick is a single explicit call to the state-dispatcher handler; the per
   - covers:task-12725-lifecycle-dispatch-rev1:2.19:2.19.5
   - covers:task-12725-lifecycle-dispatch-rev1:2.19:2.19.6
   - covers:task-12725-lifecycle-dispatch-rev1:2.19:2.19.7
-  assigned_agent: backend-developer
   tdd: true
   source_section: '2.19'
+  implementation_domain: backend
 - title: 'Plan-Coverage Contract: `## Task Manifest` section requirement'
   category: docs
   task_type: feature
@@ -3317,9 +3316,9 @@ CLI tick-kick is a single explicit call to the state-dispatcher handler; the per
   - covers:task-12725-lifecycle-dispatch-rev1:2.21:2.21.3c
   - covers:task-12725-lifecycle-dispatch-rev1:2.21:2.21.3d
   - covers:task-12725-lifecycle-dispatch-rev1:2.21:2.21.4
-  assigned_agent: developer
   tdd: false
   source_section: '2.21'
+  assigned_agent: tech-writer
 - title: Manifest-emitter library
   category: code
   task_type: feature
@@ -3333,9 +3332,9 @@ CLI tick-kick is a single explicit call to the state-dispatcher handler; the per
   - covers:task-12725-lifecycle-dispatch-rev1:2.21a:2.21a.4
   - covers:task-12725-lifecycle-dispatch-rev1:2.21a:2.21a.5
   - covers:task-12725-lifecycle-dispatch-rev1:2.21a:2.21a.6
-  assigned_agent: backend-developer
   tdd: true
   source_section: 2.21a
+  implementation_domain: backend
 - title: 'plan-adversary agent: manifest emission on approval'
   category: config
   task_type: feature
@@ -3349,9 +3348,9 @@ CLI tick-kick is a single explicit call to the state-dispatcher handler; the per
   - covers:task-12725-lifecycle-dispatch-rev1:2.22:2.22.3
   - covers:task-12725-lifecycle-dispatch-rev1:2.22:2.22.4
   - covers:task-12725-lifecycle-dispatch-rev1:2.22:2.22.5
-  assigned_agent: developer
-  tdd: false
+  tdd: true
   source_section: '2.22'
+  assigned_agent: backend-developer
 - title: 'planner agent / plan-draft skill: fresh context + tighter mandate'
   category: config
   task_type: feature
@@ -3365,9 +3364,9 @@ CLI tick-kick is a single explicit call to the state-dispatcher handler; the per
   - covers:task-12725-lifecycle-dispatch-rev1:2.23:2.23.3
   - covers:task-12725-lifecycle-dispatch-rev1:2.23:2.23.4
   - covers:task-12725-lifecycle-dispatch-rev1:2.23:2.23.5
-  assigned_agent: developer
-  tdd: false
+  tdd: true
   source_section: '2.23'
+  assigned_agent: backend-developer
 - title: '`/gobby plan` skill: end-to-end coordinator flow'
   category: config
   task_type: feature
@@ -3387,11 +3386,11 @@ CLI tick-kick is a single explicit call to the state-dispatcher handler; the per
   - covers:task-12725-lifecycle-dispatch-rev1:2.24:2.24.8
   - covers:task-12725-lifecycle-dispatch-rev1:2.24:2.24.9
   - covers:task-12725-lifecycle-dispatch-rev1:2.24:2.24.10
-  assigned_agent: developer
-  tdd: false
+  tdd: true
   source_section: '2.24'
+  assigned_agent: backend-developer
 - title: 'Re-expansion of #12725 as Epic 1 end-to-end validation'
-  category: manual
+  category: code
   task_type: feature
   depends_on:
   - '2.21'
@@ -3404,9 +3403,9 @@ CLI tick-kick is a single explicit call to the state-dispatcher handler; the per
   - covers:task-12725-lifecycle-dispatch-rev1:2.20:2.20.3
   - covers:task-12725-lifecycle-dispatch-rev1:2.20:2.20.4
   - covers:task-12725-lifecycle-dispatch-rev1:2.20:2.20.5
-  assigned_agent: developer
-  tdd: false
+  tdd: true
   source_section: '2.20'
+  implementation_domain: backend
 - title: "Build service \u2014 CLI + MCP + HTTP shared core"
   category: code
   task_type: feature
@@ -3421,7 +3420,7 @@ CLI tick-kick is a single explicit call to the state-dispatcher handler; the per
   - covers:task-12725-lifecycle-dispatch-rev1:3.2:3.2.6
   - covers:task-12725-lifecycle-dispatch-rev1:3.2:3.2.7
   - covers:task-12725-lifecycle-dispatch-rev1:3.2:3.2.8
-  assigned_agent: backend-developer
   tdd: true
   source_section: '3.2'
+  implementation_domain: backend
 ```

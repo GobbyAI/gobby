@@ -14,7 +14,7 @@ from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect
 from gobby.workflows.engine.core import RuleEngine
 
-pytestmark = pytest.mark.unit
+pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
@@ -68,14 +68,18 @@ async def test_disable_rule_takes_effect_on_next_event_in_process(db: HubDatabas
 
 
 @pytest.mark.asyncio
-async def test_disable_rule_takes_effect_across_processes(db: HubDatabase) -> None:
+async def test_disable_rule_takes_effect_across_processes(
+    db: HubDatabase,
+    postgres_database_url: str,
+    postgres_schema: str,
+) -> None:
     manager = LocalWorkflowDefinitionManager(db)
-    _make_blocking_rule(manager)
+    rule_id = _make_blocking_rule(manager)
     engine = RuleEngine(db)
     event = _make_bash_event()
 
     first = await engine.evaluate(event, session_id="session-rule-disable", variables={})
-    pytest.skip("Cross-process PostgreSQL propagation is covered by integration tests.")
+    _disable_rule_in_child_process(postgres_database_url, postgres_schema, rule_id)
     second = await engine.evaluate(event, session_id="session-rule-disable", variables={})
 
     assert first.decision == "block"
