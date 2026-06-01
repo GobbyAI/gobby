@@ -102,12 +102,18 @@ pub struct StandaloneEmbeddingStatus {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StandaloneFailure {
+    pub name: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StandaloneSetupStatus {
     pub namespace: String,
     pub schema: String,
     pub created: Vec<String>,
     pub skipped: Vec<String>,
-    pub failed: Vec<(String, String)>,
+    pub failed: Vec<StandaloneFailure>,
     pub config_file: Option<String>,
     pub services: Option<StandaloneServicesStatus>,
     pub embedding: Option<StandaloneEmbeddingStatus>,

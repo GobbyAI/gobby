@@ -1,5 +1,7 @@
+use std::io::Cursor;
 use std::path::PathBuf;
 
+use bytes::Bytes;
 use reqwest::blocking::{Client, RequestBuilder, multipart};
 use serde_json::{Map, Value};
 
@@ -54,6 +56,7 @@ pub fn transcribe_via_daemon(
     let provider = binding.provider.clone();
     let model = binding.model.clone();
     let project_id = cfg.project_id.clone();
+    let bytes = Bytes::from(bytes);
     let _permit = cfg.limiter.acquire();
 
     let value = super::retry_with_backoff(
@@ -96,6 +99,7 @@ pub fn describe_image_via_daemon(
     let provider = binding.provider.clone();
     let model = binding.model.clone();
     let project_id = cfg.project_id.clone();
+    let bytes = Bytes::from(bytes);
     let _permit = cfg.limiter.acquire();
 
     let value = super::retry_with_backoff(
@@ -211,12 +215,14 @@ fn with_local_token(request: RequestBuilder, token: &str) -> RequestBuilder {
 }
 
 fn multipart_form_with_file(
-    bytes: Vec<u8>,
+    bytes: Bytes,
     file_name: &str,
     mime: &str,
     capability: AiCapability,
 ) -> Result<multipart::Form, AiError> {
-    let file_part = multipart::Part::bytes(bytes)
+    let file_len = u64::try_from(bytes.len())
+        .map_err(|_| AiError::parse_failure("daemon multipart payload is too large to send"))?;
+    let file_part = multipart::Part::reader_with_length(Cursor::new(bytes), file_len)
         .file_name(file_name.to_string())
         .mime_str(mime)
         .map_err(|error| {
@@ -305,7 +311,7 @@ mod tests {
     use crate::config::{AiRouting, AiTuning, CapabilityBinding, TEST_ENV_LOCK};
     use std::ffi::OsString;
     use std::fs;
-    use std::io::{Read, Write};
+    use std::io::{ErrorKind, Read, Write};
     use std::net::TcpListener;
     use std::path::Path;
     use std::sync::MutexGuard;
@@ -491,7 +497,15 @@ mod tests {
         let mut request = Vec::new();
         let mut chunk = [0_u8; 1024];
         loop {
-            let read = stream.read(&mut chunk).unwrap();
+            let read = match stream.read(&mut chunk) {
+                Ok(read) => read,
+                Err(error)
+                    if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) =>
+                {
+                    break;
+                }
+                Err(error) => panic!("read request: {error}"),
+            };
             if read == 0 {
                 break;
             }

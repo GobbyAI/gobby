@@ -10,6 +10,8 @@ fn gwiki(args: &[&str]) -> Output {
 
     Command::new(env!("CARGO_BIN_EXE_gwiki"))
         .args(args)
+        .env_clear()
+        .env("HOME", tmp.path())
         .env("GOBBY_WIKI_HUB", &hub)
         .current_dir(&project)
         .output()

@@ -85,9 +85,20 @@ pub fn register_scope(path: &Path, scope: &ResolvedScope) -> Result<(), WikiErro
         serde_json::to_string_pretty(&registry).map_err(|error| WikiError::Registry {
             detail: format!("failed to serialize {}: {error}", path.display()),
         })?;
-    let result = write_registry_atomically(path, format!("{contents}\n").as_bytes());
-    drop(lock);
-    result
+    let write_result = write_registry_atomically(path, format!("{contents}\n").as_bytes());
+    let unlock_result = fs4::FileExt::unlock(&lock).map_err(|error| WikiError::Io {
+        action: "unlock registry",
+        path: Some(lock_path),
+        source: error,
+    });
+
+    match write_result {
+        Ok(()) => unlock_result,
+        Err(error) => {
+            let _ = unlock_result;
+            Err(error)
+        }
+    }
 }
 
 fn lock_registry(lock: &std::fs::File, lock_path: &Path) -> Result<(), WikiError> {

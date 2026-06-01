@@ -4,7 +4,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::graph::report::DEFAULT_TOP_LIMIT;
-use crate::models::{ProjectionMetadata, ProjectionProvenance};
+use crate::models::ProjectionMetadata;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BridgeEdgeHypothesis {
@@ -29,7 +29,7 @@ impl BridgeEdgeHypothesis {
             relation: relation.into(),
             label: "inferred hypothesis".to_string(),
             read_only: true,
-            metadata: inferred_bridge_metadata(metadata),
+            metadata,
         }
     }
 
@@ -265,9 +265,4 @@ impl Default for BridgeEdgeInput {
     fn default() -> Self {
         Self::Available(vec![])
     }
-}
-
-fn inferred_bridge_metadata(mut metadata: ProjectionMetadata) -> ProjectionMetadata {
-    metadata.provenance = ProjectionProvenance::Inferred;
-    metadata
 }

@@ -10,6 +10,6 @@ pub(crate) use contracts::DEFAULT_SCHEMA;
 pub use ddl::GcodeStandaloneSetup;
 pub use postgres::{run_standalone_setup, validate_standalone_request};
 pub use types::{
-    StandaloneEmbeddingStatus, StandaloneServicesStatus, StandaloneSetupRequest,
+    StandaloneEmbeddingStatus, StandaloneFailure, StandaloneServicesStatus, StandaloneSetupRequest,
     StandaloneSetupStatus,
 };

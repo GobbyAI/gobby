@@ -169,7 +169,23 @@ fn split_assignment(line: &str) -> Option<(&str, &str)> {
         let next = line[idx + 1..].chars().next();
         if matches!(
             previous,
-            Some('=' | '!' | '<' | '>' | ':' | '+' | '-' | '*' | '/' | '%' | '&' | '|' | '^' | '?')
+            Some(
+                '=' | '!'
+                    | '<'
+                    | '>'
+                    | ':'
+                    | '+'
+                    | '-'
+                    | '*'
+                    | '/'
+                    | '%'
+                    | '&'
+                    | '|'
+                    | '^'
+                    | '?'
+                    | '@'
+                    | '~'
+            )
         ) || matches!(next, Some('=' | '>'))
         {
             continue;
@@ -247,6 +263,13 @@ mod tests {
         assert_eq!(split_assignment("flags |= WRITE"), None);
         assert_eq!(split_assignment("flags ^= EXECUTE"), None);
         assert_eq!(split_assignment("value += 1"), None);
+        assert_eq!(split_assignment("matrix @= transform"), None);
+        assert_eq!(split_assignment("cache ??= fallback"), None);
+        assert_eq!(split_assignment("enabled &&= predicate()"), None);
+        assert_eq!(split_assignment("enabled ||= fallback()"), None);
+        assert_eq!(split_assignment("power **= 2"), None);
+        assert_eq!(split_assignment("bits <<= 1"), None);
+        assert_eq!(split_assignment("bits >>= 1"), None);
         assert_eq!(
             split_assignment("flags = READ | WRITE"),
             Some(("flags ", " READ | WRITE"))

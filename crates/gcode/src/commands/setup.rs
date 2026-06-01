@@ -6,7 +6,6 @@ use gobby_core::provisioning::{
     EnsureHubOptions, StandaloneConfig, compose_file_path, ensure_hub, gcore_config_path,
 };
 use postgres::{Client, NoTls};
-use sha2::{Digest, Sha256};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
@@ -17,6 +16,7 @@ use crate::output::{self, Format};
 use crate::setup::{
     self, StandaloneEmbeddingStatus, StandaloneServicesStatus, StandaloneSetupRequest,
 };
+use crate::utils::api_key_fingerprint;
 use crate::vector::code_symbols;
 
 pub fn run(request: StandaloneSetupRequest, format: Format, quiet: bool) -> anyhow::Result<()> {
@@ -39,8 +39,8 @@ pub fn run(request: StandaloneSetupRequest, format: Format, quiet: bool) -> anyh
                 output::print_json(&status)?;
             }
             Format::Text => {
-                for (object, message) in &status.failed {
-                    eprintln!("Failed to create {object}: {message}");
+                for failure in &status.failed {
+                    eprintln!("Failed to create {}: {}", failure.name, failure.reason);
                 }
             }
         }
@@ -365,11 +365,6 @@ fn explicit_embedding_bootstrap(
         query_prefix: request.embedding_query_prefix.clone(),
         api_key: request.embedding_api_key.clone(),
     })
-}
-
-fn api_key_fingerprint(api_key: &str) -> String {
-    let digest = Sha256::digest(api_key.as_bytes());
-    format!("{digest:x}").chars().take(16).collect()
 }
 
 fn endpoint_reachable(api_base: &str) -> bool {

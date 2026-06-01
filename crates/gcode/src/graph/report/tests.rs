@@ -3,6 +3,7 @@ use crate::models::{ProjectionMetadata, ProjectionProvenance};
 use std::path::PathBuf;
 
 use super::generation::generate_report_from_snapshot;
+use super::render::render_markdown;
 use super::types::{BridgeEdgeInput, ReportCodeEdge, ReportGraphSnapshot, ReportNode};
 use super::*;
 
@@ -70,7 +71,7 @@ fn bridge_edges_are_read_only() {
 
     assert!(edge.read_only);
     assert_eq!(edge.label, "inferred hypothesis");
-    assert_eq!(edge.metadata.provenance, ProjectionProvenance::Inferred);
+    assert_eq!(edge.metadata.provenance, ProjectionProvenance::Extracted);
 
     let snapshot = ReportGraphSnapshot {
         nodes: vec![ReportNode::new("symbol-1", "handler", "function")],
@@ -84,8 +85,32 @@ fn bridge_edges_are_read_only() {
     assert_eq!(json["bridge_edges"][0]["read_only"], true);
     assert_eq!(
         json["bridge_edges"][0]["metadata"]["provenance"],
-        "INFERRED"
+        "EXTRACTED"
     );
+}
+
+#[test]
+fn markdown_inline_code_uses_commonmark_backtick_delimiters() {
+    let report = empty_report("project`1");
+    let markdown = render_markdown(super::render::RenderMarkdownInput {
+        project_id: &report.project_id,
+        generated_at: &report.generated_at,
+        summary: &report.summary,
+        hotspots: &report.hotspots,
+        unresolved_targets: &[TargetFrequency {
+            id: "target".to_string(),
+            name: "call`target".to_string(),
+            count: 1,
+        }],
+        external_targets: &[],
+        bridge_summary: None,
+        degradation_details: &[],
+        top_n: 10,
+    });
+
+    assert!(markdown.contains("- Project: ``project`1``"));
+    assert!(markdown.contains("- ``call`target`` (1)"));
+    assert!(!markdown.contains("\\`"));
 }
 
 #[test]

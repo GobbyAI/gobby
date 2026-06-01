@@ -9,7 +9,7 @@ use crate::markdown::{MarkdownFence, markdown_fence_closes, markdown_fence_start
 use crate::provenance::ProvenanceGraph;
 use crate::sources::SourceManifest;
 use crate::synthesis::slugify;
-use crate::{ScopeIdentity, WikiError};
+use crate::{ScopeIdentity, ScopeKind, WikiError};
 
 const DEFAULT_IGNORED_SECTIONS: &[&str] = &[
     "citations",
@@ -114,7 +114,10 @@ pub fn run_with_options(
     scope: ScopeIdentity,
     options: AuditOptions,
 ) -> Result<AuditReport, WikiError> {
-    let pages = collect_pages(vault_root)?;
+    let pages = collect_pages(vault_root)?
+        .into_iter()
+        .filter(|page| scope_includes_page(&scope, &page.relative_path))
+        .collect::<Vec<_>>();
     let source_context = Arc::new(source_context(vault_root)?);
     let provenance = load_provenance(vault_root)?;
     let unsupported_claims = pages
@@ -129,6 +132,13 @@ pub fn run_with_options(
         unsupported_claims,
         source_context,
     })
+}
+
+fn scope_includes_page(scope: &ScopeIdentity, path: &Path) -> bool {
+    match scope.kind {
+        ScopeKind::Topic => path.starts_with(Path::new("wiki").join("topics")),
+        ScopeKind::Project | ScopeKind::Global => true,
+    }
 }
 
 pub fn render_text(report: &AuditReport) -> String {
@@ -439,6 +449,36 @@ mod tests {
             json.pointer("/unsupported_claims/0/path")
                 .and_then(serde_json::Value::as_str),
             Some("wiki/topics/path-scope.md")
+        );
+    }
+
+    #[test]
+    fn topic_scope_audits_only_topic_pages() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        let topic_page = root.join("wiki/topics/topic-claim.md");
+        let concept_page = root.join("wiki/concepts/concept-claim.md");
+        std::fs::create_dir_all(topic_page.parent().expect("topic parent"))
+            .expect("create topic dir");
+        std::fs::create_dir_all(concept_page.parent().expect("concept parent"))
+            .expect("create concept dir");
+        std::fs::write(
+            &topic_page,
+            "---\ntitle: Topic\nsource_kind: topic\n---\n# Topic\nTopic claim.\n",
+        )
+        .expect("write topic page");
+        std::fs::write(
+            &concept_page,
+            "---\ntitle: Concept\nsource_kind: concept\n---\n# Concept\nConcept claim.\n",
+        )
+        .expect("write concept page");
+
+        let report = run(root, ScopeIdentity::topic("ops")).expect("audit runs");
+
+        assert_eq!(report.unsupported_claims.len(), 1);
+        assert_eq!(
+            report.unsupported_claims[0].path,
+            PathBuf::from("wiki/topics/topic-claim.md")
         );
     }
 

@@ -27,6 +27,7 @@ pub const GWIKI_POSTGRES_INDEXES: &[&str] = &[
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GwikiPostgresObjectKind {
+    Preflight,
     Table,
     Index,
 }
@@ -71,6 +72,17 @@ impl GwikiStandaloneSetup {
         let chunks_search_bm25 = self.qualified("gwiki_chunks_search_bm25", "index")?;
 
         Ok(vec![
+            preflight(
+                "gwiki_pg_search_extension_preflight",
+                "DO $$
+                 BEGIN
+                     IF NOT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_search') THEN
+                         RAISE EXCEPTION 'pg_search extension is required before creating gwiki BM25 indexes';
+                     END IF;
+                 END
+                 $$;"
+                .to_string(),
+            ),
             table(
                 "gwiki_documents",
                 format!(
@@ -288,6 +300,14 @@ fn index(name: &'static str, sql: String) -> GwikiPostgresObject {
     }
 }
 
+fn preflight(name: &'static str, sql: String) -> GwikiPostgresObject {
+    GwikiPostgresObject {
+        name,
+        kind: GwikiPostgresObjectKind::Preflight,
+        sql,
+    }
+}
+
 fn owned_object(object: GwikiPostgresObject) -> OwnedObject {
     let object_name = object.name.to_string();
     let sql = object.sql;
@@ -402,6 +422,7 @@ mod tests {
         assert!(combined_sql.contains("frontmatter"), "{combined_sql}");
         assert!(combined_sql.contains("provenance"), "{combined_sql}");
         assert!(combined_sql.contains("USING bm25"), "{combined_sql}");
+        assert!(combined_sql.contains("pg_extension"), "{combined_sql}");
         assert!(!combined_sql.contains("CREATE EXTENSION"), "{combined_sql}");
         assert!(!combined_sql.contains("CREATE SCHEMA"), "{combined_sql}");
         assert!(!combined_sql.contains("ALTER "), "{combined_sql}");

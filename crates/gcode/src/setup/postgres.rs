@@ -4,7 +4,7 @@ use super::contracts::{
 };
 use super::ddl::GcodeStandaloneSetup;
 use super::identifiers::qualified_relation;
-use super::types::{StandaloneSetupRequest, StandaloneSetupStatus};
+use super::types::{StandaloneFailure, StandaloneSetupRequest, StandaloneSetupStatus};
 use gobby_core::setup::{SetupContext, SetupError, SetupReport, StandaloneSetup};
 use postgres::{Client, GenericClient};
 use std::collections::HashSet;
@@ -65,7 +65,11 @@ fn standalone_setup_status(
         schema: setup.schema().to_string(),
         created: report.created,
         skipped: report.skipped,
-        failed: report.failed,
+        failed: report
+            .failed
+            .into_iter()
+            .map(|(name, reason)| StandaloneFailure { name, reason })
+            .collect(),
         config_file: None,
         services: None,
         embedding: None,

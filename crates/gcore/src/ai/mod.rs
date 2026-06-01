@@ -1,5 +1,7 @@
+use std::io::Cursor;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use bytes::Bytes;
 use reqwest::blocking::{Client, RequestBuilder, Response, multipart};
 use reqwest::header::{AUTHORIZATION, RETRY_AFTER};
 use serde::Serialize;
@@ -110,6 +112,7 @@ impl<'a> AiTransport<'a> {
         fields: &[(&str, &str)],
     ) -> Result<serde_json::Value, AiError> {
         let _permit = self.context.limiter.acquire();
+        let bytes = Bytes::from(bytes);
         retry_with_backoff(
             || {
                 let request = self.build_multipart_request(
@@ -166,13 +169,17 @@ impl<'a> AiTransport<'a> {
         url: &str,
         file_field: &str,
         file_name: &str,
-        bytes: Vec<u8>,
+        bytes: Bytes,
         fields: &[(&str, &str)],
     ) -> Result<RequestBuilder, AiError> {
         let binding = self.context.binding(capability);
+        let file_len = u64::try_from(bytes.len()).map_err(|_| {
+            AiError::parse_failure("multipart payload is too large to send".to_string())
+        })?;
         let mut form = multipart::Form::new().part(
             file_field.to_string(),
-            multipart::Part::bytes(bytes).file_name(file_name.to_string()),
+            multipart::Part::reader_with_length(Cursor::new(bytes), file_len)
+                .file_name(file_name.to_string()),
         );
 
         for (key, value) in fields {

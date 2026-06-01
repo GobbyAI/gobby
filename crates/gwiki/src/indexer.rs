@@ -6,6 +6,7 @@ use gobby_core::indexing::{
     Chunk, IndexEvent, WalkerSettings, file_content_hash, index_events_from_hashes,
 };
 
+use crate::links as wiki_links;
 use crate::store::{
     StoreError, WikiChunk, WikiDocument, WikiDocumentKind, WikiIndexStore, WikiIngestion,
     WikiIngestionEvent, WikiLink, WikiSource, configured_memory_index_limit_bytes,
@@ -370,90 +371,18 @@ fn parse_heading(line: &str) -> Option<String> {
 }
 
 fn extract_links(path: &Path, body: &str) -> Vec<WikiLink> {
-    let mut links = Vec::new();
-    extract_wikilinks(path, body, &mut links);
-    extract_markdown_links(path, body, &mut links);
+    let mut links = wiki_links::extract_links(body, std::iter::empty::<&str>())
+        .into_iter()
+        .map(|link| WikiLink {
+            path: path.to_path_buf(),
+            target: link.target,
+            alias: link.alias,
+            byte_start: link.byte_start,
+            byte_end: link.byte_end,
+        })
+        .collect::<Vec<_>>();
     links.sort_by_key(|link| link.byte_start);
     links
-}
-
-fn extract_wikilinks(path: &Path, body: &str, links: &mut Vec<WikiLink>) {
-    let mut cursor = 0;
-    while let Some(start_offset) = body[cursor..].find("[[") {
-        let byte_start = cursor + start_offset;
-        let content_start = byte_start + 2;
-        let Some(end_offset) = body[content_start..].find("]]") else {
-            break;
-        };
-        let content_end = content_start + end_offset;
-        let byte_end = content_end + 2;
-        let inner = body[content_start..content_end].trim();
-
-        if !inner.is_empty() {
-            let (target, alias) = match inner.split_once('|') {
-                Some((target, alias)) => (target.trim(), Some(alias.trim())),
-                None => (inner, None),
-            };
-            if !target.is_empty() {
-                links.push(WikiLink {
-                    path: path.to_path_buf(),
-                    target: target.to_string(),
-                    alias: alias.filter(|value| !value.is_empty()).map(str::to_string),
-                    byte_start,
-                    byte_end,
-                });
-            }
-        }
-
-        cursor = byte_end;
-    }
-}
-
-fn extract_markdown_links(path: &Path, body: &str, links: &mut Vec<WikiLink>) {
-    let bytes = body.as_bytes();
-    let mut cursor = 0;
-
-    while let Some(start_offset) = body[cursor..].find('[') {
-        let byte_start = cursor + start_offset;
-        if byte_start > 0 && bytes.get(byte_start - 1) == Some(&b'!') {
-            cursor = byte_start + 1;
-            continue;
-        }
-
-        let alias_start = byte_start + 1;
-        let Some(alias_end_offset) = body[alias_start..].find(']') else {
-            break;
-        };
-        let alias_end = alias_start + alias_end_offset;
-        if bytes.get(alias_end + 1) != Some(&b'(') {
-            cursor = alias_end + 1;
-            continue;
-        }
-
-        let target_start = alias_end + 2;
-        let Some(target_end_offset) = body[target_start..].find(')') else {
-            break;
-        };
-        let target_end = target_start + target_end_offset;
-        let target = body[target_start..target_end].trim();
-
-        if !target.is_empty() {
-            let alias = body[alias_start..alias_end].trim();
-            links.push(WikiLink {
-                path: path.to_path_buf(),
-                target: target.to_string(),
-                alias: if alias.is_empty() {
-                    None
-                } else {
-                    Some(alias.to_string())
-                },
-                byte_start,
-                byte_end: target_end + 1,
-            });
-        }
-
-        cursor = target_end + 1;
-    }
 }
 
 #[cfg(test)]

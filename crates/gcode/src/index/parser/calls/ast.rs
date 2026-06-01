@@ -37,11 +37,7 @@ pub(super) fn extract_ast_calls(
 
     let mut cursor = QueryCursor::new();
     let mut matches = cursor.matches(&query, tree.root_node(), source);
-    let capture_names: Vec<String> = query
-        .capture_names()
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+    let capture_names = query.capture_names();
     let mut calls = Vec::new();
 
     while let Some(m) = matches.next() {
@@ -49,7 +45,7 @@ pub(super) fn extract_ast_calls(
         let mut call_node = None;
 
         for cap in m.captures {
-            let cap_name = &capture_names[cap.index as usize];
+            let cap_name = capture_names[cap.index as usize];
             if cap_name == "name" {
                 name_node = Some(cap.node);
             } else if cap_name == "call" {

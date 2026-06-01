@@ -641,10 +641,14 @@ fn resolve_ai_non_empty(source: &mut impl ConfigSource, value: &str) -> Option<S
     if trimmed.is_empty() {
         return None;
     }
-    source
-        .resolve_value(trimmed)
-        .ok()
-        .filter(|resolved| !resolved.trim().is_empty())
+    source.resolve_value(trimmed).ok().filter(|resolved| {
+        let resolved = resolved.trim();
+        !resolved.is_empty() && !contains_unresolved_env_pattern(resolved)
+    })
+}
+
+fn contains_unresolved_env_pattern(value: &str) -> bool {
+    value.contains("${")
 }
 
 fn resolve_setting(
@@ -1014,6 +1018,14 @@ mod tests {
         );
         assert_eq!(binding.api_key.as_deref(), Some("plaintext-local-key"));
         assert_eq!(embedding.api_base, "http://yaml-embedding:11434/v1");
+
+        let mut missing_env_source = LayeredTestSource::with_layers(
+            [],
+            [(ai_keys::TEXT_GENERATE_MODEL, "${GOBBY_TEST_MISSING}")],
+        );
+        let binding =
+            resolve_capability_binding(&mut missing_env_source, AiCapability::TextGenerate);
+        assert_eq!(binding.model, None);
 
         let tuning = resolve_ai_tuning(&mut TestSource::default());
         assert_eq!(tuning.max_concurrency, 1);

@@ -16,6 +16,7 @@ pub(crate) fn execute(
     query: String,
     selection: ScopeSelection,
     limit: usize,
+    include_semantic: bool,
 ) -> Result<CommandOutcome, WikiError> {
     if let Some(database_url) = database_url_from_env() {
         let scope = resolve_command_scope(&selection)?;
@@ -25,6 +26,7 @@ pub(crate) fn execute(
             search_scope_for_resolved(&scope),
             query,
             limit,
+            include_semantic,
         );
     }
 
@@ -39,10 +41,13 @@ pub(crate) fn execute(
         &mut bm25_backend,
         &mut semantic_backend,
         &mut graph_backend,
-        output_scope,
-        search_scope,
-        query,
-        limit,
+        SearchExecutionInput {
+            output_scope,
+            search_scope,
+            query,
+            limit,
+            include_semantic,
+        },
     )
 }
 
@@ -52,6 +57,7 @@ fn run_search_attached(
     search_scope: wiki_search::SearchScope,
     query: String,
     limit: usize,
+    include_semantic: bool,
 ) -> Result<CommandOutcome, WikiError> {
     let mut conn = gobby_core::postgres::connect_readonly(database_url).map_err(|error| {
         WikiError::Config {
@@ -77,21 +83,29 @@ fn run_search_attached(
         &mut bm25_backend,
         &mut semantic_backend,
         &mut graph_backend,
-        output_scope,
-        search_scope,
-        query,
-        limit,
+        SearchExecutionInput {
+            output_scope,
+            search_scope,
+            query,
+            limit,
+            include_semantic,
+        },
     )
+}
+
+struct SearchExecutionInput {
+    output_scope: ScopeIdentity,
+    search_scope: wiki_search::SearchScope,
+    query: String,
+    limit: usize,
+    include_semantic: bool,
 }
 
 fn run_search_with_backends<B, S, G>(
     bm25_backend: &mut B,
     semantic_backend: &mut S,
     graph_backend: &mut G,
-    output_scope: ScopeIdentity,
-    search_scope: wiki_search::SearchScope,
-    query: String,
-    limit: usize,
+    input: SearchExecutionInput,
 ) -> Result<CommandOutcome, WikiError>
 where
     B: wiki_search::bm25::Bm25SearchBackend,
@@ -103,10 +117,10 @@ where
         semantic_backend,
         graph_backend,
         wiki_search::SearchRequest {
-            query: query.clone(),
-            scope: search_scope,
-            limit,
-            include_semantic: true,
+            query: input.query.clone(),
+            scope: input.search_scope,
+            limit: input.limit,
+            include_semantic: input.include_semantic,
         },
     )
     .map_err(search_error_to_wiki_error)?;
@@ -140,7 +154,13 @@ where
         .iter()
         .map(degradation_label)
         .collect::<Vec<_>>();
-    let output = SearchOutput::new(output_scope, query, limit, results, degradations);
+    let output = SearchOutput::new(
+        input.output_scope,
+        input.query,
+        input.limit,
+        results,
+        degradations,
+    );
     render(output)
 }
 

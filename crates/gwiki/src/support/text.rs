@@ -61,6 +61,7 @@ pub(crate) fn document_kind_name(kind: store::WikiDocumentKind) -> &'static str 
 
 pub(crate) fn postgres_object_kind(kind: setup::GwikiPostgresObjectKind) -> &'static str {
     match kind {
+        setup::GwikiPostgresObjectKind::Preflight => "preflight",
         setup::GwikiPostgresObjectKind::Table => "table",
         setup::GwikiPostgresObjectKind::Index => "index",
     }

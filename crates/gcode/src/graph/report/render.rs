@@ -21,8 +21,8 @@ pub(super) fn render_markdown(input: RenderMarkdownInput<'_>) -> String {
     let mut lines = vec![
         "# Project Graph Report".to_string(),
         String::new(),
-        format!("- Project: `{}`", input.project_id),
-        format!("- Generated: `{}`", input.generated_at),
+        format!("- Project: {}", inline_code(input.project_id)),
+        format!("- Generated: {}", inline_code(input.generated_at)),
         format!("- Nodes: {}", input.summary.node_count),
         format!("- Edges: {}", input.summary.edge_count),
     ];
@@ -134,7 +134,26 @@ fn append_target_section(
 }
 
 fn inline_code(value: &str) -> String {
-    format!("`{}`", value.replace('`', "\\`"))
+    let delimiter = "`".repeat(max_backtick_run(value).saturating_add(1).max(1));
+    if value.starts_with('`') || value.ends_with('`') {
+        format!("{delimiter} {value} {delimiter}")
+    } else {
+        format!("{delimiter}{value}{delimiter}")
+    }
+}
+
+fn max_backtick_run(value: &str) -> usize {
+    let mut max_run = 0usize;
+    let mut current_run = 0usize;
+    for ch in value.chars() {
+        if ch == '`' {
+            current_run += 1;
+            max_run = max_run.max(current_run);
+        } else {
+            current_run = 0;
+        }
+    }
+    max_run
 }
 
 fn markdown_text(value: &str) -> String {

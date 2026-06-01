@@ -195,12 +195,25 @@ pub(super) fn get_stale_files(
             error
         })?;
     for row in rows {
-        if let (Ok(file_path), Ok(content_hash)) = (
-            row.try_get::<_, String>("file_path"),
-            row.try_get::<_, String>("content_hash"),
-        ) {
-            indexed.insert(file_path, content_hash);
-        }
+        let file_path = match row.try_get::<_, String>("file_path") {
+            Ok(file_path) => file_path,
+            Err(error) => {
+                log::warn!(
+                    "skipping malformed indexed-file stale-detection row for project {project_id}: file_path: {error}"
+                );
+                continue;
+            }
+        };
+        let content_hash = match row.try_get::<_, String>("content_hash") {
+            Ok(content_hash) => content_hash,
+            Err(error) => {
+                log::warn!(
+                    "skipping malformed indexed-file stale-detection row for project {project_id}, file {file_path}: content_hash: {error}"
+                );
+                continue;
+            }
+        };
+        indexed.insert(file_path, content_hash);
     }
 
     for (path, hash) in current_hashes {
@@ -260,9 +273,16 @@ pub(super) fn get_orphan_files(
             error
         })?;
     for row in rows {
-        if let Ok(file_path) = row.try_get::<_, String>("file_path")
-            && !present_paths.contains(&file_path)
-        {
+        let file_path = match row.try_get::<_, String>("file_path") {
+            Ok(file_path) => file_path,
+            Err(error) => {
+                log::warn!(
+                    "skipping malformed indexed-file orphan-detection row for project {project_id}: file_path: {error}"
+                );
+                continue;
+            }
+        };
+        if !present_paths.contains(&file_path) {
             orphans.push(file_path);
         }
     }

@@ -7,6 +7,8 @@ use crate::ingest::{
 use crate::sources::{CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest};
 use crate::store::WikiIndexStore;
 
+const MAX_CODE_FENCE_LEN: usize = 64;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GitFileSnapshot {
     pub path: String,
@@ -132,17 +134,31 @@ fn code_fence_info(path: &str) -> String {
 }
 
 fn markdown_code_fence(text: &str) -> String {
+    let backticks = bounded_max_run(text, '`');
+    let tildes = bounded_max_run(text, '~');
+    let (delimiter, max_run) = if backticks <= tildes {
+        ('`', backticks)
+    } else {
+        ('~', tildes)
+    };
+    std::iter::repeat_n(delimiter, max_run.saturating_add(1).max(3)).collect()
+}
+
+fn bounded_max_run(text: &str, delimiter: char) -> usize {
     let mut max_run = 0usize;
     let mut current_run = 0usize;
     for ch in text.chars() {
-        if ch == '`' {
+        if ch == delimiter {
             current_run += 1;
             max_run = max_run.max(current_run);
+            if max_run + 1 >= MAX_CODE_FENCE_LEN {
+                return MAX_CODE_FENCE_LEN - 1;
+            }
         } else {
             current_run = 0;
         }
     }
-    "`".repeat(max_run.saturating_add(1).max(3))
+    max_run
 }
 
 #[cfg(test)]
@@ -194,5 +210,16 @@ mod tests {
             "git+https://github.com/GobbyAI/example.git@7f83b1657ff1fc53b92dc18148a1d65dfa135adb"
         );
         assert_eq!(entry.fetched_at, "2026-05-29T18:20:00Z");
+    }
+
+    #[test]
+    fn code_fence_length_is_bounded_by_switching_delimiters() {
+        let text = "`".repeat(MAX_CODE_FENCE_LEN * 4);
+
+        assert_eq!(markdown_code_fence(&text), "~~~");
+        assert_eq!(
+            markdown_code_fence(&"~".repeat(MAX_CODE_FENCE_LEN * 4)).len(),
+            3
+        );
     }
 }

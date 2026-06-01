@@ -9,6 +9,12 @@ pub struct GcodeStandaloneSetup {
     schema: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PostgresObjectDefinition {
+    pub(crate) name: String,
+    pub(crate) sql: String,
+}
+
 impl GcodeStandaloneSetup {
     pub fn new(schema: impl Into<String>) -> Self {
         Self {
@@ -20,12 +26,10 @@ impl GcodeStandaloneSetup {
         &self.schema
     }
 
-    fn object(&self, name: &str, sql: String) -> OwnedObject {
-        let object_name = name.to_string();
-        OwnedObject {
-            name: object_name.clone(),
-            store: StoreKind::Postgres,
-            creator: Box::new(move |ctx| execute_postgres_ddl(ctx, &object_name, &sql)),
+    fn object_definition(&self, name: &str, sql: String) -> PostgresObjectDefinition {
+        PostgresObjectDefinition {
+            name: name.to_string(),
+            sql,
         }
     }
 
@@ -36,14 +40,10 @@ impl GcodeStandaloneSetup {
             quote_identifier(relation, "relation")?
         ))
     }
-}
 
-impl StandaloneSetup for GcodeStandaloneSetup {
-    fn namespace(&self) -> &str {
-        NAMESPACE
-    }
-
-    fn owned_objects(&self) -> Result<Vec<OwnedObject>, SetupError> {
+    pub(crate) fn postgres_object_definitions(
+        &self,
+    ) -> Result<Vec<PostgresObjectDefinition>, SetupError> {
         let code_indexed_projects = self.qualified("code_indexed_projects")?;
         let code_indexed_files = self.qualified("code_indexed_files")?;
         let code_symbols = self.qualified("code_symbols")?;
@@ -52,11 +52,11 @@ impl StandaloneSetup for GcodeStandaloneSetup {
         let code_calls = self.qualified("code_calls")?;
 
         Ok(vec![
-            self.object(
+            self.object_definition(
                 "pg_search extension",
                 "CREATE EXTENSION IF NOT EXISTS pg_search;".to_string(),
             ),
-            self.object(
+            self.object_definition(
                 "code_indexed_projects table",
                 format!(
                     "CREATE TABLE IF NOT EXISTS {code_indexed_projects} (
@@ -71,7 +71,7 @@ impl StandaloneSetup for GcodeStandaloneSetup {
                     );"
                 ),
             ),
-            self.object(
+            self.object_definition(
                 "code_indexed_files table",
                 format!(
                     "CREATE TABLE IF NOT EXISTS {code_indexed_files} (
@@ -90,28 +90,28 @@ impl StandaloneSetup for GcodeStandaloneSetup {
                     );"
                 ),
             ),
-            self.object(
+            self.object_definition(
                 "idx_cif_project index",
                 format!(
                     "CREATE INDEX IF NOT EXISTS idx_cif_project
                      ON {code_indexed_files}(project_id);"
                 ),
             ),
-            self.object(
+            self.object_definition(
                 "idx_cif_graph_synced index",
                 format!(
                     "CREATE INDEX IF NOT EXISTS idx_cif_graph_synced
                      ON {code_indexed_files}(project_id, graph_synced);"
                 ),
             ),
-            self.object(
+            self.object_definition(
                 "idx_cif_vectors_synced index",
                 format!(
                     "CREATE INDEX IF NOT EXISTS idx_cif_vectors_synced
                      ON {code_indexed_files}(project_id, vectors_synced);"
                 ),
             ),
-            self.object(
+            self.object_definition(
                 "code_symbols table",
                 format!(
                     "CREATE TABLE IF NOT EXISTS {code_symbols} (
@@ -136,40 +136,40 @@ impl StandaloneSetup for GcodeStandaloneSetup {
                     );"
                 ),
             ),
-            self.object(
+            self.object_definition(
                 "idx_cs_project index",
                 format!("CREATE INDEX IF NOT EXISTS idx_cs_project ON {code_symbols}(project_id);"),
             ),
-            self.object(
+            self.object_definition(
                 "idx_cs_file index",
                 format!(
                     "CREATE INDEX IF NOT EXISTS idx_cs_file
                      ON {code_symbols}(project_id, file_path);"
                 ),
             ),
-            self.object(
+            self.object_definition(
                 "idx_cs_name index",
                 format!("CREATE INDEX IF NOT EXISTS idx_cs_name ON {code_symbols}(name);"),
             ),
-            self.object(
+            self.object_definition(
                 "idx_cs_qualified index",
                 format!(
                     "CREATE INDEX IF NOT EXISTS idx_cs_qualified
                      ON {code_symbols}(qualified_name);"
                 ),
             ),
-            self.object(
+            self.object_definition(
                 "idx_cs_kind index",
                 format!("CREATE INDEX IF NOT EXISTS idx_cs_kind ON {code_symbols}(kind);"),
             ),
-            self.object(
+            self.object_definition(
                 "idx_cs_parent index",
                 format!(
                     "CREATE INDEX IF NOT EXISTS idx_cs_parent
                      ON {code_symbols}(parent_symbol_id);"
                 ),
             ),
-            self.object(
+            self.object_definition(
                 "code_content_chunks table",
                 format!(
                     "CREATE TABLE IF NOT EXISTS {code_content_chunks} (
@@ -186,21 +186,21 @@ impl StandaloneSetup for GcodeStandaloneSetup {
                     );"
                 ),
             ),
-            self.object(
+            self.object_definition(
                 "idx_ccc_project index",
                 format!(
                     "CREATE INDEX IF NOT EXISTS idx_ccc_project
                      ON {code_content_chunks}(project_id);"
                 ),
             ),
-            self.object(
+            self.object_definition(
                 "idx_ccc_file index",
                 format!(
                     "CREATE INDEX IF NOT EXISTS idx_ccc_file
                      ON {code_content_chunks}(project_id, file_path);"
                 ),
             ),
-            self.object(
+            self.object_definition(
                 "code_imports table",
                 format!(
                     "CREATE TABLE IF NOT EXISTS {code_imports} (
@@ -212,14 +212,14 @@ impl StandaloneSetup for GcodeStandaloneSetup {
                     );"
                 ),
             ),
-            self.object(
+            self.object_definition(
                 "idx_ci_file index",
                 format!(
                     "CREATE INDEX IF NOT EXISTS idx_ci_file
                      ON {code_imports}(project_id, source_file);"
                 ),
             ),
-            self.object(
+            self.object_definition(
                 "code_calls table",
                 format!(
                     "CREATE TABLE IF NOT EXISTS {code_calls} (
@@ -239,28 +239,28 @@ impl StandaloneSetup for GcodeStandaloneSetup {
                     );"
                 ),
             ),
-            self.object(
+            self.object_definition(
                 "idx_cc_file index",
                 format!(
                     "CREATE INDEX IF NOT EXISTS idx_cc_file
                      ON {code_calls}(project_id, file_path);"
                 ),
             ),
-            self.object(
+            self.object_definition(
                 "idx_cc_caller index",
                 format!(
                     "CREATE INDEX IF NOT EXISTS idx_cc_caller
                      ON {code_calls}(project_id, caller_symbol_id);"
                 ),
             ),
-            self.object(
+            self.object_definition(
                 "idx_cc_target index",
                 format!(
                     "CREATE INDEX IF NOT EXISTS idx_cc_target
                      ON {code_calls}(project_id, callee_target_kind, callee_symbol_id, callee_name);"
                 ),
             ),
-            self.object(
+            self.object_definition(
                 "code_symbols_search_bm25 index",
                 format!(
                     "CREATE INDEX IF NOT EXISTS code_symbols_search_bm25
@@ -269,7 +269,7 @@ impl StandaloneSetup for GcodeStandaloneSetup {
                      WITH (key_field = 'id');"
                 ),
             ),
-            self.object(
+            self.object_definition(
                 "code_content_search_bm25 index",
                 format!(
                     "CREATE INDEX IF NOT EXISTS code_content_search_bm25
@@ -279,6 +279,20 @@ impl StandaloneSetup for GcodeStandaloneSetup {
                 ),
             ),
         ])
+    }
+}
+
+impl StandaloneSetup for GcodeStandaloneSetup {
+    fn namespace(&self) -> &str {
+        NAMESPACE
+    }
+
+    fn owned_objects(&self) -> Result<Vec<OwnedObject>, SetupError> {
+        Ok(self
+            .postgres_object_definitions()?
+            .into_iter()
+            .map(owned_object)
+            .collect())
     }
 
     fn create(&self, ctx: &mut SetupContext<'_>) -> Result<SetupReport, SetupError> {
@@ -295,6 +309,16 @@ impl StandaloneSetup for GcodeStandaloneSetup {
             }
         }
         Ok(report)
+    }
+}
+
+fn owned_object(definition: PostgresObjectDefinition) -> OwnedObject {
+    let object_name = definition.name;
+    let sql = definition.sql;
+    OwnedObject {
+        name: object_name.clone(),
+        store: StoreKind::Postgres,
+        creator: Box::new(move |ctx| execute_postgres_ddl(ctx, &object_name, &sql)),
     }
 }
 

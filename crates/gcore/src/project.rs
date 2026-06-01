@@ -146,4 +146,23 @@ mod tests {
             "standalone-fallback"
         );
     }
+
+    #[test]
+    fn read_project_id_falls_back_to_gcode_json_when_project_json_is_malformed() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let gobby_dir = tmp.path().join(".gobby");
+        fs::create_dir(&gobby_dir).expect("create .gobby");
+        fs::write(gobby_dir.join("project.json"), r#"{"id":"broken""#)
+            .expect("write malformed project json");
+        fs::write(
+            gobby_dir.join("gcode.json"),
+            r#"{"project_id":"standalone-fallback"}"#,
+        )
+        .expect("write gcode json");
+
+        assert_eq!(
+            read_project_id(tmp.path()).expect("read fallback project id"),
+            "standalone-fallback"
+        );
+    }
 }

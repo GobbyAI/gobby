@@ -1,5 +1,5 @@
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::collections::{HashMap, hash_map::Entry};
 use std::sync::{Mutex, OnceLock};
 
 use crate::config::EmbeddingConfig;
@@ -18,30 +18,22 @@ pub(super) fn dimension_probe_text() -> &'static str {
 pub fn embedding_client(
     config: &EmbeddingConfig,
 ) -> Result<reqwest::blocking::Client, VectorLifecycleError> {
-    let clients = EMBEDDING_CLIENTS
+    let mut clients = EMBEDDING_CLIENTS
         .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
         .map_err(|err| VectorLifecycleError::EmbeddingResponse(err.to_string()))?;
     // The blocking HTTP client is keyed only by timeout because request-specific
     // embedding endpoint, model, and auth details are applied per request.
-    if let Some(client) = clients.get(&config.timeout_seconds) {
-        return Ok(client.clone());
+    match clients.entry(config.timeout_seconds) {
+        Entry::Occupied(entry) => Ok(entry.get().clone()),
+        Entry::Vacant(entry) => {
+            let client = reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(config.timeout_seconds))
+                .build()
+                .map_err(|err| VectorLifecycleError::EmbeddingResponse(err.to_string()))?;
+            Ok(entry.insert(client).clone())
+        }
     }
-    drop(clients);
-
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(config.timeout_seconds))
-        .build()
-        .map_err(|err| VectorLifecycleError::EmbeddingResponse(err.to_string()))?;
-    let mut clients = EMBEDDING_CLIENTS
-        .get_or_init(|| Mutex::new(HashMap::new()))
-        .lock()
-        .map_err(|err| VectorLifecycleError::EmbeddingResponse(err.to_string()))?;
-    if let Some(client) = clients.get(&config.timeout_seconds) {
-        return Ok(client.clone());
-    }
-    clients.insert(config.timeout_seconds, client.clone());
-    Ok(client)
 }
 
 pub fn embed_text(

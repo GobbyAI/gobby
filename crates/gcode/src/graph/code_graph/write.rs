@@ -1,6 +1,14 @@
+//! Code-index graph projection writes.
+//!
+//! This is the intentional exception to the broader "Gobby-owned stores are
+//! externally managed" rule: `gcode` owns the code-index graph projection and
+//! writes FalkorDB `Code*` nodes/edges derived from its PostgreSQL index rows.
+
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use anyhow::Context as _;
 
 use crate::config::Context;
 use crate::graph::typed_query::{TypedQuery, TypedValue};
@@ -390,8 +398,10 @@ where
     Ok(TypedQuery::with_params(cypher, params)?)
 }
 
-fn usize_value(value: usize) -> TypedValue {
-    TypedValue::Integer(i64::try_from(value).unwrap_or(i64::MAX))
+fn usize_value(value: usize) -> anyhow::Result<TypedValue> {
+    Ok(TypedValue::Integer(i64::try_from(value).context(
+        "graph integer value exceeds FalkorDB i64 range",
+    )?))
 }
 
 #[derive(Debug, Clone)]
@@ -546,12 +556,12 @@ fn sync_file_mutation_query(input: SyncFileMutation<'_>) -> anyhow::Result<Typed
     let mut params = vec![
         ("project", TypedValue::String(input.project_id.to_string())),
         ("file_path", TypedValue::String(input.file_path.to_string())),
-        ("symbol_count", usize_value(input.symbol_count)),
+        ("symbol_count", usize_value(input.symbol_count)?),
         ("imports", import_rows(input.imports)),
-        ("symbols", symbol_rows(input.symbols)),
-        ("symbol_calls", call_rows(&input.calls.symbol)),
-        ("external_calls", call_rows(&input.calls.external)),
-        ("unresolved_calls", call_rows(&input.calls.unresolved)),
+        ("symbols", symbol_rows(input.symbols)?),
+        ("symbol_calls", call_rows(&input.calls.symbol)?),
+        ("external_calls", call_rows(&input.calls.external)?),
+        ("unresolved_calls", call_rows(&input.calls.unresolved)?),
     ];
     params.extend(metadata_params(input.sync_token));
     typed_query(cypher, params)
@@ -571,7 +581,7 @@ pub(crate) fn ensure_file_node_query(
         [
             ("project", TypedValue::String(project_id.to_string())),
             ("file_path", TypedValue::String(file_path.to_string())),
-            ("symbol_count", usize_value(symbol_count)),
+            ("symbol_count", usize_value(symbol_count)?),
             sync_token_param(sync_token),
         ],
     )
@@ -624,7 +634,7 @@ fn add_definitions_query(
                 symbols
                     .iter()
                     .map(|symbol| {
-                        map_value([
+                        Ok(map_value([
                             ("id", TypedValue::String(symbol.id.clone())),
                             ("name", TypedValue::String(symbol.name.clone())),
                             (
@@ -633,11 +643,11 @@ fn add_definitions_query(
                             ),
                             ("kind", TypedValue::String(symbol.kind.clone())),
                             ("language", TypedValue::String(symbol.language.clone())),
-                            ("line_start", usize_value(symbol.line_start)),
-                            ("line_end", usize_value(symbol.line_end)),
-                        ])
+                            ("line_start", usize_value(symbol.line_start)?),
+                            ("line_end", usize_value(symbol.line_end)?),
+                        ]))
                     })
-                    .collect(),
+                    .collect::<anyhow::Result<Vec<_>>>()?,
             ),
         ),
     ];
@@ -693,25 +703,25 @@ pub fn call_target_id(project_id: &str, call: &CallRelation) -> Option<String> {
     }
 }
 
-fn call_rows(calls: &[CallGraphItem]) -> TypedValue {
-    TypedValue::List(
+fn call_rows(calls: &[CallGraphItem]) -> anyhow::Result<TypedValue> {
+    Ok(TypedValue::List(
         calls
             .iter()
             .map(|call| {
-                map_value([
+                Ok(map_value([
                     ("caller_id", TypedValue::String(call.caller_id.clone())),
                     ("target_id", TypedValue::String(call.target_id.clone())),
                     ("callee_name", TypedValue::String(call.callee_name.clone())),
                     ("file_path", TypedValue::String(call.file_path.clone())),
-                    ("line", usize_value(call.line)),
+                    ("line", usize_value(call.line)?),
                     (
                         "callee_module",
                         TypedValue::String(call.callee_module.clone().unwrap_or_default()),
                     ),
-                ])
+                ]))
             })
-            .collect(),
-    )
+            .collect::<anyhow::Result<Vec<_>>>()?,
+    ))
 }
 
 fn import_rows(imports: &[ImportGraphItem]) -> TypedValue {
@@ -734,12 +744,12 @@ fn import_rows(imports: &[ImportGraphItem]) -> TypedValue {
     )
 }
 
-fn symbol_rows(symbols: &[&Symbol]) -> TypedValue {
-    TypedValue::List(
+fn symbol_rows(symbols: &[&Symbol]) -> anyhow::Result<TypedValue> {
+    Ok(TypedValue::List(
         symbols
             .iter()
             .map(|symbol| {
-                map_value([
+                Ok(map_value([
                     ("id", TypedValue::String(symbol.id.clone())),
                     ("name", TypedValue::String(symbol.name.clone())),
                     (
@@ -748,12 +758,12 @@ fn symbol_rows(symbols: &[&Symbol]) -> TypedValue {
                     ),
                     ("kind", TypedValue::String(symbol.kind.clone())),
                     ("language", TypedValue::String(symbol.language.clone())),
-                    ("line_start", usize_value(symbol.line_start)),
-                    ("line_end", usize_value(symbol.line_end)),
-                ])
+                    ("line_start", usize_value(symbol.line_start)?),
+                    ("line_end", usize_value(symbol.line_end)?),
+                ]))
             })
-            .collect(),
-    )
+            .collect::<anyhow::Result<Vec<_>>>()?,
+    ))
 }
 
 fn add_symbol_calls_query(
@@ -763,7 +773,7 @@ fn add_symbol_calls_query(
 ) -> anyhow::Result<TypedQuery> {
     let mut params = vec![
         ("project", TypedValue::String(project_id.to_string())),
-        ("symbol_calls", call_rows(calls)),
+        ("symbol_calls", call_rows(calls)?),
     ];
     params.extend(metadata_params(sync_token));
     typed_query(ADD_SYMBOL_CALLS_CYPHER, params)
@@ -776,7 +786,7 @@ fn add_external_calls_query(
 ) -> anyhow::Result<TypedQuery> {
     let mut params = vec![
         ("project", TypedValue::String(project_id.to_string())),
-        ("external_calls", call_rows(calls)),
+        ("external_calls", call_rows(calls)?),
     ];
     params.extend(metadata_params(sync_token));
     typed_query(ADD_EXTERNAL_CALLS_CYPHER, params)
@@ -789,7 +799,7 @@ fn add_unresolved_calls_query(
 ) -> anyhow::Result<TypedQuery> {
     let mut params = vec![
         ("project", TypedValue::String(project_id.to_string())),
-        ("unresolved_calls", call_rows(calls)),
+        ("unresolved_calls", call_rows(calls)?),
     ];
     params.extend(metadata_params(sync_token));
     typed_query(ADD_UNRESOLVED_CALLS_CYPHER, params)

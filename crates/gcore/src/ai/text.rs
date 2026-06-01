@@ -54,7 +54,7 @@ mod tests {
     use crate::ai_context::{AiBindings, AiLimiter};
     use crate::config::{AiRouting, AiTuning, CapabilityBinding};
     use serde_json::Value;
-    use std::io::{Read, Write};
+    use std::io::{ErrorKind, Read, Write};
     use std::net::TcpListener;
     use std::thread;
     use std::time::Duration;
@@ -106,7 +106,15 @@ mod tests {
         let mut request = Vec::new();
         let mut chunk = [0_u8; 1024];
         loop {
-            let read = stream.read(&mut chunk).unwrap();
+            let read = match stream.read(&mut chunk) {
+                Ok(read) => read,
+                Err(error)
+                    if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) =>
+                {
+                    break;
+                }
+                Err(error) => panic!("read request: {error}"),
+            };
             if read == 0 {
                 break;
             }

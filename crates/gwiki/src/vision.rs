@@ -264,16 +264,24 @@ fn create_vision_temp_file(path: &Path) -> Result<NamedTempFile, WikiError> {
 }
 
 fn sync_parent_dir(path: &Path) -> Result<(), WikiError> {
-    let Some(parent) = path.parent() else {
-        return Ok(());
-    };
-    std::fs::File::open(parent)
-        .and_then(|dir| dir.sync_all())
-        .map_err(|error| WikiError::Io {
-            action: "sync vision derived markdown directory",
-            path: Some(parent.to_path_buf()),
-            source: error,
-        })
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Ok(())
+    }
+    #[cfg(unix)]
+    {
+        let Some(parent) = path.parent() else {
+            return Ok(());
+        };
+        std::fs::File::open(parent)
+            .and_then(|dir| dir.sync_all())
+            .map_err(|error| WikiError::Io {
+                action: "sync vision derived markdown directory",
+                path: Some(parent.to_path_buf()),
+                source: error,
+            })
+    }
 }
 
 #[cfg(test)]

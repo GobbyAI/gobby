@@ -144,6 +144,10 @@ struct SearchArgs {
 
     #[arg(long, default_value = "10")]
     limit: usize,
+
+    /// Disable semantic vector search for this query.
+    #[arg(long = "no-semantic")]
+    no_semantic: bool,
 }
 
 #[derive(Debug, Args)]
@@ -297,6 +301,7 @@ fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Comman
             query: args.query,
             scope,
             limit: args.limit,
+            include_semantic: !args.no_semantic,
         }),
         CliCommand::Backlinks(args) => Ok(Command::Backlinks {
             page: args.page,

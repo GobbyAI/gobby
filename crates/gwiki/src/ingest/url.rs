@@ -87,7 +87,6 @@ fn extract_title(document: &Html) -> Option<String> {
         .text()
         .collect::<Vec<_>>()
         .join(" ");
-    let title = decode_html_entities(&title);
     let title = single_line(&title);
     (!title.is_empty()).then_some(title)
 }
@@ -100,7 +99,7 @@ fn html_to_markdownish_text(document: &Html) -> String {
         .unwrap_or_else(|| document.root_element());
     collect_visible_text(root, &mut parts);
     let text = parts.join("\n");
-    normalize_markdown_text(&decode_html_entities(&text))
+    normalize_markdown_text(&text)
 }
 
 fn collect_visible_text(element: ElementRef<'_>, parts: &mut Vec<String>) {
@@ -199,10 +198,6 @@ fn normalize_markdown_text(text: &str) -> String {
         }
     }
     lines.join("\n\n")
-}
-
-fn decode_html_entities(text: &str) -> String {
-    html_escape::decode_html_entities(text).into_owned()
 }
 
 #[cfg(test)]

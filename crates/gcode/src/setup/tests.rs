@@ -1,4 +1,7 @@
-use super::contracts::{OVERWRITE_GUIDANCE, code_index_index_names, code_index_table_names};
+use super::contracts::{
+    INDEX_CONTRACTS, OVERWRITE_GUIDANCE, TABLE_CONTRACTS, code_index_index_names,
+    code_index_table_names,
+};
 use super::identifiers::quote_identifier;
 use super::postgres::postgres_overwrite_reset_sql;
 use super::*;
@@ -78,6 +81,84 @@ fn standalone_setup_uses_gobby_core_contract() {
             .iter()
             .any(|object| object.name == "pg_search extension")
     );
+}
+
+#[test]
+fn standalone_setup_ddl_matches_catalog_contracts() {
+    let setup = GcodeStandaloneSetup::new("public");
+    let definitions = setup
+        .postgres_object_definitions()
+        .expect("postgres object definitions");
+
+    for contract in TABLE_CONTRACTS {
+        let definition = definitions
+            .iter()
+            .find(|definition| definition.name == format!("{} table", contract.name))
+            .unwrap_or_else(|| panic!("missing DDL for table {}", contract.name));
+        assert_eq!(
+            table_columns(&definition.sql),
+            contract.required_columns,
+            "{}",
+            definition.sql
+        );
+    }
+
+    for contract in INDEX_CONTRACTS {
+        let definition = definitions
+            .iter()
+            .find(|definition| definition.name == format!("{} index", contract.name))
+            .unwrap_or_else(|| panic!("missing DDL for index {}", contract.name));
+        let sql = normalized_sql(&definition.sql);
+        assert!(
+            sql.contains(&format!("create index if not exists {}", contract.name)),
+            "{}",
+            definition.sql
+        );
+        assert!(
+            sql.contains(&format!(" on \"public\".\"{}\"", contract.table)),
+            "{}",
+            definition.sql
+        );
+        if contract.method == "bm25" {
+            assert!(sql.contains(" using bm25 "), "{}", definition.sql);
+        } else {
+            assert!(!sql.contains(" using "), "{}", definition.sql);
+        }
+    }
+}
+
+fn table_columns(sql: &str) -> Vec<&str> {
+    let (_, body) = sql.split_once('(').expect("table DDL has body");
+    let (body, _) = body.rsplit_once(");").expect("table DDL closes");
+    let mut in_table_constraint = false;
+    let mut columns = Vec::new();
+    for line in body.lines() {
+        let line = line.trim().trim_end_matches(',');
+        if in_table_constraint {
+            if line.contains(')') {
+                in_table_constraint = false;
+            }
+            continue;
+        }
+        if line.is_empty() || line == ")" {
+            continue;
+        }
+        if line.starts_with("UNIQUE") {
+            in_table_constraint = !line.contains(')');
+            continue;
+        }
+        if let Some(column) = line.split_whitespace().next() {
+            columns.push(column);
+        }
+    }
+    columns
+}
+
+fn normalized_sql(sql: &str) -> String {
+    sql.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase()
 }
 
 #[test]
@@ -190,6 +271,29 @@ fn standalone_setup_request_debug_redacts_database_url() {
     assert!(debug.contains("<redacted>"));
     assert!(!debug.contains("secret"));
     assert!(!debug.contains("secret2"));
+}
+
+#[test]
+fn standalone_setup_status_serializes_failures_as_objects() {
+    let status = StandaloneSetupStatus {
+        namespace: "gcode".to_string(),
+        schema: "public".to_string(),
+        created: Vec::new(),
+        skipped: Vec::new(),
+        failed: vec![StandaloneFailure {
+            name: "code_symbols table".to_string(),
+            reason: "permission denied".to_string(),
+        }],
+        config_file: None,
+        services: None,
+        embedding: None,
+    };
+
+    let value = serde_json::to_value(status).expect("status serializes");
+
+    assert_eq!(value["failed"][0]["name"], "code_symbols table");
+    assert_eq!(value["failed"][0]["reason"], "permission denied");
+    assert!(!value["failed"][0].is_array());
 }
 
 #[test]

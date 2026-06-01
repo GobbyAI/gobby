@@ -2,11 +2,11 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 
 use crate::config::{self, Context, EmbeddingConfig, EmbeddingConfigDetails};
 use crate::db;
 use crate::output;
+use crate::utils::api_key_fingerprint;
 use crate::vector::code_symbols::probe_embedding_dim;
 
 const EXIT_HEALTHY: u8 = 0;
@@ -230,11 +230,6 @@ fn push_drift(
         self_value: self_value.map_or(Value::Null, |value| json!(value)),
         peer: peer_value.map_or(Value::Null, |value| json!(value)),
     });
-}
-
-fn api_key_fingerprint(api_key: &str) -> String {
-    let digest = Sha256::digest(api_key.as_bytes());
-    format!("{digest:x}").chars().take(16).collect()
 }
 
 fn fetch_daemon_peer(daemon_url: Option<&str>) -> PeerDoctorOutcome {

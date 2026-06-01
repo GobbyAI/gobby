@@ -187,17 +187,43 @@ impl ResearchSession {
             path: Some(path.clone()),
             source: error,
         })?;
-        serde_json::from_str(&json).map_err(|error| WikiError::Json {
+        let session: Self = serde_json::from_str(&json).map_err(|error| WikiError::Json {
             action: "parse research checkpoint",
-            path: Some(path),
+            path: Some(path.clone()),
             source: error,
-        })
+        })?;
+        validate_checkpoint_scope_root(vault_root, session.scope.root(), &path)?;
+        Ok(session)
     }
 
     pub fn record_compile_state(&mut self, state: CompileState) -> Result<(), WikiError> {
         self.compile_state = Some(state);
         self.save_checkpoint()
     }
+}
+
+fn validate_checkpoint_scope_root(
+    expected_root: &Path,
+    loaded_root: &Path,
+    checkpoint_path: &Path,
+) -> Result<(), WikiError> {
+    let expected = comparable_path(expected_root);
+    let loaded = comparable_path(loaded_root);
+    if expected == loaded {
+        return Ok(());
+    }
+    Err(WikiError::InvalidScope {
+        detail: format!(
+            "research checkpoint {} belongs to scope root {}, expected {}",
+            checkpoint_path.display(),
+            loaded_root.display(),
+            expected_root.display()
+        ),
+    })
+}
+
+fn comparable_path(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
 fn new_session_id() -> Result<String, WikiError> {
@@ -272,5 +298,29 @@ mod tests {
         assert_eq!(state.selected_source_titles, vec!["Compile behavior"]);
         assert_eq!(state.citations, vec!["Example Docs"]);
         assert!(!state.write_intent);
+    }
+
+    #[test]
+    fn load_checkpoint_rejects_mismatched_scope_root() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let expected = temp.path().join("expected");
+        let other = temp.path().join("other");
+        fs::create_dir_all(expected.join(".gwiki")).expect("create checkpoint dir");
+        fs::create_dir_all(&other).expect("create other root");
+        let session = ResearchSession::new(
+            "Which root?",
+            ResearchScope::project(&other),
+            Vec::new(),
+            1,
+            None,
+        )
+        .expect("session created");
+        let json = serde_json::to_string_pretty(&session).expect("serialize session");
+        fs::write(ResearchSession::checkpoint_path(&expected), json).expect("write checkpoint");
+
+        let error = ResearchSession::load_checkpoint(&expected)
+            .expect_err("mismatched scope root is rejected");
+
+        assert!(matches!(error, WikiError::InvalidScope { .. }));
     }
 }

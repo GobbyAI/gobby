@@ -31,6 +31,7 @@ pub enum Command {
         query: String,
         scope: ScopeSelection,
         limit: usize,
+        include_semantic: bool,
     },
     Backlinks {
         page: String,
