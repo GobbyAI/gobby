@@ -97,14 +97,22 @@ is exact first-heading resolution until the upstream CLI intentionally expands m
 frontmatter aliases or wikilinks.
 
 `gwiki sources --format json` must return scoped source records in CLI-owned JSON suitable
-for pass-through to the daemon, MCP, and web UI. The daemon must not normalize the source
-record schema beyond its standard HTTP/MCP envelope.
+for pass-through to the daemon, MCP, and web UI. Each source entry includes `id`, `kind`,
+`title`, `location`, `citation`, `content_hash`, `fetched_at`, `compile_status`,
+`raw_path`, `raw_exists`, and optional `source_asset`. Missing raw files are CLI
+degradations, not daemon-side errors. The daemon must not normalize the source record schema
+beyond its standard HTTP/MCP envelope.
 
 `gwiki remove-source --id <SOURCE_ID> --format json [--dry-run|--yes] [--keep-asset]`
 must own all source-removal planning and mutation. Dry-run returns the CLI preview payload
-for display; confirmed removal returns the CLI result plus `index_status.index_required`.
-The daemon uses `index_status.index_required` only to coordinate follow-up indexing and
-does not infer removal effects by inspecting vault files.
+for display; confirmed removal returns the CLI result with `status`, `dry_run`, `source`,
+`removed_paths`, `kept_paths`, `missing_paths`, `degradations`, `follow_up`, and
+`index_status.index_required`. `follow_up: ["audit_recommended"]` signals that compiled
+claims may need review. Source removal is conservative: it removes raw source provenance and
+raw assets only; compiled wiki articles, concepts, health snapshots, research checkpoints,
+and `outputs/` exports remain out of scope. The daemon uses `index_status.index_required`
+only to coordinate follow-up indexing and does not infer removal effects by inspecting vault
+files.
 
 `GwikiGateway` normalizes command-specific CLI JSON into daemon HTTP/MCP response envelopes.
 For `gwiki read`, payload statuses such as `not_found`, `invalid_request`, and `ambiguous`
