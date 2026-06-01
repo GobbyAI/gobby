@@ -5,6 +5,7 @@ Provides hook execution endpoint for CLI adapters.
 Extracted from base.py as part of Strangler Fig decomposition.
 """
 
+import asyncio
 import json
 import logging
 import time
@@ -39,6 +40,8 @@ HOLD_OPEN_HOOK_TYPE_MAP: dict[str, str] = {
 }
 
 SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION = 1
+FAIL_SAFE_HOOK_TIMEOUT_SECONDS = 20.0
+FAIL_SAFE_HOOK_TYPES = frozenset({"Stop", "stop"})
 
 
 def _graceful_error_response(
@@ -212,6 +215,62 @@ def _hook_log_extra(
     }
     combined.update(extra)
     return combined
+
+
+def _fail_safe_hook_timeout_seconds(
+    hook_type: str | None, metadata: dict[str, Any]
+) -> float | None:
+    """Return the bounded execution timeout for hooks that must fail safe."""
+    if hook_type in FAIL_SAFE_HOOK_TYPES or metadata.get("critical") is True:
+        return FAIL_SAFE_HOOK_TIMEOUT_SECONDS
+    return None
+
+
+def _hook_timeout_response(
+    adapter: Any,
+    hook_type: str,
+    source: str | None,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    """Build a provider-native timeout response without waiting on hook internals."""
+    from gobby.hooks.events import HookResponse
+
+    reason = (
+        f"Gobby hook evaluation timed out after {timeout_seconds:g}s; "
+        "blocking this critical hook for safety. Try again after the daemon recovers."
+    )
+    response = HookResponse(decision="block", reason=reason)
+
+    try:
+        translated = adapter.translate_from_hook_response(response, hook_type=hook_type)
+    except TypeError:
+        translated = adapter.translate_from_hook_response(response)
+    except Exception:
+        logger.warning(
+            "Failed to translate hook timeout response for %s/%s",
+            source,
+            hook_type,
+            exc_info=True,
+        )
+        translated = {"continue": False, "decision": "block", "reason": reason}
+
+    return cast(dict[str, Any], translated)
+
+
+async def _run_adapter_hook(
+    adapter: Any,
+    payload: dict[str, Any],
+    hook_manager: Any,
+    *,
+    timeout_seconds: float | None,
+) -> dict[str, Any]:
+    """Run blocking hook adapter work without occupying the DB executor."""
+    pending = asyncio.to_thread(adapter.handle_native, payload, hook_manager)
+    if timeout_seconds is None:
+        result = await pending
+    else:
+        result = await asyncio.wait_for(pending, timeout=timeout_seconds)
+    return cast(dict[str, Any], result)
 
 
 def _normalize_hold_open_hook_type(hook_type: str | None) -> str | None:
@@ -518,7 +577,13 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
 
             # Execute hook via adapter
             try:
-                result = await server.run_db(adapter.handle_native, payload, hook_manager)
+                hook_timeout = _fail_safe_hook_timeout_seconds(hook_type, request_metadata)
+                result = await _run_adapter_hook(
+                    adapter,
+                    payload,
+                    hook_manager,
+                    timeout_seconds=hook_timeout,
+                )
 
                 # After existing hook processing, check for web chat hold-open.
                 # Terminal sessions pass straight through; only web_chat sessions
@@ -551,7 +616,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     ),
                 )
 
-                return cast(dict[str, Any], result)
+                return result
 
             except ValueError as e:
                 # Invalid request - still return graceful response
@@ -567,6 +632,23 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                         extra=_hook_log_extra(hook_type, request_metadata, error=str(e)),
                     )
                 return _graceful_error_response(hook_type, str(e), source=source)
+
+            except TimeoutError:
+                inc_counter("hooks_failed_total")
+                timeout_seconds = _fail_safe_hook_timeout_seconds(hook_type, request_metadata)
+                if timeout_seconds is None:
+                    raise
+                logger.error(
+                    "Critical hook timed out: %s",
+                    hook_type,
+                    extra=_hook_log_extra(
+                        hook_type,
+                        request_metadata,
+                        source=source,
+                        timeout_seconds=timeout_seconds,
+                    ),
+                )
+                return _hook_timeout_response(adapter, hook_type, source, timeout_seconds)
 
             except Exception as e:
                 # Hook execution error - return graceful response so tool proceeds

@@ -82,3 +82,49 @@ def test_embedded_envelope_headers_are_ignored_without_real_header(
     )
 
     assert "_platform_session_id" not in adapter_payload
+
+
+def test_codex_stop_hook_timeout_blocks_fail_safe(
+    temp_db: HubDatabase,
+) -> None:
+    session_manager = SessionManager(temp_db)
+    server = create_http_server(
+        port=60887,
+        test_mode=True,
+        session_manager=session_manager,
+    )
+    server.app.state.hook_manager = MagicMock()
+    server.app.state.hook_manager.shutdown_async = AsyncMock()
+
+    with (
+        TestClient(server.app) as client,
+        patch("gobby.adapters.codex_impl.hooks_adapter.CodexHooksAdapter") as adapter_cls,
+        patch(
+            "gobby.servers.routes.mcp.hooks._run_adapter_hook",
+            new=AsyncMock(side_effect=TimeoutError()),
+        ),
+    ):
+        adapter = MagicMock()
+        adapter.translate_from_hook_response.return_value = {
+            "continue": False,
+            "decision": "block",
+            "reason": "timed out",
+        }
+        adapter_cls.return_value = adapter
+
+        response = client.post(
+            "/api/hooks/execute",
+            json={
+                "hook_type": "Stop",
+                "source": "codex",
+                "input_data": {},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "continue": False,
+        "decision": "block",
+        "reason": "timed out",
+    }
+    adapter.translate_from_hook_response.assert_called_once()
