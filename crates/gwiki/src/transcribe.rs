@@ -42,6 +42,27 @@ pub trait TranscriptionClient {
         &self,
         request: &TranscriptionRequest<'_>,
     ) -> Result<TranscriptionOutput, WikiError>;
+
+    fn translate_to_english(
+        &self,
+        _request: &TranscriptionRequest<'_>,
+        _language_hint: Option<&str>,
+    ) -> Result<TranscriptionOutput, WikiError> {
+        Err(WikiError::Config {
+            detail: "audio translation is not configured".to_string(),
+        })
+    }
+
+    fn translate_segments(
+        &self,
+        _segments: &[TranscriptSegment],
+        _source_lang: &str,
+        _target_lang: &str,
+    ) -> Result<Vec<String>, WikiError> {
+        Err(WikiError::Config {
+            detail: "text translation is not configured".to_string(),
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -54,6 +75,11 @@ pub struct TranscriptionRequest<'a> {
 
 pub enum TranscriptionEndpoint<'a> {
     Available(Box<dyn TranscriptionClient + 'a>),
+    Translating {
+        client: Box<dyn TranscriptionClient + 'a>,
+        target_lang: Option<String>,
+        language_hint: Option<String>,
+    },
     Unavailable(TranscriptionDegradation),
 }
 
