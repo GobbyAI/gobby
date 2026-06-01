@@ -486,24 +486,50 @@ pub fn resolve_embedding_config(source: &mut impl ConfigSource) -> Option<Embedd
 pub fn resolve_embedding_config_resolution(
     source: &mut impl ConfigSource,
 ) -> Option<EmbeddingConfigResolution> {
-    let api_base = resolve_embedding_setting(source, embedding_keys::AI_API_BASE)?;
-    let model = resolve_embedding_setting(source, embedding_keys::AI_MODEL)
+    let binding = resolve_capability_binding(source, AiCapability::Embed);
+    let config = resolve_embedding_config_from_binding(source, &binding)?;
+
+    Some(EmbeddingConfigResolution {
+        config,
+        namespace: embedding_keys::AI_NAMESPACE,
+    })
+}
+
+/// Build OpenAI-compatible embedding client config from the shared embed binding.
+pub fn resolve_embedding_config_from_binding(
+    source: &mut impl ConfigSource,
+    binding: &CapabilityBinding,
+) -> Option<EmbeddingConfig> {
+    let api_base = binding
+        .api_base
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?
+        .to_string();
+    let model = binding
+        .model
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
         .unwrap_or_else(|| EMBEDDING_DEFAULT_MODEL.to_string());
-    let api_key = resolve_embedding_setting(source, embedding_keys::AI_API_KEY);
+    let api_key = binding
+        .api_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
     let query_prefix = resolve_embedding_setting(source, embedding_keys::AI_QUERY_PREFIX);
     let timeout_seconds = resolve_embedding_setting(source, embedding_keys::AI_TIMEOUT_SECONDS)
         .and_then(|value| value.parse::<u64>().ok())
         .unwrap_or(EMBEDDING_DEFAULT_TIMEOUT_SECONDS);
 
-    Some(EmbeddingConfigResolution {
-        config: EmbeddingConfig {
-            api_base,
-            model,
-            api_key,
-            query_prefix,
-            timeout_seconds,
-        },
-        namespace: embedding_keys::AI_NAMESPACE,
+    Some(EmbeddingConfig {
+        api_base,
+        model,
+        api_key,
+        query_prefix,
+        timeout_seconds,
     })
 }
 
