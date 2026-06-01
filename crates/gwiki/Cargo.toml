@@ -44,9 +44,7 @@ regex = "1"
 scraper = "0.27"
 log = "0.4"
 percent-encoding = "2"
+tempfile = "3"
 calamine = { version = "0.30", optional = true }
 quick-xml = { version = "0.38", optional = true }
 zip = { version = "4", default-features = false, features = ["deflate"], optional = true }
-
-[dev-dependencies]
-tempfile = "3"
