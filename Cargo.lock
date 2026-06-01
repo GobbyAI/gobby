@@ -994,6 +994,7 @@ name = "gobby-core"
 version = "0.3.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "dirs",
  "falkordb",
  "ignore",

@@ -8,7 +8,9 @@ use crate::ai_context::AiContext;
 use crate::ai_types::{AiError, TextResult, TranscriptionResult, VisionResult};
 use crate::config::{AiCapability, CapabilityBinding};
 
+pub mod text;
 pub mod transcription;
+pub mod vision;
 
 const TEXT_VISION_TIMEOUT: Duration = Duration::from_secs(60);
 const STT_CHUNK_TIMEOUT: Duration = Duration::from_secs(120);
@@ -258,6 +260,49 @@ fn reqwest_error(error: reqwest::Error) -> AiError {
 
 fn duration_to_ms(duration: Duration) -> u64 {
     duration.as_millis().min(u128::from(u64::MAX)) as u64
+}
+
+fn chat_completions_url(cfg: &AiContext, capability: AiCapability) -> Result<String, AiError> {
+    let binding = cfg.binding(capability);
+    let api_base = binding
+        .api_base
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            AiError::not_configured(
+                Some(capability.as_str().to_string()),
+                format!(
+                    "{}.api_base is required for direct chat completions",
+                    capability.namespace()
+                ),
+            )
+        })?;
+
+    Ok(format!(
+        "{}/v1/chat/completions",
+        api_base.trim_end_matches('/')
+    ))
+}
+
+fn chat_completion_content(value: &serde_json::Value) -> Result<String, AiError> {
+    value
+        .get("choices")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|choices| choices.first())
+        .and_then(|choice| choice.get("message"))
+        .and_then(|message| message.get("content"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| AiError::parse_failure("chat completion response missing message content"))
+}
+
+fn chat_completion_model(value: &serde_json::Value) -> Option<String> {
+    value
+        .get("model")
+        .and_then(serde_json::Value::as_str)
+        .filter(|model| !model.is_empty())
+        .map(str::to_string)
 }
 
 #[cfg(feature = "local_backend")]
