@@ -2,8 +2,6 @@ use std::collections::{BTreeMap, BTreeSet};
 #[cfg(feature = "documents")]
 use std::io::Cursor;
 use std::path::Path;
-#[cfg(feature = "documents")]
-use std::sync::OnceLock;
 
 use crate::ScopeIdentity;
 use crate::WikiError;
@@ -441,7 +439,7 @@ fn render_pdf_pages(
     snapshot: &PdfFileSnapshot,
     dpi: u16,
 ) -> Result<Vec<PdfRenderedPage>, WikiError> {
-    let pdfium = shared_pdfium()?;
+    let pdfium = bundled_pdfium()?;
     let document = pdfium
         .load_pdf_from_byte_vec(snapshot.bytes.clone(), None)
         .map_err(pdfium_error)?;
@@ -474,18 +472,16 @@ fn render_pdf_pages(
 }
 
 #[cfg(feature = "documents")]
-fn shared_pdfium() -> Result<&'static Pdfium, WikiError> {
-    static PDFIUM: OnceLock<Result<Pdfium, String>> = OnceLock::new();
-    PDFIUM
-        .get_or_init(|| {
-            Pdfium::bind_to_statically_linked_library()
-                .map(Pdfium::new)
-                .map_err(|error| error.to_string())
-        })
-        .as_ref()
-        .map_err(|message| WikiError::InvalidInput {
+fn bundled_pdfium() -> Result<Pdfium, WikiError> {
+    let path = pdfium_auto::ensure_pdfium_bundled().map_err(|error| WikiError::InvalidInput {
+        field: "pdf",
+        message: format!("failed to initialize bundled pdfium: {error}"),
+    })?;
+    Pdfium::bind_to_library(&path)
+        .map(Pdfium::new)
+        .map_err(|error| WikiError::InvalidInput {
             field: "pdf",
-            message: format!("failed to initialize statically linked pdfium: {message}"),
+            message: format!("failed to initialize bundled pdfium: {error}"),
         })
 }
 
