@@ -294,6 +294,70 @@ class TestLocalWorktreeManagerGetBy:
         assert worktree is not None
         assert worktree.task_id == "gt-task123"
 
+    def test_get_by_task_prefers_active_worktree(self, mock_row) -> None:
+        """get_by_task ranks active worktrees above stale task-linked rows."""
+
+        class OrderingDb:
+            def __init__(self, rows):
+                self.rows = rows
+                self.query = None
+                self.params = None
+
+            def fetchone(self, query, params):
+                self.query = query
+                self.params = params
+                task_id, *statuses = params
+                status_rank = {status: rank for rank, status in enumerate(statuses)}
+                candidates = [row for row in self.rows if row["task_id"] == task_id]
+                candidates.sort(
+                    key=lambda row: (
+                        status_rank.get(row["status"], len(status_rank)),
+                        row["updated_at"],
+                        row["created_at"],
+                    )
+                )
+                return candidates[0] if candidates else None
+
+        abandoned_row = {
+            **mock_row,
+            "id": "wt-abandoned",
+            "status": WorktreeStatus.ABANDONED.value,
+            "updated_at": "2026-01-01T00:00:00+00:00",
+        }
+        active_row = {
+            **mock_row,
+            "id": "wt-active",
+            "status": WorktreeStatus.ACTIVE.value,
+            "updated_at": "2025-01-01T00:00:00+00:00",
+        }
+        mock_db = OrderingDb([abandoned_row, active_row])
+        manager = LocalWorktreeManager(db=mock_db)
+
+        worktree = manager.get_by_task("gt-task123")
+
+        assert worktree is not None
+        assert worktree.id == "wt-active"
+        assert "CASE status" in mock_db.query
+        assert mock_db.params == (
+            "gt-task123",
+            WorktreeStatus.ACTIVE.value,
+            WorktreeStatus.STALE.value,
+            WorktreeStatus.MERGED.value,
+            WorktreeStatus.ABANDONED.value,
+        )
+
+    def test_get_by_task_returns_stale_worktree_without_active(
+        self, manager, mock_db, mock_row
+    ) -> None:
+        """get_by_task still returns a stale row when no active row exists."""
+        stale_row = {**mock_row, "status": WorktreeStatus.STALE.value}
+        mock_db.fetchone.return_value = stale_row
+
+        worktree = manager.get_by_task("gt-task123")
+
+        assert worktree is not None
+        assert worktree.status == WorktreeStatus.STALE.value
+
     def test_get_by_task_not_found(self, manager, mock_db) -> None:
         """get_by_task returns None for non-existent task."""
         mock_db.fetchone.return_value = None

@@ -186,7 +186,30 @@ class LocalWorktreeManager:
 
     def get_by_task(self, task_id: str) -> Worktree | None:
         """Get worktree linked to a task."""
-        row = self.db.fetchone("SELECT * FROM worktrees WHERE task_id = %s", (task_id,))
+        row = self.db.fetchone(
+            """
+            SELECT * FROM worktrees
+            WHERE task_id = %s
+            ORDER BY
+                CASE status
+                    WHEN %s THEN 0
+                    WHEN %s THEN 1
+                    WHEN %s THEN 2
+                    WHEN %s THEN 3
+                    ELSE 4
+                END,
+                updated_at DESC,
+                created_at DESC
+            LIMIT 1
+            """,
+            (
+                task_id,
+                WorktreeStatus.ACTIVE.value,
+                WorktreeStatus.STALE.value,
+                WorktreeStatus.MERGED.value,
+                WorktreeStatus.ABANDONED.value,
+            ),
+        )
         return Worktree.from_row(row) if row else None
 
     def list_worktrees(
