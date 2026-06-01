@@ -97,7 +97,7 @@ jobs:
         run: cargo clippy -p gobby-wiki --all-targets -- -D warnings
 
       - name: Clippy without default features
-        run: cargo clippy -p gobby-wiki --no-default-features -- -D warnings
+        run: cargo clippy -p gobby-wiki --all-targets --no-default-features -- -D warnings
 
       - name: Run tests
         run: cargo test -p gobby-wiki
@@ -152,20 +152,26 @@ jobs:
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
 
       - name: Build gwiki
-        run: cargo build --release --target ${{ matrix.target }} -p gobby-wiki
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cargo build --release --target "$TARGET" -p gobby-wiki
 
       - name: Package (Unix)
         if: "!startsWith(matrix.os, 'windows')"
+        env:
+          TARGET: ${{ matrix.target }}
         run: |
-          cd target/${{ matrix.target }}/release
-          tar czf ../../../gwiki-${{ matrix.target }}.tar.gz gwiki
+          cd "target/$TARGET/release"
+          tar czf "../../../gwiki-$TARGET.tar.gz" gwiki
           cd ../../..
 
       - name: Package (Windows)
         if: startsWith(matrix.os, 'windows')
+        env:
+          TARGET: ${{ matrix.target }}
         run: |
-          cd target/${{ matrix.target }}/release
-          Compress-Archive -Path gwiki.exe -DestinationPath ../../../gwiki-${{ matrix.target }}.zip
+          cd "target/$env:TARGET/release"
+          Compress-Archive -Path gwiki.exe -DestinationPath "../../../gwiki-$env:TARGET.zip"
           cd ../../..
 
       - name: Upload artifacts
@@ -182,7 +188,6 @@ jobs:
     permissions:
       contents: read
       id-token: write
-      packages: write
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -194,7 +199,13 @@ jobs:
         with:
           toolchain: stable
 
+      - name: Authenticate to crates.io
+        id: cargo-registry-auth
+        uses: rust-lang/crates-io-auth-action@bbd81622f20ce9e2dd9622e3218b975523e45bbe
+
       - name: Publish gobby-wiki to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.cargo-registry-auth.outputs.token }}
         run: cargo publish -p gobby-wiki --locked
 
   release:

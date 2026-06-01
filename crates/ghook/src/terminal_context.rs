@@ -22,6 +22,15 @@ pub fn capture() -> Value {
     )
 }
 
+pub fn enabled_for_hook(hook_type: &str) -> bool {
+    hook_type
+        .chars()
+        .filter(|ch| !matches!(ch, '-' | '_'))
+        .flat_map(char::to_lowercase)
+        .collect::<String>()
+        == "sessionstart"
+}
+
 fn build_context(tmux: Option<&str>, tmux_pane: Option<&str>) -> Value {
     let parent_pid = parent_pid_or_null();
     let tty = tty_name_or_null();

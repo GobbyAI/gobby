@@ -209,7 +209,7 @@ pub fn visible_symbol_by_id(
     ctx: &Context,
     id: &str,
 ) -> anyhow::Result<Option<Symbol>> {
-    let columns = db::symbol_select_columns("");
+    let columns = db::symbol_select_columns("cs");
     let Some(row) = conn.query_opt(
         &format!("SELECT {columns} FROM code_symbols WHERE id = $1"),
         &[&id],
@@ -368,14 +368,7 @@ pub fn visible_symbols_for_file(
             if overlay_has_row(conn, overlay_project_id, file_path) {
                 return query_symbols_for_file(conn, overlay_project_id, file_path);
             }
-            let columns = db::symbol_select_columns("");
-            let sql = format!(
-                "SELECT {columns} FROM code_symbols
-                 WHERE project_id = $1 AND file_path = $2
-                 ORDER BY line_start, byte_start"
-            );
-            let rows = conn.query(&sql, &[parent_project_id, &file_path])?;
-            rows.iter().map(Symbol::from_row).collect()
+            query_symbols_for_file(conn, parent_project_id, file_path)
         }
     }
 }
@@ -388,11 +381,16 @@ fn query_symbols_for_file(
     let columns = db::symbol_select_columns("");
     let rows = conn.query(
         &format!(
-            "SELECT {columns} FROM code_symbols
-             WHERE project_id = $1 AND file_path = $2
-             ORDER BY line_start, byte_start"
+            "SELECT {columns}
+             FROM code_symbols cs
+             JOIN code_indexed_files cf
+               ON cf.project_id = cs.project_id AND cf.file_path = cs.file_path
+             WHERE cs.project_id = $1
+               AND cs.file_path = $2
+               AND cf.language != $3
+             ORDER BY cs.line_start, cs.byte_start"
         ),
-        &[&project_id, &file_path],
+        &[&project_id, &file_path, &TOMBSTONE_LANGUAGE],
     )?;
     rows.iter().map(Symbol::from_row).collect()
 }

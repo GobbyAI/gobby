@@ -67,6 +67,8 @@ pub fn capability_status_route(capability: AiCapability) -> Option<CapabilitySta
         AiCapability::AudioTranscribe | AiCapability::AudioTranslate => "/api/voice/status",
         AiCapability::VisionExtract => "/api/llm/vision/status",
         AiCapability::TextGenerate => "/api/llm/status",
+        // Embeddings currently have direct local/OpenAI-compatible probes, but
+        // the daemon does not expose a stable HTTP status route for them.
         AiCapability::Embed => return None,
     };
 
@@ -316,10 +318,26 @@ mod tests {
         );
 
         let report = probe_daemon_capabilities_with("http://daemon.test", &FakeTransport::new([]));
-        assert!(!availability(&report, AiCapability::VisionExtract).available);
-        assert!(!availability(&report, AiCapability::AudioTranscribe).available);
-        assert!(!availability(&report, AiCapability::AudioTranslate).available);
-        assert!(!availability(&report, AiCapability::TextGenerate).available);
+        assert!(
+            report
+                .availability(AiCapability::VisionExtract)
+                .is_some_and(|availability| !availability.available)
+        );
+        assert!(
+            report
+                .availability(AiCapability::AudioTranscribe)
+                .is_some_and(|availability| !availability.available)
+        );
+        assert!(
+            report
+                .availability(AiCapability::AudioTranslate)
+                .is_some_and(|availability| !availability.available)
+        );
+        assert!(
+            report
+                .availability(AiCapability::TextGenerate)
+                .is_some_and(|availability| !availability.available)
+        );
         assert!(report.availability(AiCapability::Embed).is_some());
         assert!(
             CapabilityProbeReport {
@@ -352,7 +370,11 @@ mod tests {
 
         let report = probe_daemon_capabilities_with("http://daemon.test", &transport);
 
-        assert!(!availability(&report, AiCapability::VisionExtract).available);
+        assert!(
+            report
+                .availability(AiCapability::VisionExtract)
+                .is_some_and(|availability| !availability.available)
+        );
         assert!(
             !transport
                 .requests()
@@ -379,8 +401,16 @@ mod tests {
 
         let report = probe_daemon_capabilities_with("http://daemon.test", &transport);
 
-        assert!(availability(&report, AiCapability::AudioTranscribe).available);
-        assert!(!availability(&report, AiCapability::AudioTranslate).available);
+        assert!(
+            report
+                .availability(AiCapability::AudioTranscribe)
+                .is_some_and(|availability| availability.available)
+        );
+        assert!(
+            report
+                .availability(AiCapability::AudioTranslate)
+                .is_some_and(|availability| !availability.available)
+        );
     }
 
     #[test]
@@ -395,7 +425,11 @@ mod tests {
 
         let report = probe_daemon_capabilities_with("http://daemon.test", &transport);
 
-        assert!(!availability(&report, AiCapability::TextGenerate).available);
+        assert!(
+            report
+                .availability(AiCapability::TextGenerate)
+                .is_some_and(|availability| !availability.available)
+        );
         assert!(
             !transport
                 .requests()
@@ -441,14 +475,5 @@ mod tests {
                     body: None,
                 })
         }
-    }
-
-    fn availability(
-        report: &CapabilityProbeReport,
-        capability: AiCapability,
-    ) -> &CapabilityAvailability {
-        report
-            .availability(capability)
-            .unwrap_or_else(|| panic!("missing probe result for {}", capability.as_str()))
     }
 }

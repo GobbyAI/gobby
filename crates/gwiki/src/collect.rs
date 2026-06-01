@@ -1,5 +1,5 @@
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -108,10 +108,7 @@ fn collect_inbox_with_limit(
             continue;
         }
 
-        let bytes = fs::read(&path).map_err(|error| io_error("read inbox item", &path, error))?;
-        // Metadata is only a pre-read snapshot. Check the actual buffer too so
-        // size-limit enforcement survives races, sparse files, and odd filesystems.
-        if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > max_item_bytes {
+        let Some(bytes) = read_inbox_item_limited(&path, max_item_bytes)? else {
             skip_item(
                 vault_root,
                 fetched_at,
@@ -121,7 +118,7 @@ fn collect_inbox_with_limit(
                 &mut report,
             )?;
             continue;
-        }
+        };
         match classify_inbox_item(&path, &bytes) {
             Ok(kind) => {
                 accept_item(
@@ -152,6 +149,19 @@ pub fn collect_inbox_and_index(
         index_after_ingest(vault_root, store)?;
     }
     Ok(report)
+}
+
+fn read_inbox_item_limited(path: &Path, max_item_bytes: u64) -> Result<Option<Vec<u8>>, WikiError> {
+    let file = fs::File::open(path).map_err(|error| io_error("read inbox item", path, error))?;
+    let mut bytes = Vec::new();
+    file.take(max_item_bytes.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|error| io_error("read inbox item", path, error))?;
+    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > max_item_bytes {
+        Ok(None)
+    } else {
+        Ok(Some(bytes))
+    }
 }
 
 fn ensure_collect_paths(vault_root: &Path) -> Result<(), WikiError> {

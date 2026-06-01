@@ -33,7 +33,7 @@ pub(crate) fn parse_import_statement(
         "csharp" => parse_csharp_import_statement(text, rel_path, import_context, extracted),
         "php" => parse_php_import_statement(text, rel_path, import_context, extracted),
         "kotlin" => parse_kotlin_import_statement(text, rel_path, import_context, extracted),
-        "swift" => parse_swift_import_statement(text, rel_path, extracted),
+        "swift" => parse_swift_import_statement(text, rel_path, import_context, extracted),
         "ruby" => parse_ruby_import_statement(text, rel_path, import_context, extracted),
         "dart" => parse_dart_import_statement(text, rel_path, import_context, extracted),
         "elixir" => parse_elixir_import_statement(text, rel_path, import_context, extracted),
@@ -873,7 +873,12 @@ fn php_join_use_path(prefix: &str, item: &str) -> Option<String> {
     })
 }
 
-fn parse_swift_import_statement(text: &str, rel_path: &str, extracted: &mut ExtractedImports) {
+fn parse_swift_import_statement(
+    text: &str,
+    rel_path: &str,
+    import_context: &ImportResolutionContext,
+    extracted: &mut ExtractedImports,
+) {
     let normalized = text.trim();
     let Some(rest) = normalized.strip_prefix("import ") else {
         extracted.imports.push(ImportRelation {
@@ -901,6 +906,7 @@ fn parse_swift_import_statement(text: &str, rel_path: &str, extracted: &mut Extr
             module,
             "class" | "struct" | "enum" | "protocol" | "func" | "typealias" | "var" | "let"
         )
+        || import_context.swift_local_modules.contains(module)
     {
         return;
     }

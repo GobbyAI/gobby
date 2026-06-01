@@ -60,12 +60,13 @@ fn resolve_database_url_from_sources(
     home: &Path,
     broker_resolver: impl Fn(&Path) -> anyhow::Result<String>,
     get_var: impl FnMut(&str) -> Option<String>,
+    database_reachable: impl FnMut(&str) -> bool,
 ) -> anyhow::Result<String> {
     resolve_database_url_from_sources_with_identity_and_reachability(
         home,
         broker_resolver,
         get_var,
-        |_| true,
+        database_reachable,
         gobby_core::provisioning::probe_postgres_hub_identity,
     )
 }
@@ -75,13 +76,14 @@ fn resolve_database_url_from_sources_with_identity(
     home: &Path,
     broker_resolver: impl Fn(&Path) -> anyhow::Result<String>,
     get_var: impl FnMut(&str) -> Option<String>,
+    database_reachable: impl FnMut(&str) -> bool,
     identity_probe: impl FnMut(&str) -> anyhow::Result<gobby_core::provisioning::HubIdentityProbeResult>,
 ) -> anyhow::Result<String> {
     resolve_database_url_from_sources_with_identity_and_reachability(
         home,
         broker_resolver,
         get_var,
-        |_| true,
+        database_reachable,
         identity_probe,
     )
 }
@@ -628,6 +630,7 @@ mod tests {
                 GCODE_DATABASE_URL_ENV => Some("postgresql://env/db".to_string()),
                 _ => None,
             },
+            |_| true,
         )
         .expect("resolve database url");
 
@@ -642,6 +645,7 @@ mod tests {
             home.path(),
             |_| Ok("postgresql://broker/db".to_string()),
             |_| None,
+            |_| true,
         )
         .expect("resolve database url");
 
@@ -661,6 +665,7 @@ mod tests {
             home.path(),
             |_| bail!("daemon unavailable"),
             |_| None,
+            |_| true,
         )
         .expect("resolve database url");
 
@@ -685,6 +690,7 @@ mod tests {
             home.path(),
             |_| bail!("daemon unavailable"),
             |_| None,
+            |_| true,
         )
         .expect("resolve database url");
 
@@ -704,6 +710,7 @@ mod tests {
             home.path(),
             |_| Ok("postgresql://adopted/gobby".to_string()),
             |_| None,
+            |_| true,
             |_| {
                 Ok(gobby_core::provisioning::HubIdentityProbeResult::Known(
                     gobby_core::provisioning::HubIdentity {

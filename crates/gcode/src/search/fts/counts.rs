@@ -59,7 +59,10 @@ pub fn count_text(
     );
     match conn.query_one(&sql, &refs) {
         Ok(row) => row.try_get::<_, i64>("count").unwrap_or(0) as usize,
-        Err(_) => count_symbols_by_name_like(conn, query, project_id, language, paths),
+        Err(error) => {
+            log::warn!("BM25 symbol count failed; falling back to LIKE count: {error}");
+            count_symbols_by_name_like(conn, query, project_id, language, paths)
+        }
     }
 }
 
@@ -149,7 +152,10 @@ pub fn count_content(
     );
     match conn.query_one(&sql, &refs) {
         Ok(row) => row.try_get::<_, i64>("count").unwrap_or(0) as usize,
-        Err(_) => count_content_like(conn, query, project_id, language, paths),
+        Err(error) => {
+            log::warn!("BM25 content count failed; falling back to LIKE count: {error}");
+            count_content_like(conn, query, project_id, language, paths)
+        }
     }
 }
 
@@ -420,7 +426,10 @@ pub fn count_text_visible(
 
     match count_symbols_fts_visible(conn, &bm25_query, ctx, language, paths) {
         Ok(count) => count,
-        Err(_) => count_symbols_by_name_like_visible(conn, query, ctx, language, paths),
+        Err(error) => {
+            log::warn!("visible BM25 symbol count failed; falling back to LIKE count: {error}");
+            count_symbols_by_name_like_visible(conn, query, ctx, language, paths)
+        }
     }
 }
 
@@ -442,7 +451,10 @@ pub fn count_content_visible(
 
     match count_content_bm25_visible(conn, &bm25_query, ctx, language, paths) {
         Ok(count) => count,
-        Err(_) => count_content_like_visible(conn, query, ctx, language, paths),
+        Err(error) => {
+            log::warn!("visible BM25 content count failed; falling back to LIKE count: {error}");
+            count_content_like_visible(conn, query, ctx, language, paths)
+        }
     }
 }
 

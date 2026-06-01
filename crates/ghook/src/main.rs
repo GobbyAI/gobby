@@ -281,7 +281,9 @@ fn build_dispatch_envelope(
     mut input_data: Value,
     project_id: Option<&str>,
 ) -> Envelope {
-    terminal_context::inject(&mut input_data);
+    if terminal_context::enabled_for_hook(hook_type) {
+        terminal_context::inject(&mut input_data);
+    }
 
     // Headers: omit on missing (never empty string).
     let mut headers: BTreeMap<String, String> = BTreeMap::new();
@@ -587,7 +589,7 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_envelope_injects_valid_tmux_pane_for_any_cli() {
+    fn dispatch_envelope_injects_valid_tmux_pane_for_session_start() {
         with_tmux_env(Some("/tmp/tmux-501/default,12345,0"), Some("%17"), || {
             let cfg = CliConfig::for_dispatch("grok");
             let envelope = build_dispatch_envelope(
@@ -598,6 +600,17 @@ mod tests {
             );
 
             assert_eq!(envelope.input_data["terminal_context"]["tmux_pane"], "%17");
+        });
+    }
+
+    #[test]
+    fn dispatch_envelope_omits_terminal_context_for_tool_hooks() {
+        with_tmux_env(Some("/tmp/tmux-501/default,12345,0"), Some("%17"), || {
+            let cfg = CliConfig::for_dispatch("codex");
+            let envelope =
+                build_dispatch_envelope(&cfg, "PreToolUse", json!({"session_id": "sess-1"}), None);
+
+            assert!(envelope.input_data.get("terminal_context").is_none());
         });
     }
 

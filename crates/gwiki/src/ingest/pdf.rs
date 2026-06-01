@@ -498,7 +498,7 @@ fn render_pdf_pages(
 ) -> Result<Vec<PdfRenderedPage>, WikiError> {
     let pdfium = bundled_pdfium()?;
     let document = pdfium
-        .load_pdf_from_byte_vec(snapshot.bytes.clone(), None)
+        .load_pdf_from_byte_slice(&snapshot.bytes, None)
         .map_err(pdfium_error)?;
     let render_dpi = dpi.max(1);
     let mut rendered_pages = Vec::with_capacity(document.pages().len() as usize);
@@ -744,20 +744,30 @@ mod tests {
 
     #[test]
     fn pdf_page_body_sanitizes_internal_markers_and_fences() {
+        let snapshot = PdfSnapshot {
+            location: "/tmp/report.pdf".to_string(),
+            file_name: "report.pdf".to_string(),
+            fetched_at: "2026-05-29T21:30:00Z".to_string(),
+            bytes: vec![0; 10],
+            pages: Vec::new(),
+        };
         let markdown = render_pdf_markdown(
+            &ScopeIdentity::global(),
+            &snapshot,
             "report.pdf",
+            "hash",
+            Path::new("raw/assets/report.pdf"),
             &[PdfPageMarkdown {
                 number: 1,
                 markdown: "before\n<!-- gwiki-page: 99 -->\n---\nafter".to_string(),
             }],
             &PdfMarkdownSummary {
-                source_hash: "hash".to_string(),
-                file_size_bytes: 10,
                 page_count: 1,
+                has_text_layer: true,
+                vision_used: false,
                 model: None,
                 degradations: Vec::new(),
             },
-            &ScopeIdentity::global(),
         );
 
         assert!(markdown.contains("<!-- gwiki-page: 1 -->"));

@@ -184,7 +184,7 @@ struct LinkSuggestArgs {
 #[derive(Debug, Args)]
 struct ResearchArgs {
     #[arg(value_name = "QUESTION")]
-    question: String,
+    question: Option<String>,
 
     #[arg(long = "source-constraint", value_name = "TEXT")]
     source_constraints: Vec<String>,
@@ -360,9 +360,19 @@ fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Comman
             limit: args.limit,
         }),
         CliCommand::Research(args) => {
+            let question = match (args.resume, args.question) {
+                (true, question) => question.unwrap_or_default(),
+                (false, Some(question)) => question,
+                (false, None) => {
+                    return Err(WikiError::InvalidInput {
+                        field: "research",
+                        message: "QUESTION is required unless --resume is set".to_string(),
+                    });
+                }
+            };
             let research_scope = gobby_wiki::resolve_research_scope(&scope)?;
             Ok(Command::Research(gobby_wiki::research::ResearchOptions {
-                question: args.question,
+                question,
                 scope: research_scope,
                 source_constraints: args.source_constraints,
                 agent_count: args.agent_count,
@@ -440,6 +450,26 @@ fn exit_code_for_error(error: &WikiError) -> ExitCode {
         | WikiError::Registry { .. }
         | WikiError::Daemon { .. }
         | WikiError::Setup { .. } => ExitCode::from(1),
+    }
+}
+
+impl From<SetupArgs> for gobby_wiki::SetupOptions {
+    fn from(args: SetupArgs) -> Self {
+        Self {
+            standalone: args.standalone,
+            database_url: args.database_url,
+            no_services: args.no_services,
+            falkordb_host: args.falkordb_host,
+            falkordb_port: args.falkordb_port,
+            falkordb_password: args.falkordb_password,
+            qdrant_url: args.qdrant_url,
+            embedding_provider: args.embedding_provider,
+            embedding_api_base: args.embedding_api_base,
+            embedding_model: args.embedding_model,
+            embedding_query_prefix: args.embedding_query_prefix,
+            embedding_vector_dim: args.embedding_vector_dim,
+            embedding_api_key: args.embedding_api_key,
+        }
     }
 }
 
@@ -526,25 +556,5 @@ mod tests {
         assert_eq!(options.falkordb_port, Some(26379));
         assert_eq!(options.qdrant_url.as_deref(), Some("http://localhost:7333"));
         assert_eq!(options.embedding_vector_dim, Some(1024));
-    }
-}
-
-impl From<SetupArgs> for gobby_wiki::SetupOptions {
-    fn from(args: SetupArgs) -> Self {
-        Self {
-            standalone: args.standalone,
-            database_url: args.database_url,
-            no_services: args.no_services,
-            falkordb_host: args.falkordb_host,
-            falkordb_port: args.falkordb_port,
-            falkordb_password: args.falkordb_password,
-            qdrant_url: args.qdrant_url,
-            embedding_provider: args.embedding_provider,
-            embedding_api_base: args.embedding_api_base,
-            embedding_model: args.embedding_model,
-            embedding_query_prefix: args.embedding_query_prefix,
-            embedding_vector_dim: args.embedding_vector_dim,
-            embedding_api_key: args.embedding_api_key,
-        }
     }
 }

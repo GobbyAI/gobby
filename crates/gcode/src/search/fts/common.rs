@@ -8,6 +8,8 @@ use crate::db;
 use crate::models::Symbol;
 use crate::visibility;
 
+// Keep BM25 query sanitation centralized in gobby-core so gcode and gwiki
+// escape pg_search's DSL identically.
 pub use gobby_core::search::sanitize_pg_search_query;
 
 pub(super) type PgParam = Box<dyn ToSql + Sync>;

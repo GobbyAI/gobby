@@ -363,6 +363,7 @@ fn self_referential_parent_marker_keeps_project_json_id() {
 #[test]
 fn isolated_marker_with_parent_metadata_resolves_overlay_scope() {
     let tmp = tempfile::tempdir().expect("tempdir");
+    let parent_project_id = "0f1f5df6-7f37-4a7f-9115-5b473f22934e";
     let parent = tmp.path().join("parent");
     std::fs::create_dir(&parent).expect("create parent");
     let worktree = tmp.path().join("worktree");
@@ -372,7 +373,7 @@ fn isolated_marker_with_parent_metadata_resolves_overlay_scope() {
         serde_json::json!({
             "id": "parent-id",
             "parent_project_path": parent.to_string_lossy(),
-            "parent_project_id": "parent-id"
+            "parent_project_id": parent_project_id
         }),
     );
 
@@ -388,7 +389,7 @@ fn isolated_marker_with_parent_metadata_resolves_overlay_scope() {
         ProjectIndexScope::Overlay {
             overlay_project_id: crate::project::code_index_id_for_root(&worktree),
             overlay_root: worktree.canonicalize().unwrap(),
-            parent_project_id: "parent-id".to_string(),
+            parent_project_id: parent_project_id.to_string(),
             parent_root: parent.canonicalize().unwrap(),
         }
     );

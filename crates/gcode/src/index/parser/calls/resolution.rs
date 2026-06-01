@@ -121,7 +121,7 @@ pub(super) fn member_qualifier_path(
 ) -> Option<String> {
     let prefix = String::from_utf8_lossy(&source[call_node.start_byte()..name_node.start_byte()]);
     let prefix = prefix.trim();
-    if prefix.starts_with('$') || prefix.contains("->") || prefix.contains("?->") {
+    if prefix.starts_with('$') || prefix.contains("->") {
         return None;
     }
     let is_absolute_namespace = prefix.starts_with('\\');

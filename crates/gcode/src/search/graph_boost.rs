@@ -34,14 +34,14 @@ pub fn graph_boost(ctx: &Context, query: &str) -> Vec<String> {
     };
     let graph_ctx = visibility::context_for_source_project(ctx, &symbol.project_id);
 
-    let callers = code_graph::find_callers(&graph_ctx, &symbol.id, 0, 10).unwrap_or_default();
-    let usages = code_graph::find_usages(&graph_ctx, &symbol.id, 0, 10).unwrap_or_default();
+    let callers = code_graph::find_caller_ids(&graph_ctx, &symbol.id, 10).unwrap_or_default();
+    let usages = code_graph::find_usage_ids(&graph_ctx, &symbol.id, 10).unwrap_or_default();
 
     let mut ids = Vec::new();
     let mut seen = HashSet::new();
-    for r in callers.iter().chain(usages.iter()) {
-        if !r.id.is_empty() && seen.insert(r.id.clone()) {
-            ids.push(r.id.clone());
+    for id in callers.into_iter().chain(usages) {
+        if !id.is_empty() && seen.insert(id.clone()) {
+            ids.push(id);
         }
     }
     ids
@@ -80,15 +80,15 @@ pub fn graph_expand(ctx: &Context, seed_ids: &[String]) -> Vec<String> {
         let graph_ctx = visibility::context_for_source_project(ctx, &project_id);
         // Callees first — "what do these symbols call?" surfaces implementation details.
         let callees =
-            code_graph::find_callees_batch(&graph_ctx, &ids_for_project, 30).unwrap_or_default();
+            code_graph::find_callee_ids_batch(&graph_ctx, &ids_for_project, 30).unwrap_or_default();
         // Callers second — "who calls these symbols?" surfaces broader context.
         let callers =
-            code_graph::find_callers_batch(&graph_ctx, &ids_for_project, 30).unwrap_or_default();
-        for r in callees.iter().chain(callers.iter()) {
-            if r.id.is_empty() || !seen.insert(r.id.clone()) {
+            code_graph::find_caller_ids_batch(&graph_ctx, &ids_for_project, 30).unwrap_or_default();
+        for id in callees.into_iter().chain(callers) {
+            if id.is_empty() || !seen.insert(id.clone()) {
                 continue;
             }
-            ids.push(r.id.clone());
+            ids.push(id);
         }
     }
     ids

@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+use postgres::Transaction;
 use serde_json::json;
 
 use crate::models::WikiScope;
@@ -465,7 +466,9 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
             "DELETE FROM gwiki_links WHERE scope_kind = $1 AND scope_id = $2 AND path = $3",
             &[&scope.scope_kind(), &scope.scope_id(), &path_string],
         ) {
-            return Err(error.into());
+            let error = StoreError::from(error);
+            rollback_link_replacement(tx, &path_string);
+            return Err(error);
         }
 
         for link in links {
@@ -521,17 +524,12 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
                 eprintln!(
                     "warning: failed to insert gwiki link for {path} -> {target_path}: {error}"
                 );
-                if let Err(rollback_error) = tx.rollback() {
-                    eprintln!(
-                        "warning: failed to rollback gwiki link replacement for {path_string}: {rollback_error}"
-                    );
-                }
+                rollback_link_replacement(tx, &path_string);
                 return Err(error);
             }
         }
 
-        tx.commit()?;
-        Ok(())
+        tx.commit().map_err(StoreError::from)
     }
 
     fn upsert_source(&mut self, source: WikiSource) -> Result<(), StoreError> {
@@ -776,6 +774,12 @@ pub(crate) fn link_kind(target: &str) -> &'static str {
         "markdown"
     } else {
         "wiki"
+    }
+}
+
+fn rollback_link_replacement(tx: Transaction<'_>, path: &str) {
+    if let Err(error) = tx.rollback() {
+        eprintln!("warning: failed to rollback gwiki link replacement for {path}: {error}");
     }
 }
 

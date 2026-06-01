@@ -639,13 +639,7 @@ fn public_cli_smoke_uses_gwiki_modules() {
         &hub,
         tmp.path(),
         &[
-            "--format",
-            "json",
-            "--topic",
-            "rust",
-            "research",
-            "--resume",
-            "How should ownership evidence compile?",
+            "--format", "json", "--topic", "rust", "research", "--resume",
         ],
     );
     assert_success(&research, "research");
@@ -732,13 +726,7 @@ fn public_cli_smoke_continues_research_compile_audit_in_topic_scope() {
         &hub,
         tmp.path(),
         &[
-            "--format",
-            "json",
-            "--topic",
-            "rust",
-            "research",
-            "--resume",
-            "ignored on resume",
+            "--format", "json", "--topic", "rust", "research", "--resume",
         ],
     );
     assert_success(&research, "research");

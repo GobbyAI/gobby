@@ -51,7 +51,14 @@ pub(crate) fn execute_ingest_file(
 ) -> Result<CommandOutcome, WikiError> {
     let scope = resolve_command_scope(&selection)?;
     // Vault initialization is idempotent here; ingest only needs the paths to exist.
-    let _ = vault::initialize(&scope)?;
+    let initialized = vault::initialize(&scope)?;
+    if !initialized.directories.is_empty() || !initialized.files.is_empty() {
+        log::debug!(
+            "initialized gwiki vault paths before ingest-file: directories={:?} files={:?}",
+            initialized.directories,
+            initialized.files
+        );
+    }
     let output_scope = resolved_scope_identity(&scope);
     let project_id = ai_project_id(&output_scope);
     let gobby_home = gobby_home()?;

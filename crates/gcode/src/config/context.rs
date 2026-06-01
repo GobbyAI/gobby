@@ -8,8 +8,10 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+use anyhow::Context as _;
 use gobby_core::project::{find_project_root, read_project_id};
 use postgres::Client;
+use uuid::Uuid;
 
 use super::services::{
     read_standalone_config_optional, resolve_code_vector_settings, resolve_embedding_config,
@@ -350,7 +352,9 @@ fn normalize_project_id(project_id: &str) -> anyhow::Result<String> {
     if project_id.is_empty() {
         anyhow::bail!("--project-id must not be empty");
     }
-    Ok(project_id.to_string())
+    Uuid::parse_str(project_id)
+        .map(|id| id.to_string())
+        .with_context(|| format!("--project-id must be a UUID, got `{project_id}`"))
 }
 
 pub(crate) fn validate_parent_code_index(
@@ -535,7 +539,7 @@ fn absolute_fallback(path: &Path) -> PathBuf {
         path.to_path_buf()
     } else {
         std::env::current_dir()
-            .unwrap_or_else(|_| PathBuf::from("."))
+            .unwrap_or_else(|_| std::env::temp_dir())
             .join(path)
     }
 }

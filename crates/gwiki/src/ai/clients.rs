@@ -345,9 +345,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn clients_consume_effective_route() {
+    fn clients_consume_effective_off_and_direct_routes() {
         let audio_client =
-            ProductionTranscriptionClient::new(test_context(binding(AiRouting::Auto, None)));
+            ProductionTranscriptionClient::new(test_context(binding(AiRouting::Off, None)));
         let audio_path = PathBuf::from("raw/audio.wav");
         let audio_error = audio_client
             .transcribe(&TranscriptionRequest {
@@ -356,7 +356,7 @@ mod tests {
                 asset_path: &audio_path,
                 bytes: b"audio",
             })
-            .expect_err("auto routing without daemon or api_base resolves off");
+            .expect_err("off routing resolves off");
 
         assert!(
             audio_error.to_string().contains(
@@ -382,7 +382,7 @@ mod tests {
         );
 
         let vision_client =
-            ProductionVisionClient::new(test_context(binding(AiRouting::Auto, None)));
+            ProductionVisionClient::new(test_context(binding(AiRouting::Off, None)));
         let image_path = PathBuf::from("raw/image.png");
         let vision_error = vision_client
             .extract(&VisionRequest {
@@ -393,7 +393,7 @@ mod tests {
                 width: None,
                 height: None,
             })
-            .expect_err("auto routing without daemon or api_base resolves off");
+            .expect_err("off routing resolves off");
 
         assert!(
             vision_error

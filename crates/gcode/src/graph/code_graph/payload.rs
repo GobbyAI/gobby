@@ -139,7 +139,7 @@ impl GraphNode {
         );
         node.kind = row_string_owned(row, &[kind_key.as_str()]);
         node.file_path = row_string_owned(row, &[file_path_key.as_str()]);
-        node.line_start = row_usize_owned(row, &[line_start_key.as_str()]);
+        node.line_start = row_usize(row, &[line_start_key.as_str()]);
         node.signature = row_string_owned(row, &[signature_key.as_str()]);
         Some(node)
     }
@@ -243,10 +243,6 @@ pub(super) fn row_string_owned(row: &Row, keys: &[&str]) -> Option<String> {
 }
 
 pub(super) fn row_usize(row: &Row, keys: &[&str]) -> Option<usize> {
-    row_usize_owned(row, keys)
-}
-
-fn row_usize_owned(row: &Row, keys: &[&str]) -> Option<usize> {
     for key in keys {
         let Some(value) = row.get(*key) else {
             continue;

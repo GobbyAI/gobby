@@ -319,8 +319,10 @@ mod tests {
             .write_at(&path)
             .expect("write existing standalone config");
 
-        let mut options = SetupOptions::default();
-        options.qdrant_url = Some("http://localhost:7333".to_string());
+        let options = SetupOptions {
+            qdrant_url: Some("http://localhost:7333".to_string()),
+            ..SetupOptions::default()
+        };
         let service_options = DockerServiceOptions::new(home.path().to_path_buf());
 
         write_gwiki_gcore_config(

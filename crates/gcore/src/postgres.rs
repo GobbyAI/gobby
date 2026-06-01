@@ -124,7 +124,10 @@ fn requested_ssl_mode(database_url: &str) -> Option<RequestedSslMode> {
         "require" => Some(RequestedSslMode::Require),
         "verify-ca" => Some(RequestedSslMode::VerifyCa),
         "verify-full" => Some(RequestedSslMode::VerifyFull),
-        _ => None,
+        _ => {
+            log::debug!("unrecognized PostgreSQL sslmode value `{value}`; using parser default");
+            None
+        }
     }
 }
 

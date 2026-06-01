@@ -636,6 +636,11 @@ fn resolve_ai_config_value(source: &mut impl ConfigSource, config_key: &str) -> 
     resolve_ai_non_empty(source, &value)
 }
 
+/// Resolve an AI config value and reject empty or still-unexpanded placeholders.
+///
+/// AI config resolves from `config_store`/gcore.yaml, but stored values may
+/// reference secrets or `${VAR}`. Unresolved placeholders must not masquerade as
+/// usable endpoints, models, or keys.
 fn resolve_ai_non_empty(source: &mut impl ConfigSource, value: &str) -> Option<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -1403,6 +1408,9 @@ mod tests {
             let entry = entry.expect("directory entry");
             let path = entry.path();
             if path.is_dir() {
+                if should_skip_embedding_key_scan_dir(&path) {
+                    continue;
+                }
                 visit_embedding_key_literal_sources(&path, offenders);
                 continue;
             }
@@ -1420,6 +1428,22 @@ mod tests {
                 offenders.push(path);
             }
         }
+    }
+
+    fn should_skip_embedding_key_scan_dir(path: &std::path::Path) -> bool {
+        matches!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some(
+                ".git"
+                    | "target"
+                    | "node_modules"
+                    | "dist"
+                    | "build"
+                    | ".venv"
+                    | "venv"
+                    | "__pycache__"
+            )
+        )
     }
 
     fn guarded_embedding_keys() -> Vec<String> {

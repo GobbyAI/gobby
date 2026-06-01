@@ -278,6 +278,42 @@ fn php_grouped_function_imports_register_concrete_bare_bindings() {
 }
 
 #[test]
+fn swift_imports_do_not_mark_local_modules_external() {
+    let tempdir = TempDir::new().expect("tempdir");
+    let local_file = tempdir.path().join("Sources/AppCore/Thing.swift");
+    fs::create_dir_all(local_file.parent().expect("source parent")).expect("create source dir");
+    fs::write(&local_file, "import Foundation\n").expect("write swift source");
+    let context = build_import_resolution_context(tempdir.path(), &[local_file]);
+    let mut extracted = ExtractedImports::default();
+
+    parse_import_statement(
+        "swift",
+        "import AppCore",
+        "Sources/AppCore/Thing.swift",
+        &context,
+        &mut extracted,
+    );
+
+    assert!(!extracted.bindings.external_roots.contains_key("AppCore"));
+}
+
+#[test]
+fn swift_imports_still_mark_unknown_modules_external() {
+    let context = ImportResolutionContext::default();
+    let mut extracted = ExtractedImports::default();
+
+    parse_import_statement(
+        "swift",
+        "import Foundation",
+        "Sources/AppCore/Thing.swift",
+        &context,
+        &mut extracted,
+    );
+
+    assert!(extracted.bindings.external_roots.contains_key("Foundation"));
+}
+
+#[test]
 fn php_grouped_const_imports_preserve_aliases() {
     let mut extracted = ExtractedImports::default();
 

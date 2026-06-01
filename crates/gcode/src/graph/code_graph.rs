@@ -15,9 +15,10 @@ pub use payload::{
     GraphBlastRadiusTarget, GraphLink, GraphNode, GraphPayload, extracted_code_edge_metadata,
 };
 pub use read::{
-    blast_radius, blast_radius_graph, count_callers, count_usages, file_graph, find_callees_batch,
-    find_callers, find_callers_batch, find_usages, get_imports, project_overview_graph,
-    symbol_neighbors,
+    blast_radius, blast_radius_graph, count_callers, count_usages, file_graph,
+    find_callee_ids_batch, find_callees_batch, find_caller_ids, find_caller_ids_batch,
+    find_callers, find_callers_batch, find_usage_ids, find_usages, get_imports,
+    project_overview_graph, symbol_neighbors,
 };
 pub use write::{
     CodeGraph, call_target_id, cleanup_orphans, clear_all_code_index, clear_project,

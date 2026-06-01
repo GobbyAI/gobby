@@ -18,10 +18,10 @@ ghook --version
 
 ## Terminal context
 
-When `TMUX` is set and `TMUX_PANE` matches `^%\d+$`, `ghook` injects
-`input_data.terminal_context.tmux_pane` into the envelope for any `--cli` value.
+For session-start hooks, when `TMUX` is set and `TMUX_PANE` matches `^%\d+$`,
+`ghook` injects `input_data.terminal_context.tmux_pane` into the envelope.
 The pane ID is passed through verbatim. If the pane variable is missing, empty,
-or invalid, `terminal_context` is omitted.
+or invalid, the tmux fields are emitted as `null`.
 
 Exit codes:
 

@@ -504,6 +504,8 @@ mod tests {
     }
 
     fn long_request<'a>() -> TranscriptionRequest<'a> {
+        // Intentionally leak one oversized test fixture so the request can
+        // borrow it for any helper lifetime without cloning >MAX bytes.
         TranscriptionRequest {
             file_name: "long.wav",
             mime_type: Some("audio/wav"),

@@ -85,8 +85,14 @@ pub fn diagnose(cli: &str, hook_type: &str) -> DiagnoseOutput {
     let (source, critical, terminal_context_enabled, terminal_context_preview) = match cfg {
         Some(c) => {
             let critical = c.critical_hooks.contains(hook_type);
-            let preview = Some(crate::terminal_context::capture());
-            (Some(c.source.to_string()), critical, true, preview)
+            let terminal_context_enabled = crate::terminal_context::enabled_for_hook(hook_type);
+            let preview = terminal_context_enabled.then(crate::terminal_context::capture);
+            (
+                Some(c.source.to_string()),
+                critical,
+                terminal_context_enabled,
+                preview,
+            )
         }
         None => (None, false, false, None),
     };
@@ -137,11 +143,12 @@ mod tests {
     }
 
     #[test]
-    fn codex_pre_tool_use_noncritical_with_terminal_context() {
+    fn codex_pre_tool_use_noncritical_without_terminal_context() {
         let d = diagnose("codex", "PreToolUse");
         assert!(d.cli_recognized);
         assert!(!d.critical);
-        assert!(d.terminal_context_enabled);
+        assert!(!d.terminal_context_enabled);
+        assert!(d.terminal_context_preview.is_none());
     }
 
     #[test]

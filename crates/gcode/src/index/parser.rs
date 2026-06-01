@@ -156,11 +156,12 @@ fn extract_symbols(
 
     let mut symbols = Vec::new();
     let mut seen_ids = HashSet::new();
-    let capture_names: Vec<String> = query
-        .capture_names()
+    let capture_names = query.capture_names();
+    let name_capture = capture_names.iter().position(|name| *name == "name");
+    let definition_kinds = capture_names
         .iter()
-        .map(|s| s.to_string())
-        .collect();
+        .map(|name| name.strip_prefix("definition."))
+        .collect::<Vec<_>>();
 
     while let Some(m) = matches.next() {
         let mut name_text: Option<String> = None;
@@ -168,15 +169,15 @@ fn extract_symbols(
         let mut kind = String::from("function");
 
         for cap in m.captures {
-            let cap_name = &capture_names[cap.index as usize];
-            if cap_name == "name" {
+            let capture_index = cap.index as usize;
+            if name_capture == Some(capture_index) {
                 name_text = Some(
                     String::from_utf8_lossy(&source[cap.node.start_byte()..cap.node.end_byte()])
                         .to_string(),
                 );
-            } else if let Some(k) = cap_name.strip_prefix("definition.") {
+            } else if let Some(Some(k)) = definition_kinds.get(capture_index) {
                 def_node = Some(cap.node);
-                kind = k.to_string();
+                kind = (*k).to_string();
             }
         }
 
@@ -353,17 +354,13 @@ fn extract_imports(
 
     let mut cursor = QueryCursor::new();
     let mut matches = cursor.matches(&query, tree.root_node(), source);
-    let capture_names: Vec<String> = query
-        .capture_names()
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+    let capture_names = query.capture_names();
+    let import_capture = capture_names.iter().position(|name| *name == "import");
     let mut extracted = ExtractedImports::default();
 
     while let Some(m) = matches.next() {
         for cap in m.captures {
-            let cap_name = &capture_names[cap.index as usize];
-            if cap_name == "import" {
+            if import_capture == Some(cap.index as usize) {
                 let text =
                     String::from_utf8_lossy(&source[cap.node.start_byte()..cap.node.end_byte()])
                         .trim()

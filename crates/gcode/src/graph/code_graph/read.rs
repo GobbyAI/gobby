@@ -169,6 +169,42 @@ pub(crate) fn find_usages_query(
     )
 }
 
+fn find_caller_ids_query(
+    project_id: &str,
+    symbol_id: &str,
+    limit: usize,
+) -> (String, HashMap<String, String>) {
+    let limit = clamp_limit(limit);
+    (
+        format!(
+            "MATCH (caller:CodeSymbol {{project: $project}})-[:CALLS]->(target {{id: $id, project: $project}}) \
+             WHERE {CALL_TARGET_PREDICATE} \
+             RETURN DISTINCT caller.id AS id \
+             ORDER BY caller.id \
+             LIMIT {limit}"
+        ),
+        typed_query::string_params(&[("project", project_id), ("id", symbol_id)]),
+    )
+}
+
+fn find_usage_ids_query(
+    project_id: &str,
+    symbol_id: &str,
+    limit: usize,
+) -> (String, HashMap<String, String>) {
+    let limit = clamp_limit(limit);
+    (
+        format!(
+            "MATCH (source:CodeSymbol {{project: $project}})-[:CALLS]->(target {{id: $id, project: $project}}) \
+             WHERE {CALL_TARGET_PREDICATE} \
+             RETURN DISTINCT source.id AS id \
+             ORDER BY source.id \
+             LIMIT {limit}"
+        ),
+        typed_query::string_params(&[("project", project_id), ("id", symbol_id)]),
+    )
+}
+
 pub(crate) fn find_callers_batch_query(
     project_id: &str,
     symbol_ids: &[String],
@@ -188,6 +224,25 @@ pub(crate) fn find_callers_batch_query(
     )
 }
 
+fn find_caller_ids_batch_query(
+    project_id: &str,
+    symbol_ids: &[String],
+    limit: usize,
+) -> (String, HashMap<String, String>) {
+    let limit = clamp_limit(limit);
+    let ids = typed_query::id_list_literal(symbol_ids);
+    (
+        format!(
+            "MATCH (caller:CodeSymbol {{project: $project}})-[:CALLS]->(target {{project: $project}}) \
+             WHERE ({CALL_TARGET_PREDICATE}) AND target.id IN [{ids}] \
+             RETURN DISTINCT caller.id AS id \
+             ORDER BY caller.id \
+             LIMIT {limit}"
+        ),
+        typed_query::string_params(&[("project", project_id)]),
+    )
+}
+
 pub(crate) fn find_callees_batch_query(
     project_id: &str,
     symbol_ids: &[String],
@@ -201,6 +256,25 @@ pub(crate) fn find_callees_batch_query(
              WHERE src.id IN [{ids}] AND ({CALL_TARGET_PREDICATE}) \
              RETURN target.id AS callee_id, target.name AS callee_name, \
                     r.file AS file, r.line AS line \
+             LIMIT {limit}"
+        ),
+        typed_query::string_params(&[("project", project_id)]),
+    )
+}
+
+fn find_callee_ids_batch_query(
+    project_id: &str,
+    symbol_ids: &[String],
+    limit: usize,
+) -> (String, HashMap<String, String>) {
+    let limit = clamp_limit(limit);
+    let ids = typed_query::id_list_literal(symbol_ids);
+    (
+        format!(
+            "MATCH (src:CodeSymbol {{project: $project}})-[:CALLS]->(target {{project: $project}}) \
+             WHERE src.id IN [{ids}] AND ({CALL_TARGET_PREDICATE}) \
+             RETURN DISTINCT target.id AS id \
+             ORDER BY target.id \
              LIMIT {limit}"
         ),
         typed_query::string_params(&[("project", project_id)]),
@@ -751,6 +825,32 @@ pub fn find_usages(
     })
 }
 
+pub fn find_caller_ids(
+    ctx: &Context,
+    symbol_id: &str,
+    limit: usize,
+) -> anyhow::Result<Vec<String>> {
+    with_required_core_graph(ctx, |client| {
+        let (query, params) = find_caller_ids_query(&ctx.project_id, symbol_id, limit);
+        let rows = client.query(&query, Some(params))?;
+        Ok(rows
+            .iter()
+            .filter_map(|row| row_string_owned(row, &["id"]))
+            .collect())
+    })
+}
+
+pub fn find_usage_ids(ctx: &Context, symbol_id: &str, limit: usize) -> anyhow::Result<Vec<String>> {
+    with_required_core_graph(ctx, |client| {
+        let (query, params) = find_usage_ids_query(&ctx.project_id, symbol_id, limit);
+        let rows = client.query(&query, Some(params))?;
+        Ok(rows
+            .iter()
+            .filter_map(|row| row_string_owned(row, &["id"]))
+            .collect())
+    })
+}
+
 pub fn find_callers_batch(
     ctx: &Context,
     symbol_ids: &[String],
@@ -766,6 +866,24 @@ pub fn find_callers_batch(
     })
 }
 
+pub fn find_caller_ids_batch(
+    ctx: &Context,
+    symbol_ids: &[String],
+    limit: usize,
+) -> anyhow::Result<Vec<String>> {
+    if symbol_ids.is_empty() {
+        return Ok(vec![]);
+    }
+    with_required_core_graph(ctx, |client| {
+        let (query, params) = find_caller_ids_batch_query(&ctx.project_id, symbol_ids, limit);
+        let rows = client.query(&query, Some(params))?;
+        Ok(rows
+            .iter()
+            .filter_map(|row| row_string_owned(row, &["id"]))
+            .collect())
+    })
+}
+
 pub fn find_callees_batch(
     ctx: &Context,
     symbol_ids: &[String],
@@ -778,6 +896,24 @@ pub fn find_callees_batch(
         let (query, params) = find_callees_batch_query(&ctx.project_id, symbol_ids, limit);
         let rows = client.query(&query, Some(params))?;
         Ok(rows.iter().map(row_to_graph_result).collect())
+    })
+}
+
+pub fn find_callee_ids_batch(
+    ctx: &Context,
+    symbol_ids: &[String],
+    limit: usize,
+) -> anyhow::Result<Vec<String>> {
+    if symbol_ids.is_empty() {
+        return Ok(vec![]);
+    }
+    with_required_core_graph(ctx, |client| {
+        let (query, params) = find_callee_ids_batch_query(&ctx.project_id, symbol_ids, limit);
+        let rows = client.query(&query, Some(params))?;
+        Ok(rows
+            .iter()
+            .filter_map(|row| row_string_owned(row, &["id"]))
+            .collect())
     })
 }
 

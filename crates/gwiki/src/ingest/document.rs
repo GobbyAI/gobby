@@ -251,7 +251,7 @@ fn extract_pptx(bytes: &[u8]) -> Result<DocumentExtraction, WikiError> {
 }
 
 fn extract_spreadsheet(bytes: &[u8]) -> Result<DocumentExtraction, WikiError> {
-    let cursor = Cursor::new(bytes.to_vec());
+    let cursor = Cursor::new(bytes);
     let mut workbook = open_workbook_auto_from_rs(cursor)
         .map_err(|error| document_error(format!("open spreadsheet: {error}")))?;
     let sheet_names = workbook.sheet_names().to_vec();
@@ -261,6 +261,7 @@ fn extract_spreadsheet(bytes: &[u8]) -> Result<DocumentExtraction, WikiError> {
 
     let mut markdown = String::new();
     let mut rendered_sheets = 0;
+    let mut title = None;
     for sheet_name in sheet_names.iter().take(MAX_SHEETS) {
         let range = workbook
             .worksheet_range(sheet_name)
@@ -279,6 +280,9 @@ fn extract_spreadsheet(bytes: &[u8]) -> Result<DocumentExtraction, WikiError> {
         if rows.is_empty() {
             continue;
         }
+        if title.is_none() {
+            title = Some(markdown_title(sheet_name));
+        }
         rendered_sheets += 1;
         if !markdown.is_empty() {
             markdown.push('\n');
@@ -296,7 +300,7 @@ fn extract_spreadsheet(bytes: &[u8]) -> Result<DocumentExtraction, WikiError> {
         return Err(document_error("spreadsheet contained no cell text"));
     }
     Ok(DocumentExtraction {
-        title: sheet_names.first().map(|name| markdown_title(name)),
+        title,
         markdown: markdown.trim_end().to_string(),
         units_label: "sheet_count",
         units_count: rendered_sheets,

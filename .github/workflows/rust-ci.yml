@@ -79,14 +79,14 @@ jobs:
         run: cargo test -p gobby-wiki
 
       - name: Clippy (gwiki, no default features)
-        run: cargo clippy -p gobby-wiki --no-default-features -- -D warnings
+        run: cargo clippy -p gobby-wiki --all-targets --no-default-features -- -D warnings
 
       - name: Test (gwiki, no default features)
         run: cargo test -p gobby-wiki --no-default-features
 
       # gcode: clippy + tests without embeddings (Linux CI has no cmake/Metal)
       - name: Clippy (gcode, no embeddings)
-        run: cargo clippy -p gobby-code --no-default-features -- -D warnings
+        run: cargo clippy -p gobby-code --all-targets --no-default-features -- -D warnings
 
       - name: Test (gcode, no embeddings)
         run: cargo test -p gobby-code --no-default-features

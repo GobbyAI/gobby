@@ -81,7 +81,7 @@ fn absolute_fallback(path: &Path) -> PathBuf {
         path.to_path_buf()
     } else {
         std::env::current_dir()
-            .unwrap_or_else(|_| PathBuf::from("."))
+            .unwrap_or_else(|_| std::env::temp_dir())
             .join(path)
     }
 }

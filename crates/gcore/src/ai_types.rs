@@ -55,6 +55,8 @@ impl VisionResult {
 pub struct TextResult {
     pub text: String,
     pub model: Option<String>,
+    /// Provider-specific metadata preserved for diagnostics and callers that
+    /// need backend details without depending on a transport-specific schema.
     #[serde(default)]
     pub metadata: BTreeMap<String, String>,
 }

@@ -26,6 +26,7 @@ pub struct ImportResolutionContext {
     pub(super) php_local_symbols: HashSet<String>,
     pub(super) ruby_local_constant_roots: HashSet<String>,
     pub(super) ruby_require_root_overrides: HashMap<String, String>,
+    pub(super) swift_local_modules: HashSet<String>,
     pub(super) dart_external_packages: HashSet<String>,
     pub(super) dart_self_package_name: Option<String>,
     pub(super) elixir_external_roots: HashMap<String, String>,
@@ -173,6 +174,7 @@ pub fn build_import_resolution_context_with_overrides(
         php_local_symbols: build_php_local_symbol_index(candidate_files),
         ruby_local_constant_roots: build_ruby_local_constant_roots(candidate_files),
         ruby_require_root_overrides,
+        swift_local_modules: build_swift_local_modules(root_path, candidate_files),
         dart_external_packages: load_dart_external_packages(root_path),
         dart_self_package_name: load_dart_self_package_name(root_path),
         elixir_external_roots: load_elixir_external_roots(root_path),
@@ -508,6 +510,49 @@ pub(super) fn build_ruby_local_constant_roots(candidate_files: &[PathBuf]) -> Ha
         })
         .reduce(HashSet::new, |mut all, roots| {
             all.extend(roots);
+            all
+        })
+}
+
+pub(super) fn build_swift_local_modules(
+    root_path: &Path,
+    candidate_files: &[PathBuf],
+) -> HashSet<String> {
+    candidate_files
+        .par_iter()
+        .map(|path| {
+            let mut modules = HashSet::new();
+            let ext = path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .unwrap_or_default();
+            if ext != "swift" {
+                return modules;
+            }
+            let rel = path.strip_prefix(root_path).unwrap_or(path.as_path());
+            let components = rel
+                .components()
+                .filter_map(|component| component.as_os_str().to_str())
+                .collect::<Vec<_>>();
+            for window in components.windows(2) {
+                if matches!(window[0], "Sources" | "Tests") && !window[1].is_empty() {
+                    modules.insert(window[1].to_string());
+                }
+            }
+            if let Some(parent) = rel
+                .parent()
+                .and_then(Path::file_name)
+                .and_then(|name| name.to_str())
+                && !parent.is_empty()
+                && parent != "Sources"
+                && parent != "Tests"
+            {
+                modules.insert(parent.to_string());
+            }
+            modules
+        })
+        .reduce(HashSet::new, |mut all, modules| {
+            all.extend(modules);
             all
         })
 }
