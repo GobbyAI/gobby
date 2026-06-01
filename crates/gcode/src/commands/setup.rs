@@ -3,7 +3,7 @@ use gobby_core::config::embedding_keys;
 use gobby_core::provisioning::{
     DEFAULT_EMBEDDING_VECTOR_DIM, DEFAULT_LM_STUDIO_API_BASE, DEFAULT_OLLAMA_API_BASE,
     DEFAULT_OLLAMA_MODEL, DockerProvisioningReport, DockerServiceOptions, EmbeddingBootstrap,
-    StandaloneConfig, compose_file_path, gcore_config_path, provision_docker_services,
+    EnsureHubOptions, StandaloneConfig, compose_file_path, ensure_hub, gcore_config_path,
 };
 use postgres::{Client, NoTls};
 use sha2::{Digest, Sha256};
@@ -175,14 +175,13 @@ fn resolve_or_provision_database(
         return db::resolve_database_url().map(|url| (url, None));
     }
 
-    match db::resolve_database_url() {
-        Ok(database_url) => Ok((database_url, None)),
-        Err(_) => {
-            let report = provision_docker_services(service_options)
-                .context("failed to provision standalone Docker services")?;
-            Ok((service_options.database_url(), Some(report)))
-        }
+    let home = db::gobby_home()?;
+    let mut options = EnsureHubOptions::new(home);
+    options.service_options = service_options.clone();
+    if let Ok(database_url) = db::resolve_database_url() {
+        options.candidate_database_urls.push(database_url);
     }
+    ensure_hub(&options)
 }
 
 fn apply_service_overrides(

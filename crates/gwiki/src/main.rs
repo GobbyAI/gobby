@@ -28,7 +28,7 @@ enum CliCommand {
     /// Initialize a wiki vault.
     Init,
     /// Create gwiki-owned derived storage.
-    Setup,
+    Setup(SetupArgs),
     /// Index markdown and source notes in the selected scope.
     Index,
     /// Collect recognized inbox drops into raw storage.
@@ -90,6 +90,51 @@ struct ScopeArgs {
     /// Use a named topic wiki scope; default is global.
     #[arg(long, global = true, value_name = "NAME")]
     topic: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct SetupArgs {
+    /// Resolve or provision the shared Gobby hub before creating gwiki storage.
+    #[arg(long)]
+    standalone: bool,
+
+    /// PostgreSQL URL to use for setup without persisting the flag value in output.
+    #[arg(long = "database-url", value_name = "DSN")]
+    database_url: Option<String>,
+
+    /// Do not provision Docker services when no reachable hub is configured.
+    #[arg(long)]
+    no_services: bool,
+
+    #[arg(long, value_name = "HOST")]
+    falkordb_host: Option<String>,
+
+    #[arg(long, value_name = "PORT")]
+    falkordb_port: Option<u16>,
+
+    #[arg(long, value_name = "PASSWORD")]
+    falkordb_password: Option<String>,
+
+    #[arg(long, value_name = "URL")]
+    qdrant_url: Option<String>,
+
+    #[arg(long, value_name = "PROVIDER")]
+    embedding_provider: Option<String>,
+
+    #[arg(long, value_name = "URL")]
+    embedding_api_base: Option<String>,
+
+    #[arg(long, value_name = "MODEL")]
+    embedding_model: Option<String>,
+
+    #[arg(long, value_name = "PREFIX")]
+    embedding_query_prefix: Option<String>,
+
+    #[arg(long, value_name = "DIM")]
+    embedding_vector_dim: Option<usize>,
+
+    #[arg(long, value_name = "KEY")]
+    embedding_api_key: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -220,7 +265,10 @@ fn main() -> ExitCode {
 fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Command, WikiError> {
     match command {
         CliCommand::Init => Ok(Command::Init { scope }),
-        CliCommand::Setup => Ok(Command::Setup { scope }),
+        CliCommand::Setup(args) => Ok(Command::Setup {
+            scope,
+            options: args.into(),
+        }),
         CliCommand::Index => Ok(Command::Index { scope }),
         CliCommand::Collect => Ok(Command::Collect { scope }),
         CliCommand::IngestFile {
@@ -383,5 +431,62 @@ mod tests {
             context.bindings.audio_translate.target_lang.as_deref(),
             Some("es")
         );
+    }
+
+    #[test]
+    fn setup_cli_flags_map_to_command_options() {
+        let command = command_from_cli(
+            CliCommand::Setup(SetupArgs {
+                standalone: true,
+                database_url: Some("postgresql://localhost/gwiki".to_string()),
+                no_services: true,
+                falkordb_host: Some("127.0.0.2".to_string()),
+                falkordb_port: Some(26379),
+                falkordb_password: Some("secret".to_string()),
+                qdrant_url: Some("http://localhost:7333".to_string()),
+                embedding_provider: Some("openai-compatible".to_string()),
+                embedding_api_base: Some("http://localhost:1234/v1".to_string()),
+                embedding_model: Some("embed-small".to_string()),
+                embedding_query_prefix: Some("query: ".to_string()),
+                embedding_vector_dim: Some(1024),
+                embedding_api_key: Some("api-key".to_string()),
+            }),
+            ScopeSelection::global(),
+        )
+        .expect("map setup command");
+
+        let Command::Setup { options, .. } = command else {
+            panic!("expected setup command");
+        };
+        assert!(options.standalone);
+        assert_eq!(
+            options.database_url.as_deref(),
+            Some("postgresql://localhost/gwiki")
+        );
+        assert!(options.no_services);
+        assert_eq!(options.falkordb_host.as_deref(), Some("127.0.0.2"));
+        assert_eq!(options.falkordb_port, Some(26379));
+        assert_eq!(options.qdrant_url.as_deref(), Some("http://localhost:7333"));
+        assert_eq!(options.embedding_vector_dim, Some(1024));
+    }
+}
+
+impl From<SetupArgs> for gobby_wiki::SetupOptions {
+    fn from(args: SetupArgs) -> Self {
+        Self {
+            standalone: args.standalone,
+            database_url: args.database_url,
+            no_services: args.no_services,
+            falkordb_host: args.falkordb_host,
+            falkordb_port: args.falkordb_port,
+            falkordb_password: args.falkordb_password,
+            qdrant_url: args.qdrant_url,
+            embedding_provider: args.embedding_provider,
+            embedding_api_base: args.embedding_api_base,
+            embedding_model: args.embedding_model,
+            embedding_query_prefix: args.embedding_query_prefix,
+            embedding_vector_dim: args.embedding_vector_dim,
+            embedding_api_key: args.embedding_api_key,
+        }
     }
 }

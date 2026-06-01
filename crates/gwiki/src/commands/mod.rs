@@ -17,7 +17,7 @@ use crate::{Command, CommandOutcome, CommandResult, ScopeIdentity, WikiError};
 pub(crate) fn run(command: Command) -> Result<CommandOutcome, WikiError> {
     match command {
         Command::Init { scope } => init::execute(scope),
-        Command::Setup { scope } => setup::execute(scope),
+        Command::Setup { scope, options } => setup::execute(scope, options),
         Command::Index { scope } => index::execute(scope),
         Command::Collect { scope } => collect::execute(scope),
         Command::IngestFile {

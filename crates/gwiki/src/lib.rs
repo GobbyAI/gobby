@@ -76,7 +76,7 @@ pub(crate) mod vision;
 
 pub use api::{
     Command, CommandOutcome, CommandResult, IngestFileOptions, ScopeIdentity, ScopeKind,
-    ScopeSelection,
+    ScopeSelection, SetupOptions,
 };
 pub use error::WikiError;
 pub use runner::{resolve_research_scope, run};
