@@ -27,6 +27,7 @@ from gobby.cli.install_setup import (
     _install_ghook_from_cargo_binstall,
     _install_ghook_from_cargo_install,
     _install_ghook_from_github,
+    _is_native_ghook_binary,
     _probe_ghook_version,
     _write_ghook_version_stamp,
 )
@@ -63,6 +64,14 @@ def _write_fake_ghook_binary(bin_dir: Path, name: str = "ghook") -> Path:
     bin_dir.mkdir(parents=True, exist_ok=True)
     binary = bin_dir / name
     binary.write_bytes(b"#!/bin/sh\necho fake-ghook\n")
+    return binary
+
+
+def _write_fake_native_ghook_binary(bin_dir: Path, name: str = "ghook") -> Path:
+    """Create a fake native-looking ghook binary in the install bin directory."""
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    binary = bin_dir / name
+    binary.write_bytes(b"\xcf\xfa\xed\xfe" + b"fake-ghook\n")
     return binary
 
 
@@ -106,6 +115,18 @@ class TestWriteGhookVersionStamp:
     def test_writes_version(self, tmp_path: Path) -> None:
         _write_ghook_version_stamp(tmp_path, "0.1.0")
         assert (tmp_path / _GHOOK_VERSION_STAMP).read_text().strip() == "0.1.0"
+
+
+class TestIsNativeGhookBinary:
+    def test_accepts_native_executable_magic(self, tmp_path: Path) -> None:
+        binary = _write_fake_native_ghook_binary(tmp_path)
+
+        assert _is_native_ghook_binary(binary) is True
+
+    def test_rejects_shell_wrapper(self, tmp_path: Path) -> None:
+        binary = _write_fake_ghook_binary(tmp_path)
+
+        assert _is_native_ghook_binary(binary) is False
 
 
 class TestInstallGhookFromGithub:
@@ -257,7 +278,7 @@ class TestInstallGhook:
     def test_already_up_to_date(self, tmp_path: Path, _patch_platform: None) -> None:
         bin_dir = tmp_path / ".gobby" / "bin"
         bin_dir.mkdir(parents=True, exist_ok=True)
-        (bin_dir / "ghook").write_bytes(b"\x00")
+        _write_fake_native_ghook_binary(bin_dir)
         pinned_version = MANAGED_BIN_VERSION_PINS["ghook"]
         (bin_dir / _GHOOK_VERSION_STAMP).write_text(f"{pinned_version}\n")
 
@@ -275,7 +296,7 @@ class TestInstallGhook:
     ) -> None:
         bin_dir = tmp_path / ".gobby" / "bin"
         bin_dir.mkdir(parents=True, exist_ok=True)
-        (bin_dir / "ghook").write_bytes(b"\x00")
+        _write_fake_native_ghook_binary(bin_dir)
         (bin_dir / _GHOOK_VERSION_STAMP).write_text("0.4.2\n")
 
         with (
@@ -287,6 +308,36 @@ class TestInstallGhook:
 
         assert result == {"installed": False, "skipped": True, "version": "0.4.2"}
         mock_github.assert_not_called()
+
+    def test_replaces_shell_wrapper_even_when_version_stamp_satisfies_pin(
+        self, tmp_path: Path, _patch_platform: None
+    ) -> None:
+        bin_dir = tmp_path / ".gobby" / "bin"
+        wrapper = _write_fake_ghook_binary(bin_dir)
+        pinned_version = MANAGED_BIN_VERSION_PINS["ghook"]
+        (bin_dir / _GHOOK_VERSION_STAMP).write_text(f"{pinned_version}\n")
+
+        def install_from_github_side_effect(*args: object, **kwargs: object) -> bool:
+            _write_fake_native_ghook_binary(bin_dir)
+            return True
+
+        with (
+            patch("gobby.cli.install_setup.Path.home", return_value=tmp_path),
+            patch("gobby.cli.install_setup._get_latest_ghook_version", return_value=pinned_version),
+            patch(
+                "gobby.cli.install_setup._install_ghook_from_github",
+                side_effect=install_from_github_side_effect,
+            ) as mock_github,
+            patch("gobby.cli.install_setup._probe_ghook_version", return_value=pinned_version),
+            patch("gobby.cli.install_setup._ensure_gobby_bin_on_path", return_value={}),
+        ):
+            result = _install_ghook()
+
+        assert wrapper.read_bytes().startswith(b"\xcf\xfa\xed\xfe")
+        assert result["installed"] is True
+        assert result["method"] == "github"
+        assert result["version"] == pinned_version
+        mock_github.assert_called_once()
 
     def test_version_override_skips_crates_lookup(
         self, tmp_path: Path, _patch_platform: None

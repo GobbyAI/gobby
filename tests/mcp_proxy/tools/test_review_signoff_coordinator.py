@@ -23,6 +23,7 @@ def _coordinated_review_fixture(
     temp_db: HubDatabase,
     *,
     name: str,
+    cross_project_coordinator: bool = False,
 ) -> tuple[InternalToolRegistry, Session, Session, Task]:
     from gobby.mcp_proxy.tools.tasks._context import RegistryContext
     from gobby.mcp_proxy.tools.tasks._stage_ops import create_stage_ops_registry
@@ -31,16 +32,25 @@ def _coordinated_review_fixture(
     from gobby.storage.sessions import SessionManager
     from gobby.storage.tasks import LocalTaskManager
 
-    project = LocalProjectManager(temp_db).create(
+    project_manager = LocalProjectManager(temp_db)
+    project = project_manager.create(
         f"review-signoff-{name}",
         repo_path=f"/tmp/review-signoff-{name}",
+    )
+    coordinator_project = (
+        project_manager.create(
+            f"review-signoff-coordinator-{name}",
+            repo_path=f"/tmp/review-signoff-coordinator-{name}",
+        )
+        if cross_project_coordinator
+        else project
     )
     sessions = SessionManager(temp_db)
     coordinator = sessions.register(
         external_id=f"coordinator-{name}",
         machine_id="machine-1",
         source="codex",
-        project_id=project.id,
+        project_id=coordinator_project.id,
     )
     reviewer = sessions.register(
         external_id=f"reviewer-{name}",
@@ -62,12 +72,20 @@ def _coordinated_review_fixture(
     task_manager.initialize_task_manifest(task.id, stage_names=["planning"])
     task_manager.stage_states.start_stage(task.id, "planning", by_session_id=reviewer.id)
     task_manager.submit_for_review(task.id, "planning", by_session_id=reviewer.id)
+    summary = {"coordinator_session_id": coordinator.id}
+    if cross_project_coordinator:
+        summary.update(
+            {
+                "build_project_id": project.id,
+                "coordinator_project_id": coordinator_project.id,
+            }
+        )
     BuildHistoryStorage(temp_db).record_run(
         project_id=project.id,
         root_task_id=root.id,
         input_ref=f"#{root.seq_num}",
         action="build",
-        summary={"coordinator_session_id": coordinator.id},
+        summary=summary,
     )
 
     ctx = RegistryContext(task_manager=task_manager, sync_manager=MagicMock())
@@ -164,6 +182,42 @@ async def test_approve_review_relays_signoff_summary_to_build_coordinator(
     assert metadata["signoff_message"] == "APPROVED: round 2, no blocking findings"
     assert metadata["task_id"] == task.id
     assert metadata["stage_name"] == "planning"
+
+
+@pytest.mark.asyncio
+async def test_approve_review_relays_authorized_cross_project_signoff_to_coordinator(
+    temp_db: HubDatabase,
+) -> None:
+    registry, coordinator, reviewer, task = _coordinated_review_fixture(
+        temp_db,
+        name="approve-cross-project",
+        cross_project_coordinator=True,
+    )
+
+    with (
+        session_context_for_test(reviewer.id),
+        patch("gobby.mcp_proxy.tools.tasks._stage_review._auto_link_session_commits"),
+        patch("gobby.mcp_proxy.tools.tasks._stage_review.notify_parent_on_task_state_change"),
+    ):
+        result = await registry.call(
+            "approve_review",
+            {
+                "task_id": task.id,
+                "stage_name": "planning",
+                "signoff_summary": "APPROVED: cross-project coordinator authorized",
+            },
+        )
+
+    assert "error" not in result
+    messages = await _wait_for_messages(temp_db, coordinator.id)
+    assert len(messages) == 1
+    message = messages[0]
+    assert message.from_session == reviewer.id
+    assert message.to_session == coordinator.id
+    assert message.content == "APPROVED: cross-project coordinator authorized"
+    metadata = json.loads(message.metadata_json or "{}")
+    assert metadata["build_run_id"]
+    assert metadata["task_id"] == task.id
 
 
 @pytest.mark.asyncio

@@ -7,6 +7,17 @@ from typing import Any
 
 from gobby.cli.install_setup_versions import managed_version_satisfies_pin
 
+_NATIVE_GHOOK_BINARY_MAGICS = (
+    b"\x7fELF",
+    b"MZ",
+    b"\xca\xfe\xba\xbe",
+    b"\xbe\xba\xfe\xca",
+    b"\xcf\xfa\xed\xfe",
+    b"\xfe\xed\xfa\xcf",
+    b"\xce\xfa\xed\xfe",
+    b"\xfe\xed\xfa\xce",
+)
+
 
 def get_latest_ghook_version(module: Any) -> str | None:
     """Query crates.io for latest ghook version."""
@@ -52,6 +63,16 @@ def write_ghook_version_stamp(module: Any, bin_dir: Path, version: str) -> None:
         if module.os.path.exists(tmp_path):
             module.os.unlink(tmp_path)
         raise
+
+
+def is_native_ghook_binary(module: Any, ghook_path: Path) -> bool:
+    """Return whether the ghook path looks like a native executable."""
+    try:
+        header = ghook_path.read_bytes()[:4]
+    except OSError as e:
+        module.logger.debug("ghook: could not inspect existing binary %s: %s", ghook_path, e)
+        return False
+    return any(header.startswith(magic) for magic in _NATIVE_GHOOK_BINARY_MAGICS)
 
 
 def ghook_installed_at_utc(module: Any) -> str:
@@ -269,7 +290,12 @@ def install_ghook(module: Any, force: bool = False) -> dict[str, Any]:
     method_override = module._get_ghook_method_override()
 
     if ghook_path.exists() and not force:
-        if managed_version_satisfies_pin("ghook", installed_version):
+        if not module._is_native_ghook_binary(ghook_path):
+            module.logger.warning(
+                "ghook: existing %s is not a native executable; reinstalling",
+                ghook_path,
+            )
+        elif managed_version_satisfies_pin("ghook", installed_version):
             return {"installed": False, "skipped": True, "version": installed_version}
 
     bin_dir.mkdir(parents=True, exist_ok=True)

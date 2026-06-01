@@ -553,6 +553,10 @@ def _write_ghook_version_stamp(bin_dir: Path, version: str) -> None:
     _ghook_impl.write_ghook_version_stamp(_module(), bin_dir, version)
 
 
+def _is_native_ghook_binary(ghook_path: Path) -> bool:
+    return _ghook_impl.is_native_ghook_binary(_module(), ghook_path)
+
+
 def _ghook_installed_at_utc() -> str:
     return _ghook_impl.ghook_installed_at_utc(_module())
 

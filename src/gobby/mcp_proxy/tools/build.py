@@ -10,6 +10,7 @@ from gobby.build.options import resolve_build_isolation
 from gobby.build.service import BuildOptions, build
 from gobby.config.build import Isolation, StageCapOverride
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.utils.session_context import get_current_session_id
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.tasks._context import RegistryContext
@@ -20,6 +21,21 @@ AUTOMATION_DISABLED_MESSAGE = (
     "automation_disabled: project build automation is paused. "
     "Run `gobby build resume` to re-enable build automation."
 )
+
+
+def _resolve_coordinator_session_ref(coordinator: str | None) -> str | None:
+    """Resolve MCP-only coordinator aliases before handing off to build service."""
+    if coordinator is None:
+        return None
+    ref = coordinator.strip()
+    if not ref:
+        return None
+    if ref != "current":
+        return ref
+    session_id = get_current_session_id()
+    if not session_id:
+        raise ValueError("coordinator=current requires an MCP session context")
+    return session_id
 
 
 def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
@@ -73,7 +89,7 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
             reset_expansion_output=reset_expansion_output,
             max_active_agents=max_active_agents,
             max_retries=max_retries,
-            coordinator_session_ref=coordinator,
+            coordinator_session_ref=_resolve_coordinator_session_ref(coordinator),
             project_explicit=project_id is not None,
         )
         result = await build(

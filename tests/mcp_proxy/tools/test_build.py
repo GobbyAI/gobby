@@ -9,6 +9,7 @@ import pytest
 
 from gobby.mcp_proxy.tools.tasks._ops_factory import create_task_ops_registry
 from gobby.storage.tasks import LocalTaskManager
+from gobby.utils.session_context import session_context_for_test
 
 pytestmark = pytest.mark.unit
 
@@ -142,6 +143,35 @@ async def test_build_task_tool_calls_shared_service_and_returns_result_dict(
     assert call.kwargs["db"] is temp_db
     assert call.kwargs["project_id"] == "project-1"
     assert "services" in call.kwargs
+
+
+@pytest.mark.asyncio
+async def test_build_task_tool_resolves_current_coordinator_from_mcp_session(
+    temp_db: Any,
+) -> None:
+    from gobby.build.service import BuildResult, DispatcherTickSummary
+
+    registry = _registry(temp_db)
+    build_task = registry.get_tool("build_task")
+    build_result = BuildResult(
+        task_id="task-1",
+        created=False,
+        initial_lifecycle="development",
+        applied_stages_skipped=[],
+        tick_dispatched=0,
+        dispatcher_tick=DispatcherTickSummary(),
+    )
+
+    with (
+        session_context_for_test("coordinator-session-uuid"),
+        patch(
+            "gobby.mcp_proxy.tools.build.build", new=AsyncMock(return_value=build_result)
+        ) as build,
+    ):
+        await build_task(input_ref="#42", coordinator="current", project_id="project-1")
+
+    opts = build.call_args.args[1]
+    assert opts.coordinator_session_ref == "coordinator-session-uuid"
 
 
 @pytest.mark.asyncio

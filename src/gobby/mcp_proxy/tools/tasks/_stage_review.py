@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 import psycopg
 
+from gobby.build.coordinator import summary_allows_cross_project_coordinator
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._dispatch_mutex_release import (
@@ -117,13 +118,25 @@ def _relay_signoff_to_build_coordinator_sync(
     coordinator = ctx.session_manager.get(coordinator_session_id)
     if coordinator is None:
         return
-    if getattr(coordinator, "project_id", None) != task.project_id:
+    build_project_id = str(task.project_id)
+    coordinator_project_id = getattr(coordinator, "project_id", None)
+    coordinator_project_id_str = str(coordinator_project_id) if coordinator_project_id else None
+    if (
+        coordinator_project_id_str != build_project_id
+        and not summary_allows_cross_project_coordinator(
+            run.summary,
+            coordinator_project_id=coordinator_project_id_str,
+            build_project_id=build_project_id,
+        )
+    ):
         logger.warning(
             "Skipping cross-project build coordinator signoff relay",
             extra={
                 "task_id": task_id,
                 "build_run_id": run.id,
                 "coordinator_session_id": coordinator_session_id,
+                "coordinator_project_id": coordinator_project_id,
+                "build_project_id": build_project_id,
             },
         )
         return
