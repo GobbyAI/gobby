@@ -14,6 +14,9 @@ fn gwiki(args: &[&str]) -> Output {
             let output = Command::new(env!("CARGO_BIN_EXE_gwiki"))
                 .args(["init", "--topic", "rust"])
                 .env("GOBBY_WIKI_HUB", &hub)
+                .env_remove("GWIKI_DATABASE_URL")
+                .env_remove("GOBBY_POSTGRES_DSN")
+                .env_remove("GCODE_DATABASE_URL")
                 .current_dir(&project)
                 .output()
                 .expect("gwiki topic init runs");
@@ -27,6 +30,9 @@ fn gwiki(args: &[&str]) -> Output {
             let output = Command::new(env!("CARGO_BIN_EXE_gwiki"))
                 .args(["init", "--project"])
                 .env("GOBBY_WIKI_HUB", &hub)
+                .env_remove("GWIKI_DATABASE_URL")
+                .env_remove("GOBBY_POSTGRES_DSN")
+                .env_remove("GCODE_DATABASE_URL")
                 .current_dir(&project)
                 .output()
                 .expect("gwiki project init runs");

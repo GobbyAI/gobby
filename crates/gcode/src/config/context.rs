@@ -499,8 +499,9 @@ pub(crate) fn resolve_daemon_url() -> Option<String> {
     }
 
     // Read from bootstrap.yaml
-    let bootstrap_path = db::bootstrap_path().ok()?;
-    if let Ok(contents) = std::fs::read_to_string(&bootstrap_path)
+    let bootstrap_path = db::bootstrap_path().ok();
+    if let Some(bootstrap_path) = bootstrap_path
+        && let Ok(contents) = std::fs::read_to_string(&bootstrap_path)
         && let Ok(yaml) = serde_yaml::from_str::<serde_yaml::Value>(&contents)
         && let Some(port) = yaml.get("daemon_port").and_then(|v| v.as_u64())
     {
@@ -508,11 +509,19 @@ pub(crate) fn resolve_daemon_url() -> Option<String> {
             .get("bind_host")
             .and_then(|v| v.as_str())
             .unwrap_or("localhost");
-        return Some(format!("http://{host}:{port}"));
+        return Some(format!("http://{}:{port}", client_daemon_host(host)));
     }
 
     // Well-known default (matches gsqz)
     Some("http://localhost:60887".to_string())
+}
+
+fn client_daemon_host(host: &str) -> String {
+    match host.trim() {
+        "" | "0.0.0.0" | "::" | "[::]" => "localhost".to_string(),
+        host if host.contains(':') && !host.starts_with('[') => format!("[{host}]"),
+        host => host.to_string(),
+    }
 }
 
 /// Resolve project ID from identity files or generate deterministically.

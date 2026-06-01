@@ -40,7 +40,7 @@ pub(crate) use read::row_to_graph_result;
 #[cfg(test)]
 use payload::{row_string_owned, row_to_projection_metadata, row_usize};
 #[cfg(test)]
-use read::{dedupe_limited_blast_rows, file_calls_query};
+use read::{blast_radius_file_import_query, dedupe_limited_blast_rows, file_calls_query};
 #[cfg(test)]
 use write::{
     cleanup_orphans_queries, clear_all_code_index_query, clear_project_query,

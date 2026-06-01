@@ -77,8 +77,7 @@ pub(crate) fn store_search_hits(
 
         let document_score = keyword_score(
             &format!(
-                "{}
-{}",
+                "{}\n{}",
                 document.title.as_deref().unwrap_or_default(),
                 document.body
             ),
@@ -113,8 +112,7 @@ pub(crate) fn store_search_hits(
             for chunk in chunks {
                 let chunk_score = keyword_score(
                     &format!(
-                        "{}
-{}",
+                        "{}\n{}",
                         chunk.heading.as_deref().unwrap_or_default(),
                         chunk.content
                     ),

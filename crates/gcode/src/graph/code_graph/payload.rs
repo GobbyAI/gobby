@@ -29,24 +29,22 @@ impl GraphPayload {
         if node.id.is_empty() {
             return;
         }
-        self.refresh_node_cache_if_needed();
+        if self.node_ids.is_empty() && !self.nodes.is_empty() {
+            self.refresh_node_cache();
+        }
         if !self.node_ids.insert(node.id.clone()) {
             return;
         }
         self.nodes.push(node);
     }
 
-    fn refresh_node_cache_if_needed(&mut self) {
-        let node_ids = self
+    fn refresh_node_cache(&mut self) {
+        self.node_ids = self
             .nodes
             .iter()
             .filter(|node| !node.id.is_empty())
             .map(|node| node.id.clone())
             .collect::<HashSet<_>>();
-        if self.node_ids == node_ids {
-            return;
-        }
-        self.node_ids = node_ids;
     }
 }
 

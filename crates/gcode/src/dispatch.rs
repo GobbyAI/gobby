@@ -149,9 +149,7 @@ fn run() -> anyhow::Result<()> {
     let ctx = config::Context::resolve(cli.project.as_deref(), cli.quiet)?;
 
     match cli.command {
-        Command::Init | Command::Setup { .. } | Command::Projects | Command::Prune { .. } => {
-            unreachable!()
-        }
+        Command::Init | Command::Setup { .. } | Command::Projects | Command::Prune { .. } => Ok(()),
         Command::Index {
             path,
             files,
@@ -186,7 +184,7 @@ fn run() -> anyhow::Result<()> {
             command: GraphCommand::Clear {
                 project_id: Some(_),
             },
-        } => unreachable!(),
+        } => Ok(()),
         Command::Graph {
             command: GraphCommand::Rebuild,
         } => {

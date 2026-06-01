@@ -7,33 +7,38 @@
 //! Sharp edge (dispatcher `:205`): `TMUX_PANE` is inherited by children
 //! spawned into *other* terminals (e.g. Ghostty), so emitting it when
 //! `TMUX` is not set would point `kill_agent` at the *parent's* pane. We
-//! emit `terminal_context` only when `TMUX` is present and `TMUX_PANE`
-//! matches the daemon's `^%\d+$` tmux-pane contract.
+//! always emit process context, but tmux fields are populated only when
+//! `TMUX` is present and `TMUX_PANE` matches the daemon's `^%\d+$` contract.
 
 use serde_json::{Value, json};
 use std::env;
 
 /// Build a terminal-context object for injection under
 /// `input_data.terminal_context`.
-pub fn capture() -> Option<Value> {
-    let tmux = env::var("TMUX").ok()?;
-    let tmux_pane = env::var("TMUX_PANE").ok()?;
-    build_context(&tmux, &tmux_pane)
+pub fn capture() -> Value {
+    build_context(
+        env::var("TMUX").ok().as_deref(),
+        env::var("TMUX_PANE").ok().as_deref(),
+    )
 }
 
-fn build_context(tmux: &str, tmux_pane: &str) -> Option<Value> {
-    if tmux.is_empty() || !is_valid_tmux_pane(tmux_pane) {
-        return None;
-    }
-
+fn build_context(tmux: Option<&str>, tmux_pane: Option<&str>) -> Value {
     let parent_pid = parent_pid_or_null();
     let tty = tty_name_or_null();
-    let tmux_socket_path = parse_tmux_socket_path(tmux)
+    let valid_tmux = tmux
+        .filter(|value| !value.is_empty())
+        .zip(tmux_pane.filter(|pane| is_valid_tmux_pane(pane)));
+    let tmux_pane = valid_tmux
+        .as_ref()
+        .map(|(_, pane)| Value::String((*pane).to_string()))
+        .unwrap_or(Value::Null);
+    let tmux_socket_path = valid_tmux
+        .and_then(|(tmux, _)| parse_tmux_socket_path(tmux))
         .map(Value::String)
         .unwrap_or(Value::Null);
     let term_program = env_or_null("TERM_PROGRAM");
 
-    Some(json!({
+    json!({
         "parent_pid": parent_pid,
         "tty": tty,
         "tmux_pane": tmux_pane,
@@ -47,7 +52,7 @@ fn build_context(tmux: &str, tmux_pane: &str) -> Option<Value> {
         // Carried so the daemon's SESSION_START handler can recognize and
         // drop registrations from daemon-spawned ACP subprocesses.
         "gobby_acp_child": env_or_null("GOBBY_ACP_CHILD"),
-    }))
+    })
 }
 
 /// Inject terminal context into `input_data` when:
@@ -57,9 +62,8 @@ fn build_context(tmux: &str, tmux_pane: &str) -> Option<Value> {
 pub fn inject(input_data: &mut Value) {
     if let Some(obj) = input_data.as_object_mut()
         && !obj.contains_key("terminal_context")
-        && let Some(ctx) = capture()
     {
-        obj.insert("terminal_context".into(), ctx);
+        obj.insert("terminal_context".into(), capture());
     }
 }
 
@@ -152,18 +156,25 @@ mod tests {
 
     #[test]
     fn build_context_sets_tmux_pane_verbatim() {
-        let ctx = build_context("/private/tmp/tmux-501/default,12345,0", "%42").unwrap();
+        let ctx = build_context(Some("/private/tmp/tmux-501/default,12345,0"), Some("%42"));
         assert_eq!(ctx["tmux_pane"], "%42");
         assert_eq!(ctx["tmux_socket_path"], "/private/tmp/tmux-501/default");
     }
 
     #[test]
-    fn build_context_rejects_missing_empty_or_invalid_pane() {
-        assert!(build_context("/tmp/tmux,1,0", "").is_none());
-        assert!(build_context("/tmp/tmux,1,0", "42").is_none());
-        assert!(build_context("/tmp/tmux,1,0", "%").is_none());
-        assert!(build_context("/tmp/tmux,1,0", "%abc").is_none());
-        assert!(build_context("", "%42").is_none());
+    fn build_context_nulls_missing_empty_or_invalid_tmux_fields() {
+        for (tmux, pane) in [
+            (Some("/tmp/tmux,1,0"), Some("")),
+            (Some("/tmp/tmux,1,0"), Some("42")),
+            (Some("/tmp/tmux,1,0"), Some("%")),
+            (Some("/tmp/tmux,1,0"), Some("%abc")),
+            (Some(""), Some("%42")),
+            (None, Some("%42")),
+        ] {
+            let ctx = build_context(tmux, pane);
+            assert_eq!(ctx["tmux_pane"], Value::Null);
+            assert_eq!(ctx["tmux_socket_path"], Value::Null);
+        }
     }
 
     #[test]
@@ -197,7 +208,7 @@ mod tests {
 
     #[test]
     fn capture_emits_expected_keys() {
-        let ctx = build_context("/tmp/tmux,1,0", "%9").unwrap();
+        let ctx = build_context(Some("/tmp/tmux,1,0"), Some("%9"));
         let obj = ctx.as_object().expect("object");
         for key in [
             "parent_pid",

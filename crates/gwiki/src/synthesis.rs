@@ -546,16 +546,24 @@ fn write_synthesized_page_atomically(path: &Path, contents: &[u8]) -> Result<(),
 }
 
 fn sync_parent_dir(path: &Path) -> Result<(), WikiError> {
-    let Some(parent) = path.parent() else {
-        return Ok(());
-    };
-    fs::File::open(parent)
-        .and_then(|dir| dir.sync_all())
-        .map_err(|error| WikiError::Io {
-            action: "sync synthesized page directory",
-            path: Some(parent.to_path_buf()),
-            source: error,
-        })
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Ok(())
+    }
+    #[cfg(unix)]
+    {
+        let Some(parent) = path.parent() else {
+            return Ok(());
+        };
+        fs::File::open(parent)
+            .and_then(|dir| dir.sync_all())
+            .map_err(|error| WikiError::Io {
+                action: "sync synthesized page directory",
+                path: Some(parent.to_path_buf()),
+                source: error,
+            })
+    }
 }
 
 fn temp_sibling_path(path: &Path) -> PathBuf {

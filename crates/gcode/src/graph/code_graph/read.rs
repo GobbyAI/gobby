@@ -213,7 +213,7 @@ pub(crate) fn get_imports_query(
 ) -> (String, HashMap<String, String>) {
     (
         "MATCH (f:CodeFile {path: $path, project: $project})-[:IMPORTS]->(m:CodeModule) \
-         RETURN m.name AS module_name"
+         RETURN m.name AS id, m.name AS module_name"
             .to_string(),
         typed_query::string_params(&[("project", project_id), ("path", file_path)]),
     )
@@ -422,7 +422,7 @@ fn blast_radius_file_call_query(
     )
 }
 
-fn blast_radius_file_import_query(
+pub(super) fn blast_radius_file_import_query(
     project_id: &str,
     file_path: &str,
     depth: usize,
@@ -433,7 +433,7 @@ fn blast_radius_file_import_query(
     (
         format!(
             "MATCH (tf:CodeFile {{path: $path, project: $project}})-[:IMPORTS]->(m:CodeModule {{project: $project}}) \
-             MATCH path = (importer:CodeFile {{project: $project}})-[:IMPORTS*1..{depth}]->(m) \
+             MATCH path = (importer:CodeFile {{project: $project}})-[:IMPORTS*1..{depth}]-(m) \
              WHERE importer.path <> $path \
              WITH importer, min(length(path)) AS distance \
              RETURN DISTINCT importer.path AS node_id, \

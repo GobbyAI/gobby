@@ -1,7 +1,8 @@
 //! Source manifest records for immutable raw wiki sources.
 
 use std::fmt;
-use std::fs;
+use std::fs::{self, File, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -260,30 +261,32 @@ impl SourceManifest {
         draft: SourceRecordParts,
         content_hash: String,
     ) -> Result<SourceRecord, WikiError> {
-        let mut manifest = Self::read(vault_root)?;
-        let canonical_location = canonicalize_location(&draft.location);
-        if let Some(existing) = manifest.entries.iter().find(|entry| {
-            entry.canonical_location == canonical_location && entry.content_hash == content_hash
-        }) {
-            return Ok(existing.clone());
-        }
+        with_manifest_lock(vault_root, || {
+            let mut manifest = Self::read(vault_root)?;
+            let canonical_location = canonicalize_location(&draft.location);
+            if let Some(existing) = manifest.entries.iter().find(|entry| {
+                entry.canonical_location == canonical_location && entry.content_hash == content_hash
+            }) {
+                return Ok(existing.clone());
+            }
 
-        let record = SourceRecord {
-            id: source_id(&canonical_location, &content_hash),
-            location: draft.location,
-            canonical_location,
-            kind: draft.kind,
-            fetched_at: draft.fetched_at,
-            content_hash,
-            title: draft.title,
-            citation: draft.citation,
-            license: draft.license,
-            ingestion_method: draft.ingestion_method,
-            compile_status: draft.compile_status,
-        };
-        manifest.entries.push(record.clone());
-        manifest.write(vault_root)?;
-        Ok(record)
+            let record = SourceRecord {
+                id: source_id(&canonical_location, &content_hash),
+                location: draft.location,
+                canonical_location,
+                kind: draft.kind,
+                fetched_at: draft.fetched_at,
+                content_hash,
+                title: draft.title,
+                citation: draft.citation,
+                license: draft.license,
+                ingestion_method: draft.ingestion_method,
+                compile_status: draft.compile_status,
+            };
+            manifest.entries.push(record.clone());
+            manifest.write(vault_root)?;
+            Ok(record)
+        })
     }
 
     pub fn write(&self, vault_root: &Path) -> Result<(), WikiError> {
@@ -303,16 +306,43 @@ impl SourceManifest {
             render_entry(entry, &mut index)?;
         }
 
-        fs::write(&index_path, index).map_err(|error| WikiError::Io {
-            action: "write raw source index",
-            path: Some(index_path),
-            source: error,
-        })
+        write_atomic(&index_path, index.as_bytes(), "write raw source index")
     }
 
     pub fn index_path(vault_root: &Path) -> PathBuf {
         vault_root.join("raw").join("INDEX.md")
     }
+}
+
+fn with_manifest_lock<T>(
+    vault_root: &Path,
+    action: impl FnOnce() -> Result<T, WikiError>,
+) -> Result<T, WikiError> {
+    let lock_path = vault_root.join(".gwiki").join("source-manifest.lock");
+    if let Some(parent) = lock_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| WikiError::Io {
+            action: "create source manifest lock directory",
+            path: Some(parent.to_path_buf()),
+            source: error,
+        })?;
+    }
+    let lock = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .map_err(|error| WikiError::Io {
+            action: "open source manifest lock",
+            path: Some(lock_path.clone()),
+            source: error,
+        })?;
+    fs4::FileExt::lock(&lock).map_err(|error| WikiError::Io {
+        action: "lock source manifest",
+        path: Some(lock_path),
+        source: error,
+    })?;
+    action()
 }
 
 struct SourceRecordParts {
@@ -437,6 +467,74 @@ fn existing_index_without_manifest(index_path: &Path) -> Result<String, WikiErro
     }
     index.push_str("\n\n");
     Ok(index)
+}
+
+fn write_atomic(path: &Path, contents: &[u8], action: &'static str) -> Result<(), WikiError> {
+    let temp_path = temp_sibling_path(path);
+    let mut file = File::create(&temp_path).map_err(|error| WikiError::Io {
+        action: "create raw source index temp file",
+        path: Some(temp_path.clone()),
+        source: error,
+    })?;
+    if let Err(error) = file.write_all(contents) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(WikiError::Io {
+            action,
+            path: Some(temp_path),
+            source: error,
+        });
+    }
+    if let Err(error) = file.sync_all() {
+        let _ = fs::remove_file(&temp_path);
+        return Err(WikiError::Io {
+            action: "sync raw source index temp file",
+            path: Some(temp_path),
+            source: error,
+        });
+    }
+    drop(file);
+    if let Err(error) = fs::rename(&temp_path, path) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(WikiError::Io {
+            action,
+            path: Some(path.to_path_buf()),
+            source: error,
+        });
+    }
+    sync_parent_dir(path)
+}
+
+fn temp_sibling_path(path: &Path) -> PathBuf {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("INDEX.md");
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    path.with_file_name(format!(".{file_name}.{}.{nanos}.tmp", std::process::id()))
+}
+
+fn sync_parent_dir(path: &Path) -> Result<(), WikiError> {
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Ok(())
+    }
+    #[cfg(unix)]
+    {
+        let Some(parent) = path.parent() else {
+            return Ok(());
+        };
+        File::open(parent)
+            .and_then(|dir| dir.sync_all())
+            .map_err(|error| WikiError::Io {
+                action: "sync raw source index directory",
+                path: Some(parent.to_path_buf()),
+                source: error,
+            })
+    }
 }
 
 fn lower_url_scheme_and_authority(location: &str) -> String {

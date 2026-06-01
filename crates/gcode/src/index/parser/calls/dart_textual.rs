@@ -2,7 +2,7 @@ use crate::index::semantic::SemanticCallResolver;
 use crate::models::CallRelation;
 
 use super::resolution::CallSyntaxKind;
-use super::text::{is_identifier_continue, is_textual_call_name_byte, should_ignore_call_name};
+use super::text::{is_textual_call_name_byte, should_ignore_call_name};
 use super::{CallExtractionContext, CallSite, materialize_call};
 
 pub(super) fn extract_textual_dart_calls(
@@ -27,7 +27,7 @@ pub(super) fn extract_textual_dart_calls(
             continue;
         }
 
-        for candidate in textual_call_candidates(&line, line_start_byte, row + 1, &['.']) {
+        for candidate in textual_call_candidates(&line, line_start_byte, row + 1, b".") {
             let candidate_line_byte = candidate.name_byte.saturating_sub(line_start_byte);
             if dart_textual_candidate_in_ignored_context(&line, candidate_line_byte, dart_state) {
                 continue;
@@ -75,7 +75,7 @@ fn textual_call_candidates(
     line: &str,
     line_start_byte: usize,
     line_number: usize,
-    separators: &[char],
+    separators: &[u8],
 ) -> Vec<CallSite> {
     let bytes = line.as_bytes();
     let mut candidates = Vec::new();
@@ -126,11 +126,11 @@ fn textual_call_candidates(
         while prefix_end > 0 && bytes[prefix_end - 1].is_ascii_whitespace() {
             prefix_end -= 1;
         }
-        if prefix_end > 0 && separators.contains(&(bytes[prefix_end - 1] as char)) {
+        if prefix_end > 0 && separators.contains(&bytes[prefix_end - 1]) {
             let mut qualifier_start = prefix_end - 1;
             while qualifier_start > 0 {
-                let ch = bytes[qualifier_start - 1] as char;
-                if is_identifier_continue(ch) || separators.contains(&ch) {
+                let byte = bytes[qualifier_start - 1];
+                if is_textual_qualifier_byte(byte) || separators.contains(&byte) {
                     qualifier_start -= 1;
                 } else {
                     break;
@@ -160,6 +160,10 @@ fn textual_call_candidates(
     }
 
     candidates
+}
+
+fn is_textual_qualifier_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$')
 }
 
 fn matching_angle_start(bytes: &[u8], close_idx: usize) -> Option<usize> {

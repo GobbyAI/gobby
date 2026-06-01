@@ -9,6 +9,7 @@ from requests import get as fetch
 def run():
     fetch()
 "#,
+        &[],
     );
 
     let call = parsed.calls.first().expect("call");

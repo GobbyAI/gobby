@@ -129,6 +129,21 @@ fn file_calls_query_keeps_node_and_metadata_source_paths_distinct() {
 }
 
 #[test]
+fn imports_query_returns_stable_id() {
+    let (query, _) = get_imports_query("project-1", "src/lib.rs");
+
+    assert!(query.contains("m.name AS id"), "{query}");
+    assert!(query.contains("m.name AS module_name"), "{query}");
+}
+
+#[test]
+fn file_import_blast_radius_traverses_import_edges_undirected() {
+    let (query, _) = blast_radius_file_import_query("project-1", "src/lib.rs", 2, 10);
+
+    assert!(query.contains("-[:IMPORTS*1..2]-(m)"), "{query}");
+}
+
+#[test]
 fn projection_metadata_uses_only_metadata_source_file_path() {
     let row = Row::from([
         ("provenance".to_string(), json!("EXTRACTED")),

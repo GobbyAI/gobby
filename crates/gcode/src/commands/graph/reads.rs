@@ -19,9 +19,21 @@ fn hint_for(ctx: &Context) -> Option<String> {
     }
 }
 
-fn print_graph_hint_text(ctx: &Context) {
-    if ctx.falkordb.is_none() {
-        eprintln!("Hint: {GOBBY_HINT}");
+fn hint_for_error(ctx: &Context, error: &anyhow::Error) -> Option<String> {
+    match error.downcast_ref::<code_graph::GraphReadError>() {
+        Some(code_graph::GraphReadError::NotConfigured) => hint_for(ctx),
+        Some(code_graph::GraphReadError::Unreachable { message }) => Some(format!(
+            "FalkorDB is configured but unreachable; graph results are unavailable: {message}"
+        )),
+        _ => hint_for(ctx),
+    }
+}
+
+fn print_graph_hint_text(ctx: &Context, error: Option<&anyhow::Error>) {
+    let hint = error.and_then(|err| hint_for_error(ctx, err));
+    let hint = hint.or_else(|| hint_for(ctx));
+    if let Some(hint) = hint {
+        eprintln!("Hint: {hint}");
     }
 }
 
@@ -40,6 +52,7 @@ fn empty_paged_response<T: Serialize>(
     offset: usize,
     limit: usize,
     format: Format,
+    error: Option<&anyhow::Error>,
 ) -> anyhow::Result<()> {
     match format {
         Format::Json => output::print_json(&PagedResponse::<T> {
@@ -48,12 +61,31 @@ fn empty_paged_response<T: Serialize>(
             offset,
             limit,
             results: vec![],
-            hint: hint_for(ctx),
+            hint: error
+                .and_then(|err| hint_for_error(ctx, err))
+                .or_else(|| hint_for(ctx)),
         }),
         Format::Text => {
-            print_graph_hint_text(ctx);
+            print_graph_hint_text(ctx, error);
             Ok(())
         }
+    }
+}
+
+fn graph_read_or_empty<T: Serialize>(
+    ctx: &Context,
+    offset: usize,
+    limit: usize,
+    format: Format,
+    read: impl FnOnce() -> anyhow::Result<T>,
+) -> anyhow::Result<Option<T>> {
+    match read() {
+        Ok(value) => Ok(Some(value)),
+        Err(err) if graph_read_unavailable(&err) => {
+            empty_paged_response::<T>(ctx, offset, limit, format, Some(&err))?;
+            Ok(None)
+        }
+        Err(err) => Err(err),
     }
 }
 
@@ -119,7 +151,7 @@ fn resolve_symbol_or_empty_response(
     match resolve_symbol(ctx, input)? {
         Some(symbol) => Ok(Some(symbol)),
         None => {
-            empty_paged_response::<crate::models::GraphResult>(ctx, offset, limit, format)?;
+            empty_paged_response::<crate::models::GraphResult>(ctx, offset, limit, format, None)?;
             Ok(None)
         }
     }
@@ -132,29 +164,28 @@ pub fn callers(
     offset: usize,
     format: Format,
 ) -> anyhow::Result<()> {
-    if let Err(err) = code_graph::require_graph_reads(ctx) {
-        if graph_read_unavailable(&err) {
-            return empty_paged_response::<crate::models::GraphResult>(ctx, offset, limit, format);
-        }
-        return Err(err);
-    }
+    let Some(()) = graph_read_or_empty::<()>(ctx, offset, limit, format, || {
+        code_graph::require_graph_reads(ctx)
+    })?
+    else {
+        return Ok(());
+    };
     let Some(symbol) = resolve_symbol_or_empty_response(ctx, symbol_name, offset, limit, format)?
     else {
         return Ok(());
     };
-    let total = match code_graph::count_callers(ctx, &symbol.id) {
-        Ok(total) => total,
-        Err(err) if graph_read_unavailable(&err) => {
-            return empty_paged_response::<crate::models::GraphResult>(ctx, offset, limit, format);
-        }
-        Err(err) => return Err(err),
+    let Some(total) = graph_read_or_empty::<usize>(ctx, offset, limit, format, || {
+        code_graph::count_callers(ctx, &symbol.id)
+    })?
+    else {
+        return Ok(());
     };
-    let results = match code_graph::find_callers(ctx, &symbol.id, offset, limit) {
-        Ok(results) => results,
-        Err(err) if graph_read_unavailable(&err) => {
-            return empty_paged_response::<crate::models::GraphResult>(ctx, offset, limit, format);
-        }
-        Err(err) => return Err(err),
+    let Some(results) =
+        graph_read_or_empty::<Vec<crate::models::GraphResult>>(ctx, offset, limit, format, || {
+            code_graph::find_callers(ctx, &symbol.id, offset, limit)
+        })?
+    else {
+        return Ok(());
     };
 
     match format {
@@ -169,7 +200,7 @@ pub fn callers(
         Format::Text => {
             if results.is_empty() && offset == 0 {
                 output::print_text(&format!("No callers found for '{}'", symbol.display_name))?;
-                print_graph_hint_text(ctx);
+                print_graph_hint_text(ctx, None);
             } else if results.is_empty() {
                 eprintln!("No callers at offset {offset} (total {total})");
             } else {
@@ -197,29 +228,28 @@ pub fn usages(
     offset: usize,
     format: Format,
 ) -> anyhow::Result<()> {
-    if let Err(err) = code_graph::require_graph_reads(ctx) {
-        if graph_read_unavailable(&err) {
-            return empty_paged_response::<crate::models::GraphResult>(ctx, offset, limit, format);
-        }
-        return Err(err);
-    }
+    let Some(()) = graph_read_or_empty::<()>(ctx, offset, limit, format, || {
+        code_graph::require_graph_reads(ctx)
+    })?
+    else {
+        return Ok(());
+    };
     let Some(symbol) = resolve_symbol_or_empty_response(ctx, symbol_name, offset, limit, format)?
     else {
         return Ok(());
     };
-    let total = match code_graph::count_usages(ctx, &symbol.id) {
-        Ok(total) => total,
-        Err(err) if graph_read_unavailable(&err) => {
-            return empty_paged_response::<crate::models::GraphResult>(ctx, offset, limit, format);
-        }
-        Err(err) => return Err(err),
+    let Some(total) = graph_read_or_empty::<usize>(ctx, offset, limit, format, || {
+        code_graph::count_usages(ctx, &symbol.id)
+    })?
+    else {
+        return Ok(());
     };
-    let results = match code_graph::find_usages(ctx, &symbol.id, offset, limit) {
-        Ok(results) => results,
-        Err(err) if graph_read_unavailable(&err) => {
-            return empty_paged_response::<crate::models::GraphResult>(ctx, offset, limit, format);
-        }
-        Err(err) => return Err(err),
+    let Some(results) =
+        graph_read_or_empty::<Vec<crate::models::GraphResult>>(ctx, offset, limit, format, || {
+            code_graph::find_usages(ctx, &symbol.id, offset, limit)
+        })?
+    else {
+        return Ok(());
     };
 
     match format {
@@ -234,7 +264,7 @@ pub fn usages(
         Format::Text => {
             if results.is_empty() && offset == 0 {
                 output::print_text(&format!("No usages found for '{}'", symbol.display_name))?;
-                print_graph_hint_text(ctx);
+                print_graph_hint_text(ctx, None);
             } else if results.is_empty() {
                 eprintln!("No usages at offset {offset} (total {total})");
             } else {
@@ -257,18 +287,17 @@ pub fn usages(
 }
 
 pub fn imports(ctx: &Context, file: &str, format: Format) -> anyhow::Result<()> {
-    if let Err(err) = code_graph::require_graph_reads(ctx) {
-        if graph_read_unavailable(&err) {
-            return empty_paged_response::<crate::models::GraphResult>(ctx, 0, 0, format);
-        }
-        return Err(err);
-    }
-    let results = match code_graph::get_imports(ctx, file) {
-        Ok(results) => results,
-        Err(err) if graph_read_unavailable(&err) => {
-            return empty_paged_response::<crate::models::GraphResult>(ctx, 0, 0, format);
-        }
-        Err(err) => return Err(err),
+    let Some(()) =
+        graph_read_or_empty::<()>(ctx, 0, 0, format, || code_graph::require_graph_reads(ctx))?
+    else {
+        return Ok(());
+    };
+    let Some(results) =
+        graph_read_or_empty::<Vec<crate::models::GraphResult>>(ctx, 0, 0, format, || {
+            code_graph::get_imports(ctx, file)
+        })?
+    else {
+        return Ok(());
     };
     let total = results.len();
     match format {
@@ -283,7 +312,7 @@ pub fn imports(ctx: &Context, file: &str, format: Format) -> anyhow::Result<()> 
         Format::Text => {
             if results.is_empty() {
                 output::print_text(&format!("No imports found for '{file}'"))?;
-                print_graph_hint_text(ctx);
+                print_graph_hint_text(ctx, None);
             } else {
                 for r in &results {
                     output::print_text(&r.name)?;
@@ -300,21 +329,20 @@ pub fn blast_radius(
     depth: usize,
     format: Format,
 ) -> anyhow::Result<()> {
-    if let Err(err) = code_graph::require_graph_reads(ctx) {
-        if graph_read_unavailable(&err) {
-            return empty_paged_response::<crate::models::GraphResult>(ctx, 0, 0, format);
-        }
-        return Err(err);
-    }
+    let Some(()) =
+        graph_read_or_empty::<()>(ctx, 0, 0, format, || code_graph::require_graph_reads(ctx))?
+    else {
+        return Ok(());
+    };
     let Some(symbol) = resolve_symbol_or_empty_response(ctx, target, 0, 0, format)? else {
         return Ok(());
     };
-    let results = match code_graph::blast_radius(ctx, &symbol.id, depth) {
-        Ok(results) => results,
-        Err(err) if graph_read_unavailable(&err) => {
-            return empty_paged_response::<crate::models::GraphResult>(ctx, 0, 0, format);
-        }
-        Err(err) => return Err(err),
+    let Some(results) =
+        graph_read_or_empty::<Vec<crate::models::GraphResult>>(ctx, 0, 0, format, || {
+            code_graph::blast_radius(ctx, &symbol.id, depth)
+        })?
+    else {
+        return Ok(());
     };
     let total = results.len();
     match format {
@@ -332,7 +360,7 @@ pub fn blast_radius(
                     "No blast radius found for '{}'",
                     symbol.display_name
                 ))?;
-                print_graph_hint_text(ctx);
+                print_graph_hint_text(ctx, None);
             } else {
                 output::print_text(&format_grouped_graph_results(&results, |r| {
                     let dist = r.distance.unwrap_or(0);

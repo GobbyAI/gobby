@@ -6,7 +6,7 @@ use gobby_core::provisioning::{
     DockerProvisioningReport, DockerServiceOptions, EnsureHubOptions, StandaloneConfig,
     compose_file_path, ensure_hub, gcore_config_path,
 };
-use gobby_core::setup::{SetupContext, StandaloneSetup};
+use gobby_core::setup::{SetupContext, StandaloneSetup, ValidationContext};
 use serde_json::json;
 
 use crate::error::setup_error_to_wiki_error;
@@ -52,7 +52,8 @@ pub(crate) fn execute(
         }
         let (database_url, service_report) =
             ensure_hub(&ensure_options).map_err(standalone_error)?;
-        let (created, skipped, failed) = run_gwiki_postgres_setup(&setup, &database_url)?;
+        let (created, skipped, failed) =
+            run_gwiki_standalone_postgres_setup(&setup, &database_url)?;
         write_gwiki_gcore_config(
             &home,
             &options,
@@ -64,7 +65,7 @@ pub(crate) fn execute(
         let status = setup_status(&created, &skipped, &failed);
         (status, created, skipped, failed)
     } else if let Some(database_url) = database_url_from_env() {
-        let (created, skipped, failed) = run_gwiki_postgres_setup(&setup, &database_url)?;
+        let (created, skipped, failed) = validate_gwiki_postgres_setup(&database_url)?;
         let status = setup_status(&created, &skipped, &failed);
         (status, created, skipped, failed)
     } else {
@@ -82,7 +83,7 @@ pub(crate) fn execute(
     ))
 }
 
-fn run_gwiki_postgres_setup(
+fn run_gwiki_standalone_postgres_setup(
     setup: &impl StandaloneSetup,
     database_url: &str,
 ) -> Result<PostgresSetupResult, WikiError> {
@@ -99,6 +100,29 @@ fn run_gwiki_postgres_setup(
     };
     let report = setup.create(&mut ctx).map_err(setup_error_to_wiki_error)?;
     Ok((report.created, report.skipped, report.failed))
+}
+
+fn validate_gwiki_postgres_setup(database_url: &str) -> Result<PostgresSetupResult, WikiError> {
+    let mut client = gobby_core::postgres::connect_readonly(database_url).map_err(|error| {
+        WikiError::Config {
+            detail: format!("failed to connect to PostgreSQL for gwiki setup validation: {error}"),
+        }
+    })?;
+    let mut ctx = ValidationContext {
+        pg: Some(&mut client),
+        falkor_config: None,
+        qdrant_config: None,
+    };
+    let report = crate::schema::validate_runtime_schema(&mut ctx);
+    Ok((
+        Vec::new(),
+        report.present,
+        report
+            .missing
+            .into_iter()
+            .map(|(name, issue)| (name, issue.guidance.problem))
+            .collect(),
+    ))
 }
 
 fn apply_service_overrides(options: &SetupOptions, service_options: &mut DockerServiceOptions) {

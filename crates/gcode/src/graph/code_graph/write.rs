@@ -26,6 +26,77 @@ const PROJECT_INDEXED_LABELS: &[&str] = &[
     "ExternalSymbol",
 ];
 static SYNC_TOKEN_COUNTER: AtomicU64 = AtomicU64::new(0);
+const ADD_IMPORTS_CYPHER: &str = "UNWIND $imports AS import
+         MERGE (f:CodeFile {path: import.source_file, project: $project})
+         MERGE (m:CodeModule {name: import.target_module, project: $project})
+         MERGE (f)-[r:IMPORTS]->(m)
+         SET r.provenance = $provenance,
+             r.confidence = $confidence,
+             r.source_system = $source_system,
+             r.source_file_path = import.source_file,
+             r.sync_token = $sync_token";
+const ADD_DEFINITIONS_CYPHER: &str = "UNWIND $symbols AS symbol
+         MERGE (f:CodeFile {path: $file_path, project: $project})
+         MERGE (s:CodeSymbol {id: symbol.id, project: $project})
+         SET s.name = symbol.name,
+             s.qualified_name = symbol.qualified_name,
+             s.kind = symbol.kind,
+             s.language = symbol.language,
+             s.file_path = $file_path,
+             s.line_start = symbol.line_start,
+             s.line_end = symbol.line_end,
+             s.updated_at = timestamp(),
+             s.sync_token = $sync_token
+         MERGE (f)-[r:DEFINES]->(s)
+         SET r.provenance = $provenance,
+             r.confidence = $confidence,
+             r.source_system = $source_system,
+             r.source_file_path = $file_path,
+             r.source_line = symbol.line_start,
+             r.source_symbol_id = symbol.id,
+             r.sync_token = $sync_token";
+const ADD_SYMBOL_CALLS_CYPHER: &str = "UNWIND $symbol_calls AS call
+         MERGE (caller:CodeSymbol {id: call.caller_id, project: $project})
+         MERGE (callee:CodeSymbol {id: call.target_id, project: $project})
+         ON CREATE SET callee.name = call.callee_name, callee.updated_at = timestamp()
+         MERGE (caller)-[r:CALLS {file: call.file_path, line: call.line}]->(callee)
+         SET r.provenance = $provenance,
+             r.confidence = $confidence,
+             r.source_system = $source_system,
+             r.source_file_path = call.file_path,
+             r.source_line = call.line,
+             r.source_symbol_id = call.caller_id,
+             r.sync_token = $sync_token";
+const ADD_EXTERNAL_CALLS_CYPHER: &str = "UNWIND $external_calls AS call
+         MERGE (caller:CodeSymbol {id: call.caller_id, project: $project})
+         MERGE (callee:ExternalSymbol {id: call.target_id, project: $project})
+         SET callee.name = call.callee_name,
+             callee.external_module = call.callee_module,
+             callee.module = call.callee_module,
+             callee.updated_at = timestamp(),
+             callee.sync_token = $sync_token
+         MERGE (caller)-[r:CALLS {file: call.file_path, line: call.line}]->(callee)
+         SET r.provenance = $provenance,
+             r.confidence = $confidence,
+             r.source_system = $source_system,
+             r.source_file_path = call.file_path,
+             r.source_line = call.line,
+             r.source_symbol_id = call.caller_id,
+             r.sync_token = $sync_token";
+const ADD_UNRESOLVED_CALLS_CYPHER: &str = "UNWIND $unresolved_calls AS call
+         MERGE (caller:CodeSymbol {id: call.caller_id, project: $project})
+         MERGE (callee:UnresolvedCallee {id: call.target_id, project: $project})
+         SET callee.name = call.callee_name,
+             callee.updated_at = timestamp(),
+             callee.sync_token = $sync_token
+         MERGE (caller)-[r:CALLS {file: call.file_path, line: call.line}]->(callee)
+         SET r.provenance = $provenance,
+             r.confidence = $confidence,
+             r.source_system = $source_system,
+             r.source_file_path = call.file_path,
+             r.source_line = call.line,
+             r.source_symbol_id = call.caller_id,
+             r.sync_token = $sync_token";
 
 pub struct CodeGraph<'a> {
     project_id: &'a str,
@@ -47,16 +118,30 @@ impl<'a> CodeGraph<'a> {
     ) -> anyhow::Result<usize> {
         self.ensure_project_indexes()?;
         let sync_token = new_sync_token(file_path);
-        self.ensure_file_node(file_path, definitions.len(), &sync_token)?;
-        let current_symbol_ids = definitions
+        let import_items = import_graph_items(file_path, imports);
+        let symbols = definition_graph_symbols(definitions);
+        let current_symbol_ids = symbols
             .iter()
             .map(|symbol| symbol.id.clone())
             .collect::<Vec<_>>();
-
-        let mut relationship_count = 0;
-        relationship_count += self.add_imports(file_path, imports, &sync_token)?;
-        relationship_count += self.add_definitions(file_path, definitions, &sync_token)?;
-        relationship_count += self.add_calls(file_path, calls, &sync_token)?;
+        let call_groups = partition_call_graph_items(self.project_id, file_path, calls);
+        let relationship_count = import_items.len()
+            + symbols.len()
+            + call_groups.symbol.len()
+            + call_groups.external.len()
+            + call_groups.unresolved.len();
+        execute_write_query(
+            self.client,
+            sync_file_mutation_query(SyncFileMutation {
+                project_id: self.project_id,
+                file_path,
+                symbol_count: definitions.len(),
+                imports: &import_items,
+                symbols: &symbols,
+                calls: &call_groups,
+                sync_token: &sync_token,
+            })?,
+        )?;
         self.delete_stale_file_graph(file_path, &current_symbol_ids, &sync_token)?;
         if cleanup_orphans {
             self.cleanup_orphans()?;
@@ -89,18 +174,7 @@ impl<'a> CodeGraph<'a> {
         imports: &[ImportRelation],
         sync_token: &str,
     ) -> anyhow::Result<usize> {
-        let items = imports
-            .iter()
-            .filter(|import| !import.module_name.is_empty())
-            .map(|import| ImportGraphItem {
-                source_file: if import.file_path.is_empty() {
-                    file_path.to_string()
-                } else {
-                    import.file_path.clone()
-                },
-                target_module: import.module_name.clone(),
-            })
-            .collect::<Vec<_>>();
+        let items = import_graph_items(file_path, imports);
         if items.is_empty() {
             return Ok(0);
         }
@@ -139,56 +213,28 @@ impl<'a> CodeGraph<'a> {
         calls: &[CallRelation],
         sync_token: &str,
     ) -> anyhow::Result<usize> {
-        let mut symbol_calls = Vec::new();
-        let mut external_calls = Vec::new();
-        let mut unresolved_calls = Vec::new();
-        for call in calls {
-            if call.caller_symbol_id.is_empty() {
-                continue;
-            }
-            let Some(target) = GraphCallTarget::from_call(self.project_id, call) else {
-                continue;
-            };
-            let call_file_path = if call.file_path.is_empty() {
-                file_path.to_string()
-            } else {
-                call.file_path.clone()
-            };
-            let item = CallGraphItem {
-                caller_id: call.caller_symbol_id.clone(),
-                target_id: target.id().to_string(),
-                callee_name: call.callee_name.clone(),
-                file_path: call_file_path,
-                line: call.line,
-                callee_module: target.module().map(str::to_string),
-            };
-            match target {
-                GraphCallTarget::Symbol { .. } => symbol_calls.push(item),
-                GraphCallTarget::External { .. } => external_calls.push(item),
-                GraphCallTarget::Unresolved { .. } => unresolved_calls.push(item),
-            }
-        }
+        let call_groups = partition_call_graph_items(self.project_id, file_path, calls);
 
         let mut written = 0;
-        if !symbol_calls.is_empty() {
-            written += symbol_calls.len();
+        if !call_groups.symbol.is_empty() {
+            written += call_groups.symbol.len();
             execute_write_query(
                 self.client,
-                add_symbol_calls_query(self.project_id, &symbol_calls, sync_token)?,
+                add_symbol_calls_query(self.project_id, &call_groups.symbol, sync_token)?,
             )?;
         }
-        if !external_calls.is_empty() {
-            written += external_calls.len();
+        if !call_groups.external.is_empty() {
+            written += call_groups.external.len();
             execute_write_query(
                 self.client,
-                add_external_calls_query(self.project_id, &external_calls, sync_token)?,
+                add_external_calls_query(self.project_id, &call_groups.external, sync_token)?,
             )?;
         }
-        if !unresolved_calls.is_empty() {
-            written += unresolved_calls.len();
+        if !call_groups.unresolved.is_empty() {
+            written += call_groups.unresolved.len();
             execute_write_query(
                 self.client,
-                add_unresolved_calls_query(self.project_id, &unresolved_calls, sync_token)?,
+                add_unresolved_calls_query(self.project_id, &call_groups.unresolved, sync_token)?,
             )?;
         }
         Ok(written)
@@ -363,6 +409,13 @@ struct CallGraphItem {
     callee_module: Option<String>,
 }
 
+#[derive(Debug, Clone, Default)]
+struct CallGraphItems {
+    symbol: Vec<CallGraphItem>,
+    external: Vec<CallGraphItem>,
+    unresolved: Vec<CallGraphItem>,
+}
+
 fn map_value(values: impl IntoIterator<Item = (&'static str, TypedValue)>) -> TypedValue {
     TypedValue::Map(
         values
@@ -370,6 +423,63 @@ fn map_value(values: impl IntoIterator<Item = (&'static str, TypedValue)>) -> Ty
             .map(|(key, value)| (key.to_string(), value))
             .collect::<BTreeMap<_, _>>(),
     )
+}
+
+fn import_graph_items(file_path: &str, imports: &[ImportRelation]) -> Vec<ImportGraphItem> {
+    imports
+        .iter()
+        .filter(|import| !import.module_name.is_empty())
+        .map(|import| ImportGraphItem {
+            source_file: if import.file_path.is_empty() {
+                file_path.to_string()
+            } else {
+                import.file_path.clone()
+            },
+            target_module: import.module_name.clone(),
+        })
+        .collect()
+}
+
+fn definition_graph_symbols(definitions: &[Symbol]) -> Vec<&Symbol> {
+    definitions
+        .iter()
+        .filter(|symbol| !symbol.id.is_empty() && !symbol.name.is_empty())
+        .collect()
+}
+
+fn partition_call_graph_items(
+    project_id: &str,
+    file_path: &str,
+    calls: &[CallRelation],
+) -> CallGraphItems {
+    let mut groups = CallGraphItems::default();
+    for call in calls {
+        if call.caller_symbol_id.is_empty() {
+            continue;
+        }
+        let Some(target) = GraphCallTarget::from_call(project_id, call) else {
+            continue;
+        };
+        let call_file_path = if call.file_path.is_empty() {
+            file_path.to_string()
+        } else {
+            call.file_path.clone()
+        };
+        let item = CallGraphItem {
+            caller_id: call.caller_symbol_id.clone(),
+            target_id: target.id().to_string(),
+            callee_name: call.callee_name.clone(),
+            file_path: call_file_path,
+            line: call.line,
+            callee_module: target.module().map(str::to_string),
+        };
+        match target {
+            GraphCallTarget::Symbol { .. } => groups.symbol.push(item),
+            GraphCallTarget::External { .. } => groups.external.push(item),
+            GraphCallTarget::Unresolved { .. } => groups.unresolved.push(item),
+        }
+    }
+    groups
 }
 
 fn metadata_params(sync_token: &str) -> Vec<(&'static str, TypedValue)> {
@@ -389,6 +499,61 @@ fn metadata_params(sync_token: &str) -> Vec<(&'static str, TypedValue)> {
 
 fn sync_token_param(sync_token: &str) -> (&'static str, TypedValue) {
     ("sync_token", TypedValue::String(sync_token.to_string()))
+}
+
+fn append_sync_segment(cypher: &mut String, segment: &str) {
+    if !cypher.is_empty() {
+        cypher.push_str("\nWITH DISTINCT 1 AS _\n");
+    }
+    cypher.push_str(segment);
+}
+
+struct SyncFileMutation<'a> {
+    project_id: &'a str,
+    file_path: &'a str,
+    symbol_count: usize,
+    imports: &'a [ImportGraphItem],
+    symbols: &'a [&'a Symbol],
+    calls: &'a CallGraphItems,
+    sync_token: &'a str,
+}
+
+fn sync_file_mutation_query(input: SyncFileMutation<'_>) -> anyhow::Result<TypedQuery> {
+    let mut cypher = String::new();
+    append_sync_segment(
+        &mut cypher,
+        "MERGE (f:CodeFile {path: $file_path, project: $project})
+         SET f.updated_at = timestamp(),
+             f.symbol_count = $symbol_count,
+             f.sync_token = $sync_token",
+    );
+    if !input.imports.is_empty() {
+        append_sync_segment(&mut cypher, ADD_IMPORTS_CYPHER);
+    }
+    if !input.symbols.is_empty() {
+        append_sync_segment(&mut cypher, ADD_DEFINITIONS_CYPHER);
+    }
+    if !input.calls.symbol.is_empty() {
+        append_sync_segment(&mut cypher, ADD_SYMBOL_CALLS_CYPHER);
+    }
+    if !input.calls.external.is_empty() {
+        append_sync_segment(&mut cypher, ADD_EXTERNAL_CALLS_CYPHER);
+    }
+    if !input.calls.unresolved.is_empty() {
+        append_sync_segment(&mut cypher, ADD_UNRESOLVED_CALLS_CYPHER);
+    }
+    let mut params = vec![
+        ("project", TypedValue::String(input.project_id.to_string())),
+        ("file_path", TypedValue::String(input.file_path.to_string())),
+        ("symbol_count", usize_value(input.symbol_count)),
+        ("imports", import_rows(input.imports)),
+        ("symbols", symbol_rows(input.symbols)),
+        ("symbol_calls", call_rows(&input.calls.symbol)),
+        ("external_calls", call_rows(&input.calls.external)),
+        ("unresolved_calls", call_rows(&input.calls.unresolved)),
+    ];
+    params.extend(metadata_params(input.sync_token));
+    typed_query(cypher, params)
 }
 
 pub(crate) fn ensure_file_node_query(
@@ -440,18 +605,7 @@ fn add_imports_query(
         ),
     ];
     params.extend(metadata_params(sync_token));
-    typed_query(
-        "UNWIND $imports AS import
-         MERGE (f:CodeFile {path: import.source_file, project: $project})
-         MERGE (m:CodeModule {name: import.target_module, project: $project})
-         MERGE (f)-[r:IMPORTS]->(m)
-         SET r.provenance = $provenance,
-             r.confidence = $confidence,
-             r.source_system = $source_system,
-             r.source_file_path = import.source_file,
-             r.sync_token = $sync_token",
-        params,
-    )
+    typed_query(ADD_IMPORTS_CYPHER, params)
 }
 
 fn add_definitions_query(
@@ -487,29 +641,7 @@ fn add_definitions_query(
         ),
     ];
     params.extend(metadata_params(sync_token));
-    typed_query(
-        "UNWIND $symbols AS symbol
-         MERGE (f:CodeFile {path: $file_path, project: $project})
-         MERGE (s:CodeSymbol {id: symbol.id, project: $project})
-         SET s.name = symbol.name,
-             s.qualified_name = symbol.qualified_name,
-             s.kind = symbol.kind,
-             s.language = symbol.language,
-             s.file_path = $file_path,
-             s.line_start = symbol.line_start,
-             s.line_end = symbol.line_end,
-             s.updated_at = timestamp(),
-             s.sync_token = $sync_token
-         MERGE (f)-[r:DEFINES]->(s)
-         SET r.provenance = $provenance,
-             r.confidence = $confidence,
-             r.source_system = $source_system,
-             r.source_file_path = $file_path,
-             r.source_line = symbol.line_start,
-             r.source_symbol_id = symbol.id,
-             r.sync_token = $sync_token",
-        params,
-    )
+    typed_query(ADD_DEFINITIONS_CYPHER, params)
 }
 
 enum GraphCallTarget {
@@ -581,6 +713,48 @@ fn call_rows(calls: &[CallGraphItem]) -> TypedValue {
     )
 }
 
+fn import_rows(imports: &[ImportGraphItem]) -> TypedValue {
+    TypedValue::List(
+        imports
+            .iter()
+            .map(|import| {
+                map_value([
+                    (
+                        "source_file",
+                        TypedValue::String(import.source_file.clone()),
+                    ),
+                    (
+                        "target_module",
+                        TypedValue::String(import.target_module.clone()),
+                    ),
+                ])
+            })
+            .collect(),
+    )
+}
+
+fn symbol_rows(symbols: &[&Symbol]) -> TypedValue {
+    TypedValue::List(
+        symbols
+            .iter()
+            .map(|symbol| {
+                map_value([
+                    ("id", TypedValue::String(symbol.id.clone())),
+                    ("name", TypedValue::String(symbol.name.clone())),
+                    (
+                        "qualified_name",
+                        TypedValue::String(symbol.qualified_name.clone()),
+                    ),
+                    ("kind", TypedValue::String(symbol.kind.clone())),
+                    ("language", TypedValue::String(symbol.language.clone())),
+                    ("line_start", usize_value(symbol.line_start)),
+                    ("line_end", usize_value(symbol.line_end)),
+                ])
+            })
+            .collect(),
+    )
+}
+
 fn add_symbol_calls_query(
     project_id: &str,
     calls: &[CallGraphItem],
@@ -588,24 +762,10 @@ fn add_symbol_calls_query(
 ) -> anyhow::Result<TypedQuery> {
     let mut params = vec![
         ("project", TypedValue::String(project_id.to_string())),
-        ("calls", call_rows(calls)),
+        ("symbol_calls", call_rows(calls)),
     ];
     params.extend(metadata_params(sync_token));
-    typed_query(
-        "UNWIND $calls AS call
-         MERGE (caller:CodeSymbol {id: call.caller_id, project: $project})
-         MERGE (callee:CodeSymbol {id: call.target_id, project: $project})
-         ON CREATE SET callee.name = call.callee_name, callee.updated_at = timestamp()
-         MERGE (caller)-[r:CALLS {file: call.file_path, line: call.line}]->(callee)
-         SET r.provenance = $provenance,
-             r.confidence = $confidence,
-             r.source_system = $source_system,
-             r.source_file_path = call.file_path,
-             r.source_line = call.line,
-             r.source_symbol_id = call.caller_id,
-             r.sync_token = $sync_token",
-        params,
-    )
+    typed_query(ADD_SYMBOL_CALLS_CYPHER, params)
 }
 
 fn add_external_calls_query(
@@ -615,28 +775,10 @@ fn add_external_calls_query(
 ) -> anyhow::Result<TypedQuery> {
     let mut params = vec![
         ("project", TypedValue::String(project_id.to_string())),
-        ("calls", call_rows(calls)),
+        ("external_calls", call_rows(calls)),
     ];
     params.extend(metadata_params(sync_token));
-    typed_query(
-        "UNWIND $calls AS call
-         MERGE (caller:CodeSymbol {id: call.caller_id, project: $project})
-         MERGE (callee:ExternalSymbol {id: call.target_id, project: $project})
-         SET callee.name = call.callee_name,
-             callee.external_module = call.callee_module,
-             callee.module = call.callee_module,
-             callee.updated_at = timestamp(),
-             callee.sync_token = $sync_token
-         MERGE (caller)-[r:CALLS {file: call.file_path, line: call.line}]->(callee)
-         SET r.provenance = $provenance,
-             r.confidence = $confidence,
-             r.source_system = $source_system,
-             r.source_file_path = call.file_path,
-             r.source_line = call.line,
-             r.source_symbol_id = call.caller_id,
-             r.sync_token = $sync_token",
-        params,
-    )
+    typed_query(ADD_EXTERNAL_CALLS_CYPHER, params)
 }
 
 fn add_unresolved_calls_query(
@@ -646,26 +788,10 @@ fn add_unresolved_calls_query(
 ) -> anyhow::Result<TypedQuery> {
     let mut params = vec![
         ("project", TypedValue::String(project_id.to_string())),
-        ("calls", call_rows(calls)),
+        ("unresolved_calls", call_rows(calls)),
     ];
     params.extend(metadata_params(sync_token));
-    typed_query(
-        "UNWIND $calls AS call
-         MERGE (caller:CodeSymbol {id: call.caller_id, project: $project})
-         MERGE (callee:UnresolvedCallee {id: call.target_id, project: $project})
-         SET callee.name = call.callee_name,
-             callee.updated_at = timestamp(),
-             callee.sync_token = $sync_token
-         MERGE (caller)-[r:CALLS {file: call.file_path, line: call.line}]->(callee)
-         SET r.provenance = $provenance,
-             r.confidence = $confidence,
-             r.source_system = $source_system,
-             r.source_file_path = call.file_path,
-             r.source_line = call.line,
-             r.source_symbol_id = call.caller_id,
-             r.sync_token = $sync_token",
-        params,
-    )
+    typed_query(ADD_UNRESOLVED_CALLS_CYPHER, params)
 }
 
 pub(crate) fn delete_file_graph_queries(
@@ -815,30 +941,28 @@ pub(crate) fn cleanup_orphans_queries(project_id: &str) -> anyhow::Result<Vec<Ty
     let project_param = || [("project", TypedValue::String(project_id.to_string()))];
     // Orphan cleanup runs after low-activity sync paths so failed writes leave
     // the previous projection available.
-    Ok(vec![
-        typed_query(
-            "MATCH (m:CodeModule {project: $project})
+    cleanup_orphans_cypher_segments()
+        .into_iter()
+        .map(|cypher| typed_query(cypher, project_param()))
+        .collect()
+}
+
+fn cleanup_orphans_cypher_segments() -> [&'static str; 3] {
+    [
+        "MATCH (m:CodeModule {project: $project})
              WHERE NOT (:CodeFile {project: $project})-[:IMPORTS]->(m)
              DETACH DELETE m",
-            project_param(),
-        )?,
-        typed_query(
-            "MATCH (n {project: $project})
+        "MATCH (n {project: $project})
              WHERE (n:UnresolvedCallee OR n:ExternalSymbol)
                AND NOT ({project: $project})-[:CALLS]->(n)
              DETACH DELETE n",
-            project_param(),
-        )?,
-        typed_query(
-            "MATCH (s:CodeSymbol {project: $project})
+        "MATCH (s:CodeSymbol {project: $project})
              WHERE s.file_path IS NULL
                AND NOT (:CodeFile {project: $project})-[:DEFINES]->(s)
                AND NOT ({project: $project})-[:CALLS]->(s)
                AND NOT (s)-[:CALLS]->({project: $project})
              DETACH DELETE s",
-            project_param(),
-        )?,
-    ])
+    ]
 }
 
 pub(crate) fn clear_project_query(project_id: &str) -> anyhow::Result<TypedQuery> {

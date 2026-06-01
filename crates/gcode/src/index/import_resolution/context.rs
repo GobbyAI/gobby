@@ -263,27 +263,54 @@ pub(super) fn load_go_module_path(root_path: &Path) -> Option<String> {
 }
 
 pub(super) fn load_rust_external_crates(root_path: &Path) -> HashSet<String> {
-    let Ok(contents) = std::fs::read_to_string(root_path.join("Cargo.toml")) else {
-        return HashSet::new();
-    };
-    let Ok(cargo_toml) = toml::from_str::<toml::Table>(&contents) else {
-        return HashSet::new();
-    };
     let mut crates = HashSet::new();
+    for manifest in rust_manifest_paths(root_path) {
+        let Ok(contents) = std::fs::read_to_string(manifest) else {
+            continue;
+        };
+        let Ok(cargo_toml) = toml::from_str::<toml::Table>(&contents) else {
+            continue;
+        };
 
-    for section in ["dependencies", "dev-dependencies", "build-dependencies"] {
-        collect_rust_dependency_keys(cargo_toml.get(section), &mut crates);
-    }
+        for section in ["dependencies", "dev-dependencies", "build-dependencies"] {
+            collect_rust_dependency_keys(cargo_toml.get(section), &mut crates);
+        }
 
-    if let Some(targets) = cargo_toml.get("target").and_then(toml::Value::as_table) {
-        for target in targets.values() {
-            for section in ["dependencies", "dev-dependencies", "build-dependencies"] {
-                collect_rust_dependency_keys(target.get(section), &mut crates);
+        if let Some(targets) = cargo_toml.get("target").and_then(toml::Value::as_table) {
+            for target in targets.values() {
+                for section in ["dependencies", "dev-dependencies", "build-dependencies"] {
+                    collect_rust_dependency_keys(target.get(section), &mut crates);
+                }
             }
         }
     }
 
     crates
+}
+
+fn rust_manifest_paths(root_path: &Path) -> Vec<PathBuf> {
+    let root_manifest = root_path.join("Cargo.toml");
+    let mut manifests = vec![root_manifest.clone()];
+    let Ok(contents) = std::fs::read_to_string(&root_manifest) else {
+        return manifests;
+    };
+    let Ok(cargo_toml) = toml::from_str::<toml::Table>(&contents) else {
+        return manifests;
+    };
+    let Some(members) = cargo_toml
+        .get("workspace")
+        .and_then(|workspace| workspace.get("members"))
+        .and_then(toml::Value::as_array)
+    else {
+        return manifests;
+    };
+    for member in members.iter().filter_map(toml::Value::as_str) {
+        if member.contains('*') {
+            continue;
+        }
+        manifests.push(root_path.join(member).join("Cargo.toml"));
+    }
+    manifests
 }
 
 pub(super) fn load_rust_self_crate_name(root_path: &Path) -> Option<String> {

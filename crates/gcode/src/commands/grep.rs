@@ -6,6 +6,7 @@ use postgres::types::ToSql;
 use regex::Regex;
 use serde::Serialize;
 
+use crate::commands::scope;
 use crate::config::{Context, ProjectIndexScope};
 use crate::db;
 use crate::output::{self, Format};
@@ -173,8 +174,20 @@ fn load_indexed_chunks(
             conn.query(&sql, &params)?
         }
     };
+    let mut valid_paths = BTreeMap::<String, bool>::new();
     for row in rows {
         let file_path: String = row.try_get("file_path")?;
+        let is_valid = match valid_paths.get(&file_path) {
+            Some(is_valid) => *is_valid,
+            None => {
+                let is_valid = scope::current_indexed_path_is_valid(conn, ctx, &file_path);
+                valid_paths.insert(file_path.clone(), is_valid);
+                is_valid
+            }
+        };
+        if !is_valid {
+            continue;
+        }
         let line_start = i64_to_usize(row.try_get("line_start")?, "line_start")?;
         chunks.push(IndexedContentChunk {
             file_path,

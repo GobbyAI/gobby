@@ -1,3 +1,6 @@
+// A 500 MB ceiling keeps video/audio/PDF inbox imports usable while preventing
+// accidental multi-GB reads from exhausting memory before media-specific
+// ingestion can stream or degrade the file.
 const DEFAULT_MAX_INBOX_ITEM_BYTES: u64 = 500_000_000;
 
 pub(crate) fn database_url_from_env() -> Option<String> {

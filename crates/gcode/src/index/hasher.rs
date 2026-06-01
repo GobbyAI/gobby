@@ -46,4 +46,14 @@ mod tests {
         assert!(source.contains(&delegate));
         assert!(!source.contains(&local_buffer));
     }
+
+    #[test]
+    fn content_hash_delegates_to_gobby_core() {
+        let source = b"hash me from memory\n";
+
+        assert_eq!(
+            content_hash(source),
+            gobby_core::indexing::content_hash(source)
+        );
+    }
 }

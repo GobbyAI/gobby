@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use super::context::escape_like;
+use super::context::resolve_daemon_url;
 use super::context::resolve_project_id;
 use super::services::{
     resolve_code_vector_settings_from_values, resolve_embedding_config_from_values,
@@ -146,6 +147,47 @@ fn adapter_env_precedence_and_json_decode() {
 #[test]
 fn project_name_like_lookup_escapes_wildcards() {
     assert_eq!(escape_like(r"api\_%"), r"api\\\_\%");
+}
+
+#[test]
+#[serial_test::serial]
+fn daemon_url_falls_back_when_bootstrap_path_is_unavailable() {
+    temp_env::with_vars(
+        [
+            ("GOBBY_PORT", None::<&str>),
+            ("GOBBY_HOME", Some("/dev/null/not-a-directory")),
+        ],
+        || {
+            assert_eq!(
+                resolve_daemon_url().as_deref(),
+                Some("http://localhost:60887")
+            );
+        },
+    );
+}
+
+#[test]
+#[serial_test::serial]
+fn daemon_url_normalizes_wildcard_bootstrap_bind_host() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        temp.path().join("bootstrap.yaml"),
+        "daemon_port: 61234\nbind_host: 0.0.0.0\n",
+    )
+    .expect("write bootstrap");
+
+    temp_env::with_vars(
+        [
+            ("GOBBY_PORT", None::<&str>),
+            ("GOBBY_HOME", Some(temp.path().to_str().expect("utf8 path"))),
+        ],
+        || {
+            assert_eq!(
+                resolve_daemon_url().as_deref(),
+                Some("http://localhost:61234")
+            );
+        },
+    );
 }
 
 #[test]

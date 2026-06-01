@@ -65,6 +65,11 @@ impl EventMonitor {
             action: "flush session event log",
             path: Some(self.path.clone()),
             source: error,
+        })?;
+        file.sync_all().map_err(|error| WikiError::Io {
+            action: "sync session event log",
+            path: Some(self.path.clone()),
+            source: error,
         })
     }
 }

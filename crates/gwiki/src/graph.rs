@@ -9,6 +9,7 @@ pub const WIKI_TARGET_LABEL: &str = "WikiTarget";
 pub const WIKI_LINKS_TO_REL: &str = "WIKI_LINKS_TO";
 pub const MENTIONS_TARGET_REL: &str = "MENTIONS_TARGET";
 pub const SUPPORTS_REL: &str = "SUPPORTS";
+const BACKWARD_LINK_SCORE: f64 = 0.8;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WikiGraphDocument {
@@ -260,7 +261,7 @@ impl MemoryWikiGraph {
                 let candidate = if &link.source_path == seed_path {
                     Some((target_path, seed_score))
                 } else if target_path == seed_path {
-                    Some((&link.source_path, seed_score * 0.8))
+                    Some((&link.source_path, seed_score * BACKWARD_LINK_SCORE))
                 } else {
                     None
                 };

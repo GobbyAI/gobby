@@ -5,7 +5,7 @@
 //!
 //! Source: src/gobby/code_index/searcher.py (_graph_boost method)
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use crate::config::Context;
 use crate::db;
@@ -61,8 +61,7 @@ pub fn graph_expand(ctx: &Context, seed_ids: &[String]) -> Vec<String> {
     let mut ids = Vec::new();
     let mut seen = HashSet::new();
     let mut conn = db::connect_readonly(&ctx.database_url).ok();
-    let mut by_project: std::collections::HashMap<String, Vec<String>> =
-        std::collections::HashMap::new();
+    let mut by_project: BTreeMap<String, Vec<String>> = BTreeMap::new();
     if let Some(conn) = conn.as_mut()
         && let Ok(symbols) = visibility::visible_symbols_by_ids(conn, ctx, seed_ids)
     {

@@ -85,7 +85,7 @@ pub fn diagnose(cli: &str, hook_type: &str) -> DiagnoseOutput {
     let (source, critical, terminal_context_enabled, terminal_context_preview) = match cfg {
         Some(c) => {
             let critical = c.critical_hooks.contains(hook_type);
-            let preview = crate::terminal_context::capture();
+            let preview = Some(crate::terminal_context::capture());
             (Some(c.source.to_string()), critical, true, preview)
         }
         None => (None, false, false, None),

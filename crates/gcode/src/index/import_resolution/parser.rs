@@ -951,10 +951,11 @@ fn parse_dart_import_statement(
     if !normalized.starts_with("import ") || !is_external_dart_uri(&uri, import_context) {
         return;
     }
-    let Some(alias) = dart_import_alias(&normalized) else {
-        return;
-    };
-    extracted.bindings.member.insert(alias, uri);
+    if let Some(alias) = dart_import_alias(&normalized) {
+        extracted.bindings.member.insert(alias, uri);
+    } else {
+        extracted.bindings.bare_wildcard_modules.push(uri);
+    }
 }
 
 fn parse_elixir_import_statement(
@@ -981,7 +982,7 @@ fn parse_elixir_import_statement(
         },
     });
 
-    if !matches!(keyword, "alias" | "require") || !is_elixir_alias_path(target) {
+    if !matches!(keyword, "alias" | "import" | "require") || !is_elixir_alias_path(target) {
         return;
     }
     let Some(root) = target.split('.').next() else {
@@ -998,6 +999,11 @@ fn parse_elixir_import_statement(
         let alias = elixir_alias_as(&normalized)
             .unwrap_or_else(|| target.rsplit('.').next().unwrap_or(target).to_string());
         extracted.bindings.member.insert(alias, target.to_string());
+    } else if keyword == "import" {
+        extracted
+            .bindings
+            .bare_wildcard_modules
+            .push(target.to_string());
     }
     extracted.bindings.external_roots.insert(
         root.to_string(),

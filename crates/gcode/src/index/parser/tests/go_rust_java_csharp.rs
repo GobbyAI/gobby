@@ -165,6 +165,40 @@ serde_json = "1"
 }
 
 #[test]
+fn classifies_rust_workspace_member_dependencies() {
+    let parsed = parse_rust(
+        r#"
+use serde_json::from_str;
+
+fn run() {
+    from_str("{}");
+}
+"#,
+        &[
+            (
+                "Cargo.toml",
+                r#"[workspace]
+members = ["crates/app"]
+"#,
+            ),
+            (
+                "crates/app/Cargo.toml",
+                r#"[package]
+name = "app"
+
+[dependencies]
+serde_json = "1"
+"#,
+            ),
+        ],
+    );
+
+    let call = parsed.calls.first().expect("from_str call");
+    assert_eq!(call.callee_target_kind.as_str(), "external");
+    assert_eq!(call.callee_external_module.as_deref(), Some("serde_json"));
+}
+
+#[test]
 fn leaves_rust_receiver_method_calls_unresolved() {
     let parsed = parse_rust(
         r#"

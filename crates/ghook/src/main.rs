@@ -602,7 +602,7 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_envelope_omits_terminal_context_for_missing_or_invalid_tmux_pane() {
+    fn dispatch_envelope_nulls_tmux_fields_for_missing_or_invalid_tmux_pane() {
         for pane in [None, Some(""), Some("17"), Some("%"), Some("%x")] {
             with_tmux_env(Some("/tmp/tmux-501/default,12345,0"), pane, || {
                 let cfg = CliConfig::for_dispatch("gemini");
@@ -613,7 +613,14 @@ mod tests {
                     None,
                 );
 
-                assert!(envelope.input_data.get("terminal_context").is_none());
+                assert_eq!(
+                    envelope.input_data["terminal_context"]["tmux_pane"],
+                    json!(null)
+                );
+                assert_eq!(
+                    envelope.input_data["terminal_context"]["tmux_socket_path"],
+                    json!(null)
+                );
             });
         }
 
@@ -626,7 +633,14 @@ mod tests {
                 None,
             );
 
-            assert!(envelope.input_data.get("terminal_context").is_none());
+            assert_eq!(
+                envelope.input_data["terminal_context"]["tmux_pane"],
+                json!(null)
+            );
+            assert_eq!(
+                envelope.input_data["terminal_context"]["tmux_socket_path"],
+                json!(null)
+            );
         });
     }
 

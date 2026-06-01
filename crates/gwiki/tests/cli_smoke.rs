@@ -191,6 +191,9 @@ fn configured_postgres_index_feeds_configured_search_when_test_database_is_avail
         .ok()
         .or_else(|| std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL").ok())
     else {
+        eprintln!(
+            "skipping configured_postgres_index_feeds_configured_search_when_test_database_is_available: GWIKI_POSTGRES_TEST_DATABASE_URL/GCODE_POSTGRES_TEST_DATABASE_URL is not set"
+        );
         return;
     };
 
@@ -210,7 +213,17 @@ fn configured_postgres_index_feeds_configured_search_when_test_database_is_avail
         &hub,
         tmp.path(),
         &database_url,
-        &["--format", "json", "setup", "--topic", &topic],
+        &[
+            "--format",
+            "json",
+            "setup",
+            "--standalone",
+            "--no-services",
+            "--database-url",
+            &database_url,
+            "--topic",
+            &topic,
+        ],
     );
     assert_success(&setup, "setup");
 

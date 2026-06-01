@@ -16,23 +16,27 @@ impl ProjectCleanup {
 
 impl Drop for ProjectCleanup {
     fn drop(&mut self) {
-        let mut conn = match Client::connect(&self.database_url, NoTls) {
-            Ok(conn) => conn,
-            Err(err) => {
-                eprintln!(
-                    "ProjectCleanup Drop::drop: Client::connect failed for project {}: {err}",
-                    self.project_id
-                );
-                return;
-            }
-        };
+        let database_url = self.database_url.clone();
+        let project_id = self.project_id.clone();
+        let _ = std::thread::Builder::new()
+            .name("gcode-test-project-cleanup".to_string())
+            .spawn(move || {
+                let mut conn = match Client::connect(&database_url, NoTls) {
+                    Ok(conn) => conn,
+                    Err(err) => {
+                        eprintln!(
+                            "ProjectCleanup async cleanup: Client::connect failed for project {project_id}: {err}",
+                        );
+                        return;
+                    }
+                };
 
-        if let Err(err) = cleanup_project(&mut conn, &self.project_id) {
-            eprintln!(
-                "ProjectCleanup Drop::drop: cleanup_project failed for project {}: {err}",
-                self.project_id
-            );
-        }
+                if let Err(err) = cleanup_project(&mut conn, &project_id) {
+                    eprintln!(
+                        "ProjectCleanup async cleanup: cleanup_project failed for project {project_id}: {err}",
+                    );
+                }
+            });
     }
 }
 

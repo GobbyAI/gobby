@@ -3,9 +3,8 @@ use postgres::Client;
 use crate::config::Context;
 
 use super::common::{
-    PgParam, SymbolFilters, compile_patterns, escape_like, param_refs, push_param,
-    push_path_filter, push_symbol_filters, push_visible_project_file_filter, query_count,
-    sanitize_pg_search_query,
+    PgParam, SymbolFilters, escape_like, param_refs, push_param, push_path_filter,
+    push_symbol_filters, push_visible_project_file_filter, query_count, sanitize_pg_search_query,
 };
 
 pub fn count_text(
@@ -226,33 +225,84 @@ fn count_visible_symbols_by_conditions(
 fn count_symbol_file_path_rows(
     conn: &mut Client,
     conditions: Vec<String>,
-    params: Vec<PgParam>,
+    mut params: Vec<PgParam>,
     paths: &[String],
 ) -> Result<usize, postgres::Error> {
-    let patterns = match compile_patterns(paths) {
-        Ok(patterns) => patterns,
-        Err(error) => {
-            log::warn!("invalid post-query count path filter: {error}");
-            return Ok(0);
-        }
-    };
-    let refs = param_refs(&params);
+    let mut conditions = conditions;
+    push_pg_regex_path_filter(&mut conditions, &mut params, "cs", paths);
     let sql = format!(
-        "SELECT cs.file_path
+        "SELECT COUNT(*)::BIGINT AS count
          FROM code_symbols cs
          JOIN code_indexed_files cf
            ON cf.project_id = cs.project_id AND cf.file_path = cs.file_path
          WHERE {}",
         conditions.join(" AND ")
     );
-    let rows = conn.query(&sql, &refs)?;
-    Ok(rows
+    query_count(conn, &sql, &params)
+}
+
+fn push_pg_regex_path_filter(
+    conditions: &mut Vec<String>,
+    params: &mut Vec<PgParam>,
+    alias: &str,
+    paths: &[String],
+) {
+    if paths.is_empty() {
+        return;
+    }
+    let regexes = paths
         .iter()
-        .filter_map(|row| row.try_get::<_, String>("file_path").ok())
-        .filter(|file_path| {
-            patterns.is_empty() || patterns.iter().any(|pattern| pattern.matches(file_path))
+        .filter_map(|path| match glob_to_pg_regex(path) {
+            Some(regex) => Some(regex),
+            None => {
+                log::warn!("omitting invalid post-query count path glob `{path}`");
+                None
+            }
         })
-        .count())
+        .collect::<Vec<_>>();
+    if regexes.is_empty() {
+        conditions.push("FALSE".to_string());
+        return;
+    }
+    let placeholder = push_param(params, regexes);
+    conditions.push(format!("{alias}.file_path ~ ANY({placeholder}::TEXT[])"));
+}
+
+fn glob_to_pg_regex(pattern: &str) -> Option<String> {
+    let mut regex = String::from("^");
+    let mut chars = pattern.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '*' => regex.push_str(".*"),
+            '?' => regex.push('.'),
+            '[' => {
+                regex.push('[');
+                if chars.peek() == Some(&'!') {
+                    chars.next();
+                    regex.push('^');
+                }
+                let mut closed = false;
+                for class_ch in chars.by_ref() {
+                    regex.push(class_ch);
+                    if class_ch == ']' {
+                        closed = true;
+                        break;
+                    }
+                }
+                if !closed {
+                    return None;
+                }
+            }
+            '\\' => regex.push_str("\\\\"),
+            '.' | '+' | '(' | ')' | '|' | '^' | '$' | '{' | '}' => {
+                regex.push('\\');
+                regex.push(ch);
+            }
+            ch => regex.push(ch),
+        }
+    }
+    regex.push('$');
+    Some(regex)
 }
 
 fn count_symbols_fts_visible(
@@ -393,5 +443,20 @@ pub fn count_content_visible(
     match count_content_bm25_visible(conn, &bm25_query, ctx, language, paths) {
         Ok(count) => count,
         Err(_) => count_content_like_visible(conn, query, ctx, language, paths),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::glob_to_pg_regex;
+
+    #[test]
+    fn glob_to_pg_regex_anchors_and_escapes_patterns() {
+        assert_eq!(glob_to_pg_regex("*.rs").as_deref(), Some("^.*\\.rs$"));
+        assert_eq!(
+            glob_to_pg_regex("src/foo?.[ch]").as_deref(),
+            Some("^src/foo.\\.[ch]$")
+        );
+        assert_eq!(glob_to_pg_regex("src/["), None);
     }
 }

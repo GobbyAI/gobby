@@ -177,13 +177,21 @@ fn binding_name_from_left_part(part: &str) -> Option<&str> {
 }
 
 fn declaration_without_assignment_contains(line: &str, name: &str) -> bool {
-    let Some(rest) = line
+    if let Some(rest) = line
         .strip_prefix("let ")
         .or_else(|| line.strip_prefix("const "))
         .or_else(|| line.strip_prefix("var "))
-        .or_else(|| line.strip_prefix("final "))
-        .or_else(|| line.strip_prefix("late "))
         .or_else(|| line.strip_prefix("val "))
+    {
+        return rest
+            .split([',', ';'])
+            .filter_map(binding_name_from_name_first_part)
+            .any(|binding_name| binding_name == name);
+    }
+
+    let Some(rest) = line
+        .strip_prefix("final ")
+        .or_else(|| line.strip_prefix("late "))
         .or_else(|| line.strip_prefix("auto "))
     else {
         return false;
@@ -193,9 +201,22 @@ fn declaration_without_assignment_contains(line: &str, name: &str) -> bool {
         .any(|binding_name| binding_name == name)
 }
 
+fn binding_name_from_name_first_part(part: &str) -> Option<&str> {
+    let part = part.trim();
+    let token = part.split_whitespace().next()?;
+    if token.contains(['.', '[', ']']) {
+        return None;
+    }
+    token
+        .split(':')
+        .next()
+        .map(trim_identifier_token)
+        .filter(|token| !token.is_empty())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::split_assignment;
+    use super::{declaration_without_assignment_contains, split_assignment};
 
     #[test]
     fn split_assignment_ignores_bitwise_compound_operators() {
@@ -207,5 +228,21 @@ mod tests {
             split_assignment("flags = READ | WRITE"),
             Some(("flags ", " READ | WRITE"))
         );
+    }
+
+    #[test]
+    fn name_first_declarations_use_declared_name() {
+        assert!(declaration_without_assignment_contains(
+            "var client http.Client",
+            "client"
+        ));
+        assert!(declaration_without_assignment_contains(
+            "val owner: User",
+            "owner"
+        ));
+        assert!(!declaration_without_assignment_contains(
+            "var client http.Client",
+            "Client"
+        ));
     }
 }

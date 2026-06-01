@@ -20,11 +20,7 @@ pub(crate) fn execute(
         .map(|artifact| artifact.path.display().to_string())
         .collect::<Vec<_>>()
         .join(", ");
-    let text = format!(
-        "Exported wiki artifacts
-Scope: {output_scope}
-Artifacts: {paths}"
-    );
+    let text = format!("Exported wiki artifacts\nScope: {output_scope}\nArtifacts: {paths}");
     Ok(super::scoped_outcome(
         "export",
         &output_scope,

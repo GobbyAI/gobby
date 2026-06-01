@@ -355,6 +355,34 @@ void run() {
 }
 
 #[test]
+fn classifies_unaliased_external_dart_import_bare_calls() {
+    let parsed = parse_dart(
+        r#"
+import 'package:http/http.dart';
+
+void run() {
+  Client();
+}
+"#,
+        &[(
+            "pubspec.yaml",
+            r#"
+name: app
+dependencies:
+  http: ^1.0.0
+"#,
+        )],
+    );
+
+    let call = parsed.calls.first().expect("Client call");
+    assert_eq!(call.callee_target_kind.as_str(), "external");
+    assert_eq!(
+        call.callee_external_module.as_deref(),
+        Some("package:http/http.dart")
+    );
+}
+
+#[test]
 fn classifies_external_elixir_remote_alias_and_required_calls() {
     let parsed = parse_elixir(
         r#"
@@ -440,4 +468,24 @@ end
             .iter()
             .all(|call| call.callee_target_kind.as_str() == "unresolved")
     );
+}
+
+#[test]
+fn classifies_external_elixir_imported_bare_calls() {
+    let parsed = parse_elixir(
+        r#"
+defmodule App.Sample do
+  import Jason
+
+  def run(body) do
+    decode!(body)
+  end
+end
+"#,
+        &[("mix.exs", "{:jason, \"~> 1.4\"}\n")],
+    );
+
+    let call = parsed.calls.first().expect("decode call");
+    assert_eq!(call.callee_target_kind.as_str(), "external");
+    assert_eq!(call.callee_external_module.as_deref(), Some("Jason"));
 }

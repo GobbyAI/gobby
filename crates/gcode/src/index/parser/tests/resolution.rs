@@ -40,6 +40,7 @@ def foo():
 def bar():
     foo()
 "#,
+        &[],
     );
 
     let foo = parsed
@@ -69,6 +70,7 @@ class Greeter:
     def render(self):
         pass
 "#,
+        &[],
     );
 
     let render = parsed
@@ -95,6 +97,7 @@ class A:
 def bar():
     foo()
 "#,
+        &[],
     );
 
     let call = parsed.calls.first().expect("call");
@@ -113,6 +116,7 @@ class B:
     def render(self):
         pass
 "#,
+        &[],
     );
 
     let call = parsed.calls.first().expect("call");

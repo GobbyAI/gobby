@@ -2,6 +2,8 @@ use std::collections::HashMap;
 
 use crate::graph::typed_query;
 
+const CODE_EDGE_REL_TYPES: &str = "['DEFINES', 'IMPORTS', 'CALLS']";
+
 pub(super) fn report_node_type_case(alias: &str) -> String {
     format!(
         "CASE \
@@ -37,10 +39,11 @@ pub(super) fn report_node_counts_query(project_id: &str) -> (String, HashMap<Str
 
 pub(super) fn report_code_edge_counts_query(project_id: &str) -> (String, HashMap<String, String>) {
     (
-        "MATCH (source {project: $project})-[r]->(target {project: $project}) \
-         WHERE type(r) IN ['DEFINES', 'IMPORTS', 'CALLS'] \
-         RETURN type(r) AS name, count(r) AS count"
-            .to_string(),
+        format!(
+            "MATCH (source {{project: $project}})-[r]->(target {{project: $project}}) \
+             WHERE type(r) IN {CODE_EDGE_REL_TYPES} \
+             RETURN type(r) AS name, count(r) AS count"
+        ),
         typed_query::string_params(&[("project", project_id)]),
     )
 }
@@ -61,11 +64,11 @@ pub(super) fn report_hotspots_query(
             "MATCH (n {{project: $project}}) \
              WHERE {predicate} \
              OPTIONAL MATCH (n)-[out]->(out_target {{project: $project}}) \
-             WHERE type(out) IN ['DEFINES', 'IMPORTS', 'CALLS'] \
+             WHERE type(out) IN {CODE_EDGE_REL_TYPES} \
                AND (out_target:CodeFile OR out_target:CodeSymbol OR out_target:CodeModule OR out_target:UnresolvedCallee OR out_target:ExternalSymbol) \
              WITH n, count(out) AS outgoing \
              OPTIONAL MATCH (in_source {{project: $project}})-[inc]->(n) \
-             WHERE type(inc) IN ['DEFINES', 'IMPORTS', 'CALLS'] \
+             WHERE type(inc) IN {CODE_EDGE_REL_TYPES} \
                AND (in_source:CodeFile OR in_source:CodeSymbol OR in_source:CodeModule OR in_source:UnresolvedCallee OR in_source:ExternalSymbol) \
              WITH n, outgoing, count(inc) AS incoming \
              WITH n, outgoing, incoming, outgoing + incoming AS degree \

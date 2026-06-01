@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::ingest::{markdown_metadata, markdown_title, single_line};
 use crate::sources::SourceRecord;
+use crate::support::text::display_path;
 use crate::transcribe::{
     TranscriptSegment, TranscriptionDegradation, TranscriptionOutput, TranscriptionRange,
 };
@@ -89,7 +90,7 @@ pub fn sample_frames(asset_path: &Path, plan: FrameSamplingPlan) -> Vec<VideoFra
 
 pub fn audio_reference_for_video(asset_path: &Path) -> VideoAudioReference {
     let source_asset = asset_path.to_path_buf();
-    let source_reference = format!("{}#audio", path_to_string(asset_path));
+    let source_reference = format!("{}#audio", display_path(asset_path));
     VideoAudioReference {
         source_asset,
         source_reference,
@@ -222,7 +223,7 @@ pub fn write_video_derived_markdown(
 fn frame_sample(asset_path: &Path, timestamp_seconds: u32) -> VideoFrameSample {
     let timestamp = format_timestamp(timestamp_seconds);
     let source_asset = asset_path.to_path_buf();
-    let source_reference = format!("{}#t={timestamp}", path_to_string(asset_path));
+    let source_reference = format!("{}#t={timestamp}", display_path(asset_path));
 
     VideoFrameSample {
         timestamp_seconds,
@@ -245,8 +246,8 @@ fn render_video_derived_markdown(
     aligned_segments: &[AlignedVideoSegment],
 ) -> String {
     let title = markdown_title(request.file_name);
-    let asset_path = path_to_string(request.asset_path);
-    let raw_path = path_to_string(request.raw_path);
+    let asset_path = display_path(request.asset_path);
+    let raw_path = display_path(request.raw_path);
     let audio_reference = audio_reference_for_video(request.asset_path);
     let audio_source_reference = audio_reference.source_reference;
     let mut fields = vec![
@@ -428,7 +429,7 @@ fn render_video_derived_markdown(
         markdown.push_str("## Frame Images\n\n");
         for path in request.frame_image_paths {
             markdown.push_str("- `");
-            markdown.push_str(&path_to_string(path));
+            markdown.push_str(&display_path(path));
             markdown.push_str("`\n");
         }
         markdown.push('\n');
@@ -526,10 +527,6 @@ fn format_ranges_ms(ranges: &[TranscriptionRange]) -> String {
         .map(|range| format!("{}-{}", range.start_ms, range.end_ms))
         .collect::<Vec<_>>()
         .join(",")
-}
-
-fn path_to_string(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
 }
 
 #[cfg(test)]

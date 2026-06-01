@@ -132,4 +132,30 @@ mod tests {
             "durable-provenance"
         );
     }
+
+    #[test]
+    fn saves_and_loads_vault_roundtrip() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut graph = ProvenanceGraph::default();
+        graph.add_link(ProvenanceLink {
+            source: SourceChunkRef {
+                source_id: "src-roundtrip".to_string(),
+                chunk_id: "chunk-1".to_string(),
+                path: PathBuf::from("raw/source.md"),
+                byte_start: 0,
+                byte_end: 42,
+            },
+            section: WikiSectionRef {
+                page_path: PathBuf::from("wiki/topics/roundtrip.md"),
+                heading: "Roundtrip".to_string(),
+                section_id: "roundtrip".to_string(),
+            },
+            claim: Some("Persistence preserves provenance links.".to_string()),
+        });
+
+        graph.save_to_vault(temp.path()).expect("save provenance");
+        let loaded = ProvenanceGraph::load_from_vault(temp.path()).expect("load provenance");
+
+        assert_eq!(loaded, graph);
+    }
 }

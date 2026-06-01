@@ -35,8 +35,8 @@ pub(super) fn parse_source(
         .expect("parse file")
 }
 
-pub(super) fn parse_python(source: &str) -> ParseResult {
-    parse_source("sample.py", source, &[])
+pub(super) fn parse_python(source: &str, extra_files: &[(&str, &str)]) -> ParseResult {
+    parse_source("sample.py", source, extra_files)
 }
 
 pub(super) fn parse_javascript(source: &str, extra_files: &[(&str, &str)]) -> ParseResult {
