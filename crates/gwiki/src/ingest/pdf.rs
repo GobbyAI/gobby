@@ -5,6 +5,7 @@ use std::path::Path;
 
 use crate::ScopeIdentity;
 use crate::WikiError;
+use crate::document::{DocumentDegradation, DocumentFailureMode, DocumentUnitCount};
 use crate::ingest::{
     IngestResult, index_after_ingest, markdown_metadata, markdown_title, path_to_string,
     single_line, write_asset, write_raw_markdown,
@@ -73,7 +74,7 @@ struct PdfMarkdownSummary {
     has_text_layer: bool,
     vision_used: bool,
     model: Option<String>,
-    degradations: Vec<String>,
+    degradations: Vec<DocumentDegradation>,
 }
 
 pub fn ingest_pages(
@@ -107,7 +108,11 @@ pub fn ingest_pdf_file(
     let pages = match extract_text_layer_pages(&snapshot.bytes) {
         Ok(pages) => pages,
         Err(error) => {
-            degradations.push(error.to_string());
+            degradations.push(DocumentDegradation::new(
+                DocumentFailureMode::PdfTextLayerError,
+                DocumentUnitCount::pages(0),
+                format!("PDF text-layer extraction failed: {error}; original asset is preserved."),
+            ));
             Vec::new()
         }
     };
@@ -115,7 +120,11 @@ pub fn ingest_pdf_file(
         VisionEndpoint::Available(_) => match render_pdf_pages(&snapshot, options.render_dpi) {
             Ok(pages) => pages,
             Err(error) => {
-                degradations.push(error.to_string());
+                degradations.push(DocumentDegradation::new(
+                    DocumentFailureMode::PdfRenderError,
+                    DocumentUnitCount::pages(pages.len()),
+                    format!("PDF page rendering failed: {error}; original asset is preserved."),
+                ));
                 Vec::new()
             }
         },
@@ -165,7 +174,7 @@ fn ingest_pages_with_vision_inner(
     snapshot: PdfSnapshot,
     rendered_pages: Vec<PdfRenderedPage>,
     endpoint: VisionEndpoint<'_>,
-    mut degradations: Vec<String>,
+    mut degradations: Vec<DocumentDegradation>,
 ) -> Result<IngestResult, WikiError> {
     let title = markdown_title(&snapshot.file_name);
     let draft = SourceDraft {
@@ -187,7 +196,11 @@ fn ingest_pages_with_vision_inner(
         .all(|page| normalize_page_text(&page.text).is_empty())
         && rendered_pages.is_empty()
     {
-        degradations.push("no_extractable_pdf_content".to_string());
+        degradations.push(DocumentDegradation::new(
+            DocumentFailureMode::PdfNoExtractableContent,
+            DocumentUnitCount::pages(snapshot.pages.len()),
+            "PDF contained no extractable text and no usable rendered page vision; original asset is preserved.",
+        ));
     }
     let (pages, summary) = merge_pdf_pages(
         &snapshot,
@@ -230,6 +243,7 @@ fn render_pdf_markdown(
         ("fetched_at", snapshot.fetched_at.clone()),
         ("source_hash", source_hash.to_string()),
         ("source_asset", path_to_string(asset_path)),
+        ("file_size_bytes", snapshot.bytes.len().to_string()),
         ("page_count", summary.page_count.to_string()),
         ("has_text_layer", summary.has_text_layer.to_string()),
         ("vision_used", summary.vision_used.to_string()),
@@ -241,7 +255,15 @@ fn render_pdf_markdown(
         ("scope_id", scope.id.clone()),
     ];
     if !summary.degradations.is_empty() {
-        fields.push(("pdf_degradation", summary.degradations.join("; ")));
+        fields.push((
+            "media_degradation",
+            summary
+                .degradations
+                .iter()
+                .map(|degradation| degradation.reason())
+                .collect::<Vec<_>>()
+                .join("; "),
+        ));
     }
     let mut markdown = markdown_metadata(&fields);
     markdown.push_str("# ");
@@ -275,7 +297,7 @@ fn merge_pdf_pages(
     asset_path: &Path,
     rendered_pages: Vec<PdfRenderedPage>,
     endpoint: VisionEndpoint<'_>,
-    degradations: Vec<String>,
+    degradations: Vec<DocumentDegradation>,
 ) -> (Vec<PdfPageMarkdown>, PdfMarkdownSummary) {
     let text_pages = snapshot
         .pages
@@ -294,12 +316,20 @@ fn merge_pdf_pages(
     let mut vision_used = false;
     let mut models = BTreeSet::new();
     let mut pages = Vec::with_capacity(page_numbers.len());
+    let mut vision_failed = false;
 
     for number in page_numbers {
         let text_layer = text_pages.get(&number).copied().unwrap_or_default();
-        let vision = rendered_pages.get(&number).and_then(|rendered| {
-            extract_vision_for_page(snapshot, asset_path, rendered, &endpoint)
-        });
+        let vision =
+            rendered_pages.get(&number).and_then(|rendered| {
+                match extract_vision_for_page(snapshot, asset_path, rendered, &endpoint) {
+                    Ok(vision) => vision,
+                    Err(_) => {
+                        vision_failed = true;
+                        None
+                    }
+                }
+            });
         if let Some(vision) = &vision {
             vision_used = true;
             if let Some(model) = vision_model(vision) {
@@ -316,10 +346,26 @@ fn merge_pdf_pages(
         .pages
         .iter()
         .any(|page| !normalize_page_text(&page.text).is_empty());
+    let page_count = text_pages.len().max(rendered_pages.len());
+    let mut degradations = degradations;
+    if matches!(endpoint, VisionEndpoint::Unavailable(_)) && !rendered_pages.is_empty() {
+        degradations.push(DocumentDegradation::new(
+            DocumentFailureMode::PdfVisionUnavailable,
+            DocumentUnitCount::pages(page_count),
+            "PDF vision extraction is unavailable; original asset is preserved.",
+        ));
+    }
+    if vision_failed {
+        degradations.push(DocumentDegradation::new(
+            DocumentFailureMode::PdfVisionError,
+            DocumentUnitCount::pages(page_count),
+            "PDF page vision extraction failed; original asset is preserved.",
+        ));
+    }
     (
         pages,
         PdfMarkdownSummary {
-            page_count: text_pages.len().max(rendered_pages.len()),
+            page_count,
             has_text_layer,
             vision_used,
             model: (!models.is_empty()).then(|| models.into_iter().collect::<Vec<_>>().join(", ")),
@@ -333,10 +379,10 @@ fn extract_vision_for_page(
     asset_path: &Path,
     rendered: &PdfRenderedPage,
     endpoint: &VisionEndpoint<'_>,
-) -> Option<VisionExtraction> {
+) -> Result<Option<VisionExtraction>, WikiError> {
     let client = match endpoint {
         VisionEndpoint::Available(client) => *client,
-        VisionEndpoint::Unavailable(_) => return None,
+        VisionEndpoint::Unavailable(_) => return Ok(None),
     };
     let file_name = rendered_page_file_name(&snapshot.file_name, rendered.number);
     client
@@ -348,7 +394,7 @@ fn extract_vision_for_page(
             width: rendered.width,
             height: rendered.height,
         })
-        .ok()
+        .map(Some)
 }
 
 fn merge_page_markdown(text_layer: &str, vision: Option<&VisionExtraction>) -> String {
@@ -690,5 +736,88 @@ mod tests {
         let text = normalize_page_text("First line\nwraps here.\n\nSecond paragraph.\n");
 
         assert_eq!(text, "First line wraps here.\n\nSecond paragraph.");
+    }
+
+    #[test]
+    fn pdf_degradation_uses_uniform_metadata() {
+        struct FailingPdfVisionClient;
+
+        impl VisionClient for FailingPdfVisionClient {
+            fn extract(&self, _request: &VisionRequest<'_>) -> Result<VisionExtraction, WikiError> {
+                Err(WikiError::InvalidInput {
+                    field: "vision",
+                    message: "vision provider failed".to_string(),
+                })
+            }
+        }
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let bytes = b"%PDF-1.7\nsource bytes\n%%EOF\n".to_vec();
+        let mut store = MemoryWikiStore::default();
+        let vision = FailingPdfVisionClient;
+        let snapshot = PdfSnapshot {
+            location: "/tmp/scanned.pdf".to_string(),
+            file_name: "scanned.pdf".to_string(),
+            fetched_at: "2026-05-29T16:30:00Z".to_string(),
+            bytes: bytes.clone(),
+            pages: vec![PdfPage {
+                number: 1,
+                text: String::new(),
+            }],
+        };
+        let rendered_pages = vec![PdfRenderedPage {
+            number: 1,
+            bytes: b"rendered-png-page-1".to_vec(),
+            mime_type: "image/png".to_string(),
+            width: Some(1200),
+            height: Some(1600),
+        }];
+
+        let result = ingest_pages_with_vision(
+            temp.path(),
+            &mut store,
+            &ScopeIdentity::global(),
+            snapshot,
+            rendered_pages,
+            VisionEndpoint::Available(&vision),
+        )
+        .expect("ingest degraded pdf");
+        let raw = std::fs::read_to_string(temp.path().join(&result.raw_path))
+            .expect("raw markdown written");
+        assert!(raw.contains("media_degradation: pdf_vision_error"));
+        assert!(raw.contains("file_size_bytes: 28"));
+        assert!(raw.contains("page_count: 1"));
+        assert!(raw.contains("No extractable page text."));
+
+        let asset_path = result.asset_path.expect("pdf asset path");
+        assert_eq!(
+            std::fs::read(temp.path().join(asset_path)).expect("pdf asset"),
+            bytes
+        );
+
+        let empty_pdf = PdfSnapshot {
+            location: "/tmp/empty.pdf".to_string(),
+            file_name: "empty.pdf".to_string(),
+            fetched_at: "2026-05-29T16:30:00Z".to_string(),
+            bytes: b"%PDF empty".to_vec(),
+            pages: Vec::new(),
+        };
+        let result = ingest_pages_with_vision(
+            temp.path(),
+            &mut store,
+            &ScopeIdentity::global(),
+            empty_pdf,
+            Vec::new(),
+            VisionEndpoint::Unavailable(crate::vision::VisionDegradation {
+                reason: "disabled".to_string(),
+                fallback: "vision disabled".to_string(),
+            }),
+        )
+        .expect("ingest empty degraded pdf");
+        let raw = std::fs::read_to_string(temp.path().join(&result.raw_path))
+            .expect("raw markdown written");
+        assert!(raw.contains("media_degradation: pdf_no_extractable_content"));
+        assert!(raw.contains("file_size_bytes: 10"));
+        assert!(raw.contains("page_count: 0"));
     }
 }
