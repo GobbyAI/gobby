@@ -5,18 +5,20 @@ use std::path::{Path, PathBuf};
 use gobby_core::ai::{daemon::generate_via_daemon, effective_route, text::generate_text};
 use gobby_core::ai_context::{AiConfigSource, AiContext, PostgresAiConfigSource};
 use gobby_core::config::{AiCapability, AiRouting};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::commands::scope;
 use crate::config::{self, Context};
 use crate::db;
 use crate::falkor;
+use crate::index::hasher;
 use crate::models::Symbol;
 use crate::output::{self, Format};
 use crate::secrets;
 use crate::visibility;
 
 const DEFAULT_OUT_DIR: &str = "codewiki";
+const CODEWIKI_META_PATH: &str = "_meta/codewiki.json";
 const MAX_MERMAID_HOPS: usize = 2;
 const MAX_MERMAID_EDGES: usize = 20;
 
@@ -285,6 +287,17 @@ pub struct CodewikiRunSummary {
     pub ai_enabled: bool,
 }
 
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+struct CodewikiMeta {
+    docs: BTreeMap<String, CodewikiDocMeta>,
+    generated_docs: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Eq, PartialEq, Serialize)]
+struct CodewikiDocMeta {
+    source_hashes: BTreeMap<String, String>,
+}
+
 pub type TextGenerator<'a> = dyn FnMut(&str, &str) -> Option<String> + 'a;
 
 pub fn run(
@@ -341,7 +354,7 @@ pub fn run(
         .filter(|symbol| is_core_file(&symbol.file_path))
         .count();
     let out_dir = out.unwrap_or_else(|| DEFAULT_OUT_DIR.to_string());
-    write_doc_set(Path::new(&out_dir), &docs)?;
+    write_incremental_doc_set(&ctx.project_root, Path::new(&out_dir), &docs)?;
 
     let summary = CodewikiRunSummary {
         out_dir,
@@ -440,13 +453,120 @@ fn generate_hierarchical_docs_with_graph_availability(
 pub fn write_doc_set(out_dir: &Path, docs: &[(String, String)]) -> anyhow::Result<()> {
     std::fs::create_dir_all(out_dir)?;
     for (relative_path, content) in docs {
-        let target = safe_doc_path(out_dir, relative_path)?;
-        if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(target, content)?;
+        write_doc(out_dir, relative_path, content)?;
     }
     Ok(())
+}
+
+pub fn write_incremental_doc_set(
+    project_root: &Path,
+    out_dir: &Path,
+    docs: &[(String, String)],
+) -> anyhow::Result<Vec<String>> {
+    std::fs::create_dir_all(out_dir)?;
+    let previous = read_codewiki_meta(out_dir)?;
+    let mut next_docs = BTreeMap::new();
+    let mut generated_docs = Vec::new();
+
+    for (relative_path, content) in docs {
+        let doc_meta = CodewikiDocMeta {
+            source_hashes: source_hashes_for_doc(project_root, content)?,
+        };
+        let target = safe_doc_path(out_dir, relative_path)?;
+        let unchanged = target.exists()
+            && previous
+                .docs
+                .get(relative_path)
+                .is_some_and(|previous_meta| previous_meta == &doc_meta);
+
+        if !unchanged {
+            write_doc(out_dir, relative_path, content)?;
+            generated_docs.push(relative_path.clone());
+        }
+        next_docs.insert(relative_path.clone(), doc_meta);
+    }
+
+    let meta = CodewikiMeta {
+        docs: next_docs,
+        generated_docs: generated_docs.clone(),
+    };
+    write_codewiki_meta(out_dir, &meta)?;
+    Ok(generated_docs)
+}
+
+fn write_doc(out_dir: &Path, relative_path: &str, content: &str) -> anyhow::Result<()> {
+    let target = safe_doc_path(out_dir, relative_path)?;
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(target, content)?;
+    Ok(())
+}
+
+fn read_codewiki_meta(out_dir: &Path) -> anyhow::Result<CodewikiMeta> {
+    let path = safe_doc_path(out_dir, CODEWIKI_META_PATH)?;
+    match std::fs::read_to_string(&path) {
+        Ok(raw) => Ok(serde_json::from_str(&raw)?),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(CodewikiMeta::default()),
+        Err(err) => Err(err.into()),
+    }
+}
+
+fn write_codewiki_meta(out_dir: &Path, meta: &CodewikiMeta) -> anyhow::Result<()> {
+    let content = serde_json::to_string_pretty(meta)?;
+    write_doc(out_dir, CODEWIKI_META_PATH, &(content + "\n"))
+}
+
+fn source_hashes_for_doc(
+    project_root: &Path,
+    content: &str,
+) -> anyhow::Result<BTreeMap<String, String>> {
+    let mut hashes = BTreeMap::new();
+    for file in source_files_from_frontmatter(content) {
+        let hash = hasher::file_content_hash(&project_root.join(&file))
+            .map_err(|err| anyhow::anyhow!("failed to hash codewiki source file {file}: {err}"))?;
+        hashes.insert(file, hash);
+    }
+    Ok(hashes)
+}
+
+fn source_files_from_frontmatter(content: &str) -> BTreeSet<String> {
+    let mut files = BTreeSet::new();
+    let mut in_frontmatter = false;
+    for line in content.lines() {
+        if line == "---" {
+            if in_frontmatter {
+                break;
+            }
+            in_frontmatter = true;
+            continue;
+        }
+        if !in_frontmatter {
+            continue;
+        }
+        if let Some(file) = line
+            .strip_prefix("  - file: ")
+            .and_then(unquote_yaml_string)
+        {
+            files.insert(file);
+        }
+    }
+    files
+}
+
+fn unquote_yaml_string(value: &str) -> Option<String> {
+    let value = value.trim();
+    let inner = value.strip_prefix('"')?.strip_suffix('"')?;
+    let mut out = String::new();
+    let mut chars = inner.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            out.push(chars.next()?);
+        } else {
+            out.push(ch);
+        }
+    }
+    Some(out)
 }
 
 fn fetch_codewiki_graph_edges(
@@ -1997,6 +2117,82 @@ mod tests {
         assert!(file_doc.contains("[src/lib.rs:20]"));
         assert!(!file_doc.contains("src/lib.rs:999"));
         assert!(!file_doc.contains("missing.rs:1"));
+    }
+
+    #[test]
+    fn incremental_regenerates_only_changed() {
+        let project = tempfile::tempdir().expect("project tempdir");
+        std::fs::create_dir_all(project.path().join("src/nested")).expect("source dirs");
+        std::fs::write(project.path().join("src/lib.rs"), "pub struct Client;\n")
+            .expect("write lib");
+        std::fs::write(
+            project.path().join("src/nested/api.rs"),
+            "pub fn serve() {}\n",
+        )
+        .expect("write api");
+        let out_dir = project.path().join("codewiki");
+
+        let input = CodewikiInput {
+            files: vec!["src/lib.rs".to_string(), "src/nested/api.rs".to_string()],
+            graph_edges: Vec::new(),
+            symbols: vec![
+                test_symbol("src/lib.rs", "Client", "class", 1, "pub struct Client;"),
+                test_symbol(
+                    "src/nested/api.rs",
+                    "serve",
+                    "function",
+                    1,
+                    "pub fn serve()",
+                ),
+            ],
+        };
+
+        let first_docs = generate_hierarchical_docs(&input, None);
+        let first_written =
+            write_incremental_doc_set(project.path(), &out_dir, &first_docs).expect("first write");
+        assert!(first_written.contains(&"repo.md".to_string()));
+        assert!(first_written.contains(&"modules/src.md".to_string()));
+        assert!(first_written.contains(&"files/src/lib.rs.md".to_string()));
+        assert!(first_written.contains(&"files/src/nested/api.rs.md".to_string()));
+
+        let unchanged_file_doc = out_dir.join("files/src/nested/api.rs.md");
+        let mut unchanged_content =
+            std::fs::read_to_string(&unchanged_file_doc).expect("unchanged doc content");
+        unchanged_content.push_str("\n<!-- preserve unchanged doc -->\n");
+        std::fs::write(&unchanged_file_doc, unchanged_content).expect("write unchanged marker");
+
+        std::fs::write(
+            project.path().join("src/lib.rs"),
+            "pub struct Client;\npub fn connect() {}\n",
+        )
+        .expect("modify lib");
+        let changed_docs = generate_hierarchical_docs(&input, None);
+        let changed_written = write_incremental_doc_set(project.path(), &out_dir, &changed_docs)
+            .expect("incremental write");
+        let unchanged_after =
+            std::fs::read_to_string(&unchanged_file_doc).expect("unchanged doc after content");
+
+        assert!(unchanged_after.contains("preserve unchanged doc"));
+        assert_eq!(
+            changed_written,
+            vec![
+                "repo.md".to_string(),
+                "modules/src.md".to_string(),
+                "files/src/lib.rs.md".to_string()
+            ]
+        );
+        let meta =
+            std::fs::read_to_string(out_dir.join("_meta/codewiki.json")).expect("read meta log");
+        let meta: serde_json::Value = serde_json::from_str(&meta).expect("parse meta log");
+        let generated_docs = meta["generated_docs"].as_array().expect("generated docs");
+        assert_eq!(
+            generated_docs,
+            &vec![
+                serde_json::Value::String("repo.md".to_string()),
+                serde_json::Value::String("modules/src.md".to_string()),
+                serde_json::Value::String("files/src/lib.rs.md".to_string())
+            ]
+        );
     }
 
     fn test_symbol(
