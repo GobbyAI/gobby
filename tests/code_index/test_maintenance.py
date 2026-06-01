@@ -36,6 +36,20 @@ class _MaintenanceContext(Protocol):
     async def clear_graph(self, project_id: str) -> dict[str, Any]: ...
 
 
+class _MaintenanceProcess:
+    def __init__(
+        self,
+        *,
+        returncode: int = 0,
+        stderr: bytes = b"",
+    ) -> None:
+        self.returncode = returncode
+        self.stderr = stderr
+
+    async def communicate(self) -> tuple[bytes, bytes]:
+        return b"", self.stderr
+
+
 @pytest.mark.asyncio
 async def test_maintenance_purges_indexed_project_when_root_is_missing(tmp_path: Path) -> None:
     """Missing indexed roots are purged instead of being sent to gcode."""
@@ -87,6 +101,80 @@ async def test_maintenance_purges_indexed_project_when_root_is_missing(tmp_path:
     vector_store.delete_collection.assert_awaited_once_with("code_symbols_proj-missing")
     create_proc.assert_not_called()
     assert not missing_root.exists()
+    assert run_db_calls == ["list_indexed_projects", "delete_project_index"]
+
+
+@pytest.mark.asyncio
+async def test_maintenance_purges_indexed_project_when_gcode_rejects_existing_root(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    project = IndexedProject(
+        id="proj-stale",
+        root_path=str(root),
+        total_files=2,
+        total_symbols=3,
+    )
+    storage = MagicMock()
+    storage.list_indexed_projects.return_value = [project]
+    storage.delete_project_index.return_value = {
+        "files": 2,
+        "symbols": 3,
+        "imports": 0,
+        "calls": 0,
+        "content_chunks": 0,
+        "projects": 1,
+    }
+    clear_graph = AsyncMock(return_value={"success": True})
+    vector_store = SimpleNamespace(delete_collection=AsyncMock())
+    summarizer = SimpleNamespace(summarize_batch=AsyncMock())
+    run_db_calls: list[str] = []
+    subprocess_calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+
+    async def run_db(func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
+        func_name = getattr(func, "__name__", None)
+        if not isinstance(func_name, str):
+            mock_name = getattr(func, "_mock_name", None)
+            func_name = mock_name if isinstance(mock_name, str) else repr(func)
+        run_db_calls.append(func_name)
+        return func(*args, **kwargs)
+
+    async def create_subprocess_exec(*args: Any, **kwargs: Any) -> _MaintenanceProcess:
+        subprocess_calls.append((args, kwargs))
+        return _MaintenanceProcess(
+            returncode=1,
+            stderr=b"No gcode project found. Run `gcode init` to initialize this directory.",
+        )
+
+    context: _MaintenanceContext = SimpleNamespace(
+        storage=storage,
+        clear_graph=clear_graph,
+        vector_store=vector_store,
+        config=SimpleNamespace(graph_enabled=True, qdrant_collection_prefix="code_symbols_"),
+        run_db=run_db,
+    )
+
+    with (
+        patch("gobby.code_index.maintenance.resolve_native_bin", return_value="/tmp/gcode"),
+        patch("asyncio.create_subprocess_exec", side_effect=create_subprocess_exec),
+        caplog.at_level(logging.WARNING, logger="gobby.code_index.maintenance"),
+    ):
+        await _run_maintenance(context, summarizer=summarizer)
+
+    assert subprocess_calls == [
+        (
+            ("/tmp/gcode", "index", "--project", str(root), "--quiet"),
+            {"stdout": asyncio.subprocess.DEVNULL, "stderr": asyncio.subprocess.PIPE},
+        )
+    ]
+    storage.delete_project_index.assert_called_once_with("proj-stale")
+    storage.get_unsummarized_symbols.assert_not_called()
+    clear_graph.assert_awaited_once_with("proj-stale")
+    vector_store.delete_collection.assert_awaited_once_with("code_symbols_proj-stale")
+    summarizer.summarize_batch.assert_not_called()
+    assert "Maintenance reindex failed" not in caplog.text
     assert run_db_calls == ["list_indexed_projects", "delete_project_index"]
 
 

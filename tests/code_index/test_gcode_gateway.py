@@ -348,6 +348,27 @@ async def test_gateway_classifies_project_not_found(
     assert exc_info.value.returncode == 2
 
 
+async def test_gateway_classifies_current_project_not_found_stderr(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    processes = [
+        FakeProcess(stdout=GCODE_PIN_STDOUT),
+        FakeProcess(
+            returncode=1,
+            stderr=b"No gcode project found. Run `gcode init` to initialize this directory.",
+        ),
+    ]
+    _patch_subprocess(monkeypatch, processes)
+    gateway = GcodeGateway(binary="/tmp/gcode")
+
+    with pytest.raises(GcodeProjectNotFoundError) as exc_info:
+        await gateway.graph_sync_file(tmp_path, "src/app.py")
+
+    assert exc_info.value.project_path == str(tmp_path)
+    assert exc_info.value.returncode == 1
+
+
 async def test_gateway_classifies_indexed_file_not_found(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

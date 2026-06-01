@@ -17,6 +17,7 @@ MIN_GCODE_GRAPH_VERSION = MANAGED_BIN_VERSION_PINS["gcode"]
 GCODE_ALLOW_MISSING_INDEXED_FILE_VERSION = "0.9.5"
 _VERSION_PATTERN = re.compile(r"\b(\d+\.\d+\.\d+(?:\.\d+)?)\b")
 _PROJECT_NOT_FOUND_PATTERN = re.compile(r"Project '([^']+)' not found")
+_NO_GCODE_PROJECT_FOUND = "No gcode project found. Run `gcode init`"
 _INDEXED_FILE_NOT_FOUND_PATTERN = re.compile(
     r"indexed file `([^`]+)` was not found for project (\S+)"
 )
@@ -81,6 +82,49 @@ class GcodeIndexedFileNotFoundError(GcodeCommandError):
 
 class GcodeJsonError(GcodeGatewayError):
     """Raised when gcode returns invalid JSON."""
+
+
+def _command_project_path(command: Sequence[str]) -> str | None:
+    try:
+        project_arg_index = command.index("--project")
+    except ValueError:
+        return None
+    project_path_index = project_arg_index + 1
+    if project_path_index >= len(command):
+        return None
+    return command[project_path_index]
+
+
+def _classify_gcode_command_error(
+    command: Sequence[str],
+    returncode: int,
+    stderr_text: str,
+) -> GcodeCommandError:
+    if match := _INDEXED_FILE_NOT_FOUND_PATTERN.search(stderr_text):
+        return GcodeIndexedFileNotFoundError(
+            command,
+            returncode,
+            stderr_text,
+            match.group(1),
+            match.group(2),
+        )
+    if match := _PROJECT_NOT_FOUND_PATTERN.search(stderr_text):
+        return GcodeProjectNotFoundError(
+            command,
+            returncode,
+            stderr_text,
+            match.group(1),
+        )
+    if _NO_GCODE_PROJECT_FOUND in stderr_text:
+        project_path = _command_project_path(command)
+        if project_path is not None:
+            return GcodeProjectNotFoundError(
+                command,
+                returncode,
+                stderr_text,
+                project_path,
+            )
+    return GcodeCommandError(command, returncode, stderr_text)
 
 
 class GcodeGateway:
@@ -279,22 +323,11 @@ class GcodeGateway:
         if proc.returncode != 0:
             stderr_text = stderr.decode(errors="replace").strip()
             if check_version:
-                if match := _INDEXED_FILE_NOT_FOUND_PATTERN.search(stderr_text):
-                    raise GcodeIndexedFileNotFoundError(
-                        command,
-                        proc.returncode or 1,
-                        stderr_text,
-                        match.group(1),
-                        match.group(2),
-                    )
-                if match := _PROJECT_NOT_FOUND_PATTERN.search(stderr_text):
-                    raise GcodeProjectNotFoundError(
-                        command,
-                        proc.returncode or 1,
-                        stderr_text,
-                        match.group(1),
-                    )
-                raise GcodeCommandError(command, proc.returncode or 1, stderr_text)
+                raise _classify_gcode_command_error(
+                    command,
+                    proc.returncode or 1,
+                    stderr_text,
+                )
             raise GcodeUnavailableError(stderr_text or f"gcode exited {proc.returncode}")
 
         return stdout, stderr

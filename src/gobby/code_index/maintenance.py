@@ -12,6 +12,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.code_index.cleanup import purge_missing_project
+from gobby.code_index.gcode_gateway import (
+    GcodeProjectNotFoundError,
+    _classify_gcode_command_error,
+)
 from gobby.utils.native_bin import resolve_native_bin
 
 if TYPE_CHECKING:
@@ -94,23 +98,29 @@ async def _run_maintenance(
 
         if gcode_bin is not None:
             proc: asyncio.subprocess.Process | None = None
+            purge_project = False
             try:
+                command = [gcode_bin, "index", "--project", str(root), "--quiet"]
                 proc = await asyncio.create_subprocess_exec(
-                    gcode_bin,
-                    "index",
-                    "--project",
-                    str(root),
-                    "--quiet",
+                    *command,
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=asyncio.subprocess.PIPE,
                 )
                 _, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
                 if proc.returncode != 0:
-                    detail = stderr.decode().strip() if stderr else "<no stderr>"
-                    logger.warning(
-                        f"Maintenance reindex failed for {project.id} "
-                        f"(exit code {proc.returncode}): {detail}"
+                    detail = stderr.decode(errors="replace").strip() if stderr else "<no stderr>"
+                    error = _classify_gcode_command_error(
+                        command,
+                        proc.returncode or 1,
+                        detail,
                     )
+                    if isinstance(error, GcodeProjectNotFoundError):
+                        purge_project = True
+                    else:
+                        logger.warning(
+                            f"Maintenance reindex failed for {project.id} "
+                            f"(exit code {proc.returncode}): {detail}"
+                        )
             except asyncio.CancelledError:
                 if proc is not None:
                     try:
@@ -131,6 +141,17 @@ async def _run_maintenance(
                 logger.warning(
                     "Maintenance reindex failed for %s: %s", project.id, e, exc_info=True
                 )
+
+            if purge_project:
+                await purge_missing_project(
+                    project=project,
+                    storage=context.storage,
+                    config=context.config,
+                    vector_store=context.vector_store,
+                    clear_graph=context.clear_graph,
+                    run_db=context.run_db,
+                )
+                continue
 
         # Generate summaries for unsummarized symbols
         if summarizer:
