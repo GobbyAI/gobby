@@ -385,11 +385,6 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
             "DELETE FROM gwiki_chunks WHERE scope_kind = $1 AND scope_id = $2 AND path = $3",
             &[&scope.scope_kind(), &scope.scope_id(), &path_string],
         ) {
-            if let Err(rollback_error) = tx.rollback() {
-                log::warn!(
-                    "failed to roll back gwiki chunk replacement after delete error: {rollback_error}"
-                );
-            }
             return Err(error.into());
         }
         if chunks.is_empty() {
@@ -453,11 +448,6 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
                     &chunk.content,
                 ],
             ) {
-                if let Err(rollback_error) = tx.rollback() {
-                    log::warn!(
-                        "failed to roll back gwiki chunk replacement after insert error: {rollback_error}"
-                    );
-                }
                 return Err(error.into());
             }
         }
@@ -475,11 +465,6 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
             "DELETE FROM gwiki_links WHERE scope_kind = $1 AND scope_id = $2 AND path = $3",
             &[&scope.scope_kind(), &scope.scope_id(), &path_string],
         ) {
-            if let Err(rollback_error) = tx.rollback() {
-                log::warn!(
-                    "failed to roll back gwiki link replacement after delete error: {rollback_error}"
-                );
-            }
             return Err(error.into());
         }
 

@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
 use postgres::Client;
+use wait_timeout::ChildExt;
 
 use crate::config::{Context, ProjectIndexScope};
 use crate::index::api;
@@ -85,7 +86,7 @@ pub(super) fn index_overlay_files(
         parent_root,
     } = &ctx.index_scope
     else {
-        unreachable!("overlay indexer called for single-project context");
+        anyhow::bail!("overlay indexer requires an overlay project context");
     };
 
     crate::config::validate_parent_code_index(conn, &ctx.index_scope)?;
@@ -196,7 +197,7 @@ pub(super) fn index_overlay_files(
                 api::delete_file_facts(conn, overlay_project_id, &rel)?;
             }
             OverlayReconcileAction::Index => {
-                unreachable!("overlay index action requires an AST or content-only candidate")
+                anyhow::bail!("overlay index action selected for non-indexable path `{rel}`")
             }
             OverlayReconcileAction::Skip => {
                 outcome.skipped_files += 1;
@@ -301,13 +302,10 @@ fn git_status_relative_paths(root_path: &Path) -> anyhow::Result<HashSet<String>
         .stderr(Stdio::piped())
         .spawn()
         .context("spawn git status")?;
-    let started = Instant::now();
     let timeout = Duration::from_secs(5);
-    let output = loop {
-        if child.try_wait()?.is_some() {
-            break child.wait_with_output()?;
-        }
-        if started.elapsed() >= timeout {
+    let output = match child.wait_timeout(timeout)? {
+        Some(_) => child.wait_with_output()?,
+        None => {
             let _ = child.kill();
             let output = child.wait_with_output()?;
             let stderr = compact_stderr(&output.stderr);
@@ -319,7 +317,6 @@ fn git_status_relative_paths(root_path: &Path) -> anyhow::Result<HashSet<String>
                 timeout.as_millis()
             );
         }
-        std::thread::sleep(Duration::from_millis(25));
     };
     if !output.status.success() {
         let stderr = compact_stderr(&output.stderr);

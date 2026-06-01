@@ -81,6 +81,8 @@ pub(crate) struct ExternalCallTarget {
     pub(crate) callee_name: String,
 }
 
+// Curated from the Node.js built-in module list in the official Node API docs,
+// checked 2026-06-01. Keep this explicit so import resolution stays offline.
 pub(super) const JS_BUILTIN_MODULES: &[&str] = &[
     "assert",
     "assert/strict",
@@ -384,112 +386,130 @@ pub(super) fn build_java_local_class_index(candidate_files: &[PathBuf]) -> HashS
 }
 
 pub(super) fn build_csharp_local_roots(candidate_files: &[PathBuf]) -> HashSet<String> {
-    let mut roots = HashSet::new();
-    for path in candidate_files {
-        let ext = path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .unwrap_or_default();
-        if ext != "cs" {
-            continue;
-        }
-        let Ok(file) = File::open(path) else {
-            continue;
-        };
-        for line in BufReader::new(file).lines().map_while(Result::ok) {
-            let line = line.trim();
-            if let Some(rest) = line.strip_prefix("namespace ") {
-                let namespace = rest
-                    .trim()
-                    .trim_end_matches([';', '{'])
-                    .split_whitespace()
+    candidate_files
+        .par_iter()
+        .map(|path| {
+            let mut roots = HashSet::new();
+            let ext = path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .unwrap_or_default();
+            if ext != "cs" {
+                return roots;
+            }
+            let Ok(file) = File::open(path) else {
+                return roots;
+            };
+            for line in BufReader::new(file).lines().map_while(Result::ok) {
+                let line = line.trim();
+                if let Some(rest) = line.strip_prefix("namespace ") {
+                    let namespace = rest
+                        .trim()
+                        .trim_end_matches([';', '{'])
+                        .split_whitespace()
+                        .next()
+                        .unwrap_or_default();
+                    if let Some(root) = namespace.split('.').next()
+                        && !root.is_empty()
+                    {
+                        roots.insert(root.to_string());
+                    }
+                }
+                for type_name in csharp_declared_types(line) {
+                    roots.insert(type_name);
+                }
+            }
+            roots
+        })
+        .reduce(HashSet::new, |mut all, roots| {
+            all.extend(roots);
+            all
+        })
+}
+
+pub(super) fn build_php_local_symbol_index(candidate_files: &[PathBuf]) -> HashSet<String> {
+    candidate_files
+        .par_iter()
+        .map(|path| {
+            let mut symbols = HashSet::new();
+            let ext = path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .unwrap_or_default();
+            if ext != "php" {
+                return symbols;
+            }
+            let Ok(file) = File::open(path) else {
+                return symbols;
+            };
+            let mut namespace = None;
+            for line in BufReader::new(file).lines().map_while(Result::ok) {
+                let line = line.trim();
+                if namespace.is_none() {
+                    namespace = line
+                        .strip_prefix("namespace ")
+                        .map(|rest| rest.trim().trim_end_matches([';', '{']).to_string());
+                }
+                for name in php_declared_symbols(line) {
+                    symbols.insert(name.clone());
+                    symbols.insert(name.to_ascii_lowercase());
+                    if let Some(namespace) = namespace.as_deref()
+                        && !namespace.is_empty()
+                    {
+                        let qualified = format!("{namespace}\\{name}");
+                        symbols.insert(qualified.clone());
+                        symbols.insert(qualified.to_ascii_lowercase());
+                    }
+                }
+            }
+            symbols
+        })
+        .reduce(HashSet::new, |mut all, symbols| {
+            all.extend(symbols);
+            all
+        })
+}
+
+pub(super) fn build_ruby_local_constant_roots(candidate_files: &[PathBuf]) -> HashSet<String> {
+    candidate_files
+        .par_iter()
+        .map(|path| {
+            let mut roots = HashSet::new();
+            let ext = path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .unwrap_or_default();
+            if !matches!(ext, "rb" | "rake" | "gemspec") {
+                return roots;
+            }
+            let Ok(file) = File::open(path) else {
+                return roots;
+            };
+            for line in BufReader::new(file).lines().map_while(Result::ok) {
+                let line = line.trim_start();
+                let Some(rest) = line
+                    .strip_prefix("class ")
+                    .or_else(|| line.strip_prefix("module "))
+                else {
+                    continue;
+                };
+                let name = rest
+                    .split(|ch: char| ch.is_whitespace() || matches!(ch, '<' | '(' | ';' | '#'))
                     .next()
-                    .unwrap_or_default();
-                if let Some(root) = namespace.split('.').next()
-                    && !root.is_empty()
+                    .unwrap_or_default()
+                    .trim_start_matches("::");
+                if let Some(root) = name.split("::").next()
+                    && is_ruby_constant_name(root)
                 {
                     roots.insert(root.to_string());
                 }
             }
-            for type_name in csharp_declared_types(line) {
-                roots.insert(type_name);
-            }
-        }
-    }
-    roots
-}
-
-pub(super) fn build_php_local_symbol_index(candidate_files: &[PathBuf]) -> HashSet<String> {
-    let mut symbols = HashSet::new();
-    for path in candidate_files {
-        let ext = path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .unwrap_or_default();
-        if ext != "php" {
-            continue;
-        }
-        let Ok(file) = File::open(path) else {
-            continue;
-        };
-        let mut namespace = None;
-        for line in BufReader::new(file).lines().map_while(Result::ok) {
-            let line = line.trim();
-            if namespace.is_none() {
-                namespace = line
-                    .strip_prefix("namespace ")
-                    .map(|rest| rest.trim().trim_end_matches([';', '{']).to_string());
-            }
-            for name in php_declared_symbols(line) {
-                symbols.insert(name.clone());
-                symbols.insert(name.to_ascii_lowercase());
-                if let Some(namespace) = namespace.as_deref()
-                    && !namespace.is_empty()
-                {
-                    let qualified = format!("{namespace}\\{name}");
-                    symbols.insert(qualified.clone());
-                    symbols.insert(qualified.to_ascii_lowercase());
-                }
-            }
-        }
-    }
-    symbols
-}
-
-pub(super) fn build_ruby_local_constant_roots(candidate_files: &[PathBuf]) -> HashSet<String> {
-    let mut roots = HashSet::new();
-    for path in candidate_files {
-        let ext = path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .unwrap_or_default();
-        if !matches!(ext, "rb" | "rake" | "gemspec") {
-            continue;
-        }
-        let Ok(file) = File::open(path) else {
-            continue;
-        };
-        for line in BufReader::new(file).lines().map_while(Result::ok) {
-            let line = line.trim_start();
-            let Some(rest) = line
-                .strip_prefix("class ")
-                .or_else(|| line.strip_prefix("module "))
-            else {
-                continue;
-            };
-            let name = rest
-                .split(|ch: char| ch.is_whitespace() || matches!(ch, '<' | '(' | ';' | '#'))
-                .next()
-                .unwrap_or_default()
-                .trim_start_matches("::");
-            if let Some(root) = name.split("::").next()
-                && is_ruby_constant_name(root)
-            {
-                roots.insert(root.to_string());
-            }
-        }
-    }
-    roots
+            roots
+        })
+        .reduce(HashSet::new, |mut all, roots| {
+            all.extend(roots);
+            all
+        })
 }
 
 pub(super) fn load_dart_external_packages(root_path: &Path) -> HashSet<String> {
@@ -522,35 +542,41 @@ pub(super) fn load_dart_self_package_name(root_path: &Path) -> Option<String> {
 }
 
 pub(super) fn build_elixir_local_module_roots(candidate_files: &[PathBuf]) -> HashSet<String> {
-    let mut roots = HashSet::new();
-    for path in candidate_files {
-        let ext = path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .unwrap_or_default();
-        if !matches!(ext, "ex" | "exs") {
-            continue;
-        }
-        let Ok(file) = File::open(path) else {
-            continue;
-        };
-        for line in BufReader::new(file).lines().map_while(Result::ok) {
-            let line = line.trim_start();
-            let Some(rest) = line.strip_prefix("defmodule ") else {
-                continue;
-            };
-            let module = rest
-                .split(|ch: char| ch.is_whitespace() || matches!(ch, ',' | '(' | '['))
-                .next()
+    candidate_files
+        .par_iter()
+        .map(|path| {
+            let mut roots = HashSet::new();
+            let ext = path
+                .extension()
+                .and_then(|ext| ext.to_str())
                 .unwrap_or_default();
-            if let Some(root) = module.split('.').next()
-                && is_elixir_alias(root)
-            {
-                roots.insert(root.to_string());
+            if !matches!(ext, "ex" | "exs") {
+                return roots;
             }
-        }
-    }
-    roots
+            let Ok(file) = File::open(path) else {
+                return roots;
+            };
+            for line in BufReader::new(file).lines().map_while(Result::ok) {
+                let line = line.trim_start();
+                let Some(rest) = line.strip_prefix("defmodule ") else {
+                    continue;
+                };
+                let module = rest
+                    .split(|ch: char| ch.is_whitespace() || matches!(ch, ',' | '(' | '['))
+                    .next()
+                    .unwrap_or_default();
+                if let Some(root) = module.split('.').next()
+                    && is_elixir_alias(root)
+                {
+                    roots.insert(root.to_string());
+                }
+            }
+            roots
+        })
+        .reduce(HashSet::new, |mut all, roots| {
+            all.extend(roots);
+            all
+        })
 }
 
 pub(super) fn load_elixir_external_roots(root_path: &Path) -> HashMap<String, String> {

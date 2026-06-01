@@ -24,7 +24,9 @@ pub fn ingest_snapshot(
     store: &mut impl WikiIndexStore,
     snapshot: UrlSnapshot,
 ) -> Result<IngestResult, WikiError> {
-    let title = extract_title(&snapshot.body).unwrap_or_else(|| snapshot.final_url.clone());
+    let html = text_from_utf8_lossy(&snapshot.body);
+    let document = Html::parse_document(&html);
+    let title = extract_title(&document).unwrap_or_else(|| snapshot.final_url.clone());
     let draft = SourceDraft {
         location: snapshot.final_url.clone(),
         kind: SourceKind::Url,
@@ -37,7 +39,7 @@ pub fn ingest_snapshot(
         compile_status: CompileStatus::Pending,
     };
     let record = SourceManifest::register(vault_root, draft)?;
-    let markdown = render_url_markdown(&snapshot, &record.canonical_location, &title);
+    let markdown = render_url_markdown(&snapshot, &record.canonical_location, &title, &document);
     let raw_path = write_raw_markdown(vault_root, &record, &markdown)?;
     index_after_ingest(vault_root, store)?;
 
@@ -48,7 +50,12 @@ pub fn ingest_snapshot(
     })
 }
 
-fn render_url_markdown(snapshot: &UrlSnapshot, canonical_url: &str, title: &str) -> String {
+fn render_url_markdown(
+    snapshot: &UrlSnapshot,
+    canonical_url: &str,
+    title: &str,
+    document: &Html,
+) -> String {
     let mut fields = vec![
         ("source_kind", "url".to_string()),
         ("source_url", snapshot.final_url.clone()),
@@ -67,14 +74,12 @@ fn render_url_markdown(snapshot: &UrlSnapshot, canonical_url: &str, title: &str)
     markdown.push_str("# ");
     markdown.push_str(&markdown_title(title));
     markdown.push_str("\n\n");
-    markdown.push_str(&html_to_markdownish_text(&snapshot.body));
+    markdown.push_str(&html_to_markdownish_text(document));
     markdown.push('\n');
     markdown
 }
 
-fn extract_title(bytes: &[u8]) -> Option<String> {
-    let html = text_from_utf8_lossy(bytes);
-    let document = Html::parse_document(&html);
+fn extract_title(document: &Html) -> Option<String> {
     let selector = Selector::parse("title").ok()?;
     let title = document
         .select(&selector)
@@ -87,9 +92,7 @@ fn extract_title(bytes: &[u8]) -> Option<String> {
     (!title.is_empty()).then_some(title)
 }
 
-fn html_to_markdownish_text(bytes: &[u8]) -> String {
-    let html = text_from_utf8_lossy(bytes);
-    let document = Html::parse_document(&html);
+fn html_to_markdownish_text(document: &Html) -> String {
     let mut parts = Vec::new();
     let root = Selector::parse("body")
         .ok()
@@ -193,7 +196,9 @@ mod tests {
 <body><main><p>Keep &amp; decode.</p><script>drop()</script></main></body>
 </html>"#;
 
-        assert_eq!(extract_title(html), Some("Hidden & Title".to_string()));
-        assert_eq!(html_to_markdownish_text(html), "Keep & decode.");
+        let html = Html::parse_document(&text_from_utf8_lossy(html));
+
+        assert_eq!(extract_title(&html), Some("Hidden & Title".to_string()));
+        assert_eq!(html_to_markdownish_text(&html), "Keep & decode.");
     }
 }

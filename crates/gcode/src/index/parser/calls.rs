@@ -33,12 +33,12 @@ pub(super) struct CallExtractionContext<'a> {
 
 #[derive(Debug)]
 struct CallSite {
-    pub(super) callee_name: String,
-    pub(super) qualifier_path: Option<String>,
-    pub(super) name_byte: usize,
-    pub(super) scope_byte: usize,
-    pub(super) line: usize,
-    pub(super) syntax: CallSyntaxKind,
+    callee_name: String,
+    qualifier_path: Option<String>,
+    name_byte: usize,
+    scope_byte: usize,
+    line: usize,
+    syntax: CallSyntaxKind,
 }
 
 pub(super) fn extract_calls(

@@ -109,6 +109,8 @@ fn collect_inbox_with_limit(
         }
 
         let bytes = fs::read(&path).map_err(|error| io_error("read inbox item", &path, error))?;
+        // Metadata is only a pre-read snapshot. Check the actual buffer too so
+        // size-limit enforcement survives races, sparse files, and odd filesystems.
         if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > max_item_bytes {
             skip_item(
                 vault_root,

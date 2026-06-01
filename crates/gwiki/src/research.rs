@@ -12,6 +12,8 @@ use crate::scope::{self, ScopeKind};
 use crate::session::{AcceptedResearchNote, DaemonDispatch, ResearchScope, ResearchSession};
 use crate::{ScopeSelection, WikiError};
 
+const MAX_RESEARCH_NOTE_SUFFIX_ATTEMPTS: usize = 1000;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AcceptedNoteDraft {
     pub title: String,
@@ -355,7 +357,7 @@ fn create_new_research_note(
     title: &str,
 ) -> Result<(PathBuf, fs::File), WikiError> {
     let slug = slugify(title);
-    for attempt in 1..=1000 {
+    for attempt in 1..=MAX_RESEARCH_NOTE_SUFFIX_ATTEMPTS {
         let file_name = if attempt == 1 {
             format!("{slug}.md")
         } else {

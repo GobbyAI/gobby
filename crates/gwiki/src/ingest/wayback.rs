@@ -1,9 +1,7 @@
 use std::path::Path;
-use std::sync::OnceLock;
 
 use percent_encoding::percent_decode_str;
-use regex::Regex;
-use scraper::{Html, Selector};
+use scraper::{ElementRef, Html, Node, Selector};
 
 use crate::WikiError;
 use crate::ingest::{
@@ -125,7 +123,8 @@ fn render_wayback_markdown(
 
 fn html_to_text(bytes: &[u8]) -> String {
     let html = text_from_utf8_lossy(bytes);
-    let output = extract_html_text(&strip_script_style(&html));
+    let document = Html::parse_document(&html);
+    let output = extract_html_text(&document);
     output
         .lines()
         .map(single_line)
@@ -134,37 +133,32 @@ fn html_to_text(bytes: &[u8]) -> String {
         .join("\n\n")
 }
 
-fn extract_html_text(html: &str) -> String {
-    let document = Html::parse_document(html);
+fn extract_html_text(document: &Html) -> String {
     let body_selector = Selector::parse("body").expect("body selector parses");
-    document
-        .select(&body_selector)
-        .next()
-        .map(|body| body.text().collect::<Vec<_>>().join("\n"))
-        .unwrap_or_else(|| {
-            document
-                .root_element()
-                .text()
-                .collect::<Vec<_>>()
-                .join("\n")
-        })
+    let mut parts = Vec::new();
+    if let Some(body) = document.select(&body_selector).next() {
+        collect_visible_text(body, &mut parts);
+    } else {
+        collect_visible_text(document.root_element(), &mut parts);
+    }
+    parts.join("\n")
 }
 
-fn strip_script_style(html: &str) -> String {
-    static SCRIPT_RE: OnceLock<Regex> = OnceLock::new();
-    static STYLE_RE: OnceLock<Regex> = OnceLock::new();
-
-    let script_re = SCRIPT_RE.get_or_init(|| {
-        Regex::new(r"(?is)<script\b[^>]*>.*?</script\s*>")
-            .expect("script-stripping regex should compile")
-    });
-    let style_re = STYLE_RE.get_or_init(|| {
-        Regex::new(r"(?is)<style\b[^>]*>.*?</style\s*>")
-            .expect("style-stripping regex should compile")
-    });
-
-    let without_scripts = script_re.replace_all(html, " ");
-    style_re.replace_all(&without_scripts, " ").into_owned()
+fn collect_visible_text(element: ElementRef<'_>, parts: &mut Vec<String>) {
+    if matches!(element.value().name(), "head" | "script" | "style") {
+        return;
+    }
+    for child in element.children() {
+        match child.value() {
+            Node::Text(text) => parts.push(text.text.to_string()),
+            Node::Element(_) => {
+                if let Some(child_element) = ElementRef::wrap(child) {
+                    collect_visible_text(child_element, parts);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 #[cfg(test)]

@@ -392,20 +392,17 @@ fn sql_like_prefixes(patterns: &[String]) -> Option<Vec<String>> {
     if patterns.is_empty() {
         return Some(Vec::new());
     }
-    patterns
-        .iter()
-        .map(|pattern| {
-            let prefix = pattern
-                .chars()
-                .take_while(|ch| !matches!(ch, '*' | '?' | '['))
-                .collect::<String>();
-            if prefix.is_empty() {
-                None
-            } else {
-                Some(format!("{}%", escape_like_prefix(&prefix)))
-            }
-        })
-        .collect()
+    let mut prefixes = Vec::new();
+    for pattern in patterns {
+        let prefix = pattern
+            .chars()
+            .take_while(|ch| !matches!(ch, '*' | '?' | '['))
+            .collect::<String>();
+        if !prefix.is_empty() {
+            prefixes.push(format!("{}%", escape_like_prefix(&prefix)));
+        }
+    }
+    Some(prefixes)
 }
 
 fn escape_like_prefix(value: &str) -> String {
@@ -651,7 +648,10 @@ mod tests {
         );
 
         let globs = vec!["*.rs".to_string(), "src/*.rs".to_string()];
-        assert!(sql_like_prefixes(&globs).is_none());
+        assert_eq!(
+            sql_like_prefixes(&globs).expect("glob prefixes"),
+            vec!["src/%"]
+        );
     }
 
     #[test]

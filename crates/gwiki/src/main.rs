@@ -385,7 +385,8 @@ fn exit_code_for_error(error: &WikiError) -> ExitCode {
         | WikiError::Json { .. }
         | WikiError::Yaml { .. }
         | WikiError::Registry { .. }
-        | WikiError::Daemon { .. } => ExitCode::from(1),
+        | WikiError::Daemon { .. }
+        | WikiError::Setup { .. } => ExitCode::from(1),
     }
 }
 

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::models::{ProjectionMetadata, ProjectionProvenance};
 use gobby_core::falkor::Row;
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GraphPayload {
     pub nodes: Vec<GraphNode>,
     pub links: Vec<GraphLink>,
@@ -13,6 +13,8 @@ pub struct GraphPayload {
     pub center: Option<String>,
     #[serde(skip)]
     node_ids: HashSet<String>,
+    #[serde(skip)]
+    node_cache_ready: bool,
 }
 
 impl GraphPayload {
@@ -22,6 +24,7 @@ impl GraphPayload {
             links: vec![],
             center: Some(center.into()),
             node_ids: HashSet::new(),
+            node_cache_ready: false,
         }
     }
 
@@ -29,7 +32,7 @@ impl GraphPayload {
         if node.id.is_empty() {
             return;
         }
-        if self.node_ids.is_empty() && !self.nodes.is_empty() {
+        if !self.node_cache_ready {
             self.refresh_node_cache();
         }
         if !self.node_ids.insert(node.id.clone()) {
@@ -45,6 +48,13 @@ impl GraphPayload {
             .filter(|node| !node.id.is_empty())
             .map(|node| node.id.clone())
             .collect::<HashSet<_>>();
+        self.node_cache_ready = true;
+    }
+}
+
+impl PartialEq for GraphPayload {
+    fn eq(&self, other: &Self) -> bool {
+        self.nodes == other.nodes && self.links == other.links && self.center == other.center
     }
 }
 

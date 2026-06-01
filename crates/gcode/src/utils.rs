@@ -23,6 +23,8 @@ mod tests {
 
     #[test]
     fn short_id_handles_unicode() {
-        assert_eq!(short_id("ééééééééé"), "éééééééé");
+        let value = "\u{00e9}".repeat(9);
+        let expected = "\u{00e9}".repeat(8);
+        assert_eq!(short_id(&value), expected);
     }
 }

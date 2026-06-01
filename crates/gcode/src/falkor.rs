@@ -60,6 +60,10 @@ pub fn id_list_literal(ids: &[String]) -> String {
     typed_query::id_list_literal(ids)
 }
 
+/// Bound user-supplied offsets to the graph query page cap.
+///
+/// Callers may pass any non-negative offset, but FalkorDB reads stay capped at
+/// `MAX_GRAPH_LIMIT` so accidental deep pages cannot trigger unbounded scans.
 pub fn clamp_offset(offset: usize) -> usize {
     offset.min(MAX_GRAPH_LIMIT)
 }

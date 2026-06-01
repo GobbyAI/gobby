@@ -16,41 +16,39 @@ pub fn run_standalone_setup(
     validate_standalone_request(request)?;
 
     let setup = GcodeStandaloneSetup::new(request.schema.clone());
-    begin_postgres_transaction(client)?;
+    let mut tx = client
+        .transaction()
+        .map_err(|err| SetupError::CreationFailed {
+            object: "standalone setup transaction".to_string(),
+            message: err.to_string(),
+        })?;
     let mut reset_report = SetupReport::default();
     if request.overwrite_code_index {
-        if let Err(err) = reset_postgres_code_index(client, setup.schema()) {
+        if let Err(err) = reset_postgres_code_index(&mut tx, setup.schema()) {
             reset_report
                 .failed
                 .push(("code-index overwrite reset".to_string(), err.to_string()));
-            rollback_postgres_transaction(client, "code-index overwrite reset rollback")?;
             return Ok(standalone_setup_status(&setup, reset_report));
         }
-    } else if let Err(err) = ensure_postgres_code_index_compatible(client, setup.schema()) {
-        rollback_postgres_transaction(client, "code-index preflight rollback")?;
-        return Err(err);
+    } else {
+        ensure_postgres_code_index_compatible(&mut tx, setup.schema())?;
     }
 
-    let setup_result = {
+    let mut report = {
         let mut ctx = SetupContext {
-            pg: Some(client),
+            pg: Some(&mut tx),
             falkor_config: None,
             qdrant_config: None,
             non_interactive: true,
         };
         setup.create(&mut ctx)
-    };
-    let mut report = match setup_result {
-        Ok(report) => report,
-        Err(err) => {
-            rollback_postgres_transaction(client, "standalone setup rollback")?;
-            return Err(err);
-        }
-    };
+    }?;
     if report.failed.is_empty() {
-        commit_postgres_transaction(client)?;
+        tx.commit().map_err(|err| SetupError::CreationFailed {
+            object: "standalone setup commit".to_string(),
+            message: err.to_string(),
+        })?;
     } else {
-        rollback_postgres_transaction(client, "standalone setup rollback")?;
         report.created.clear();
         report.skipped.clear();
     }
@@ -72,33 +70,6 @@ fn standalone_setup_status(
         services: None,
         embedding: None,
     }
-}
-
-fn begin_postgres_transaction(client: &mut Client) -> Result<(), SetupError> {
-    client
-        .batch_execute("BEGIN")
-        .map_err(|err| SetupError::CreationFailed {
-            object: "standalone setup transaction".to_string(),
-            message: err.to_string(),
-        })
-}
-
-fn commit_postgres_transaction(client: &mut Client) -> Result<(), SetupError> {
-    client
-        .batch_execute("COMMIT")
-        .map_err(|err| SetupError::CreationFailed {
-            object: "standalone setup commit".to_string(),
-            message: err.to_string(),
-        })
-}
-
-fn rollback_postgres_transaction(client: &mut Client, object: &str) -> Result<(), SetupError> {
-    client
-        .batch_execute("ROLLBACK")
-        .map_err(|err| SetupError::CreationFailed {
-            object: object.to_string(),
-            message: err.to_string(),
-        })
 }
 
 /// The standalone setup target is PostgreSQL 18 with `pg_search` BM25 indexes.

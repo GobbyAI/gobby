@@ -12,6 +12,8 @@ use crate::support::text::slugify;
 
 const GRAPH_SOURCE_KIND: &str = "graph";
 const GRAPH_SERVICE: &str = "gwiki_graph";
+const GRAPH_BOOST_DOCUMENT_QUERY_LIMIT: i64 = 10_000;
+const GRAPH_BOOST_LINK_QUERY_LIMIT: i64 = 50_000;
 
 pub struct GraphBoostRequest {
     pub scope: SearchScope,
@@ -104,8 +106,10 @@ impl GraphBoostBackend for PostgresGraphBoostBackend {
         let documents = match conn.query(
             "SELECT path, title
              FROM gwiki_documents
-             WHERE scope_kind = $1 AND scope_id = $2",
-            &[&scope_kind, &scope_id],
+             WHERE scope_kind = $1 AND scope_id = $2
+             ORDER BY path
+             LIMIT $3",
+            &[&scope_kind, &scope_id, &GRAPH_BOOST_DOCUMENT_QUERY_LIMIT],
         ) {
             Ok(rows) => rows
                 .into_iter()
@@ -120,8 +124,10 @@ impl GraphBoostBackend for PostgresGraphBoostBackend {
         let links = match conn.query(
             "SELECT path, target_path
              FROM gwiki_links
-             WHERE scope_kind = $1 AND scope_id = $2",
-            &[&scope_kind, &scope_id],
+             WHERE scope_kind = $1 AND scope_id = $2
+             ORDER BY path, target_path
+             LIMIT $3",
+            &[&scope_kind, &scope_id, &GRAPH_BOOST_LINK_QUERY_LIMIT],
         ) {
             Ok(rows) => rows
                 .into_iter()

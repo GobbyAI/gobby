@@ -307,7 +307,7 @@ mod tests {
     use std::fs;
     use std::io::{Read, Write};
     use std::net::TcpListener;
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
     use std::sync::MutexGuard;
     use std::thread;
     use std::time::Duration;
@@ -317,8 +317,8 @@ mod tests {
         let response = r#"{"text":"legacy transcript"}"#;
         let (port, request) = spawn_server(response);
         let home = temp_home();
-        let _env = EnvGuard::set_home(&home);
-        write_daemon_files(&home, port, "voice-token");
+        let _env = EnvGuard::set_home(home.path());
+        write_daemon_files(home.path(), port, "voice-token");
         let cfg = test_context(None);
 
         let result = transcribe_via_daemon(
@@ -345,8 +345,8 @@ mod tests {
     fn forwards_provider_model_and_optional_project_id() {
         let (port, request) = spawn_server(r#"{"text":"ok","model":"daemon-model"}"#);
         let home = temp_home();
-        let _env = EnvGuard::set_home(&home);
-        write_daemon_files(&home, port, "text-token");
+        let _env = EnvGuard::set_home(home.path());
+        write_daemon_files(home.path(), port, "text-token");
         let cfg = test_context(Some("project-123"));
 
         let result = generate_via_daemon(&cfg, "Write a title", Some("Be brief")).unwrap();
@@ -362,7 +362,7 @@ mod tests {
         assert_eq!(result.text, "ok");
 
         let (port, request) = spawn_server(r#"{"text":"ok"}"#);
-        write_daemon_files(&home, port, "text-token");
+        write_daemon_files(home.path(), port, "text-token");
         let cfg = test_context(None);
 
         generate_via_daemon(&cfg, "No project", None).unwrap();
@@ -378,8 +378,8 @@ mod tests {
     fn sends_local_token_and_multipart() {
         let (port, request) = spawn_server(r#"{"description":"diagram","ocr_text":null}"#);
         let home = temp_home();
-        let _env = EnvGuard::set_home(&home);
-        write_daemon_files(&home, port, "local-secret");
+        let _env = EnvGuard::set_home(home.path());
+        write_daemon_files(home.path(), port, "local-secret");
         let cfg = test_context(None);
 
         describe_image_via_daemon(&cfg, b"png bytes".to_vec(), "figure.png", "image/png").unwrap();
@@ -393,7 +393,7 @@ mod tests {
 
         let (port, request) =
             spawn_server(r#"{"text":"hello","segments":[{"start":0.0,"end":1.0,"text":"hello"}]}"#);
-        write_daemon_files(&home, port, "local-secret");
+        write_daemon_files(home.path(), port, "local-secret");
 
         transcribe_via_daemon(
             &cfg,
@@ -416,8 +416,8 @@ mod tests {
     fn voice_multipart_carries_capability_fields() {
         let (port, request) = spawn_server(r#"{"text":"hello","segments":[]}"#);
         let home = temp_home();
-        let _env = EnvGuard::set_home(&home);
-        write_daemon_files(&home, port, "voice-token");
+        let _env = EnvGuard::set_home(home.path());
+        write_daemon_files(home.path(), port, "voice-token");
         let cfg = test_context(None);
 
         transcribe_via_daemon(
@@ -446,7 +446,7 @@ mod tests {
         assert!(!multipart_has_field(&request, "capability", "translate"));
 
         let (port, request) = spawn_server(r#"{"text":"hello","segments":[]}"#);
-        write_daemon_files(&home, port, "voice-token");
+        write_daemon_files(home.path(), port, "voice-token");
 
         transcribe_via_daemon(
             &cfg,
@@ -540,8 +540,8 @@ mod tests {
         request.contains(&format!("name=\"{name}\"\r\n\r\n{value}"))
     }
 
-    fn temp_home() -> PathBuf {
-        tempfile::tempdir().unwrap().keep()
+    fn temp_home() -> tempfile::TempDir {
+        tempfile::tempdir().unwrap()
     }
 
     fn write_daemon_files(home: &Path, port: u16, token: &str) {

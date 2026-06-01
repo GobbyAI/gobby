@@ -16,7 +16,10 @@ pub(crate) fn keyword_score(text: &str, tokens: &[String]) -> usize {
     let haystack = text.to_lowercase();
     tokens
         .iter()
-        .map(|token| haystack.matches(token).count())
+        .map(|token| {
+            let token = token.to_lowercase();
+            haystack.matches(&token).count()
+        })
         .sum()
 }
 

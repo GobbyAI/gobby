@@ -49,6 +49,9 @@ pub enum WikiError {
     Search {
         source: search::SearchError,
     },
+    Setup {
+        source: SetupError,
+    },
 }
 
 impl WikiError {
@@ -65,6 +68,7 @@ impl WikiError {
             Self::InvalidInput { .. } => "invalid_input",
             Self::Index { .. } => "index_error",
             Self::Search { .. } => "search_error",
+            Self::Setup { .. } => "setup_error",
         }
     }
 }
@@ -101,6 +105,7 @@ impl fmt::Display for WikiError {
             }
             Self::Index { source } => write!(f, "index: {source} ({})", self.code()),
             Self::Search { source } => write!(f, "query: {source} ({})", self.code()),
+            Self::Setup { source } => write!(f, "gwiki setup failed: {source} ({})", self.code()),
         }
     }
 }
@@ -130,15 +135,14 @@ impl std::error::Error for WikiError {
             Self::Yaml { source, .. } => Some(source),
             Self::Index { source } => Some(source),
             Self::Search { source } => Some(source),
+            Self::Setup { source } => Some(source),
             _ => None,
         }
     }
 }
 
 pub(crate) fn setup_error_to_wiki_error(error: SetupError) -> WikiError {
-    WikiError::Config {
-        detail: format!("gwiki setup failed: {error}"),
-    }
+    WikiError::Setup { source: error }
 }
 
 pub(crate) fn index_error_to_wiki_error(error: indexer::IndexError) -> WikiError {
@@ -179,5 +183,17 @@ mod tests {
 
         assert_eq!(index.code(), "index_error");
         assert_eq!(search.code(), "search_error");
+    }
+
+    #[test]
+    fn setup_error_source_is_preserved() {
+        let error = setup_error_to_wiki_error(SetupError::CreationFailed {
+            object: "gwiki_documents".to_string(),
+            message: "permission denied".to_string(),
+        });
+
+        assert_eq!(error.code(), "setup_error");
+        assert!(error.source().is_some());
+        assert!(error.to_string().contains("gwiki setup failed"));
     }
 }

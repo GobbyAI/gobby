@@ -90,13 +90,34 @@ pub trait AttachedValidator {
 pub struct SetupContext<'a> {
     /// PostgreSQL connection supplied by the caller when the `postgres` feature is enabled.
     #[cfg(feature = "postgres")]
-    pub pg: Option<&'a mut postgres::Client>,
+    pub pg: Option<&'a mut dyn SetupPostgresExecutor>,
     /// FalkorDB connection configuration, when configured.
     pub falkor_config: Option<&'a crate::config::FalkorConfig>,
     /// Qdrant connection configuration, when configured.
     pub qdrant_config: Option<&'a crate::config::QdrantConfig>,
     /// If true, skip prompts and apply defaults.
     pub non_interactive: bool,
+}
+
+/// Object-safe PostgreSQL executor supplied to setup creation callbacks.
+#[cfg(feature = "postgres")]
+pub trait SetupPostgresExecutor {
+    /// Execute SQL against the underlying PostgreSQL setup connection.
+    fn batch_execute(&mut self, sql: &str) -> Result<(), postgres::Error>;
+}
+
+#[cfg(feature = "postgres")]
+impl SetupPostgresExecutor for postgres::Client {
+    fn batch_execute(&mut self, sql: &str) -> Result<(), postgres::Error> {
+        postgres::Client::batch_execute(self, sql)
+    }
+}
+
+#[cfg(feature = "postgres")]
+impl SetupPostgresExecutor for postgres::Transaction<'_> {
+    fn batch_execute(&mut self, sql: &str) -> Result<(), postgres::Error> {
+        postgres::Transaction::batch_execute(self, sql)
+    }
 }
 
 /// Report from a standalone setup creation run.

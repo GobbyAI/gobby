@@ -71,6 +71,7 @@ struct EndpointContract {
     optional: bool,
     method: &'static str,
     path: &'static str,
+    probe_method: &'static str,
     probe_path: &'static str,
     request_shape: &'static str,
     response_shape: &'static str,
@@ -83,7 +84,7 @@ enum ProbeObservation {
     TransportError(String),
 }
 
-trait DaemonProbeTransport {
+trait DaemonProbeTransport: Sync {
     fn status(&self, base_url: &str, method: &str, path: &str) -> ProbeObservation;
 }
 
@@ -105,6 +106,7 @@ const EMBEDDINGS: EndpointContract = EndpointContract {
     optional: true,
     method: "POST",
     path: "/api/memories/embeddings/reindex",
+    probe_method: "OPTIONS",
     probe_path: "/api/memories/embeddings/reindex",
     request_shape: "query: project_id?; body: none",
     response_shape: "object with embedding reindex counts or error detail",
@@ -116,6 +118,7 @@ const SYNTHESIS: EndpointContract = EndpointContract {
     optional: true,
     method: "GET",
     path: "/api/providers/models",
+    probe_method: "GET",
     probe_path: "/api/providers/models",
     request_shape: "none",
     response_shape: r#"{"providers":[{"provider","available","models","source","startup_error",...}]}"#,
@@ -127,6 +130,7 @@ const VISION: EndpointContract = EndpointContract {
     optional: true,
     method: "GET",
     path: "/api/llm/vision/status",
+    probe_method: "GET",
     probe_path: "/api/llm/vision/status",
     request_shape: "none",
     response_shape: "vision status object advertising vision_extract support",
@@ -138,6 +142,7 @@ const TRANSCRIPTION: EndpointContract = EndpointContract {
     optional: true,
     method: "GET",
     path: "/api/voice/status",
+    probe_method: "GET",
     probe_path: "/api/voice/status",
     request_shape: "none",
     response_shape: "voice status object advertising transcription_enabled/translation_enabled",
@@ -149,6 +154,7 @@ const AGENT_DISPATCH: EndpointContract = EndpointContract {
     optional: true,
     method: "POST",
     path: "/api/agents/spawn",
+    probe_method: "OPTIONS",
     probe_path: "/api/agents/spawn",
     request_shape: "JSON AgentSpawnRequest: task_id, agent_name?, prompt?, provider?, model?, isolation?, workflow?",
     response_shape: "AgentSpawnResponse with success plus run_id/child_session_id/conversation_id or error",
@@ -160,6 +166,7 @@ const SESSION_EVENTS: EndpointContract = EndpointContract {
     optional: true,
     method: "GET",
     path: "/api/sessions",
+    probe_method: "GET",
     probe_path: "/api/sessions",
     request_shape: "query filters such as source?, project_id?, status?, limit?, offset?",
     response_shape: "session listing object with sessions and pagination/count fields",
@@ -179,12 +186,26 @@ fn probe_daemon_capabilities_with(
     base_url: &str,
     transport: &impl DaemonProbeTransport,
 ) -> DaemonCapabilityReport {
-    let embeddings = probe_contract(base_url, transport, EMBEDDINGS);
-    let synthesis = probe_contract(base_url, transport, SYNTHESIS);
-    let vision = probe_contract(base_url, transport, VISION);
-    let transcription = probe_contract(base_url, transport, TRANSCRIPTION);
-    let agent_dispatch = probe_contract(base_url, transport, AGENT_DISPATCH);
-    let session_events = probe_contract(base_url, transport, SESSION_EVENTS);
+    let contracts = [
+        EMBEDDINGS,
+        SYNTHESIS,
+        VISION,
+        TRANSCRIPTION,
+        AGENT_DISPATCH,
+        SESSION_EVENTS,
+    ];
+    let [
+        embeddings,
+        synthesis,
+        vision,
+        transcription,
+        agent_dispatch,
+        session_events,
+    ] = std::thread::scope(|scope| {
+        contracts
+            .map(|contract| scope.spawn(move || probe_contract(base_url, transport, contract)))
+            .map(|handle| handle.join().expect("daemon capability probe panicked"))
+    });
 
     let degraded = [
         &embeddings,
@@ -215,7 +236,7 @@ fn probe_contract(
     transport: &impl DaemonProbeTransport,
     contract: EndpointContract,
 ) -> CapabilityAvailability {
-    let observation = transport.status(base_url, contract.method, contract.probe_path);
+    let observation = transport.status(base_url, contract.probe_method, contract.probe_path);
     let degradation = degradation_for_observation(contract, observation);
     CapabilityAvailability {
         capability: contract.capability,
@@ -237,7 +258,7 @@ fn degradation_for_observation(
 ) -> Option<DaemonDegradation> {
     match observation {
         ProbeObservation::HttpStatus(status) if (200..=299).contains(&status) => None,
-        ProbeObservation::HttpStatus(400 | 422) if contract.method == "POST" => None,
+        ProbeObservation::HttpStatus(405) if contract.probe_method == "OPTIONS" => None,
         ProbeObservation::HttpStatus(status @ (401 | 403)) => Some(degradation(
             contract,
             DegradationReason::Unauthorized,
@@ -318,8 +339,8 @@ mod tests {
                 ProbeObservation::HttpStatus(404),
             ),
             (
-                ("POST", "/api/agents/spawn"),
-                ProbeObservation::HttpStatus(405),
+                ("OPTIONS", "/api/agents/spawn"),
+                ProbeObservation::HttpStatus(404),
             ),
         ]);
 
@@ -341,7 +362,7 @@ mod tests {
         assert!(!report.agent_dispatch.available);
         assert_eq!(
             report.agent_dispatch.degradation.as_ref().map(|d| d.reason),
-            Some(DegradationReason::UnexpectedStatus)
+            Some(DegradationReason::MissingEndpoint)
         );
         assert_eq!(
             report
@@ -349,22 +370,16 @@ mod tests {
                 .degradation
                 .as_ref()
                 .and_then(|d| d.http_status),
-            Some(405)
+            Some(404)
         );
     }
 
     #[test]
-    fn post_validation_failures_still_mean_endpoint_exists() {
-        let transport = FakeTransport::new([
-            (
-                ("POST", "/api/memories/embeddings/reindex"),
-                ProbeObservation::HttpStatus(422),
-            ),
-            (
-                ("GET", "/api/memories/embeddings/reindex"),
-                ProbeObservation::HttpStatus(405),
-            ),
-        ]);
+    fn safe_write_probe_method_not_allowed_still_means_endpoint_exists() {
+        let transport = FakeTransport::new([(
+            ("OPTIONS", "/api/memories/embeddings/reindex"),
+            ProbeObservation::HttpStatus(405),
+        )]);
 
         let report = probe_daemon_capabilities_with("http://daemon.test", &transport);
 

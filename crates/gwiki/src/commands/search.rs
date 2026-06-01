@@ -140,7 +140,7 @@ where
         .iter()
         .map(degradation_label)
         .collect::<Vec<_>>();
-    let output = SearchOutput::new(output_scope.clone(), query, limit, results, degradations);
+    let output = SearchOutput::new(output_scope, query, limit, results, degradations);
     render(output)
 }
 

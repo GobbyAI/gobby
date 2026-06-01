@@ -270,26 +270,6 @@ pub(super) fn append_unique_symbols(
     }
 }
 
-pub(super) fn append_visible_symbols(
-    conn: &mut Client,
-    ctx: &Context,
-    out: &mut Vec<Symbol>,
-    seen: &mut HashSet<String>,
-    symbols: Vec<Symbol>,
-    limit: usize,
-) {
-    for symbol in symbols {
-        if seen.contains(&symbol.id) || !visibility::symbol_is_visible(conn, ctx, &symbol) {
-            continue;
-        }
-        seen.insert(symbol.id.clone());
-        out.push(symbol);
-        if out.len() >= limit {
-            return;
-        }
-    }
-}
-
 pub(super) fn query_symbols_by_conditions(
     conn: &mut Client,
     mut conditions: Vec<String>,

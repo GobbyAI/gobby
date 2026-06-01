@@ -27,6 +27,8 @@ pub fn append_logs(
     let scope_log = scope_root.join("log.md");
     append_log(&scope_log, entry)?;
 
+    // Scope log is the source of truth for command chronology; mirror to the
+    // global log only after the scope append succeeds.
     let global_log = global_hub_root
         .map(|root| root.join("log.md"))
         .map(|path| {

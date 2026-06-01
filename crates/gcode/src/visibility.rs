@@ -253,7 +253,7 @@ pub fn visible_symbols_by_ids(
     filter_visible_symbols(conn, ctx, out)
 }
 
-fn filter_visible_symbols(
+pub(crate) fn filter_visible_symbols(
     conn: &mut Client,
     ctx: &Context,
     symbols: Vec<Symbol>,

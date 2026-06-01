@@ -80,6 +80,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 anyhow = "1"
 log = "0.4"
 ureq = { version = "2", features = ["json"] }
+wait-timeout = "0.2"
 
 # Secret resolution (Fernet decryption of gobby secrets)
 fernet = "0.2"

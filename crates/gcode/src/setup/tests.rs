@@ -220,12 +220,16 @@ fn quote_identifier_rejects_names_over_postgres_byte_limit() {
 #[serial_test::serial]
 fn overwrite_recreates_incompatible_code_index_and_preserves_sentinel_table() {
     let Ok(database_url) = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL") else {
+        // This is an opt-in destructive integration test. Local/unit test runs
+        // skip it when no throwaway PostgreSQL database is configured.
         eprintln!(
             "skipping PostgreSQL overwrite test: GCODE_POSTGRES_TEST_DATABASE_URL is not set"
         );
         return;
     };
     if let Err(reason) = destructive_postgres_test_allowed(&database_url) {
+        // Refuse to panic against a non-test database; skipping is safer than
+        // requiring every developer machine to provide PostgreSQL.
         eprintln!("skipping PostgreSQL overwrite test: {reason}");
         return;
     }

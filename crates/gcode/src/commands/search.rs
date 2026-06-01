@@ -304,7 +304,7 @@ fn search_symbol_with_graph(
     for (sym_id, rrf_score, source_names) in &merged {
         let sym = match symbol_cache.remove(sym_id) {
             Some(symbol) => Some(symbol),
-            None => fetch_symbol_by_id(conn, ctx, sym_id)?,
+            None => visibility::visible_symbol_by_id(conn, ctx, sym_id)?,
         };
 
         if let Some(s) = sym
@@ -572,14 +572,6 @@ fn exact_tier_score(query: &str, symbol: &Symbol) -> f64 {
 
 fn final_rank_score(query: &str, symbol: &Symbol, rrf_score: f64) -> f64 {
     exact_tier_score(query, symbol) + rrf_score
-}
-
-fn fetch_symbol_by_id(
-    conn: &mut postgres::Client,
-    ctx: &Context,
-    symbol_id: &str,
-) -> anyhow::Result<Option<Symbol>> {
-    visibility::visible_symbol_by_id(conn, ctx, symbol_id)
 }
 
 fn symbol_matches_filters(

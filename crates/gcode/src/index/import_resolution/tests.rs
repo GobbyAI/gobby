@@ -282,6 +282,48 @@ fn php_grouped_const_imports_preserve_aliases() {
 }
 
 #[test]
+fn php_wildcard_imports_register_external_module_prefixes() {
+    let mut extracted = ExtractedImports::default();
+
+    parse_import_statement(
+        "php",
+        r"use Vendor\Pkg\*;",
+        "src/sample.php",
+        &ImportResolutionContext::default(),
+        &mut extracted,
+    );
+
+    assert_eq!(
+        extracted
+            .bindings
+            .bare_wildcard_modules
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        vec![r"Vendor\Pkg"]
+    );
+}
+
+#[test]
+fn php_path_segment_wildcards_do_not_register_literal_member_bindings() {
+    let mut extracted = ExtractedImports::default();
+
+    parse_import_statement(
+        "php",
+        r"use Vendor\*\Helper;",
+        "src/sample.php",
+        &ImportResolutionContext::default(),
+        &mut extracted,
+    );
+
+    assert_eq!(
+        extracted.bindings.bare_wildcard_modules,
+        vec![r"Vendor".to_string()]
+    );
+    assert!(extracted.bindings.member.is_empty());
+}
+
+#[test]
 fn loads_elixir_mix_lock_first_quoted_dependency_per_line() {
     let tempdir = TempDir::new().expect("tempdir");
     fs::write(

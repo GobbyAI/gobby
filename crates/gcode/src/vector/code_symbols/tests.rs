@@ -635,11 +635,25 @@ fn char_literal_end(bytes: &[u8], index: usize) -> Option<usize> {
         return None;
     };
     let cursor = match bytes.get(start + 1) {
-        Some(b'\\') => start + 3,
-        Some(_) => start + 2,
+        Some(b'\\') => escaped_char_literal_payload_end(bytes, start + 2)?,
+        Some(_) => {
+            let rest = std::str::from_utf8(&bytes[start + 1..]).ok()?;
+            start + 1 + rest.chars().next()?.len_utf8()
+        }
         None => return None,
     };
     (bytes.get(cursor) == Some(&b'\'')).then_some(cursor + 1)
+}
+
+fn escaped_char_literal_payload_end(bytes: &[u8], index: usize) -> Option<usize> {
+    match bytes.get(index)? {
+        b'x' => (index + 3 <= bytes.len()).then_some(index + 3),
+        b'u' if bytes.get(index + 1) == Some(&b'{') => {
+            let close = bytes[index + 2..].iter().position(|byte| *byte == b'}')?;
+            Some(index + 2 + close + 1)
+        }
+        _ => Some(index + 1),
+    }
 }
 
 fn push_masked(output: &mut String, bytes: &[u8]) {
@@ -650,6 +664,20 @@ fn push_masked(output: &mut String, bytes: &[u8]) {
             output.push(' ');
         }
     }
+}
+
+#[test]
+fn rust_literal_mask_handles_long_char_escapes() {
+    let source = r#"let emoji = '\u{1F600}';
+let byte = b'\x7f';
+call_real_code();
+"#;
+
+    let masked = rust_code_without_comments_and_literals(source);
+
+    assert!(!masked.contains(r"\u{1F600}"));
+    assert!(!masked.contains(r"\x7f"));
+    assert!(masked.contains("call_real_code();"));
 }
 
 #[test]
@@ -717,6 +745,8 @@ fn read_http_request(stream: &mut TcpStream) -> String {
     stream
         .set_read_timeout(Some(Duration::from_secs(2)))
         .expect("set read timeout");
+    // Stop at Content-Length when present; otherwise the read timeout ends
+    // keep-alive or bodyless test requests without hanging the server thread.
     let mut request = Vec::new();
     let mut buffer = [0; 4096];
     let mut expected_len = None;

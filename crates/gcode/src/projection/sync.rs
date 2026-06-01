@@ -156,14 +156,28 @@ fn sync_graph_files(ctx: &Context, file_paths: &[String]) -> anyhow::Result<Proj
         return Ok(ProjectionSyncReport::degraded_from_error(&error, 0, 0));
     }
 
-    let conn = db::connect_readwrite(&ctx.database_url)?;
-    let mut state = GraphProjectionState { ctx, conn };
-    let report = sync_files_with_state(
-        file_paths,
-        &mut state,
-        GraphProjectionState::sync_file,
-        GraphProjectionState::mark_synced,
-    );
+    let mut conn = db::connect_readwrite(&ctx.database_url)?;
+    let report = code_graph::with_code_graph(ctx, |graph| {
+        let mut synced_files = 0usize;
+        let mut synced_symbols = 0usize;
+
+        for file_path in file_paths {
+            let symbols = match sync_graph_file(ctx, &mut conn, graph, file_path) {
+                Ok(symbols) => symbols,
+                Err(error) => {
+                    return Ok(ProjectionSyncReport::degraded_from_error(
+                        &error,
+                        synced_files,
+                        synced_symbols,
+                    ));
+                }
+            };
+            synced_files += 1;
+            synced_symbols += symbols;
+        }
+
+        Ok(ProjectionSyncReport::ok(synced_files, synced_symbols))
+    })?;
     if report.synced_files > 0
         && report.error.is_none()
         && let Err(error) = code_graph::cleanup_orphans(ctx)
@@ -207,41 +221,33 @@ fn sync_vector_files(ctx: &Context, file_paths: &[String]) -> anyhow::Result<Pro
     ))
 }
 
-struct GraphProjectionState<'a> {
-    ctx: &'a Context,
-    conn: postgres::Client,
-}
-
-impl GraphProjectionState<'_> {
-    fn sync_file(&mut self, file_path: &str) -> anyhow::Result<usize> {
-        let facts = db::read_graph_file_facts(&mut self.conn, &self.ctx.project_id, file_path)?;
-        if !db::mark_graph_sync_attempted(&mut self.conn, &self.ctx.project_id, file_path)? {
-            anyhow::bail!(
-                "indexed file `{file_path}` was not found for project {}",
-                self.ctx.project_id
-            );
-        }
-        code_graph::sync_file_graph(
-            self.ctx,
-            &facts.file_path,
-            &facts.imports,
-            &facts.definitions,
-            &facts.calls,
-            false,
-        )?;
-        Ok(facts.definitions.len())
+fn sync_graph_file(
+    ctx: &Context,
+    conn: &mut postgres::Client,
+    graph: &mut code_graph::CodeGraph<'_>,
+    file_path: &str,
+) -> anyhow::Result<usize> {
+    let facts = db::read_graph_file_facts(conn, &ctx.project_id, file_path)?;
+    if !db::mark_graph_sync_attempted(conn, &ctx.project_id, file_path)? {
+        anyhow::bail!(
+            "indexed file `{file_path}` was not found for project {}",
+            ctx.project_id
+        );
     }
-
-    fn mark_synced(&mut self, file_path: &str) -> anyhow::Result<()> {
-        if db::mark_graph_synced(&mut self.conn, &self.ctx.project_id, file_path)? {
-            Ok(())
-        } else {
-            anyhow::bail!(
-                "indexed file `{file_path}` was not found for project {}",
-                self.ctx.project_id
-            )
-        }
+    graph.sync_file(
+        &facts.file_path,
+        &facts.imports,
+        &facts.definitions,
+        &facts.calls,
+        false,
+    )?;
+    if !db::mark_graph_synced(conn, &ctx.project_id, file_path)? {
+        anyhow::bail!(
+            "indexed file `{file_path}` was not found for project {}",
+            ctx.project_id
+        );
     }
+    Ok(facts.definitions.len())
 }
 
 struct VectorProjectionState<'a> {

@@ -687,25 +687,13 @@ fn parse_php_import_statement(
         (PhpImportKind::ClassLike, rest.trim())
     };
 
-    if split_top_level(rest, ',')
-        .unwrap_or_default()
-        .into_iter()
-        .any(|item| item.trim() == "*")
-    {
-        extracted.imports.push(ImportRelation {
-            file_path: rel_path.to_string(),
-            module_name: rest.to_string(),
-        });
-        return;
-    }
-
     if let Some((base, group)) = split_php_use_group(rest) {
         let Ok(items) = split_top_level(group, ',') else {
             return;
         };
         for item in items {
             if let Some(target) = php_join_use_path(base, item) {
-                register_php_import_item(&target, kind, rel_path, import_context, extracted);
+                register_php_import_or_wildcard(&target, kind, rel_path, import_context, extracted);
             }
         }
         return;
@@ -723,7 +711,7 @@ fn parse_php_import_statement(
         return;
     };
     for item in items {
-        register_php_import_item(item, kind, rel_path, import_context, extracted);
+        register_php_import_or_wildcard(item, kind, rel_path, import_context, extracted);
     }
 }
 
@@ -817,6 +805,42 @@ fn register_php_import_item(
             .member
             .insert(local_alias.to_string(), target.to_string());
     }
+}
+
+fn register_php_import_or_wildcard(
+    item: &str,
+    kind: PhpImportKind,
+    rel_path: &str,
+    import_context: &ImportResolutionContext,
+    extracted: &mut ExtractedImports,
+) {
+    if let Some(module) = php_wildcard_module(item) {
+        extracted.imports.push(ImportRelation {
+            file_path: rel_path.to_string(),
+            module_name: module.clone(),
+        });
+        if is_external_php_symbol(&module, import_context) {
+            extracted.bindings.bare_wildcard_modules.push(module);
+        }
+        return;
+    }
+
+    register_php_import_item(item, kind, rel_path, import_context, extracted);
+}
+
+fn php_wildcard_module(item: &str) -> Option<String> {
+    let (target, _) = split_alias(item);
+    let target = target.trim().trim_start_matches('\\');
+    let wildcard = target
+        .split('\\')
+        .position(|segment| segment.trim() == "*")?;
+    let module = target
+        .split('\\')
+        .take(wildcard)
+        .filter(|segment| !segment.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\\");
+    (!module.is_empty()).then_some(module)
 }
 
 fn split_php_use_group(text: &str) -> Option<(&str, &str)> {

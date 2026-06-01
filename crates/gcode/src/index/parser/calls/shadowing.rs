@@ -166,7 +166,7 @@ fn binding_left_side_contains(left: &str, name: &str) -> bool {
 }
 
 fn binding_name_from_left_part(part: &str) -> Option<&str> {
-    let part = part.trim();
+    let part = part.split(':').next().unwrap_or(part).trim();
     if part.contains(['.', '[', ']']) {
         return None;
     }
@@ -243,6 +243,18 @@ mod tests {
         assert!(!declaration_without_assignment_contains(
             "var client http.Client",
             "Client"
+        ));
+    }
+
+    #[test]
+    fn typed_assignment_bindings_use_name_before_colon() {
+        assert!(super::binding_left_side_contains(
+            "let owner: User",
+            "owner"
+        ));
+        assert!(!super::binding_left_side_contains(
+            "let owner: User",
+            "User"
         ));
     }
 }

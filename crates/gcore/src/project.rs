@@ -30,7 +30,22 @@ pub fn find_project_root(start: &Path) -> Option<PathBuf> {
 pub fn read_project_id(project_root: &Path) -> anyhow::Result<String> {
     let project_json = project_root.join(".gobby").join("project.json");
     if project_json.exists() {
-        return read_project_id_from(&project_json);
+        match read_project_id_from(&project_json) {
+            Ok(project_id) => return Ok(project_id),
+            Err(project_error) => {
+                let gcode_json = project_root.join(".gobby").join("gcode.json");
+                if !gcode_json.exists() {
+                    return Err(project_error);
+                }
+                return read_project_id_from(&gcode_json).with_context(|| {
+                    format!(
+                        "failed to read project id from {} and fallback {}",
+                        project_json.display(),
+                        gcode_json.display()
+                    )
+                });
+            }
+        }
     }
 
     let gcode_json = project_root.join(".gobby").join("gcode.json");
@@ -111,5 +126,24 @@ mod tests {
         let error = read_project_id(tmp.path()).expect_err("project id is missing");
 
         assert!(error.to_string().contains("'id' or 'project_id'"));
+    }
+
+    #[test]
+    fn read_project_id_falls_back_to_gcode_json_when_project_json_is_bad() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let gobby_dir = tmp.path().join(".gobby");
+        fs::create_dir(&gobby_dir).expect("create .gobby");
+        fs::write(gobby_dir.join("project.json"), r#"{"name":"example"}"#)
+            .expect("write project json");
+        fs::write(
+            gobby_dir.join("gcode.json"),
+            r#"{"id":"standalone-fallback"}"#,
+        )
+        .expect("write gcode json");
+
+        assert_eq!(
+            read_project_id(tmp.path()).expect("read fallback project id"),
+            "standalone-fallback"
+        );
     }
 }

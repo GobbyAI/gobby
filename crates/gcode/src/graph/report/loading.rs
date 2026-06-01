@@ -13,6 +13,7 @@ use super::types::{
     BridgeEdgeInput, GraphHotspot, GraphReportHotspots, GraphReportSummary, ReportGraphSnapshot,
     TargetFrequency,
 };
+use gobby_core::falkor::Row;
 
 pub(super) fn load_report_snapshot(
     client: &mut GraphClient,
@@ -56,11 +57,11 @@ pub(super) fn load_report_snapshot(
     let rows = client
         .query(&query, Some(params))
         .context("load graph report bridge edges")?;
-    let bridge_edges = BridgeEdgeInput::available(
-        rows.iter()
-            .filter_map(row_to_bridge_edge_hypothesis)
-            .collect(),
-    );
+    let bridge_edges = BridgeEdgeInput::available(collect_report_rows(
+        &rows,
+        "bridge edges",
+        row_to_bridge_edge_hypothesis,
+    ));
 
     Ok(ReportGraphSnapshot {
         nodes: vec![],
@@ -80,12 +81,14 @@ fn load_hotspots(
     top_n: usize,
 ) -> anyhow::Result<Vec<GraphHotspot>> {
     let (query, params) = report_hotspots_query(project_id, node_class, top_n);
-    Ok(client
+    let rows = client
         .query(&query, Some(params))
-        .with_context(|| format!("load graph report {node_class} hotspots"))?
-        .iter()
-        .filter_map(row_to_graph_hotspot)
-        .collect())
+        .with_context(|| format!("load graph report {node_class} hotspots"))?;
+    Ok(collect_report_rows(
+        &rows,
+        &format!("{node_class} hotspots"),
+        row_to_graph_hotspot,
+    ))
 }
 
 fn load_incoming_call_hotspots(
@@ -94,12 +97,14 @@ fn load_incoming_call_hotspots(
     top_n: usize,
 ) -> anyhow::Result<Vec<GraphHotspot>> {
     let (query, params) = report_incoming_call_hotspots_query(project_id, top_n);
-    Ok(client
+    let rows = client
         .query(&query, Some(params))
-        .context("load graph report incoming call hotspots")?
-        .iter()
-        .filter_map(row_to_graph_hotspot)
-        .collect())
+        .context("load graph report incoming call hotspots")?;
+    Ok(collect_report_rows(
+        &rows,
+        "incoming call hotspots",
+        row_to_graph_hotspot,
+    ))
 }
 
 fn load_target_frequencies(
@@ -109,10 +114,30 @@ fn load_target_frequencies(
     top_n: usize,
 ) -> anyhow::Result<Vec<TargetFrequency>> {
     let (query, params) = report_target_frequencies_query(project_id, target_type, top_n);
-    Ok(client
+    let rows = client
         .query(&query, Some(params))
-        .with_context(|| format!("load graph report {target_type} target frequencies"))?
+        .with_context(|| format!("load graph report {target_type} target frequencies"))?;
+    Ok(collect_report_rows(
+        &rows,
+        &format!("{target_type} target frequencies"),
+        row_to_target_frequency,
+    ))
+}
+
+fn collect_report_rows<T>(rows: &[Row], label: &str, mapper: impl Fn(&Row) -> Option<T>) -> Vec<T> {
+    let mut dropped = 0usize;
+    let values = rows
         .iter()
-        .filter_map(row_to_target_frequency)
-        .collect())
+        .filter_map(|row| {
+            let value = mapper(row);
+            if value.is_none() {
+                dropped += 1;
+            }
+            value
+        })
+        .collect::<Vec<_>>();
+    if dropped > 0 {
+        log::warn!("dropped {dropped} malformed graph report row(s) while loading {label}");
+    }
+    values
 }

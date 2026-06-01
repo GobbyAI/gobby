@@ -209,38 +209,41 @@ fn rebuild_project_graph(ctx: &Context) -> anyhow::Result<GraphLifecycleOutput> 
     let mut files_synced = 0usize;
     let mut symbols_synced = 0usize;
     let mut errors = Vec::new();
-    for file_path in &file_paths {
-        let synced_symbols =
-            match db::mark_graph_sync_attempted(&mut conn, &ctx.project_id, file_path)
-                .and_then(|updated| {
-                    if updated {
-                        Ok(())
-                    } else {
-                        anyhow::bail!("indexed file no longer exists")
+    code_graph::with_code_graph(ctx, |graph| {
+        for file_path in &file_paths {
+            let synced_symbols =
+                match db::mark_graph_sync_attempted(&mut conn, &ctx.project_id, file_path)
+                    .and_then(|updated| {
+                        if updated {
+                            Ok(())
+                        } else {
+                            anyhow::bail!("indexed file no longer exists")
+                        }
+                    })
+                    .and_then(|_| {
+                        let facts =
+                            db::read_graph_file_facts(&mut conn, &ctx.project_id, file_path)?;
+                        graph.sync_file(
+                            &facts.file_path,
+                            &facts.imports,
+                            &facts.definitions,
+                            &facts.calls,
+                            false,
+                        )?;
+                        db::mark_graph_synced(&mut conn, &ctx.project_id, file_path)?;
+                        Ok(facts.definitions.len())
+                    }) {
+                    Ok(symbols) => symbols,
+                    Err(err) => {
+                        errors.push(format!("{file_path}: {err}"));
+                        continue;
                     }
-                })
-                .and_then(|_| {
-                    let facts = db::read_graph_file_facts(&mut conn, &ctx.project_id, file_path)?;
-                    code_graph::sync_file_graph(
-                        ctx,
-                        &facts.file_path,
-                        &facts.imports,
-                        &facts.definitions,
-                        &facts.calls,
-                        false,
-                    )?;
-                    db::mark_graph_synced(&mut conn, &ctx.project_id, file_path)?;
-                    Ok(facts.definitions.len())
-                }) {
-                Ok(symbols) => symbols,
-                Err(err) => {
-                    errors.push(format!("{file_path}: {err}"));
-                    continue;
-                }
-            };
-        files_synced += 1;
-        symbols_synced += synced_symbols;
-    }
+                };
+            files_synced += 1;
+            symbols_synced += synced_symbols;
+        }
+        Ok(())
+    })?;
     if files_synced > 0
         && let Err(err) = code_graph::cleanup_orphans(ctx)
     {

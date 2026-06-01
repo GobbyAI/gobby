@@ -18,8 +18,11 @@ use crate::sources::{CompileStatus, IngestionMethod, SourceDraftRef, SourceKind,
 use crate::store::WikiIndexStore;
 use crate::{ScopeIdentity, WikiError};
 
+/// Maximum spreadsheet sheets rendered into markdown during bounded extraction.
 const MAX_SHEETS: usize = 8;
+/// Maximum rows rendered per spreadsheet sheet before truncation is reported.
 const MAX_ROWS_PER_SHEET: usize = 64;
+/// Maximum columns rendered per spreadsheet sheet before truncation is reported.
 const MAX_COLUMNS_PER_SHEET: usize = 16;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -558,6 +561,9 @@ fn extract_xml_paragraphs(xml: &str) -> Result<Vec<String>, WikiError> {
 }
 
 fn markdown_table(rows: &[Vec<String>]) -> String {
+    if rows.is_empty() {
+        return String::new();
+    }
     let column_count = rows.iter().map(Vec::len).max().unwrap_or(1).max(1);
     let mut markdown = String::new();
     let header = &rows[0];
@@ -897,5 +903,10 @@ mod tests {
                 .contains(&format!("file_size_bytes: {}", html_bytes.len()))
         );
         assert!(html_doc.body.contains("page_count: 1"));
+    }
+
+    #[test]
+    fn markdown_table_handles_empty_rows() {
+        assert_eq!(markdown_table(&[]), "");
     }
 }

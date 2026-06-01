@@ -282,6 +282,8 @@ fn read_http_request(stream: &mut TcpStream) -> String {
     stream
         .set_read_timeout(Some(Duration::from_secs(2)))
         .expect("set read timeout");
+    // Stop at Content-Length when present; otherwise the read timeout ends
+    // keep-alive or bodyless test requests without hanging the server thread.
     let mut request = Vec::new();
     let mut buffer = [0; 4096];
     let mut expected_len = None;

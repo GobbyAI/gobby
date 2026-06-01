@@ -116,7 +116,6 @@ impl<'a> CodeGraph<'a> {
         calls: &[CallRelation],
         cleanup_orphans: bool,
     ) -> anyhow::Result<usize> {
-        self.ensure_project_indexes()?;
         let sync_token = new_sync_token(file_path);
         let import_items = import_graph_items(file_path, imports);
         let symbols = definition_graph_symbols(definitions);
@@ -282,7 +281,6 @@ impl<'a> CodeGraph<'a> {
     }
 
     pub fn cleanup_orphans(&mut self) -> anyhow::Result<()> {
-        self.ensure_project_indexes()?;
         for query in cleanup_orphans_queries(self.project_id)? {
             execute_write_query(self.client, query)?;
         }
@@ -302,14 +300,19 @@ pub fn sync_file_graph(
     calls: &[CallRelation],
     cleanup_orphans: bool,
 ) -> anyhow::Result<usize> {
+    with_code_graph(ctx, |graph| {
+        graph.sync_file(file_path, imports, definitions, calls, cleanup_orphans)
+    })
+}
+
+pub fn with_code_graph<T>(
+    ctx: &Context,
+    f: impl FnOnce(&mut CodeGraph<'_>) -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
     with_required_core_graph(ctx, |client| {
-        CodeGraph::new(&ctx.project_id, client).sync_file(
-            file_path,
-            imports,
-            definitions,
-            calls,
-            cleanup_orphans,
-        )
+        let mut graph = CodeGraph::new(&ctx.project_id, client);
+        graph.ensure_project_indexes()?;
+        f(&mut graph)
     })
 }
 
@@ -330,9 +333,7 @@ pub fn delete_file_projection(ctx: &Context, file_path: &str) -> anyhow::Result<
 }
 
 pub fn cleanup_orphans(ctx: &Context) -> anyhow::Result<()> {
-    with_required_core_graph(ctx, |client| {
-        CodeGraph::new(&ctx.project_id, client).cleanup_orphans()
-    })
+    with_code_graph(ctx, |graph| graph.cleanup_orphans())
 }
 
 pub fn clear_project(ctx: &Context) -> anyhow::Result<()> {

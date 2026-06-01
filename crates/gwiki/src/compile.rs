@@ -623,6 +623,8 @@ fn lock_wiki_index(lock: &fs::File, lock_path: &Path) -> Result<(), WikiError> {
             Err(fs4::TryLockError::WouldBlock) => {
                 let elapsed = started.elapsed();
                 if elapsed >= timeout {
+                    // Returning drops the lock file handle, which releases any
+                    // fs4 lock acquired by this process through RAII.
                     return Err(WikiError::Io {
                         action: "lock wiki index",
                         path: Some(lock_path.to_path_buf()),
