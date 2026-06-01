@@ -259,3 +259,7 @@ async def test_orchestrator_yaml_loads(tmp_path: Path) -> None:
     assert data["provider"] == "claude"
     assert data["model"] == "opus"
     assert data["isolation"] == "none"
+
+    plan_step = next(step for step in data["steps"] if step["name"] == "plan")
+    assert "gobby-agents:list_agent_runs" in plan_step["allowed_mcp_tools"]
+    assert "gobby-agents:list_running_agents" in plan_step["allowed_mcp_tools"]

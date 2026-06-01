@@ -48,6 +48,23 @@ def _inject_required_project_id_argument(
         arguments["project_id"] = project_id
 
 
+def _inject_agent_parent_session_argument(
+    server_name: str,
+    tool_name: str,
+    arguments: dict[str, Any],
+    effective_session_id: str | None,
+) -> None:
+    """Keep child agent spawns in the caller's project when parent_session_id is omitted."""
+    parent_session_tools = {"dispatch_batch", "evaluate_spawn", "spawn_agent"}
+    if (
+        effective_session_id
+        and server_name == "gobby-agents"
+        and tool_name in parent_session_tools
+        and not arguments.get("parent_session_id")
+    ):
+        arguments["parent_session_id"] = effective_session_id
+
+
 async def list_tools(
     service: Any,
     server_name: str,
@@ -342,6 +359,12 @@ async def _execute_tool(
         if service._internal_manager and service._internal_manager.is_internal(server_name):
             registry = service._internal_manager.get_registry(server_name)
             if registry:
+                _inject_agent_parent_session_argument(
+                    server_name,
+                    tool_name,
+                    arguments,
+                    effective_session_id,
+                )
                 result = await registry.call(tool_name, arguments)
                 return normalize_internal_success_result(result)
 

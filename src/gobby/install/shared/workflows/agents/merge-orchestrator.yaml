@@ -320,6 +320,9 @@ steps:
       - "gobby-tasks:close_task"
       - "gobby-tasks-ops:get_artifacts"
       - "gobby-tasks-ops:get_delivery_state"
+      - "gobby-agents:list_agent_runs"
+      - "gobby-agents:list_running_agents"
+      - "gobby-agents:get_running_agent"
     on_mcp_success:
       - server: gobby-tasks
         tool: close_task

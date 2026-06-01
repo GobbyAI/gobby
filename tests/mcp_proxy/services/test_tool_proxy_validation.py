@@ -435,6 +435,50 @@ class TestCallToolInternalServer:
         assert result["id"] == "gt-123"
         mock_registry.call.assert_called_once_with("get_task", {"task_id": "gt-123"})
 
+    @pytest.mark.asyncio
+    async def test_agent_spawn_inherits_effective_parent_session(
+        self,
+        tool_proxy,
+        mock_internal_manager,
+    ):
+        """Agent spawn-style tools inherit wrapper session context when omitted."""
+        mock_internal_manager.is_internal.return_value = True
+        mock_registry = MagicMock()
+        mock_registry.call = AsyncMock(return_value={"success": True, "run_id": "run-123"})
+        mock_internal_manager.get_registry.return_value = mock_registry
+
+        async def mock_get_schema(server, tool):
+            return {
+                "success": True,
+                "tool": {
+                    "name": tool,
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "prompt": {"type": "string"},
+                            "parent_session_id": {"type": "string"},
+                        },
+                        "required": ["prompt"],
+                    },
+                },
+            }
+
+        tool_proxy.get_tool_schema = mock_get_schema
+
+        result = await tool_proxy.call_tool(
+            server_name="gobby-agents",
+            tool_name="spawn_agent",
+            arguments={"prompt": "merge target task"},
+            session_id="caller-session",
+        )
+
+        assert "success" not in result
+        assert result["run_id"] == "run-123"
+        mock_registry.call.assert_called_once_with(
+            "spawn_agent",
+            {"prompt": "merge target task", "parent_session_id": "caller-session"},
+        )
+
 
 class TestIsArgumentError:
     """Tests for the _is_argument_error heuristic method."""
