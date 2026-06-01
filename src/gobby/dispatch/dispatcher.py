@@ -559,6 +559,7 @@ async def execute_action(
         if isinstance(action, EscalateAction):
             return escalate_task(db=db, task_id=action.task_id, reason=action.reason)
         if isinstance(action, MergeWorkspaceAction):
+            mutex.release()
             return cast(object, await execute_merge_workspace(action, db=db, services=services))
         if isinstance(action, CreateIsolationAction):
             return cast(object | None, await create_isolation(action, db=db, context=context))

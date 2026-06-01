@@ -15,6 +15,7 @@ import pytest
 from gobby.dispatch.actions import (
     AppendAuditMarkerAction,
     CreateIsolationAction,
+    MergeWorkspaceAction,
     SpawnAgentAction,
     StartPipelineAction,
     StartStageAction,
@@ -2251,6 +2252,59 @@ async def test_advance_action_releases_lease_immediately(
     await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
 
     assert storage.get_mutex(task.id) is None
+
+
+@pytest.mark.asyncio
+async def test_merge_workspace_action_releases_lease_before_stage_transition(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
+    """Merge actions release their dispatch lease before completing the merge stage."""
+    from gobby.dispatch import dispatcher
+    from gobby.storage.tasks._runtime_mutex import RuntimeDispatchMutex
+    from tests.storage.tasks._stage_test_helpers import stage_row
+
+    task = _task(
+        temp_db,
+        sample_project,
+        stage_name="merge",
+        stage_state="in_progress",
+        isolation="worktree",
+    )
+    storage = _mutex_storage(temp_db)
+    action = MergeWorkspaceAction(
+        task_id=task.id,
+        task_ref="#123",
+        backend="worktree",
+        target_branch="main",
+        source_branch="feature/test",
+    )
+
+    async def complete_merge_stage(
+        action: MergeWorkspaceAction,
+        *,
+        db: HubDatabase,
+        services: object | None = None,
+    ) -> object:
+        manager = dispatcher._stage_states_manager(db=db, services=services)
+        return manager.complete_stage(action.task_id, "merge", by_session_id="dispatcher")
+
+    monkeypatch.setattr(dispatcher, "execute_merge_workspace", complete_merge_stage)
+    mutex = RuntimeDispatchMutex(
+        storage,
+        task.id,
+        holder="dispatcher",
+        action_kind="merge_workspace",
+        ttl_seconds=600,
+    )
+
+    with mutex:
+        await dispatcher.execute_action(action, mutex=mutex, db=temp_db)
+
+    row = stage_row(temp_db, task.id, "merge")
+    assert storage.get_mutex(task.id) is None
+    assert row["state"] == "done"
 
 
 @pytest.mark.asyncio
