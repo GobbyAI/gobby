@@ -119,7 +119,7 @@ fn validate_scope_id(kind: &'static str, value: &str) -> Result<String, WikiErro
         || value.contains(':')
         || value.contains('/')
         || value.contains('\\')
-        || value.chars().any(char::is_control);
+        || value.chars().any(|ch| ch.is_ascii_control());
     if invalid {
         return Err(WikiError::InvalidScope {
             detail: format!("invalid {kind} `{value}`"),
@@ -195,5 +195,12 @@ mod tests {
                 "{invalid:?} should fail"
             );
         }
+    }
+
+    #[test]
+    fn scope_storage_names_reject_ascii_controls_only() {
+        assert!(project_collection_name("bad\u{1f}topic").is_err());
+        assert!(topic_collection_name("bad\u{7f}topic").is_err());
+        assert!(project_collection_name("topic\u{85}name").is_ok());
     }
 }

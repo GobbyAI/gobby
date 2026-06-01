@@ -2,8 +2,7 @@ use std::path::Path;
 
 use crate::WikiError;
 use crate::ingest::{
-    IngestResult, markdown_metadata, markdown_title, single_line, text_from_utf8_lossy,
-    write_raw_then_index,
+    IngestResult, markdown_title, single_line, text_from_utf8_lossy, write_raw_then_index,
 };
 use crate::sources::{CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest};
 use crate::store::WikiIndexStore;
@@ -71,7 +70,7 @@ fn snapshot_content_bytes(snapshot: &GitRepositorySnapshot) -> Vec<u8> {
 }
 
 fn render_git_markdown(snapshot: &GitRepositorySnapshot, title: &str, source_hash: &str) -> String {
-    let mut markdown = markdown_metadata(&[
+    let mut markdown = git_markdown_metadata(&[
         ("source_kind", "git_repository".to_string()),
         ("git_remote", snapshot.remote_url.clone()),
         ("git_commit", snapshot.commit_sha.clone()),
@@ -102,6 +101,20 @@ fn render_git_markdown(snapshot: &GitRepositorySnapshot, title: &str, source_has
         markdown.push_str("\n\n");
     }
     markdown
+}
+
+fn git_markdown_metadata(fields: &[(&str, String)]) -> String {
+    let mut metadata = String::from("---\n");
+    for (key, value) in fields {
+        metadata.push_str(key);
+        metadata.push_str(": ");
+        metadata.push_str(
+            &serde_json::to_string(&single_line(value)).expect("string scalar serializes"),
+        );
+        metadata.push('\n');
+    }
+    metadata.push_str("---\n\n");
+    metadata
 }
 
 fn code_fence_info(path: &str) -> String {
@@ -164,9 +177,9 @@ mod tests {
         let raw = std::fs::read_to_string(temp.path().join(&result.raw_path))
             .expect("raw markdown written");
         assert!(raw.contains("# https://github.com/GobbyAI/example.git"));
-        assert!(raw.contains("source_kind: git_repository"));
-        assert!(raw.contains("git_remote: https://github.com/GobbyAI/example.git"));
-        assert!(raw.contains("git_commit: 7f83b1657ff1fc53b92dc18148a1d65dfa135adb"));
+        assert!(raw.contains("source_kind: \"git_repository\""));
+        assert!(raw.contains("git_remote: \"https://github.com/GobbyAI/example.git\""));
+        assert!(raw.contains("git_commit: \"7f83b1657ff1fc53b92dc18148a1d65dfa135adb\""));
         assert!(raw.contains("file_path: README.md"));
         assert!(raw.contains("file_path: src/lib.rs"));
         assert!(raw.contains("Repository notes."));

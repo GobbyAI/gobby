@@ -9,7 +9,8 @@ use super::context::{
 };
 use super::helpers::{extract_quoted_string, go_default_package_alias, split_top_level};
 use super::predicates::{
-    csharp_declared_types, elixir_dependency_roots, is_external_js_module, ruby_require_root,
+    bundled_elixir_dependency_roots, bundled_ruby_require_roots, csharp_declared_types,
+    elixir_dependency_roots, is_external_js_module, ruby_require_root,
 };
 use super::*;
 
@@ -132,6 +133,19 @@ fn missing_dart_pubspec_loads_no_external_packages() {
     let packages = load_dart_external_packages(tempdir.path());
 
     assert!(packages.is_empty());
+}
+
+#[test]
+fn bundled_import_root_json_parses() {
+    assert_eq!(
+        bundled_ruby_require_roots().get("json").map(String::as_str),
+        Some("JSON")
+    );
+    assert!(
+        bundled_elixir_dependency_roots()
+            .get("jason")
+            .is_some_and(|roots| roots.iter().any(|root| root == "Jason"))
+    );
 }
 
 #[test]

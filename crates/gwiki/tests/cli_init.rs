@@ -43,7 +43,7 @@ fn init_creates_vault_shape() {
     assert!(hub.join("wikis.json").is_file());
 
     let project = tmp.path().join("project");
-    let project_json = common::write_project_json(&project);
+    let gcode_json = common::write_gcode_json(&project);
 
     let project_output = Command::new(env!("CARGO_BIN_EXE_gwiki"))
         .args(["init", "--project"])
@@ -66,5 +66,5 @@ fn init_creates_vault_shape() {
             .join("wikis.json")
             .is_file()
     );
-    common::assert_project_json_unchanged(&project_json);
+    common::assert_gcode_json_unchanged(&gcode_json);
 }

@@ -9,7 +9,7 @@ pub const WIKI_TARGET_LABEL: &str = "WikiTarget";
 pub const WIKI_LINKS_TO_REL: &str = "WIKI_LINKS_TO";
 pub const MENTIONS_TARGET_REL: &str = "MENTIONS_TARGET";
 pub const SUPPORTS_REL: &str = "SUPPORTS";
-const BACKWARD_LINK_SCORE: f64 = 0.8;
+pub const BACKWARD_LINK_WEIGHT: f64 = 0.8;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WikiGraphDocument {
@@ -65,6 +65,19 @@ pub struct LinkSuggestion {
     pub target: String,
     pub mention_count: usize,
     pub source_paths: Vec<PathBuf>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RelatedPathOptions {
+    pub backward_link_weight: f64,
+}
+
+impl Default for RelatedPathOptions {
+    fn default() -> Self {
+        Self {
+            backward_link_weight: BACKWARD_LINK_WEIGHT,
+        }
+    }
 }
 
 pub fn graph_write_statements(facts: &WikiGraphFacts) -> Vec<GraphStatement> {
@@ -233,6 +246,16 @@ impl MemoryWikiGraph {
         seed_paths: &[PathBuf],
         limit: usize,
     ) -> Vec<(PathBuf, f64)> {
+        self.related_paths_with_options(scope, seed_paths, limit, RelatedPathOptions::default())
+    }
+
+    pub fn related_paths_with_options(
+        &self,
+        scope: &SearchScope,
+        seed_paths: &[PathBuf],
+        limit: usize,
+        options: RelatedPathOptions,
+    ) -> Vec<(PathBuf, f64)> {
         if seed_paths.is_empty() || limit == 0 {
             return Vec::new();
         }
@@ -261,13 +284,16 @@ impl MemoryWikiGraph {
                 let candidate = if &link.source_path == seed_path {
                     Some((target_path, seed_score))
                 } else if target_path == seed_path {
-                    Some((&link.source_path, seed_score * BACKWARD_LINK_SCORE))
+                    Some((&link.source_path, seed_score * options.backward_link_weight))
                 } else {
                     None
                 };
                 let Some((path, score)) = candidate else {
                     continue;
                 };
+                if !score.is_finite() {
+                    continue;
+                }
                 if seed_set.contains(path) {
                     continue;
                 }
@@ -278,8 +304,7 @@ impl MemoryWikiGraph {
         let mut ranked = scores.into_iter().collect::<Vec<_>>();
         ranked.sort_by(|(left_path, left_score), (right_path, right_score)| {
             right_score
-                .partial_cmp(left_score)
-                .unwrap_or(std::cmp::Ordering::Equal)
+                .total_cmp(left_score)
                 .then_with(|| left_path.cmp(right_path))
         });
         ranked.truncate(limit);
@@ -491,6 +516,50 @@ mod tests {
         assert_eq!(suggestions[0].source_paths.len(), 2);
         assert_eq!(suggestions[1].target, "Borrow checker");
         assert_eq!(suggestions[1].mention_count, 1);
+    }
+
+    #[test]
+    fn related_paths_support_weight_options_and_skip_non_finite_scores() {
+        let mut graph = MemoryWikiGraph::default();
+        let scope = SearchScope::project("project-1");
+        graph.replace_facts(WikiGraphFacts {
+            documents: vec![
+                doc(scope.clone(), "wiki/a.md"),
+                doc(scope.clone(), "wiki/b.md"),
+                doc(scope.clone(), "wiki/c.md"),
+            ],
+            links: vec![
+                resolved_link(scope.clone(), "wiki/a.md", "B", "wiki/b.md"),
+                resolved_link(scope.clone(), "wiki/c.md", "A", "wiki/a.md"),
+            ],
+            sources: Vec::new(),
+        });
+
+        let ranked = graph.related_paths_with_options(
+            &scope,
+            &[PathBuf::from("wiki/a.md")],
+            10,
+            RelatedPathOptions {
+                backward_link_weight: 0.5,
+            },
+        );
+        assert_eq!(
+            ranked,
+            vec![
+                (PathBuf::from("wiki/b.md"), 1.0),
+                (PathBuf::from("wiki/c.md"), 0.5),
+            ]
+        );
+
+        let non_finite = graph.related_paths_with_options(
+            &scope,
+            &[PathBuf::from("wiki/a.md")],
+            10,
+            RelatedPathOptions {
+                backward_link_weight: f64::NAN,
+            },
+        );
+        assert_eq!(non_finite, vec![(PathBuf::from("wiki/b.md"), 1.0)]);
     }
 
     fn doc(scope: SearchScope, path: &str) -> WikiGraphDocument {

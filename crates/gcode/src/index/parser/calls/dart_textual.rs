@@ -29,7 +29,18 @@ pub(super) fn extract_textual_dart_calls(
 
         for candidate in textual_call_candidates(&line, line_start_byte, row + 1, b".") {
             let candidate_line_byte = candidate.name_byte.saturating_sub(line_start_byte);
-            if dart_textual_candidate_in_ignored_context(&line, candidate_line_byte, dart_state) {
+            if dart_textual_candidate_in_ignored_context(
+                &line,
+                candidate_line_byte,
+                dart_state.clone(),
+            ) {
+                continue;
+            }
+            if empty_prefix_semicolon_declaration_in_class(
+                &line,
+                candidate_line_byte,
+                dart_state.clone(),
+            ) {
                 continue;
             }
             if should_ignore_call_name("dart", &candidate.callee_name) {
@@ -183,15 +194,24 @@ fn matching_angle_start(bytes: &[u8], close_idx: usize) -> Option<usize> {
     None
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 struct DartScanState {
     in_block_comment: bool,
     string: Option<DartStringState>,
+    brace_depth: usize,
+    pending_class_body: bool,
+    class_body_depths: Vec<usize>,
 }
 
 impl DartScanState {
-    fn is_code(self) -> bool {
+    fn is_code(&self) -> bool {
         !self.in_block_comment && self.string.is_none()
+    }
+
+    fn in_class_member_scope(&self) -> bool {
+        self.class_body_depths
+            .last()
+            .is_some_and(|depth| self.brace_depth == *depth)
     }
 }
 
@@ -213,6 +233,10 @@ fn dart_textual_candidate_in_ignored_context(
 }
 
 fn dart_state_after_line(line: &str, state: DartScanState) -> DartScanState {
+    let mut state = state;
+    if state.is_code() && dart_line_starts_type_declaration(line) {
+        state.pending_class_body = true;
+    }
     dart_scan_line_until(line, line.len(), state).0
 }
 
@@ -273,10 +297,65 @@ fn dart_scan_line_until(
             idx += consumed;
             continue;
         }
+        match bytes[idx] {
+            b'{' => {
+                state.brace_depth = state.brace_depth.saturating_add(1);
+                if state.pending_class_body {
+                    state.class_body_depths.push(state.brace_depth);
+                    state.pending_class_body = false;
+                }
+            }
+            b'}' => {
+                if state.class_body_depths.last() == Some(&state.brace_depth) {
+                    state.class_body_depths.pop();
+                }
+                state.brace_depth = state.brace_depth.saturating_sub(1);
+            }
+            _ => {}
+        }
         idx += 1;
     }
 
     (state, false)
+}
+
+fn dart_line_starts_type_declaration(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    trimmed.starts_with("class ")
+        || trimmed.starts_with("abstract class ")
+        || trimmed.starts_with("base class ")
+        || trimmed.starts_with("final class ")
+        || trimmed.starts_with("interface class ")
+        || trimmed.starts_with("enum ")
+        || trimmed.starts_with("mixin ")
+        || trimmed.starts_with("extension ")
+}
+
+fn empty_prefix_semicolon_declaration_in_class(
+    line: &str,
+    name_start: usize,
+    state: DartScanState,
+) -> bool {
+    if !line[..name_start].trim().is_empty() {
+        return false;
+    }
+    let Some(open_paren) = line[name_start..]
+        .find('(')
+        .map(|offset| name_start + offset)
+    else {
+        return false;
+    };
+    let after_paren = &line[open_paren + 1..];
+    let after_args = after_paren
+        .find(')')
+        .and_then(|close| after_paren.get(close + 1..))
+        .unwrap_or_default()
+        .trim_start();
+    if !after_args.starts_with(';') {
+        return false;
+    }
+    let (state, in_line_comment) = dart_scan_line_until(line, name_start, state);
+    !in_line_comment && state.in_class_member_scope()
 }
 
 fn dart_string_start(bytes: &[u8], idx: usize) -> Option<(DartStringState, usize)> {

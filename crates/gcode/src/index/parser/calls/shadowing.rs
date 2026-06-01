@@ -34,10 +34,30 @@ fn local_name_in_scope_before_call(
     }
     let end = call_byte.min(source.len());
     let prefix = String::from_utf8_lossy(&source[start..end]);
-    caller_symbol.is_some_and(|_| parameter_list_contains_name(&prefix, name))
-        || prefix
+    let prefix_without_block_comments = remove_block_comments(&prefix);
+    caller_symbol
+        .is_some_and(|_| parameter_list_contains_name(&prefix_without_block_comments, name))
+        || prefix_without_block_comments
             .lines()
             .any(|line| local_binding_line_defines(line, name))
+}
+
+fn remove_block_comments(text: &str) -> String {
+    let mut cleaned = String::with_capacity(text.len());
+    let mut rest = text;
+    loop {
+        let Some(start) = rest.find("/*") else {
+            cleaned.push_str(rest);
+            break;
+        };
+        cleaned.push_str(&rest[..start]);
+        let after_start = &rest[start + 2..];
+        let Some(end) = after_start.find("*/") else {
+            break;
+        };
+        rest = &after_start[end + 2..];
+    }
+    cleaned
 }
 
 fn parameter_list_contains_name(prefix: &str, name: &str) -> bool {
@@ -216,7 +236,10 @@ fn binding_name_from_name_first_part(part: &str) -> Option<&str> {
 
 #[cfg(test)]
 mod tests {
-    use super::{declaration_without_assignment_contains, split_assignment};
+    use super::{
+        declaration_without_assignment_contains, local_name_in_scope_before_call,
+        remove_block_comments, split_assignment,
+    };
 
     #[test]
     fn split_assignment_ignores_bitwise_compound_operators() {
@@ -255,6 +278,18 @@ mod tests {
         assert!(!super::binding_left_side_contains(
             "let owner: User",
             "User"
+        ));
+    }
+
+    #[test]
+    fn block_comments_do_not_define_shadowing_bindings() {
+        let prefix = "/*\nconst fetch = localFetch;\n*/\nfetch();";
+        assert_eq!(remove_block_comments(prefix), "\nfetch();");
+        assert!(!local_name_in_scope_before_call(
+            prefix.as_bytes(),
+            None,
+            prefix.len(),
+            "fetch"
         ));
     }
 }

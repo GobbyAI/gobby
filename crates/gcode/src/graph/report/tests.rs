@@ -111,7 +111,7 @@ fn report_degradation_contract() {
         ReportGraphSnapshot {
             nodes: vec![ReportNode::new("symbol-1", "handler", "function")],
             code_edges: vec![],
-            bridge_edges: BridgeEdgeInput::unavailable("bridge edge query timed out"),
+            bridge_edges: BridgeEdgeInput::unavailable("bridge *edge* <timed out>"),
             ..ReportGraphSnapshot::default()
         },
     );
@@ -120,6 +120,11 @@ fn report_degradation_contract() {
     assert_eq!(report.degradation_details.len(), 1);
     assert_eq!(report.degradation_details[0].input, RELATES_TO_CODE);
     assert!(!report.degradation_details[0].required);
+    assert!(
+        report
+            .markdown
+            .contains("- `RELATES_TO_CODE`: bridge \\*edge\\* \\<timed out\\>")
+    );
 }
 
 #[test]

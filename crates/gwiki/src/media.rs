@@ -324,7 +324,6 @@ fn missing_media_tool(tool: &str) -> WikiError {
 mod tests {
     use std::fs;
     use std::io::Write;
-    use std::os::unix::fs::PermissionsExt;
 
     use super::*;
 
@@ -335,6 +334,7 @@ mod tests {
         assert_eq!(seconds_arg(61_007), "61.007");
     }
 
+    #[cfg(unix)]
     #[test]
     fn temp_files_cleaned_asset_survives() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -395,7 +395,10 @@ fi
         }
     }
 
+    #[cfg(unix)]
     fn write_executable(path: &Path, contents: &str) {
+        use std::os::unix::fs::PermissionsExt;
+
         let mut file = fs::File::create(path).expect("create executable");
         file.write_all(contents.as_bytes())
             .expect("write executable");

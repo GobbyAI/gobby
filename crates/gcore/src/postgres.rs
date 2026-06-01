@@ -133,20 +133,70 @@ fn sslmode_value(database_url: &str) -> Option<String> {
     if let Some((_, query)) = database_url.split_once('?') {
         return query.split('&').find_map(|pair| {
             let (key, value) = pair.split_once('=')?;
-            (key == "sslmode").then(|| value.to_ascii_lowercase())
+            (key == "sslmode").then(|| normalize_sslmode_token(value))
         });
     }
 
     database_url.split_whitespace().find_map(|part| {
         let (key, value) = part.split_once('=')?;
-        (key == "sslmode").then(|| value.trim_matches('\'').to_ascii_lowercase())
+        (key == "sslmode").then(|| normalize_sslmode_token(value))
     })
 }
 
 fn normalize_sslmode_for_parser(database_url: &str) -> String {
+    if let Some((base, query)) = database_url.split_once('?') {
+        let query = query
+            .split('&')
+            .map(normalize_sslmode_query_pair)
+            .collect::<Vec<_>>()
+            .join("&");
+        return format!("{base}?{query}");
+    }
+
     database_url
-        .replace("sslmode=verify-ca", "sslmode=require")
-        .replace("sslmode=verify-full", "sslmode=require")
+        .split_whitespace()
+        .map(normalize_sslmode_keyword_pair)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn normalize_sslmode_query_pair(pair: &str) -> String {
+    let Some((key, value)) = pair.split_once('=') else {
+        return pair.to_string();
+    };
+    if key == "sslmode"
+        && matches!(
+            normalize_sslmode_token(value).as_str(),
+            "verify-ca" | "verify-full"
+        )
+    {
+        "sslmode=require".to_string()
+    } else {
+        pair.to_string()
+    }
+}
+
+fn normalize_sslmode_keyword_pair(part: &str) -> String {
+    let Some((key, value)) = part.split_once('=') else {
+        return part.to_string();
+    };
+    if key == "sslmode"
+        && matches!(
+            normalize_sslmode_token(value).as_str(),
+            "verify-ca" | "verify-full"
+        )
+    {
+        "sslmode=require".to_string()
+    } else {
+        part.to_string()
+    }
+}
+
+fn normalize_sslmode_token(value: &str) -> String {
+    value
+        .trim_matches('\'')
+        .trim_matches('"')
+        .to_ascii_lowercase()
 }
 
 fn connect_with_tls_unverified(config: &postgres::Config) -> anyhow::Result<Client> {
@@ -315,6 +365,22 @@ mod tests {
 
         assert_eq!(require.get_ssl_mode(), SslMode::Require);
         assert_eq!(disable.get_ssl_mode(), SslMode::Disable);
+    }
+
+    #[test]
+    fn quoted_verify_sslmodes_normalize_for_postgres_parser() {
+        assert_eq!(
+            requested_ssl_mode("postgresql://localhost/db?sslmode='verify-full'"),
+            Some(RequestedSslMode::VerifyFull)
+        );
+        assert_eq!(
+            normalize_sslmode_for_parser("postgresql://localhost/db?sslmode='verify-ca'&x=1"),
+            "postgresql://localhost/db?sslmode=require&x=1"
+        );
+        assert_eq!(
+            normalize_sslmode_for_parser("host=localhost sslmode='verify-full' dbname=gobby"),
+            "host=localhost sslmode=require dbname=gobby"
+        );
     }
 
     #[test]

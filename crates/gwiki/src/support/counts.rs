@@ -32,6 +32,8 @@ pub(crate) fn postgres_index_counts(
     })
 }
 
+// `table` must be a static gwiki-owned identifier from postgres_index_counts'
+// fixed table list. Never pass user input here.
 fn postgres_count(
     conn: &mut postgres::Client,
     table: &'static str,

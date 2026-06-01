@@ -329,6 +329,29 @@ void run() {
 }
 
 #[test]
+fn textual_dart_calls_ignore_class_member_declarations() {
+    let parsed = parse_dart(
+        r#"
+abstract class Worker {
+  run();
+}
+
+void main() {
+  run();
+}
+"#,
+        &[],
+    );
+
+    let call_names: Vec<_> = parsed
+        .calls
+        .iter()
+        .map(|call| call.callee_name.as_str())
+        .collect();
+    assert_eq!(call_names, vec!["run"]);
+}
+
+#[test]
 fn textual_dart_calls_ignore_raw_and_triple_quoted_multiline_strings() {
     let parsed = parse_dart(
         r#"

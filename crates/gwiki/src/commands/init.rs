@@ -21,7 +21,7 @@ fn render(scope: ScopeIdentity, root: &Path, created_paths: &CreatedVaultPaths) 
         "command": "init",
         "scope": scope,
         "status": "ready",
-        "root": root,
+        "root": root.display().to_string(),
         "created": {
             "directories": created_paths.directories,
             "files": created_paths.files,

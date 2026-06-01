@@ -11,11 +11,19 @@ pub struct CodeSymbolVectorSearchRequest {
     pub collection_prefix: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodeSymbolVectorSearchHit {
     pub symbol_id: String,
     pub score: f64,
 }
+
+impl PartialEq for CodeSymbolVectorSearchHit {
+    fn eq(&self, other: &Self) -> bool {
+        self.symbol_id == other.symbol_id && self.score.to_bits() == other.score.to_bits()
+    }
+}
+
+impl Eq for CodeSymbolVectorSearchHit {}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CodeSymbolVectorPayload {

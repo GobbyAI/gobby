@@ -48,13 +48,13 @@ pub(super) fn format_report_text(report: &ProjectGraphReport) -> String {
 }
 
 pub fn report(ctx: &Context, top_n: usize, format: Format) -> anyhow::Result<()> {
-    let report = crate::graph::report::generate_report_with_options(
+    let generated_report = crate::graph::report::generate_report_with_options(
         ctx,
         ProjectGraphReportOptions { top_n },
     )?;
     match format {
-        Format::Json => output::print_json(&report),
-        Format::Text => output::print_text(&format_report_text(&report)),
+        Format::Json => output::print_json(&generated_report),
+        Format::Text => output::print_text(&format_report_text(&generated_report)),
     }
 }
 

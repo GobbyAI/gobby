@@ -204,6 +204,9 @@ fn apply_embedding_options(
     options: &SetupOptions,
     config: &mut StandaloneConfig,
 ) -> anyhow::Result<()> {
+    if matches!(options.embedding_vector_dim, Some(0)) {
+        anyhow::bail!("--embedding-vector-dim must be positive");
+    }
     let has_embedding_options = options.embedding_provider.is_some()
         || options.embedding_api_base.is_some()
         || options.embedding_model.is_some()
@@ -229,9 +232,6 @@ fn apply_embedding_options(
         config.set(embedding_keys::AI_QUERY_PREFIX, query_prefix);
     }
     if let Some(vector_dim) = options.embedding_vector_dim {
-        if vector_dim == 0 {
-            anyhow::bail!("--embedding-vector-dim must be positive");
-        }
         config.set(embedding_keys::AI_DIM, vector_dim.to_string());
     }
     if let Some(api_key) = options.embedding_api_key.as_deref() {
@@ -292,7 +292,7 @@ fn setup_status(
 
 #[cfg(test)]
 mod tests {
-    use super::{setup_status, write_gwiki_gcore_config};
+    use super::{apply_embedding_options, setup_status, write_gwiki_gcore_config};
     use crate::SetupOptions;
     use gobby_core::config::embedding_keys;
     use gobby_core::provisioning::{DockerServiceOptions, StandaloneConfig, gcore_config_path};
@@ -377,5 +377,25 @@ mod tests {
             Some("postgresql://localhost/gcode")
         );
         assert_eq!(config.get("code.index.schema"), Some("public"));
+    }
+
+    #[test]
+    fn invalid_embedding_dim_does_not_mutate_config() {
+        let mut config = StandaloneConfig::empty();
+        config.set(embedding_keys::AI_PROVIDER, "existing-provider");
+        let options = SetupOptions {
+            embedding_provider: Some("new-provider".to_string()),
+            embedding_vector_dim: Some(0),
+            ..SetupOptions::default()
+        };
+
+        let error =
+            apply_embedding_options(&options, &mut config).expect_err("invalid dim rejected");
+
+        assert!(error.to_string().contains("must be positive"));
+        assert_eq!(
+            config.get(embedding_keys::AI_PROVIDER),
+            Some("existing-provider")
+        );
     }
 }

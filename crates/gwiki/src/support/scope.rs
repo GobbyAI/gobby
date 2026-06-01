@@ -3,6 +3,8 @@ use crate::{
     ScopeIdentity, ScopeSelection, WikiError, indexer, scope as wiki_scope, search, session, store,
 };
 
+pub(crate) const DEFAULT_PROJECT_ID: &str = "current";
+
 pub(crate) fn indexed_store_for_selection(
     selection: &ScopeSelection,
 ) -> Result<
@@ -55,7 +57,7 @@ pub(crate) fn search_scope_for_resolved(scope: &wiki_scope::ResolvedScope) -> se
     match topic_project_precedence(scope.topic_name(), scope.project_id()) {
         ScopePrecedence::Topic(topic) => search::SearchScope::topic(topic),
         ScopePrecedence::Project(project_id) => search::SearchScope::project(project_id),
-        ScopePrecedence::DefaultProject => search::SearchScope::project("current"),
+        ScopePrecedence::DefaultProject => search::SearchScope::project(DEFAULT_PROJECT_ID),
     }
 }
 
@@ -79,7 +81,7 @@ pub(crate) fn resolve_command_scope(
 
 pub(crate) fn research_scope_identity(scope: &session::ResearchScope) -> ScopeIdentity {
     match scope {
-        session::ResearchScope::Project { .. } => ScopeIdentity::project("current"),
+        session::ResearchScope::Project { .. } => ScopeIdentity::project(DEFAULT_PROJECT_ID),
         session::ResearchScope::Topic { name, .. } => ScopeIdentity::topic(name.clone()),
     }
 }
@@ -88,7 +90,7 @@ pub(crate) fn resolved_scope_identity(scope: &wiki_scope::ResolvedScope) -> Scop
     match topic_project_precedence(scope.topic_name(), scope.project_id()) {
         ScopePrecedence::Topic(topic) => ScopeIdentity::topic(topic),
         ScopePrecedence::Project(project_id) => ScopeIdentity::project(project_id),
-        ScopePrecedence::DefaultProject => ScopeIdentity::project("current"),
+        ScopePrecedence::DefaultProject => ScopeIdentity::project(DEFAULT_PROJECT_ID),
     }
 }
 

@@ -107,17 +107,87 @@ fn collect_visible_text(element: ElementRef<'_>, parts: &mut Vec<String>) {
     if matches!(element.value().name(), "head" | "script" | "style") {
         return;
     }
+    if is_text_block(element.value().name()) {
+        let mut text = String::new();
+        collect_inline_text(element, &mut text);
+        if !single_line(&text).is_empty() {
+            parts.push(text);
+        }
+        return;
+    }
+
+    let mut inline = String::new();
     for child in element.children() {
         match child.value() {
-            Node::Text(text) => parts.push(text.text.to_string()),
+            Node::Text(text) => inline.push_str(&text.text),
             Node::Element(_) => {
                 if let Some(child_element) = ElementRef::wrap(child) {
-                    collect_visible_text(child_element, parts);
+                    if is_hidden_element(child_element.value().name()) {
+                        continue;
+                    }
+                    if is_text_block(child_element.value().name()) {
+                        push_inline_part(&mut inline, parts);
+                        collect_visible_text(child_element, parts);
+                    } else {
+                        collect_inline_text(child_element, &mut inline);
+                    }
                 }
             }
             _ => {}
         }
     }
+    push_inline_part(&mut inline, parts);
+}
+
+fn collect_inline_text(element: ElementRef<'_>, output: &mut String) {
+    if is_hidden_element(element.value().name()) {
+        return;
+    }
+    for child in element.children() {
+        match child.value() {
+            Node::Text(text) => output.push_str(&text.text),
+            Node::Element(_) => {
+                if let Some(child_element) = ElementRef::wrap(child) {
+                    collect_inline_text(child_element, output);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn push_inline_part(inline: &mut String, parts: &mut Vec<String>) {
+    if !single_line(inline).is_empty() {
+        parts.push(std::mem::take(inline));
+    } else {
+        inline.clear();
+    }
+}
+
+fn is_hidden_element(name: &str) -> bool {
+    matches!(name, "head" | "script" | "style")
+}
+
+fn is_text_block(name: &str) -> bool {
+    matches!(
+        name,
+        "address"
+            | "blockquote"
+            | "dd"
+            | "dt"
+            | "figcaption"
+            | "h1"
+            | "h2"
+            | "h3"
+            | "h4"
+            | "h5"
+            | "h6"
+            | "li"
+            | "p"
+            | "pre"
+            | "td"
+            | "th"
+    )
 }
 
 fn normalize_markdown_text(text: &str) -> String {
@@ -193,12 +263,12 @@ mod tests {
         let html = br#"<!doctype html>
 <html>
 <head><title>Hidden &amp; Title</title></head>
-<body><main><p>Keep &amp; decode.</p><script>drop()</script></main></body>
+<body><main><p>Keep <strong>&amp; decode</strong> together.</p><script>drop()</script></main></body>
 </html>"#;
 
         let html = Html::parse_document(&text_from_utf8_lossy(html));
 
         assert_eq!(extract_title(&html), Some("Hidden & Title".to_string()));
-        assert_eq!(html_to_markdownish_text(&html), "Keep & decode.");
+        assert_eq!(html_to_markdownish_text(&html), "Keep & decode together.");
     }
 }

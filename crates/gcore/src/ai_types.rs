@@ -249,7 +249,13 @@ fn seconds_to_ms(seconds: f64) -> Result<u64, AiError> {
             "transcription segment times must be finite, non-negative seconds",
         ));
     }
-    Ok((seconds * 1000.0).round() as u64)
+    let milliseconds = (seconds * 1000.0).round();
+    if !milliseconds.is_finite() || milliseconds >= u64::MAX as f64 {
+        return Err(AiError::parse_failure(
+            "transcription segment times are too large to represent in milliseconds",
+        ));
+    }
+    Ok(milliseconds as u64)
 }
 
 fn duration_to_ms(duration: Duration) -> u64 {
@@ -302,5 +308,19 @@ mod tests {
         );
         assert_eq!(result.language.as_deref(), Some("en"));
         assert!(!result.translated);
+    }
+
+    #[test]
+    fn transcription_wire_seconds_reject_overflowing_milliseconds() {
+        let json = serde_json::json!({
+            "text": "too long",
+            "segments": [
+                { "start": 0.0, "end": f64::MAX, "text": "too long" }
+            ]
+        });
+
+        let error = TranscriptionResult::from_wire_json(json).expect_err("overflow rejected");
+
+        assert!(error.to_string().contains("too large"));
     }
 }

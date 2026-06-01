@@ -116,6 +116,7 @@ impl TranscriptionClient for ProductionTranscriptionClient {
         {
             return first;
         }
+        warn_translation_batch_mismatch("first", segments.len(), &first);
 
         let second = self.translate_segment_batch(segments, source_lang, target_lang);
         if let Ok(texts) = &second
@@ -123,6 +124,7 @@ impl TranscriptionClient for ProductionTranscriptionClient {
         {
             return second;
         }
+        warn_translation_batch_mismatch("second", segments.len(), &second);
 
         segments
             .iter()
@@ -193,10 +195,20 @@ fn parse_indexed_translation(text: &str, expected_len: usize) -> Result<Vec<Stri
         })?;
     let mut translated = vec![None; expected_len];
     for item in items {
-        if item.i >= expected_len || translated[item.i].is_some() {
+        if item.i >= expected_len {
             return Err(WikiError::Config {
-                detail: "translation response indexes did not match transcript segments"
-                    .to_string(),
+                detail: format!(
+                    "translation response index {} is out of range for {expected_len} transcript segment(s)",
+                    item.i
+                ),
+            });
+        }
+        if translated[item.i].is_some() {
+            return Err(WikiError::Config {
+                detail: format!(
+                    "translation response duplicated transcript segment index {}",
+                    item.i
+                ),
             });
         }
         translated[item.i] = Some(item.text);
@@ -207,6 +219,19 @@ fn parse_indexed_translation(text: &str, expected_len: usize) -> Result<Vec<Stri
         .ok_or_else(|| WikiError::Config {
             detail: "translation response omitted transcript segments".to_string(),
         })
+}
+
+fn warn_translation_batch_mismatch(
+    attempt: &str,
+    expected_len: usize,
+    result: &Result<Vec<String>, WikiError>,
+) {
+    if let Ok(texts) = result {
+        eprintln!(
+            "Warning: {attempt} translation batch returned {} text(s) for {expected_len} segment(s); retrying with smaller batches",
+            texts.len()
+        );
+    }
 }
 
 pub(crate) struct ProductionVisionClient {
@@ -373,6 +398,18 @@ mod tests {
                 .to_string()
                 .contains("vision_extract unavailable after shared effective routing resolved off")
         );
+    }
+
+    #[test]
+    fn indexed_translation_errors_name_bad_index_shape() {
+        let duplicate =
+            parse_indexed_translation(r#"[{"i":0,"text":"first"},{"i":0,"text":"again"}]"#, 2)
+                .expect_err("duplicate rejected");
+        assert!(duplicate.to_string().contains("duplicated"));
+
+        let out_of_range = parse_indexed_translation(r#"[{"i":2,"text":"bad"}]"#, 1)
+            .expect_err("out of range rejected");
+        assert!(out_of_range.to_string().contains("out of range"));
     }
 
     fn test_context(binding: CapabilityBinding) -> AiContext {

@@ -75,7 +75,26 @@ pub fn validate_backend(backend: &Backend, timeout_ms: u64) -> bool {
         .timeout_connect(timeout)
         .timeout_read(timeout)
         .build();
-    agent.get(&url).call().is_ok()
+    match agent.get(&url).call() {
+        Ok(_) => true,
+        Err(ureq::Error::Status(status, response)) => {
+            eprintln!(
+                "Warning: local backend probe `{}` at {} returned HTTP {} {}",
+                backend.name,
+                url,
+                status,
+                response.status_text()
+            );
+            false
+        }
+        Err(error) => {
+            eprintln!(
+                "Warning: local backend probe `{}` at {} failed: {}",
+                backend.name, url, error
+            );
+            false
+        }
+    }
 }
 
 #[cfg(all(test, feature = "local_backend"))]

@@ -60,11 +60,13 @@ fn translate_segment_texts(
     if first.len() == segments.len() {
         return Ok(first);
     }
+    warn_translation_batch_mismatch("first", first.len(), segments.len());
 
     let second = client.translate_segments(segments, source_lang, target_lang)?;
     if second.len() == segments.len() {
         return Ok(second);
     }
+    warn_translation_batch_mismatch("second", second.len(), segments.len());
 
     segments
         .iter()
@@ -78,6 +80,12 @@ fn translate_segment_texts(
                 })
         })
         .collect()
+}
+
+fn warn_translation_batch_mismatch(attempt: &str, actual_len: usize, expected_len: usize) {
+    eprintln!(
+        "Warning: {attempt} translation batch returned {actual_len} text(s) for {expected_len} segment(s); retrying with smaller batches"
+    );
 }
 
 fn mark_english_translation(

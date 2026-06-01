@@ -1,6 +1,8 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use tempfile::{Builder, NamedTempFile};
+
 use crate::ingest::{markdown_metadata, markdown_title, path_to_string, single_line};
 use crate::sources::SourceRecord;
 use crate::{ScopeIdentity, WikiError};
@@ -219,66 +221,46 @@ fn vision_metadata_key(key: &str) -> String {
 }
 
 fn write_vision_markdown_atomically(path: &Path, contents: &[u8]) -> Result<(), WikiError> {
-    let (temp_path, mut file) = create_vision_temp_file(path)?;
-    if let Err(error) = file.write_all(contents) {
-        let _ = std::fs::remove_file(&temp_path);
+    let mut temp_file = create_vision_temp_file(path)?;
+    if let Err(error) = temp_file.write_all(contents) {
         return Err(WikiError::Io {
             action: "write vision derived markdown temp file",
-            path: Some(temp_path),
+            path: Some(temp_file.path().to_path_buf()),
             source: error,
         });
     }
-    if let Err(error) = file.sync_all() {
-        let _ = std::fs::remove_file(&temp_path);
+    if let Err(error) = temp_file.as_file().sync_all() {
         return Err(WikiError::Io {
             action: "sync vision derived markdown temp file",
-            path: Some(temp_path),
+            path: Some(temp_file.path().to_path_buf()),
             source: error,
         });
     }
-    drop(file);
-    if let Err(error) = std::fs::rename(&temp_path, path) {
-        let _ = std::fs::remove_file(&temp_path);
+    if let Err(error) = temp_file.persist(path) {
         return Err(WikiError::Io {
             action: "replace vision derived markdown",
             path: Some(path.to_path_buf()),
-            source: error,
+            source: error.error,
         });
     }
     sync_parent_dir(path)
 }
 
-fn create_vision_temp_file(path: &Path) -> Result<(PathBuf, std::fs::File), WikiError> {
-    const TEMP_RETRIES: usize = 8;
-
-    for attempt in 0..TEMP_RETRIES {
-        let temp_path = temp_sibling_path(path, attempt);
-        match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temp_path)
-        {
-            Ok(file) => return Ok((temp_path, file)),
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(error) => {
-                return Err(WikiError::Io {
-                    action: "create vision derived markdown temp file",
-                    path: Some(temp_path),
-                    source: error,
-                });
-            }
-        }
-    }
-
-    let temp_path = temp_sibling_path(path, TEMP_RETRIES);
-    Err(WikiError::Io {
-        action: "create vision derived markdown temp file",
-        path: Some(temp_path),
-        source: std::io::Error::new(
-            std::io::ErrorKind::AlreadyExists,
-            "exhausted unique temp file retries",
-        ),
-    })
+fn create_vision_temp_file(path: &Path) -> Result<NamedTempFile, WikiError> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("vision.md");
+    Builder::new()
+        .prefix(&format!(".{file_name}."))
+        .suffix(".tmp")
+        .tempfile_in(parent)
+        .map_err(|source| WikiError::Io {
+            action: "create vision derived markdown temp file",
+            path: Some(parent.to_path_buf()),
+            source,
+        })
 }
 
 fn sync_parent_dir(path: &Path) -> Result<(), WikiError> {
@@ -292,21 +274,6 @@ fn sync_parent_dir(path: &Path) -> Result<(), WikiError> {
             path: Some(parent.to_path_buf()),
             source: error,
         })
-}
-
-fn temp_sibling_path(path: &Path, attempt: usize) -> PathBuf {
-    let file_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("vision.md");
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or_default();
-    path.with_file_name(format!(
-        ".{file_name}.{}.{nanos}.{attempt}.tmp",
-        std::process::id()
-    ))
 }
 
 #[cfg(test)]

@@ -1,7 +1,9 @@
 use std::path::{Path, PathBuf};
 
 use gobby_core::ai_context::AiContext;
-use gobby_core::config::{AiCapability, AiRouting};
+#[cfg(all(feature = "documents", feature = "ai"))]
+use gobby_core::config::AiCapability;
+use gobby_core::config::AiRouting;
 
 #[cfg(feature = "ai")]
 use crate::ai::clients::ProductionVisionClient;
@@ -23,7 +25,9 @@ use crate::sources::{
     CompileStatus, IngestionMethod, SourceDraft, SourceDraftRef, SourceKind, SourceManifest,
 };
 use crate::store::WikiIndexStore;
-use crate::vision::{VisionDegradation, VisionEndpoint};
+use crate::vision::VisionDegradation;
+#[cfg(feature = "documents")]
+use crate::vision::VisionEndpoint;
 use crate::{ScopeIdentity, WikiError};
 #[cfg(feature = "ai")]
 use gobby_core::ai::effective_route;
@@ -355,12 +359,6 @@ fn render_file_markdown(
     }
 
     markdown
-}
-
-fn vision_endpoint(context: &AiContext) -> VisionEndpoint<'static> {
-    VisionEndpoint::Unavailable(vision_degradation(
-        context.binding(AiCapability::VisionExtract).routing,
-    ))
 }
 
 fn vision_degradation(routing: AiRouting) -> VisionDegradation {

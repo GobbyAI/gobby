@@ -81,7 +81,11 @@ pub(super) fn render_markdown(input: RenderMarkdownInput<'_>) -> String {
         lines.push(String::new());
         lines.push("## Degradation".to_string());
         for detail in input.degradation_details {
-            lines.push(format!("- {}: {}", detail.input, detail.detail));
+            lines.push(format!(
+                "- {}: {}",
+                inline_code(&detail.input),
+                markdown_text(&detail.detail)
+            ));
         }
     }
 
@@ -131,6 +135,19 @@ fn append_target_section(
 
 fn inline_code(value: &str) -> String {
     format!("`{}`", value.replace('`', "\\`"))
+}
+
+fn markdown_text(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('`', "\\`")
+        .replace('*', "\\*")
+        .replace('_', "\\_")
+        .replace('[', "\\[")
+        .replace(']', "\\]")
+        .replace('<', "\\<")
+        .replace('>', "\\>")
+        .replace('\n', " ")
 }
 
 fn named_counts_inline(counts: &BTreeMap<String, usize>) -> String {

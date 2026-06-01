@@ -267,13 +267,13 @@ mod tests {
         let nested = project.join("src").join("bin");
         fs::create_dir_all(project.join(".gobby")).expect("create .gobby");
         fs::create_dir_all(&nested).expect("create nested dir");
-        let project_json = project.join(".gobby").join("project.json");
-        let original_project_json = r#"{
+        let gcode_json = project.join(".gobby").join("gcode.json");
+        let original_gcode_json = r#"{
   "id": "project-123",
   "name": "demo"
 }
 "#;
-        fs::write(&project_json, original_project_json).expect("write project json");
+        fs::write(&gcode_json, original_gcode_json).expect("write gcode json");
 
         let mut config = TestConfig::with(
             "wiki.hub_path",
@@ -285,8 +285,8 @@ mod tests {
         assert_eq!(scope.identity(), "project:project-123");
         assert_eq!(scope.root(), project.join(".gobby").join("wiki"));
         assert_eq!(
-            fs::read_to_string(project_json).expect("read project json"),
-            original_project_json
+            fs::read_to_string(gcode_json).expect("read gcode json"),
+            original_gcode_json
         );
         assert!(
             !project.join(".gobby").join("wiki").exists(),

@@ -13,6 +13,8 @@ use crate::output::{self, Format};
 use crate::search::fts;
 use crate::visibility;
 
+const GREP_SQL_SAFETY_LIMIT: i64 = 100_000;
+
 pub struct GrepOptions<'a> {
     pub pattern: &'a str,
     pub paths: &'a [String],
@@ -31,6 +33,12 @@ struct IndexedContentChunk {
     file_path: String,
     line_start: usize,
     content: String,
+}
+
+#[derive(Debug)]
+struct LoadedIndexedChunks {
+    chunks: Vec<IndexedContentChunk>,
+    truncated: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -81,8 +89,9 @@ struct GrepResult {
 pub fn run(ctx: &Context, options: GrepOptions<'_>) -> anyhow::Result<()> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
     let filters = GrepFilters::new(options.paths, options.globs)?;
-    let chunks = load_indexed_chunks(&mut conn, ctx, &filters)?;
-    let result = grep_chunks_with_filters(&chunks, &options, &filters)?;
+    let loaded = load_indexed_chunks(&mut conn, ctx, &filters)?;
+    let mut result = grep_chunks_with_filters(&loaded.chunks, &options, &filters)?;
+    result.truncated |= loaded.truncated;
 
     match options.format {
         Format::Json => output::print_json(&GrepResponse {
@@ -113,7 +122,7 @@ fn load_indexed_chunks(
     conn: &mut Client,
     ctx: &Context,
     filters: &GrepFilters,
-) -> anyhow::Result<Vec<IndexedContentChunk>> {
+) -> anyhow::Result<LoadedIndexedChunks> {
     let mut chunks = Vec::new();
     let tombstone_language = visibility::TOMBSTONE_LANGUAGE;
     let rows = match &ctx.index_scope {
@@ -124,6 +133,9 @@ fn load_indexed_chunks(
                 "cf.language != $2".to_string(),
             ];
             push_grep_sql_prefilters(&mut conditions, &mut params, "c", filters);
+            let limit = GREP_SQL_SAFETY_LIMIT + 1;
+            let limit_placeholder = format!("${}", params.len() + 1);
+            params.push(&limit);
             let sql = format!(
                 "SELECT c.file_path,
                         c.line_start::BIGINT AS line_start,
@@ -132,7 +144,8 @@ fn load_indexed_chunks(
                  JOIN code_indexed_files cf
                    ON cf.project_id = c.project_id AND cf.file_path = c.file_path
                  WHERE {}
-                 ORDER BY c.file_path ASC, c.line_start ASC, c.chunk_index ASC",
+                 ORDER BY c.file_path ASC, c.line_start ASC, c.chunk_index ASC
+                 LIMIT {limit_placeholder}",
                 conditions.join(" AND ")
             );
             conn.query(&sql, &params)?
@@ -160,6 +173,9 @@ fn load_indexed_chunks(
                 .to_string(),
             ];
             push_grep_sql_prefilters(&mut conditions, &mut params, "c", filters);
+            let limit = GREP_SQL_SAFETY_LIMIT + 1;
+            let limit_placeholder = format!("${}", params.len() + 1);
+            params.push(&limit);
             let sql = format!(
                 "SELECT c.file_path,
                         c.line_start::BIGINT AS line_start,
@@ -168,14 +184,20 @@ fn load_indexed_chunks(
                  JOIN code_indexed_files cf
                    ON cf.project_id = c.project_id AND cf.file_path = c.file_path
                  WHERE {}
-                 ORDER BY c.file_path ASC, c.line_start ASC, c.chunk_index ASC",
+                 ORDER BY c.file_path ASC, c.line_start ASC, c.chunk_index ASC
+                 LIMIT {limit_placeholder}",
                 conditions.join(" AND ")
             );
             conn.query(&sql, &params)?
         }
     };
     let mut valid_paths = BTreeMap::<String, bool>::new();
+    let mut truncated = false;
     for row in rows {
+        if chunks.len() >= GREP_SQL_SAFETY_LIMIT as usize {
+            truncated = true;
+            break;
+        }
         let file_path: String = row.try_get("file_path")?;
         let is_valid = match valid_paths.get(&file_path) {
             Some(is_valid) => *is_valid,
@@ -202,7 +224,7 @@ fn load_indexed_chunks(
                 .then_with(|| a.line_start.cmp(&b.line_start))
         });
     }
-    Ok(chunks)
+    Ok(LoadedIndexedChunks { chunks, truncated })
 }
 
 fn push_grep_sql_prefilters<'a>(
@@ -266,7 +288,6 @@ fn grep_chunks_with_filters(
     let after_context = options.after_context.or(options.context).unwrap_or(0);
 
     let mut scanned_chunks = 0usize;
-    let mut file_lines: BTreeMap<String, BTreeMap<usize, String>> = BTreeMap::new();
     let mut matches: BTreeMap<(String, usize), GrepMatch> = BTreeMap::new();
 
     for chunk in chunks {
@@ -277,12 +298,6 @@ fn grep_chunks_with_filters(
 
         for (offset, line_text) in chunk.content.lines().enumerate() {
             let line = chunk.line_start + offset;
-            file_lines
-                .entry(chunk.file_path.clone())
-                .or_default()
-                .entry(line)
-                .or_insert_with(|| line_text.to_string());
-
             let key = (chunk.file_path.clone(), line);
             if matches.contains_key(&key) {
                 continue;
@@ -308,8 +323,10 @@ fn grep_chunks_with_filters(
     let total_matching_lines = matches.len();
     let max = options.max_count.unwrap_or(usize::MAX);
     let mut retained = matches.into_values().take(max).collect::<Vec<_>>();
+    let needed_context = context_line_numbers(&retained, before_context, after_context);
+    let context_lines = collect_context_lines(chunks, filters, &needed_context);
     for item in &mut retained {
-        if let Some(lines) = file_lines.get(&item.path) {
+        if let Some(lines) = context_lines.get(&item.path) {
             item.before = context_before(lines, item.line, before_context);
             item.after = context_after(lines, item.line, after_context);
         }
@@ -321,6 +338,61 @@ fn grep_chunks_with_filters(
         truncated: total_matching_lines > retained.len(),
         matches: retained,
     })
+}
+
+fn context_line_numbers(
+    matches: &[GrepMatch],
+    before_context: usize,
+    after_context: usize,
+) -> BTreeMap<String, BTreeSet<usize>> {
+    let mut needed = BTreeMap::<String, BTreeSet<usize>>::new();
+    for item in matches {
+        let lines = needed.entry(item.path.clone()).or_default();
+        if before_context > 0 {
+            for line in item.line.saturating_sub(before_context)..item.line {
+                lines.insert(line);
+            }
+        }
+        if after_context > 0 {
+            let end = item.line.saturating_add(after_context);
+            for line in item.line.saturating_add(1)..=end {
+                lines.insert(line);
+            }
+        }
+    }
+    needed
+}
+
+fn collect_context_lines(
+    chunks: &[IndexedContentChunk],
+    filters: &GrepFilters,
+    needed: &BTreeMap<String, BTreeSet<usize>>,
+) -> BTreeMap<String, BTreeMap<usize, String>> {
+    let mut context_lines = BTreeMap::<String, BTreeMap<usize, String>>::new();
+    if needed.is_empty() {
+        return context_lines;
+    }
+
+    for chunk in chunks {
+        if !filters.matches(&chunk.file_path) {
+            continue;
+        }
+        let Some(needed_lines) = needed.get(&chunk.file_path) else {
+            continue;
+        };
+        for (offset, line_text) in chunk.content.lines().enumerate() {
+            let line = chunk.line_start + offset;
+            if needed_lines.contains(&line) {
+                context_lines
+                    .entry(chunk.file_path.clone())
+                    .or_default()
+                    .entry(line)
+                    .or_insert_with(|| line_text.to_string());
+            }
+        }
+    }
+
+    context_lines
 }
 
 struct GrepMatcher {

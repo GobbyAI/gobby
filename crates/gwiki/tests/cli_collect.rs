@@ -6,7 +6,7 @@ fn gwiki(args: &[&str]) -> Output {
     let tmp = tempfile::tempdir().expect("tempdir");
     let hub = tmp.path().join("hub");
     let project = tmp.path().join("project");
-    common::write_project_json(&project);
+    common::write_gcode_json(&project);
 
     Command::new(env!("CARGO_BIN_EXE_gwiki"))
         .args(args)

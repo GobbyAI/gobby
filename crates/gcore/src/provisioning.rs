@@ -706,7 +706,7 @@ fn postgres_database_reachable(database_url: &str) -> bool {
 
 #[cfg(not(feature = "postgres"))]
 fn postgres_database_reachable(_database_url: &str) -> bool {
-    true
+    false
 }
 
 pub fn provision_docker_services(
