@@ -1,5 +1,6 @@
-use gobby_core::config::ConfigSource;
+use gobby_core::ai_context::AiContext;
 use gobby_core::config::embedding_keys;
+use gobby_core::config::{AiCapability, AiRouting, CapabilityBinding, ConfigSource};
 use gobby_core::provisioning::{GCORE_CONFIG_FILENAME, StandaloneConfig};
 use postgres::Client;
 use std::collections::HashMap;
@@ -227,7 +228,7 @@ where
         read_config_value,
         resolve_value,
     };
-    gobby_core::config::resolve_embedding_config(&mut source)
+    resolve_embedding_config_from_source(None, &mut source)
 }
 
 #[cfg(test)]
@@ -299,7 +300,7 @@ pub(super) fn resolve_embedding_config(
         postgres: PostgresConfigSource { conn },
         standalone,
     };
-    gobby_core::config::resolve_embedding_config(&mut source)
+    resolve_embedding_config_from_source(None, &mut source)
 }
 
 pub(crate) fn resolve_embedding_config_details(
@@ -311,15 +312,46 @@ pub(crate) fn resolve_embedding_config_details(
         standalone,
         hits: HashMap::new(),
     };
-    let resolution = gobby_core::config::resolve_embedding_config_resolution(&mut source)?;
+    let config = resolve_embedding_config_from_source(None, &mut source)?;
     let source_name = source
         .hit_source(embedding_keys::AI_API_BASE)
         .unwrap_or("unknown");
     Some(EmbeddingConfigDetails {
-        config: resolution.config,
-        namespace: resolution.namespace,
+        config,
+        namespace: embedding_keys::AI_NAMESPACE,
         source: source_name,
     })
+}
+
+pub(crate) fn resolve_embedding_config_from_source(
+    project_id: Option<String>,
+    source: &mut impl ConfigSource,
+) -> Option<super::EmbeddingConfig> {
+    let context = AiContext::resolve(project_id, source);
+    let binding = context.binding(AiCapability::Embed);
+    if !embedding_binding_uses_openai_http(binding) || !embedding_binding_routes_direct(binding) {
+        return None;
+    }
+    gobby_core::config::resolve_embedding_config_from_binding(source, binding)
+}
+
+fn embedding_binding_routes_direct(binding: &CapabilityBinding) -> bool {
+    match binding.routing {
+        AiRouting::Off | AiRouting::Daemon => false,
+        AiRouting::Auto | AiRouting::Direct => binding
+            .api_base
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty()),
+    }
+}
+
+fn embedding_binding_uses_openai_http(binding: &CapabilityBinding) -> bool {
+    binding
+        .transport
+        .as_deref()
+        .map(str::trim)
+        .is_none_or(|transport| transport.is_empty() || transport == "openai_compatible_http")
 }
 
 pub(super) fn resolve_code_vector_settings(

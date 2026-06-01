@@ -238,3 +238,97 @@ pub fn vector_text_for_symbol(symbol: &Symbol) -> String {
     }
     lines.join("\n")
 }
+
+#[cfg(test)]
+mod tests {
+    use gobby_core::config::{ConfigSource, ai_keys, embedding_keys};
+    use std::collections::HashMap;
+
+    #[derive(Default)]
+    struct TestSource {
+        values: HashMap<&'static str, &'static str>,
+    }
+
+    impl TestSource {
+        fn with_values(values: impl IntoIterator<Item = (&'static str, &'static str)>) -> Self {
+            Self {
+                values: values.into_iter().collect(),
+            }
+        }
+    }
+
+    impl ConfigSource for TestSource {
+        fn config_value(&mut self, key: &str) -> Option<String> {
+            self.values.get(key).map(|value| (*value).to_string())
+        }
+
+        fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
+            match value {
+                "$secret:EMBEDDING_KEY" => Ok("resolved-embedding-key".to_string()),
+                value => Ok(value.to_string()),
+            }
+        }
+    }
+
+    #[test]
+    fn resolves_via_shared_routing() {
+        let mut auto_source = TestSource::with_values([
+            (ai_keys::EMBEDDINGS_ROUTING, "auto"),
+            (ai_keys::EMBEDDINGS_TRANSPORT, "openai_compatible_http"),
+            (
+                ai_keys::EMBEDDINGS_API_BASE,
+                "http://embeddings.local:11434/v1",
+            ),
+        ]);
+        let config = crate::config::resolve_embedding_config_from_source(None, &mut auto_source)
+            .expect("auto route with endpoint should use direct embeddings");
+        assert_eq!(config.api_base, "http://embeddings.local:11434/v1");
+
+        let mut daemon_source = TestSource::with_values([
+            (ai_keys::EMBEDDINGS_ROUTING, "daemon"),
+            (
+                ai_keys::EMBEDDINGS_API_BASE,
+                "http://daemon-should-not-be-used:11434/v1",
+            ),
+        ]);
+        assert!(
+            crate::config::resolve_embedding_config_from_source(None, &mut daemon_source).is_none()
+        );
+
+        let mut off_source = TestSource::with_values([
+            (ai_keys::EMBEDDINGS_ROUTING, "off"),
+            (
+                ai_keys::EMBEDDINGS_API_BASE,
+                "http://off-should-not-be-used:11434/v1",
+            ),
+        ]);
+        assert!(
+            crate::config::resolve_embedding_config_from_source(None, &mut off_source).is_none()
+        );
+    }
+
+    #[test]
+    fn reads_endpoint_from_shared_binding() {
+        let mut source = TestSource::with_values([
+            (ai_keys::EMBEDDINGS_ROUTING, "direct"),
+            (ai_keys::EMBEDDINGS_TRANSPORT, "openai_compatible_http"),
+            (
+                ai_keys::EMBEDDINGS_API_BASE,
+                "http://shared-binding.local:11434/v1",
+            ),
+            (ai_keys::EMBEDDINGS_MODEL, "shared-embed-model"),
+            (ai_keys::EMBEDDINGS_API_KEY, "$secret:EMBEDDING_KEY"),
+            (embedding_keys::AI_QUERY_PREFIX, "query:"),
+            (embedding_keys::AI_TIMEOUT_SECONDS, "12"),
+        ]);
+
+        let config = crate::config::resolve_embedding_config_from_source(None, &mut source)
+            .expect("embedding config from shared binding");
+
+        assert_eq!(config.api_base, "http://shared-binding.local:11434/v1");
+        assert_eq!(config.model, "shared-embed-model");
+        assert_eq!(config.api_key.as_deref(), Some("resolved-embedding-key"));
+        assert_eq!(config.query_prefix.as_deref(), Some("query:"));
+        assert_eq!(config.timeout_seconds, 12);
+    }
+}
