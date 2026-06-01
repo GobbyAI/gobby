@@ -571,6 +571,20 @@ ai:
     }
 
     #[test]
+    fn concurrency_cap_enforced() {
+        let limiter = AiLimiter::new(1);
+        let permit = limiter
+            .try_acquire()
+            .expect("first permit should be available");
+
+        assert!(limiter.try_acquire().is_none());
+
+        drop(permit);
+
+        assert!(limiter.try_acquire().is_some());
+    }
+
+    #[test]
     fn forced_routing_and_no_ai_override() {
         let source = TestSource::with_values([
             (ai_keys::AUDIO_TRANSCRIBE_ROUTING, "daemon"),
