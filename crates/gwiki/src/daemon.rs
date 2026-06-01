@@ -125,11 +125,11 @@ const SYNTHESIS: EndpointContract = EndpointContract {
 const VISION: EndpointContract = EndpointContract {
     capability: DaemonCapability::Vision,
     optional: true,
-    method: "POST",
-    path: "/api/chat/attachments",
-    probe_path: "/api/chat/attachments",
-    request_shape: "multipart form: file, draft_id?, project_id?",
-    response_shape: "attachment object with id, project_id, filename, mime_type, size_bytes, created_at",
+    method: "GET",
+    path: "/api/llm/vision/status",
+    probe_path: "/api/llm/vision/status",
+    request_shape: "none",
+    response_shape: "vision status object advertising vision_extract support",
     fallback: "Keep raw image assets and surface filename/metadata only; skip visual extraction.",
 };
 
@@ -137,10 +137,10 @@ const TRANSCRIPTION: EndpointContract = EndpointContract {
     capability: DaemonCapability::Transcription,
     optional: true,
     method: "GET",
-    path: "/api/voice/status?want_stt=true",
-    probe_path: "/api/voice/status?want_stt=true",
-    request_shape: "query: want_stt?, want_tts?",
-    response_shape: "voice status object with enabled, stt_available, stt_reason, voice_ready",
+    path: "/api/voice/status",
+    probe_path: "/api/voice/status",
+    request_shape: "none",
+    response_shape: "voice status object advertising transcription_enabled/translation_enabled",
     fallback: "Keep raw audio assets and require supplied transcripts; skip daemon transcription.",
 };
 
@@ -314,7 +314,7 @@ mod tests {
     fn missing_optional_endpoint_degrades() {
         let transport = FakeTransport::new([
             (
-                ("POST", "/api/chat/attachments"),
+                ("GET", "/api/llm/vision/status"),
                 ProbeObservation::HttpStatus(404),
             ),
             (

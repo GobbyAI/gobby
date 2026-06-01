@@ -6,9 +6,10 @@ use serde::Serialize;
 
 use crate::ai_context::AiContext;
 use crate::ai_types::{AiError, TextResult, TranscriptionResult, VisionResult};
-use crate::config::{AiCapability, CapabilityBinding};
+use crate::config::{AiCapability, AiRouting, CapabilityBinding};
 
 pub mod daemon;
+pub mod probe;
 pub mod text;
 pub mod transcription;
 pub mod vision;
@@ -18,6 +19,51 @@ const STT_CHUNK_TIMEOUT: Duration = Duration::from_secs(120);
 const MAX_RETRIES: usize = 2;
 const BASE_BACKOFF: Duration = Duration::from_millis(250);
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
+
+pub fn effective_route(context: &AiContext, capability: AiCapability) -> AiRouting {
+    effective_route_with_probe(context, capability, |capability| {
+        probe::probe_daemon_capability(capability).available
+    })
+}
+
+fn effective_route_with_probe(
+    context: &AiContext,
+    capability: AiCapability,
+    mut daemon_available: impl FnMut(AiCapability) -> bool,
+) -> AiRouting {
+    match context.binding(capability).routing {
+        AiRouting::Off => AiRouting::Off,
+        AiRouting::Direct => direct_route_or_off(context, capability),
+        AiRouting::Daemon => daemon_route_or_fallback(context, capability, &mut daemon_available),
+        AiRouting::Auto => daemon_route_or_fallback(context, capability, &mut daemon_available),
+    }
+}
+
+fn daemon_route_or_fallback(
+    context: &AiContext,
+    capability: AiCapability,
+    daemon_available: &mut impl FnMut(AiCapability) -> bool,
+) -> AiRouting {
+    if probe::capability_status_route(capability).is_some() && daemon_available(capability) {
+        AiRouting::Daemon
+    } else {
+        direct_route_or_off(context, capability)
+    }
+}
+
+fn direct_route_or_off(context: &AiContext, capability: AiCapability) -> AiRouting {
+    if context
+        .binding(capability)
+        .api_base
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty())
+    {
+        AiRouting::Direct
+    } else {
+        AiRouting::Off
+    }
+}
 
 /// Blocking OpenAI-compatible transport skeleton for AI capabilities.
 pub struct AiTransport<'a> {
@@ -380,5 +426,61 @@ mod tests {
         assert_eq!(result.unwrap(), "ok");
         assert_eq!(attempts, 2);
         assert_eq!(delays, vec![Duration::from_millis(750)]);
+    }
+
+    #[test]
+    fn effective_route_auto_falls_through_per_capability() {
+        use crate::config::{AiRouting, AiTuning};
+
+        let context = AiContext {
+            bindings: crate::ai_context::AiBindings {
+                embed: binding(AiRouting::Auto, None),
+                audio_transcribe: binding(AiRouting::Auto, Some("http://direct.test")),
+                audio_translate: binding(AiRouting::Auto, Some("http://direct.test")),
+                vision_extract: binding(AiRouting::Auto, None),
+                text_generate: binding(AiRouting::Auto, Some("http://direct.test")),
+            },
+            tuning: AiTuning {
+                max_concurrency: 1,
+                keep_alive: None,
+            },
+            limiter: crate::ai_context::AiLimiter::new(1),
+            project_id: None,
+        };
+
+        assert_eq!(
+            effective_route_with_probe(&context, AiCapability::AudioTranscribe, |_| true),
+            AiRouting::Daemon
+        );
+        assert_eq!(
+            effective_route_with_probe(&context, AiCapability::AudioTranslate, |_| false),
+            AiRouting::Direct
+        );
+        assert_eq!(
+            effective_route_with_probe(&context, AiCapability::VisionExtract, |_| false),
+            AiRouting::Off
+        );
+        assert_eq!(
+            effective_route_with_probe(&context, AiCapability::TextGenerate, |_| false),
+            AiRouting::Direct
+        );
+        assert_eq!(
+            effective_route_with_probe(&context, AiCapability::Embed, |_| true),
+            AiRouting::Off
+        );
+    }
+
+    fn binding(routing: AiRouting, api_base: Option<&str>) -> CapabilityBinding {
+        CapabilityBinding {
+            routing,
+            transport: None,
+            api_base: api_base.map(str::to_string),
+            api_key: None,
+            model: None,
+            provider: None,
+            task: None,
+            language: None,
+            target_lang: None,
+        }
     }
 }
