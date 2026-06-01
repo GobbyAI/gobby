@@ -67,20 +67,20 @@ export interface SessionUsageUpdatedMessage {
   session_id: string;
   project_id?: string | null;
   model?: string | null;
-  context_window?: number | null;
-  context_used_tokens?: number | null;
-  context_usage_ratio?: number | null;
+  context_window?: number | string | null;
+  context_used_tokens?: number | string | null;
+  context_usage_ratio?: number | string | null;
   context_usage_source?: string | null;
   context_usage_confidence?: string | null;
-  last_prompt_input_tokens?: number | null;
-  last_prompt_uncached_input_tokens?: number | null;
-  last_prompt_cache_read_tokens?: number | null;
-  last_prompt_cache_creation_tokens?: number | null;
-  last_completion_output_tokens?: number | null;
-  usage_input_tokens?: number;
-  usage_output_tokens?: number;
-  usage_cache_creation_tokens?: number;
-  usage_cache_read_tokens?: number;
+  last_prompt_input_tokens?: number | string | null;
+  last_prompt_uncached_input_tokens?: number | string | null;
+  last_prompt_cache_read_tokens?: number | string | null;
+  last_prompt_cache_creation_tokens?: number | string | null;
+  last_completion_output_tokens?: number | string | null;
+  usage_input_tokens?: number | string | null;
+  usage_output_tokens?: number | string | null;
+  usage_cache_creation_tokens?: number | string | null;
+  usage_cache_read_tokens?: number | string | null;
   updated_at?: string;
 }
 
@@ -94,16 +94,16 @@ export interface TokenEventMessage {
   event_at: string;
   model?: string | null;
   model_family?: string | null;
-  input_tokens?: number;
-  output_tokens?: number;
-  cache_creation_tokens?: number;
-  cache_read_tokens?: number;
-  context_window?: number | null;
+  input_tokens?: number | string | null;
+  output_tokens?: number | string | null;
+  cache_creation_tokens?: number | string | null;
+  cache_read_tokens?: number | string | null;
+  context_window?: number | string | null;
   session_totals?: {
-    input_tokens?: number;
-    output_tokens?: number;
-    cache_creation_tokens?: number;
-    cache_read_tokens?: number;
+    input_tokens?: number | string;
+    output_tokens?: number | string;
+    cache_creation_tokens?: number | string;
+    cache_read_tokens?: number | string;
   };
 }
 

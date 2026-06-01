@@ -8,7 +8,10 @@ import {
   mapRenderedMessageToChatMessage,
 } from "../../lib/chatMessageMapping";
 import { clearFreshChatDraft } from "../../lib/sessionPersistence";
-import { canProxyAttachSessionRecord } from "../../lib/sessionProxyAttach";
+import {
+  canProxyAttachObservationMeta,
+  canProxyAttachSessionRecord,
+} from "../../lib/sessionProxyAttach";
 import {
   buildContextUsageFromTotals,
   computeContextUsageFromSessionData,
@@ -399,10 +402,7 @@ const attachToViewed = useCallback(() => {
     return;
   }
   const viewedMeta = viewingSessionMetaRef.current;
-  if (
-    viewedMeta?.sessionType !== "terminal" ||
-    viewedMeta.agentRunId
-  ) {
+  if (!canProxyAttachObservationMeta(viewedMeta)) {
     return;
   }
   attachToSession(sid, "proxy");

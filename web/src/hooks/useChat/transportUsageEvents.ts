@@ -7,14 +7,28 @@ import type {
   TokenEventMessage,
 } from "./transportEventTypes";
 import type { UseChatTransportParams } from "./transportTypes";
+import type { ContextUsage } from "../../types/chat";
 import { omitNullish } from "../../utils/omitNullish";
 
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value);
+function numericValue(value: unknown): number | null {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function isFiniteNumeric(value: unknown): boolean {
+  return numericValue(value) !== null;
 }
 
 function optionalNumber(value: unknown): number | undefined {
-  return isFiniteNumber(value) ? value : undefined;
+  return numericValue(value) ?? undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -42,13 +56,15 @@ function isSessionUsageUpdatedMessage(
       data.last_prompt_cache_read_tokens,
       data.last_prompt_cache_creation_tokens,
       data.last_completion_output_tokens,
-    ].every((value) => value === undefined || value === null || isFiniteNumber(value))
-    && (
+    ].every(
+      (value) => value === undefined || value === null || isFiniteNumeric(value),
+    ) &&
+    (
       data.context_usage_source === undefined ||
       data.context_usage_source === null ||
       typeof data.context_usage_source === "string"
-    )
-    && (
+    ) &&
+    (
       data.context_usage_confidence === undefined ||
       data.context_usage_confidence === null ||
       typeof data.context_usage_confidence === "string"
@@ -74,7 +90,7 @@ function isTokenEventMessage(data: unknown): data is TokenEventMessage {
   ];
   if (
     !numericFields.every(
-      (value) => value === undefined || value === null || isFiniteNumber(value),
+      (value) => value === undefined || value === null || isFiniteNumeric(value),
     )
   ) {
     return false;
@@ -90,7 +106,55 @@ function isTokenEventMessage(data: unknown): data is TokenEventMessage {
     data.session_totals.output_tokens,
     data.session_totals.cache_creation_tokens,
     data.session_totals.cache_read_tokens,
-  ].every((value) => value === undefined || isFiniteNumber(value));
+  ].every((value) => value === undefined || isFiniteNumeric(value));
+}
+
+function hasNormalizedContextPayload(data: SessionUsageUpdatedMessage): boolean {
+  return [
+    data.context_used_tokens,
+    data.context_usage_ratio,
+    data.context_usage_source,
+    data.context_usage_confidence,
+    data.last_prompt_input_tokens,
+    data.last_prompt_uncached_input_tokens,
+    data.last_prompt_cache_read_tokens,
+    data.last_prompt_cache_creation_tokens,
+  ].some((value) => value !== undefined && value !== null);
+}
+
+function hasExistingNormalizedSnapshot(prev: ContextUsage): boolean {
+  if (prev.contextUsageSource) {
+    return prev.contextUsageSource !== "web_chat";
+  }
+  return Boolean(prev.contextUsageConfidence && prev.contextUsageRatio != null);
+}
+
+function previousUsagePayload(prev: ContextUsage): Record<string, unknown> {
+  if (hasExistingNormalizedSnapshot(prev)) {
+    return {
+      context_used_tokens: prev.totalInputTokens,
+      last_prompt_input_tokens: prev.totalInputTokens,
+      last_prompt_uncached_input_tokens: prev.uncachedInputTokens,
+      last_prompt_cache_read_tokens: prev.cacheReadTokens,
+      last_prompt_cache_creation_tokens: prev.cacheCreationTokens,
+      last_completion_output_tokens: prev.outputTokens,
+      context_window: prev.contextWindow,
+      context_usage_ratio: prev.contextUsageRatio,
+      context_usage_source: prev.contextUsageSource,
+      context_usage_confidence: prev.contextUsageConfidence,
+    };
+  }
+
+  return {
+    usage_input_tokens: prev.totalInputTokens,
+    usage_output_tokens: prev.outputTokens,
+    usage_cache_read_tokens: prev.cacheReadTokens,
+    usage_cache_creation_tokens: prev.cacheCreationTokens,
+    context_window: prev.contextWindow,
+    context_usage_ratio: prev.contextUsageRatio,
+    context_usage_source: prev.contextUsageSource,
+    context_usage_confidence: prev.contextUsageConfidence,
+  };
 }
 
 export function handleSessionUsageUpdated(
@@ -104,15 +168,21 @@ export function handleSessionUsageUpdated(
     ctx.markSessionUsageFresh(update.session_id, update.updated_at);
     ctx.setContextUsage((prev) =>
       computeContextUsageFromSessionData({
-        usage_input_tokens: prev.totalInputTokens,
-        usage_output_tokens: prev.outputTokens,
-        usage_cache_read_tokens: prev.cacheReadTokens,
-        usage_cache_creation_tokens: prev.cacheCreationTokens,
-        context_window: prev.contextWindow,
-        context_usage_ratio: prev.contextUsageRatio,
-        context_usage_source: prev.contextUsageSource,
-        context_usage_confidence: prev.contextUsageConfidence,
+        ...previousUsagePayload(prev),
         ...omitNullish(update),
+        ...(hasExistingNormalizedSnapshot(prev) && !hasNormalizedContextPayload(update)
+          ? {
+              context_used_tokens: prev.totalInputTokens,
+              last_prompt_input_tokens: prev.totalInputTokens,
+              last_prompt_uncached_input_tokens: prev.uncachedInputTokens,
+              last_prompt_cache_read_tokens: prev.cacheReadTokens,
+              last_prompt_cache_creation_tokens: prev.cacheCreationTokens,
+              last_completion_output_tokens: prev.outputTokens,
+              context_usage_ratio: prev.contextUsageRatio,
+              context_usage_source: prev.contextUsageSource,
+              context_usage_confidence: prev.contextUsageConfidence,
+            }
+          : {}),
       }),
     );
   }
@@ -123,8 +193,8 @@ export function handleSessionUsageUpdated(
             ...prev,
             model: typeof update.model === "string" ? update.model : prev.model,
             contextWindow:
-              typeof update.context_window === "number"
-                ? update.context_window
+              optionalNumber(update.context_window) != null
+                ? optionalNumber(update.context_window)!
                 : prev.contextWindow,
           }
         : prev,
@@ -136,8 +206,8 @@ export function handleSessionUsageUpdated(
             ...prev,
             model: typeof update.model === "string" ? update.model : prev.model,
             contextWindow:
-              typeof update.context_window === "number"
-                ? update.context_window
+              optionalNumber(update.context_window) != null
+                ? optionalNumber(update.context_window)!
                 : prev.contextWindow,
           }
         : prev,
@@ -152,24 +222,21 @@ export function handleTokenEvent(
   if (!isTokenEventMessage(data)) return;
   const eventData = data;
   const visibleSessionId = ctx.viewingSessionIdRef.current ?? ctx.dbSessionIdRef.current;
-  const sessionTotals = eventData.session_totals;
-  if (eventData.session_id === visibleSessionId && sessionTotals) {
+  if (eventData.session_id === visibleSessionId) {
     ctx.markSessionUsageFresh(eventData.session_id, eventData.event_at);
     ctx.setContextUsage((prev) =>
       buildContextUsageFromTotals({
         totalInputTokens:
-          optionalNumber(sessionTotals.input_tokens) ?? prev.totalInputTokens,
-        outputTokens:
-          optionalNumber(sessionTotals.output_tokens) ?? prev.outputTokens,
+          optionalNumber(eventData.input_tokens) ?? prev.totalInputTokens,
+        outputTokens: optionalNumber(eventData.output_tokens) ?? prev.outputTokens,
         cacheReadTokens:
-          optionalNumber(sessionTotals.cache_read_tokens) ?? prev.cacheReadTokens,
+          optionalNumber(eventData.cache_read_tokens) ?? prev.cacheReadTokens,
         cacheCreationTokens:
-          optionalNumber(sessionTotals.cache_creation_tokens) ??
+          optionalNumber(eventData.cache_creation_tokens) ??
           prev.cacheCreationTokens,
-        contextWindow:
-          typeof eventData.context_window === "number"
-            ? eventData.context_window
-            : prev.contextWindow,
+        contextWindow: optionalNumber(eventData.context_window) ?? prev.contextWindow,
+        contextUsageSource: "token_event",
+        contextUsageConfidence: "reported",
       }),
     );
   }

@@ -280,9 +280,31 @@ describe("useChatPageProviderState", () => {
     expect(autonomous.result.current.providerPickerDisabledReason).toBe(
       "Observing autonomous session",
     );
+    expect(autonomous.result.current.canAttachViewedSession).toBe(true);
+    expect(autonomous.result.current.canControlViewedSession).toBe(false);
+    expect(autonomous.result.current.showChatInput).toBe(false);
+
+    const autonomousProxy = renderHook(() =>
+      useChatPageProviderState({
+        chat: createChat({
+          attachedSessionId: "terminal-auto",
+          sessionInteractionMode: "proxy",
+          viewingSessionMeta: terminalMeta({ agentRunId: "run-1" }),
+        }),
+        mainSessionMeta: null,
+        currentModel: "sonnet",
+        reasoningPreferences: {},
+        confirm: vi.fn(async () => true),
+      }),
+    );
+    expect(autonomousProxy.result.current.providerPickerDisabledReason).toBe(
+      "Cannot change provider on a pipeline-managed session",
+    );
+    expect(autonomousProxy.result.current.showChatInput).toBe(true);
     await waitFor(() => {
       expect(proxy.result.current.providerModelCatalog).toHaveLength(2);
       expect(autonomous.result.current.providerModelCatalog).toHaveLength(2);
+      expect(autonomousProxy.result.current.providerModelCatalog).toHaveLength(2);
     });
   });
 
@@ -414,6 +436,52 @@ describe("useChatPageProviderState", () => {
       chatMode: null,
       fallbackContext: "auto",
     });
+  });
+
+  it("keeps autonomous viewed terminals out of resume and provider handoff", async () => {
+    const confirm = vi.fn(async () => true);
+    const continueSessionInChat = vi.fn(async () => "continued-session");
+    const onProviderChange = vi.fn();
+    const onModelChange = vi.fn();
+    const { result } = renderHook(() =>
+      useChatPageProviderState({
+        chat: createChat({
+          viewingSessionId: "terminal-auto",
+          viewingSessionMeta: terminalMeta({
+            agentRunId: "run-auto-1",
+            canProxyAttach: true,
+          }),
+          sessionInteractionMode: "observe",
+          continueSessionInChat,
+          onProviderChange,
+        }),
+        mainSessionMeta: null,
+        currentModel: "sonnet",
+        reasoningPreferences: {},
+        onModelChange,
+        onReasoningPreferenceChange: vi.fn(),
+        projectId: "proj-1",
+        confirm,
+      }),
+    );
+
+    act(() => {
+      result.current.handleResumeViewedSession();
+    });
+    await act(async () => {
+      await result.current.handleSwappedSessionProviderSelection(
+        "claude",
+        "sonnet",
+        "medium",
+      );
+    });
+
+    expect(result.current.canAttachViewedSession).toBe(true);
+    expect(result.current.canControlViewedSession).toBe(false);
+    expect(continueSessionInChat).not.toHaveBeenCalled();
+    expect(onProviderChange).not.toHaveBeenCalled();
+    expect(onModelChange).not.toHaveBeenCalled();
+    expect(confirm).not.toHaveBeenCalled();
   });
 });
 

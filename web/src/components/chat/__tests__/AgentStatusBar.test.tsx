@@ -230,4 +230,34 @@ describe('AgentStatusBar', () => {
     expect(screen.getByRole('button', { name: 'Detach' })).toBeInTheDocument()
   })
 
+  it('shows Attach for a watched autonomous terminal session', () => {
+    render(
+      <AgentStatusBar
+        viewingMeta={{
+          ref: '#91',
+          source: 'claude',
+          title: 'Autonomous Agent Session',
+          status: 'active',
+          model: 'sonnet',
+          externalId: 'ext-91',
+          chatMode: 'accept_edits',
+          gitBranch: null,
+          contextWindow: null,
+          agentRunId: 'run-1',
+          workflowName: null,
+          agentName: null,
+          sessionType: 'terminal',
+        }}
+        interactionMode="observe"
+        isAttached={false}
+        isAutonomousSession={true}
+        onAttach={vi.fn()}
+        onResume={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: 'Attach' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Resume' })).toBeNull()
+  })
+
 })

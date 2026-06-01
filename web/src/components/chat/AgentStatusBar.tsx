@@ -73,7 +73,7 @@ export function AgentStatusBar({
     contextUsageUpdatedAt != null ? Math.max(0, usageClock - contextUsageUpdatedAt) : null
   const sessionBadge = viewingMeta ? getSessionKindBadge(viewingMeta.sessionType) : null
   const stateText = viewingMeta ? formatSessionStateText(interactionMode, isAttached) : null
-  const canAttach = !isAttached && !isAutonomousSession && Boolean(onAttach)
+  const canAttach = !isAttached && Boolean(onAttach)
   const canResume = !isAutonomousSession && Boolean(onResume)
   const canDetach = isAttached && Boolean(onDetach)
 

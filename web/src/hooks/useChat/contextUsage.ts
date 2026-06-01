@@ -54,15 +54,11 @@ export function computeContextUsageFromSessionData(
 export function hasSessionUsage(session: Record<string, unknown> | null): boolean {
   if (!session) return false;
   return (
-    (typeof session.context_used_tokens === "number" &&
-      session.context_used_tokens > 0) ||
-    (typeof session.last_prompt_input_tokens === "number" &&
-      session.last_prompt_input_tokens > 0) ||
-    (typeof session.usage_input_tokens === "number" &&
-      session.usage_input_tokens > 0) ||
-    (typeof session.usage_output_tokens === "number" &&
-      session.usage_output_tokens > 0) ||
-    typeof session.context_window === "number"
+    (numberOrNull(session.context_used_tokens) ?? 0) > 0 ||
+    (numberOrNull(session.last_prompt_input_tokens) ?? 0) > 0 ||
+    (numberOrNull(session.usage_input_tokens) ?? 0) > 0 ||
+    (numberOrNull(session.usage_output_tokens) ?? 0) > 0 ||
+    numberOrNull(session.context_window) !== null
   );
 }
 
@@ -72,6 +68,8 @@ export function buildContextUsageFromTotals(params: {
   cacheReadTokens?: number | null;
   cacheCreationTokens?: number | null;
   contextWindow?: number | null;
+  contextUsageSource?: string | null;
+  contextUsageConfidence?: string | null;
 }): ContextUsage {
   const totalInputTokens = params.totalInputTokens ?? 0;
   const outputTokens = params.outputTokens ?? 0;
@@ -92,13 +90,23 @@ export function buildContextUsageFromTotals(params: {
       params.contextWindow && totalInputTokens > 0
         ? clampRatio(totalInputTokens / params.contextWindow)
         : null,
-    contextUsageSource: "web_chat",
-    contextUsageConfidence: totalInputTokens > 0 ? "reported" : null,
+    contextUsageSource: params.contextUsageSource ?? "web_chat",
+    contextUsageConfidence:
+      params.contextUsageConfidence ?? (totalInputTokens > 0 ? "reported" : null),
   };
 }
 
 function numberOrNull(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
 }
 
 function clampRatio(value: number): number {

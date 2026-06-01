@@ -494,7 +494,58 @@ describe("useChat streaming and event handling", () => {
     });
   });
 
-  it("preserves existing totals when token_event session totals are partial", async () => {
+  it("does not replace a normalized snapshot with cumulative usage totals", async () => {
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    act(() => {
+      ws.simulateMessage({
+        type: "session_usage_updated",
+        session_id: "test-conversation-id",
+        context_window: "258400",
+        context_used_tokens: "53535",
+        context_usage_ratio: "0.2072",
+        context_usage_source: "codex_token_event",
+        context_usage_confidence: "reported",
+        last_prompt_input_tokens: "53535",
+        last_prompt_uncached_input_tokens: "1234",
+        last_prompt_cache_read_tokens: "50000",
+        last_prompt_cache_creation_tokens: "2301",
+        last_completion_output_tokens: "456",
+        usage_input_tokens: 6111865,
+        usage_output_tokens: 999,
+      });
+    });
+
+    act(() => {
+      ws.simulateMessage({
+        type: "session_usage_updated",
+        session_id: "test-conversation-id",
+        usage_input_tokens: 6112000,
+        usage_output_tokens: 1000,
+        usage_cache_read_tokens: 6000000,
+        usage_cache_creation_tokens: 11000,
+        context_window: "258400",
+      });
+    });
+
+    expect(result.current.contextUsage).toMatchObject({
+      totalInputTokens: 53535,
+      outputTokens: 456,
+      cacheReadTokens: 50000,
+      cacheCreationTokens: 2301,
+      uncachedInputTokens: 1234,
+      contextWindow: 258400,
+      contextUsageSource: "codex_token_event",
+      contextUsageConfidence: "reported",
+    });
+    expect(result.current.contextUsage.contextUsageRatio).toBeCloseTo(0.2072);
+  });
+
+  it("updates context usage from the token_event footprint, not session totals", async () => {
     await loadModule();
     const { result } = renderHook(() => useChat());
 
@@ -518,19 +569,30 @@ describe("useChat streaming and event handling", () => {
         type: "token_event",
         session_id: "test-conversation-id",
         event_at: "2026-04-08T12:00:00Z",
+        input_tokens: "128",
+        output_tokens: "11",
+        cache_read_tokens: "20",
+        cache_creation_tokens: "8",
+        context_window: "1000",
         session_totals: {
+          input_tokens: 9999,
           output_tokens: 44,
+          cache_read_tokens: 777,
+          cache_creation_tokens: 666,
         },
       });
     });
 
     expect(result.current.contextUsage).toMatchObject({
-      totalInputTokens: 420,
-      outputTokens: 44,
-      cacheReadTokens: 120,
-      cacheCreationTokens: 10,
-      uncachedInputTokens: 290,
-      contextWindow: 200000,
+      totalInputTokens: 128,
+      outputTokens: 11,
+      cacheReadTokens: 20,
+      cacheCreationTokens: 8,
+      uncachedInputTokens: 100,
+      contextWindow: 1000,
+      contextUsageSource: "token_event",
+      contextUsageConfidence: "reported",
     });
+    expect(result.current.contextUsage.contextUsageRatio).toBeCloseTo(0.128);
   });
 });

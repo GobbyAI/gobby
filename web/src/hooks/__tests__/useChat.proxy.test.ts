@@ -384,11 +384,20 @@ describe("useChat proxy session messaging", () => {
         model: "gpt-5.4",
         ref: "#300",
         session_type: "terminal",
-        usage_input_tokens: 250,
+        context_window: "258400",
+        context_used_tokens: "53535",
+        context_usage_ratio: "0.2072",
+        context_usage_source: "codex_token_event",
+        context_usage_confidence: "reported",
+        last_prompt_input_tokens: "53535",
+        last_prompt_uncached_input_tokens: "1234",
+        last_prompt_cache_read_tokens: "50000",
+        last_prompt_cache_creation_tokens: "2301",
+        last_completion_output_tokens: "456",
+        usage_input_tokens: 6111865,
         usage_output_tokens: 30,
         usage_cache_read_tokens: 90,
         usage_cache_creation_tokens: 20,
-        context_window: 200000,
         messages: [],
         total_count: 0,
       });
@@ -398,13 +407,16 @@ describe("useChat proxy session messaging", () => {
     expect(result.current.viewingSessionId).toBe("sess-proxy");
     expect(result.current.attachedSessionId).toBe("sess-proxy");
     expect(result.current.contextUsage).toMatchObject({
-      totalInputTokens: 250,
-      outputTokens: 30,
-      cacheReadTokens: 90,
-      cacheCreationTokens: 20,
-      uncachedInputTokens: 140,
-      contextWindow: 200000,
+      totalInputTokens: 53535,
+      outputTokens: 456,
+      cacheReadTokens: 50000,
+      cacheCreationTokens: 2301,
+      uncachedInputTokens: 1234,
+      contextWindow: 258400,
+      contextUsageSource: "codex_token_event",
+      contextUsageConfidence: "reported",
     });
+    expect(result.current.contextUsage.contextUsageRatio).toBeCloseTo(0.2072);
   });
 
   it("sends queued attachment payloads to attached terminal sessions", async () => {

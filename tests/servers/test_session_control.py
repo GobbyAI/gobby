@@ -1151,6 +1151,15 @@ class TestContinueInChatTerminalKill:
         source_session.chat_mode = "accept_edits"
         source_session.git_branch = "main"
         source_session.context_window = 200000
+        source_session.context_used_tokens = 53535
+        source_session.context_usage_ratio = 0.2072
+        source_session.context_usage_source = "codex_token_event"
+        source_session.context_usage_confidence = "reported"
+        source_session.last_prompt_input_tokens = 53535
+        source_session.last_prompt_uncached_input_tokens = 1234
+        source_session.last_prompt_cache_read_tokens = 50000
+        source_session.last_prompt_cache_creation_tokens = 2301
+        source_session.last_completion_output_tokens = 456
         source_session.session_type = "terminal"
         source_session.workflow_name = "release-checks"
         source_session.agent_run_id = "run-auto-1"
@@ -1182,6 +1191,15 @@ class TestContinueInChatTerminalKill:
         assert response["workflow_name"] == "release-checks"
         assert response["agent_run_id"] == "run-auto-1"
         assert response["agent_name"] == "code-reviewer"
+        assert response["context_used_tokens"] == 53535
+        assert response["context_usage_ratio"] == 0.2072
+        assert response["context_usage_source"] == "codex_token_event"
+        assert response["context_usage_confidence"] == "reported"
+        assert response["last_prompt_input_tokens"] == 53535
+        assert response["last_prompt_uncached_input_tokens"] == 1234
+        assert response["last_prompt_cache_read_tokens"] == 50000
+        assert response["last_prompt_cache_creation_tokens"] == 2301
+        assert response["last_completion_output_tokens"] == 456
 
     @pytest.mark.asyncio
     async def test_attach_to_session_hydrates_live_session_variables(self) -> None:

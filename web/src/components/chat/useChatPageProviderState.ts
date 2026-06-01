@@ -58,16 +58,15 @@ export function useChatPageProviderState({
   );
   const isProxyAttached =
     Boolean(chat.attachedSessionId) && chat.sessionInteractionMode === "proxy";
-  const canAttachViewedSession =
-    !isAutonomousSession && canProxyAttachObservationMeta(viewingMeta);
+  const canAttachViewedSession = canProxyAttachObservationMeta(viewingMeta);
   const canControlViewedSession =
     viewingMeta?.sessionType === "terminal" && !isAutonomousSession;
-  const providerPickerDisabledReason = isProxyAttached
-    ? "Attached session owns provider, model, and reasoning"
-    : isAutonomousSession
-      ? chat.sessionInteractionMode === "proxy"
-        ? "Cannot change provider on a pipeline-managed session"
-        : "Observing autonomous session"
+  const providerPickerDisabledReason = isAutonomousSession
+    ? chat.sessionInteractionMode === "proxy"
+      ? "Cannot change provider on a pipeline-managed session"
+      : "Observing autonomous session"
+    : isProxyAttached
+      ? "Attached session owns provider, model, and reasoning"
       : null;
 
   const mainInputSelection = resolveProviderModelPair(

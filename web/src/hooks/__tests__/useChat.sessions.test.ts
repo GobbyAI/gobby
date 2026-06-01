@@ -1027,7 +1027,7 @@ describe("useChat viewed session state", () => {
     },
   );
 
-  it("keeps autonomous session observation read-only", async () => {
+  it("allows autonomous terminal sessions to proxy attach and send input", async () => {
     await loadModule();
     mockFetch.mockJsonResponse(
       "/api/sessions/sess-auto/messages?limit=100&offset=0",
@@ -1055,6 +1055,7 @@ describe("useChat viewed session state", () => {
         usage_cache_read_tokens: 0,
         usage_cache_creation_tokens: 0,
         session_type: "terminal",
+        can_proxy_attach: true,
         workflow_name: "release-checks",
         agent_run_id: "run-auto-1",
       },
@@ -1087,6 +1088,7 @@ describe("useChat viewed session state", () => {
         git_branch: "main",
         context_window: 200000,
         session_type: "terminal",
+        can_proxy_attach: true,
         workflow_name: "release-checks",
         agent_run_id: "run-auto-1",
         agent_name: "code-reviewer",
@@ -1104,10 +1106,47 @@ describe("useChat viewed session state", () => {
       result.current.attachToViewed?.();
     });
 
-    expect(result.current.sessionInteractionMode).toBe("observe");
-    expect(result.current.attachedSessionId).toBeNull();
-    expect(result.current.viewingSessionId).toBe("sess-auto");
-    expect(ws.send.mock.calls).toHaveLength(sendCountBeforeAttach);
+    expect(JSON.parse(ws.send.mock.calls[sendCountBeforeAttach][0])).toMatchObject({
+      type: "attach_to_session",
+      session_id: "sess-auto",
+    });
+
+    act(() => {
+      ws.simulateMessage({
+        type: "attach_to_session_result",
+        session_id: "sess-auto",
+        external_id: "claude-ext-auto",
+        source: "claude",
+        title: "Autonomous session",
+        status: "active",
+        model: "sonnet",
+        ref: "#2311",
+        chat_mode: "accept_edits",
+        git_branch: "main",
+        context_window: 200000,
+        session_type: "terminal",
+        can_proxy_attach: true,
+        workflow_name: "release-checks",
+        agent_run_id: "run-auto-1",
+        agent_name: "code-reviewer",
+        messages: [],
+        total_count: 0,
+      });
+    });
+
+    expect(result.current.sessionInteractionMode).toBe("proxy");
+    expect(result.current.attachedSessionId).toBe("sess-auto");
+
+    act(() => {
+      result.current.sendMessage("please continue");
+    });
+
+    const sentMsg = JSON.parse(ws.send.mock.calls[ws.send.mock.calls.length - 1][0]);
+    expect(sentMsg).toMatchObject({
+      type: "send_to_cli_session",
+      session_id: "sess-auto",
+      content: "please continue",
+    });
   });
 
   it("ignores non-string agent run names when resolving viewed session metadata", async () => {

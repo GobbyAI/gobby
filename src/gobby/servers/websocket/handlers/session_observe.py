@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 from collections.abc import Callable
+from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeGuard, cast
 from uuid import uuid4
@@ -55,7 +56,36 @@ def _normalize_optional_markdown(value: str | None) -> str | None:
 
 def _as_int(value: Any, default: int | None = None) -> int | None:
     """Return a JSON-safe int or the provided default."""
-    return value if isinstance(value, int) and not isinstance(value, bool) else default
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return default
+        try:
+            return int(stripped)
+        except ValueError:
+            return default
+    return default
+
+
+def _as_float(value: Any, default: float | None = None) -> float | None:
+    """Return a JSON-safe float or the provided default."""
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float, Decimal)):
+        return float(value)
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return default
+        try:
+            return float(stripped)
+        except ValueError:
+            return default
+    return default
 
 
 def _mode_from_level(value: Any) -> str | None:
@@ -188,6 +218,27 @@ def _session_meta_payload(
         "workflow_name": workflow_name,
         "agent_run_id": agent_run_id,
         "agent_name": agent_name,
+        "context_used_tokens": _as_int(getattr(session, "context_used_tokens", None)),
+        "context_usage_ratio": _as_float(getattr(session, "context_usage_ratio", None)),
+        "context_usage_source": _as_str(getattr(session, "context_usage_source", None)),
+        "context_usage_confidence": _as_str(
+            getattr(session, "context_usage_confidence", None),
+        ),
+        "last_prompt_input_tokens": _as_int(
+            getattr(session, "last_prompt_input_tokens", None),
+        ),
+        "last_prompt_uncached_input_tokens": _as_int(
+            getattr(session, "last_prompt_uncached_input_tokens", None),
+        ),
+        "last_prompt_cache_read_tokens": _as_int(
+            getattr(session, "last_prompt_cache_read_tokens", None),
+        ),
+        "last_prompt_cache_creation_tokens": _as_int(
+            getattr(session, "last_prompt_cache_creation_tokens", None),
+        ),
+        "last_completion_output_tokens": _as_int(
+            getattr(session, "last_completion_output_tokens", None),
+        ),
         "usage_input_tokens": _as_int(getattr(session, "usage_input_tokens", 0), 0),
         "usage_output_tokens": _as_int(getattr(session, "usage_output_tokens", 0), 0),
         "usage_cache_read_tokens": _as_int(getattr(session, "usage_cache_read_tokens", 0), 0),
