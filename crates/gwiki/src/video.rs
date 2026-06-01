@@ -3,7 +3,9 @@ use std::path::{Path, PathBuf};
 
 use crate::ingest::{markdown_metadata, markdown_title, single_line};
 use crate::sources::SourceRecord;
-use crate::transcribe::{TranscriptSegment, TranscriptionOutput, TranscriptionRange};
+use crate::transcribe::{
+    TranscriptSegment, TranscriptionDegradation, TranscriptionOutput, TranscriptionRange,
+};
 use crate::{ScopeIdentity, WikiError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,6 +46,19 @@ pub struct VideoAudioReference {
 pub struct VideoMarkdownResult {
     pub path: PathBuf,
     pub aligned_segments: Vec<AlignedVideoSegment>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VideoMediaMetadata {
+    pub file_size_bytes: u64,
+    pub duration_seconds: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VideoMediaDegradation {
+    pub kind: String,
+    pub reason: String,
+    pub message: String,
 }
 
 pub fn sample_frames(asset_path: &Path, plan: FrameSamplingPlan) -> Vec<VideoFrameSample> {
@@ -162,6 +177,9 @@ pub struct VideoMarkdownRequest<'a> {
     pub asset_path: &'a Path,
     pub raw_path: &'a Path,
     pub duration_seconds: Option<u32>,
+    pub media_metadata: Option<VideoMediaMetadata>,
+    pub media_degradations: &'a [VideoMediaDegradation],
+    pub transcription_degradation: Option<&'a TranscriptionDegradation>,
     pub frame_interval_seconds: u32,
     pub frame_samples: &'a [VideoFrameSample],
     pub frame_image_paths: &'a [PathBuf],
@@ -269,6 +287,8 @@ fn render_video_derived_markdown(
             "transcription_status".to_string(),
             if request.transcription.is_some() {
                 "transcribed".to_string()
+            } else if request.transcription_degradation.is_some() {
+                "degraded".to_string()
             } else {
                 "unavailable".to_string()
             },
@@ -281,6 +301,32 @@ fn render_video_derived_markdown(
         fields.push((
             "video_duration_seconds".to_string(),
             duration_seconds.to_string(),
+        ));
+    }
+    if let Some(metadata) = &request.media_metadata {
+        fields.push((
+            "file_size_bytes".to_string(),
+            metadata.file_size_bytes.to_string(),
+        ));
+        if let Some(duration_seconds) = metadata.duration_seconds {
+            fields.push(("duration_seconds".to_string(), duration_seconds.to_string()));
+        }
+    }
+    if !request.media_degradations.is_empty() {
+        fields.push((
+            "media_degradation".to_string(),
+            request
+                .media_degradations
+                .iter()
+                .map(|degradation| format!("{}:{}", degradation.kind, degradation.reason))
+                .collect::<Vec<_>>()
+                .join(","),
+        ));
+    }
+    if let Some(degradation) = request.transcription_degradation {
+        fields.push((
+            "transcription_degradation".to_string(),
+            degradation.reason.clone(),
         ));
     }
     if let Some(output) = request.transcription {
@@ -342,6 +388,27 @@ fn render_video_derived_markdown(
     markdown.push_str("Audio reference: `");
     markdown.push_str(&audio_source_reference);
     markdown.push_str("`\n\n");
+
+    if !request.media_degradations.is_empty() || request.transcription_degradation.is_some() {
+        markdown.push_str("## Degradations\n\n");
+        for degradation in request.media_degradations {
+            markdown.push_str("- ");
+            markdown.push_str(&single_line(&degradation.kind));
+            markdown.push_str(": ");
+            markdown.push_str(&single_line(&degradation.reason));
+            markdown.push_str(" - ");
+            markdown.push_str(&single_line(&degradation.message));
+            markdown.push('\n');
+        }
+        if let Some(degradation) = request.transcription_degradation {
+            markdown.push_str("- transcription: ");
+            markdown.push_str(&single_line(&degradation.reason));
+            markdown.push_str(" - ");
+            markdown.push_str(&single_line(&degradation.fallback));
+            markdown.push('\n');
+        }
+        markdown.push('\n');
+    }
 
     markdown.push_str("## Frame Samples\n\n");
     if request.frame_samples.is_empty() {
@@ -468,7 +535,8 @@ fn path_to_string(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transcribe::TranscriptSegment;
+    use crate::sources::{CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest};
+    use crate::transcribe::{TranscriptSegment, TranscriptionDegradation, TranscriptionOutput};
 
     #[test]
     fn frame_sampling_records_timestamps() {
@@ -587,5 +655,178 @@ mod tests {
         assert_eq!(aligned[1].timestamp, "00:00:05");
         assert_eq!(aligned[1].frame_descriptions[0], frame_descriptions[1]);
         assert_eq!(aligned[1].transcript_segments[0], transcript_segments[1]);
+    }
+
+    #[test]
+    fn partial_failure_matrix() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let record = record_for(temp.path());
+        let raw_path = PathBuf::from("raw/source-note.md");
+        let asset_path = PathBuf::from("raw/assets/lecture.mp4");
+        let transcript_segments = vec![TranscriptSegment {
+            start_ms: 1_000,
+            end_ms: 2_000,
+            text: "Transcript survives frame extraction failure.".to_string(),
+        }];
+        let frame_descriptions = vec![VideoFrameDescription {
+            timestamp: "00:00:04".to_string(),
+            source_reference: "raw/assets/lecture.mp4#t=00:00:04".to_string(),
+            description: "Frame survives STT failure.".to_string(),
+        }];
+        let no_frames = [VideoMediaDegradation {
+            kind: "frames".to_string(),
+            reason: "extraction_failed".to_string(),
+            message: "ffmpeg frame sampling failed".to_string(),
+        }];
+        let transcription_degradation = TranscriptionDegradation {
+            reason: "provider_failed".to_string(),
+            fallback: "STT provider failed after frames were extracted.".to_string(),
+        };
+
+        let transcript_only = write_video_derived_markdown(
+            temp.path(),
+            &ScopeIdentity::topic("field-work"),
+            &record,
+            VideoMarkdownRequest {
+                file_name: "lecture.mp4",
+                mime_type: Some("video/mp4"),
+                asset_path: &asset_path,
+                raw_path: &raw_path,
+                duration_seconds: Some(8),
+                media_metadata: Some(VideoMediaMetadata {
+                    file_size_bytes: 12,
+                    duration_seconds: Some(8),
+                }),
+                media_degradations: &no_frames,
+                transcription_degradation: None,
+                frame_interval_seconds: 4,
+                frame_samples: &[],
+                frame_image_paths: &[],
+                frame_descriptions: &[],
+                transcript_segments: &transcript_segments,
+                transcription: Some(&transcription_output(&transcript_segments)),
+            },
+        )
+        .expect("write transcript-only degradation doc");
+
+        let transcript_only_doc =
+            std::fs::read_to_string(temp.path().join(transcript_only.path)).expect("read doc");
+        assert!(transcript_only_doc.contains("media_degradation: frames:extraction_failed"));
+        assert!(transcript_only_doc.contains("Transcript survives frame extraction failure."));
+        assert!(transcript_only_doc.contains("No frame samples recorded."));
+
+        let frame_timeline = write_video_derived_markdown(
+            temp.path(),
+            &ScopeIdentity::topic("field-work"),
+            &record,
+            VideoMarkdownRequest {
+                file_name: "lecture.mp4",
+                mime_type: Some("video/mp4"),
+                asset_path: &asset_path,
+                raw_path: &raw_path,
+                duration_seconds: Some(8),
+                media_metadata: Some(VideoMediaMetadata {
+                    file_size_bytes: 12,
+                    duration_seconds: Some(8),
+                }),
+                media_degradations: &[],
+                transcription_degradation: Some(&transcription_degradation),
+                frame_interval_seconds: 4,
+                frame_samples: &[VideoFrameSample {
+                    timestamp_seconds: 4,
+                    timestamp: "00:00:04".to_string(),
+                    source_asset: asset_path.clone(),
+                    source_reference: "raw/assets/lecture.mp4#t=00:00:04".to_string(),
+                }],
+                frame_image_paths: &[],
+                frame_descriptions: &frame_descriptions,
+                transcript_segments: &[],
+                transcription: None,
+            },
+        )
+        .expect("write frame-only degradation doc");
+
+        let frame_timeline_doc =
+            std::fs::read_to_string(temp.path().join(frame_timeline.path)).expect("read doc");
+        assert!(frame_timeline_doc.contains("transcription_degradation: provider_failed"));
+        assert!(frame_timeline_doc.contains("STT provider failed after frames were extracted."));
+        assert!(frame_timeline_doc.contains("Frame survives STT failure."));
+    }
+
+    #[test]
+    fn degradation_metadata_has_size_and_duration() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let record = record_for(temp.path());
+        let raw_path = PathBuf::from("raw/source-note.md");
+        let asset_path = PathBuf::from("raw/assets/lecture.mp4");
+
+        let result = write_video_derived_markdown(
+            temp.path(),
+            &ScopeIdentity::topic("field-work"),
+            &record,
+            VideoMarkdownRequest {
+                file_name: "lecture.mp4",
+                mime_type: Some("video/mp4"),
+                asset_path: &asset_path,
+                raw_path: &raw_path,
+                duration_seconds: Some(13),
+                media_metadata: Some(VideoMediaMetadata {
+                    file_size_bytes: 42,
+                    duration_seconds: Some(13),
+                }),
+                media_degradations: &[VideoMediaDegradation {
+                    kind: "media".to_string(),
+                    reason: "ffmpeg_unavailable".to_string(),
+                    message: "ffmpeg was not found".to_string(),
+                }],
+                transcription_degradation: None,
+                frame_interval_seconds: 5,
+                frame_samples: &[],
+                frame_image_paths: &[],
+                frame_descriptions: &[],
+                transcript_segments: &[],
+                transcription: None,
+            },
+        )
+        .expect("write degradation metadata doc");
+
+        let document = std::fs::read_to_string(temp.path().join(result.path)).expect("read doc");
+        assert!(document.contains("file_size_bytes: 42"));
+        assert!(document.contains("duration_seconds: 13"));
+        assert!(document.contains("media_degradation: media:ffmpeg_unavailable"));
+        assert!(document.contains("ffmpeg was not found"));
+    }
+
+    fn record_for(temp: &Path) -> SourceRecord {
+        SourceManifest::register(
+            temp,
+            SourceDraft {
+                location: "/tmp/lecture.mp4".to_string(),
+                kind: SourceKind::Video,
+                fetched_at: "2026-05-29T21:30:00Z".to_string(),
+                content: b"video-bytes".to_vec(),
+                title: Some("lecture.mp4".to_string()),
+                citation: Some("/tmp/lecture.mp4".to_string()),
+                license: None,
+                ingestion_method: IngestionMethod::Manual,
+                compile_status: CompileStatus::Pending,
+            },
+        )
+        .expect("register video source")
+    }
+
+    fn transcription_output(segments: &[TranscriptSegment]) -> TranscriptionOutput {
+        TranscriptionOutput {
+            segments: segments.to_vec(),
+            language: Some("en".to_string()),
+            model: Some("fake-stt".to_string()),
+            source_language: Some("en".to_string()),
+            task: Some("transcribe".to_string()),
+            target_language: None,
+            translated: false,
+            partial: false,
+            completed_ranges: Vec::new(),
+            missing_ranges: Vec::new(),
+        }
     }
 }

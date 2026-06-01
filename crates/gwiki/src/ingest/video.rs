@@ -19,12 +19,13 @@ use crate::sources::{
 };
 use crate::store::WikiIndexStore;
 use crate::transcribe::{
-    TranscriptSegment, TranscriptionEndpoint, TranscriptionMarkdownInput, TranscriptionOutput,
-    TranscriptionRequest,
+    TranscriptSegment, TranscriptionDegradation, TranscriptionEndpoint, TranscriptionMarkdownInput,
+    TranscriptionOutput, TranscriptionRequest,
 };
 use crate::video::{
     AlignedVideoSegment, FrameSamplingPlan, VideoFrameDescription, VideoFrameSample,
-    VideoMarkdownRequest, VideoMarkdownResult, write_video_derived_markdown,
+    VideoMarkdownRequest, VideoMarkdownResult, VideoMediaDegradation, VideoMediaMetadata,
+    write_video_derived_markdown,
 };
 use crate::vision::{VisionDegradation, VisionEndpoint, VisionRequest};
 use crate::{ScopeIdentity, WikiError};
@@ -81,9 +82,15 @@ pub fn ingest_video(
 ) -> Result<VideoIngestResult, WikiError> {
     let content_hash = gobby_core::indexing::content_hash(&snapshot.bytes);
     let metadata = VideoSnapshotRef::from_snapshot(&snapshot);
-    ingest_video_with_asset(vault_root, store, scope, metadata, content_hash, |record| {
-        write_asset(vault_root, record, &snapshot.file_name, &snapshot.bytes)
-    })
+    ingest_video_with_asset(
+        vault_root,
+        store,
+        scope,
+        metadata,
+        content_hash,
+        VideoDegradationContext::default(),
+        |record| write_asset(vault_root, record, &snapshot.file_name, &snapshot.bytes),
+    )
 }
 
 pub fn ingest_video_file(
@@ -92,6 +99,18 @@ pub fn ingest_video_file(
     scope: ScopeIdentity,
     snapshot: VideoFileSnapshot,
 ) -> Result<VideoIngestResult, WikiError> {
+    ingest_video_file_with_degradations(vault_root, store, scope, snapshot, &[], None, false)
+}
+
+fn ingest_video_file_with_degradations(
+    vault_root: &Path,
+    store: &mut impl WikiIndexStore,
+    scope: ScopeIdentity,
+    snapshot: VideoFileSnapshot,
+    media_degradations: &[VideoMediaDegradation],
+    transcription_degradation: Option<&TranscriptionDegradation>,
+    suppress_frame_sampling: bool,
+) -> Result<VideoIngestResult, WikiError> {
     let content_hash =
         gobby_core::indexing::file_content_hash(&snapshot.path).map_err(|error| WikiError::Io {
             action: "hash video source",
@@ -99,15 +118,27 @@ pub fn ingest_video_file(
             source: error,
         })?;
     let metadata = VideoSnapshotRef::from_file_snapshot(&snapshot);
-    ingest_video_with_asset(vault_root, store, scope, metadata, content_hash, |record| {
-        write_asset_from_path(
-            vault_root,
-            record,
-            &snapshot.file_name,
-            &snapshot.path,
-            &record.content_hash,
-        )
-    })
+    ingest_video_with_asset(
+        vault_root,
+        store,
+        scope,
+        metadata,
+        content_hash,
+        VideoDegradationContext {
+            media: media_degradations,
+            transcription: transcription_degradation,
+            suppress_frame_sampling,
+        },
+        |record| {
+            write_asset_from_path(
+                vault_root,
+                record,
+                &snapshot.file_name,
+                &snapshot.path,
+                &record.content_hash,
+            )
+        },
+    )
 }
 
 pub fn ingest_video_file_with_production_processing(
@@ -115,9 +146,12 @@ pub fn ingest_video_file_with_production_processing(
     store: &mut impl WikiIndexStore,
     scope: ScopeIdentity,
     ai_context: &AiContext,
-    snapshot: VideoFileSnapshot,
+    mut snapshot: VideoFileSnapshot,
     translate: bool,
 ) -> Result<VideoIngestResult, WikiError> {
+    if snapshot.duration_seconds.is_none() {
+        snapshot.duration_seconds = crate::media::probe_duration(&snapshot.path);
+    }
     let media = ProductionVideoMediaExtractor;
     let transcription_endpoint = production_transcription_endpoint(ai_context, translate);
 
@@ -201,42 +235,111 @@ fn ingest_video_file_with_processing(
     let frame_interval_seconds = snapshot
         .frame_interval_seconds
         .unwrap_or(DEFAULT_FRAME_INTERVAL_SECONDS);
+    let mut media_degradations = Vec::new();
+    let mut transcription_degradation = None;
+    let mut suppress_frame_sampling = false;
+
     if !matches!(
         &transcription_endpoint,
         TranscriptionEndpoint::Unavailable(_)
     ) {
-        let audio = media.extract_audio(&snapshot.path)?;
-        let audio_bytes = std::fs::read(audio.path()).map_err(|source| WikiError::Io {
-            action: "read extracted video audio",
-            path: Some(audio.path().to_path_buf()),
-            source,
-        })?;
-        let request = TranscriptionRequest {
-            file_name: &snapshot.file_name,
-            mime_type: Some("audio/wav"),
-            asset_path: audio.path(),
-            bytes: &audio_bytes,
-        };
-        if let TranscriptionMarkdownInput::Transcribed(output) =
-            transcribe_for_markdown(&request, transcription_endpoint)
-        {
-            snapshot.transcript_segments = output.segments.clone();
-            snapshot.transcription = Some(output);
+        match media.extract_audio(&snapshot.path) {
+            Ok(audio) => match std::fs::read(audio.path()) {
+                Ok(audio_bytes) => {
+                    let request = TranscriptionRequest {
+                        file_name: &snapshot.file_name,
+                        mime_type: Some("audio/wav"),
+                        asset_path: audio.path(),
+                        bytes: &audio_bytes,
+                    };
+                    match transcribe_for_markdown(&request, transcription_endpoint) {
+                        TranscriptionMarkdownInput::Transcribed(output) => {
+                            snapshot.transcript_segments = output.segments.clone();
+                            snapshot.transcription = Some(output);
+                        }
+                        TranscriptionMarkdownInput::Degraded(degradation) => {
+                            transcription_degradation = Some(degradation);
+                        }
+                    }
+                }
+                Err(source) => media_degradations.push(VideoMediaDegradation {
+                    kind: "audio".to_string(),
+                    reason: "read_failed".to_string(),
+                    message: WikiError::Io {
+                        action: "read extracted video audio",
+                        path: Some(audio.path().to_path_buf()),
+                        source,
+                    }
+                    .to_string(),
+                }),
+            },
+            Err(error) => media_degradations.push(video_media_degradation(
+                "audio",
+                "extraction_failed",
+                error,
+            )),
         }
     }
 
     if frame_interval_seconds != 0 && matches!(&vision_endpoint, VisionEndpoint::Available(_)) {
-        let frames = media.sample_frame_images(
+        match media.sample_frame_images(
             &snapshot.path,
             Duration::from_secs(u64::from(frame_interval_seconds)),
-        )?;
-        let described_frames = describe_frame_images(&snapshot.file_name, frames, vision_endpoint)?;
-        snapshot.frame_samples = described_frames.samples;
-        snapshot.frame_image_paths = described_frames.paths;
-        snapshot.frame_descriptions = described_frames.descriptions;
+        ) {
+            Ok(frames) => match describe_frame_images(&snapshot.file_name, frames, vision_endpoint)
+            {
+                Ok(described_frames) => {
+                    snapshot.frame_samples = described_frames.samples;
+                    snapshot.frame_image_paths = described_frames.paths;
+                    snapshot.frame_descriptions = described_frames.descriptions;
+                }
+                Err(error) => {
+                    suppress_frame_sampling = true;
+                    media_degradations.push(video_media_degradation(
+                        "frames",
+                        "vision_failed",
+                        error,
+                    ));
+                }
+            },
+            Err(error) => {
+                suppress_frame_sampling = true;
+                media_degradations.push(video_media_degradation(
+                    "frames",
+                    "extraction_failed",
+                    error,
+                ));
+            }
+        }
     }
 
-    ingest_video_file(vault_root, store, scope, snapshot)
+    ingest_video_file_with_degradations(
+        vault_root,
+        store,
+        scope,
+        snapshot,
+        &media_degradations,
+        transcription_degradation.as_ref(),
+        suppress_frame_sampling,
+    )
+}
+
+fn video_media_degradation(
+    kind: impl Into<String>,
+    fallback_reason: &str,
+    error: WikiError,
+) -> VideoMediaDegradation {
+    let message = error.to_string();
+    let reason = if message.contains("ffmpeg") {
+        "ffmpeg_unavailable"
+    } else {
+        fallback_reason
+    };
+    VideoMediaDegradation {
+        kind: kind.into(),
+        reason: reason.to_string(),
+        message,
+    }
 }
 
 struct DescribedFrameImages {
@@ -318,6 +421,7 @@ fn ingest_video_with_asset(
     scope: ScopeIdentity,
     snapshot: VideoSnapshotRef<'_>,
     content_hash: String,
+    degradations: VideoDegradationContext<'_>,
     write_asset_fn: impl FnOnce(&SourceRecord) -> Result<PathBuf, WikiError>,
 ) -> Result<VideoIngestResult, WikiError> {
     let title = markdown_title(snapshot.file_name);
@@ -334,6 +438,7 @@ fn ingest_video_with_asset(
     };
     let record = SourceManifest::register_with_content_hash(vault_root, draft, content_hash)?;
     let asset_path = write_asset_fn(&record)?;
+    let media_metadata = video_media_metadata(vault_root, &asset_path, snapshot.duration_seconds)?;
     let frame_interval_seconds = snapshot
         .frame_interval_seconds
         .unwrap_or(DEFAULT_FRAME_INTERVAL_SECONDS);
@@ -344,7 +449,7 @@ fn ingest_video_with_asset(
         frame_interval_seconds,
     );
     let raw_path = write_raw_markdown(vault_root, &record, &raw_markdown)?;
-    let frame_samples = if frame_interval_seconds == 0 {
+    let frame_samples = if frame_interval_seconds == 0 || degradations.suppress_frame_sampling {
         Vec::new()
     } else if !snapshot.frame_samples.is_empty() {
         snapshot.frame_samples.to_vec()
@@ -370,6 +475,9 @@ fn ingest_video_with_asset(
             asset_path: &asset_path,
             raw_path: &raw_path,
             duration_seconds: snapshot.duration_seconds,
+            media_metadata: Some(media_metadata),
+            media_degradations: degradations.media,
+            transcription_degradation: degradations.transcription,
             frame_interval_seconds,
             frame_samples: &frame_samples,
             frame_image_paths: snapshot.frame_image_paths,
@@ -387,6 +495,30 @@ fn ingest_video_with_asset(
         derived_path,
         frame_samples,
         aligned_segments,
+    })
+}
+
+#[derive(Clone, Copy, Default)]
+struct VideoDegradationContext<'a> {
+    media: &'a [VideoMediaDegradation],
+    transcription: Option<&'a TranscriptionDegradation>,
+    suppress_frame_sampling: bool,
+}
+
+fn video_media_metadata(
+    vault_root: &Path,
+    asset_path: &Path,
+    duration_seconds: Option<u32>,
+) -> Result<VideoMediaMetadata, WikiError> {
+    let absolute_asset_path = vault_root.join(asset_path);
+    let metadata = std::fs::metadata(&absolute_asset_path).map_err(|source| WikiError::Io {
+        action: "stat video asset",
+        path: Some(absolute_asset_path),
+        source,
+    })?;
+    Ok(VideoMediaMetadata {
+        file_size_bytes: metadata.len(),
+        duration_seconds,
     })
 }
 
@@ -500,6 +632,7 @@ fn format_timestamp(seconds: u32) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "ai")]
     use std::cell::RefCell;
     use std::io::Write;
     use std::time::Duration;
@@ -556,10 +689,17 @@ mod tests {
     struct FakeVideoMediaExtractor {
         audio_bytes: Vec<u8>,
         frames: Vec<(u64, Vec<u8>)>,
+        fail_audio: Option<&'static str>,
+        fail_frames: Option<&'static str>,
     }
 
     impl VideoMediaExtractor for FakeVideoMediaExtractor {
         fn extract_audio(&self, _video: &Path) -> Result<tempfile::NamedTempFile, WikiError> {
+            if let Some(detail) = self.fail_audio {
+                return Err(WikiError::Config {
+                    detail: detail.to_string(),
+                });
+            }
             temp_file_with_bytes(".wav", &self.audio_bytes)
         }
 
@@ -568,6 +708,11 @@ mod tests {
             _video: &Path,
             _interval: Duration,
         ) -> Result<Vec<(u64, tempfile::NamedTempFile)>, WikiError> {
+            if let Some(detail) = self.fail_frames {
+                return Err(WikiError::Config {
+                    detail: detail.to_string(),
+                });
+            }
             self.frames
                 .iter()
                 .map(|(start_ms, bytes)| Ok((*start_ms, temp_file_with_bytes(".jpg", bytes)?)))
@@ -617,6 +762,19 @@ mod tests {
                     "Audio-first transcript from extracted video audio.",
                 )],
             ))
+        }
+    }
+
+    struct FailingTranscriptionClient;
+
+    impl TranscriptionClient for FailingTranscriptionClient {
+        fn transcribe(
+            &self,
+            _request: &TranscriptionRequest<'_>,
+        ) -> Result<TranscriptionOutput, WikiError> {
+            Err(WikiError::Config {
+                detail: "stt provider failed".to_string(),
+            })
         }
     }
 
@@ -672,6 +830,8 @@ mod tests {
         let media = FakeVideoMediaExtractor {
             audio_bytes: b"extracted audio".to_vec(),
             frames: vec![(0, b"frame-zero".to_vec()), (4_000, b"frame-four".to_vec())],
+            fail_audio: None,
+            fail_frames: None,
         };
         let vision = FakeVisionClient;
 
@@ -729,6 +889,8 @@ mod tests {
         let media = FakeVideoMediaExtractor {
             audio_bytes: b"extracted audio".to_vec(),
             frames: vec![(0, b"should-not-be-sampled".to_vec())],
+            fail_audio: None,
+            fail_frames: None,
         };
         let vision = FakeVisionClient;
 
@@ -821,6 +983,8 @@ mod tests {
         let media = FakeVideoMediaExtractor {
             audio_bytes: vec![b'a'; crate::ai::chunk::MAX_AUDIO_UPLOAD_BYTES + 1],
             frames: Vec::new(),
+            fail_audio: None,
+            fail_frames: None,
         };
         let client = ScriptedTranscriptionClient {
             english: RefCell::new(vec![
@@ -882,6 +1046,181 @@ mod tests {
                 .contains("transcription_missing_ranges: 9000-19000")
         );
         assert!(document.body.contains("[00:00:00] hello"));
+    }
+
+    #[cfg(feature = "ai")]
+    struct ScriptedChunkTranscriptionClient {
+        outputs: RefCell<Vec<Result<TranscriptionOutput, WikiError>>>,
+    }
+
+    #[cfg(feature = "ai")]
+    impl TranscriptionClient for ScriptedChunkTranscriptionClient {
+        fn transcribe(
+            &self,
+            _request: &TranscriptionRequest<'_>,
+        ) -> Result<TranscriptionOutput, WikiError> {
+            self.outputs.borrow_mut().remove(0)
+        }
+    }
+
+    #[test]
+    fn production_ingest_applies_degradation_matrix() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let vision = FakeVisionClient;
+
+        let no_ffmpeg = ingest_with_media(
+            temp.path(),
+            FakeVideoMediaExtractor {
+                audio_bytes: Vec::new(),
+                frames: Vec::new(),
+                fail_audio: Some("ffmpeg is unavailable"),
+                fail_frames: Some("ffmpeg is unavailable"),
+            },
+            TranscriptionEndpoint::Available(Box::new(FakeTranscriptionClient)),
+            VisionEndpoint::Available(&vision),
+            "no-ffmpeg.mp4",
+        )
+        .expect("no ffmpeg degrades");
+        assert_asset_preserved(temp.path(), &no_ffmpeg, b"video bytes");
+        let no_ffmpeg_doc = read_derived(temp.path(), &no_ffmpeg);
+        assert!(no_ffmpeg_doc.contains("file_size_bytes: 11"));
+        assert!(
+            no_ffmpeg_doc.contains("media_degradation: audio:ffmpeg_unavailable")
+                || no_ffmpeg_doc.contains("media_degradation: frames:ffmpeg_unavailable")
+        );
+
+        let frames_fail = ingest_with_media(
+            temp.path(),
+            FakeVideoMediaExtractor {
+                audio_bytes: b"extracted audio".to_vec(),
+                frames: Vec::new(),
+                fail_audio: None,
+                fail_frames: Some("frame extraction failed"),
+            },
+            TranscriptionEndpoint::Available(Box::new(FakeTranscriptionClient)),
+            VisionEndpoint::Available(&vision),
+            "frames-fail.mp4",
+        )
+        .expect("frame extraction degrades");
+        let frames_fail_doc = read_derived(temp.path(), &frames_fail);
+        assert!(frames_fail_doc.contains("media_degradation: frames:extraction_failed"));
+        assert!(frames_fail_doc.contains("Audio-first transcript from extracted video audio."));
+        assert!(frames_fail_doc.contains("No frame samples recorded."));
+
+        let stt_fail = ingest_with_media(
+            temp.path(),
+            FakeVideoMediaExtractor {
+                audio_bytes: b"extracted audio".to_vec(),
+                frames: vec![(0, b"frame-zero".to_vec())],
+                fail_audio: None,
+                fail_frames: None,
+            },
+            TranscriptionEndpoint::Available(Box::new(FailingTranscriptionClient)),
+            VisionEndpoint::Available(&vision),
+            "stt-fail.mp4",
+        )
+        .expect("stt degrades");
+        let stt_fail_doc = read_derived(temp.path(), &stt_fail);
+        assert!(stt_fail_doc.contains("transcription_status: degraded"));
+        assert!(stt_fail_doc.contains("transcription_degradation: transcription_error"));
+        assert!(stt_fail_doc.contains("frame stt-fail.mp4.frame-0000.jpg has 10 bytes"));
+
+        #[cfg(feature = "ai")]
+        {
+            let _chunks = crate::ai::chunk::install_test_chunks(vec![
+                crate::ai::chunk::AudioChunk {
+                    start_ms: 0,
+                    end_ms: 10_000,
+                    file_name: "chunk-0.wav".to_string(),
+                    path: PathBuf::from("chunk-0.wav"),
+                    bytes: vec![b'w', b'a', b'v'],
+                },
+                crate::ai::chunk::AudioChunk {
+                    start_ms: 9_000,
+                    end_ms: 19_000,
+                    file_name: "chunk-1.wav".to_string(),
+                    path: PathBuf::from("chunk-1.wav"),
+                    bytes: vec![b'w', b'a', b'v'],
+                },
+            ]);
+            let partial = ingest_with_media(
+                temp.path(),
+                FakeVideoMediaExtractor {
+                    audio_bytes: vec![b'a'; crate::ai::chunk::MAX_AUDIO_UPLOAD_BYTES + 1],
+                    frames: Vec::new(),
+                    fail_audio: None,
+                    fail_frames: None,
+                },
+                TranscriptionEndpoint::Available(Box::new(ScriptedChunkTranscriptionClient {
+                    outputs: RefCell::new(vec![
+                        Ok(transcript_output(
+                            "en",
+                            false,
+                            "transcribe",
+                            &[(0, 1_000, "completed chunk")],
+                        )),
+                        Err(WikiError::Config {
+                            detail: "provider failed mid chunk".to_string(),
+                        }),
+                    ]),
+                })),
+                VisionEndpoint::Unavailable(crate::vision::VisionDegradation {
+                    reason: "disabled".to_string(),
+                    fallback: "skip frames".to_string(),
+                }),
+                "partial-chunk.mp4",
+            )
+            .expect("partial chunk aggregate degrades");
+            let partial_doc = read_derived(temp.path(), &partial);
+            assert!(partial_doc.contains("transcription_partial: true"));
+            assert!(partial_doc.contains("transcription_missing_ranges: 9000-19000"));
+            assert!(partial_doc.contains("[00:00:00] completed chunk"));
+        }
+    }
+
+    fn ingest_with_media(
+        vault_root: &Path,
+        media: FakeVideoMediaExtractor,
+        transcription_endpoint: TranscriptionEndpoint<'_>,
+        vision_endpoint: VisionEndpoint<'_>,
+        file_name: &str,
+    ) -> Result<VideoIngestResult, WikiError> {
+        let source_path = vault_root.join(format!("{file_name}.source"));
+        std::fs::write(&source_path, b"video bytes").expect("write source video");
+        let mut store = MemoryWikiStore::default();
+        ingest_video_file_with_processing(
+            vault_root,
+            &mut store,
+            ScopeIdentity::topic("field-work"),
+            VideoFileSnapshot {
+                location: format!("/tmp/{file_name}"),
+                file_name: file_name.to_string(),
+                fetched_at: "2026-05-29T21:30:00Z".to_string(),
+                path: source_path,
+                mime_type: Some("video/mp4".to_string()),
+                duration_seconds: Some(20),
+                frame_interval_seconds: Some(4),
+                frame_samples: Vec::new(),
+                frame_descriptions: Vec::new(),
+                frame_image_paths: Vec::new(),
+                transcript_segments: Vec::new(),
+                transcription: None,
+            },
+            transcription_endpoint,
+            vision_endpoint,
+            &media,
+        )
+    }
+
+    fn read_derived(vault_root: &Path, result: &VideoIngestResult) -> String {
+        std::fs::read_to_string(vault_root.join(&result.derived_path)).expect("read derived video")
+    }
+
+    fn assert_asset_preserved(vault_root: &Path, result: &VideoIngestResult, expected: &[u8]) {
+        assert_eq!(
+            std::fs::read(vault_root.join(&result.asset_path)).expect("read video asset"),
+            expected
+        );
     }
 
     #[test]
