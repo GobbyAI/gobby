@@ -105,18 +105,20 @@ class TaskDispatchMutexManager:
 
         with self.db.transaction_immediate(DispatchMutexRow(task_id=task_id)) as conn:
             row = conn.execute(
-                "SELECT lease_until, lease_holder FROM task_dispatch_mutex WHERE task_id = %s",
+                "SELECT lease_until, lease_holder, run_id FROM task_dispatch_mutex WHERE task_id = %s",
                 (task_id,),
             ).fetchone()
             if row is not None:
                 existing_until = row["lease_until"]
                 existing_holder = row["lease_holder"]
-                if (
-                    existing_holder != holder
-                    and existing_until is not None
-                    and existing_until >= now_iso
-                ):
-                    return False
+                existing_run_id = row["run_id"]
+                if existing_until is not None and existing_until >= now_iso:
+                    if (
+                        run_id is None
+                        or existing_holder != holder
+                        or existing_run_id != run_id
+                    ):
+                        return False
 
             conn.execute(
                 """
