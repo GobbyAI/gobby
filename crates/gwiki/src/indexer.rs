@@ -219,7 +219,10 @@ fn is_indexable_vault_path(path: &Path) -> bool {
     let components = normal_components(path);
     matches!(
         components.as_slice(),
-        ["wiki", "sources", ..] | ["wiki", "concepts", ..] | ["wiki", "topics", ..]
+        ["wiki", "sources", ..]
+            | ["wiki", "concepts", ..]
+            | ["wiki", "topics", ..]
+            | ["wiki", "code", ..]
     )
 }
 
@@ -232,6 +235,7 @@ fn document_kind(path: &Path) -> Option<WikiDocumentKind> {
         ["wiki", "sources", ..] => Some(WikiDocumentKind::SourceNote),
         ["wiki", "concepts", ..] => Some(WikiDocumentKind::Concept),
         ["wiki", "topics", ..] => Some(WikiDocumentKind::Topic),
+        ["wiki", "code", ..] => Some(WikiDocumentKind::CodeDoc),
         _ => None,
     }
 }
@@ -609,6 +613,72 @@ mod tests {
                 .event,
             WikiIngestionEvent::Unchanged
         );
+    }
+
+    #[test]
+    fn indexes_codedocs_with_provenance() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        write_file(
+            tempdir.path(),
+            "wiki/code/crates/gwiki/src/indexer.md",
+            "---\nsource_files:\n  - crates/gwiki/src/indexer.rs\n---\n# Indexer\n\nSee [[wiki/code/crates/gwiki/src/store|store docs]].\n",
+        );
+        let mut store = MemoryWikiStore::default();
+
+        index_vault(tempdir.path(), &mut store).expect("index vault");
+
+        let path = PathBuf::from("wiki/code/crates/gwiki/src/indexer.md");
+        let document = store.documents.get(&path).expect("codedoc document");
+        assert_eq!(document.kind, WikiDocumentKind::CodeDoc);
+        assert!(document.body.contains("source_files:"));
+        assert_eq!(store.sources[&path].kind, WikiDocumentKind::CodeDoc);
+        assert_eq!(store.links[&path].len(), 1);
+        assert_eq!(
+            store.links[&path][0].target,
+            "wiki/code/crates/gwiki/src/store"
+        );
+        assert_eq!(store.links[&path][0].alias.as_deref(), Some("store docs"));
+        assert_eq!(store.ingestions[0].event, WikiIngestionEvent::Added);
+    }
+
+    #[test]
+    fn codedoc_tree_indexes_idempotently() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        write_file(tempdir.path(), "wiki/code/a.md", "# A\n\nSee [[B]].\n");
+        write_file(tempdir.path(), "wiki/code/nested/b.md", "# B\n\nStable.\n");
+        write_file(
+            tempdir.path(),
+            "wiki/code/nested/ignored.txt",
+            "not markdown\n",
+        );
+        let mut store = MemoryWikiStore::default();
+
+        index_vault(tempdir.path(), &mut store).expect("first index");
+
+        let a_path = PathBuf::from("wiki/code/a.md");
+        let b_path = PathBuf::from("wiki/code/nested/b.md");
+        assert_eq!(store.documents[&a_path].kind, WikiDocumentKind::CodeDoc);
+        assert_eq!(store.documents[&b_path].kind, WikiDocumentKind::CodeDoc);
+        assert!(
+            !store
+                .documents
+                .contains_key(&PathBuf::from("wiki/code/nested/ignored.txt"))
+        );
+        assert_eq!(store.document_upserts, 2);
+        assert_eq!(store.ingestions.len(), 2);
+
+        write_file(tempdir.path(), "wiki/code/a.md", "# A\n\nChanged.\n");
+        index_vault(tempdir.path(), &mut store).expect("second index");
+
+        assert_eq!(store.document_upserts, 3);
+        assert_eq!(store.chunk_replacements, 3);
+        assert_eq!(store.link_replacements, 3);
+        assert_eq!(store.source_upserts, 3);
+        assert_eq!(store.ingestions[2].path, a_path);
+        assert_eq!(store.ingestions[2].event, WikiIngestionEvent::Changed);
+        assert_eq!(store.ingestions[3].path, b_path);
+        assert_eq!(store.ingestions[3].event, WikiIngestionEvent::Unchanged);
+        assert_eq!(store.links[&b_path].len(), 0);
     }
 
     #[test]

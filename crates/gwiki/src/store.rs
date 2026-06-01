@@ -16,6 +16,7 @@ pub enum WikiDocumentKind {
     SourceNote,
     Concept,
     Topic,
+    CodeDoc,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -758,6 +759,7 @@ fn document_kind_name(kind: WikiDocumentKind) -> &'static str {
         WikiDocumentKind::SourceNote => "source_note",
         WikiDocumentKind::Concept => "concept",
         WikiDocumentKind::Topic => "topic",
+        WikiDocumentKind::CodeDoc => "code_doc",
     }
 }
 
