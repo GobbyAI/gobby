@@ -9,7 +9,7 @@ use crate::ingest::audio::{
 };
 #[cfg(feature = "documents")]
 use crate::ingest::document::{DocumentSnapshot, ingest_document};
-use crate::ingest::image::{ImageSnapshot, ingest_image_with_vision};
+use crate::ingest::image::{ImageSnapshot, ingest_image_with_production_vision};
 use crate::ingest::video::{VideoFileSnapshot, ingest_video_file};
 use crate::ingest::{
     IngestResult, index_after_ingest, markdown_metadata, markdown_title, path_to_string,
@@ -20,6 +20,7 @@ use crate::sources::{
 };
 use crate::store::WikiIndexStore;
 use crate::vision::{VisionDegradation, VisionEndpoint};
+use crate::transcribe::{TranscriptionDegradation, TranscriptionEndpoint};
 use crate::{ScopeIdentity, WikiError};
 
 const TEXT_INLINE_LIMIT_BYTES: usize = 256 * 1024;
@@ -67,10 +68,11 @@ pub fn ingest_path(
         }
         SourceKind::Image => {
             let bytes = read_source_file(path)?;
-            return ingest_image_with_vision(
+            return ingest_image_with_production_vision(
                 vault_root,
                 store,
                 scope.clone(),
+                ai_context,
                 ImageSnapshot {
                     location,
                     file_name: file_name.to_string(),
@@ -80,7 +82,6 @@ pub fn ingest_path(
                     width: None,
                     height: None,
                 },
-                vision_endpoint(ai_context),
             )
             .map(Into::into);
         }
@@ -315,6 +316,33 @@ fn vision_degradation(routing: AiRouting) -> VisionDegradation {
     VisionDegradation {
         reason: reason.to_string(),
         fallback: "Keep raw image assets and surface filename/metadata only.".to_string(),
+    }
+}
+
+fn transcription_endpoint(
+    context: &AiContext,
+    options: &IngestFileOptions,
+) -> TranscriptionEndpoint<'static> {
+    let capability = if options.translate {
+        AiCapability::AudioTranslate
+    } else {
+        AiCapability::AudioTranscribe
+    };
+    TranscriptionEndpoint::Unavailable(transcription_degradation(
+        context.binding(capability).routing,
+        options.translate,
+    ))
+}
+
+fn transcription_degradation(routing: AiRouting, translate: bool) -> TranscriptionDegradation {
+    let action = if translate {
+        "translation"
+    } else {
+        "transcription"
+    };
+    TranscriptionDegradation {
+        reason: reason.to_string(),
+        fallback: format!("Keep raw audio assets and skip daemon {action}."),
     }
 }
 
