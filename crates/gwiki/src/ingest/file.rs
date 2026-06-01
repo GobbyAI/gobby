@@ -4,7 +4,9 @@ use gobby_core::ai_context::AiContext;
 use gobby_core::config::{AiCapability, AiRouting};
 
 use crate::api::IngestFileOptions;
-use crate::ingest::audio::{AudioSnapshot, ingest_audio_with_transcription};
+use crate::ingest::audio::{
+    AudioSnapshot, ingest_audio_with_transcription, production_transcription_endpoint,
+};
 #[cfg(feature = "documents")]
 use crate::ingest::document::{DocumentSnapshot, ingest_document};
 use crate::ingest::image::{ImageSnapshot, ingest_image_with_vision};
@@ -17,7 +19,6 @@ use crate::sources::{
     CompileStatus, IngestionMethod, SourceDraft, SourceDraftRef, SourceKind, SourceManifest,
 };
 use crate::store::WikiIndexStore;
-use crate::transcribe::{TranscriptionDegradation, TranscriptionEndpoint};
 use crate::vision::{VisionDegradation, VisionEndpoint};
 use crate::{ScopeIdentity, WikiError};
 
@@ -60,7 +61,7 @@ pub fn ingest_path(
                     mime_type: None,
                     duration_seconds: None,
                 },
-                transcription_endpoint(ai_context, options),
+                production_transcription_endpoint(ai_context, options.translate),
             )
             .map(Into::into);
         }
@@ -298,37 +299,6 @@ fn render_file_markdown(
     }
 
     markdown
-}
-
-fn transcription_endpoint(
-    context: &AiContext,
-    options: &IngestFileOptions,
-) -> TranscriptionEndpoint<'static> {
-    let capability = if options.translate {
-        AiCapability::AudioTranslate
-    } else {
-        AiCapability::AudioTranscribe
-    };
-    TranscriptionEndpoint::Unavailable(transcription_degradation(
-        context.binding(capability).routing,
-        options.translate,
-    ))
-}
-
-fn transcription_degradation(routing: AiRouting, translate: bool) -> TranscriptionDegradation {
-    let action = if translate {
-        "translation"
-    } else {
-        "transcription"
-    };
-    let reason = match routing {
-        AiRouting::Off => "disabled",
-        AiRouting::Auto | AiRouting::Daemon | AiRouting::Direct => "missing_endpoint",
-    };
-    TranscriptionDegradation {
-        reason: reason.to_string(),
-        fallback: format!("Keep raw audio assets and skip daemon {action}."),
-    }
 }
 
 fn vision_endpoint(context: &AiContext) -> VisionEndpoint<'static> {

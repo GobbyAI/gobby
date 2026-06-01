@@ -12,10 +12,23 @@ pub struct TranscriptSegment {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TranscriptionRange {
+    pub start_ms: u64,
+    pub end_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TranscriptionOutput {
     pub segments: Vec<TranscriptSegment>,
     pub language: Option<String>,
     pub model: Option<String>,
+    pub source_language: Option<String>,
+    pub task: Option<String>,
+    pub target_language: Option<String>,
+    pub translated: bool,
+    pub partial: bool,
+    pub completed_ranges: Vec<TranscriptionRange>,
+    pub missing_ranges: Vec<TranscriptionRange>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,7 +53,7 @@ pub struct TranscriptionRequest<'a> {
 }
 
 pub enum TranscriptionEndpoint<'a> {
-    Available(&'a dyn TranscriptionClient),
+    Available(Box<dyn TranscriptionClient + 'a>),
     Unavailable(TranscriptionDegradation),
 }
 
@@ -50,27 +63,22 @@ pub struct TranscriptionMarkdownResult {
     pub degradation: Option<TranscriptionDegradation>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TranscriptionMarkdownInput {
+    Transcribed(TranscriptionOutput),
+    Degraded(TranscriptionDegradation),
+}
+
 pub fn write_audio_transcript_markdown(
     vault_root: &Path,
     scope: &ScopeIdentity,
     record: &SourceRecord,
     request: TranscriptionRequest<'_>,
-    endpoint: TranscriptionEndpoint<'_>,
+    input: TranscriptionMarkdownInput,
 ) -> Result<TranscriptionMarkdownResult, WikiError> {
-    let (transcription, degradation) = match endpoint {
-        TranscriptionEndpoint::Available(client) => match client.transcribe(&request) {
-            Ok(output) => (Some(output), None),
-            Err(error) => (
-                None,
-                Some(TranscriptionDegradation {
-                    reason: "transcription_error".to_string(),
-                    fallback: format!(
-                        "Transcription failed: {error}; keep raw audio assets and require supplied transcripts."
-                    ),
-                }),
-            ),
-        },
-        TranscriptionEndpoint::Unavailable(degradation) => (None, Some(degradation)),
+    let (transcription, degradation) = match input {
+        TranscriptionMarkdownInput::Transcribed(output) => (Some(output), None),
+        TranscriptionMarkdownInput::Degraded(degradation) => (None, Some(degradation)),
     };
 
     let relative_path = derived_markdown_path(record);
@@ -87,7 +95,7 @@ pub fn write_audio_transcript_markdown(
         scope,
         record,
         request,
-        transcription,
+        transcription.as_ref(),
         degradation.as_ref(),
     );
     std::fs::write(&path, markdown).map_err(|error| WikiError::Io {
@@ -112,7 +120,7 @@ fn render_audio_transcript_markdown(
     scope: &ScopeIdentity,
     record: &SourceRecord,
     request: TranscriptionRequest<'_>,
-    transcription: Option<TranscriptionOutput>,
+    transcription: Option<&TranscriptionOutput>,
     degradation: Option<&TranscriptionDegradation>,
 ) -> String {
     let title = markdown_title(request.file_name);
@@ -148,6 +156,31 @@ fn render_audio_transcript_markdown(
         if let Some(model) = &output.model {
             fields.push(("transcription_model".to_string(), model.clone()));
         }
+        if let Some(source_language) = &output.source_language {
+            fields.push((
+                "transcription_source_language".to_string(),
+                source_language.clone(),
+            ));
+        }
+        if let Some(task) = &output.task {
+            fields.push(("transcription_task".to_string(), task.clone()));
+        }
+        if let Some(target_language) = &output.target_language {
+            fields.push((
+                "transcription_target_language".to_string(),
+                target_language.clone(),
+            ));
+        }
+        fields.push(("translated".to_string(), output.translated.to_string()));
+        if output.partial {
+            fields.push(("transcription_partial".to_string(), "true".to_string()));
+            if !output.missing_ranges.is_empty() {
+                fields.push((
+                    "transcription_missing_ranges".to_string(),
+                    format_ranges_ms(&output.missing_ranges),
+                ));
+            }
+        }
     }
     if let Some(degradation) = degradation {
         fields.push((
@@ -175,7 +208,7 @@ fn render_audio_transcript_markdown(
 
     if let Some(output) = transcription {
         markdown.push_str("## Transcript\n\n");
-        for segment in output.segments {
+        for segment in &output.segments {
             markdown.push('[');
             markdown.push_str(&format_timestamp_ms(segment.start_ms));
             markdown.push_str("] ");
@@ -214,6 +247,14 @@ fn format_timestamp_ms(timestamp_ms: u64) -> String {
     format!("{hours:02}:{minutes:02}:{seconds:02}")
 }
 
+fn format_ranges_ms(ranges: &[TranscriptionRange]) -> String {
+    ranges
+        .iter()
+        .map(|range| format!("{}-{}", range.start_ms, range.end_ms))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
@@ -246,6 +287,13 @@ mod tests {
                 ],
                 language: Some("en".to_string()),
                 model: Some("fake-stt".to_string()),
+                source_language: Some("en".to_string()),
+                task: Some("transcribe".to_string()),
+                target_language: None,
+                translated: false,
+                partial: false,
+                completed_ranges: Vec::new(),
+                missing_ranges: Vec::new(),
             })
         }
     }
@@ -287,7 +335,16 @@ mod tests {
                 asset_path: &asset_path,
                 bytes: b"audio-bytes",
             },
-            TranscriptionEndpoint::Available(&client),
+            TranscriptionMarkdownInput::Transcribed(
+                client
+                    .transcribe(&TranscriptionRequest {
+                        file_name: "interview.wav",
+                        mime_type: Some("audio/wav"),
+                        asset_path: &asset_path,
+                        bytes: b"audio-bytes",
+                    })
+                    .expect("transcribe fixture"),
+            ),
         )
         .expect("write transcript markdown");
 
@@ -312,6 +369,66 @@ mod tests {
     }
 
     #[test]
+    fn renders_precomputed_output_without_transcribing() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let record = record_for(temp.path());
+        let asset_path = PathBuf::from("raw/assets/interview.wav");
+        let client = FakeTranscriptionClient {
+            calls: Cell::new(0),
+        };
+
+        let result = write_audio_transcript_markdown(
+            temp.path(),
+            &ScopeIdentity::topic("field-work"),
+            &record,
+            TranscriptionRequest {
+                file_name: "interview.wav",
+                mime_type: Some("audio/wav"),
+                asset_path: &asset_path,
+                bytes: b"audio-bytes",
+            },
+            TranscriptionMarkdownInput::Transcribed(TranscriptionOutput {
+                segments: vec![TranscriptSegment {
+                    start_ms: 1_000,
+                    end_ms: 3_500,
+                    text: "Translated field recording sentence.".to_string(),
+                }],
+                language: Some("en".to_string()),
+                model: Some("fake-stt".to_string()),
+                source_language: Some("es".to_string()),
+                task: Some("translate".to_string()),
+                target_language: Some("en".to_string()),
+                translated: true,
+                partial: true,
+                completed_ranges: vec![TranscriptionRange {
+                    start_ms: 1_000,
+                    end_ms: 3_500,
+                }],
+                missing_ranges: vec![TranscriptionRange {
+                    start_ms: 3_500,
+                    end_ms: 7_000,
+                }],
+            }),
+        )
+        .expect("write precomputed transcript markdown");
+
+        assert_eq!(client.calls.get(), 0);
+        assert!(result.degradation.is_none());
+
+        let markdown =
+            std::fs::read_to_string(temp.path().join(&result.path)).expect("transcript markdown");
+        assert!(markdown.contains("transcription_status: transcribed"));
+        assert!(markdown.contains("transcription_language: en"));
+        assert!(markdown.contains("transcription_source_language: es"));
+        assert!(markdown.contains("transcription_task: translate"));
+        assert!(markdown.contains("transcription_target_language: en"));
+        assert!(markdown.contains("translated: true"));
+        assert!(markdown.contains("transcription_partial: true"));
+        assert!(markdown.contains("transcription_missing_ranges: 3500-7000"));
+        assert!(markdown.contains("[00:00:01] Translated field recording sentence."));
+    }
+
+    #[test]
     fn missing_transcription_degrades() {
         let temp = tempfile::tempdir().expect("tempdir");
         let record = record_for(temp.path());
@@ -329,7 +446,7 @@ mod tests {
                 asset_path: &asset_path,
                 bytes: b"audio-bytes",
             },
-            TranscriptionEndpoint::Unavailable(TranscriptionDegradation {
+            TranscriptionMarkdownInput::Degraded(TranscriptionDegradation {
                 reason: "missing_endpoint".to_string(),
                 fallback: "Keep raw audio assets and require supplied transcripts.".to_string(),
             }),
