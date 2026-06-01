@@ -292,7 +292,7 @@ def create_agents_registry(
         run = runner.get_run(run_id)
         if not run:
             return {"success": False, "error": f"Agent run {run_id} not found"}
-
+        run = await overlay_live_activity(run, transcript_reader)
         return {"success": True, **_agent_result_payload(run)}
 
     @registry.tool(

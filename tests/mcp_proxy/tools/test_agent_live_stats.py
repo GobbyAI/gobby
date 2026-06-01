@@ -242,6 +242,49 @@ async def test_wait_for_agent_terminal_error_overlays_transcript_activity(
 
 
 @pytest.mark.asyncio
+async def test_get_agent_result_overlays_transcript_activity_when_persisted_counts_lag(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict,
+) -> None:
+    """Completed result payloads use transcript counts when persisted stats stayed at zero."""
+    parent_id = _register_session(session_manager, sample_project, "mcp-parent-result")
+    child_id = _register_session(
+        session_manager,
+        sample_project,
+        "mcp-child-result",
+        parent_session_id=parent_id,
+    )
+    run_storage = LocalAgentRunManager(temp_db)
+    run = run_storage.create(
+        parent_session_id=parent_id,
+        child_session_id=child_id,
+        provider="claude",
+        prompt="completed result with lagging counters",
+        agent_name="qa-reviewer",
+    )
+    run_storage.start(run.id)
+    run_storage.complete(run.id, "approved")
+
+    runner = MagicMock()
+    runner.run_storage = run_storage
+    runner.get_run.side_effect = lambda run_id: run_storage.get(run_id)
+    transcript_reader = _FakeTranscriptReader(
+        {"message_count": 58, "turn_count": 6, "tool_call_count": 24}
+    )
+    registry = create_agents_registry(runner, transcript_reader=transcript_reader)
+    get_agent_result = registry._tools["get_agent_result"].func
+
+    result = await get_agent_result(run.id)
+
+    assert result["success"] is True
+    assert result["status"] == "success"
+    assert result["tool_calls_count"] == 24
+    assert result["turns_used"] == 6
+    assert transcript_reader.session_ids == [child_id]
+
+
+@pytest.mark.asyncio
 async def test_list_running_agents_default_scope_sees_non_child_runs(
     temp_db: HubDatabase,
     session_manager: SessionManager,
