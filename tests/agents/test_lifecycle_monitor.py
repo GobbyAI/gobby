@@ -127,6 +127,95 @@ async def test_refresh_active_run_dispatch_mutexes_extends_expired_attached_mute
     assert datetime.fromisoformat(refreshed.lease_until) > before_refresh
 
 
+@pytest.mark.asyncio
+async def test_refresh_active_run_dispatch_mutexes_restores_missing_mutex(
+    agent_run_manager: LocalAgentRunManager,
+    session_manager: SessionManager,
+    sample_session: dict,
+    sample_project: dict,
+    temp_db: HubDatabase,
+) -> None:
+    child = session_manager.register(
+        external_id="child-restore-dispatch-mutex",
+        machine_id="machine-1",
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    task_manager = LocalTaskManager(temp_db)
+    task, run, mutexes = _make_dispatched_stage_run(
+        agent_run_manager=agent_run_manager,
+        task_manager=task_manager,
+        temp_db=temp_db,
+        sample_project=sample_project,
+        parent_session_id=sample_session["id"],
+        child_session_id=child.id,
+        run_id="run-restore-dispatch-mutex",
+        tmux_session_name="gobby-restore-dispatch-mutex",
+    )
+    assert mutexes.clear_by_run_id(run.id) == 1
+    assert mutexes.get_mutex(task.id) is None
+
+    monitor = AgentLifecycleMonitor(
+        agent_run_manager=agent_run_manager,
+        db=temp_db,
+        check_interval_seconds=1.0,
+    )
+
+    before_restore = datetime.now(UTC)
+    assert await monitor.refresh_active_run_dispatch_mutexes() == 1
+
+    restored = mutexes.get_mutex(task.id)
+    assert restored is not None
+    assert restored.run_id == run.id
+    assert restored.lease_holder == "dispatcher"
+    assert datetime.fromisoformat(restored.lease_until) > before_restore
+
+
+@pytest.mark.asyncio
+async def test_refresh_active_run_dispatch_mutexes_does_not_restore_without_stage_context(
+    agent_run_manager: LocalAgentRunManager,
+    session_manager: SessionManager,
+    sample_session: dict,
+    sample_project: dict,
+    temp_db: HubDatabase,
+) -> None:
+    child = session_manager.register(
+        external_id="child-no-stage-dispatch-mutex",
+        machine_id="machine-1",
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    task_manager = LocalTaskManager(temp_db)
+    task = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Manual task-bound agent",
+        claimed_by_session_id=child.id,
+    )
+    run = agent_run_manager.create(
+        parent_session_id=sample_session["id"],
+        child_session_id=child.id,
+        claimed_session_id=child.id,
+        provider="codex",
+        prompt="manual",
+        run_id="run-no-stage-dispatch-mutex",
+        task_id=task.id,
+    )
+    agent_run_manager.start(run.id)
+
+    mutexes = TaskDispatchMutexManager(temp_db)
+    mutexes.ensure_table()
+    assert mutexes.get_mutex(task.id) is None
+
+    monitor = AgentLifecycleMonitor(
+        agent_run_manager=agent_run_manager,
+        db=temp_db,
+        check_interval_seconds=1.0,
+    )
+
+    assert await monitor.refresh_active_run_dispatch_mutexes() == 0
+    assert mutexes.get_mutex(task.id) is None
+
+
 def _make_terminal_run(
     agent_run_manager: LocalAgentRunManager,
     sample_session: dict,
@@ -199,6 +288,10 @@ def _make_dispatched_stage_run(
     )
     agent_run_manager.start(run.id)
     agent_run_manager.update_runtime(run.id, tmux_session_name=tmux_session_name)
+    agent_run_manager.update_resume_metadata(
+        run.id,
+        {"stage_name": "development", "stage_state": "in_progress"},
+    )
     stored_run = agent_run_manager.get(run.id)
     assert stored_run is not None
 

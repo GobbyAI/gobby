@@ -46,6 +46,18 @@ logger = logging.getLogger(__name__)
 DISPATCH_MUTEX_REFRESH_TTL_SECONDS = 600
 
 
+def _has_dispatch_stage_context(run: AgentRun) -> bool:
+    metadata = run.resume_metadata_json
+    if not isinstance(metadata, dict):
+        return False
+    if metadata.get("stage_name") or metadata.get("stage_state"):
+        return True
+    initial_variables = metadata.get("initial_variables")
+    return isinstance(initial_variables, dict) and bool(
+        initial_variables.get("stage_name") or initial_variables.get("stage_state")
+    )
+
+
 class AgentLifecycleMonitor:
     """Periodically checks if agent processes are still alive.
 
@@ -325,7 +337,7 @@ class AgentLifecycleMonitor:
         return await self._health_monitor.check_provider_stalls()
 
     async def refresh_active_run_dispatch_mutexes(self) -> int:
-        """Extend dispatch mutex leases for active runs that already own one."""
+        """Extend or restore dispatch mutex leases for active task-bound runs."""
 
         def _refresh() -> int:
             storage = TaskDispatchMutexManager(self._db)
@@ -337,6 +349,19 @@ class AgentLifecycleMonitor:
                     run.task_id,
                     run.id,
                     ttl_seconds=DISPATCH_MUTEX_REFRESH_TTL_SECONDS,
+                ):
+                    refreshed += 1
+                    continue
+                if storage.get_mutex(run.task_id) is not None:
+                    continue
+                if not _has_dispatch_stage_context(run):
+                    continue
+                if storage.acquire_mutex(
+                    run.task_id,
+                    holder="dispatcher",
+                    kind="heartbeat",
+                    ttl_seconds=DISPATCH_MUTEX_REFRESH_TTL_SECONDS,
+                    run_id=run.id,
                 ):
                     refreshed += 1
             return refreshed
