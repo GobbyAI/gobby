@@ -33,6 +33,10 @@ pub enum Command {
         limit: usize,
         include_semantic: bool,
     },
+    Read {
+        target: ReadTarget,
+        scope: ScopeSelection,
+    },
     Backlinks {
         page: String,
         scope: ScopeSelection,
@@ -66,6 +70,12 @@ pub enum Command {
     Status {
         scope: ScopeSelection,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReadTarget {
+    Path(PathBuf),
+    Title(String),
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

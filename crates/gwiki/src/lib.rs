@@ -75,8 +75,8 @@ pub(crate) mod video;
 pub(crate) mod vision;
 
 pub use api::{
-    Command, CommandOutcome, CommandResult, IngestFileOptions, ScopeIdentity, ScopeKind,
-    ScopeSelection, SetupOptions,
+    Command, CommandOutcome, CommandResult, IngestFileOptions, ReadTarget, ScopeIdentity,
+    ScopeKind, ScopeSelection, SetupOptions,
 };
 pub use error::WikiError;
 pub use runner::{resolve_research_scope, run};

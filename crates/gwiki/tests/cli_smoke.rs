@@ -321,6 +321,158 @@ fn cleanup_postgres_topic(database_url: &str, topic: &str) -> Result<(), postgre
 }
 
 #[test]
+fn read_returns_scoped_wiki_document_contract() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let hub = tmp.path().join("hub");
+
+    let init = gwiki(
+        &hub,
+        tmp.path(),
+        &["--format", "json", "init", "--topic", "rust"],
+    );
+    assert_success(&init, "init");
+
+    let vault = hub.join("topics").join("rust");
+    let ownership_path = vault.join("wiki/topics/ownership.md");
+    std::fs::write(
+        &ownership_path,
+        "# Ownership\n\nOwnership evidence stays scoped.\n",
+    )
+    .expect("write ownership page");
+    std::fs::write(
+        vault.join("wiki/topics/shared.md"),
+        "# Shared\n\nTopic page.\n",
+    )
+    .expect("write shared topic page");
+    std::fs::write(
+        vault.join("wiki/concepts/shared.md"),
+        "# Shared\n\nConcept page.\n",
+    )
+    .expect("write shared concept page");
+
+    let by_path = gwiki(
+        &hub,
+        tmp.path(),
+        &[
+            "--format",
+            "json",
+            "--topic",
+            "rust",
+            "read",
+            "--path",
+            "wiki/topics/ownership.md",
+        ],
+    );
+    assert_success(&by_path, "read by path");
+    let by_path_payload = json_output(&by_path);
+    assert_eq!(by_path_payload["command"], "read");
+    assert_eq!(by_path_payload["status"], "found");
+    assert_eq!(by_path_payload["scope"]["kind"], "topic");
+    assert_eq!(by_path_payload["scope"]["id"], "rust");
+    assert_eq!(by_path_payload["requested"]["kind"], "path");
+    assert_eq!(
+        by_path_payload["requested"]["value"],
+        "wiki/topics/ownership.md"
+    );
+    assert_eq!(by_path_payload["wiki_path"], "wiki/topics/ownership.md");
+    assert_json_path(&by_path_payload["absolute_path"], &ownership_path);
+    assert_eq!(by_path_payload["title"], "Ownership");
+    assert_eq!(by_path_payload["content_format"], "markdown");
+    assert!(
+        by_path_payload["content"]
+            .as_str()
+            .is_some_and(|content| content.contains("Ownership evidence")),
+        "{by_path_payload:#}"
+    );
+    assert!(
+        by_path_payload["degradations"]
+            .as_array()
+            .is_some_and(Vec::is_empty)
+    );
+
+    let by_title = gwiki(
+        &hub,
+        tmp.path(),
+        &[
+            "--format",
+            "json",
+            "--topic",
+            "rust",
+            "read",
+            "--title",
+            "Ownership",
+        ],
+    );
+    assert_success(&by_title, "read by title");
+    let by_title_payload = json_output(&by_title);
+    assert_eq!(by_title_payload["status"], "found");
+    assert_eq!(by_title_payload["requested"]["kind"], "title");
+    assert_eq!(by_title_payload["wiki_path"], "wiki/topics/ownership.md");
+
+    let missing = gwiki(
+        &hub,
+        tmp.path(),
+        &[
+            "--format",
+            "json",
+            "--topic",
+            "rust",
+            "read",
+            "--path",
+            "wiki/topics/missing.md",
+        ],
+    );
+    assert_success(&missing, "read missing");
+    let missing_payload = json_output(&missing);
+    assert_eq!(missing_payload["status"], "not_found");
+    assert_eq!(missing_payload["wiki_path"], "wiki/topics/missing.md");
+    assert_eq!(missing_payload["content"], serde_json::Value::Null);
+    assert_eq!(missing_payload["degradations"][0]["reason"], "not_found");
+
+    let invalid = gwiki(
+        &hub,
+        tmp.path(),
+        &[
+            "--format",
+            "json",
+            "--topic",
+            "rust",
+            "read",
+            "--path",
+            "../secret.md",
+        ],
+    );
+    assert_success(&invalid, "read invalid");
+    let invalid_payload = json_output(&invalid);
+    assert_eq!(invalid_payload["status"], "invalid_request");
+    assert_eq!(invalid_payload["wiki_path"], serde_json::Value::Null);
+    assert_eq!(invalid_payload["content"], serde_json::Value::Null);
+    assert_eq!(
+        invalid_payload["degradations"][0]["reason"],
+        "invalid_request"
+    );
+
+    let ambiguous = gwiki(
+        &hub,
+        tmp.path(),
+        &[
+            "--format", "json", "--topic", "rust", "read", "--title", "Shared",
+        ],
+    );
+    assert_success(&ambiguous, "read ambiguous");
+    let ambiguous_payload = json_output(&ambiguous);
+    assert_eq!(ambiguous_payload["status"], "ambiguous");
+    assert_eq!(ambiguous_payload["degradations"][0]["reason"], "ambiguous");
+    assert_eq!(
+        ambiguous_payload["candidates"]
+            .as_array()
+            .expect("candidates")
+            .len(),
+        2
+    );
+}
+
+#[test]
 fn public_cli_smoke_uses_gwiki_modules() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let hub = tmp.path().join("hub");

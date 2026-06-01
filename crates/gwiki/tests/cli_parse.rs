@@ -64,6 +64,8 @@ fn core_commands_parse_scope_flags() {
         vec!["index", "--topic", "rust"],
         vec!["ingest-file", "--topic", "rust", "README.md"],
         vec!["search", "--topic", "rust", "ownership"],
+        vec!["read", "--topic", "rust", "--path", "wiki/topics/rust.md"],
+        vec!["read", "--topic", "rust", "--title", "Rust"],
         vec!["backlinks", "--topic", "rust", "wiki/topics/rust.md"],
         vec!["link-suggest", "--topic", "rust"],
         vec!["audit", "--topic", "rust"],

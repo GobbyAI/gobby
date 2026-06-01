@@ -7,6 +7,7 @@ pub(crate) mod health;
 pub(crate) mod index;
 pub(crate) mod init;
 pub(crate) mod lint;
+pub(crate) mod read;
 pub(crate) mod research;
 pub(crate) mod search;
 pub(crate) mod setup;
@@ -31,6 +32,7 @@ pub(crate) fn run(command: Command) -> Result<CommandOutcome, WikiError> {
             limit,
             include_semantic,
         } => search::execute(query, scope, limit, include_semantic),
+        Command::Read { target, scope } => read::execute(target, scope),
         Command::Backlinks { page, scope } => backlinks::execute(page, scope),
         Command::LinkSuggest { scope, limit } => backlinks::execute_link_suggest(scope, limit),
         Command::Research(options) => research::execute(options),

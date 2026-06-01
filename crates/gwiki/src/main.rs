@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 use gobby_core::config::AiRouting;
-use gobby_wiki::{Command, IngestFileOptions, ScopeSelection, WikiError, output};
+use gobby_wiki::{Command, IngestFileOptions, ReadTarget, ScopeSelection, WikiError, output};
 use serde_json::json;
 
 #[derive(Debug, Parser)]
@@ -62,6 +62,8 @@ enum CliCommand {
     },
     /// Search wiki documents in the selected scope.
     Search(SearchArgs),
+    /// Read a wiki page or document in the selected scope.
+    Read(ReadArgs),
     /// Show backlinks for a wiki page.
     Backlinks(BacklinksArgs),
     /// Suggest unresolved wiki links in the selected scope.
@@ -149,6 +151,22 @@ struct SearchArgs {
     /// Disable semantic vector search for this query.
     #[arg(long = "no-semantic")]
     no_semantic: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(group(
+    ArgGroup::new("target")
+        .required(true)
+        .args(["path", "title"])
+))]
+struct ReadArgs {
+    /// Vault-relative wiki path to read.
+    #[arg(long, value_name = "PATH")]
+    path: Option<PathBuf>,
+
+    /// First-heading title to resolve inside the selected scope.
+    #[arg(long, value_name = "TITLE")]
+    title: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -320,6 +338,19 @@ fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Comman
             limit: args.limit,
             include_semantic: !args.no_semantic,
         }),
+        CliCommand::Read(args) => {
+            let target = match (args.path, args.title) {
+                (Some(path), None) => ReadTarget::Path(path),
+                (None, Some(title)) => ReadTarget::Title(title),
+                _ => {
+                    return Err(WikiError::InvalidInput {
+                        field: "read",
+                        message: "pass exactly one of --path or --title".to_string(),
+                    });
+                }
+            };
+            Ok(Command::Read { target, scope })
+        }
         CliCommand::Backlinks(args) => Ok(Command::Backlinks {
             page: args.page,
             scope,
