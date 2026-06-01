@@ -236,25 +236,41 @@ def resolve_and_seed_contexts(
     tokens.resolved_project_id = canonical_project_id
 
     resolved_session_id: str | None = None
-    if session_ref and session_manager is not None:
+    resolved_session_conversation_id: str | None = None
+    effective_session_ref = session_ref.strip() if session_ref else None
+    if effective_session_ref == "current":
+        current_ctx = get_session_context()
+        if current_ctx is not None:
+            resolved_session_id = current_ctx.session_id
+            resolved_session_conversation_id = current_ctx.conversation_id
+        else:
+            logger.debug(
+                "resolve_and_seed_contexts: ignoring current session alias without "
+                "active session context"
+            )
+        effective_session_ref = None
+
+    if effective_session_ref and session_manager is not None:
         # UUID / prefix refs resolve globally; only #N needs project scope.
         session_scope = (
-            canonical_session_scope_id if _ref_requires_project_scope(session_ref) else None
+            canonical_session_scope_id
+            if _ref_requires_project_scope(effective_session_ref)
+            else None
         )
         try:
             resolved_session_id = str(
-                session_manager.resolve_session_reference(session_ref, session_scope)
+                session_manager.resolve_session_reference(effective_session_ref, session_scope)
             )
         except ValueError as exc:
             logger.warning(
                 "resolve_and_seed_contexts: could not resolve session ref %r (project_id=%s): %s",
-                session_ref,
+                effective_session_ref,
                 session_scope,
                 exc,
             )
 
     if resolved_session_id:
-        conversation_id: str | None = None
+        conversation_id: str | None = resolved_session_conversation_id
         try:
             session = session_manager.get(resolved_session_id) if session_manager else None
             if session is not None:

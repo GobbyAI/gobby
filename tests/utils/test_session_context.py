@@ -23,6 +23,7 @@ from gobby.utils.session_context import (
     get_session_context,
     reset_seeded_contexts,
     resolve_and_seed_contexts,
+    session_context_for_test,
 )
 from gobby.workflows.state_manager import SessionVariableManager
 
@@ -101,6 +102,54 @@ def test_resolve_and_seed_contexts_session_only_derives_project_from_session() -
     try:
         assert tokens.project_token == "project-token"
         mock_from_session.assert_called_once_with(SESSION_PLATFORM_UUID, mgr, mgr.db)
+    finally:
+        reset_seeded_contexts(tokens)
+
+
+def test_resolve_and_seed_contexts_current_alias_uses_ambient_session() -> None:
+    """The MCP-only current alias should not be handed to SessionManager."""
+    mgr = _make_session_manager(resolve_to=SESSION_PLATFORM_UUID)
+    with (
+        session_context_for_test(SESSION_PLATFORM_UUID, conversation_id=SESSION_EXTERNAL_UUID),
+        patch(
+            "gobby.utils.project_context.set_project_context_from_session",
+            return_value="project-token",
+        ),
+    ):
+        tokens = resolve_and_seed_contexts(
+            session_ref="current",
+            session_manager=mgr,
+            project_ref=None,
+            db=mgr.db,
+        )
+        try:
+            assert tokens.resolved_session_id == SESSION_PLATFORM_UUID
+            assert get_session_context() is not None
+            assert get_session_context().session_id == SESSION_PLATFORM_UUID
+            mgr.resolve_session_reference.assert_not_called()
+        finally:
+            reset_seeded_contexts(tokens)
+
+
+def test_resolve_and_seed_contexts_current_alias_without_context_does_not_warn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing ambient context should not spam Session 'current' warnings."""
+    mgr = _make_session_manager(resolve_exc=ValueError("Session 'current' not found"))
+    mock_warning = MagicMock()
+    monkeypatch.setattr("gobby.utils.session_context.logger.warning", mock_warning)
+
+    tokens = resolve_and_seed_contexts(
+        session_ref="current",
+        session_manager=mgr,
+        project_ref=None,
+        db=mgr.db,
+    )
+    try:
+        assert tokens.session_token is None
+        assert tokens.resolved_session_id is None
+        assert mock_warning.call_count == 0
+        mgr.resolve_session_reference.assert_not_called()
     finally:
         reset_seeded_contexts(tokens)
 
