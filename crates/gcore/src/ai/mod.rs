@@ -8,6 +8,7 @@ use crate::ai_context::AiContext;
 use crate::ai_types::{AiError, TextResult, TranscriptionResult, VisionResult};
 use crate::config::{AiCapability, CapabilityBinding};
 
+pub mod daemon;
 pub mod text;
 pub mod transcription;
 pub mod vision;
