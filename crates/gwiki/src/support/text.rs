@@ -52,6 +52,7 @@ pub(crate) fn document_kind_name(kind: store::WikiDocumentKind) -> &'static str 
         store::WikiDocumentKind::SourceNote => "source_note",
         store::WikiDocumentKind::Concept => "concept",
         store::WikiDocumentKind::Topic => "topic",
+        store::WikiDocumentKind::CodeDoc => "code_doc",
     }
 }
 
