@@ -222,6 +222,9 @@ async def run_heartbeat(
             ):
                 result = _release_and_skip(mutex, result)
                 continue
+            if getattr(context, "holistic_descendant_gate", None) is not None:
+                result = _release_and_skip(mutex, result)
+                continue
             action = dispatch_rules.evaluate(current, context, _rules())
             if action is None:
                 result = _release_and_skip(mutex, result)

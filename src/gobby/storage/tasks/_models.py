@@ -187,6 +187,8 @@ class Task:
     validation_fail_count: int = 0
     dispatch_failure_count: int = 0
     validation_override_reason: str | None = None  # Why agent bypassed validation
+    merge_in_progress: bool = False
+    blocked_by_merge: bool = False
     # Commit linking
     commits: list[str] | None = None
     # Escalation fields
@@ -283,6 +285,12 @@ class Task:
             validation_override_reason=(
                 row["validation_override_reason"] if "validation_override_reason" in keys else None
             ),
+            merge_in_progress=(
+                bool(row["merge_in_progress"]) if "merge_in_progress" in keys else False
+            ),
+            blocked_by_merge=(
+                bool(row["blocked_by_merge"]) if "blocked_by_merge" in keys else False
+            ),
             commits=json.loads(row["commits"]) if "commits" in keys and row["commits"] else None,
             escalated_at=escalated_at,
             escalation_reason=row["escalation_reason"] if "escalation_reason" in keys else None,
@@ -345,6 +353,8 @@ class Task:
             "validation_fail_count": self.validation_fail_count,
             "dispatch_failure_count": self.dispatch_failure_count,
             "validation_override_reason": self.validation_override_reason,
+            "merge_in_progress": self.merge_in_progress,
+            "blocked_by_merge": self.blocked_by_merge,
             "commits": self.commits,
             "escalated_at": self.escalated_at,
             "escalation_reason": self.escalation_reason,
@@ -396,6 +406,8 @@ class Task:
             "closed_in_session_id": self.closed_in_session_id,
             "validation_fail_count": self.validation_fail_count,
             "dispatch_failure_count": self.dispatch_failure_count,
+            "merge_in_progress": self.merge_in_progress,
+            "blocked_by_merge": self.blocked_by_merge,
             "escalated_at": self.escalated_at,
             "is_escalated": self.is_escalated,
             "start_date": self.start_date,

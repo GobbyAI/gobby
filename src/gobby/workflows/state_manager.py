@@ -157,7 +157,15 @@ class SessionVariableManager:
             "SELECT variables FROM session_variables WHERE session_id = %s",
             (session_id,),
         )
-        session_vars = json.loads(row["variables"]) if row and row["variables"] else {}
+        session_vars = {}
+        if row:
+            variables = row["variables"]
+            if isinstance(variables, dict):
+                session_vars = variables
+            elif isinstance(variables, str | bytes | bytearray) and variables:
+                loaded = json.loads(variables)
+                if isinstance(loaded, dict):
+                    session_vars = loaded
 
         if not defaults:
             return session_vars

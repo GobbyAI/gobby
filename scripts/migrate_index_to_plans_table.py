@@ -111,7 +111,7 @@ def _upsert_plan(
                 id, project_id, plan_id, plan_path, plan_hash, plan_kind, state,
                 root_task_ref, created_at, updated_at, archived_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT(project_id, plan_id) DO UPDATE SET
                 plan_path = excluded.plan_path,
                 plan_hash = excluded.plan_hash,

@@ -600,7 +600,7 @@ class TestConfigureMcpServerToml:
         assert "[mcp_servers.gobby]" in content
 
     def test_configure_already_configured_toml(self, temp_dir: Path) -> None:
-        """Test when server is already configured in TOML."""
+        """Test incomplete TOML server config is repaired."""
         config_path = temp_dir / "config.toml"
         config_path.write_text('[mcp_servers.gobby]\ncommand = "existing"\n')
 
@@ -608,8 +608,9 @@ class TestConfigureMcpServerToml:
 
         assert result["success"] is True
         assert result["added"] is False
-        assert result["already_configured"] is True
-        assert result["backup_path"] is None
+        assert result["updated"] is True
+        assert result["already_configured"] is False
+        assert result["backup_path"] is not None
 
     def test_configure_custom_server_name_toml(self, temp_dir: Path) -> None:
         """Test using custom server name in TOML."""

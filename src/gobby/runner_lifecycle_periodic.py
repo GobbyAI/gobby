@@ -16,6 +16,40 @@ DEFAULT_CHAT_ATTACHMENT_RETENTION_HOURS = 24
 DEFAULT_CHAT_ATTACHMENT_GC_INTERVAL_MINUTES = 60
 
 
+def _default_loops() -> dict[str, Any]:
+    from gobby.runner_maintenance import (
+        bin_freshness_loop,
+        cleanup_chat_attachments_loop,
+        cleanup_comms_messages_loop,
+        cleanup_expired_isolation_loop,
+        cleanup_zombie_messages_loop,
+        drain_hook_inbox_loop,
+        expire_approval_timeouts_loop,
+        memory_reconcile_loop,
+        metric_snapshot_loop,
+        metrics_archive_loop,
+        metrics_cleanup_loop,
+        span_cleanup_loop,
+        tmux_window_name_repair_loop,
+    )
+
+    return {
+        "metrics_cleanup_loop": metrics_cleanup_loop,
+        "metrics_archive_loop": metrics_archive_loop,
+        "span_cleanup_loop": span_cleanup_loop,
+        "memory_reconcile_loop": memory_reconcile_loop,
+        "cleanup_zombie_messages_loop": cleanup_zombie_messages_loop,
+        "cleanup_comms_messages_loop": cleanup_comms_messages_loop,
+        "cleanup_chat_attachments_loop": cleanup_chat_attachments_loop,
+        "cleanup_expired_isolation_loop": cleanup_expired_isolation_loop,
+        "metric_snapshot_loop": metric_snapshot_loop,
+        "bin_freshness_loop": bin_freshness_loop,
+        "drain_hook_inbox_loop": drain_hook_inbox_loop,
+        "expire_approval_timeouts_loop": expire_approval_timeouts_loop,
+        "tmux_window_name_repair_loop": tmux_window_name_repair_loop,
+    }
+
+
 def start_periodic_tasks(
     runner: GobbyRunner,
     *,
@@ -23,6 +57,7 @@ def start_periodic_tasks(
     **loops: Any,
 ) -> None:
     """Start all lightweight periodic background tasks."""
+    loops = {**_default_loops(), **loops}
     runner._metrics_cleanup_task = asyncio.create_task(
         loops["metrics_cleanup_loop"](runner.metrics_manager, lambda: runner._shutdown_requested),
         name="metrics-cleanup",

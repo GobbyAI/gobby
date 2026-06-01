@@ -261,6 +261,10 @@ def resolve_context_window_with_source(
     provider_reported_context_window: Any | None = None,
 ) -> ResolvedContextWindow | None:
     """Resolve context window and expose the selected source."""
+    if model is not None and not isinstance(model, str):
+        raise TypeError("model must be a string or None")
+    if overrides is not None and not isinstance(overrides, dict):
+        raise TypeError("overrides must be a dict or None")
     if not model:
         return None
 

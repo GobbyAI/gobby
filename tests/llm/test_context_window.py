@@ -1,4 +1,4 @@
-"""Tests for resolve_context_window in gobby.llm.claude_models.
+"""Tests for resolve_context_window in gobby.llm.context_windows.
 
 Verifies the priority order:
 1. Config overrides (model substring -> context window)
@@ -16,8 +16,7 @@ from unittest.mock import patch
 
 import pytest
 
-from gobby.llm.claude_models import resolve_context_window
-from gobby.llm.context_windows import coerce_context_length
+from gobby.llm.context_windows import coerce_context_length, resolve_context_window
 from gobby.servers.provider_models import ProviderModelCatalog
 
 pytestmark = pytest.mark.unit
@@ -100,15 +99,11 @@ class _BareSourceCatalog:
 class TestResolveContextWindow:
     """Tests for resolve_context_window()."""
 
-    def test_claude_models_wrapper_emits_deprecation_warning(self) -> None:
-        with pytest.warns(DeprecationWarning):
-            assert resolve_context_window(None) is None
-
-    def test_claude_models_wrapper_rejects_invalid_model(self) -> None:
+    def test_rejects_invalid_model(self) -> None:
         with pytest.raises(TypeError, match="model must be a string or None"):
             resolve_context_window(123)  # type: ignore[arg-type]
 
-    def test_claude_models_wrapper_rejects_invalid_overrides(self) -> None:
+    def test_rejects_invalid_overrides(self) -> None:
         with pytest.raises(TypeError, match="overrides must be a dict or None"):
             resolve_context_window(None, overrides=[])  # type: ignore[arg-type]
 

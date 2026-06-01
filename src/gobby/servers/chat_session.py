@@ -46,8 +46,8 @@ from gobby.llm.claude_models import (
     ThinkingEvent,
     ToolCallEvent,
     ToolResultEvent,
-    resolve_context_window,
 )
+from gobby.llm.context_windows import resolve_context_window
 from gobby.llm.sdk_utils import (
     ADDITIONAL_CONTEXT_LIMIT as _ADDITIONAL_CONTEXT_LIMIT,
 )

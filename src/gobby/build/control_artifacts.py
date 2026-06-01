@@ -84,16 +84,12 @@ def classify_dirty_descendant_worktree_artifacts(
         if not Path(artifact.path).exists():
             artifacts_to_delete.append(artifact)
             continue
-        porcelain = _git_text_or_none(
-            worktree_git,
-            ["status", "--porcelain", "--untracked-files=all"],
-            cwd=artifact.path,
-        )
-        if porcelain is None:
+        is_dirty = _worktree_is_dirty(worktree_git, artifact.path)
+        if is_dirty is None:
             artifact.deferred = True
             artifact.cleanup_reason = "worktree_status_unknown_deferred"
             continue
-        if porcelain:
+        if is_dirty:
             if task_id is None:
                 artifacts_to_delete.append(artifact)
                 continue
@@ -254,27 +250,6 @@ def delete_artifacts(
                     if stored_path.exists():
                         path = stored_path
                 if path.exists():
-                    porcelain = _git_text_or_none(
-                        worktree_git,
-                        ["status", "--porcelain", "--untracked-files=all"],
-                        cwd=path,
-                    )
-                    if porcelain is None:
-                        artifact.deferred = True
-                        artifact.cleanup_reason = "worktree_status_unknown_deferred"
-                        continue
-                    if porcelain and artifact.cleanup_reason != "dirty_closed_integrated_cleaned":
-                        task = (
-                            task_manager.get_task(artifact.task_id, project_id=project_id)
-                            if artifact.task_id is not None
-                            else None
-                        )
-                        artifact.deferred = True
-                        if task is None or task.closed_at is None or task.is_escalated:
-                            artifact.cleanup_reason = "dirty_open_task_deferred"
-                        else:
-                            artifact.cleanup_reason = "dirty_closed_unclassified_deferred"
-                        continue
                     worktree_result = worktree_git.delete_worktree(path, force=force)
                     if not worktree_result.success and path.exists():
                         artifact.error = worktree_result.error or worktree_result.message
@@ -377,6 +352,27 @@ def _is_ancestor(worktree_git: WorktreeGitManager, head: str, target_ref: str) -
         timeout=10,
     )
     return result.returncode == 0
+
+
+def _worktree_is_dirty(worktree_git: WorktreeGitManager, path: str | Path) -> bool | None:
+    get_status = getattr(worktree_git, "get_worktree_status", None)
+    if callable(get_status):
+        status = get_status(path)
+        if status is None:
+            return None
+        return bool(
+            getattr(status, "has_uncommitted_changes", False)
+            or getattr(status, "has_staged_changes", False)
+            or getattr(status, "has_untracked_files", False)
+        )
+    porcelain = _git_text_or_none(
+        worktree_git,
+        ["status", "--porcelain", "--untracked-files=all"],
+        cwd=path,
+    )
+    if porcelain is None:
+        return None
+    return bool(porcelain)
 
 
 def _dirty_worktree_evidence(

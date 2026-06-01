@@ -1,0 +1,7 @@
+ALTER TABLE tasks
+ADD COLUMN IF NOT EXISTS merge_in_progress BOOLEAN NOT NULL DEFAULT FALSE
+    CHECK(merge_in_progress IN (FALSE, TRUE));
+
+ALTER TABLE tasks
+ADD COLUMN IF NOT EXISTS blocked_by_merge BOOLEAN NOT NULL DEFAULT FALSE
+    CHECK(blocked_by_merge IN (FALSE, TRUE));

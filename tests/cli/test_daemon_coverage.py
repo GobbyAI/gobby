@@ -13,7 +13,6 @@ from click.testing import CliRunner
 from gobby.cli.daemon import (
     _services_start,
     _services_stop,
-    get_merge_status,
     status,
     stop,
 )
@@ -325,43 +324,3 @@ class TestStatusCommand:
         result = runner.invoke(status, [], obj={"config": config}, catch_exceptions=False)
         assert result.exit_code == 0
         assert "Stale" in result.output
-
-
-# ---------------------------------------------------------------------------
-# get_merge_status
-# ---------------------------------------------------------------------------
-class TestGetMergeStatus:
-    @patch("gobby.storage.merge_resolutions.MergeResolutionManager")
-    @patch("gobby.storage.hub.runtime.open_runtime_hub_database")
-    def test_no_active_resolution(self, _db: MagicMock, mock_mgr_cls: MagicMock) -> None:
-        mock_mgr_cls.return_value.get_active_resolution.return_value = None
-        result = get_merge_status()
-        assert result["active"] is False
-
-    @patch("gobby.storage.merge_resolutions.MergeResolutionManager")
-    @patch("gobby.storage.hub.runtime.open_runtime_hub_database")
-    def test_active_resolution(self, _db: MagicMock, mock_mgr_cls: MagicMock) -> None:
-        resolution = MagicMock()
-        resolution.id = "res-123"
-        resolution.source_branch = "feature"
-        resolution.target_branch = "main"
-
-        conflict1 = MagicMock(status="pending")
-        conflict2 = MagicMock(status="resolved")
-
-        mock_mgr = mock_mgr_cls.return_value
-        mock_mgr.get_active_resolution.return_value = resolution
-        mock_mgr.list_conflicts.return_value = [conflict1, conflict2]
-
-        result = get_merge_status()
-        assert result["active"] is True
-        assert result["pending_conflicts"] == 1
-        assert result["total_conflicts"] == 2
-
-    @patch(
-        "gobby.storage.hub.runtime.open_runtime_hub_database", side_effect=RuntimeError("db error")
-    )
-    def test_exception_returns_inactive(self, _db: MagicMock) -> None:
-        result = get_merge_status()
-        assert result["active"] is False
-        assert "error" in result

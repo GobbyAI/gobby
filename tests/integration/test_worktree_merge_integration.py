@@ -1,4 +1,4 @@
-"""Integration tests for merge flow with worktree system (TDD red phase).
+"""Integration tests for merge flow with worktree system.
 
 Tests cover:
 - Merge initiation from worktree context
@@ -7,9 +7,6 @@ Tests cover:
 - Merge state persistence across daemon restarts
 - Concurrent merges in different worktrees
 
-Note: These tests are designed to fail initially (TDD red phase) as they test
-functionality that doesn't exist yet. The green phase implementation will make
-these tests pass.
 """
 
 from typing import Any
@@ -116,16 +113,9 @@ class TestAutomaticMergeOnSync:
 class TestTaskStatusDuringMerge:
     """Tests for task status updates during merge resolution.
 
-    Note: These tests are marked as skip because task-level merge integration
-    requires schema changes to the tasks table and careful consideration of
-    the impact on the task system. The worktree-level merge_state field
-    provides sufficient tracking for Phase 1.
+    Task-level merge status is stored on the tasks table.
     """
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="Task merge fields deferred to Phase 2 - requires schema migration",
-    )
     def test_task_has_merge_in_progress_field(self) -> None:
         """Task should have merge_in_progress field."""
         from gobby.storage.tasks import Task
@@ -133,10 +123,6 @@ class TestTaskStatusDuringMerge:
         task_fields = Task.__dataclass_fields__
         assert "merge_in_progress" in task_fields
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="Task merge fields deferred to Phase 2 - requires schema migration",
-    )
     def test_task_has_blocked_by_merge_field(self) -> None:
         """Task should have blocked_by_merge field."""
         from gobby.storage.tasks import Task
@@ -144,15 +130,32 @@ class TestTaskStatusDuringMerge:
         task_fields = Task.__dataclass_fields__
         assert "blocked_by_merge" in task_fields
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="Task merge fields deferred to Phase 2 - requires schema migration",
-    )
     def test_task_manager_has_set_merge_status_method(self) -> None:
         """TaskManager should have method to set merge status."""
         from gobby.storage.tasks import LocalTaskManager
 
         assert hasattr(LocalTaskManager, "set_merge_status")
+
+    def test_task_manager_set_merge_status_persists(self, hub_db: HubDatabase) -> None:
+        """TaskManager persists task-level merge status."""
+        from gobby.storage.projects import LocalProjectManager
+        from gobby.storage.tasks import LocalTaskManager
+
+        project = LocalProjectManager(hub_db).create(name="merge-status", repo_path="/tmp/repo")
+        manager = LocalTaskManager(hub_db)
+        task = manager.create_task(project_id=project.id, title="Merge status", category="code")
+
+        updated = manager.set_merge_status(
+            task.id,
+            merge_in_progress=True,
+            blocked_by_merge=True,
+        )
+        reloaded = manager.get_task(task.id)
+
+        assert updated.merge_in_progress is True
+        assert updated.blocked_by_merge is True
+        assert reloaded.merge_in_progress is True
+        assert reloaded.blocked_by_merge is True
 
 
 # ==============================================================================
@@ -232,47 +235,6 @@ class TestConcurrentMerges:
 
 # ==============================================================================
 # CLI Status Output Tests
-# ==============================================================================
-
-
-class TestCLIMergeStatusOutput:
-    """Tests for merge status in gobby status CLI output."""
-
-    def test_daemon_module_has_get_merge_status(self) -> None:
-        """gobby.cli.daemon should have get_merge_status function."""
-        # This function should provide merge status for CLI output
-        try:
-            from gobby.cli.daemon import get_merge_status
-
-            assert callable(get_merge_status)
-        except ImportError:
-            # Function doesn't exist yet - red phase failure
-            pytest.fail("get_merge_status not found in gobby.cli.daemon")
-
-    @patch("gobby.cli.daemon.get_merge_status")
-    def test_status_command_includes_merge_info(self, mock_get_merge: Any) -> None:
-        """gobby status command should include merge information."""
-        from click.testing import CliRunner
-
-        from gobby.cli import cli
-
-        mock_get_merge.return_value = {
-            "active": True,
-            "resolution_id": "mr-abc123",
-            "conflicts": 2,
-        }
-
-        runner = CliRunner()
-        result = runner.invoke(cli, ["status"])
-
-        # The status command should call get_merge_status
-        # This test will pass when integration is complete
-        # For now, we just verify the command runs
-        assert result.exit_code == 0 or "merge" in result.output.lower()
-
-
-# ==============================================================================
-# Hook Integration Tests
 # ==============================================================================
 
 

@@ -7,44 +7,8 @@ decomposition.
 
 from __future__ import annotations
 
-import warnings
 from dataclasses import dataclass
 from typing import Any
-
-from gobby.llm.context_windows import resolve_context_window as _resolve_context_window
-
-
-def resolve_context_window(
-    model: str | None,
-    provider_metadata: Any = None,
-    overrides: dict[str, int] | None = None,
-    *,
-    provider: str | None = None,
-    catalog: Any | None = None,
-    provider_reported_context_window: Any | None = None,
-) -> int | None:
-    """Compatibility wrapper for source-aware context-window resolution.
-
-    Deprecated: import from ``gobby.llm.context_windows`` instead.
-    """
-    if model is not None and not isinstance(model, str):
-        raise TypeError("model must be a string or None")
-    if overrides is not None and not isinstance(overrides, dict):
-        raise TypeError("overrides must be a dict or None")
-    warnings.warn(
-        "gobby.llm.claude_models.resolve_context_window is deprecated; "
-        "use gobby.llm.context_windows.resolve_context_window",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return _resolve_context_window(
-        model,
-        provider_metadata,
-        overrides,
-        provider=provider,
-        catalog=catalog,
-        provider_reported_context_window=provider_reported_context_window,
-    )
 
 
 @dataclass

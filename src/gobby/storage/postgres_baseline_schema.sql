@@ -313,6 +313,10 @@ CREATE TABLE tasks (
     validation_criteria TEXT,
     validation_fail_count INTEGER DEFAULT 0,
     dispatch_failure_count INTEGER DEFAULT 0,
+    merge_in_progress BOOLEAN NOT NULL DEFAULT FALSE
+        CHECK(merge_in_progress IN (FALSE, TRUE)),
+    blocked_by_merge BOOLEAN NOT NULL DEFAULT FALSE
+        CHECK(blocked_by_merge IN (FALSE, TRUE)),
     allow_automation BOOLEAN NOT NULL DEFAULT FALSE CHECK(allow_automation IN (FALSE, TRUE)),
     unattended BOOLEAN NOT NULL DEFAULT FALSE CHECK(unattended IN (FALSE, TRUE)),
     isolation TEXT NOT NULL DEFAULT 'worktree' CHECK(isolation IN ('none', 'worktree', 'clone')),

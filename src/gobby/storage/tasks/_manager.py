@@ -351,6 +351,8 @@ class LocalTaskManager(TaskDecompositionMixin):
         validation_criteria: MaybeUnset[str | None] = UNSET,
         validation_fail_count: MaybeUnset[int | None] = UNSET,
         dispatch_failure_count: MaybeUnset[int | None] = UNSET,
+        merge_in_progress: MaybeUnset[bool | None] = UNSET,
+        blocked_by_merge: MaybeUnset[bool | None] = UNSET,
         escalated_at: MaybeUnset[str | None] = UNSET,
         escalation_reason: MaybeUnset[str | None] = UNSET,
         github_issue_number: MaybeUnset[int | None] = UNSET,
@@ -394,6 +396,8 @@ class LocalTaskManager(TaskDecompositionMixin):
             validation_criteria=validation_criteria,
             validation_fail_count=validation_fail_count,
             dispatch_failure_count=dispatch_failure_count,
+            merge_in_progress=merge_in_progress,
+            blocked_by_merge=blocked_by_merge,
             escalated_at=escalated_at,
             escalation_reason=escalation_reason,
             github_issue_number=github_issue_number,
@@ -416,6 +420,23 @@ class LocalTaskManager(TaskDecompositionMixin):
         if parent_changed:
             self.update_descendant_paths(task_id)
 
+        self._notify_listeners()
+        return self.get_task(task_id)
+
+    def set_merge_status(
+        self,
+        task_id: str,
+        *,
+        merge_in_progress: bool,
+        blocked_by_merge: bool,
+    ) -> Task:
+        """Persist task-level merge status flags."""
+        _update_task_metadata(
+            self.db,
+            task_id=task_id,
+            merge_in_progress=merge_in_progress,
+            blocked_by_merge=blocked_by_merge,
+        )
         self._notify_listeners()
         return self.get_task(task_id)
 
