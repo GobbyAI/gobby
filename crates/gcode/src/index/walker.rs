@@ -8,7 +8,6 @@ use crate::index::security;
 
 /// Maximum file size to index (10 MB).
 const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
-const SKIPPED_EXTENSIONS: &[&str] = &["md", "markdown"];
 
 /// How a file should be indexed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,10 +50,6 @@ pub fn classify_file(
     path: &Path,
     exclude_patterns: &[String],
 ) -> Option<FileClassification> {
-    if has_skipped_extension(path) {
-        return None;
-    }
-
     if !is_safe_text_file(root, path, exclude_patterns) {
         return None;
     }
@@ -76,20 +71,16 @@ pub fn is_content_indexable(root: &Path, path: &Path, exclude_patterns: &[String
 
 /// Language label for content-only files.
 pub fn content_language(path: &Path) -> String {
-    path.extension()
+    let extension = path
+        .extension()
         .map(|e| e.to_string_lossy().to_lowercase())
         .filter(|ext| !ext.is_empty())
-        .unwrap_or_else(|| "text".to_string())
-}
+        .unwrap_or_else(|| "text".to_string());
 
-fn has_skipped_extension(path: &Path) -> bool {
-    path.extension()
-        .and_then(|ext| ext.to_str())
-        .is_some_and(|ext| {
-            SKIPPED_EXTENSIONS
-                .iter()
-                .any(|skipped| ext.eq_ignore_ascii_case(skipped))
-        })
+    match extension.as_str() {
+        "md" | "markdown" => "markdown".to_string(),
+        _ => extension,
+    }
 }
 
 fn is_safe_text_file(root: &Path, path: &Path, exclude_patterns: &[String]) -> bool {
@@ -175,11 +166,14 @@ mod tests {
             rels(root, content_only),
             vec![
                 "Dockerfile",
+                "README.md",
                 "config/app.properties",
                 "config/app.toml",
                 "docs/guide.rst",
+                "docs/reference.markdown",
                 "notes.txt",
-                "scripts/setup.sh"
+                "scripts/setup.sh",
+                "skills/gcode/SKILL.md"
             ]
         );
     }
@@ -199,7 +193,20 @@ mod tests {
     }
 
     #[test]
-    fn classifies_mjs_as_ast_and_markdown_as_skipped() {
+    fn classifies_markdown_content_language_as_markdown() {
+        assert_eq!(content_language(Path::new("README.md")), "markdown");
+        assert_eq!(
+            content_language(Path::new("docs/guide.markdown")),
+            "markdown"
+        );
+        assert_eq!(
+            content_language(Path::new("skills/gcode/SKILL.md")),
+            "markdown"
+        );
+    }
+
+    #[test]
+    fn classifies_mjs_as_ast_and_markdown_as_content_only() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let root = tmp.path();
         write_file(root, "src/generated.mjs", b"export const value = 1;\n");
@@ -213,11 +220,11 @@ mod tests {
         );
         assert_eq!(
             classify_file(root, &root.join("README.md"), &excludes),
-            None
+            Some(FileClassification::ContentOnly)
         );
         assert_eq!(
             classify_file(root, &root.join("docs/guide.markdown"), &excludes),
-            None
+            Some(FileClassification::ContentOnly)
         );
     }
 

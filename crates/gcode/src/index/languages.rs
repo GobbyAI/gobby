@@ -375,8 +375,7 @@ mod tests {
 
     #[test]
     fn markdown_extensions_are_not_detected() {
-        // Markdown is intentionally handled by the walker skip list, not AST
-        // language detection.
+        // Markdown is intentionally handled as content-only text, not AST.
         assert_eq!(detect_language("README.md"), None);
         assert_eq!(detect_language("docs/guide.markdown"), None);
     }

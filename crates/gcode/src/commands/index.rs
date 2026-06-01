@@ -316,6 +316,11 @@ mod tests {
         let mut outcome = sample_outcome();
         outcome.unsupported_file_types = vec![
             UnsupportedFileType {
+                extension: ".md".to_string(),
+                files: 1,
+                examples: vec!["README.md".to_string()],
+            },
+            UnsupportedFileType {
                 extension: ".txt".to_string(),
                 files: 2,
                 examples: vec!["notes.txt".to_string(), "docs/tasks.txt".to_string()],
@@ -330,6 +335,7 @@ mod tests {
         let text = index_text(&outcome);
 
         assert!(text.contains("Unsupported file types indexed as text only"));
+        assert!(text.contains(".md: 1 file (example: README.md)"));
         assert!(text.contains(".txt: 2 files (examples: notes.txt, docs/tasks.txt)"));
         assert!(text.contains("extensionless: 1 file (example: Dockerfile)"));
     }

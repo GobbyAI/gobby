@@ -103,6 +103,8 @@ fn unsupported_file_types_group_content_only_paths() {
     let temp = tempfile::tempdir().expect("tempdir");
     write_file(temp.path(), "notes.txt", b"plain notes\n");
     write_file(temp.path(), "docs/tasks.TXT", b"more notes\n");
+    write_file(temp.path(), "README.md", b"# Project\n");
+    write_file(temp.path(), "docs/reference.markdown", b"# Reference\n");
     write_file(temp.path(), "Dockerfile", b"FROM rust:latest\n");
 
     let unsupported = super::util::unsupported_file_types(
@@ -110,6 +112,8 @@ fn unsupported_file_types_group_content_only_paths() {
         &[
             temp.path().join("notes.txt"),
             temp.path().join("docs/tasks.TXT"),
+            temp.path().join("README.md"),
+            temp.path().join("docs/reference.markdown"),
             temp.path().join("Dockerfile"),
         ],
     );
@@ -117,6 +121,16 @@ fn unsupported_file_types_group_content_only_paths() {
     assert_eq!(
         unsupported,
         vec![
+            UnsupportedFileType {
+                extension: ".markdown".to_string(),
+                files: 1,
+                examples: vec!["docs/reference.markdown".to_string()],
+            },
+            UnsupportedFileType {
+                extension: ".md".to_string(),
+                files: 1,
+                examples: vec!["README.md".to_string()],
+            },
             UnsupportedFileType {
                 extension: ".txt".to_string(),
                 files: 2,
@@ -328,7 +342,7 @@ fn explicit_file_route_sends_unsupported_text_to_content_only() {
 }
 
 #[test]
-fn explicit_file_route_indexes_mjs_and_skips_markdown() {
+fn explicit_file_route_indexes_mjs_and_routes_markdown_to_content_only() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path();
     write_file(root, "src/generated.mjs", b"export const value = 1;\n");
@@ -343,11 +357,11 @@ fn explicit_file_route_indexes_mjs_and_skips_markdown() {
     );
     assert_eq!(
         explicit_file_route(root, &root.join("README.md"), &excludes),
-        ExplicitFileRoute::Skip
+        ExplicitFileRoute::ContentOnly
     );
     assert_eq!(
         explicit_file_route(root, &root.join("docs/guide.markdown"), &excludes),
-        ExplicitFileRoute::Skip
+        ExplicitFileRoute::ContentOnly
     );
 }
 
