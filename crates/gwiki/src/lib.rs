@@ -22,6 +22,7 @@ pub(crate) mod compile;
 pub(crate) mod credibility;
 #[allow(dead_code)]
 pub(crate) mod daemon;
+pub mod document;
 #[allow(dead_code)]
 pub(crate) mod events;
 pub mod exports;

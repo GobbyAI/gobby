@@ -7,6 +7,9 @@ use quick_xml::events::Event;
 use scraper::{ElementRef, Html, Node, Selector};
 use zip::ZipArchive;
 
+use crate::document::{
+    DocumentDegradation, DocumentDegradationMatrix, DocumentFailureMode, DocumentUnitCount,
+};
 use crate::ingest::{
     IngestResult, index_after_ingest, markdown_metadata, markdown_title, path_to_string,
     single_line, text_from_utf8_lossy, write_asset, write_raw_markdown,
@@ -26,12 +29,6 @@ pub struct DocumentSnapshot {
     pub fetched_at: String,
     pub bytes: Vec<u8>,
     pub kind: SourceKind,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DocumentDegradation {
-    pub reason: String,
-    pub fallback: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -112,12 +109,7 @@ pub fn ingest_document_with_endpoint(
             Ok(extraction) => (Some(extraction), None),
             Err(error) => (
                 None,
-                Some(DocumentDegradation {
-                    reason: "document_parse_error".to_string(),
-                    fallback: format!(
-                        "Document parsing failed: {error}; original asset is preserved."
-                    ),
-                }),
+                Some(document_degradation_for_error(&request, error.to_string())),
             ),
         },
         DocumentEndpoint::Unavailable(degradation) => (None, Some(degradation)),
@@ -409,10 +401,6 @@ fn render_document_derived_markdown(
         ("scope_kind".to_string(), scope.kind.as_str().to_string()),
         ("scope_id".to_string(), scope.id.clone()),
         (
-            "file_size_bytes".to_string(),
-            snapshot.bytes.len().to_string(),
-        ),
-        (
             "document_status".to_string(),
             if extraction.is_some() {
                 "extracted".to_string()
@@ -428,7 +416,15 @@ fn render_document_derived_markdown(
         ));
     }
     if let Some(degradation) = degradation {
-        fields.push(("media_degradation".to_string(), degradation.reason.clone()));
+        fields.extend(DocumentDegradationMatrix::metadata(
+            degradation,
+            snapshot.bytes.len(),
+        ));
+    } else {
+        fields.push((
+            "file_size_bytes".to_string(),
+            snapshot.bytes.len().to_string(),
+        ));
     }
 
     let mut markdown = {
@@ -454,11 +450,7 @@ fn render_document_derived_markdown(
             markdown.push('\n');
         }
     } else if let Some(degradation) = degradation {
-        markdown.push_str("## Document Parse Unavailable\n\n");
-        markdown.push_str(&single_line(&degradation.reason));
-        markdown.push_str(": ");
-        markdown.push_str(&single_line(&degradation.fallback));
-        markdown.push_str("\n\n");
+        markdown.push_str(&DocumentDegradationMatrix::markdown_section(degradation));
     }
 
     markdown.push_str("## Source References\n\n");
@@ -480,6 +472,34 @@ fn derived_markdown_path(record: &crate::sources::SourceRecord) -> PathBuf {
     PathBuf::from("wiki")
         .join("sources")
         .join(format!("{}.md", record.id))
+}
+
+fn document_degradation_for_error(
+    request: &DocumentRequest<'_>,
+    error: String,
+) -> DocumentDegradation {
+    let mode = match request.kind {
+        SourceKind::Html => DocumentFailureMode::HtmlParseError,
+        SourceKind::Office => DocumentFailureMode::OfficeParseError,
+        _ => DocumentFailureMode::OfficeParseError,
+    };
+    DocumentDegradation::new(
+        mode,
+        document_unit_count_for_failure(request.file_name, request.kind),
+        format!("Document parsing failed: {error}; original asset is preserved."),
+    )
+}
+
+fn document_unit_count_for_failure(file_name: &str, kind: &SourceKind) -> DocumentUnitCount {
+    match kind {
+        SourceKind::Html => DocumentUnitCount::pages(1),
+        SourceKind::Office => match extension(file_name).as_deref() {
+            Some("pptx") => DocumentUnitCount::slides(0),
+            Some("xlsx" | "xls" | "ods") => DocumentUnitCount::sheets(0),
+            _ => DocumentUnitCount::pages(0),
+        },
+        _ => DocumentUnitCount::pages(0),
+    }
 }
 
 fn read_zip_entry(bytes: &[u8], name: &str) -> Result<String, WikiError> {
@@ -812,8 +832,70 @@ mod tests {
         assert!(
             document
                 .body
-                .contains("media_degradation: document_parse_error")
+                .contains("media_degradation: office_parse_error")
         );
         assert!(document.body.contains("## Document Parse Unavailable"));
+    }
+
+    #[test]
+    fn office_html_degradation_uses_uniform_metadata() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut store = MemoryWikiStore::default();
+
+        let office_bytes = b"not a zip".to_vec();
+        let office = ingest_sample(
+            temp.path(),
+            &mut store,
+            "broken.xlsx",
+            SourceKind::Office,
+            office_bytes.clone(),
+        );
+        assert_eq!(
+            std::fs::read(temp.path().join(&office.asset_path)).expect("office asset"),
+            office_bytes
+        );
+        let office_doc = store
+            .documents
+            .get(&office.derived_path)
+            .expect("office derived document indexed");
+        assert!(
+            office_doc
+                .body
+                .contains("media_degradation: office_parse_error")
+        );
+        assert!(
+            office_doc
+                .body
+                .contains(&format!("file_size_bytes: {}", office_bytes.len()))
+        );
+        assert!(office_doc.body.contains("sheet_count: 0"));
+
+        let html_bytes = b"<html><head></head><body><script>drop()</script></body></html>".to_vec();
+        let html = ingest_sample(
+            temp.path(),
+            &mut store,
+            "empty.html",
+            SourceKind::Html,
+            html_bytes.clone(),
+        );
+        assert_eq!(
+            std::fs::read(temp.path().join(&html.asset_path)).expect("html asset"),
+            html_bytes
+        );
+        let html_doc = store
+            .documents
+            .get(&html.derived_path)
+            .expect("html derived document indexed");
+        assert!(
+            html_doc
+                .body
+                .contains("media_degradation: html_parse_error")
+        );
+        assert!(
+            html_doc
+                .body
+                .contains(&format!("file_size_bytes: {}", html_bytes.len()))
+        );
+        assert!(html_doc.body.contains("page_count: 1"));
     }
 }
