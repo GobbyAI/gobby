@@ -120,14 +120,19 @@ instructions: |
     agent_name is exactly `merge-worker`. Never wait on this orchestrator's
     own run_id, and never treat another `merge-orchestrator` run as a
     merge-worker.
-  - After every completed merge-worker wait, call merge_status before any
-    additional spawn_agent call for the same resolution. If the resolution's
-    resolved_count/pending_count signature is unchanged and pending_count is
-    still non-zero, do not redispatch another worker. Record a failed merge
-    result with the worker run ids, unchanged counts, and unresolved files.
-    This no-progress cap is scoped to workers this orchestrator run actually
-    waited for; historical delivery campaign failures and last_error text are
-    evidence for the report, but are not by themselves a redispatch blocker.
+  - After every completed merge-worker wait, inspect merge state before any
+    additional spawn_agent call. If inspect_merge_state exposes an
+    active_resolution_id, call merge_status for that resolution before
+    spawning another worker. If the resolution's resolved_count/pending_count
+    signature is unchanged and pending_count is still non-zero, do not
+    redispatch another worker. If inspect_merge_state has no
+    active_resolution_id, do not call merge_status with a blank id. Treat clean
+    state as having no resumable worker-owned resolution; treat resumable git
+    state without an active resolution as failed execution and record a failed
+    merge result or escalate. This no-progress cap is scoped to workers this
+    orchestrator run actually waited for; historical delivery campaign failures
+    and last_error text are evidence for the report, but are not by themselves
+    a redispatch blocker.
   - If a worker returns success but inspect_merge_state or merge_status still
     shows unresolved merge state, treat that as a failed execution, record a
     failed merge result with the stale worker run id and unresolved files, and
@@ -421,6 +426,24 @@ steps:
         variable: last_worker_run_id
         value: "str(tool_output.get('run_id') or tool_output.get('result', {}).get('run_id'))"
       - server: gobby-merge
+        tool: inspect_merge_state
+        when: "vars.get('merge_worker_completed') is True and not tool_output.result.active_resolution_id"
+        action: set_variable
+        variable: post_worker_merge_status_checked
+        value: true
+      - server: gobby-merge
+        tool: inspect_merge_state
+        when: "vars.get('merge_worker_completed') is True and not tool_output.result.active_resolution_id"
+        action: set_variable
+        variable: last_merge_status_signature
+        value: "'no-active-resolution:' + str(tool_output.result.state) + ':' + str(tool_output.result.conflicted_files)"
+      - server: gobby-merge
+        tool: inspect_merge_state
+        when: "vars.get('merge_worker_completed') is True and not tool_output.result.active_resolution_id and tool_output.result.can_resume"
+        action: set_variable
+        variable: no_progress_merge_status_count
+        value: 1
+      - server: gobby-merge
         tool: merge_status
         action: set_variable
         variable: no_progress_merge_status_count
@@ -492,10 +515,12 @@ steps:
         when: "vars.get('merge_worker_completed') is True and not vars.get('post_worker_merge_status_checked', False)"
         reason: |
           A merge-worker completed, but merge_status has not been checked yet.
-          Before spawning another worker, call gobby-merge:merge_status for the
-          active resolution and compare resolved_count/pending_count. If pending
-          conflicts remain, record a failed merge result instead of redispatching
-          blindly.
+          Before spawning another worker, call gobby-merge:inspect_merge_state.
+          If it returns active_resolution_id, call gobby-merge:merge_status for
+          that resolution and compare resolved_count/pending_count. If it
+          returns no active_resolution_id, do not call merge_status with an empty
+          id; verify clean state, record a failed merge result, or escalate
+          instead of redispatching blindly.
       - server: gobby-agents
         tool: spawn_agent
         action: block

@@ -28,6 +28,7 @@ import pytest
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.merge_landscape import register_merge_landscape_tools
 from gobby.storage.worktrees import Worktree
+from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
 from gobby.worktrees.git import WorktreeGitManager
 
 pytestmark = [pytest.mark.integration]
@@ -263,3 +264,46 @@ async def test_orchestrator_yaml_loads(tmp_path: Path) -> None:
     plan_step = next(step for step in data["steps"] if step["name"] == "plan")
     assert "gobby-agents:list_agent_runs" in plan_step["allowed_mcp_tools"]
     assert "gobby-agents:list_running_agents" in plan_step["allowed_mcp_tools"]
+
+    execute_step = next(step for step in data["steps"] if step["name"] == "execute")
+    handlers = execute_step["on_mcp_success"]
+    no_resolution_handlers = [
+        handler
+        for handler in handlers
+        if handler.get("server") == "gobby-merge"
+        and handler.get("tool") == "inspect_merge_state"
+        and "not tool_output.result.active_resolution_id" in handler.get("when", "")
+    ]
+    assert any(
+        handler.get("variable") == "post_worker_merge_status_checked"
+        for handler in no_resolution_handlers
+    )
+    assert any(
+        handler.get("variable") == "no_progress_merge_status_count"
+        and "tool_output.result.can_resume" in handler.get("when", "")
+        for handler in no_resolution_handlers
+    )
+
+    context = {
+        "vars": {"merge_worker_completed": True},
+        "tool_output": {
+            "result": {
+                "active_resolution_id": None,
+                "can_resume": True,
+                "conflicted_files": ["src/example.py"],
+                "state": "merging",
+            }
+        },
+    }
+    evaluator = SafeExpressionEvaluator(context, build_condition_helpers(context=context))
+    for handler in no_resolution_handlers:
+        assert evaluator.evaluate(handler["when"])
+    signature_handler = next(
+        handler
+        for handler in no_resolution_handlers
+        if handler.get("variable") == "last_merge_status_signature"
+    )
+    assert (
+        evaluator.evaluate_value(signature_handler["value"])
+        == "no-active-resolution:merging:['src/example.py']"
+    )

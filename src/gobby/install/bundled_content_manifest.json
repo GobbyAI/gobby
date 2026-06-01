@@ -166,7 +166,7 @@
     "workflows/agents/fullstack-developer.yaml": "3c954ec80e43b1769f99f966f6b38b4bb775a50add7462a0604de669c2d333e4",
     "workflows/agents/gemini-image-gen.yaml": "68c25d044498b010cdbb96dab7549777307763bab0edd98ff1963ffce93a4100",
     "workflows/agents/holistic-reviewer.yaml": "b6bdb7bae4ec7a6e4ccf325e27116e91e130168e06476e9134a627370a33882c",
-    "workflows/agents/merge-orchestrator.yaml": "7785b6835a9880d621968815032871ab470daec21fbe68a635b8cc54278d7fdf",
+    "workflows/agents/merge-orchestrator.yaml": "ca8aad76857f01fc8b0804d00d082da39e2bda21a2cf130432de2eac93c8932c",
     "workflows/agents/merge-worker.yaml": "647b48d0a219f0a57c727844b30597068855ac3b07fad4d4821927efc336e912",
     "workflows/agents/nightly-linter.yaml": "b383801eb9d08783e7ad7ec4994430fefe96e699317e15919f3ca338eafc6ad5",
     "workflows/agents/nightly-test-fixer.yaml": "d55397a80e5feee28355a406545cc98c9028e58462cfff7c5b81ff4bef38e83c",
