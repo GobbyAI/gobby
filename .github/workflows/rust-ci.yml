@@ -41,6 +41,12 @@ jobs:
       - name: Test (gobby-core)
         run: cargo test -p gobby-core
 
+      - name: Clippy (gobby-core, ai)
+        run: cargo clippy -p gobby-core --features ai --all-targets -- -D warnings
+
+      - name: Test (gobby-core, ai)
+        run: cargo test -p gobby-core --features ai
+
       # ghook: full clippy + tests
       - name: Clippy (ghook)
         run: cargo clippy -p gobby-hooks --all-targets -- -D warnings
@@ -64,6 +70,19 @@ jobs:
 
       - name: Test (gloc)
         run: cargo test -p gobby-local
+
+      # gwiki: default checks include documents/pdfium; no-default-features covers degraded storage path
+      - name: Clippy (gwiki)
+        run: cargo clippy -p gobby-wiki --all-targets -- -D warnings
+
+      - name: Test (gwiki)
+        run: cargo test -p gobby-wiki
+
+      - name: Clippy (gwiki, no default features)
+        run: cargo clippy -p gobby-wiki --no-default-features -- -D warnings
+
+      - name: Test (gwiki, no default features)
+        run: cargo test -p gobby-wiki --no-default-features
 
       # gcode: clippy + tests without embeddings (Linux CI has no cmake/Metal)
       - name: Clippy (gcode, no embeddings)
