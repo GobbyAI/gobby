@@ -179,15 +179,9 @@ fn transcribe_for_markdown(
     endpoint: TranscriptionEndpoint<'_>,
 ) -> TranscriptionMarkdownInput {
     match endpoint {
-        TranscriptionEndpoint::Available(client) => match client.transcribe(request) {
-            Ok(output) => TranscriptionMarkdownInput::Transcribed(output),
-            Err(error) => TranscriptionMarkdownInput::Degraded(TranscriptionDegradation {
-                reason: "transcription_error".to_string(),
-                fallback: format!(
-                    "Transcription failed: {error}; keep raw audio assets and require supplied transcripts."
-                ),
-            }),
-        },
+        TranscriptionEndpoint::Available(client) => {
+            transcription_result_for_markdown(request, client.as_ref())
+        }
         TranscriptionEndpoint::Unavailable(degradation) => {
             TranscriptionMarkdownInput::Degraded(degradation)
         }
@@ -204,6 +198,34 @@ fn transcribe_for_markdown(
     }
 }
 
+fn transcription_result_for_markdown(
+    request: &TranscriptionRequest<'_>,
+    client: &dyn crate::transcribe::TranscriptionClient,
+) -> TranscriptionMarkdownInput {
+    let result = transcribe_available(request, client);
+    transcription_result_to_markdown(result, "transcription_error", "Transcription failed")
+}
+
+#[cfg(feature = "ai")]
+fn transcribe_available(
+    request: &TranscriptionRequest<'_>,
+    client: &dyn crate::transcribe::TranscriptionClient,
+) -> Result<crate::transcribe::TranscriptionOutput, WikiError> {
+    crate::ai::chunk::transcribe_audio_request(
+        request,
+        client,
+        crate::ai::chunk::ChunkTranscriptionMode::Transcribe,
+    )
+}
+
+#[cfg(not(feature = "ai"))]
+fn transcribe_available(
+    request: &TranscriptionRequest<'_>,
+    client: &dyn crate::transcribe::TranscriptionClient,
+) -> Result<crate::transcribe::TranscriptionOutput, WikiError> {
+    client.transcribe(request)
+}
+
 #[cfg(feature = "ai")]
 fn translate_for_markdown(
     request: &TranscriptionRequest<'_>,
@@ -211,15 +233,21 @@ fn translate_for_markdown(
     target_lang: Option<&str>,
     language_hint: Option<&str>,
 ) -> TranscriptionMarkdownInput {
-    match crate::ai::translate::translate_audio(request, client, target_lang, language_hint) {
-        Ok(output) => TranscriptionMarkdownInput::Transcribed(output),
-        Err(error) => TranscriptionMarkdownInput::Degraded(TranscriptionDegradation {
-            reason: "translation_error".to_string(),
-            fallback: format!(
-                "Translation failed: {error}; keep raw audio assets and require supplied transcripts."
-            ),
-        }),
-    }
+    let result = if crate::ai::chunk::requires_chunking(request.bytes.len()) {
+        let target_lang = target_lang.unwrap_or("en");
+        let mode = if is_english_target(target_lang) {
+            crate::ai::chunk::ChunkTranscriptionMode::TranslateToEnglish { language_hint }
+        } else {
+            crate::ai::chunk::ChunkTranscriptionMode::TranslateSegments {
+                target_lang,
+                language_hint,
+            }
+        };
+        crate::ai::chunk::transcribe_audio_request(request, client, mode)
+    } else {
+        crate::ai::translate::translate_audio(request, client, target_lang, language_hint)
+    };
+    transcription_result_to_markdown(result, "translation_error", "Translation failed")
 }
 
 #[cfg(not(feature = "ai"))]
@@ -233,6 +261,28 @@ fn translate_for_markdown(
         reason: "translation_unavailable".to_string(),
         fallback: "Translation requires the ai feature.".to_string(),
     })
+}
+
+fn transcription_result_to_markdown(
+    result: Result<crate::transcribe::TranscriptionOutput, WikiError>,
+    reason: &str,
+    prefix: &str,
+) -> TranscriptionMarkdownInput {
+    match result {
+        Ok(output) => TranscriptionMarkdownInput::Transcribed(output),
+        Err(error) => TranscriptionMarkdownInput::Degraded(TranscriptionDegradation {
+            reason: reason.to_string(),
+            fallback: format!(
+                "{prefix}: {error}; keep raw audio assets and require supplied transcripts."
+            ),
+        }),
+    }
+}
+
+#[cfg(feature = "ai")]
+fn is_english_target(target_lang: &str) -> bool {
+    let normalized = target_lang.trim().to_ascii_lowercase();
+    normalized == "en" || normalized.starts_with("en-") || normalized.starts_with("en_")
 }
 
 fn transcription_degradation(routing: AiRouting, translate: bool) -> TranscriptionDegradation {
@@ -294,9 +344,13 @@ fn render_raw_audio_markdown(
 #[cfg(test)]
 mod tests {
     #[cfg(feature = "ai")]
+    use std::cell::RefCell;
+    #[cfg(feature = "ai")]
     use std::io::{Read, Write};
     #[cfg(feature = "ai")]
     use std::net::TcpListener;
+    #[cfg(feature = "ai")]
+    use std::rc::Rc;
     #[cfg(feature = "ai")]
     use std::thread;
     #[cfg(feature = "ai")]
@@ -324,6 +378,15 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "ai")]
+    fn long_snapshot() -> AudioSnapshot {
+        AudioSnapshot {
+            bytes: vec![b'a'; crate::ai::chunk::MAX_AUDIO_UPLOAD_BYTES + 1],
+            duration_seconds: Some(1_200),
+            ..sample_snapshot()
+        }
+    }
+
     struct FakeTranscriptionClient;
 
     impl TranscriptionClient for FakeTranscriptionClient {
@@ -347,6 +410,76 @@ mod tests {
                 completed_ranges: Vec::new(),
                 missing_ranges: Vec::new(),
             })
+        }
+    }
+
+    #[cfg(feature = "ai")]
+    struct ScriptedTranscriptionClient {
+        transcriptions: RefCell<Vec<Result<TranscriptionOutput, WikiError>>>,
+        english: RefCell<Vec<Result<TranscriptionOutput, WikiError>>>,
+        translations: RefCell<Vec<Vec<String>>>,
+        calls: Rc<RefCell<Vec<&'static str>>>,
+    }
+
+    #[cfg(feature = "ai")]
+    impl ScriptedTranscriptionClient {
+        fn new(transcriptions: Vec<TranscriptionOutput>) -> Self {
+            Self {
+                transcriptions: RefCell::new(transcriptions.into_iter().map(Ok).collect()),
+                english: RefCell::new(Vec::new()),
+                translations: RefCell::new(Vec::new()),
+                calls: Rc::new(RefCell::new(Vec::new())),
+            }
+        }
+
+        fn with_english(english: Vec<TranscriptionOutput>) -> Self {
+            Self {
+                transcriptions: RefCell::new(Vec::new()),
+                english: RefCell::new(english.into_iter().map(Ok).collect()),
+                translations: RefCell::new(Vec::new()),
+                calls: Rc::new(RefCell::new(Vec::new())),
+            }
+        }
+
+        fn calls(&self) -> Rc<RefCell<Vec<&'static str>>> {
+            Rc::clone(&self.calls)
+        }
+    }
+
+    #[cfg(feature = "ai")]
+    impl TranscriptionClient for ScriptedTranscriptionClient {
+        fn transcribe(
+            &self,
+            _request: &TranscriptionRequest<'_>,
+        ) -> Result<TranscriptionOutput, WikiError> {
+            self.calls.borrow_mut().push("transcribe");
+            self.transcriptions.borrow_mut().remove(0)
+        }
+
+        fn translate_to_english(
+            &self,
+            _request: &TranscriptionRequest<'_>,
+            _language_hint: Option<&str>,
+        ) -> Result<TranscriptionOutput, WikiError> {
+            self.calls.borrow_mut().push("translate_to_english");
+            self.english.borrow_mut().remove(0)
+        }
+
+        fn translate_segments(
+            &self,
+            segments: &[TranscriptSegment],
+            _source_lang: &str,
+            _target_lang: &str,
+        ) -> Result<Vec<String>, WikiError> {
+            self.calls.borrow_mut().push("translate_segments");
+            let mut translations = self.translations.borrow_mut();
+            if translations.is_empty() {
+                return Ok(segments
+                    .iter()
+                    .map(|segment| format!("translated {}", segment.text))
+                    .collect());
+            }
+            Ok(translations.remove(0))
         }
     }
 
@@ -439,6 +572,45 @@ mod tests {
     }
 
     #[cfg(feature = "ai")]
+    fn test_chunk(start_ms: u64, end_ms: u64) -> crate::ai::chunk::AudioChunk {
+        crate::ai::chunk::AudioChunk {
+            start_ms,
+            end_ms,
+            file_name: format!("chunk-{start_ms}.wav"),
+            path: PathBuf::from(format!("chunk-{start_ms}.wav")),
+            bytes: vec![b'w', b'a', b'v'],
+        }
+    }
+
+    #[cfg(feature = "ai")]
+    fn transcript_output(
+        source_lang: &str,
+        translated: bool,
+        task: &str,
+        segments: &[(u64, u64, &str)],
+    ) -> TranscriptionOutput {
+        TranscriptionOutput {
+            segments: segments
+                .iter()
+                .map(|(start_ms, end_ms, text)| TranscriptSegment {
+                    start_ms: *start_ms,
+                    end_ms: *end_ms,
+                    text: (*text).to_string(),
+                })
+                .collect(),
+            language: Some(if translated { "en" } else { source_lang }.to_string()),
+            model: Some("fake-stt".to_string()),
+            source_language: Some(source_lang.to_string()),
+            task: Some(task.to_string()),
+            target_language: translated.then(|| "en".to_string()),
+            translated,
+            partial: false,
+            completed_ranges: Vec::new(),
+            missing_ranges: Vec::new(),
+        }
+    }
+
+    #[cfg(feature = "ai")]
     #[test]
     fn production_transcription_writes_fields() {
         let response = r#"{"text":"Production routed transcript.","source_language":"es","language":"en","model":"whisper-prod","task":"transcribe","translated":false,"segments":[{"start":0.0,"end":1.25,"text":"Production routed transcript."}]}"#;
@@ -502,6 +674,119 @@ mod tests {
         assert!(markdown.contains("transcription_task: translate"));
         assert!(markdown.contains("translated: true"));
         assert!(markdown.contains("[00:00:00] Translated transcript."));
+    }
+
+    #[cfg(feature = "ai")]
+    #[test]
+    fn production_path_chunks_long_audio() {
+        let _chunks = crate::ai::chunk::install_test_chunks(vec![
+            test_chunk(0, 10_000),
+            test_chunk(9_000, 19_000),
+        ]);
+        let client = ScriptedTranscriptionClient::new(vec![
+            transcript_output("en", false, "transcribe", &[(0, 1_000, "first chunk")]),
+            transcript_output("en", false, "transcribe", &[(0, 1_000, "second chunk")]),
+        ]);
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut store = MemoryWikiStore::default();
+
+        let result = ingest_audio_with_transcription(
+            temp.path(),
+            &mut store,
+            ScopeIdentity::topic("field-work"),
+            long_snapshot(),
+            TranscriptionEndpoint::Available(Box::new(client)),
+        )
+        .expect("ingest long audio");
+
+        let markdown =
+            std::fs::read_to_string(temp.path().join(&result.transcript_path)).expect("markdown");
+        assert!(markdown.contains("transcription_completed_ranges: 0-10000,9000-19000"));
+        assert!(markdown.contains("[00:00:00] first chunk"));
+        assert!(markdown.contains("[00:00:09] second chunk"));
+    }
+
+    #[cfg(feature = "ai")]
+    #[test]
+    fn long_media_chunks_then_translates() {
+        let _chunks = crate::ai::chunk::install_test_chunks(vec![
+            test_chunk(0, 10_000),
+            test_chunk(9_000, 19_000),
+        ]);
+        let client = ScriptedTranscriptionClient::new(vec![
+            transcript_output("es", false, "transcribe", &[(0, 1_000, "hola")]),
+            transcript_output("es", false, "transcribe", &[(0, 1_000, "mundo")]),
+        ]);
+        client
+            .translations
+            .borrow_mut()
+            .push(vec!["bonjour".to_string(), "monde".to_string()]);
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut store = MemoryWikiStore::default();
+
+        let result = ingest_audio_with_transcription(
+            temp.path(),
+            &mut store,
+            ScopeIdentity::topic("field-work"),
+            long_snapshot(),
+            TranscriptionEndpoint::Translating {
+                client: Box::new(client),
+                target_lang: Some("fr".to_string()),
+                language_hint: None,
+            },
+        )
+        .expect("ingest translated long audio");
+
+        let markdown =
+            std::fs::read_to_string(temp.path().join(&result.transcript_path)).expect("markdown");
+        assert!(markdown.contains("transcription_source_language: es"));
+        assert!(markdown.contains("transcription_target_language: fr"));
+        assert!(markdown.contains("transcription_task: translate"));
+        assert!(markdown.contains("translated: true"));
+        assert!(markdown.contains("[00:00:00] bonjour"));
+        assert!(markdown.contains("[00:00:09] monde"));
+    }
+
+    #[cfg(feature = "ai")]
+    #[test]
+    fn long_english_translation_per_chunk() {
+        let _chunks = crate::ai::chunk::install_test_chunks(vec![
+            test_chunk(0, 10_000),
+            test_chunk(9_000, 19_000),
+        ]);
+        let client = ScriptedTranscriptionClient::with_english(vec![
+            transcript_output("es", true, "translate", &[(0, 1_000, "hello")]),
+            transcript_output("es", true, "translate", &[(0, 1_000, "world")]),
+        ]);
+        let calls = client.calls();
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut store = MemoryWikiStore::default();
+
+        let result = ingest_audio_with_transcription(
+            temp.path(),
+            &mut store,
+            ScopeIdentity::topic("field-work"),
+            long_snapshot(),
+            TranscriptionEndpoint::Translating {
+                client: Box::new(client),
+                target_lang: Some("en".to_string()),
+                language_hint: Some("es".to_string()),
+            },
+        )
+        .expect("ingest English translated long audio");
+
+        let markdown =
+            std::fs::read_to_string(temp.path().join(&result.transcript_path)).expect("markdown");
+        assert!(markdown.contains("transcription_source_language: es"));
+        assert!(markdown.contains("transcription_target_language: en"));
+        assert!(markdown.contains("transcription_task: translate"));
+        assert!(markdown.contains("translated: true"));
+        assert!(markdown.contains("[00:00:00] hello"));
+        assert!(markdown.contains("[00:00:09] world"));
+        assert_eq!(
+            calls.borrow().as_slice(),
+            &["translate_to_english", "translate_to_english"]
+        );
     }
 
     #[test]
