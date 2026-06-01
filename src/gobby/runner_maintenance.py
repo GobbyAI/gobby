@@ -18,7 +18,13 @@ from typing import TYPE_CHECKING, Any, Protocol
 from gobby.cli.utils import get_gobby_home
 from gobby.config.bin_freshness import BinFreshnessConfig
 from gobby.servers.chat_attachment_files import unlink_stale_attachment_file_sync
-from gobby.shutdown_intent import ShutdownIntent
+from gobby.shutdown_intent import (
+    ShutdownIntent,
+    ShutdownIntentRecord,
+    format_shutdown_source,
+    read_active_shutdown_intent,
+    read_shutdown_intent,
+)
 from gobby.storage.sql_dialect import older_than_now_expr
 from gobby.workflows.summary_actions import enforce_window_name_if_unmanaged
 
@@ -764,35 +770,53 @@ def setup_signal_handlers(
 ) -> None:
     """Register SIGTERM/SIGINT handlers to trigger graceful shutdown."""
     loop = asyncio.get_running_loop()
-    recorded_intent: ShutdownIntent | None = None
+    recorded_shutdown: ShutdownIntentRecord | None = None
+
+    def _read_signal_shutdown_record() -> ShutdownIntentRecord:
+        home = get_gobby_home()
+        shutdown_record = read_shutdown_intent(home=home)
+        if (
+            shutdown_record.intent is ShutdownIntent.STOP
+            and shutdown_record.source == "external_sigterm"
+            and shutdown_record.sender_pid is None
+            and shutdown_record.timestamp is None
+            and shutdown_record.error is None
+        ):
+            active_record = read_active_shutdown_intent(home=home, max_age_seconds=120)
+            if (
+                active_record is not None
+                and not active_record.stale
+                and active_record.error is None
+            ):
+                return active_record
+        return shutdown_record
 
     def _make_handler(sig: signal.Signals) -> Callable[[], None]:
         def handle_shutdown() -> None:
-            nonlocal recorded_intent
+            nonlocal recorded_shutdown
 
             import traceback
 
-            from gobby.shutdown_intent import format_shutdown_source, read_shutdown_intent
-
-            logger.info(
-                f"Received {sig.name} (signal {sig.value}), initiating graceful shutdown... (pid={os.getpid()}, ppid={os.getppid()})",
-            )
-            # Log stack trace to help identify what triggered the signal
-            logger.debug(f"Stack at signal receipt:\n{''.join(traceback.format_stack())}")
-            shutdown_record = read_shutdown_intent(home=get_gobby_home())
-            logger.info(f"Shutdown source: {format_shutdown_source(shutdown_record)}")
-            if shutdown_intent_callback is not None:
-                if (
-                    recorded_intent is ShutdownIntent.RESTART
-                    and shutdown_record.intent is ShutdownIntent.STOP
-                ):
-                    logger.debug("Ignoring stop shutdown intent after restart intent was recorded")
-                else:
+            if recorded_shutdown is None:
+                logger.info(
+                    f"Received {sig.name} (signal {sig.value}), initiating graceful shutdown... (pid={os.getpid()}, ppid={os.getppid()})",
+                )
+                # Log stack trace to help identify what triggered the signal
+                logger.debug(f"Stack at signal receipt:\n{''.join(traceback.format_stack())}")
+                shutdown_record = _read_signal_shutdown_record()
+                recorded_shutdown = shutdown_record
+                logger.info(f"Shutdown source: {format_shutdown_source(shutdown_record)}")
+                if shutdown_intent_callback is not None:
                     try:
                         shutdown_intent_callback(shutdown_record.intent)
-                        recorded_intent = shutdown_record.intent
                     except Exception:
                         logger.exception("Shutdown intent callback failed")
+            else:
+                shutdown_record = recorded_shutdown
+                logger.debug(
+                    "Shutdown already in progress; original source: %s",
+                    format_shutdown_source(shutdown_record),
+                )
             shutdown_callback()
 
         return handle_shutdown

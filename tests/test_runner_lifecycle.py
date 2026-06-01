@@ -1330,6 +1330,8 @@ class TestSignalHandlerBehavior:
     def test_signal_handler_preserves_restart_after_marker_is_consumed(
         self,
         tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+        enable_log_propagation: None,
     ) -> None:
         from gobby.runner_maintenance import setup_signal_handlers
         from gobby.shutdown_intent import write_shutdown_intent
@@ -1362,11 +1364,34 @@ class TestSignalHandlerBehavior:
             )
 
             assert captured_handler is not None
-            captured_handler()
-            captured_handler()
+            with caplog.at_level(logging.DEBUG, logger="gobby.runner_maintenance"):
+                captured_handler()
+                captured_handler()
 
         shutdown_intent_callback.assert_called_once_with(ShutdownIntent.RESTART)
         assert shutdown_callback.call_count == 2
+        received_logs = [
+            record
+            for record in caplog.records
+            if record.levelno == logging.INFO and record.message.startswith("Received SIGTERM")
+        ]
+        source_logs = [
+            record
+            for record in caplog.records
+            if record.levelno == logging.INFO and record.message.startswith("Shutdown source:")
+        ]
+        assert len(received_logs) == 1
+        assert len(source_logs) == 1
+        assert source_logs[0].message == (
+            "Shutdown source: source=cli_restart, intent=restart, sender_pid=123"
+        )
+        assert "unknown (no shutdown_source.json - external SIGTERM)" not in caplog.text
+        assert any(
+            record.levelno == logging.DEBUG
+            and "Shutdown already in progress" in record.message
+            and "source=cli_restart" in record.message
+            for record in caplog.records
+        )
 
     def test_signal_handler_still_shuts_down_when_intent_callback_fails(
         self,
