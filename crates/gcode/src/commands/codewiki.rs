@@ -168,6 +168,7 @@ struct FileDoc {
     path: String,
     module: String,
     summary: String,
+    source_spans: Vec<SourceSpan>,
     symbols: Vec<SymbolDoc>,
     component_ids: Vec<String>,
 }
@@ -177,12 +178,14 @@ struct SymbolDoc {
     symbol: Symbol,
     purpose: String,
     component_id: String,
+    source_span: SourceSpan,
 }
 
 #[derive(Debug, Clone)]
 struct ModuleDoc {
     module: String,
     summary: String,
+    source_spans: Vec<SourceSpan>,
     direct_files: Vec<FileLink>,
     child_modules: Vec<ModuleLink>,
     component_ids: Vec<String>,
@@ -192,12 +195,21 @@ struct ModuleDoc {
 struct FileLink {
     path: String,
     summary: String,
+    source_spans: Vec<SourceSpan>,
 }
 
 #[derive(Debug, Clone)]
 struct ModuleLink {
     module: String,
     summary: String,
+    source_spans: Vec<SourceSpan>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+struct SourceSpan {
+    file: String,
+    line_start: usize,
+    line_end: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -599,19 +611,30 @@ fn build_file_doc(
         .into_iter()
         .map(|symbol| {
             let fallback = structural_symbol_purpose(&symbol);
-            let purpose = maybe_generate(
+            let generated = maybe_generate(
                 generate,
                 &prompts::symbol_prompt(&symbol),
                 prompts::SYMBOL_SYSTEM,
             )
             .unwrap_or(fallback);
             let component_id = component_id(&symbol);
+            let source_span = SourceSpan::from_symbol(&symbol);
+            let purpose = ground_text(
+                &generated,
+                std::slice::from_ref(&source_span),
+                &source_span.citation(),
+            );
             SymbolDoc {
                 symbol,
                 purpose,
                 component_id,
+                source_span,
             }
         })
+        .collect::<Vec<_>>();
+    let source_spans = symbol_docs
+        .iter()
+        .map(|symbol| symbol.source_span.clone())
         .collect::<Vec<_>>();
     let prompt_symbols = symbol_docs
         .iter()
@@ -629,17 +652,19 @@ fn build_file_doc(
         .map(|symbol| symbol.component_id.clone())
         .collect::<Vec<_>>();
     let fallback = structural_file_summary(file, &symbol_docs);
-    let summary = maybe_generate(
+    let generated = maybe_generate(
         generate,
         &prompts::file_prompt(file, &prompt_symbols),
         prompts::FILE_SYSTEM,
     )
     .unwrap_or(fallback);
+    let summary = ground_text(&generated, &source_spans, &citation_list(&source_spans));
 
     FileDoc {
         path: file.to_string(),
         module,
         summary,
+        source_spans,
         symbols: symbol_docs,
         component_ids,
     }
@@ -657,6 +682,7 @@ fn build_module_docs(
     }
 
     let mut module_summaries: BTreeMap<String, String> = BTreeMap::new();
+    let mut module_sources: BTreeMap<String, Vec<SourceSpan>> = BTreeMap::new();
     let mut modules = module_names.into_iter().collect::<Vec<_>>();
     modules.sort_by_key(|module| std::cmp::Reverse(module_depth(module)));
 
@@ -668,12 +694,14 @@ fn build_module_docs(
             .map(|file| FileLink {
                 path: file.path.clone(),
                 summary: file.summary.clone(),
+                source_spans: file.source_spans.clone(),
             })
             .collect::<Vec<_>>();
         let child_modules = direct_child_modules(&module, module_summaries.keys())
             .into_iter()
             .map(|child| ModuleLink {
                 summary: module_summaries.get(&child).cloned().unwrap_or_default(),
+                source_spans: module_sources.get(&child).cloned().unwrap_or_default(),
                 module: child,
             })
             .collect::<Vec<_>>();
@@ -697,17 +725,21 @@ fn build_module_docs(
             .flat_map(|file| file.component_ids.iter().cloned())
             .collect::<Vec<_>>();
         let fallback = structural_module_summary(&module, &direct_files, &child_modules);
-        let summary = maybe_generate(
+        let source_spans = collect_link_spans(&direct_files, &child_modules);
+        let generated = maybe_generate(
             generate,
             &prompts::module_prompt(&module, &file_summaries, &child_summaries, &component_ids),
             prompts::MODULE_SYSTEM,
         )
         .unwrap_or(fallback);
+        let summary = ground_text(&generated, &source_spans, &citation_list(&source_spans));
 
         module_summaries.insert(module.clone(), summary.clone());
+        module_sources.insert(module.clone(), source_spans.clone());
         docs.push(ModuleDoc {
             module,
             summary,
+            source_spans,
             direct_files,
             child_modules,
             component_ids,
@@ -729,6 +761,7 @@ fn build_repo_doc(
         .map(|module| ModuleLink {
             module: module.module.clone(),
             summary: module.summary.clone(),
+            source_spans: module.source_spans.clone(),
         })
         .collect::<Vec<_>>();
     let root_files = files
@@ -737,6 +770,7 @@ fn build_repo_doc(
         .map(|file| FileLink {
             path: file.path.clone(),
             summary: file.summary.clone(),
+            source_spans: file.source_spans.clone(),
         })
         .collect::<Vec<_>>();
     let module_summaries = top_modules
@@ -754,18 +788,25 @@ fn build_repo_doc(
         })
         .collect::<Vec<_>>();
     let fallback = structural_repo_summary(files.len(), modules.len());
-    let summary = maybe_generate(
+    let source_spans = collect_link_spans(&root_files, &top_modules);
+    let generated = maybe_generate(
         generate,
         &prompts::repo_prompt(&module_summaries, &file_summaries),
         prompts::REPO_SYSTEM,
     )
     .unwrap_or(fallback);
+    let summary = ground_text(&generated, &source_spans, &citation_list(&source_spans));
 
-    render_repo_doc(&summary, &top_modules, &root_files)
+    render_repo_doc(&summary, &top_modules, &root_files, &source_spans)
 }
 
-fn render_repo_doc(summary: &str, modules: &[ModuleLink], files: &[FileLink]) -> String {
-    let mut doc = frontmatter("Repository Overview", "code_repo");
+fn render_repo_doc(
+    summary: &str,
+    modules: &[ModuleLink],
+    files: &[FileLink],
+    source_spans: &[SourceSpan],
+) -> String {
+    let mut doc = frontmatter("Repository Overview", "code_repo", source_spans);
     doc.push_str("# Repository Overview\n\n");
     write_section(&mut doc, "Overview", summary);
     if !modules.is_empty() {
@@ -791,7 +832,7 @@ fn render_repo_doc(summary: &str, modules: &[ModuleLink], files: &[FileLink]) ->
 }
 
 fn render_module_doc(module: &ModuleDoc) -> String {
-    let mut doc = frontmatter(&module.module, "code_module");
+    let mut doc = frontmatter(&module.module, "code_module", &module.source_spans);
     let _ = writeln!(doc, "# {}\n", module.module);
     match parent_module(&module.module) {
         Some(parent) => {
@@ -830,7 +871,7 @@ fn render_module_doc(module: &ModuleDoc) -> String {
 }
 
 fn render_file_doc(file: &FileDoc) -> String {
-    let mut doc = frontmatter(&file.path, "code_file");
+    let mut doc = frontmatter(&file.path, "code_file", &file.source_spans);
     let _ = writeln!(doc, "# {}\n", file.path);
     if file.module.is_empty() {
         doc.push_str("Module: [[repo|Repository Overview]]\n\n");
@@ -846,12 +887,13 @@ fn render_file_doc(file: &FileDoc) -> String {
     for symbol in &file.symbols {
         let _ = writeln!(
             doc,
-            "- `{}` ({}) component `{}` lines {}-{}",
+            "- `{}` ({}) component `{}` lines {}-{} {}",
             inline_code(&symbol.symbol.qualified_name),
             symbol.symbol.kind,
             inline_code(&symbol.component_id),
             symbol.symbol.line_start,
-            symbol.symbol.line_end
+            symbol.symbol.line_end,
+            symbol.source_span.citation()
         );
         if let Some(signature) = symbol
             .symbol
@@ -976,11 +1018,149 @@ fn write_section(doc: &mut String, heading: &str, body: &str) {
     let _ = writeln!(doc, "## {heading}\n\n{}\n", body.trim());
 }
 
-fn frontmatter(title: &str, kind: &str) -> String {
-    format!(
-        "---\ntitle: \"{}\"\ntype: {kind}\n---\n\n",
-        yaml_quote(title)
-    )
+impl SourceSpan {
+    fn from_symbol(symbol: &Symbol) -> Self {
+        Self {
+            file: symbol.file_path.clone(),
+            line_start: symbol.line_start,
+            line_end: symbol.line_end,
+        }
+    }
+
+    fn citation(&self) -> String {
+        if self.line_start == self.line_end {
+            format!("[{}:{}]", self.file, self.line_start)
+        } else {
+            format!("[{}:{}-{}]", self.file, self.line_start, self.line_end)
+        }
+    }
+
+    fn contains(&self, file: &str, line_start: usize, line_end: usize) -> bool {
+        self.file == file && self.line_start <= line_start && line_end <= self.line_end
+    }
+}
+
+fn collect_link_spans(files: &[FileLink], modules: &[ModuleLink]) -> Vec<SourceSpan> {
+    let mut spans = BTreeSet::new();
+    for file in files {
+        spans.extend(file.source_spans.iter().cloned());
+    }
+    for module in modules {
+        spans.extend(module.source_spans.iter().cloned());
+    }
+    spans.into_iter().collect()
+}
+
+fn citation_list(spans: &[SourceSpan]) -> String {
+    spans
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .map(|span| span.citation())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn ground_text(text: &str, valid_spans: &[SourceSpan], fallback_citation: &str) -> String {
+    let cleaned = strip_invalid_citations(text, valid_spans);
+    if fallback_citation.is_empty() || contains_valid_citation(&cleaned, valid_spans) {
+        cleaned
+    } else {
+        format!("{cleaned} {fallback_citation}")
+    }
+}
+
+fn strip_invalid_citations(text: &str, valid_spans: &[SourceSpan]) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(open) = rest.find('[') {
+        let (before, after_open) = rest.split_at(open);
+        out.push_str(before);
+        let after_open = &after_open[1..];
+        let Some(close) = after_open.find(']') else {
+            out.push('[');
+            out.push_str(after_open);
+            return out;
+        };
+        let candidate = &after_open[..close];
+        if citation_parts(candidate).is_none_or(|(file, start, end)| {
+            valid_spans
+                .iter()
+                .any(|span| span.contains(file, start, end))
+        }) {
+            out.push('[');
+            out.push_str(candidate);
+            out.push(']');
+        }
+        rest = &after_open[close + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
+fn contains_valid_citation(text: &str, valid_spans: &[SourceSpan]) -> bool {
+    let mut rest = text;
+    while let Some(open) = rest.find('[') {
+        let after_open = &rest[open + 1..];
+        let Some(close) = after_open.find(']') else {
+            return false;
+        };
+        if let Some((file, start, end)) = citation_parts(&after_open[..close])
+            && valid_spans
+                .iter()
+                .any(|span| span.contains(file, start, end))
+        {
+            return true;
+        }
+        rest = &after_open[close + 1..];
+    }
+    false
+}
+
+fn citation_parts(value: &str) -> Option<(&str, usize, usize)> {
+    let (file, range) = value.rsplit_once(':')?;
+    if file.is_empty() || file.chars().any(char::is_whitespace) {
+        return None;
+    }
+    let (line_start, line_end) = match range.split_once('-') {
+        Some((start, end)) => (start.parse().ok()?, end.parse().ok()?),
+        None => {
+            let line = range.parse().ok()?;
+            (line, line)
+        }
+    };
+    (line_start > 0 && line_start <= line_end).then_some((file, line_start, line_end))
+}
+
+fn frontmatter(title: &str, kind: &str, source_spans: &[SourceSpan]) -> String {
+    let mut out = format!("---\ntitle: \"{}\"\ntype: {kind}\n", yaml_quote(title));
+    let mut files: BTreeMap<&str, BTreeSet<(usize, usize)>> = BTreeMap::new();
+    for span in source_spans {
+        files
+            .entry(&span.file)
+            .or_default()
+            .insert((span.line_start, span.line_end));
+    }
+    if files.is_empty() {
+        out.push_str("source_files: []\n");
+        out.push_str("---\n\n");
+        return out;
+    }
+    out.push_str("source_files:\n");
+    for (file, ranges) in files {
+        let _ = writeln!(out, "  - file: \"{}\"", yaml_quote(file));
+        out.push_str("    ranges:\n");
+        for (line_start, line_end) in ranges {
+            if line_start == line_end {
+                let _ = writeln!(out, "      - \"{line_start}\"");
+            } else {
+                let _ = writeln!(out, "      - \"{line_start}-{line_end}\"");
+            }
+        }
+    }
+    out.push_str("---\n\n");
+    out
 }
 
 fn yaml_quote(value: &str) -> String {
@@ -1292,6 +1472,58 @@ mod tests {
         );
     }
 
+    #[test]
+    fn citations_validated_against_spans() {
+        let input = CodewikiInput {
+            files: vec!["src/lib.rs".to_string()],
+            graph_edges: Vec::new(),
+            symbols: vec![
+                test_symbol_range(
+                    "src/lib.rs",
+                    "Client",
+                    "class",
+                    10,
+                    14,
+                    "pub struct Client {",
+                ),
+                test_symbol_range(
+                    "src/lib.rs",
+                    "connect",
+                    "function",
+                    20,
+                    24,
+                    "pub fn connect()",
+                ),
+            ],
+        };
+        let mut generator = |prompt: &str, _system: &str| {
+            if prompt.contains("Client") {
+                Some("Builds client state [src/lib.rs:999].".to_string())
+            } else if prompt.contains("connect") {
+                Some("Opens a connection [src/lib.rs:20].".to_string())
+            } else {
+                Some("Coordinates the public API [missing.rs:1].".to_string())
+            }
+        };
+
+        let docs = generate_hierarchical_docs(&input, Some(&mut generator));
+        let file_doc = docs
+            .iter()
+            .find(|(path, _)| path == "files/src/lib.rs.md")
+            .map(|(_, content)| content)
+            .expect("file doc");
+
+        assert!(file_doc.contains("source_files:\n"));
+        assert!(file_doc.contains("  - file: \"src/lib.rs\"\n"));
+        assert!(file_doc.contains("    ranges:\n"));
+        assert!(file_doc.contains("      - \"10-14\"\n"));
+        assert!(file_doc.contains("      - \"20-24\"\n"));
+        assert!(file_doc.contains("[src/lib.rs:10-14]"));
+        assert!(file_doc.contains("[src/lib.rs:20]"));
+        assert!(!file_doc.contains("src/lib.rs:999"));
+        assert!(!file_doc.contains("missing.rs:1"));
+    }
+
     fn test_symbol(
         file_path: &str,
         name: &str,
@@ -1322,6 +1554,36 @@ mod tests {
             byte_end: 0,
             line_start,
             line_end: line_start,
+            signature: Some(signature.to_string()),
+            docstring: None,
+            parent_symbol_id: None,
+            content_hash: String::new(),
+            summary: None,
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
+
+    fn test_symbol_range(
+        file_path: &str,
+        name: &str,
+        kind: &str,
+        line_start: usize,
+        line_end: usize,
+        signature: &str,
+    ) -> Symbol {
+        Symbol {
+            id: format!("{file_path}:{name}"),
+            project_id: "project-1".to_string(),
+            file_path: file_path.to_string(),
+            name: name.to_string(),
+            qualified_name: name.to_string(),
+            kind: kind.to_string(),
+            language: "rust".to_string(),
+            byte_start: 0,
+            byte_end: 0,
+            line_start,
+            line_end,
             signature: Some(signature.to_string()),
             docstring: None,
             parent_symbol_id: None,
