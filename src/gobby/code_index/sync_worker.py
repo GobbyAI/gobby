@@ -381,8 +381,8 @@ async def _sync_graph(
 ) -> bool:
     """Ask gcode to sync one indexed file into the code graph projection."""
     result = await gcode_gateway.graph_sync_file(project_root, file.file_path)
-    # Older gcode versions reported a skipped status here before the gateway
-    # promoted indexed-file misses to GcodeIndexedFileNotFoundError.
+    # Treat stale gcode skip responses as terminal for the daemon queue. gcode
+    # owns index eligibility; the daemon should not retry a file gcode skipped.
     if result.get("status") == "skipped" and result.get("reason") == "indexed_file_not_found":
-        return False
+        return True
     return True

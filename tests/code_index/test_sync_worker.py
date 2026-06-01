@@ -576,8 +576,8 @@ async def test_sync_file_warns_and_retries_when_indexed_row_still_exists(
 
 
 @pytest.mark.asyncio
-async def test_sync_file_skipped_response_leaves_graph_unsynced(tmp_path: Path) -> None:
-    """The new gcode skipped response is a no-op that remains retryable."""
+async def test_sync_file_skipped_response_marks_graph_synced(tmp_path: Path) -> None:
+    """The gcode skipped response is terminal for the daemon projection queue."""
     _write_source(tmp_path)
     pending_file = _indexed_file(vectors_synced=True, graph_synced=False)
     storage = MagicMock()
@@ -598,8 +598,8 @@ async def test_sync_file_skipped_response_leaves_graph_unsynced(tmp_path: Path) 
         embedding_dim=4,
     )
 
-    assert did_sync is False
-    storage.mark_graph_synced.assert_not_called()
+    assert did_sync is True
+    storage.mark_graph_synced.assert_called_once_with(pending_file.id)
 
 
 @pytest.mark.asyncio
