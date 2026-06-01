@@ -57,6 +57,20 @@ pub enum CoreError {
     /// Configuration was present but invalid for the requested operation.
     #[error("invalid configuration: {0}")]
     InvalidConfig(String),
+    /// Two reachable hub DSNs point at different PostgreSQL clusters or databases.
+    #[error(
+        "conflicting Gobby PostgreSQL hubs: existing recorded DSN {existing_database_url} identifies {existing_identity}; daemon DSN {daemon_database_url} identifies {daemon_identity}"
+    )]
+    HubConflict {
+        /// DSN from the existing standalone/subset configuration.
+        existing_database_url: String,
+        /// Cluster/database identity observed for the existing DSN.
+        existing_identity: String,
+        /// DSN reported by the daemon bootstrap/broker.
+        daemon_database_url: String,
+        /// Cluster/database identity observed for the daemon DSN.
+        daemon_identity: String,
+    },
     /// A service required by this command could not be used.
     #[error("required service unavailable: {service} — {message}")]
     RequiredServiceUnavailable {
