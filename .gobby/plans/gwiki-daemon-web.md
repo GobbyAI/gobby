@@ -18,12 +18,29 @@ Daemon AI/multimodal capability routes, structured capability errors, text-gener
 
 `kind: framing`
 
-The upstream CLI JSON-command contract is `gobby-cli/.gobby/plans/completed/gwiki.md`
-(Plan ID `gwiki`), especially `## P2: Indexing And Search` / `### 2.4 Add core CLI
-surfaces`, plus the `P3`-`P5` command deliverables for research, ingest, collect, compile,
-audit, and health behavior. This daemon plan consumes those `gwiki --format json` contracts
-through `GwikiGateway`; wiki parsing, vault semantics, command ownership, and AI capability
-routing remain outside this web/gateway scope. The AI capability source contract is tracked in
+The upstream CLI JSON-command source plan is
+`gobby-cli/.gobby/plans/completed/gwiki.md` (Plan ID `gwiki`). This daemon plan
+consumes existing upstream `gwiki --format json` commands through `GwikiGateway`:
+
+- `gwiki status --format json`
+- `gwiki index --format json`
+- `gwiki search --format json`
+- `gwiki backlinks --format json`
+- `gwiki ingest-file --format json`
+- `gwiki collect --format json`
+- `gwiki research --format json`
+- `gwiki compile --format json`
+- `gwiki audit --format json`
+- `gwiki health --format json`
+
+The only upstream CLI addition required by this daemon/web plan is
+`gwiki read --format json`. Daemon/web `attach` is local integration terminology: the
+daemon handles upload and staging, then maps attach requests to existing
+`gwiki ingest-file --format json` via `GwikiGateway.ingest_file`. No upstream
+`gwiki attach` command is required.
+
+Wiki parsing, vault semantics, command ownership, and AI capability routing remain outside
+this web/gateway scope. The AI capability source contract is tracked in
 `.gobby/plans/gwiki-daemon-ai-contract.md`.
 
 ## C1: Constraints
@@ -48,6 +65,7 @@ The daemon/web work requires these `gwiki` JSON command contracts from the CLI p
 - `gwiki status --format json`
 - `gwiki index --format json`
 - `gwiki search --format json`
+- `gwiki read --format json`
 - `gwiki backlinks --format json`
 - `gwiki ingest-file --format json`
 - `gwiki collect --format json`
@@ -56,7 +74,18 @@ The daemon/web work requires these `gwiki` JSON command contracts from the CLI p
 - `gwiki audit --format json`
 - `gwiki health --format json`
 
-Required JSON fields: `scope`, `command`, `ok`, `degraded`, actionable `paths`, and command-specific payloads. Errors must preserve stderr plus parsed structured guidance when available.
+Successful command JSON must include `scope`, `command`, and command-specific payloads.
+Structured degradation, actionable paths, changed paths, setup guidance, health findings, or
+similar path/status data are required where the specific command can produce them. The
+upstream CLI should preserve command-specific JSON style; it does not need to force a
+universal `ok` / `degraded` / `paths` envelope across every command.
+
+`gwiki read --format json` must return a scoped wiki page/document payload suitable for
+daemon pass-through and normalization, including requested path/title identity, resolved wiki
+path, content or rendered text, and structured degradation/error guidance when available.
+`GwikiGateway` normalizes command-specific CLI JSON into daemon HTTP/MCP response envelopes.
+On nonzero exits, gateway errors must preserve stderr and include parsed structured guidance
+from stdout or stderr when available.
 
 ## P1: Gateway And Contract Probe
 
@@ -84,11 +113,15 @@ Document each consumed `gwiki --format json` command, required arguments, reques
 
 Targets: `src/gobby/gwiki_gateway.py`, `tests/test_gwiki_gateway.py`
 
-Add a single async wrapper around `gwiki --format json` with methods for status, index, search, read, backlinks, ingest, collect, research, compile, audit, and health. The gateway resolves the binary path, passes project/topic scope, enforces timeouts, parses JSON stdout, captures stderr, and raises typed errors on non-zero exits.
+Add a single async wrapper around `gwiki --format json` with methods for `status`, `index`,
+`search`, `read`, `backlinks`, `ingest_file`, `collect`, `research`, `compile`, `audit`, and
+`health`. The gateway resolves the binary path, passes project/topic scope, enforces
+timeouts, parses JSON stdout, captures stderr, normalizes command-specific CLI JSON into
+daemon envelopes, and raises typed errors on non-zero exits.
 
 **Acceptance:**
 
-- 1.2.1 - `GwikiGateway` exposes methods for all commands listed in D1. file: `src/gobby/gwiki_gateway.py`.
+- 1.2.1 - `GwikiGateway` exposes `status`, `index`, `search`, `read`, `backlinks`, `ingest_file`, `collect`, `research`, `compile`, `audit`, and `health`. file: `src/gobby/gwiki_gateway.py`.
 - 1.2.2 - Gateway parses JSON stdout and preserves stderr on failure. test: `tests/test_gwiki_gateway.py::test_error_preserves_stderr`.
 - 1.2.3 - Gateway enforces per-command timeout and reports structured degradation. test: `tests/test_gwiki_gateway.py::test_timeout_degrades`.
 - 1.2.4 - No route, MCP tool, watcher, or cron path invokes `gwiki` outside `GwikiGateway`. behavior: "grep for create_subprocess_exec gwiki has only gateway hits" in `src/gobby/`.
@@ -120,7 +153,13 @@ Add HTTP routes backed by `GwikiGateway`:
 - `POST /api/wiki/compile`
 - `POST /api/wiki/audit`
 
-Explicit write routes trigger immediate indexing when the `gwiki` result reports changed vault files.
+`GET /api/wiki/read` calls `GwikiGateway.read` and depends on upstream
+`gwiki read --format json`; daemon code must not parse vault files directly. `POST
+/api/wiki/attach` accepts and stages uploads in daemon code, then calls
+`GwikiGateway.ingest_file` / `gwiki ingest-file --format json`; it must not require an
+upstream `gwiki attach` command. `POST /api/wiki/ingest` also calls
+`GwikiGateway.ingest_file`. Explicit write routes trigger immediate indexing when the `gwiki`
+result reports changed vault files.
 
 **Acceptance:**
 
@@ -134,7 +173,11 @@ Explicit write routes trigger immediate indexing when the `gwiki` result reports
 
 Targets: `src/gobby/mcp_proxy/tools/wiki.py`, `tests/mcp_proxy/tools/test_wiki.py`
 
-Expose MCP tools for `wiki_search`, `wiki_read`, `wiki_attach`, `wiki_ingest`, `wiki_compile`, `wiki_audit`, and `wiki_health`. Tools use the gateway and return structured JSON with scope identity, paths, citations, and degradation metadata.
+Expose MCP tools for `wiki_search`, `wiki_read`, `wiki_attach`, `wiki_ingest`,
+`wiki_compile`, `wiki_audit`, and `wiki_health`. Tools use the gateway and return structured
+JSON with scope identity, command payloads, citations, and path/degradation metadata when
+present. `wiki_read` depends on `GwikiGateway.read` / `gwiki read --format json`.
+`wiki_attach` stages daemon uploads and maps to `GwikiGateway.ingest_file`.
 
 **Acceptance:**
 
@@ -168,7 +211,11 @@ Add a Wiki tab showing current scope, status, recent searches, indexed paths, he
 
 Targets: `web/src/components/chat/`, `web/src/hooks/useWiki.ts`
 
-Add chat actions for search, read, attach, ingest, compile, audit, and health. Actions call HTTP routes, render progress and results in chat, and link back to the Wiki Activity panel state.
+Add chat actions for search, read, attach, ingest, compile, audit, and health. Actions call
+HTTP routes, render progress and results in chat, and link back to the Wiki Activity panel
+state. Read actions call `/api/wiki/read`, which depends on upstream
+`gwiki read --format json`. Attach actions call `/api/wiki/attach`, which stages uploads in
+the daemon and maps to `gwiki ingest-file` through `GwikiGateway.ingest_file`.
 
 **Acceptance:**
 
