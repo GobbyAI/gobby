@@ -1,6 +1,8 @@
 //! Ingestion helpers for immutable raw wiki sources.
 
 pub mod audio;
+#[cfg(feature = "documents")]
+pub mod document;
 pub mod file;
 pub mod git;
 pub mod image;
