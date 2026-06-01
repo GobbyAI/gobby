@@ -10,7 +10,6 @@ import type {
 } from "./transportEventTypes";
 import type { UseChatTransportParams } from "./transportTypes";
 import type { ContextUsage } from "../../types/chat";
-import { omitNullish } from "../../utils/omitNullish";
 
 function numericValue(value: unknown): number | null {
   if (typeof value === "number") {
@@ -36,6 +35,12 @@ function isOptionalNumeric(value: unknown): boolean {
 function normalizedOptionalNumber(value: unknown): number | null | undefined {
   if (value === undefined || value === null) return value;
   return numericValue(value);
+}
+
+function omitUndefined<T extends object>(value: T): Partial<T> {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, fieldValue]) => fieldValue !== undefined),
+  ) as Partial<T>;
 }
 
 function isRawSessionUsageUpdatedMessage(
@@ -244,7 +249,7 @@ export function handleSessionUsageUpdated(
     ctx.setContextUsage((prev) =>
       computeContextUsageFromSessionData({
         ...previousUsagePayload(prev),
-        ...omitNullish(update),
+        ...omitUndefined(update),
         ...(update.last_completion_output_tokens !== undefined
           ? { last_completion_output_tokens: update.last_completion_output_tokens }
           : {}),

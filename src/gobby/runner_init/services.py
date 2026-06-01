@@ -73,7 +73,7 @@ def _resolve_embedding_api_key(runner: GobbyRunner, emb_cfg: EmbeddingsConfig) -
     for secret_name in (EMBEDDING_API_KEY_SECRET_NAME, "api_key", "openai_api_key"):
         try:
             value = runner.secret_store.get(secret_name)
-        except Exception:
+        except (AttributeError, KeyError, LookupError):
             logger.debug("Failed to resolve embedding secret %s", secret_name, exc_info=True)
             continue
         if isinstance(value, str) and value:

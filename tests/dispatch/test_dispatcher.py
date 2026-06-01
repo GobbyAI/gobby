@@ -130,6 +130,62 @@ def _audit_action(task_id: str) -> AppendAuditMarkerAction:
     return AppendAuditMarkerAction(task_id=task_id, heading="Dispatch", body="marker")
 
 
+def test_sweep_expired_leases_pages_all_active_runs(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    """Expired mutexes for active runs past the first page are retained."""
+    from gobby.dispatch.constants import DISPATCH_HOLDER
+    from gobby.dispatch.lease_cleanup import sweep_expired_leases
+    from gobby.storage.agents import LocalAgentRunManager
+    from gobby.storage.sessions import SYSTEM_SESSION_ID
+
+    storage = _mutex_storage(temp_db)
+    run_storage = LocalAgentRunManager(temp_db)
+    base_time = datetime(2026, 1, 1, tzinfo=UTC)
+    target_run_id = ""
+
+    for index in range(1001):
+        run = run_storage.create(
+            parent_session_id=SYSTEM_SESSION_ID,
+            provider="codex",
+            prompt=f"active run {index}",
+            run_id=f"run-active-{index:04d}",
+        )
+        run_storage.start(run.id)
+        started_at = (base_time + timedelta(seconds=index)).isoformat()
+        temp_db.execute(
+            "UPDATE agent_runs SET started_at = %s, updated_at = %s WHERE id = %s",
+            (started_at, started_at, run.id),
+        )
+        if index == 1000:
+            target_run_id = run.id
+
+    active_task = _task(temp_db, sample_project, title="Active mutex")
+    stale_task = _task(temp_db, sample_project, title="Stale mutex")
+    expired_start = datetime.now(UTC) - timedelta(minutes=10)
+    assert storage.acquire_mutex(
+        active_task.id,
+        holder=DISPATCH_HOLDER,
+        kind="spawn",
+        ttl_seconds=1,
+        run_id=target_run_id,
+        now=expired_start,
+    )
+    assert storage.acquire_mutex(
+        stale_task.id,
+        holder=DISPATCH_HOLDER,
+        kind="spawn",
+        ttl_seconds=1,
+        run_id="run-stale-missing",
+        now=expired_start,
+    )
+
+    assert sweep_expired_leases(storage) == 1
+    assert storage.get_mutex(active_task.id) is not None
+    assert storage.get_mutex(stale_task.id) is None
+
+
 @pytest.mark.asyncio
 async def test_append_audit_marker_is_exact_marker_idempotent(
     temp_db: HubDatabase,

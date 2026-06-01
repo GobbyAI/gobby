@@ -383,7 +383,9 @@ class TestCloseTask:
         task_validator = AsyncMock()
         task_validator.validate_task.return_value = MagicMock(
             status="invalid",
-            feedback="All three validation criteria are satisfied: tests pass and lint passes.",
+            feedback=(
+                "Verified all three validation criteria are satisfied: tests pass and lint passes."
+            ),
         )
 
         registry = _create_registry(mock_task_manager, mock_sync_manager, task_validator)
@@ -406,7 +408,7 @@ class TestCloseTask:
             task.id,
             validation_status="valid",
             validation_feedback=(
-                "All three validation criteria are satisfied: tests pass and lint passes."
+                "Verified all three validation criteria are satisfied: tests pass and lint passes."
             ),
         )
         mock_task_manager.close_task.assert_called_once()

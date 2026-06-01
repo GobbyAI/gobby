@@ -13,6 +13,8 @@ from .tool_proxy_utils import safe_truncate
 
 logger = logging.getLogger("gobby.mcp.server")
 
+PARENT_SESSION_TOOLS = frozenset({"dispatch_batch", "evaluate_spawn", "spawn_agent"})
+
 
 def _schema_requires_session_id(input_schema: dict[str, Any]) -> bool:
     required = input_schema.get("required", [])
@@ -55,11 +57,10 @@ def _inject_agent_parent_session_argument(
     effective_session_id: str | None,
 ) -> None:
     """Keep child agent spawns in the caller's project when parent_session_id is omitted."""
-    parent_session_tools = {"dispatch_batch", "evaluate_spawn", "spawn_agent"}
     if (
         effective_session_id
         and server_name == "gobby-agents"
-        and tool_name in parent_session_tools
+        and tool_name in PARENT_SESSION_TOOLS
         and not arguments.get("parent_session_id")
     ):
         arguments["parent_session_id"] = effective_session_id

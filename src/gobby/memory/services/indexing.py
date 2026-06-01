@@ -233,7 +233,10 @@ class IndexingService:
     async def _run_global_embedding_reindex(self) -> dict[str, Any]:
         total = 0
         try:
-            memories = self._storage.list_memories(limit=MAX_REINDEX_LIMIT)
+            memories = await self._run_storage(
+                self._storage.list_memories,
+                limit=MAX_REINDEX_LIMIT,
+            )
             total = len(memories)
             memory_dicts = self._memory_dicts(memories)
             fingerprint = self._fingerprint_memory_dicts(memory_dicts)

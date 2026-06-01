@@ -206,7 +206,10 @@ class MiniBuildHarness:
 
     async def assert_clean_final_state(self) -> None:
         await wait_for_async_condition(
-            lambda: self.task_manager.get_task(self.root_id).closed_at is not None,
+            lambda: (
+                (root := self.task_manager.get_task(self.root_id)) is not None
+                and root.closed_at is not None
+            ),
             timeout=3.0,
             description="root task closed",
         )

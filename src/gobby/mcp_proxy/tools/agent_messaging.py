@@ -29,6 +29,15 @@ BroadcastFn = Callable[..., Coroutine[Any, Any, None]]
 logger = logging.getLogger(__name__)
 
 
+def get_context_project_id() -> str | None:
+    """Return the current project context UUID when available."""
+    from gobby.utils.project_context import get_project_context
+
+    ctx = get_project_context()
+    project_id = ctx.get("id") if ctx else None
+    return project_id if isinstance(project_id, str) else None
+
+
 def _message_metadata(msg: Any) -> dict[str, Any]:
     """Parse optional JSON metadata from an inter-session message."""
     raw = getattr(msg, "metadata_json", None)
@@ -79,11 +88,7 @@ def add_messaging_tools(
 
     def _resolve(ref: str) -> str:
         """Resolve session reference to UUID."""
-        from gobby.utils.project_context import get_project_context
-
-        ctx = get_project_context()
-        project_id = ctx.get("id") if ctx else None
-        return session_manager.resolve_session_reference(ref, project_id)
+        return session_manager.resolve_session_reference(ref, get_context_project_id())
 
     from gobby.sessions.mailbox import MailboxService
 
@@ -112,8 +117,8 @@ def add_messaging_tools(
             "project. "
             "from_session defaults to the calling session's id from SessionContext "
             "when omitted. "
-            "Optional fields such as project_id, priority, message_type, metadata, and "
-            "include_wakeup are keyword-only."
+            "Optional fields such as priority, message_type, metadata, and include_wakeup "
+            "are keyword-only."
         ),
     )
     async def send_message(
@@ -160,12 +165,7 @@ def add_messaging_tools(
 
             from_id = _resolve(from_session)
             if project_id is None:
-                from gobby.utils.project_context import get_project_context
-
-                ctx = get_project_context()
-                context_project_id = ctx.get("id") if ctx else None
-                if isinstance(context_project_id, str):
-                    project_id = context_project_id
+                project_id = get_context_project_id()
 
             resolved_target_id = target_id
             if normalized_target == "session":

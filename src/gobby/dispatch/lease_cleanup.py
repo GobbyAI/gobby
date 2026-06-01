@@ -9,9 +9,22 @@ from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 
+_ACTIVE_RUN_PAGE_SIZE = 1000
+
 
 def sweep_expired_leases(storage: TaskDispatchMutexManager) -> int:
-    active_run_ids = {run.id for run in LocalAgentRunManager(storage.db).list_active(limit=1000)}
+    run_storage = LocalAgentRunManager(storage.db)
+    active_run_ids: set[str] = set()
+    offset = 0
+    while True:
+        active_runs = run_storage.list_active(limit=_ACTIVE_RUN_PAGE_SIZE, offset=offset)
+        if not active_runs:
+            break
+        active_run_ids.update(run.id for run in active_runs)
+        if len(active_runs) < _ACTIVE_RUN_PAGE_SIZE:
+            break
+        offset += _ACTIVE_RUN_PAGE_SIZE
+
     rows = storage.db.fetchall(
         """
         SELECT task_id, run_id
@@ -63,6 +76,7 @@ def sweep_orphan_no_run_dispatch_mutexes(
         if lease_until is not None:
             if lease_until >= resolved_now:
                 continue
+            # Expired leases are always eligible even when updated_at is still recent.
             should_release = True
         else:
             should_release = False
@@ -70,6 +84,7 @@ def sweep_orphan_no_run_dispatch_mutexes(
         updated_at = _parse_mutex_timestamp(row["updated_at"])
         if updated_at is None and not should_release:
             continue
+        # Indefinite no-run leases rely on updated_at aging past the grace window.
         if (
             not should_release
             and updated_at is not None

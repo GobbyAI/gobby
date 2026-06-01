@@ -106,7 +106,10 @@ def test_resolve_and_seed_contexts_session_only_derives_project_from_session() -
         reset_seeded_contexts(tokens)
 
 
-def test_resolve_and_seed_contexts_current_alias_uses_ambient_session() -> None:
+@pytest.mark.parametrize("session_ref", ["current", "CURRENT", " Current "])
+def test_resolve_and_seed_contexts_current_alias_uses_ambient_session(
+    session_ref: str,
+) -> None:
     """The MCP-only current alias should not be handed to SessionManager."""
     mgr = _make_session_manager(resolve_to=SESSION_PLATFORM_UUID)
     with (
@@ -117,7 +120,7 @@ def test_resolve_and_seed_contexts_current_alias_uses_ambient_session() -> None:
         ),
     ):
         tokens = resolve_and_seed_contexts(
-            session_ref="current",
+            session_ref=session_ref,
             session_manager=mgr,
             project_ref=None,
             db=mgr.db,

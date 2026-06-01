@@ -478,9 +478,7 @@ describe("useChat streaming and event handling", () => {
       ws.simulateMessage({
         type: "session_usage_updated",
         session_id: "test-conversation-id",
-        usage_input_tokens: null,
         usage_output_tokens: 44,
-        context_window: null,
       });
     });
 
@@ -491,6 +489,47 @@ describe("useChat streaming and event handling", () => {
       cacheCreationTokens: 10,
       uncachedInputTokens: 290,
       contextWindow: 200000,
+    });
+  });
+
+  it("clears fields when session_usage_updated sends explicit null", async () => {
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    act(() => {
+      ws.simulateMessage({
+        type: "session_usage_updated",
+        session_id: "test-conversation-id",
+        usage_input_tokens: 420,
+        usage_output_tokens: 33,
+        usage_cache_read_tokens: 120,
+        usage_cache_creation_tokens: 10,
+        context_window: 200000,
+      });
+    });
+
+    act(() => {
+      ws.simulateMessage({
+        type: "session_usage_updated",
+        session_id: "test-conversation-id",
+        usage_input_tokens: null,
+        usage_output_tokens: 44,
+        context_window: null,
+        context_usage_ratio: null,
+      });
+    });
+
+    expect(result.current.contextUsage).toMatchObject({
+      totalInputTokens: 0,
+      outputTokens: 44,
+      cacheReadTokens: 120,
+      cacheCreationTokens: 10,
+      uncachedInputTokens: 0,
+      contextWindow: null,
+      contextUsageRatio: null,
     });
   });
 

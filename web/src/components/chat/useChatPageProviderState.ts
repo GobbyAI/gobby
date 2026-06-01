@@ -61,6 +61,7 @@ export function useChatPageProviderState({
   const canAttachViewedSession = canProxyAttachObservationMeta(viewingMeta);
   const canControlViewedSession =
     viewingMeta?.sessionType === "terminal" && !isAutonomousSession;
+  // Autonomous sessions stay read-only even when they are also proxy-attached.
   const providerPickerDisabledReason = isAutonomousSession
     ? chat.sessionInteractionMode === "proxy"
       ? "Cannot change provider on a pipeline-managed session"

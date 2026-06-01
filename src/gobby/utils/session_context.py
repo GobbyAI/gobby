@@ -238,7 +238,7 @@ def resolve_and_seed_contexts(
     resolved_session_id: str | None = None
     resolved_session_conversation_id: str | None = None
     effective_session_ref = session_ref.strip() if session_ref else None
-    if effective_session_ref == "current":
+    if effective_session_ref is not None and effective_session_ref.casefold() == "current":
         current_ctx = get_session_context()
         if current_ctx is not None:
             resolved_session_id = current_ctx.session_id

@@ -145,6 +145,14 @@ class TestConfigStore:
         store.set(AI_EMBEDDING_API_KEY_KEY, "$secret:embeddings_api_key")
         assert store.get(AI_EMBEDDING_API_KEY_KEY) == "$secret:embeddings_api_key"
 
+    def test_set_rejects_cross_key_secret_reference(self, store: ConfigStore):
+        with pytest.raises(ValueError, match=r"Config key 'ai\.embeddings\.api_key'"):
+            store.set(AI_EMBEDDING_API_KEY_KEY, "$secret:openai_api_key")
+
+    def test_set_many_rejects_cross_key_secret_reference(self, store: ConfigStore):
+        with pytest.raises(ValueError, match=r"Config key 'service\.requirepass'"):
+            store.set_many({"service.requirepass": "$secret:other_password"})
+
     def test_delete_existing(self, store: ConfigStore):
         store.set("key", "val")
         assert store.delete("key") is True

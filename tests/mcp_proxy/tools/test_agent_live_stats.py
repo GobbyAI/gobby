@@ -25,6 +25,11 @@ class _FakeTranscriptReader:
         return self.counts
 
 
+class _ExplodingTranscriptReader:
+    async def get_activity_counts(self, _session_id: str) -> dict[str, int]:
+        raise RuntimeError("transcript index unavailable")
+
+
 @pytest.mark.asyncio
 async def test_overlay_runs_live_activity_preserves_replacement_objects(
     monkeypatch: pytest.MonkeyPatch,
@@ -39,6 +44,29 @@ async def test_overlay_runs_live_activity_preserves_replacement_objects(
 
     assert results == [replacement]
     overlay.assert_awaited_once_with(run, transcript_reader)
+
+
+@pytest.mark.asyncio
+async def test_overlay_runs_live_activity_preserves_run_on_unexpected_overlay_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    run = SimpleNamespace(
+        child_session_id="child-1",
+        parent_session_id=None,
+        tool_calls_count=0,
+        turns_used=0,
+    )
+
+    with caplog.at_level("WARNING", logger="gobby.mcp_proxy.tools.agent_live_activity"):
+        results = await agent_live_activity.overlay_runs_live_activity(
+            [run],
+            _ExplodingTranscriptReader(),
+        )
+
+    assert results == [run]
+    assert run.tool_calls_count == 0
+    assert run.turns_used == 0
+    assert "Unexpected live transcript activity overlay failure" in caplog.text
 
 
 def _register_session(

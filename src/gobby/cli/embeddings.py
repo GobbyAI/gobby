@@ -58,7 +58,7 @@ def _resolved_namespace() -> str | None:
         # Diagnostic-only read: avoid mutating schema while reporting config health.
         with runtime_hub_database(apply_migrations=False) as db:
             keys = set(ConfigStore(db).list_keys(prefix=AI_EMBEDDINGS_CONFIG_PREFIX))
-    except (ImportError, OSError, RuntimeError, TypeError, ValueError, psycopg.Error) as exc:
+    except (ImportError, OSError, RuntimeError, psycopg.Error) as exc:
         logger.debug("Failed to resolve embedding config namespace: %s", exc, exc_info=True)
         return None
     return AI_EMBEDDINGS_CONFIG_PREFIX if keys.intersection(AI_EMBEDDING_CONFIG_KEYS) else None

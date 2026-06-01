@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from gobby.memory.services.indexing import IndexingService
+from gobby.memory.services.indexing import MAX_REINDEX_LIMIT, IndexingService
 from gobby.storage.memories import Memory
 
 pytestmark = pytest.mark.unit
@@ -91,7 +91,11 @@ async def _embed_fn(_content: str) -> list[float]:
     return [0.1, 0.2]
 
 
-def _service(storage: _MemoryStorage, vector_store: _VectorStore) -> IndexingService:
+def _service(
+    storage: _MemoryStorage,
+    vector_store: _VectorStore,
+    run_db: Callable[..., Awaitable[Any]] | None = None,
+) -> IndexingService:
     return IndexingService(
         storage=storage,  # type: ignore[arg-type]
         vector_store=vector_store,  # type: ignore[arg-type]
@@ -99,6 +103,7 @@ def _service(storage: _MemoryStorage, vector_store: _VectorStore) -> IndexingSer
         kg_service=None,
         crossref_service=MagicMock(),
         kg_rebuilder=AsyncMock(return_value={}),
+        run_db=run_db,
     )
 
 
@@ -148,6 +153,28 @@ async def test_global_reindex_skips_unchanged_memory_snapshot() -> None:
     assert second["embeddings_generated"] == 0
     assert second["skipped"] is True
     assert vector_store.rebuild.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_global_reindex_reads_storage_through_run_storage() -> None:
+    storage = _MemoryStorage([_memory("mem-1", "alpha")])
+    vector_store = _VectorStore()
+    run_db_calls: list[tuple[Callable[..., Any], tuple[Any, ...], dict[str, Any]]] = []
+
+    async def run_db(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        run_db_calls.append((func, args, kwargs))
+        return func(*args, **kwargs)
+
+    service = _service(storage, vector_store, run_db=run_db)
+
+    result = await service.reindex_embeddings()
+
+    assert result["success"] is True
+    func, args, kwargs = run_db_calls[0]
+    assert getattr(func, "__self__", None) is storage
+    assert getattr(func, "__func__", None) is _MemoryStorage.list_memories
+    assert args == ()
+    assert kwargs == {"limit": MAX_REINDEX_LIMIT}
 
 
 @pytest.mark.asyncio

@@ -62,8 +62,14 @@ def _is_secret_reference(value: Any) -> bool:
     return isinstance(value, str) and value.startswith("$secret:")
 
 
+def _is_canonical_secret_reference(key: str, value: Any) -> bool:
+    return isinstance(value, str) and value == f"$secret:{config_key_to_secret_name(key)}"
+
+
 def _reject_plaintext_secret_value(key: str, value: Any) -> None:
-    if not is_secret_key_name(key) or value in (None, "") or _is_secret_reference(value):
+    if not is_secret_key_name(key) or value in (None, ""):
+        return
+    if _is_secret_reference(value) and _is_canonical_secret_reference(key, value):
         return
     raise ValueError(
         f"Config key '{key}' looks like a secret. Use ConfigStore.set_secret() "

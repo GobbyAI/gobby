@@ -57,26 +57,29 @@ async def overlay_live_activity[RunT: LiveActivityRun](
     if transcript_reader is None or run is None:
         return run
 
-    session_id = run.child_session_id or run.parent_session_id
-    if not session_id:
-        return run
-
-    counter = getattr(transcript_reader, "get_activity_counts", None)
-    if counter is None:
-        return run
-
+    session_id: str | None = None
     try:
+        session_id = run.child_session_id or run.parent_session_id
+        if not session_id:
+            return run
+
+        counter = getattr(transcript_reader, "get_activity_counts", None)
+        if counter is None:
+            return run
+
         counts = await counter(session_id)
+        tool_calls = _count(counts.get("tool_call_count"))
+        turns = _count(counts.get("turn_count"))
+        if tool_calls is not None:
+            run.tool_calls_count = max(getattr(run, "tool_calls_count", 0) or 0, tool_calls)
+        if turns is not None:
+            run.turns_used = max(getattr(run, "turns_used", 0) or 0, turns)
     except (AttributeError, TypeError, KeyError, ValueError) as exc:
         logger.debug("Failed to read live transcript activity for %s: %s", session_id, exc)
         return run
-
-    tool_calls = _count(counts.get("tool_call_count"))
-    turns = _count(counts.get("turn_count"))
-    if tool_calls is not None:
-        run.tool_calls_count = max(getattr(run, "tool_calls_count", 0) or 0, tool_calls)
-    if turns is not None:
-        run.turns_used = max(getattr(run, "turns_used", 0) or 0, turns)
+    except Exception:
+        logger.warning("Unexpected live transcript activity overlay failure", exc_info=True)
+        return run
     return run
 
 
