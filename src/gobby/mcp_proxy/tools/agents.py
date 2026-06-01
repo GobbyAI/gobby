@@ -41,8 +41,6 @@ logger = logging.getLogger(__name__)
 
 _TERMINAL_AGENT_STATUSES = {"success", "error", "timeout", "cancelled"}
 _WAIT_FOR_AGENT_MAX_TIMEOUT_SECONDS = 1800.0
-_WAIT_FOR_AGENT_TRANSPORT_BOUNDARY_SECONDS = 120.0
-_WAIT_FOR_AGENT_TRANSPORT_HEADROOM_SECONDS = 5.0
 
 
 def _agent_result_payload(run: Any, *, include_prompt: bool = True) -> dict[str, Any]:
@@ -322,14 +320,7 @@ def create_agents_registry(
         requested_timeout = max(
             0.0, min(float(timeout_seconds), _WAIT_FOR_AGENT_MAX_TIMEOUT_SECONDS)
         )
-        timeout = min(
-            requested_timeout,
-            max(
-                0.0,
-                _WAIT_FOR_AGENT_TRANSPORT_BOUNDARY_SECONDS
-                - _WAIT_FOR_AGENT_TRANSPORT_HEADROOM_SECONDS,
-            ),
-        )
+        timeout = requested_timeout
         interval = max(0.1, min(float(poll_interval_seconds), 30.0))
         deadline = time.monotonic() + timeout
 

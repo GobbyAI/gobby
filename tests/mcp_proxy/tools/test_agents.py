@@ -284,7 +284,7 @@ class TestWaitForAgent:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("requested_timeout", [120, 300])
-    async def test_long_running_wait_returns_before_transport_boundary(self, requested_timeout):
+    async def test_long_running_wait_honors_requested_timeout(self, requested_timeout):
         mock_run = MagicMock()
         mock_run.id = "run-123"
         mock_run.status = "running"
@@ -306,7 +306,10 @@ class TestWaitForAgent:
         registry = create_agents_registry(runner)
         wait_for_agent = registry._tools["wait_for_agent"].func
 
-        with patch("gobby.mcp_proxy.tools.agents.time.monotonic", side_effect=[0.0, 116.0]):
+        with patch(
+            "gobby.mcp_proxy.tools.agents.time.monotonic",
+            side_effect=[0.0, float(requested_timeout) + 1.0],
+        ):
             result = await wait_for_agent(
                 run_id="run-123",
                 timeout_seconds=requested_timeout,
@@ -316,7 +319,7 @@ class TestWaitForAgent:
         assert result["success"] is True
         assert result["completed"] is False
         assert result["status"] == "running"
-        assert result["timeout_seconds"] == 115.0
+        assert result["timeout_seconds"] == float(requested_timeout)
         assert result["requested_timeout_seconds"] == float(requested_timeout)
 
     @pytest.mark.asyncio
