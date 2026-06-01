@@ -12,6 +12,8 @@ import re
 import time
 from dataclasses import dataclass
 
+from gobby.agents.prompt_detector import PromptDetector
+
 
 @dataclass
 class IdleState:
@@ -49,11 +51,6 @@ class IdleDetector:
     STOP_HOOK_BLOCKED_PATTERNS: tuple[re.Pattern[str], ...] = (
         re.compile(r"Stop hook error", re.IGNORECASE),
         re.compile(r"Rule enforced by Gobby", re.IGNORECASE),
-    )
-
-    QUEUED_MESSAGE_PATTERNS: tuple[re.Pattern[str], ...] = (
-        re.compile(r"queued messages", re.IGNORECASE),
-        re.compile(r"Press up to edit queued messages", re.IGNORECASE),
     )
 
     ACTIVE_WORK_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -119,7 +116,7 @@ class IdleDetector:
                 return "idle"
 
         has_queued_message = any(
-            pattern.search(full_text) for pattern in self.QUEUED_MESSAGE_PATTERNS
+            pattern.search(full_text) for pattern in PromptDetector.QUEUED_MESSAGE_PROMPT_PATTERNS
         )
         has_active_work = any(pattern.search(full_text) for pattern in self.ACTIVE_WORK_PATTERNS)
         if has_queued_message and has_active_work:

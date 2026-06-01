@@ -315,6 +315,7 @@ async def test_invalid_llm_result_with_verified_success_feedback_is_promoted() -
     )
 
 
+@pytest.mark.asyncio
 async def test_pending_llm_result_with_success_feedback_is_not_promoted() -> None:
     """Pending/error statuses stay blocking even when feedback contains success text."""
     update_task = MagicMock()

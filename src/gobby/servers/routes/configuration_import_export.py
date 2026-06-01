@@ -261,12 +261,12 @@ def persist_imported_config(
 ) -> int:
     """Persist validated import values into config_store and secret storage."""
     flat_config = storage_embedding_config_entries_to_runtime(flat_config)
-    config_secret_keys = {
+    runtime_config_secret_keys = {
         storage_embedding_config_key_to_runtime_key(key) for key in config_secret_keys
     }
     secret_references, secret_values, plain_values = partition_config_entries(
         flat_config,
-        config_secret_keys,
+        runtime_config_secret_keys,
     )
 
     validated_secret_values = _validate_imported_secret_values(secret_values)
@@ -284,6 +284,10 @@ def persist_imported_config(
     DaemonConfig(**unflatten_config(validation_flat))
 
     count = 0
+    runtime_secret_marker_keys = set(secret_references) | runtime_config_secret_keys
+    restart_touched_keys.update(secret_references)
+    restart_touched_keys.update(secret_values)
+
     storage_secret_references = runtime_embedding_config_entries_to_storage(secret_references)
     storage_secret_values = runtime_embedding_config_entries_to_storage(validated_secret_values)
     storage_plain_values = runtime_embedding_config_entries_to_storage(plain_values)
@@ -301,10 +305,9 @@ def persist_imported_config(
                     count += 1
         if storage_plain_values:
             count += config_store.set_many(storage_plain_values, source="import")
-        mark_secret_keys(config_store, set(secret_references) | config_secret_keys)
+        # mark_secret_keys accepts runtime keys and canonicalizes for config_store.
+        mark_secret_keys(config_store, runtime_secret_marker_keys)
 
-    restart_touched_keys.update(secret_references)
-    restart_touched_keys.update(secret_values)
     return count
 
 

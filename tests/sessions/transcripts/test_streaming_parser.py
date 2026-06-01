@@ -231,6 +231,7 @@ def test_claude_buffered_lookahead_marks_event_not_parser_safe() -> None:
         )
     )
 
+    assert len(events) >= 2
     assert any(not ev.parser_safe for ev in events[:-1])
     assert events[-1].parser_safe is True
 

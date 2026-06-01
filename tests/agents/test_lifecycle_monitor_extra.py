@@ -757,10 +757,9 @@ class TestPeriodicAgentTerminalEnter:
         )
         mock_tmux.send_keys.return_value = True
 
-        handled = await monitor.check_queued_continuation_prompts()
+        await monitor.check_queued_continuation_prompts()
         periodic_handled = await monitor.check_periodic_enters()
 
-        assert handled == 0
         assert periodic_handled == 1
         mock_tmux.send_keys.assert_called_once_with(
             "gobby-claude",
@@ -776,9 +775,9 @@ class TestPeriodicAgentTerminalEnter:
         mock_run_mgr.list_active.return_value = [self._run()]
         mock_tmux.capture_pane.return_value = "Press up to edit queued messages\n"
 
-        handled = await monitor.check_queued_continuation_prompts()
+        result = await monitor.check_queued_continuation_prompts()
 
-        assert handled == 0
+        assert result is None
         mock_tmux.send_keys.assert_not_called()
 
     @pytest.mark.asyncio

@@ -136,10 +136,11 @@ def storage_embedding_config_key_to_runtime_key(key: str) -> str:
     """Map canonical config_store embedding keys to runtime ``DaemonConfig.embeddings`` keys."""
     if key == AI_EMBEDDINGS_CONFIG_PREFIX:
         return RUNTIME_EMBEDDINGS_CONFIG_PREFIX
-    if not is_ai_embedding_config_key(key):
-        return key
-    field = key.removeprefix(f"{AI_EMBEDDINGS_CONFIG_PREFIX}.")
-    return runtime_embedding_key(field)
+    if key.startswith(f"{AI_EMBEDDINGS_CONFIG_PREFIX}."):
+        validate_embedding_storage_config_key(key)
+        field = key.removeprefix(f"{AI_EMBEDDINGS_CONFIG_PREFIX}.")
+        return runtime_embedding_key(field)
+    return key
 
 
 def external_embedding_config_key_to_runtime_key(key: str) -> str:

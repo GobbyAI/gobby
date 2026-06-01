@@ -33,7 +33,7 @@ async def overlay_live_activity(run: Any, transcript_reader: Any | None) -> Any:
 
     try:
         counts = await counter(session_id)
-    except Exception as exc:  # noqa: BLE001 - status reads must stay best-effort
+    except (AttributeError, TypeError, KeyError, ValueError) as exc:
         logger.debug("Failed to read live transcript activity for %s: %s", session_id, exc)
         return run
 

@@ -218,10 +218,6 @@ export function useSessionDetail(sessionId: string | null) {
   }, [session])
 
   useEffect(() => {
-    messagesRef.current = messages
-  }, [messages])
-
-  useEffect(() => {
     loadedCountRef.current = loadedCount
   }, [loadedCount])
 
@@ -421,6 +417,10 @@ export function useSessionDetail(sessionId: string | null) {
         ? [...replacedMessages, ...appendedMessages]
         : replacedMessages
     const appendedCount = appendedMessages.length
+
+    if (overlapCount === 0 && appendedCount === 0) {
+      return
+    }
 
     messagesRef.current = nextMessages
     setMessages(nextMessages)

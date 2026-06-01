@@ -48,6 +48,88 @@ def test_runtime_mapping_rejects_bare_storage_embedding_prefix() -> None:
         runtime_embedding_config_key_to_storage_key(AI_EMBEDDINGS_CONFIG_PREFIX)
 
 
+def test_embedding_storage_and_runtime_keys_round_trip_all_fields() -> None:
+    from gobby.config.embedding_keys import (
+        AI_EMBEDDINGS_CONFIG_PREFIX,
+        EMBEDDING_CONFIG_FIELDS,
+        RUNTIME_EMBEDDINGS_CONFIG_PREFIX,
+        canonical_embedding_key,
+        runtime_embedding_config_key_to_storage_key,
+        runtime_embedding_key,
+        storage_embedding_config_key_to_runtime_key,
+    )
+
+    assert (
+        storage_embedding_config_key_to_runtime_key(AI_EMBEDDINGS_CONFIG_PREFIX)
+        == RUNTIME_EMBEDDINGS_CONFIG_PREFIX
+    )
+    assert (
+        runtime_embedding_config_key_to_storage_key(RUNTIME_EMBEDDINGS_CONFIG_PREFIX)
+        == AI_EMBEDDINGS_CONFIG_PREFIX
+    )
+
+    for field in EMBEDDING_CONFIG_FIELDS:
+        storage_key = canonical_embedding_key(field)
+        runtime_key = runtime_embedding_key(field)
+
+        assert storage_embedding_config_key_to_runtime_key(storage_key) == runtime_key
+        assert runtime_embedding_config_key_to_storage_key(runtime_key) == storage_key
+        assert runtime_embedding_config_key_to_storage_key(storage_key) == storage_key
+
+
+def test_embedding_entry_mapping_preserves_empty_dicts_and_none_values() -> None:
+    from gobby.config.embedding_keys import (
+        AI_EMBEDDING_API_KEY_KEY,
+        runtime_embedding_config_entries_to_storage,
+        storage_embedding_config_entries_to_runtime,
+    )
+
+    assert storage_embedding_config_entries_to_runtime({}) == {}
+    assert runtime_embedding_config_entries_to_storage({}) == {}
+
+    storage_entries = {AI_EMBEDDING_API_KEY_KEY: None, "feature.enabled": None}
+    runtime_entries = {"embeddings.api_key": None, "feature.enabled": None}
+
+    assert storage_embedding_config_entries_to_runtime(storage_entries) == runtime_entries
+    assert runtime_embedding_config_entries_to_storage(runtime_entries) == storage_entries
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "service.enabled",
+        "embeddings",
+        "embeddings.model",
+        "embeddings.provider",
+    ],
+)
+def test_storage_to_runtime_preserves_non_storage_embedding_keys(key: str) -> None:
+    from gobby.config.embedding_keys import storage_embedding_config_key_to_runtime_key
+
+    assert storage_embedding_config_key_to_runtime_key(key) == key
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "ai.embeddings.provider",
+        "ai.embeddings.unknown",
+        "ai.embeddings.model.suffix",
+    ],
+)
+def test_storage_to_runtime_rejects_invalid_storage_embedding_keys(key: str) -> None:
+    from gobby.config.embedding_keys import (
+        storage_embedding_config_entries_to_runtime,
+        storage_embedding_config_key_to_runtime_key,
+    )
+
+    with pytest.raises(ValueError, match=r"(?:Embedding|Unsupported embedding) .*config key"):
+        storage_embedding_config_key_to_runtime_key(key)
+
+    with pytest.raises(ValueError, match=r"(?:Embedding|Unsupported embedding) .*config key"):
+        storage_embedding_config_entries_to_runtime({key: "value"})
+
+
 @pytest.mark.parametrize(
     "literal",
     [
