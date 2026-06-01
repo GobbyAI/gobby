@@ -1,7 +1,9 @@
 use gobby_core::ai::daemon::{
-    DaemonTranscriptionOptions, describe_image_via_daemon, transcribe_via_daemon,
+    DaemonTranscriptionOptions, describe_image_via_daemon, generate_via_daemon,
+    transcribe_via_daemon,
 };
 use gobby_core::ai::effective_route;
+use gobby_core::ai::text::generate_text;
 use gobby_core::ai::transcription::{TranscriptionTask, transcribe};
 use gobby_core::ai::vision::describe_image;
 use gobby_core::ai_context::AiContext;
@@ -13,6 +15,12 @@ use crate::transcribe::{
     TranscriptSegment, TranscriptionClient, TranscriptionOutput, TranscriptionRequest,
 };
 use crate::vision::{VisionClient, VisionExtraction, VisionRequest};
+
+#[derive(serde::Deserialize)]
+struct IndexedTranslation {
+    i: usize,
+    text: String,
+}
 
 pub(crate) struct ProductionTranscriptionClient {
     context: AiContext,
@@ -59,6 +67,146 @@ impl TranscriptionClient for ProductionTranscriptionClient {
             .map(transcription_output_from_core)
             .map_err(ai_error_to_wiki_error)
     }
+
+    fn translate_to_english(
+        &self,
+        request: &TranscriptionRequest<'_>,
+        language_hint: Option<&str>,
+    ) -> Result<TranscriptionOutput, WikiError> {
+        let capability = AiCapability::AudioTranslate;
+        let route = effective_route(&self.context, capability);
+        let mime = request.mime_type.unwrap_or("application/octet-stream");
+        let result = match route {
+            AiRouting::Daemon => transcribe_via_daemon(
+                &self.context,
+                request.bytes.to_vec(),
+                request.file_name,
+                mime,
+                DaemonTranscriptionOptions {
+                    capability,
+                    language: language_hint,
+                    prompt: None,
+                },
+            ),
+            AiRouting::Direct => transcribe(
+                &self.context,
+                request.bytes.to_vec(),
+                request.file_name,
+                mime,
+                TranscriptionTask::Translate,
+                language_hint,
+            ),
+            AiRouting::Off | AiRouting::Auto => Err(route_unavailable(capability, route)),
+        };
+
+        result
+            .map(transcription_output_from_core)
+            .map_err(ai_error_to_wiki_error)
+    }
+
+    fn translate_segments(
+        &self,
+        segments: &[TranscriptSegment],
+        source_lang: &str,
+        target_lang: &str,
+    ) -> Result<Vec<String>, WikiError> {
+        let first = self.translate_segment_batch(segments, source_lang, target_lang);
+        if let Ok(texts) = &first
+            && texts.len() == segments.len()
+        {
+            return first;
+        }
+
+        let second = self.translate_segment_batch(segments, source_lang, target_lang);
+        if let Ok(texts) = &second
+            && texts.len() == segments.len()
+        {
+            return second;
+        }
+
+        segments
+            .iter()
+            .map(|segment| {
+                self.translate_segment_batch(
+                    std::slice::from_ref(segment),
+                    source_lang,
+                    target_lang,
+                )
+                .and_then(|texts| {
+                    texts.into_iter().next().ok_or_else(|| WikiError::Config {
+                        detail: "text translation returned no segment".to_string(),
+                    })
+                })
+            })
+            .collect()
+    }
+}
+
+impl ProductionTranscriptionClient {
+    fn translate_segment_batch(
+        &self,
+        segments: &[TranscriptSegment],
+        source_lang: &str,
+        target_lang: &str,
+    ) -> Result<Vec<String>, WikiError> {
+        let capability = AiCapability::TextGenerate;
+        let route = effective_route(&self.context, capability);
+        let prompt = segment_translation_prompt(segments, source_lang, target_lang)?;
+        let system = "Return only valid JSON. Preserve array length and segment indexes.";
+        let result = match route {
+            AiRouting::Daemon => generate_via_daemon(&self.context, &prompt, Some(system)),
+            AiRouting::Direct => generate_text(&self.context, &prompt, Some(system)),
+            AiRouting::Off | AiRouting::Auto => Err(route_unavailable(capability, route)),
+        }
+        .map_err(ai_error_to_wiki_error)?;
+
+        parse_indexed_translation(&result.text, segments.len())
+    }
+}
+
+fn segment_translation_prompt(
+    segments: &[TranscriptSegment],
+    source_lang: &str,
+    target_lang: &str,
+) -> Result<String, WikiError> {
+    let indexed_segments = segments
+        .iter()
+        .enumerate()
+        .map(|(i, segment)| serde_json::json!({ "i": i, "text": segment.text }))
+        .collect::<Vec<_>>();
+    let payload = serde_json::to_string(&indexed_segments).map_err(|source| WikiError::Json {
+        action: "serialize translation prompt",
+        path: None,
+        source,
+    })?;
+    Ok(format!(
+        "Translate each transcript segment from {source_lang} to {target_lang}. Return only a JSON array of objects shaped as {{\"i\": number, \"text\": string}} using the same indexes and order.\nSegments: {payload}"
+    ))
+}
+
+fn parse_indexed_translation(text: &str, expected_len: usize) -> Result<Vec<String>, WikiError> {
+    let items: Vec<IndexedTranslation> =
+        serde_json::from_str(text.trim()).map_err(|source| WikiError::Json {
+            action: "parse translation response",
+            path: None,
+            source,
+        })?;
+    let mut translated = vec![None; expected_len];
+    for item in items {
+        if item.i >= expected_len || translated[item.i].is_some() {
+            return Err(WikiError::Config {
+                detail: "translation response indexes did not match transcript segments"
+                    .to_string(),
+            });
+        }
+        translated[item.i] = Some(item.text);
+    }
+    translated
+        .into_iter()
+        .collect::<Option<Vec<_>>>()
+        .ok_or_else(|| WikiError::Config {
+            detail: "translation response omitted transcript segments".to_string(),
+        })
 }
 
 pub(crate) struct ProductionVisionClient {

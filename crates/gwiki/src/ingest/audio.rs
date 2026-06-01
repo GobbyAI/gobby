@@ -63,12 +63,24 @@ pub fn production_transcription_endpoint(
     };
     let route = resolved_transcription_route(context, capability);
     if translate {
-        TranscriptionEndpoint::Unavailable(transcription_degradation(route, translate))
+        let transcribe_route = resolved_transcription_route(context, AiCapability::AudioTranscribe);
+        let text_route = resolved_transcription_route(context, AiCapability::TextGenerate);
+        if route_available(route)
+            || (route_available(transcribe_route) && route_available(text_route))
+        {
+            available_production_transcription_endpoint(context, route, translate)
+        } else {
+            TranscriptionEndpoint::Unavailable(transcription_degradation(route, translate))
+        }
     } else if matches!(route, AiRouting::Daemon | AiRouting::Direct) {
         available_production_transcription_endpoint(context, route, translate)
     } else {
         TranscriptionEndpoint::Unavailable(transcription_degradation(route, translate))
     }
+}
+
+fn route_available(route: AiRouting) -> bool {
+    matches!(route, AiRouting::Daemon | AiRouting::Direct)
 }
 
 #[cfg(feature = "ai")]
@@ -85,11 +97,24 @@ fn resolved_transcription_route(context: &AiContext, capability: AiCapability) -
 fn available_production_transcription_endpoint(
     context: &AiContext,
     _route: AiRouting,
-    _translate: bool,
+    translate: bool,
 ) -> TranscriptionEndpoint<'static> {
-    TranscriptionEndpoint::Available(Box::new(ProductionTranscriptionClient::new(
-        context.clone(),
-    )))
+    let client = Box::new(ProductionTranscriptionClient::new(context.clone()));
+    if translate {
+        TranscriptionEndpoint::Translating {
+            client,
+            target_lang: context
+                .binding(AiCapability::AudioTranslate)
+                .target_lang
+                .clone(),
+            language_hint: context
+                .binding(AiCapability::AudioTranscribe)
+                .language
+                .clone(),
+        }
+    } else {
+        TranscriptionEndpoint::Available(client)
+    }
 }
 
 #[cfg(not(feature = "ai"))]
@@ -166,7 +191,48 @@ fn transcribe_for_markdown(
         TranscriptionEndpoint::Unavailable(degradation) => {
             TranscriptionMarkdownInput::Degraded(degradation)
         }
+        TranscriptionEndpoint::Translating {
+            client,
+            target_lang,
+            language_hint,
+        } => translate_for_markdown(
+            request,
+            client.as_ref(),
+            target_lang.as_deref(),
+            language_hint.as_deref(),
+        ),
     }
+}
+
+#[cfg(feature = "ai")]
+fn translate_for_markdown(
+    request: &TranscriptionRequest<'_>,
+    client: &dyn crate::transcribe::TranscriptionClient,
+    target_lang: Option<&str>,
+    language_hint: Option<&str>,
+) -> TranscriptionMarkdownInput {
+    match crate::ai::translate::translate_audio(request, client, target_lang, language_hint) {
+        Ok(output) => TranscriptionMarkdownInput::Transcribed(output),
+        Err(error) => TranscriptionMarkdownInput::Degraded(TranscriptionDegradation {
+            reason: "translation_error".to_string(),
+            fallback: format!(
+                "Translation failed: {error}; keep raw audio assets and require supplied transcripts."
+            ),
+        }),
+    }
+}
+
+#[cfg(not(feature = "ai"))]
+fn translate_for_markdown(
+    _request: &TranscriptionRequest<'_>,
+    _client: &dyn crate::transcribe::TranscriptionClient,
+    _target_lang: Option<&str>,
+    _language_hint: Option<&str>,
+) -> TranscriptionMarkdownInput {
+    TranscriptionMarkdownInput::Degraded(TranscriptionDegradation {
+        reason: "translation_unavailable".to_string(),
+        fallback: "Translation requires the ai feature.".to_string(),
+    })
 }
 
 fn transcription_degradation(routing: AiRouting, translate: bool) -> TranscriptionDegradation {
@@ -403,6 +469,39 @@ mod tests {
         assert!(markdown.contains("transcription_task: transcribe"));
         assert!(markdown.contains("translated: false"));
         assert!(markdown.contains("[00:00:00] Production routed transcript."));
+    }
+
+    #[cfg(feature = "ai")]
+    #[test]
+    fn production_path_applies_translation() {
+        let response = r#"{"text":"Translated transcript.","source_language":"es","language":"es","model":"whisper-prod","task":"translate","translated":true,"segments":[{"start":0.0,"end":1.25,"text":"Translated transcript."}]}"#;
+        let (api_base, request) = spawn_transcription_server(response);
+        let context = test_context(AiRouting::Direct, Some(api_base));
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut store = MemoryWikiStore::default();
+
+        let result = ingest_audio_with_transcription(
+            temp.path(),
+            &mut store,
+            ScopeIdentity::topic("field-work"),
+            sample_snapshot(),
+            production_transcription_endpoint(&context, true),
+        )
+        .expect("ingest translated audio");
+
+        let request = request.join().expect("request");
+        assert!(request.starts_with("POST /v1/audio/translations HTTP/1.1"));
+        assert!(result.transcription_degradation.is_none());
+
+        let markdown =
+            std::fs::read_to_string(temp.path().join(&result.transcript_path)).expect("markdown");
+        assert!(markdown.contains("transcription_status: transcribed"));
+        assert!(markdown.contains("transcription_language: en"));
+        assert!(markdown.contains("transcription_source_language: es"));
+        assert!(markdown.contains("transcription_target_language: en"));
+        assert!(markdown.contains("transcription_task: translate"));
+        assert!(markdown.contains("translated: true"));
+        assert!(markdown.contains("[00:00:00] Translated transcript."));
     }
 
     #[test]
