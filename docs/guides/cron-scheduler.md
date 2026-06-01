@@ -2,7 +2,7 @@
 
 The cron scheduler runs recurring, one-shot, and manually-triggered automation
 inside the local daemon. It owns scheduled shell commands, agent spawns, pipeline
-runs, handler actions, dispatcher maintenance, and run history.
+runs, handler actions, and run history.
 
 ## Mental Model
 
@@ -73,11 +73,9 @@ The executor supports these action types:
 | `agent_spawn` | Start an agent with a prompt and provider settings |
 | `pipeline` | Launch a registered pipeline with inputs |
 | `handler` | Run an internal registered handler |
-| `dispatcher` | Run dispatcher automation |
 
 MCP creation currently exposes `agent_spawn`, `pipeline`, and `shell` as the
-general agent-facing action types. System jobs can use internal action types such
-as `dispatcher`.
+general agent-facing action types.
 
 Pipeline actions may reference tasks by short ref, such as `#123`, in
 `inputs.task_id`; the cron MCP layer resolves the ref to the durable task UUID
@@ -97,17 +95,28 @@ errors, and metadata. Use run history to answer:
 The scheduler also has stale-run recovery so interrupted `running` rows do not
 stay active forever.
 
-## Dispatcher And Nightly Jobs
+Cron history should represent real scheduled jobs. Internal dispatcher and
+pipeline-heartbeat automation is reported through daemon service status, not
+through synthetic `cron_runs`.
 
-The scheduler owns system rows such as `gobby:dispatcher`. Startup reconciliation
-preserves explicit `enabled=false` on protected system rows while ensuring system
-job definitions remain present. Dispatcher and nightly jobs are useful for:
+## System Automation And Nightly Jobs
 
-- Stage-manifest dispatch.
-- Periodic task readiness checks.
-- Project maintenance.
-- Integration sync.
-- Background pipeline orchestration.
+Dispatcher and pipeline-heartbeat automation now lives in `SystemAutomationLoop`,
+controlled by `system_loops.automation.enabled` and
+`system_loops.automation.interval_seconds`. The loop runs daemon-owned
+maintenance, direct project dispatch ticks, and pipeline heartbeat checks without
+creating cron history rows.
+
+Older databases can contain legacy rows such as `gobby:dispatcher` or
+`gobby:pipeline-heartbeat`; treat them as migration leftovers rather than the
+current automation model.
+
+Cron jobs remain the right fit for deterministic recurring work such as:
+
+- Project maintenance commands.
+- Integration sync jobs.
+- Nightly pipelines.
+- Operator-defined recurring checks.
 
 Prefer cron jobs for deterministic recurring work. Prefer workflows or pipelines
 for user-directed multi-step work that needs approval gates or rich state.
@@ -165,6 +174,7 @@ call_tool(server_name="gobby-cron", tool_name="list_cron_jobs", ...)
 - `src/gobby/scheduler/executor.py`: action execution.
 - `src/gobby/storage/cron.py`: cron persistence.
 - `src/gobby/storage/cron_models.py`: cron model types.
+- `src/gobby/system_automation.py`: daemon-owned dispatcher and heartbeat loop.
 - `web/src/components/cron/`: Cron Jobs page.
 
 ## See Also
@@ -175,4 +185,4 @@ call_tool(server_name="gobby-cron", tool_name="list_cron_jobs", ...)
 - [agents.md](agents.md)
 - [observability.md](observability.md)
 
-_Last verified: 2026-05-08_
+_Last verified: 2026-06-01_
