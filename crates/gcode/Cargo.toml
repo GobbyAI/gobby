@@ -22,7 +22,7 @@ path = "src/main.rs"
 
 [dependencies]
 # Internal
-gobby-core = { path = "../gcore", version = "0.3.0", features = ["postgres", "falkor", "qdrant", "search", "indexing", "local_backend"] }
+gobby-core = { path = "../gcore", version = "0.3.0", features = ["postgres", "falkor", "qdrant", "search", "indexing", "local_backend", "ai"] }
 
 # CLI
 clap = { version = "4", features = ["derive"] }

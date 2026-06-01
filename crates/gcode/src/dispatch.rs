@@ -382,9 +382,9 @@ fn run() -> anyhow::Result<()> {
             )
         }
 
-        Command::Outline { file } => {
+        Command::Outline { file, summarize } => {
             ensure_file_fresh(&ctx, cli.no_freshness, &file)?;
-            commands::symbols::outline(&ctx, &file, format, cli.verbose)
+            commands::symbols::outline(&ctx, &file, format, cli.verbose, summarize)
         }
         Command::Symbol { id } => {
             ensure_symbol_fresh(&ctx, cli.no_freshness, &id)?;
