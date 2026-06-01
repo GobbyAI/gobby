@@ -2,7 +2,7 @@
 //!
 //! Reusable vector projection behavior lives in `crate::vector::code_symbols`.
 
-pub use crate::vector::code_symbols::{embed_query, vector_search};
+pub use crate::vector::code_symbols::{embed_query, embed_query_with_source, vector_search};
 
 use crate::config::{CODE_SYMBOL_COLLECTION_PREFIX, Context};
 use crate::visibility;
@@ -14,10 +14,11 @@ pub fn semantic_search(ctx: &Context, query: &str, limit: usize) -> Vec<(String,
     let Some(per_project_limit) = per_project_semantic_limit(limit, project_ids.len()) else {
         return vec![];
     };
-    let Some(embedding_config) = ctx.embedding.as_ref() else {
+    let Some(embedding_source) = crate::vector::code_symbols::embedding_source_from_context(ctx)
+    else {
         return vec![];
     };
-    let Some(query_vector) = embed_query(embedding_config, query) else {
+    let Some(query_vector) = embed_query_with_source(&embedding_source, query) else {
         return vec![];
     };
 

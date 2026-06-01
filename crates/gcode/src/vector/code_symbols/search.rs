@@ -1,6 +1,6 @@
 use crate::config::{CODE_SYMBOL_COLLECTION_PREFIX, Context};
 
-use super::embedding::embed_query;
+use super::embedding::{embed_query_with_source, embedding_source_from_context};
 use super::qdrant::{collection_name, vector_search};
 use super::types::{CodeSymbolVectorSearchHit, CodeSymbolVectorSearchRequest};
 
@@ -16,15 +16,15 @@ pub fn search_code_symbols(
         }
     };
 
-    let embedding_config = match &ctx.embedding {
-        Some(c) => c,
+    let embedding_source = match embedding_source_from_context(ctx) {
+        Some(source) => source,
         None => {
             eprintln!("gcode: semantic vector search skipped: embedding config is missing");
             return vec![];
         }
     };
 
-    let embedding = match embed_query(embedding_config, &request.query) {
+    let embedding = match embed_query_with_source(&embedding_source, &request.query) {
         Some(e) => e,
         None => {
             eprintln!("gcode: semantic vector search skipped: query embedding failed");

@@ -303,6 +303,18 @@ pub(super) fn resolve_embedding_config(
     resolve_embedding_config_from_source(None, &mut source)
 }
 
+pub(crate) fn resolve_ai_context(
+    conn: &mut Client,
+    standalone: Option<StandaloneConfig>,
+    project_id: Option<String>,
+) -> AiContext {
+    let mut source = FallbackConfigSource {
+        postgres: PostgresConfigSource { conn },
+        standalone,
+    };
+    AiContext::resolve(project_id, &mut source)
+}
+
 pub(crate) fn resolve_embedding_config_details(
     conn: &mut Client,
     standalone: Option<StandaloneConfig>,

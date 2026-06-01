@@ -473,7 +473,7 @@ mod tests {
         );
         assert_eq!(
             effective_route_with_probe(&context, AiCapability::Embed, |_| true),
-            AiRouting::Off
+            AiRouting::Daemon
         );
     }
 
@@ -516,26 +516,17 @@ mod tests {
     }
 
     #[test]
-    fn direct_autodiscovers_local_endpoint() {
+    fn auto_uses_explicit_direct_config_when_daemon_unavailable() {
         use crate::config::{AiRouting, AiTuning};
 
-        let mut bindings = crate::ai_context::AiBindings {
-            embed: binding(AiRouting::Auto, None),
-            audio_transcribe: binding(AiRouting::Auto, None),
-            audio_translate: binding(AiRouting::Auto, None),
-            vision_extract: binding(AiRouting::Auto, None),
-            text_generate: binding(AiRouting::Direct, None),
-        };
-        let backend = crate::local_backend::Backend {
-            name: "ollama".into(),
-            url: "http://localhost:11434".into(),
-            probe: "/api/tags".into(),
-            auth_token: "ollama".into(),
-        };
-
-        crate::ai_context::apply_discovered_local_backend(&mut bindings, &backend);
         let context = AiContext {
-            bindings,
+            bindings: crate::ai_context::AiBindings {
+                embed: binding(AiRouting::Auto, None),
+                audio_transcribe: binding(AiRouting::Auto, None),
+                audio_translate: binding(AiRouting::Auto, None),
+                vision_extract: binding(AiRouting::Auto, None),
+                text_generate: binding(AiRouting::Auto, Some("http://direct.test")),
+            },
             tuning: AiTuning {
                 max_concurrency: 1,
                 keep_alive: None,
@@ -549,7 +540,7 @@ mod tests {
                 .binding(AiCapability::TextGenerate)
                 .api_base
                 .as_deref(),
-            Some("http://localhost:11434/v1")
+            Some("http://direct.test")
         );
         assert_eq!(
             effective_route_with_probe(&context, AiCapability::TextGenerate, |_| false),

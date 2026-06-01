@@ -2,8 +2,12 @@ use serde_json::{Value, json};
 use std::collections::{HashMap, hash_map::Entry};
 use std::sync::{Mutex, OnceLock};
 
-use crate::config::EmbeddingConfig;
+use crate::config::{Context, EmbeddingConfig};
+use crate::db;
 use crate::models::Symbol;
+use gobby_core::ai::{daemon, effective_route};
+use gobby_core::ai_context::{AiConfigSource, AiContext, NoPrimaryAiConfigSource};
+use gobby_core::config::AiCapability;
 
 use super::types::VectorLifecycleError;
 
@@ -13,6 +17,136 @@ static EMBEDDING_CLIENTS: OnceLock<Mutex<HashMap<u64, reqwest::blocking::Client>
 
 pub(super) fn dimension_probe_text() -> &'static str {
     DIMENSION_PROBE_TEXT
+}
+
+#[derive(Debug, Clone)]
+pub enum EmbeddingSource {
+    Daemon(Box<AiContext>),
+    Direct(EmbeddingConfig),
+}
+
+impl From<EmbeddingConfig> for EmbeddingSource {
+    fn from(config: EmbeddingConfig) -> Self {
+        Self::Direct(config)
+    }
+}
+
+impl From<AiContext> for EmbeddingSource {
+    fn from(context: AiContext) -> Self {
+        Self::Daemon(Box::new(context))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct EmbeddingBackend {
+    source: EmbeddingSource,
+    direct_client: Option<reqwest::blocking::Client>,
+}
+
+impl EmbeddingBackend {
+    pub fn new(source: EmbeddingSource) -> Result<Self, VectorLifecycleError> {
+        let direct_client = match &source {
+            EmbeddingSource::Direct(config) => {
+                if config.api_base.trim().is_empty() {
+                    return Err(VectorLifecycleError::MissingEmbeddingConfig);
+                }
+                Some(embedding_client(config)?)
+            }
+            EmbeddingSource::Daemon(_) => None,
+        };
+        Ok(Self {
+            source,
+            direct_client,
+        })
+    }
+
+    pub fn embed_text(&self, text: &str) -> Result<Vec<f32>, VectorLifecycleError> {
+        let texts = vec![text.to_string()];
+        let mut embeddings = self.embed_text_batch(&texts)?;
+        embeddings.pop().ok_or_else(|| {
+            VectorLifecycleError::EmbeddingResponse("embedding response was empty".to_string())
+        })
+    }
+
+    pub fn embed_query(&self, text: &str) -> Result<Vec<f32>, VectorLifecycleError> {
+        match &self.source {
+            EmbeddingSource::Direct(config) => {
+                let prefix = config.query_prefix.as_deref().unwrap_or("").trim();
+                let input = if prefix.is_empty() {
+                    text.to_string()
+                } else {
+                    format!("{prefix} {text}")
+                };
+                let client = self.direct_client.as_ref().ok_or_else(|| {
+                    VectorLifecycleError::EmbeddingResponse(
+                        "direct embedding client is not initialized".to_string(),
+                    )
+                })?;
+                embed_text(client, config, &input)
+            }
+            EmbeddingSource::Daemon(context) => {
+                let texts = vec![text.to_string()];
+                let result = daemon::embed_via_daemon(context, &texts, true)
+                    .map_err(|error| VectorLifecycleError::EmbeddingResponse(error.to_string()))?;
+                result.embeddings.into_iter().next().ok_or_else(|| {
+                    VectorLifecycleError::EmbeddingResponse(
+                        "daemon embedding response was empty".to_string(),
+                    )
+                })
+            }
+        }
+    }
+
+    pub fn embed_text_batch(
+        &self,
+        texts: &[String],
+    ) -> Result<Vec<Vec<f32>>, VectorLifecycleError> {
+        match &self.source {
+            EmbeddingSource::Direct(config) => {
+                let client = self.direct_client.as_ref().ok_or_else(|| {
+                    VectorLifecycleError::EmbeddingResponse(
+                        "direct embedding client is not initialized".to_string(),
+                    )
+                })?;
+                embed_text_batch(client, config, texts)
+            }
+            EmbeddingSource::Daemon(context) => daemon::embed_via_daemon(context, texts, false)
+                .map(|result| result.embeddings)
+                .map_err(|error| VectorLifecycleError::EmbeddingResponse(error.to_string())),
+        }
+    }
+}
+
+pub fn embedding_source_from_context(ctx: &Context) -> Option<EmbeddingSource> {
+    let ai_context = resolve_embedding_ai_context(ctx);
+    match effective_route(&ai_context, AiCapability::Embed) {
+        gobby_core::config::AiRouting::Off => None,
+        gobby_core::config::AiRouting::Daemon => {
+            Some(EmbeddingSource::Daemon(Box::new(ai_context)))
+        }
+        gobby_core::config::AiRouting::Direct => ctx.embedding.clone().map(EmbeddingSource::Direct),
+        gobby_core::config::AiRouting::Auto => None,
+    }
+}
+
+fn resolve_embedding_ai_context(ctx: &Context) -> AiContext {
+    let standalone = crate::config::read_standalone_config_optional();
+    if let Ok(mut conn) = db::connect_readonly(&ctx.database_url) {
+        return crate::config::resolve_ai_context(
+            &mut conn,
+            standalone,
+            Some(ctx.project_id.clone()),
+        );
+    }
+
+    let mut source = AiConfigSource::with_primary(NoPrimaryAiConfigSource, standalone);
+    let mut context = AiContext::resolve(Some(ctx.project_id.clone()), &mut source);
+    if let Some(embedding) = &ctx.embedding {
+        context.bindings.embed.api_base = Some(embedding.api_base.clone());
+        context.bindings.embed.model = Some(embedding.model.clone());
+        context.bindings.embed.api_key = embedding.api_key.clone();
+    }
+    context
 }
 
 pub fn embedding_client(
@@ -190,6 +324,23 @@ pub fn embed_query(config: &EmbeddingConfig, text: &str) -> Option<Vec<f32>> {
         }
     };
     match embed_text(&client, config, &input) {
+        Ok(embedding) => Some(embedding),
+        Err(error) => {
+            eprintln!("gcode: query embedding failed: {error}");
+            None
+        }
+    }
+}
+
+pub fn embed_query_with_source(source: &EmbeddingSource, text: &str) -> Option<Vec<f32>> {
+    let backend = match EmbeddingBackend::new(source.clone()) {
+        Ok(backend) => backend,
+        Err(error) => {
+            eprintln!("gcode: query embedding failed: {error}");
+            return None;
+        }
+    };
+    match backend.embed_query(text) {
         Ok(embedding) => Some(embedding),
         Err(error) => {
             eprintln!("gcode: query embedding failed: {error}");

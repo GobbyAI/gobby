@@ -19,7 +19,7 @@ qdrant = ["dep:reqwest", "dep:urlencoding"]
 indexing = ["dep:ignore", "dep:sha2"]
 search = []
 local_backend = ["dep:ureq"]
-ai = ["dep:reqwest", "dep:base64", "dep:bytes", "reqwest/multipart", "local_backend"]
+ai = ["dep:reqwest", "dep:base64", "dep:bytes", "dep:ureq", "reqwest/multipart"]
 full = ["postgres", "falkor", "qdrant", "indexing", "search", "ai"]
 
 [dependencies]

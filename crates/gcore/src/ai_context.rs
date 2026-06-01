@@ -50,11 +50,6 @@ impl AiContext {
             bindings.force_routing(routing);
         }
 
-        #[cfg(feature = "local_backend")]
-        if !options.no_ai {
-            apply_local_backend_discovery(&mut bindings);
-        }
-
         if tuning.max_concurrency == 0 {
             tuning.max_concurrency = 1;
         }
@@ -128,27 +123,14 @@ impl AiBindings {
     }
 }
 
-#[cfg(any(test, feature = "local_backend"))]
+#[cfg(test)]
 const LOCAL_BACKEND_CAPABILITIES: [AiCapability; 3] = [
     AiCapability::Embed,
     AiCapability::VisionExtract,
     AiCapability::TextGenerate,
 ];
 
-#[cfg(feature = "local_backend")]
-const LOCAL_BACKEND_DISCOVERY_TIMEOUT_MS: u64 = 500;
-
-#[cfg(feature = "local_backend")]
-fn apply_local_backend_discovery(bindings: &mut AiBindings) {
-    let backends = crate::local_backend::default_backends();
-    if let Some(backend) =
-        crate::local_backend::detect_backend(&backends, LOCAL_BACKEND_DISCOVERY_TIMEOUT_MS)
-    {
-        apply_discovered_local_backend(bindings, &backend);
-    }
-}
-
-#[cfg(any(test, feature = "local_backend"))]
+#[cfg(test)]
 pub(crate) fn apply_discovered_local_backend(
     bindings: &mut AiBindings,
     backend: &crate::local_backend::Backend,
@@ -162,7 +144,7 @@ pub(crate) fn apply_discovered_local_backend(
     }
 }
 
-#[cfg(any(test, feature = "local_backend"))]
+#[cfg(test)]
 fn binding_needs_local_api_base(binding: &CapabilityBinding) -> bool {
     matches!(binding.routing, AiRouting::Auto | AiRouting::Direct)
         && binding
@@ -707,6 +689,31 @@ ai:
         ] {
             assert_eq!(route(&disabled, capability), AiRouting::Off);
         }
+    }
+
+    #[test]
+    fn resolve_does_not_discover_local_backend_endpoints() {
+        let source = TestSource::with_values([
+            (ai_keys::EMBEDDINGS_ROUTING, "auto"),
+            (ai_keys::VISION_EXTRACT_ROUTING, "direct"),
+            (ai_keys::TEXT_GENERATE_ROUTING, "direct"),
+        ]);
+        let mut source = AiConfigSource::with_primary(source, None);
+
+        let context = AiContext::resolve(None, &mut source);
+
+        assert_eq!(route(&context, AiCapability::Embed), AiRouting::Auto);
+        assert_eq!(
+            route(&context, AiCapability::VisionExtract),
+            AiRouting::Direct
+        );
+        assert_eq!(
+            route(&context, AiCapability::TextGenerate),
+            AiRouting::Direct
+        );
+        assert_eq!(context.binding(AiCapability::Embed).api_base, None);
+        assert_eq!(context.binding(AiCapability::VisionExtract).api_base, None);
+        assert_eq!(context.binding(AiCapability::TextGenerate).api_base, None);
     }
 
     #[test]

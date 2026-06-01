@@ -1,15 +1,13 @@
 use reqwest::StatusCode;
 use serde_json::{Map, Value, json};
 
-use crate::config::{
-    CODE_SYMBOL_COLLECTION_PREFIX, CodeVectorSettings, EmbeddingConfig, QdrantConfig,
-};
+use crate::config::{CODE_SYMBOL_COLLECTION_PREFIX, CodeVectorSettings, QdrantConfig};
 use crate::models::Symbol;
 use gobby_core::degradation::ServiceState;
 use gobby_core::qdrant::UpsertRequest;
 
 use super::embedding::{
-    dimension_probe_text, embed_text, embed_text_batch, embedding_client, vector_text_for_symbol,
+    EmbeddingBackend, EmbeddingSource, dimension_probe_text, vector_text_for_symbol,
 };
 use super::qdrant::{
     VECTOR_DISTANCE_COSINE, collection_name, collection_path, delete_vectors_for_filter,
@@ -27,7 +25,7 @@ pub struct CodeSymbolVectorLifecycle {
     project_id: String,
     collection: String,
     qdrant: QdrantConfig,
-    embedding: EmbeddingConfig,
+    embedding: EmbeddingBackend,
     settings: CodeVectorSettings,
     probed_vector_size: Option<usize>,
     client: reqwest::blocking::Client,
@@ -56,7 +54,7 @@ impl CodeSymbolVectorLifecycle {
     pub fn new(
         project_id: String,
         qdrant: QdrantConfig,
-        embedding: EmbeddingConfig,
+        embedding: impl Into<EmbeddingSource>,
         settings: CodeVectorSettings,
     ) -> Result<Self, VectorLifecycleError> {
         if qdrant
@@ -67,12 +65,10 @@ impl CodeSymbolVectorLifecycle {
         {
             return Err(VectorLifecycleError::MissingQdrantConfig);
         }
-        if embedding.api_base.trim().is_empty() {
-            return Err(VectorLifecycleError::MissingEmbeddingConfig);
-        }
 
         let collection = collection_name(CODE_SYMBOL_COLLECTION_PREFIX, &project_id);
-        let client = embedding_client(&embedding)?;
+        let embedding = EmbeddingBackend::new(embedding.into())?;
+        let client = reqwest::blocking::Client::new();
         Ok(Self {
             project_id,
             collection,
@@ -190,8 +186,7 @@ impl CodeSymbolVectorLifecycle {
             None => match self.probed_vector_size {
                 Some(size) => size,
                 None => {
-                    let size =
-                        embed_text(&self.client, &self.embedding, dimension_probe_text())?.len();
+                    let size = self.embedding.embed_text(dimension_probe_text())?.len();
                     self.probed_vector_size = Some(size);
                     size
                 }
@@ -339,7 +334,7 @@ impl CodeSymbolVectorLifecycle {
             .iter()
             .map(vector_text_for_symbol)
             .collect::<Vec<_>>();
-        let vectors = embed_text_batch(&self.client, &self.embedding, &texts)?;
+        let vectors = self.embedding.embed_text_batch(&texts)?;
         if vectors.len() != symbols.len() {
             return Err(VectorLifecycleError::EmbeddingResponse(format!(
                 "embedding batch returned {} vector(s) for {} symbol(s)",

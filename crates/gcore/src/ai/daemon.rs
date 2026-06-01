@@ -16,12 +16,20 @@ const LOCAL_TOKEN_HEADER: &str = "X-Gobby-Local-Token";
 const VOICE_TRANSCRIBE_PATH: &str = "/api/voice/transcribe";
 const VISION_EXTRACT_PATH: &str = "/api/llm/vision/extract";
 const TEXT_GENERATE_PATH: &str = "/api/llm/generate";
+const EMBEDDINGS_PATH: &str = "/api/embeddings";
 
 #[derive(Debug, Clone, Copy)]
 pub struct DaemonTranscriptionOptions<'a> {
     pub capability: AiCapability,
     pub language: Option<&'a str>,
     pub prompt: Option<&'a str>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DaemonEmbeddingResult {
+    pub embeddings: Vec<Vec<f32>>,
+    pub model: String,
+    pub dim: usize,
 }
 
 impl Default for DaemonTranscriptionOptions<'_> {
@@ -159,6 +167,43 @@ pub fn generate_via_daemon(
     TextResult::from_wire_json(value)
 }
 
+pub fn embed_via_daemon(
+    cfg: &AiContext,
+    input: &[String],
+    is_query: bool,
+) -> Result<DaemonEmbeddingResult, AiError> {
+    if input.is_empty() {
+        return Ok(DaemonEmbeddingResult {
+            embeddings: Vec::new(),
+            model: String::new(),
+            dim: 0,
+        });
+    }
+
+    let capability = AiCapability::Embed;
+    let client = daemon_client()?;
+    let token = read_local_cli_token()?;
+    let url = daemon_url(EMBEDDINGS_PATH)?;
+    let body = embeddings_request_body(input, is_query);
+    let _permit = cfg.limiter.acquire();
+
+    let value = super::retry_with_backoff(
+        || {
+            let request = with_local_token(
+                client
+                    .post(&url)
+                    .timeout(super::timeout_for(capability))
+                    .json(&body),
+                &token,
+            );
+            super::parse_json_response(request.send().map_err(super::reqwest_error)?)
+        },
+        std::thread::sleep,
+    )?;
+
+    parse_daemon_embeddings(value, input.len())
+}
+
 fn audio_capability(capability: AiCapability) -> Result<AiCapability, AiError> {
     match capability {
         AiCapability::AudioTranscribe | AiCapability::AudioTranslate => Ok(capability),
@@ -262,6 +307,16 @@ fn text_request_body(
     Value::Object(body)
 }
 
+fn embeddings_request_body(input: &[String], is_query: bool) -> Value {
+    let mut body = Map::new();
+    body.insert(
+        "input".to_string(),
+        Value::Array(input.iter().cloned().map(Value::String).collect()),
+    );
+    body.insert("is_query".to_string(), Value::Bool(is_query));
+    Value::Object(body)
+}
+
 fn insert_optional(body: &mut Map<String, Value>, name: &str, value: Option<&str>) {
     if let Some(value) = non_empty(value) {
         body.insert(name.to_string(), Value::String(value.to_string()));
@@ -302,6 +357,65 @@ fn legacy_text_only(value: &Value) -> Option<String> {
         .get("text")
         .and_then(Value::as_str)
         .map(str::to_string)
+}
+
+fn parse_daemon_embeddings(
+    value: Value,
+    expected_len: usize,
+) -> Result<DaemonEmbeddingResult, AiError> {
+    let model = value
+        .get("model")
+        .and_then(Value::as_str)
+        .ok_or_else(|| AiError::parse_failure("daemon embedding response missing model"))?
+        .to_string();
+    let dim = value
+        .get("dim")
+        .and_then(Value::as_u64)
+        .and_then(|dim| usize::try_from(dim).ok())
+        .ok_or_else(|| AiError::parse_failure("daemon embedding response missing dim"))?;
+    let embeddings = value
+        .get("embeddings")
+        .and_then(Value::as_array)
+        .ok_or_else(|| AiError::parse_failure("daemon embedding response missing embeddings"))?;
+    if embeddings.len() != expected_len {
+        return Err(AiError::parse_failure(format!(
+            "daemon embedding response returned {} vector(s) for {} input(s)",
+            embeddings.len(),
+            expected_len
+        )));
+    }
+
+    let embeddings = embeddings
+        .iter()
+        .map(|embedding| parse_daemon_embedding(embedding, dim))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(DaemonEmbeddingResult {
+        embeddings,
+        model,
+        dim,
+    })
+}
+
+fn parse_daemon_embedding(value: &Value, dim: usize) -> Result<Vec<f32>, AiError> {
+    let vector = value
+        .as_array()
+        .ok_or_else(|| AiError::parse_failure("daemon embedding item is not an array"))?
+        .iter()
+        .map(|value| {
+            value.as_f64().map(|value| value as f32).ok_or_else(|| {
+                AiError::parse_failure("daemon embedding array contains a non-number")
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if vector.len() != dim {
+        return Err(AiError::parse_failure(format!(
+            "daemon embedding returned {} dimension(s), expected {}",
+            vector.len(),
+            dim
+        )));
+    }
+    Ok(vector)
 }
 
 #[cfg(test)]
@@ -378,6 +492,62 @@ mod tests {
         assert_eq!(body["provider"], "daemon-provider");
         assert_eq!(body["model"], "daemon-model");
         assert!(body.get("project_id").is_none());
+    }
+
+    #[test]
+    fn embeddings_post_preserves_batch_and_local_token() {
+        let (port, request) =
+            spawn_server(r#"{"embeddings":[[0.1,0.2],[0.3,0.4]],"model":"embed-model","dim":2}"#);
+        let home = temp_home();
+        let _env = EnvGuard::set_home(home.path());
+        write_daemon_files(home.path(), port, "embed-token");
+        let cfg = test_context(Some("project-123"));
+        let input = vec!["same".to_string(), "same".to_string()];
+
+        let result = embed_via_daemon(&cfg, &input, true).unwrap();
+        let request = request.join().unwrap();
+        let body = request_body_json(&request);
+
+        assert!(request.starts_with("POST /api/embeddings HTTP/1.1"));
+        assert!(has_header(&request, LOCAL_TOKEN_HEADER, "embed-token"));
+        assert_eq!(body["input"], serde_json::json!(["same", "same"]));
+        assert_eq!(body["is_query"], true);
+        assert_eq!(result.model, "embed-model");
+        assert_eq!(result.dim, 2);
+        assert_eq!(result.embeddings, vec![vec![0.1, 0.2], vec![0.3, 0.4]]);
+    }
+
+    #[test]
+    fn embedding_response_validates_count_and_dimension() {
+        let wrong_count = parse_daemon_embeddings(
+            serde_json::json!({
+                "embeddings": [[0.1, 0.2]],
+                "model": "embed-model",
+                "dim": 2
+            }),
+            2,
+        )
+        .expect_err("count mismatch rejected");
+        assert!(
+            wrong_count
+                .to_string()
+                .contains("returned 1 vector(s) for 2 input(s)")
+        );
+
+        let wrong_dim = parse_daemon_embeddings(
+            serde_json::json!({
+                "embeddings": [[0.1]],
+                "model": "embed-model",
+                "dim": 2
+            }),
+            1,
+        )
+        .expect_err("dimension mismatch rejected");
+        assert!(
+            wrong_dim
+                .to_string()
+                .contains("returned 1 dimension(s), expected 2")
+        );
     }
 
     #[test]

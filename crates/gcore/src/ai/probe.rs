@@ -67,9 +67,7 @@ pub fn capability_status_route(capability: AiCapability) -> Option<CapabilitySta
         AiCapability::AudioTranscribe | AiCapability::AudioTranslate => "/api/voice/status",
         AiCapability::VisionExtract => "/api/llm/vision/status",
         AiCapability::TextGenerate => "/api/llm/status",
-        // Embeddings currently have direct local/OpenAI-compatible probes, but
-        // the daemon does not expose a stable HTTP status route for them.
-        AiCapability::Embed => return None,
+        AiCapability::Embed => "/api/embeddings/status",
     };
 
     Some(CapabilityStatusRoute {
@@ -315,6 +313,10 @@ mod tests {
         assert_eq!(
             capability_status_route(AiCapability::TextGenerate).map(|route| route.path),
             Some("/api/llm/status")
+        );
+        assert_eq!(
+            capability_status_route(AiCapability::Embed).map(|route| route.path),
+            Some("/api/embeddings/status")
         );
 
         let report = probe_daemon_capabilities_with("http://daemon.test", &FakeTransport::new([]));

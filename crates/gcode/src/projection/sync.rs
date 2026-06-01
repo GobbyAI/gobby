@@ -1,7 +1,9 @@
 use crate::config::Context;
 use crate::db;
 use crate::graph::code_graph::{self, GraphReadError};
-use crate::vector::code_symbols::{self, CodeSymbolVectorLifecycle, VectorLifecycleError};
+use crate::vector::code_symbols::{
+    self, CodeSymbolVectorLifecycle, VectorLifecycleError, embedding_source_from_context,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -290,10 +292,8 @@ fn vector_lifecycle_from_context(
         .qdrant
         .clone()
         .ok_or(VectorLifecycleError::MissingQdrantConfig)?;
-    let embedding = ctx
-        .embedding
-        .clone()
-        .ok_or(VectorLifecycleError::MissingEmbeddingConfig)?;
+    let embedding =
+        embedding_source_from_context(ctx).ok_or(VectorLifecycleError::MissingEmbeddingConfig)?;
     CodeSymbolVectorLifecycle::new(
         ctx.project_id.clone(),
         qdrant,

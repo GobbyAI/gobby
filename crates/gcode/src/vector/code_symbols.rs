@@ -6,7 +6,8 @@ mod search;
 mod types;
 
 pub use embedding::{
-    embed_query, embed_text, embed_text_batch, embedding_client, probe_embedding_dim,
+    EmbeddingBackend, EmbeddingSource, embed_query, embed_query_with_source, embed_text,
+    embed_text_batch, embedding_client, embedding_source_from_context, probe_embedding_dim,
     vector_text_for_symbol,
 };
 pub use lifecycle::{CodeSymbolVectorLifecycle, lifecycle_status, resolve_lifecycle_qdrant_config};

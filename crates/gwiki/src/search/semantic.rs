@@ -2,6 +2,10 @@ use std::path::PathBuf;
 #[cfg(feature = "rustls")]
 use std::time::Duration;
 
+#[cfg(feature = "ai")]
+use gobby_core::ai::daemon;
+#[cfg(feature = "ai")]
+use gobby_core::ai_context::AiContext;
 use gobby_core::config::{EmbeddingConfig, QdrantConfig};
 use gobby_core::degradation::{DegradationKind, ServiceState};
 use gobby_core::qdrant::{CollectionScope, SearchHit, SearchRequest, collection_name};
@@ -35,9 +39,16 @@ pub trait SemanticSearchBackend {
 pub trait QueryEmbedder {
     fn embed_query(
         &mut self,
-        config: &EmbeddingConfig,
+        embedding: &SemanticEmbedding,
         query: &str,
     ) -> Result<Vec<f32>, SearchError>;
+}
+
+#[derive(Debug, Clone)]
+pub enum SemanticEmbedding {
+    Direct(EmbeddingConfig),
+    #[cfg(feature = "ai")]
+    Daemon(Box<AiContext>),
 }
 
 pub trait VectorSearchBackend {
@@ -51,7 +62,7 @@ pub trait VectorSearchBackend {
 
 pub fn search_semantic<E, V>(
     request: SemanticSearchRequest,
-    embedding: Option<&EmbeddingConfig>,
+    embedding: Option<&SemanticEmbedding>,
     qdrant: Option<&QdrantConfig>,
     embedder: &mut E,
     vector_backend: &mut V,
@@ -77,7 +88,11 @@ where
         return Ok(degraded("qdrant", ServiceState::NotConfigured));
     }
 
-    let embedding_query = semantic_embedding_query(embedding, &request.query);
+    let embedding_query = match embedding {
+        SemanticEmbedding::Direct(config) => semantic_embedding_query(config, &request.query),
+        #[cfg(feature = "ai")]
+        SemanticEmbedding::Daemon(_) => request.query.clone(),
+    };
     let vector = match embedder.embed_query(embedding, &embedding_query) {
         Ok(vector) if !vector.is_empty() => vector,
         Ok(_) => return Ok(degraded("embeddings", ServiceState::NotConfigured)),
@@ -155,7 +170,7 @@ pub fn payload_filter(scope: &SearchScope) -> Value {
 }
 
 pub struct GobbySemanticBackend<E, V> {
-    embedding: Option<EmbeddingConfig>,
+    embedding: Option<SemanticEmbedding>,
     qdrant: Option<QdrantConfig>,
     embedder: E,
     vector_backend: V,
@@ -163,7 +178,7 @@ pub struct GobbySemanticBackend<E, V> {
 
 impl<E, V> GobbySemanticBackend<E, V> {
     pub fn new(
-        embedding: Option<EmbeddingConfig>,
+        embedding: Option<SemanticEmbedding>,
         qdrant: Option<QdrantConfig>,
         embedder: E,
         vector_backend: V,
@@ -222,52 +237,74 @@ impl OpenAiEmbeddingBackend {
 impl QueryEmbedder for OpenAiEmbeddingBackend {
     fn embed_query(
         &mut self,
-        config: &EmbeddingConfig,
+        embedding: &SemanticEmbedding,
         query: &str,
     ) -> Result<Vec<f32>, SearchError> {
-        let url = format!("{}/embeddings", config.api_base.trim_end_matches('/'));
-        let mut request = self
-            .client
-            .post(url)
-            .timeout(Duration::from_secs(config.timeout_seconds))
-            .json(&json!({
-                "model": config.model,
-                "input": query,
-            }));
-        if let Some(api_key) = &config.api_key {
-            request = request.bearer_auth(api_key);
+        match embedding {
+            SemanticEmbedding::Direct(config) => embed_direct_query(&self.client, config, query),
+            #[cfg(feature = "ai")]
+            SemanticEmbedding::Daemon(context) => {
+                let input = vec![query.to_string()];
+                daemon::embed_via_daemon(context, &input, true)
+                    .map_err(|error| SearchError::Backend(error.to_string()))?
+                    .embeddings
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| {
+                        SearchError::Backend("daemon embedding response was empty".to_string())
+                    })
+            }
         }
-
-        let response = request
-            .send()
-            .map_err(|error| SearchError::Backend(error.to_string()))?;
-        let status = response.status();
-        if !status.is_success() {
-            let body = response
-                .text()
-                .unwrap_or_else(|error| format!("<failed to read response body: {error}>"));
-            return Err(SearchError::Backend(format!(
-                "embedding request failed: HTTP {status}: {body}"
-            )));
-        }
-
-        let data = response
-            .json::<Value>()
-            .map_err(|error| SearchError::Backend(error.to_string()))?;
-        data.get("data")
-            .and_then(Value::as_array)
-            .and_then(|items| items.first())
-            .and_then(|item| item.get("embedding"))
-            .and_then(Value::as_array)
-            .ok_or_else(|| SearchError::Backend("missing data[0].embedding array".to_string()))?
-            .iter()
-            .map(|value| {
-                value.as_f64().map(|value| value as f32).ok_or_else(|| {
-                    SearchError::Backend("embedding array contains a non-number".to_string())
-                })
-            })
-            .collect()
     }
+}
+
+#[cfg(feature = "rustls")]
+fn embed_direct_query(
+    client: &reqwest::blocking::Client,
+    config: &EmbeddingConfig,
+    query: &str,
+) -> Result<Vec<f32>, SearchError> {
+    let url = format!("{}/embeddings", config.api_base.trim_end_matches('/'));
+    let mut request = client
+        .post(url)
+        .timeout(Duration::from_secs(config.timeout_seconds))
+        .json(&json!({
+            "model": config.model,
+            "input": query,
+        }));
+    if let Some(api_key) = &config.api_key {
+        request = request.bearer_auth(api_key);
+    }
+
+    let response = request
+        .send()
+        .map_err(|error| SearchError::Backend(error.to_string()))?;
+    let status = response.status();
+    if !status.is_success() {
+        let body = response
+            .text()
+            .unwrap_or_else(|error| format!("<failed to read response body: {error}>"));
+        return Err(SearchError::Backend(format!(
+            "embedding request failed: HTTP {status}: {body}"
+        )));
+    }
+
+    let data = response
+        .json::<Value>()
+        .map_err(|error| SearchError::Backend(error.to_string()))?;
+    data.get("data")
+        .and_then(Value::as_array)
+        .and_then(|items| items.first())
+        .and_then(|item| item.get("embedding"))
+        .and_then(Value::as_array)
+        .ok_or_else(|| SearchError::Backend("missing data[0].embedding array".to_string()))?
+        .iter()
+        .map(|value| {
+            value.as_f64().map(|value| value as f32).ok_or_else(|| {
+                SearchError::Backend("embedding array contains a non-number".to_string())
+            })
+        })
+        .collect()
 }
 
 #[cfg(not(feature = "rustls"))]
@@ -285,7 +322,7 @@ impl OpenAiEmbeddingBackend {
 impl QueryEmbedder for OpenAiEmbeddingBackend {
     fn embed_query(
         &mut self,
-        _config: &EmbeddingConfig,
+        _embedding: &SemanticEmbedding,
         _query: &str,
     ) -> Result<Vec<f32>, SearchError> {
         Err(SearchError::Backend(
@@ -422,7 +459,7 @@ impl FixedEmbedder {
 impl QueryEmbedder for FixedEmbedder {
     fn embed_query(
         &mut self,
-        _config: &EmbeddingConfig,
+        _embedding: &SemanticEmbedding,
         query: &str,
     ) -> Result<Vec<f32>, SearchError> {
         self.queries.push(query.to_string());
@@ -494,7 +531,7 @@ mod tests {
                 scope: SearchScope::project("project-1"),
                 limit: 5,
             },
-            Some(&embedding),
+            Some(&SemanticEmbedding::Direct(embedding)),
             Some(&qdrant),
             &mut embedder,
             &mut vector,
@@ -521,6 +558,68 @@ mod tests {
                 ]
             }))
         );
+    }
+
+    #[cfg(feature = "ai")]
+    #[test]
+    fn semantic_search_daemon_embedding_uses_raw_query() {
+        let qdrant = QdrantConfig {
+            url: Some("http://qdrant.local".to_string()),
+            api_key: None,
+        };
+        let mut embedder = FixedEmbedder::new(vec![0.1, 0.2, 0.3]);
+        let mut vector =
+            RecordingVectorBackend::new(vec![vector_hit("doc-1", "project", "project-1")]);
+
+        let outcome = search_semantic(
+            SemanticSearchRequest {
+                query: "ownership".to_string(),
+                scope: SearchScope::project("project-1"),
+                limit: 5,
+            },
+            Some(&SemanticEmbedding::Daemon(Box::new(test_ai_context()))),
+            Some(&qdrant),
+            &mut embedder,
+            &mut vector,
+        )
+        .expect("semantic search succeeds");
+
+        assert_eq!(outcome.hits.len(), 1);
+        assert_eq!(embedder.queries, vec!["ownership"]);
+    }
+
+    #[cfg(feature = "ai")]
+    fn test_ai_context() -> AiContext {
+        use gobby_core::ai_context::{AiBindings, AiLimiter};
+        use gobby_core::config::{AiRouting, AiTuning, CapabilityBinding};
+
+        let binding = CapabilityBinding {
+            routing: AiRouting::Daemon,
+            transport: None,
+            api_base: None,
+            api_key: None,
+            model: None,
+            provider: None,
+            task: None,
+            language: None,
+            target_lang: None,
+        };
+
+        AiContext {
+            bindings: AiBindings {
+                embed: binding.clone(),
+                audio_transcribe: binding.clone(),
+                audio_translate: binding.clone(),
+                vision_extract: binding.clone(),
+                text_generate: binding,
+            },
+            tuning: AiTuning {
+                max_concurrency: 1,
+                keep_alive: None,
+            },
+            limiter: AiLimiter::new(1),
+            project_id: Some("project-1".to_string()),
+        }
     }
 
     fn vector_hit(id: &str, scope_kind: &str, scope_value: &str) -> gobby_core::qdrant::SearchHit {
