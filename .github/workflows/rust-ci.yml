@@ -91,5 +91,8 @@ jobs:
       - name: Test (gcode, no embeddings)
         run: cargo test -p gobby-code --no-default-features
 
+      - name: Test codewiki (gcode, no embeddings)
+        run: cargo test -p gobby-code --no-default-features codewiki
+
       - name: Build workspace (without embeddings)
         run: cargo build --workspace --no-default-features
