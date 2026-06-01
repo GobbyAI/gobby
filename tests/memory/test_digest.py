@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gobby.llm.base import LLMProviderCancellation
 from gobby.memory.digest import (
     _build_heuristic_title,
     _get_next_turn_number,
@@ -467,6 +468,34 @@ class TestBuildTurnAndDigest:
         provider = mock_llm_service.get_default_provider.return_value
         assert provider.generate_text.await_count == 1
         assert provider.generate_text.await_args.kwargs["caller"] == "memory.turn_record"
+
+    @pytest.mark.asyncio
+    async def test_provider_shutdown_cancellation_returns_cancelled_without_error_log(
+        self,
+        mock_memory_manager,
+        mock_session_manager,
+        mock_llm_service,
+        caplog,
+    ):
+        provider = mock_llm_service.get_default_provider.return_value
+        provider.generate_text.side_effect = LLMProviderCancellation(
+            "generate_text[memory.turn_record] cancelled: provider exited [exit_code=143]"
+        )
+
+        with caplog.at_level(logging.INFO):
+            result = await build_turn_and_digest(
+                memory_manager=mock_memory_manager,
+                session_manager=mock_session_manager,
+                session_id="session-123",
+                prompt_text="Summarize this turn",
+                llm_service=mock_llm_service,
+            )
+
+        assert result is not None
+        assert result["cancelled"] is True
+        assert "exit_code=143" in result["reason"]
+        mock_session_manager.persist_digest_state.assert_not_called()
+        assert not [record for record in caplog.records if record.levelno >= logging.ERROR]
 
     @pytest.mark.asyncio
     async def test_digest_persistence_failure_raises_without_legacy_writes(

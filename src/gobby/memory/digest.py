@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NoReturn, Protocol
 
+from gobby.llm.base import LLMProviderCancellation
 from gobby.sync.export_context import in_jsonl_export_context
 from gobby.utils.json_helpers import extract_json_object
 
@@ -64,6 +65,15 @@ class SessionTitlePolicy(Protocol):
 
 class _DigestPersistenceError(RuntimeError):
     """Raised when digest persistence would leave partial session state."""
+
+
+def _provider_cancelled_result(session_id: str, exc: LLMProviderCancellation) -> dict[str, Any]:
+    logger.info(
+        "build_turn_and_digest: cancelled during provider shutdown for session %s: %s",
+        session_id,
+        exc,
+    )
+    return {"cancelled": True, "reason": str(exc)}
 
 
 async def memory_sync_import(memory_sync_manager: Any) -> dict[str, Any]:
@@ -830,6 +840,8 @@ async def build_turn_and_digest(
                     llm_service=llm_service,
                     digest_config=digest_config,
                 )
+            except LLMProviderCancellation as e:
+                return _provider_cancelled_result(session_id, e)
             except Exception as e:
                 logger.warning(f"build_turn_and_digest: Title synthesis failed: {e}")
                 return None
@@ -906,6 +918,8 @@ async def build_turn_and_digest(
 
     except _DigestPersistenceError:
         raise
+    except LLMProviderCancellation as e:
+        return _provider_cancelled_result(session_id, e)
     except Exception as e:
         logger.error(
             f"build_turn_and_digest: Failed for session {session_id}: {e}",
