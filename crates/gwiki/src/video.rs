@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::ingest::{markdown_metadata, markdown_title, single_line};
 use crate::sources::SourceRecord;
-use crate::transcribe::TranscriptSegment;
+use crate::transcribe::{TranscriptSegment, TranscriptionOutput, TranscriptionRange};
 use crate::{ScopeIdentity, WikiError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -164,8 +164,10 @@ pub struct VideoMarkdownRequest<'a> {
     pub duration_seconds: Option<u32>,
     pub frame_interval_seconds: u32,
     pub frame_samples: &'a [VideoFrameSample],
+    pub frame_image_paths: &'a [PathBuf],
     pub frame_descriptions: &'a [VideoFrameDescription],
     pub transcript_segments: &'a [TranscriptSegment],
+    pub transcription: Option<&'a TranscriptionOutput>,
 }
 
 pub fn write_video_derived_markdown(
@@ -248,6 +250,10 @@ fn render_video_derived_markdown(
             request.frame_samples.len().to_string(),
         ),
         (
+            "video_frame_image_count".to_string(),
+            request.frame_image_paths.len().to_string(),
+        ),
+        (
             "video_frame_description_count".to_string(),
             request.frame_descriptions.len().to_string(),
         ),
@@ -259,6 +265,14 @@ fn render_video_derived_markdown(
             "audio_reference".to_string(),
             audio_source_reference.clone(),
         ),
+        (
+            "transcription_status".to_string(),
+            if request.transcription.is_some() {
+                "transcribed".to_string()
+            } else {
+                "unavailable".to_string()
+            },
+        ),
     ];
     if let Some(mime_type) = request.mime_type {
         fields.push(("video_mime_type".to_string(), mime_type.to_string()));
@@ -268,6 +282,45 @@ fn render_video_derived_markdown(
             "video_duration_seconds".to_string(),
             duration_seconds.to_string(),
         ));
+    }
+    if let Some(output) = request.transcription {
+        if let Some(language) = &output.language {
+            fields.push(("transcription_language".to_string(), language.clone()));
+        }
+        if let Some(model) = &output.model {
+            fields.push(("transcription_model".to_string(), model.clone()));
+        }
+        if let Some(source_language) = &output.source_language {
+            fields.push((
+                "transcription_source_language".to_string(),
+                source_language.clone(),
+            ));
+        }
+        if let Some(task) = &output.task {
+            fields.push(("transcription_task".to_string(), task.clone()));
+        }
+        if let Some(target_language) = &output.target_language {
+            fields.push((
+                "transcription_target_language".to_string(),
+                target_language.clone(),
+            ));
+        }
+        fields.push(("translated".to_string(), output.translated.to_string()));
+        if !output.completed_ranges.is_empty() {
+            fields.push((
+                "transcription_completed_ranges".to_string(),
+                format_ranges_ms(&output.completed_ranges),
+            ));
+        }
+        if output.partial {
+            fields.push(("transcription_partial".to_string(), "true".to_string()));
+            if !output.missing_ranges.is_empty() {
+                fields.push((
+                    "transcription_missing_ranges".to_string(),
+                    format_ranges_ms(&output.missing_ranges),
+                ));
+            }
+        }
     }
 
     let mut markdown = {
@@ -299,6 +352,16 @@ fn render_video_derived_markdown(
             markdown.push_str(&sample.timestamp);
             markdown.push_str("] `");
             markdown.push_str(&sample.source_reference);
+            markdown.push_str("`\n");
+        }
+        markdown.push('\n');
+    }
+
+    if !request.frame_image_paths.is_empty() {
+        markdown.push_str("## Frame Images\n\n");
+        for path in request.frame_image_paths {
+            markdown.push_str("- `");
+            markdown.push_str(&path_to_string(path));
             markdown.push_str("`\n");
         }
         markdown.push('\n');
@@ -388,6 +451,14 @@ fn format_timestamp(seconds: u32) -> String {
     let minutes = (seconds % 3600) / 60;
     let seconds = seconds % 60;
     format!("{hours:02}:{minutes:02}:{seconds:02}")
+}
+
+fn format_ranges_ms(ranges: &[TranscriptionRange]) -> String {
+    ranges
+        .iter()
+        .map(|range| format!("{}-{}", range.start_ms, range.end_ms))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn path_to_string(path: &Path) -> String {

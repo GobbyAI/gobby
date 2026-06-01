@@ -174,7 +174,7 @@ pub fn ingest_audio_with_transcription(
     })
 }
 
-fn transcribe_for_markdown(
+pub(crate) fn transcribe_for_markdown(
     request: &TranscriptionRequest<'_>,
     endpoint: TranscriptionEndpoint<'_>,
 ) -> TranscriptionMarkdownInput {
