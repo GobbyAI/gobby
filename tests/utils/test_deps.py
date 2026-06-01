@@ -13,6 +13,7 @@ from gobby.config.embedding_keys import (
     AI_EMBEDDING_DIM_KEY,
     AI_EMBEDDING_MODEL_KEY,
 )
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils import deps
 
 
@@ -44,7 +45,7 @@ def test_get_gobby_version() -> None:
         assert deps.get_gobby_version() is None
 
 
-def test_get_gcode_version(tmp_path) -> None:
+def test_get_gcode_version(tmp_path: Path) -> None:
     with patch.object(Path, "home", return_value=tmp_path):
         stamp = tmp_path / ".gobby" / "bin" / ".gcode-version"
         stamp.parent.mkdir(parents=True)
@@ -61,7 +62,7 @@ def test_get_gcode_version(tmp_path) -> None:
                 assert deps.get_gcode_version() is None
 
 
-def test_get_gsqz_version(tmp_path) -> None:
+def test_get_gsqz_version(tmp_path: Path) -> None:
     with patch.object(Path, "home", return_value=tmp_path):
         stamp = tmp_path / ".gobby" / "bin" / ".gsqz-version"
         stamp.parent.mkdir(parents=True)
@@ -78,7 +79,7 @@ def test_get_gsqz_version(tmp_path) -> None:
                 assert deps.get_gsqz_version() is None
 
 
-def test_get_ghook_version(tmp_path) -> None:
+def test_get_ghook_version(tmp_path: Path) -> None:
     with patch.object(Path, "home", return_value=tmp_path):
         stamp = tmp_path / ".gobby" / "bin" / ".ghook-version"
         stamp.parent.mkdir(parents=True)
@@ -96,7 +97,7 @@ def test_get_ghook_version(tmp_path) -> None:
             assert deps.get_ghook_version() is None
 
 
-def test_get_gloc_version(tmp_path) -> None:
+def test_get_gloc_version(tmp_path: Path) -> None:
     with patch.object(Path, "home", return_value=tmp_path):
         stamp = tmp_path / ".gobby" / "bin" / ".gloc-version"
         stamp.parent.mkdir(parents=True)
@@ -149,7 +150,7 @@ def test_get_droid_cli_version() -> None:
         assert deps.get_droid_cli_version() is None
 
 
-def test_coding_cli_hooks_status(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_coding_cli_hooks_status(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("GOBBY_DROID_HOOKS_FILE", raising=False)
     monkeypatch.delenv("GOBBY_HOOKS_DIR", raising=False)
 
@@ -177,7 +178,7 @@ def test_coding_cli_hooks_status(tmp_path, monkeypatch: pytest.MonkeyPatch) -> N
         assert result["droid"] is True
 
 
-def test_check_hooks_in_file(tmp_path) -> None:
+def test_check_hooks_in_file(tmp_path: Path) -> None:
     f = tmp_path / "settings.json"
     assert deps._check_hooks_in_file(f) is False
     f.write_text("ghook --gobby-owned --cli=codex")
@@ -305,7 +306,7 @@ def test_lmstudio_info_exception() -> None:
 
 
 @pytest.mark.unit
-def test_get_configured_embedding_provider_detects_ollama(temp_db) -> None:
+def test_get_configured_embedding_provider_detects_ollama(temp_db: HubDatabase) -> None:
     from gobby.storage.config_store import ConfigStore
 
     store = ConfigStore(temp_db)
@@ -321,7 +322,7 @@ def test_get_configured_embedding_provider_detects_ollama(temp_db) -> None:
 
 
 @pytest.mark.unit
-def test_get_configured_embedding_provider_detects_lmstudio(temp_db) -> None:
+def test_get_configured_embedding_provider_detects_lmstudio(temp_db: HubDatabase) -> None:
     from gobby.storage.config_store import ConfigStore
 
     store = ConfigStore(temp_db)
@@ -338,7 +339,7 @@ def test_get_configured_embedding_provider_detects_lmstudio(temp_db) -> None:
 
 @pytest.mark.unit
 def test_get_configured_embedding_provider_detects_embedding_api_key(
-    temp_db, mock_machine_id, tmp_path
+    temp_db: HubDatabase, mock_machine_id: str, tmp_path: Path
 ) -> None:
     from gobby.storage.config_store import ConfigStore
     from gobby.storage.secrets import SecretStore
@@ -367,7 +368,9 @@ def test_get_configured_embedding_provider_detects_embedding_api_key(
 
 
 @pytest.mark.unit
-def test_get_configured_embedding_provider_strips_whitespace_values(temp_db) -> None:
+def test_get_configured_embedding_provider_strips_whitespace_values(
+    temp_db: HubDatabase,
+) -> None:
     from gobby.storage.config_store import ConfigStore
 
     store = ConfigStore(temp_db)
@@ -392,7 +395,7 @@ def test_get_configured_embedding_provider_strips_whitespace_values(temp_db) -> 
 
 @pytest.mark.unit
 def test_get_configured_embedding_provider_ignores_whitespace_only_api_key(
-    temp_db,
+    temp_db: HubDatabase,
 ) -> None:
     from gobby.storage.config_store import ConfigStore
 
@@ -418,7 +421,7 @@ def test_get_configured_embedding_provider_ignores_whitespace_only_api_key(
 
 @pytest.mark.unit
 def test_get_configured_embedding_provider_returns_none_without_secret(
-    temp_db, monkeypatch
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from gobby.storage.config_store import ConfigStore
 
@@ -437,7 +440,7 @@ def test_get_configured_embedding_provider_returns_none_without_secret(
 
 
 @pytest.mark.unit
-def test_get_configured_embedding_provider_detects_disabled_state(temp_db) -> None:
+def test_get_configured_embedding_provider_detects_disabled_state(temp_db: HubDatabase) -> None:
     from gobby.storage.config_store import ConfigStore
 
     store = ConfigStore(temp_db)
@@ -454,7 +457,7 @@ def test_get_configured_embedding_provider_detects_disabled_state(temp_db) -> No
 
 @pytest.mark.unit
 def test_get_configured_embedding_provider_disabled_state_overrides_stale_api_base(
-    temp_db,
+    temp_db: HubDatabase,
 ) -> None:
     from gobby.storage.config_store import ConfigStore
 
@@ -471,7 +474,9 @@ def test_get_configured_embedding_provider_disabled_state_overrides_stale_api_ba
 
 
 @pytest.mark.unit
-def test_get_configured_embedding_provider_ignores_invalid_dim_string(temp_db) -> None:
+def test_get_configured_embedding_provider_ignores_invalid_dim_string(
+    temp_db: HubDatabase,
+) -> None:
     from gobby.storage.config_store import ConfigStore
 
     store = ConfigStore(temp_db)
@@ -488,7 +493,7 @@ def test_get_configured_embedding_provider_ignores_invalid_dim_string(temp_db) -
 
 @pytest.mark.unit
 def test_get_configured_embedding_provider_returns_none_when_db_missing(
-    monkeypatch, tmp_path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-env")
 
@@ -552,7 +557,7 @@ def test_collect_all_deps() -> None:
         assert res["dependencies"]["embeddings_provider"] == "lmstudio"
 
 
-def test_file_read_exceptions(tmp_path) -> None:
+def test_file_read_exceptions(tmp_path: Path) -> None:
     with patch("pathlib.Path.read_text", side_effect=OSError):
         with patch.object(Path, "home", return_value=tmp_path):
             stamp = tmp_path / ".gobby" / "bin" / ".gcode-version"

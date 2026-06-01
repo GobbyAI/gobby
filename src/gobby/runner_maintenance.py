@@ -307,6 +307,12 @@ async def tmux_window_name_repair_loop(
         normalized_session_list_limit = default_session_list_limit
     if normalized_session_list_limit < 1:
         normalized_session_list_limit = default_session_list_limit
+    try:
+        normalized_interval_seconds = int(interval_seconds)
+    except (TypeError, ValueError):
+        normalized_interval_seconds = 120
+    if normalized_interval_seconds < 1:
+        normalized_interval_seconds = 120
 
     async def _repair_once() -> None:
         if session_manager is None:
@@ -344,7 +350,7 @@ async def tmux_window_name_repair_loop(
 
     while not is_shutdown_requested():
         try:
-            await asyncio.sleep(interval_seconds)
+            await asyncio.sleep(normalized_interval_seconds)
             await _repair_once()
         except asyncio.CancelledError:
             break

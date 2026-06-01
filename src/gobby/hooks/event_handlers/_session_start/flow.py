@@ -137,7 +137,7 @@ def _reset_agent_context_injection(handler: Any, session_id: str | None) -> None
             session_id,
             {"_agent_context_injected": False},
         )
-    except (json.JSONDecodeError, KeyError, TypeError, psycopg.Error) as e:
+    except (json.JSONDecodeError, KeyError, psycopg.Error) as e:
         handler.logger.warning(f"Failed to reset agent context injection flag: {e}")
 
 
@@ -420,7 +420,7 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
                 session_id,
                 {"task_context": task_context_str},
             )
-        except (json.JSONDecodeError, TypeError, psycopg.Error) as e:
+        except (json.JSONDecodeError, psycopg.Error) as e:
             handler.logger.warning(f"Failed to persist task context: {e}")
 
     if event.task_id:

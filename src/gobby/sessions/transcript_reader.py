@@ -156,7 +156,11 @@ class TranscriptReader:
         path = await self._get_live_transcript_path(session_id, session)
         if path and os.path.isfile(path):
             if _is_json_session_file(path):
-                return await self._legacy_native(session_id, offset, limit, role)
+                try:
+                    return await self._legacy_native(session_id, offset, limit, role)
+                except TranscriptTooLargeError as e:
+                    logger.warning("Skipping oversized native transcript for %s: %s", session_id, e)
+                    return []
             source = await asyncio.to_thread(
                 detect_source_bounded, path, session_source=session.source
             )

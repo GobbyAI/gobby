@@ -2,7 +2,9 @@ import { useCallback, useMemo, useRef, useState } from 'react'
 import type { SetStateAction } from 'react'
 
 import { useWebSocketEvent } from './useWebSocketEvent'
+import { normalizeTokenEventMessage } from './useChat/transportUsageEvents'
 import type { TokenEvent } from '../types/tokens'
+import type { TokenEventMessage } from './useChat/transportEventTypes'
 
 interface Options {
   sessionId?: string | null
@@ -26,49 +28,28 @@ function eventKey(event: TokenEvent): string {
   ].join(':')
 }
 
-function normalizeTokenEvent(data: Record<string, unknown>): TokenEvent | null {
-  if (typeof data.session_id !== 'string' || typeof data.event_at !== 'string') {
-    return null
-  }
-
+function tokenEventFromMessage(data: TokenEventMessage): TokenEvent {
   return {
     session_id: data.session_id,
-    project_id: typeof data.project_id === 'string' ? data.project_id : null,
-    message_id: typeof data.message_id === 'string' ? data.message_id : null,
-    source: typeof data.source === 'string' ? data.source : null,
-    origin: typeof data.origin === 'string' ? data.origin : null,
-    model: typeof data.model === 'string' ? data.model : null,
-    model_family: typeof data.model_family === 'string' ? data.model_family : null,
-    input_tokens: typeof data.input_tokens === 'number' ? data.input_tokens : 0,
-    output_tokens: typeof data.output_tokens === 'number' ? data.output_tokens : 0,
-    cache_creation_tokens:
-      typeof data.cache_creation_tokens === 'number' ? data.cache_creation_tokens : 0,
-    cache_read_tokens:
-      typeof data.cache_read_tokens === 'number' ? data.cache_read_tokens : 0,
-    context_window: typeof data.context_window === 'number' ? data.context_window : null,
+    project_id: data.project_id ?? null,
+    message_id: data.message_id ?? null,
+    source: data.source ?? null,
+    origin: data.origin ?? null,
+    model: data.model ?? null,
+    model_family: data.model_family ?? null,
+    input_tokens: data.input_tokens ?? 0,
+    output_tokens: data.output_tokens ?? 0,
+    cache_creation_tokens: data.cache_creation_tokens ?? 0,
+    cache_read_tokens: data.cache_read_tokens ?? 0,
+    context_window: data.context_window ?? null,
     event_at: data.event_at,
     session_totals:
-      data.session_totals && typeof data.session_totals === 'object'
+      data.session_totals
         ? {
-            input_tokens:
-              typeof (data.session_totals as Record<string, unknown>).input_tokens === 'number'
-                ? ((data.session_totals as Record<string, unknown>).input_tokens as number)
-                : 0,
-            output_tokens:
-              typeof (data.session_totals as Record<string, unknown>).output_tokens === 'number'
-                ? ((data.session_totals as Record<string, unknown>).output_tokens as number)
-                : 0,
-            cache_creation_tokens:
-              typeof (data.session_totals as Record<string, unknown>).cache_creation_tokens ===
-              'number'
-                ? ((data.session_totals as Record<string, unknown>)
-                    .cache_creation_tokens as number)
-                : 0,
-            cache_read_tokens:
-              typeof (data.session_totals as Record<string, unknown>).cache_read_tokens ===
-              'number'
-                ? ((data.session_totals as Record<string, unknown>).cache_read_tokens as number)
-                : 0,
+            input_tokens: data.session_totals.input_tokens ?? 0,
+            output_tokens: data.session_totals.output_tokens ?? 0,
+            cache_creation_tokens: data.session_totals.cache_creation_tokens ?? 0,
+            cache_read_tokens: data.session_totals.cache_read_tokens ?? 0,
           }
         : undefined,
   }
@@ -137,7 +118,8 @@ export function useTokenEventsStream({ sessionId = null, limit = 200 }: Options 
     'token_event',
     useCallback(
       (data: Record<string, unknown>) => {
-        appendEvent(normalizeTokenEvent(data))
+        const tokenEvent = normalizeTokenEventMessage({ ...data, type: 'token_event' })
+        appendEvent(tokenEvent ? tokenEventFromMessage(tokenEvent) : null)
       },
       [appendEvent],
     ),

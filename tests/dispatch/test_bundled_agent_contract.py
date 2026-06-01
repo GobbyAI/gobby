@@ -98,11 +98,14 @@ def test_bundled_agent_mcp_references_match_registered_tool_inventory(
     inventory = _tool_inventory(temp_db, temp_dir, sample_project)
     missing: list[str] = []
     handler_not_allowed: list[str] = []
+    malformed_allowed_tools: list[str] = []
 
     for path in _agent_yaml_files():
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         for step in data.get("steps") or []:
             step_name = step.get("name", "<unnamed>")
+            if "allowed_tools" in step and not _valid_allowed_tools(step.get("allowed_tools")):
+                malformed_allowed_tools.append(f"{path.name}:{step_name}:allowed_tools")
             allowed = step.get("allowed_mcp_tools")
             allowed_set = set(allowed) if isinstance(allowed, list) else None
             for field_name in ("allowed_mcp_tools", "blocked_mcp_tools"):
@@ -118,6 +121,7 @@ def test_bundled_agent_mcp_references_match_registered_tool_inventory(
 
     assert missing == []
     assert handler_not_allowed == []
+    assert malformed_allowed_tools == []
 
 
 def test_bundled_agent_and_skill_assets_do_not_reference_removed_lifecycle_tools() -> None:
@@ -208,6 +212,12 @@ def _handler_refs(value: object) -> list[str]:
 def _tool_ref_exists(ref: str, inventory: dict[str, set[str]]) -> bool:
     server, tool = ref.split(":", 1)
     return server in inventory and (tool == "*" or tool in inventory[server])
+
+
+def _valid_allowed_tools(value: object) -> bool:
+    return value == "all" or (
+        isinstance(value, list) and all(isinstance(item, str) for item in value)
+    )
 
 
 def _collect_self_termination_phrase_offenders(

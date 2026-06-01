@@ -487,6 +487,10 @@ async def enforce_window_name_if_unmanaged(session: Any) -> bool:
     lands — notably interactive Claude sessions in a VSCode tmux pane, which keep
     an empty title and otherwise stay frozen on the CLI's startup OSC window name
     (e.g. its version string).
+
+    Returns False when terminal context is missing, the tmux pane is absent, the
+    window cannot be inspected, or the window is already managed and has no
+    unresolved session placeholder.
     """
     tc = parse_terminal_context_value(getattr(session, "terminal_context", None))
     if not tc:

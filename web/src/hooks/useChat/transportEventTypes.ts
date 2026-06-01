@@ -62,26 +62,73 @@ export interface VoiceTranscriptionMessage {
   request_id: string;
 }
 
+export type RawNumericValue = number | string | null;
+
+export interface RawSessionUsageUpdatedMessage {
+  type: "session_usage_updated";
+  session_id: string;
+  project_id?: string | null;
+  model?: string | null;
+  context_window?: RawNumericValue;
+  context_used_tokens?: RawNumericValue;
+  context_usage_ratio?: RawNumericValue;
+  context_usage_source?: string | null;
+  context_usage_confidence?: string | null;
+  last_prompt_input_tokens?: RawNumericValue;
+  last_prompt_uncached_input_tokens?: RawNumericValue;
+  last_prompt_cache_read_tokens?: RawNumericValue;
+  last_prompt_cache_creation_tokens?: RawNumericValue;
+  last_completion_output_tokens?: RawNumericValue;
+  usage_input_tokens?: RawNumericValue;
+  usage_output_tokens?: RawNumericValue;
+  usage_cache_creation_tokens?: RawNumericValue;
+  usage_cache_read_tokens?: RawNumericValue;
+  updated_at?: string;
+}
+
 export interface SessionUsageUpdatedMessage {
   type: "session_usage_updated";
   session_id: string;
   project_id?: string | null;
   model?: string | null;
-  context_window?: number | string | null;
-  context_used_tokens?: number | string | null;
-  context_usage_ratio?: number | string | null;
+  context_window?: number | null;
+  context_used_tokens?: number | null;
+  context_usage_ratio?: number | null;
   context_usage_source?: string | null;
   context_usage_confidence?: string | null;
-  last_prompt_input_tokens?: number | string | null;
-  last_prompt_uncached_input_tokens?: number | string | null;
-  last_prompt_cache_read_tokens?: number | string | null;
-  last_prompt_cache_creation_tokens?: number | string | null;
-  last_completion_output_tokens?: number | string | null;
-  usage_input_tokens?: number | string | null;
-  usage_output_tokens?: number | string | null;
-  usage_cache_creation_tokens?: number | string | null;
-  usage_cache_read_tokens?: number | string | null;
+  last_prompt_input_tokens?: number | null;
+  last_prompt_uncached_input_tokens?: number | null;
+  last_prompt_cache_read_tokens?: number | null;
+  last_prompt_cache_creation_tokens?: number | null;
+  last_completion_output_tokens?: number | null;
+  usage_input_tokens?: number | null;
+  usage_output_tokens?: number | null;
+  usage_cache_creation_tokens?: number | null;
+  usage_cache_read_tokens?: number | null;
   updated_at?: string;
+}
+
+export interface RawTokenEventMessage {
+  type: "token_event";
+  session_id: string;
+  project_id?: string | null;
+  message_id?: string | null;
+  source?: string | null;
+  origin?: string | null;
+  event_at: string;
+  model?: string | null;
+  model_family?: string | null;
+  input_tokens?: RawNumericValue;
+  output_tokens?: RawNumericValue;
+  cache_creation_tokens?: RawNumericValue;
+  cache_read_tokens?: RawNumericValue;
+  context_window?: RawNumericValue;
+  session_totals?: {
+    input_tokens?: number | string;
+    output_tokens?: number | string;
+    cache_creation_tokens?: number | string;
+    cache_read_tokens?: number | string;
+  };
 }
 
 export interface TokenEventMessage {
@@ -94,16 +141,16 @@ export interface TokenEventMessage {
   event_at: string;
   model?: string | null;
   model_family?: string | null;
-  input_tokens?: number | string | null;
-  output_tokens?: number | string | null;
-  cache_creation_tokens?: number | string | null;
-  cache_read_tokens?: number | string | null;
-  context_window?: number | string | null;
+  input_tokens?: number | null;
+  output_tokens?: number | null;
+  cache_creation_tokens?: number | null;
+  cache_read_tokens?: number | null;
+  context_window?: number | null;
   session_totals?: {
-    input_tokens?: number | string;
-    output_tokens?: number | string;
-    cache_creation_tokens?: number | string;
-    cache_read_tokens?: number | string;
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_creation_tokens?: number;
+    cache_read_tokens?: number;
   };
 }
 
@@ -253,8 +300,8 @@ export type WebSocketMessage =
   | ChatThinkingMessage
   | ModelSwitchedMessage
   | VoiceTranscriptionMessage
-  | SessionUsageUpdatedMessage
-  | TokenEventMessage
+  | RawSessionUsageUpdatedMessage
+  | RawTokenEventMessage
   | PlanPendingApprovalMessage
   | ModeChangedMessage
   | SessionInfoMessage

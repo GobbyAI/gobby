@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -74,6 +75,32 @@ async def test_repair_loop_normalizes_nonpositive_session_list_limit() -> None:
     )
 
     assert session_manager.calls == [(["active", "paused"], 200)]
+
+
+@pytest.mark.asyncio
+async def test_repair_loop_normalizes_nonpositive_interval_seconds() -> None:
+    """Nonpositive intervals fall back so the repair loop cannot hot-loop."""
+    session_manager = _SessionManager([])
+    sleep_calls: list[float] = []
+    shutdown_checks = 0
+
+    def is_shutdown_requested() -> bool:
+        nonlocal shutdown_checks
+        shutdown_checks += 1
+        return shutdown_checks > 1
+
+    async def sleep(seconds: float) -> None:
+        sleep_calls.append(seconds)
+        raise asyncio.CancelledError
+
+    with patch("gobby.runner_maintenance.asyncio.sleep", sleep):
+        await tmux_window_name_repair_loop(
+            session_manager,
+            is_shutdown_requested,
+            interval_seconds=0,
+        )
+
+    assert sleep_calls == [120]
 
 
 @pytest.mark.asyncio

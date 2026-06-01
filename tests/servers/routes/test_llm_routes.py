@@ -77,6 +77,20 @@ def test_llm_status_returns_registry_snapshot(client: TestClient) -> None:
     assert data["capabilities"]["vision_extract"]["capability"] == "vision_extract"
 
 
+def test_create_llm_router_does_not_run_vision_temp_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+    server_with_llm: MagicMock,
+) -> None:
+    cleanup = MagicMock()
+    monkeypatch.setattr(llm_module, "_run_vision_temp_cleanup_once", cleanup)
+
+    router = create_llm_router(server_with_llm)
+
+    assert router.prefix == "/api/llm"
+    assert any(route.path.endswith("/status") for route in router.routes)
+    cleanup.assert_not_called()
+
+
 def test_generate_selects_acp_backed_provider(
     client: TestClient,
     server_with_llm: MagicMock,
@@ -355,3 +369,35 @@ async def test_vision_temp_cleanup_task_cancels_on_shutdown(
 
     assert app.state.vision_temp_cleanup_task is None
     assert task.cancelled()
+
+
+@pytest.mark.asyncio
+async def test_vision_temp_cleanup_task_replaces_stale_loop_task(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class _StaleTask:
+        cancelled = False
+
+        def done(self) -> bool:
+            return False
+
+        def get_loop(self) -> object:
+            return object()
+
+        def cancel(self) -> None:
+            self.cancelled = True
+
+    monkeypatch.setattr(llm_module.tempfile, "gettempdir", lambda: str(tmp_path))
+    old_task = _StaleTask()
+    app = FastAPI()
+    app.state.vision_temp_cleanup_task = old_task
+
+    llm_module.start_vision_temp_cleanup_task(app)
+    new_task = app.state.vision_temp_cleanup_task
+
+    assert old_task.cancelled is True
+    assert new_task is not old_task
+    assert not new_task.done()
+
+    await llm_module.stop_vision_temp_cleanup_task(app)

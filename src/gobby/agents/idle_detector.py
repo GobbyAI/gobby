@@ -119,6 +119,7 @@ class IdleDetector:
             pattern.search(full_text) for pattern in PromptDetector.QUEUED_MESSAGE_PROMPT_PATTERNS
         )
         has_active_work = any(pattern.search(full_text) for pattern in self.ACTIVE_WORK_PATTERNS)
+        # A queued prompt can be visible while the agent is still working; do not reprompt then.
         if has_queued_message and has_active_work:
             return "active"
 

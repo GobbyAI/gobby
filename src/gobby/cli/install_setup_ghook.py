@@ -68,7 +68,8 @@ def write_ghook_version_stamp(module: Any, bin_dir: Path, version: str) -> None:
 def is_native_ghook_binary(module: Any, ghook_path: Path) -> bool:
     """Return whether the ghook path looks like a native executable."""
     try:
-        header = ghook_path.read_bytes()[:4]
+        with ghook_path.open("rb") as f:
+            header = f.read(4)
     except OSError as e:
         module.logger.debug("ghook: could not inspect existing binary %s: %s", ghook_path, e)
         return False

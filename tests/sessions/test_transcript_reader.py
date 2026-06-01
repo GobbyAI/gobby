@@ -1067,7 +1067,7 @@ class TestTranscriptReaderWindowed:
             await reader.get_rendered_window("sess-1", limit=50, offset=0, order="tail")
 
     @pytest.mark.asyncio
-    async def test_native_json_get_messages_size_guard_raises(
+    async def test_native_json_get_messages_size_guard_returns_empty(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -1093,8 +1093,7 @@ class TestTranscriptReaderWindowed:
         monkeypatch.setattr("gobby.sessions.transcript_reader.NATIVE_JSON_MAX_BYTES", 1)
         reader = TranscriptReader(session_manager)
 
-        with pytest.raises(TranscriptTooLargeError):
-            await reader.get_messages("sess-1", limit=50)
+        assert await reader.get_messages("sess-1", limit=50) == []
 
     @pytest.mark.asyncio
     async def test_count_native_json_size_guard_returns_zero(

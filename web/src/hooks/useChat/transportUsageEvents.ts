@@ -3,6 +3,8 @@ import {
   computeContextUsageFromSessionData,
 } from "./contextUsage";
 import type {
+  RawSessionUsageUpdatedMessage,
+  RawTokenEventMessage,
   SessionUsageUpdatedMessage,
   TokenEventMessage,
 } from "./transportEventTypes";
@@ -23,21 +25,22 @@ function numericValue(value: unknown): number | null {
   return null;
 }
 
-function isFiniteNumeric(value: unknown): boolean {
-  return numericValue(value) !== null;
-}
-
-function optionalNumber(value: unknown): number | undefined {
-  return numericValue(value) ?? undefined;
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isSessionUsageUpdatedMessage(
+function isOptionalNumeric(value: unknown): boolean {
+  return value === undefined || value === null || numericValue(value) !== null;
+}
+
+function normalizedOptionalNumber(value: unknown): number | null | undefined {
+  if (value === undefined || value === null) return value;
+  return numericValue(value);
+}
+
+function isRawSessionUsageUpdatedMessage(
   data: unknown,
-): data is SessionUsageUpdatedMessage {
+): data is RawSessionUsageUpdatedMessage {
   return (
     isRecord(data) &&
     data.type === "session_usage_updated" &&
@@ -56,9 +59,7 @@ function isSessionUsageUpdatedMessage(
       data.last_prompt_cache_read_tokens,
       data.last_prompt_cache_creation_tokens,
       data.last_completion_output_tokens,
-    ].every(
-      (value) => value === undefined || value === null || isFiniteNumeric(value),
-    ) &&
+    ].every(isOptionalNumeric) &&
     (
       data.context_usage_source === undefined ||
       data.context_usage_source === null ||
@@ -72,7 +73,7 @@ function isSessionUsageUpdatedMessage(
   );
 }
 
-function isTokenEventMessage(data: unknown): data is TokenEventMessage {
+function isRawTokenEventMessage(data: unknown): data is RawTokenEventMessage {
   if (
     !isRecord(data) ||
     data.type !== "token_event" ||
@@ -88,11 +89,7 @@ function isTokenEventMessage(data: unknown): data is TokenEventMessage {
     data.cache_read_tokens,
     data.context_window,
   ];
-  if (
-    !numericFields.every(
-      (value) => value === undefined || value === null || isFiniteNumeric(value),
-    )
-  ) {
+  if (!numericFields.every(isOptionalNumeric)) {
     return false;
   }
   if (data.session_totals === undefined || data.session_totals === null) {
@@ -106,7 +103,82 @@ function isTokenEventMessage(data: unknown): data is TokenEventMessage {
     data.session_totals.output_tokens,
     data.session_totals.cache_creation_tokens,
     data.session_totals.cache_read_tokens,
-  ].every((value) => value === undefined || isFiniteNumeric(value));
+  ].every((value) => value === undefined || numericValue(value) !== null);
+}
+
+export function normalizeSessionUsageUpdatedMessage(
+  data: unknown,
+): SessionUsageUpdatedMessage | null {
+  if (!isRawSessionUsageUpdatedMessage(data)) return null;
+  return {
+    type: "session_usage_updated",
+    session_id: data.session_id,
+    project_id: typeof data.project_id === "string" ? data.project_id : null,
+    model: typeof data.model === "string" ? data.model : null,
+    context_window: normalizedOptionalNumber(data.context_window),
+    context_used_tokens: normalizedOptionalNumber(data.context_used_tokens),
+    context_usage_ratio: normalizedOptionalNumber(data.context_usage_ratio),
+    context_usage_source:
+      typeof data.context_usage_source === "string" ? data.context_usage_source : null,
+    context_usage_confidence:
+      typeof data.context_usage_confidence === "string"
+        ? data.context_usage_confidence
+        : null,
+    last_prompt_input_tokens: normalizedOptionalNumber(data.last_prompt_input_tokens),
+    last_prompt_uncached_input_tokens: normalizedOptionalNumber(
+      data.last_prompt_uncached_input_tokens,
+    ),
+    last_prompt_cache_read_tokens: normalizedOptionalNumber(
+      data.last_prompt_cache_read_tokens,
+    ),
+    last_prompt_cache_creation_tokens: normalizedOptionalNumber(
+      data.last_prompt_cache_creation_tokens,
+    ),
+    last_completion_output_tokens: normalizedOptionalNumber(
+      data.last_completion_output_tokens,
+    ),
+    usage_input_tokens: normalizedOptionalNumber(data.usage_input_tokens),
+    usage_output_tokens: normalizedOptionalNumber(data.usage_output_tokens),
+    usage_cache_creation_tokens: normalizedOptionalNumber(
+      data.usage_cache_creation_tokens,
+    ),
+    usage_cache_read_tokens: normalizedOptionalNumber(data.usage_cache_read_tokens),
+    updated_at: data.updated_at,
+  };
+}
+
+function normalizeSessionTotals(
+  totals: RawTokenEventMessage["session_totals"],
+): TokenEventMessage["session_totals"] {
+  if (!totals) return undefined;
+  return {
+    input_tokens: normalizedOptionalNumber(totals.input_tokens) ?? undefined,
+    output_tokens: normalizedOptionalNumber(totals.output_tokens) ?? undefined,
+    cache_creation_tokens:
+      normalizedOptionalNumber(totals.cache_creation_tokens) ?? undefined,
+    cache_read_tokens: normalizedOptionalNumber(totals.cache_read_tokens) ?? undefined,
+  };
+}
+
+export function normalizeTokenEventMessage(data: unknown): TokenEventMessage | null {
+  if (!isRawTokenEventMessage(data)) return null;
+  return {
+    type: "token_event",
+    session_id: data.session_id,
+    project_id: typeof data.project_id === "string" ? data.project_id : null,
+    message_id: typeof data.message_id === "string" ? data.message_id : null,
+    source: typeof data.source === "string" ? data.source : null,
+    origin: typeof data.origin === "string" ? data.origin : null,
+    event_at: data.event_at,
+    model: typeof data.model === "string" ? data.model : null,
+    model_family: typeof data.model_family === "string" ? data.model_family : null,
+    input_tokens: normalizedOptionalNumber(data.input_tokens),
+    output_tokens: normalizedOptionalNumber(data.output_tokens),
+    cache_creation_tokens: normalizedOptionalNumber(data.cache_creation_tokens),
+    cache_read_tokens: normalizedOptionalNumber(data.cache_read_tokens),
+    context_window: normalizedOptionalNumber(data.context_window),
+    session_totals: normalizeSessionTotals(data.session_totals),
+  };
 }
 
 function hasNormalizedContextPayload(data: SessionUsageUpdatedMessage): boolean {
@@ -161,8 +233,8 @@ export function handleSessionUsageUpdated(
   data: Record<string, unknown>,
   ctx: UseChatTransportParams,
 ) {
-  if (!isSessionUsageUpdatedMessage(data)) return;
-  const update = data;
+  const update = normalizeSessionUsageUpdatedMessage(data);
+  if (!update) return;
   const visibleSessionId = ctx.viewingSessionIdRef.current ?? ctx.dbSessionIdRef.current;
   if (update.session_id === visibleSessionId) {
     ctx.markSessionUsageFresh(update.session_id, update.updated_at);
@@ -192,10 +264,7 @@ export function handleSessionUsageUpdated(
         ? {
             ...prev,
             model: typeof update.model === "string" ? update.model : prev.model,
-            contextWindow:
-              optionalNumber(update.context_window) != null
-                ? optionalNumber(update.context_window)!
-                : prev.contextWindow,
+            contextWindow: update.context_window ?? prev.contextWindow,
           }
         : prev,
     );
@@ -205,10 +274,7 @@ export function handleSessionUsageUpdated(
         ? {
             ...prev,
             model: typeof update.model === "string" ? update.model : prev.model,
-            contextWindow:
-              optionalNumber(update.context_window) != null
-                ? optionalNumber(update.context_window)!
-                : prev.contextWindow,
+            contextWindow: update.context_window ?? prev.contextWindow,
           }
         : prev,
     );
@@ -219,22 +285,19 @@ export function handleTokenEvent(
   data: Record<string, unknown>,
   ctx: UseChatTransportParams,
 ) {
-  if (!isTokenEventMessage(data)) return;
-  const eventData = data;
+  const eventData = normalizeTokenEventMessage(data);
+  if (!eventData) return;
   const visibleSessionId = ctx.viewingSessionIdRef.current ?? ctx.dbSessionIdRef.current;
   if (eventData.session_id === visibleSessionId) {
     ctx.markSessionUsageFresh(eventData.session_id, eventData.event_at);
     ctx.setContextUsage((prev) =>
       buildContextUsageFromTotals({
-        totalInputTokens:
-          optionalNumber(eventData.input_tokens) ?? prev.totalInputTokens,
-        outputTokens: optionalNumber(eventData.output_tokens) ?? prev.outputTokens,
-        cacheReadTokens:
-          optionalNumber(eventData.cache_read_tokens) ?? prev.cacheReadTokens,
+        totalInputTokens: eventData.input_tokens ?? prev.totalInputTokens,
+        outputTokens: eventData.output_tokens ?? prev.outputTokens,
+        cacheReadTokens: eventData.cache_read_tokens ?? prev.cacheReadTokens,
         cacheCreationTokens:
-          optionalNumber(eventData.cache_creation_tokens) ??
-          prev.cacheCreationTokens,
-        contextWindow: optionalNumber(eventData.context_window) ?? prev.contextWindow,
+          eventData.cache_creation_tokens ?? prev.cacheCreationTokens,
+        contextWindow: eventData.context_window ?? prev.contextWindow,
         contextUsageSource: "token_event",
         contextUsageConfidence: "reported",
       }),

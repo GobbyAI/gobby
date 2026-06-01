@@ -157,6 +157,16 @@ def matched_successful_validation_pattern(feedback: str | None) -> re.Pattern[st
     if not feedback or matched_required_validation_failure_pattern(feedback) is not None:
         return None
 
+    return _matched_successful_validation_pattern_unchecked(feedback)
+
+
+def _matched_successful_validation_pattern_unchecked(
+    feedback: str | None,
+) -> re.Pattern[str] | None:
+    """Return a success match without applying failure-precedence filtering."""
+    if not feedback:
+        return None
+
     normalized_feedback = _ZERO_FAILURE_TOKEN_RE.sub("", " ".join(feedback.split()))
     searchable_feedback = _QUOTED_FEEDBACK_FRAGMENT_RE.sub("", normalized_feedback)
     for pattern in _SUCCESSFUL_VALIDATION_FEEDBACK_PATTERNS:
@@ -388,8 +398,20 @@ async def validate_leaf_task_with_llm(
     validation_status = result.status
     original_feedback = result.feedback
     matched_failure_pattern = matched_required_validation_failure_pattern(original_feedback)
-    matched_success_pattern = matched_successful_validation_pattern(original_feedback)
-    if result.status == "valid" and matched_failure_pattern is not None:
+    matched_success_pattern = _matched_successful_validation_pattern_unchecked(original_feedback)
+    if matched_failure_pattern is not None and matched_success_pattern is not None:
+        logger.warning(
+            "Validation feedback for task %s contains both failure and "
+            "success evidence; failure takes precedence. Failure pattern: %s. Success "
+            "pattern: %s. Feedback: %s",
+            resolved_id,
+            matched_failure_pattern.pattern,
+            matched_success_pattern.pattern,
+            original_feedback,
+        )
+        if result.status != "pending":
+            validation_status = "invalid"
+    elif result.status == "valid" and matched_failure_pattern is not None:
         logger.warning(
             "Overriding validation status for task %s: LLM returned 'valid' but feedback "
             "admits failure. Pattern: %s. Feedback: %s",

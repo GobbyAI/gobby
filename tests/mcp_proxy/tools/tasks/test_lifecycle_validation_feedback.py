@@ -238,6 +238,49 @@ async def test_valid_llm_result_with_failure_feedback_is_overridden_to_invalid()
 
 
 @pytest.mark.asyncio
+async def test_conflicting_success_and_failure_feedback_prefers_failure() -> None:
+    """Failure evidence wins when feedback also contains explicit success text."""
+    update_task = MagicMock()
+    task = SimpleNamespace(
+        id="task-1",
+        title="Task",
+        description="Description",
+        validation_criteria="Tests pass",
+        category="code",
+    )
+    feedback = (
+        "Required validation gate did not pass. Verified all validation criteria are satisfied."
+    )
+    validator = SimpleNamespace(
+        validate_task=AsyncMock(
+            return_value=TaskValidationResult(
+                status="invalid",
+                feedback=feedback,
+            )
+        )
+    )
+    ctx = SimpleNamespace(task_manager=SimpleNamespace(update_task=update_task))
+
+    result = await validate_leaf_task_with_llm(
+        task,
+        validator,
+        "diff context",
+        None,
+        ctx,
+        "task-1",
+        None,
+    )
+
+    assert result.can_close is False
+    assert result.extra == {"validation_status": "invalid"}
+    update_task.assert_called_once_with(
+        "task-1",
+        validation_status="invalid",
+        validation_feedback=feedback,
+    )
+
+
+@pytest.mark.asyncio
 async def test_valid_llm_result_with_zero_failure_feedback_remains_valid() -> None:
     """A valid status stays valid when feedback only reports zero failures."""
     update_task = MagicMock()

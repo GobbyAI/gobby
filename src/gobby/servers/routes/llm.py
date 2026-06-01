@@ -49,7 +49,6 @@ class TextGeneratePayload(BaseModel):
 
 def create_llm_router(server: HTTPServer) -> APIRouter:
     """Create daemon AI capability routes."""
-    _run_vision_temp_cleanup_once()
     router = APIRouter(prefix="/api/llm", tags=["llm"])
 
     @router.get("/status")
@@ -229,7 +228,9 @@ def start_vision_temp_cleanup_task(app: Any) -> None:
     _run_vision_temp_cleanup_once()
     existing = getattr(app.state, _VISION_TEMP_CLEANUP_TASK_ATTR, None)
     if existing is not None and not existing.done():
-        return
+        if existing.get_loop() is asyncio.get_running_loop():
+            return
+        existing.cancel()
     setattr(
         app.state,
         _VISION_TEMP_CLEANUP_TASK_ATTR,
@@ -240,6 +241,10 @@ def start_vision_temp_cleanup_task(app: Any) -> None:
 async def stop_vision_temp_cleanup_task(app: Any) -> None:
     task = getattr(app.state, _VISION_TEMP_CLEANUP_TASK_ATTR, None)
     if task is None:
+        return
+    if task.get_loop() is not asyncio.get_running_loop():
+        task.cancel()
+        setattr(app.state, _VISION_TEMP_CLEANUP_TASK_ATTR, None)
         return
     task.cancel()
     try:

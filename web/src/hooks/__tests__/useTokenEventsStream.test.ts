@@ -163,4 +163,47 @@ describe("useTokenEventsStream", () => {
       { ...first, context_window: null, project_id: null, session_totals: undefined },
     ]);
   });
+
+  it("normalizes string numeric fields from websocket events", () => {
+    let callback: ((data: Record<string, unknown>) => void) | undefined;
+    mockUseWebSocketEvent.mockImplementation((_eventType, handler) => {
+      callback = handler;
+    });
+
+    const { result } = renderHook(() =>
+      useTokenEventsStream({ sessionId: "sess-1", limit: 50 }),
+    );
+
+    act(() => {
+      callback?.({
+        session_id: "sess-1",
+        event_at: "2026-04-08T12:00:00Z",
+        input_tokens: "128",
+        output_tokens: "11",
+        cache_creation_tokens: "8",
+        cache_read_tokens: "20",
+        context_window: "1000",
+        session_totals: {
+          input_tokens: "256",
+          output_tokens: "22",
+          cache_creation_tokens: "16",
+          cache_read_tokens: "40",
+        },
+      });
+    });
+
+    expect(result.current.events[0]).toMatchObject({
+      input_tokens: 128,
+      output_tokens: 11,
+      cache_creation_tokens: 8,
+      cache_read_tokens: 20,
+      context_window: 1000,
+      session_totals: {
+        input_tokens: 256,
+        output_tokens: 22,
+        cache_creation_tokens: 16,
+        cache_read_tokens: 40,
+      },
+    });
+  });
 });

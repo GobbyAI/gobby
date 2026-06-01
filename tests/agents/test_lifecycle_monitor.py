@@ -73,6 +73,7 @@ def test_idle_check_handler_receives_monitor_database(
     assert monitor._idle_check_handler.db is temp_db
 
 
+@pytest.mark.asyncio
 async def test_refresh_active_run_dispatch_mutexes_extends_expired_attached_mutex(
     agent_run_manager: LocalAgentRunManager,
     session_manager: SessionManager,
