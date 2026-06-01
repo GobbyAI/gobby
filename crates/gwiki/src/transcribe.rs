@@ -198,6 +198,12 @@ fn render_audio_transcript_markdown(
             ));
         }
         fields.push(("translated".to_string(), output.translated.to_string()));
+        if !output.completed_ranges.is_empty() {
+            fields.push((
+                "transcription_completed_ranges".to_string(),
+                format_ranges_ms(&output.completed_ranges),
+            ));
+        }
         if output.partial {
             fields.push(("transcription_partial".to_string(), "true".to_string()));
             if !output.missing_ranges.is_empty() {

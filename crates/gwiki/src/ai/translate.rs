@@ -15,16 +15,16 @@ pub(crate) fn translate_audio(
             Ok(output) => Ok(mark_english_translation(output, language_hint)),
             Err(_) => {
                 let output = client.transcribe(request)?;
-                translate_segments(output, client, &target_lang, language_hint)
+                translate_transcription_segments(output, client, &target_lang, language_hint)
             }
         };
     }
 
     let output = client.transcribe(request)?;
-    translate_segments(output, client, &target_lang, language_hint)
+    translate_transcription_segments(output, client, &target_lang, language_hint)
 }
 
-fn translate_segments(
+pub(crate) fn translate_transcription_segments(
     mut output: TranscriptionOutput,
     client: &dyn TranscriptionClient,
     target_lang: &str,

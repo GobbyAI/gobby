@@ -9,6 +9,7 @@ use crate::WikiError;
 #[derive(Debug)]
 pub struct Chunk {
     pub start_ms: u64,
+    pub end_ms: u64,
     pub path: NamedTempFile,
 }
 
@@ -35,7 +36,16 @@ pub fn split_audio_file(
     window: Duration,
 ) -> Result<Vec<Chunk>, WikiError> {
     let tools = MediaTools::discover()?;
-    split_audio_file_with_tools(audio.as_ref(), window, &tools)
+    split_audio_file_with_tools(audio.as_ref(), window, Duration::ZERO, &tools)
+}
+
+pub fn split_audio_file_with_overlap(
+    audio: impl AsRef<Path>,
+    window: Duration,
+    overlap: Duration,
+) -> Result<Vec<Chunk>, WikiError> {
+    let tools = MediaTools::discover()?;
+    split_audio_file_with_tools(audio.as_ref(), window, overlap, &tools)
 }
 
 #[derive(Debug)]
@@ -70,6 +80,8 @@ fn extract_audio_file_with_ffmpeg(video: &Path, ffmpeg: &Path) -> Result<NamedTe
         .arg("1")
         .arg("-ar")
         .arg("16000")
+        .arg("-c:a")
+        .arg("pcm_s16le")
         .arg("-f")
         .arg("wav")
         .arg(audio.path());
@@ -115,15 +127,28 @@ fn sample_frame_images_with_tools(
 fn split_audio_file_with_tools(
     audio: &Path,
     window: Duration,
+    overlap: Duration,
     tools: &MediaTools,
 ) -> Result<Vec<Chunk>, WikiError> {
     let window_ms = duration_to_ms(window, "window")?;
+    let overlap_ms = if overlap.is_zero() {
+        0
+    } else {
+        duration_to_ms(overlap, "overlap")?
+    };
+    if overlap_ms >= window_ms {
+        return Err(WikiError::InvalidInput {
+            field: "overlap",
+            message: "must be shorter than window".to_string(),
+        });
+    }
     let duration_ms = media_duration_ms(audio, tools)?;
     let mut chunks = Vec::new();
     let mut start_ms = 0;
     while start_ms < duration_ms {
         let chunk = media_temp_file(".wav", "create temporary audio chunk")?;
         let chunk_ms = window_ms.min(duration_ms - start_ms);
+        let end_ms = start_ms + chunk_ms;
         let mut command = Command::new(&tools.ffmpeg);
         command
             .arg("-hide_banner")
@@ -141,15 +166,21 @@ fn split_audio_file_with_tools(
             .arg("1")
             .arg("-ar")
             .arg("16000")
+            .arg("-c:a")
+            .arg("pcm_s16le")
             .arg("-f")
             .arg("wav")
             .arg(chunk.path());
         run_media_command(command, "ffmpeg", "run ffmpeg", audio)?;
         chunks.push(Chunk {
             start_ms,
+            end_ms,
             path: chunk,
         });
-        start_ms += window_ms;
+        if end_ms == duration_ms {
+            break;
+        }
+        start_ms += window_ms - overlap_ms;
     }
     Ok(chunks)
 }
