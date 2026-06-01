@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
@@ -17,6 +17,8 @@ use crate::secrets;
 use crate::visibility;
 
 const DEFAULT_OUT_DIR: &str = "codewiki";
+const MAX_MERMAID_HOPS: usize = 2;
+const MAX_MERMAID_EDGES: usize = 20;
 
 mod prompts {
     use std::fmt::Write as _;
@@ -161,6 +163,65 @@ pub struct CodewikiInput {
 pub struct CodewikiGraphEdge {
     pub source_component_id: String,
     pub target_component_id: String,
+    pub kind: CodewikiGraphEdgeKind,
+}
+
+impl CodewikiGraphEdge {
+    pub fn call(
+        source_component_id: impl Into<String>,
+        target_component_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            source_component_id: source_component_id.into(),
+            target_component_id: target_component_id.into(),
+            kind: CodewikiGraphEdgeKind::Call,
+        }
+    }
+
+    pub fn import(
+        source_component_id: impl Into<String>,
+        target_component_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            source_component_id: source_component_id.into(),
+            target_component_id: target_component_id.into(),
+            kind: CodewikiGraphEdgeKind::Import,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodewikiGraphEdgeKind {
+    Call,
+    Import,
+}
+
+#[derive(Debug, Clone)]
+struct CodewikiGraph {
+    edges: Vec<CodewikiGraphEdge>,
+    availability: CodewikiGraphAvailability,
+}
+
+impl CodewikiGraph {
+    fn available(edges: Vec<CodewikiGraphEdge>) -> Self {
+        Self {
+            edges,
+            availability: CodewikiGraphAvailability::Available,
+        }
+    }
+
+    fn unavailable() -> Self {
+        Self {
+            edges: Vec::new(),
+            availability: CodewikiGraphAvailability::Unavailable,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CodewikiGraphAvailability {
+    Available,
+    Unavailable,
 }
 
 #[derive(Debug, Clone)]
@@ -189,6 +250,9 @@ struct ModuleDoc {
     direct_files: Vec<FileLink>,
     child_modules: Vec<ModuleLink>,
     component_ids: Vec<String>,
+    dependency_diagram: Option<String>,
+    call_diagram: Option<String>,
+    graph_availability: CodewikiGraphAvailability,
 }
 
 #[derive(Debug, Clone)]
@@ -244,17 +308,24 @@ pub fn run(
         symbols.extend(visibility::visible_symbols_for_file(&mut conn, ctx, file)?);
     }
 
-    let graph_edges = fetch_codewiki_graph_edges(ctx, &files, &symbols)?;
+    let graph = fetch_codewiki_graph_edges(ctx, &files, &symbols)?;
+    let graph_availability = graph.availability;
     let input = CodewikiInput {
         files,
-        graph_edges,
+        graph_edges: graph.edges,
         symbols,
     };
     let mut generator = resolve_text_generator(ctx);
     let ai_enabled = generator.is_some();
     let docs = match generator.as_deref_mut() {
-        Some(generate) => generate_hierarchical_docs(&input, Some(generate)),
-        None => generate_hierarchical_docs(&input, None),
+        Some(generate) => generate_hierarchical_docs_with_graph_availability(
+            &input,
+            Some(generate),
+            graph_availability,
+        ),
+        None => {
+            generate_hierarchical_docs_with_graph_availability(&input, None, graph_availability)
+        }
     };
     let module_count = docs
         .iter()
@@ -290,7 +361,20 @@ pub fn run(
 
 pub fn generate_hierarchical_docs(
     input: &CodewikiInput,
+    generate: Option<&mut TextGenerator<'_>>,
+) -> Vec<(String, String)> {
+    let graph_availability = if input.graph_edges.is_empty() {
+        CodewikiGraphAvailability::Unavailable
+    } else {
+        CodewikiGraphAvailability::Available
+    };
+    generate_hierarchical_docs_with_graph_availability(input, generate, graph_availability)
+}
+
+fn generate_hierarchical_docs_with_graph_availability(
+    input: &CodewikiInput,
     mut generate: Option<&mut TextGenerator<'_>>,
+    graph_availability: CodewikiGraphAvailability,
 ) -> Vec<(String, String)> {
     let mut files = input
         .files
@@ -334,7 +418,12 @@ pub fn generate_hierarchical_docs(
             )
         })
         .collect::<Vec<_>>();
-    let module_docs = build_module_docs(&file_docs, &mut generate);
+    let module_docs = build_module_docs(
+        &file_docs,
+        &input.graph_edges,
+        graph_availability,
+        &mut generate,
+    );
     let repo_doc = build_repo_doc(&file_docs, &module_docs, &mut generate);
 
     let mut docs = Vec::new();
@@ -364,14 +453,45 @@ fn fetch_codewiki_graph_edges(
     ctx: &Context,
     files: &[String],
     symbols: &[Symbol],
-) -> anyhow::Result<Vec<CodewikiGraphEdge>> {
+) -> anyhow::Result<CodewikiGraph> {
     let symbol_components = symbols
         .iter()
         .filter(|symbol| is_core_file(&symbol.file_path))
         .map(|symbol| (symbol.id.clone(), component_id(symbol)))
         .collect::<HashMap<_, _>>();
     if symbol_components.is_empty() {
-        return Ok(Vec::new());
+        return Ok(CodewikiGraph::available(Vec::new()));
+    }
+
+    let Some(config) = &ctx.falkordb else {
+        return Ok(CodewikiGraph::unavailable());
+    };
+
+    let mut client = match falkor::FalkorClient::from_config(config) {
+        Ok(client) => client,
+        Err(e) => {
+            if !ctx.quiet {
+                eprintln!("Warning: FalkorDB connection failed: {e}");
+            }
+            return Ok(CodewikiGraph::unavailable());
+        }
+    };
+
+    fn query_or_unavailable(
+        ctx: &Context,
+        client: &mut falkor::FalkorClient,
+        query: &str,
+        params: HashMap<String, String>,
+    ) -> Option<Vec<falkor::Row>> {
+        match client.query(query, Some(params)) {
+            Ok(rows) => Some(rows),
+            Err(e) => {
+                if !ctx.quiet {
+                    eprintln!("Warning: FalkorDB query failed: {e}");
+                }
+                None
+            }
+        }
     }
 
     let symbol_ids = symbol_components.keys().cloned().collect::<Vec<_>>();
@@ -380,59 +500,63 @@ fn fetch_codewiki_graph_edges(
         .filter(|file| is_core_file(file))
         .cloned()
         .collect::<Vec<_>>();
-    falkor::with_falkor(ctx, Vec::new(), |client| {
-        let mut edges = Vec::new();
-        let (query, params) = codewiki_call_edges_query(&ctx.project_id, &symbol_ids);
-        for row in client.query(&query, Some(params))? {
-            let Some(source) = row.get("source").and_then(|value| value.as_str()) else {
-                continue;
-            };
-            let Some(target) = row.get("target").and_then(|value| value.as_str()) else {
-                continue;
-            };
-            let Some(source_component_id) = symbol_components.get(source).cloned() else {
-                continue;
-            };
-            let Some(target_component_id) = symbol_components.get(target).cloned() else {
-                continue;
-            };
-            edges.push(CodewikiGraphEdge {
-                source_component_id,
-                target_component_id,
-            });
-        }
 
-        if !core_files.is_empty() {
-            let file_symbols = symbols_by_file_component(symbols);
-            let (query, params) = codewiki_import_edges_query(&ctx.project_id, &core_files);
-            for row in client.query(&query, Some(params))? {
-                let Some(source_file) = row.get("source").and_then(|value| value.as_str()) else {
-                    continue;
-                };
-                let Some(target_module) = row.get("target").and_then(|value| value.as_str()) else {
-                    continue;
-                };
-                let Some(source_component_id) =
-                    first_component_for_file(&file_symbols, source_file)
+    let mut edges = Vec::new();
+    let (query, params) = codewiki_call_edges_query(&ctx.project_id, &symbol_ids);
+    let Some(rows) = query_or_unavailable(ctx, &mut client, &query, params) else {
+        return Ok(CodewikiGraph::unavailable());
+    };
+    for row in rows {
+        let Some(source) = row.get("source").and_then(|value| value.as_str()) else {
+            continue;
+        };
+        let Some(target) = row.get("target").and_then(|value| value.as_str()) else {
+            continue;
+        };
+        let Some(source_component_id) = symbol_components.get(source).cloned() else {
+            continue;
+        };
+        let Some(target_component_id) = symbol_components.get(target).cloned() else {
+            continue;
+        };
+        edges.push(CodewikiGraphEdge::call(
+            source_component_id,
+            target_component_id,
+        ));
+    }
+
+    if !core_files.is_empty() {
+        let file_symbols = symbols_by_file_component(symbols);
+        let (query, params) = codewiki_import_edges_query(&ctx.project_id, &core_files);
+        let Some(rows) = query_or_unavailable(ctx, &mut client, &query, params) else {
+            return Ok(CodewikiGraph::unavailable());
+        };
+        for row in rows {
+            let Some(source_file) = row.get("source").and_then(|value| value.as_str()) else {
+                continue;
+            };
+            let Some(target_module) = row.get("target").and_then(|value| value.as_str()) else {
+                continue;
+            };
+            let Some(source_component_id) = first_component_for_file(&file_symbols, source_file)
+            else {
+                continue;
+            };
+            for target_file in files_for_import_target(&core_files, target_module) {
+                let Some(target_component_id) =
+                    first_component_for_file(&file_symbols, target_file)
                 else {
                     continue;
                 };
-                for target_file in files_for_import_target(&core_files, target_module) {
-                    let Some(target_component_id) =
-                        first_component_for_file(&file_symbols, target_file)
-                    else {
-                        continue;
-                    };
-                    edges.push(CodewikiGraphEdge {
-                        source_component_id: source_component_id.clone(),
-                        target_component_id,
-                    });
-                }
+                edges.push(CodewikiGraphEdge::import(
+                    source_component_id.clone(),
+                    target_component_id,
+                ));
             }
         }
+    }
 
-        Ok(edges)
-    })
+    Ok(CodewikiGraph::available(edges))
 }
 
 fn codewiki_call_edges_query(
@@ -490,7 +614,10 @@ fn cluster_file_modules(
         .iter()
         .map(|file| (file.clone(), file.clone()))
         .collect::<HashMap<_, _>>();
-    for edge in graph_edges {
+    for edge in graph_edges
+        .iter()
+        .filter(|edge| edge.kind == CodewikiGraphEdgeKind::Call)
+    {
         let Some(source_file) = components_to_file.get(&edge.source_component_id) else {
             continue;
         };
@@ -672,6 +799,8 @@ fn build_file_doc(
 
 fn build_module_docs(
     files: &[FileDoc],
+    graph_edges: &[CodewikiGraphEdge],
+    graph_availability: CodewikiGraphAvailability,
     generate: &mut Option<&mut TextGenerator<'_>>,
 ) -> Vec<ModuleDoc> {
     let mut module_names = BTreeSet::new();
@@ -724,6 +853,8 @@ fn build_module_docs(
             .filter(|file| file.module == module || module_is_ancestor(&module, &file.module))
             .flat_map(|file| file.component_ids.iter().cloned())
             .collect::<Vec<_>>();
+        let dependency_diagram = render_module_dependency_mermaid(&module, files, graph_edges);
+        let call_diagram = render_module_call_mermaid(&module, files, graph_edges);
         let fallback = structural_module_summary(&module, &direct_files, &child_modules);
         let source_spans = collect_link_spans(&direct_files, &child_modules);
         let generated = maybe_generate(
@@ -743,11 +874,237 @@ fn build_module_docs(
             direct_files,
             child_modules,
             component_ids,
+            dependency_diagram,
+            call_diagram,
+            graph_availability,
         });
     }
 
     docs.sort_by(|a, b| a.module.cmp(&b.module));
     docs
+}
+
+fn render_module_dependency_mermaid(
+    module: &str,
+    files: &[FileDoc],
+    graph_edges: &[CodewikiGraphEdge],
+) -> Option<String> {
+    let mut component_to_module = HashMap::new();
+    for file in files {
+        for component_id in &file.component_ids {
+            component_to_module.insert(component_id.as_str(), file.module.as_str());
+        }
+    }
+
+    let all_edges = graph_edges
+        .iter()
+        .filter(|edge| edge.kind == CodewikiGraphEdgeKind::Import)
+        .filter_map(|edge| {
+            let source = component_to_module.get(edge.source_component_id.as_str())?;
+            let target = component_to_module.get(edge.target_component_id.as_str())?;
+            if source == target {
+                return None;
+            }
+            Some(((*source).to_string(), (*target).to_string()))
+        })
+        .collect::<BTreeSet<_>>();
+    if all_edges.is_empty() {
+        return None;
+    }
+
+    let bounded_edges = bounded_module_dependency_edges(module, &all_edges, MAX_MERMAID_HOPS);
+    if bounded_edges.is_empty() {
+        return None;
+    }
+
+    let mut diagram = "```mermaid\ngraph LR\n".to_string();
+    for (source, target) in bounded_edges {
+        let _ = writeln!(
+            diagram,
+            "    {}[\"{}\"] --> {}[\"{}\"]",
+            mermaid_node_id(&source),
+            mermaid_label(&source),
+            mermaid_node_id(&target),
+            mermaid_label(&target)
+        );
+    }
+    diagram.push_str("```\n");
+    Some(diagram)
+}
+
+fn render_module_call_mermaid(
+    module: &str,
+    files: &[FileDoc],
+    graph_edges: &[CodewikiGraphEdge],
+) -> Option<String> {
+    let component_to_module = files
+        .iter()
+        .flat_map(|file| {
+            file.component_ids
+                .iter()
+                .map(|component_id| (component_id.as_str(), file.module.as_str()))
+        })
+        .collect::<HashMap<_, _>>();
+    let all_edges = graph_edges
+        .iter()
+        .filter(|edge| edge.kind == CodewikiGraphEdgeKind::Call)
+        .filter_map(|edge| {
+            let source_module = component_to_module.get(edge.source_component_id.as_str())?;
+            let target_module = component_to_module.get(edge.target_component_id.as_str())?;
+            if *source_module != module && *target_module != module {
+                return None;
+            }
+            Some((
+                edge.source_component_id.clone(),
+                edge.target_component_id.clone(),
+            ))
+        })
+        .collect::<BTreeSet<_>>();
+    if all_edges.is_empty() {
+        return None;
+    }
+
+    let seed_components = files
+        .iter()
+        .filter(|file| file.module == module || module_is_ancestor(module, &file.module))
+        .flat_map(|file| file.component_ids.iter().cloned())
+        .collect::<BTreeSet<_>>();
+    let bounded_edges = bounded_component_edges(
+        &seed_components,
+        &all_edges,
+        MAX_MERMAID_HOPS,
+        MAX_MERMAID_EDGES,
+    );
+    if bounded_edges.is_empty() {
+        return None;
+    }
+
+    let mut participants = BTreeSet::new();
+    for (source, target) in &bounded_edges {
+        participants.insert(source.clone());
+        participants.insert(target.clone());
+    }
+
+    let mut diagram = "```mermaid\nsequenceDiagram\n".to_string();
+    for component in participants {
+        let _ = writeln!(
+            diagram,
+            "    participant {} as {}",
+            mermaid_node_id(&component),
+            mermaid_label(&component)
+        );
+    }
+    for (source, target) in bounded_edges {
+        let _ = writeln!(
+            diagram,
+            "    {}->>{}: calls",
+            mermaid_node_id(&source),
+            mermaid_node_id(&target)
+        );
+    }
+    diagram.push_str("```\n");
+    Some(diagram)
+}
+
+fn bounded_module_dependency_edges(
+    module: &str,
+    edges: &BTreeSet<(String, String)>,
+    max_hops: usize,
+) -> BTreeSet<(String, String)> {
+    let mut distances = BTreeMap::from([(module.to_string(), 0usize)]);
+    let mut queue = VecDeque::from([(module.to_string(), 0usize)]);
+
+    while let Some((current, distance)) = queue.pop_front() {
+        if distance >= max_hops {
+            continue;
+        }
+        for (source, target) in edges {
+            for next in dependency_neighbors(&current, source, target) {
+                if distances.contains_key(next) {
+                    continue;
+                }
+                let next_distance = distance + 1;
+                distances.insert(next.to_string(), next_distance);
+                queue.push_back((next.to_string(), next_distance));
+            }
+        }
+    }
+
+    edges
+        .iter()
+        .filter(|(source, target)| distances.contains_key(source) && distances.contains_key(target))
+        .cloned()
+        .collect()
+}
+
+fn bounded_component_edges(
+    seed_components: &BTreeSet<String>,
+    edges: &BTreeSet<(String, String)>,
+    max_hops: usize,
+    max_edges: usize,
+) -> BTreeSet<(String, String)> {
+    let mut distances = seed_components
+        .iter()
+        .map(|component| (component.clone(), 0usize))
+        .collect::<BTreeMap<_, _>>();
+    let mut queue = seed_components
+        .iter()
+        .map(|component| (component.clone(), 0usize))
+        .collect::<VecDeque<_>>();
+
+    while let Some((current, distance)) = queue.pop_front() {
+        if distance >= max_hops {
+            continue;
+        }
+        for (source, target) in edges {
+            for next in dependency_neighbors(&current, source, target) {
+                if distances.contains_key(next) {
+                    continue;
+                }
+                let next_distance = distance + 1;
+                distances.insert(next.to_string(), next_distance);
+                queue.push_back((next.to_string(), next_distance));
+            }
+        }
+    }
+
+    edges
+        .iter()
+        .filter(|(source, target)| distances.contains_key(source) && distances.contains_key(target))
+        .take(max_edges)
+        .cloned()
+        .collect()
+}
+
+fn dependency_neighbors<'a>(module: &str, source: &'a str, target: &'a str) -> Vec<&'a str> {
+    let mut neighbors = Vec::with_capacity(2);
+    if source == module {
+        neighbors.push(target);
+    }
+    if target == module {
+        neighbors.push(source);
+    }
+    neighbors
+}
+
+fn mermaid_node_id(module: &str) -> String {
+    let mut out = String::from("m_");
+    for ch in module.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch);
+        } else {
+            out.push('_');
+        }
+    }
+    out
+}
+
+fn mermaid_label(module: &str) -> String {
+    if module.is_empty() {
+        "repo".to_string()
+    } else {
+        module.replace('\\', "\\\\").replace('"', "\\\"")
+    }
 }
 
 fn build_repo_doc(
@@ -841,6 +1198,23 @@ fn render_module_doc(module: &ModuleDoc) -> String {
         None => doc.push_str("Parent: [[repo|Repository Overview]]\n\n"),
     }
     write_section(&mut doc, "Overview", &module.summary);
+    match module.graph_availability {
+        CodewikiGraphAvailability::Unavailable => {
+            doc.push_str("## Dependency Diagram\n\n`degraded: graph-unavailable`\n\n");
+        }
+        CodewikiGraphAvailability::Available => {
+            if let Some(diagram) = &module.dependency_diagram {
+                doc.push_str("## Dependency Diagram\n\n");
+                doc.push_str(diagram);
+                doc.push('\n');
+            }
+            if let Some(diagram) = &module.call_diagram {
+                doc.push_str("## Call Diagram\n\n");
+                doc.push_str(diagram);
+                doc.push('\n');
+            }
+        }
+    }
     if !module.child_modules.is_empty() {
         doc.push_str("## Child Modules\n\n");
         for child in &module.child_modules {
@@ -1340,10 +1714,10 @@ mod tests {
                 "tests/domain/service_test.rs".to_string(),
                 "vendor/generated/client.rs".to_string(),
             ],
-            graph_edges: vec![CodewikiGraphEdge {
-                source_component_id: "src/api/handler.rs::handle".to_string(),
-                target_component_id: "src/domain/service.rs::Service".to_string(),
-            }],
+            graph_edges: vec![CodewikiGraphEdge::call(
+                "src/api/handler.rs::handle",
+                "src/domain/service.rs::Service",
+            )],
             symbols: vec![
                 test_symbol(
                     "src/api/handler.rs",
@@ -1470,6 +1844,107 @@ mod tests {
                 .expect("service file doc")
                 .contains("src/domain/service.rs::Service::new")
         );
+    }
+
+    #[test]
+    fn emits_bounded_mermaid() {
+        let input = CodewikiInput {
+            files: vec![
+                "src/api/handler.rs".to_string(),
+                "src/domain/service.rs".to_string(),
+                "src/storage/repo.rs".to_string(),
+                "src/unrelated/tool.rs".to_string(),
+            ],
+            graph_edges: vec![
+                CodewikiGraphEdge::import(
+                    "src/api/handler.rs::handle",
+                    "src/domain/service.rs::Service",
+                ),
+                CodewikiGraphEdge::import(
+                    "src/domain/service.rs::Service",
+                    "src/storage/repo.rs::Repo",
+                ),
+                CodewikiGraphEdge::import(
+                    "src/unrelated/tool.rs::Tool",
+                    "src/storage/repo.rs::Repo",
+                ),
+            ],
+            symbols: vec![
+                test_symbol(
+                    "src/api/handler.rs",
+                    "handle",
+                    "function",
+                    1,
+                    "pub fn handle()",
+                ),
+                test_symbol(
+                    "src/domain/service.rs",
+                    "Service",
+                    "class",
+                    1,
+                    "pub struct Service;",
+                ),
+                test_symbol(
+                    "src/storage/repo.rs",
+                    "Repo",
+                    "class",
+                    1,
+                    "pub struct Repo;",
+                ),
+                test_symbol(
+                    "src/unrelated/tool.rs",
+                    "Tool",
+                    "class",
+                    1,
+                    "pub struct Tool;",
+                ),
+            ],
+        };
+
+        let docs = generate_hierarchical_docs(&input, None);
+        let docs_by_path = docs.into_iter().collect::<BTreeMap<_, _>>();
+        let rendered = docs_by_path
+            .get("modules/src/api.md")
+            .expect("api module doc");
+
+        assert!(rendered.contains("```mermaid"));
+        assert!(rendered.contains("graph LR"));
+        assert!(rendered.contains("m_src_api[\"src/api\"] --> m_src_domain[\"src/domain\"]"));
+        assert!(
+            rendered.contains("m_src_domain[\"src/domain\"] --> m_src_storage[\"src/storage\"]")
+        );
+        assert!(
+            !rendered
+                .contains("m_src_unrelated[\"src/unrelated\"] --> m_src_storage[\"src/storage\"]")
+        );
+    }
+
+    #[test]
+    fn mermaid_degrades_without_falkordb() {
+        let input = CodewikiInput {
+            files: vec!["src/api/handler.rs".to_string()],
+            graph_edges: Vec::new(),
+            symbols: vec![test_symbol(
+                "src/api/handler.rs",
+                "handle",
+                "function",
+                1,
+                "pub fn handle()",
+            )],
+        };
+
+        let docs = generate_hierarchical_docs(&input, None);
+        let docs_by_path = docs.into_iter().collect::<BTreeMap<_, _>>();
+        let module = docs_by_path
+            .get("modules/src/api.md")
+            .expect("module doc still renders");
+        let file = docs_by_path
+            .get("files/src/api/handler.rs.md")
+            .expect("file doc still renders");
+
+        assert!(module.contains("degraded: graph-unavailable"));
+        assert!(file.contains("API Symbols"));
+        assert!(file.contains("src/api/handler.rs::handle"));
     }
 
     #[test]
