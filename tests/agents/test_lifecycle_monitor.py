@@ -721,6 +721,50 @@ class TestCheckIdleAgents:
         assert updated.status == "running"
 
     @pytest.mark.asyncio
+    async def test_queued_continuation_prompt_reprompts_after_idle_delay(
+        self,
+        idle_monitor: AgentLifecycleMonitor,
+        agent_run_manager: LocalAgentRunManager,
+        sample_session: dict,
+    ) -> None:
+        """Queued prompts should not reset the semantic idle wake timer forever."""
+        import time
+
+        run = _make_terminal_run(
+            agent_run_manager,
+            sample_session,
+            run_id="run-queued-continuation-delayed",
+            tmux_session_name="gobby-queued-continuation-delayed",
+        )
+        state = idle_monitor._idle_detector.get_state(run.id)
+        state.first_idle_at = time.monotonic() - 360
+
+        pane_output = (
+            "  ❯ Continue working on your task. Your active Gobby step workflow is not complete.\n"
+            "    Workflow: planner-steps. Current step: plan.\n"
+            "────────────────────────────────────────────────────────────────────────────────\n"
+            "❯ Press up to edit queued messages\n"
+        )
+        with (
+            patch.object(
+                idle_monitor._tmux,
+                "capture_pane",
+                new_callable=AsyncMock,
+                return_value=pane_output,
+            ),
+            patch.object(
+                idle_monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
+            ) as mock_send,
+        ):
+            handled = await idle_monitor.check_idle_agents()
+
+        assert handled == 1
+        assert mock_send.call_args_list == [
+            call("gobby-queued-continuation-delayed", "Escape", literal=False),
+            call("gobby-queued-continuation-delayed", "Continue working on your task.\n"),
+        ]
+
+    @pytest.mark.asyncio
     async def test_truncated_queued_message_prompt_skips_idle_reprompt_and_failure(
         self,
         idle_monitor: AgentLifecycleMonitor,

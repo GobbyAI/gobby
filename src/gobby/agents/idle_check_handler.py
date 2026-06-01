@@ -160,28 +160,29 @@ class IdleCheckHandler:
         if pane_output is None and not session_stale:
             return 0
 
+        queued_message_prompt_visible = False
         if pane_output is not None:
             status = self._idle_detector.detect(pane_output)
+            queued_message_prompt_visible = self._prompt_detector.detect_queued_message_prompt(
+                pane_output
+            )
 
             if status == "context_full":
                 logger.info(f"Agent {run.id} hit context window limit - failing")
                 await self._fail_idle_agent(run, reason="context window exhausted")
                 return 1
 
-            if self._prompt_detector.detect_queued_message_prompt(pane_output):
-                logger.info(
-                    "Agent %s has a queued-message prompt visible; "
-                    "skipping idle reprompt to avoid stacking queued messages",
-                    run.id,
-                )
-                self._idle_detector.reset_idle(run.id)
-                return 0
-
             if not session_stale and status == "active":
                 self._idle_detector.reset_idle(run.id)
                 return 0
 
         if self._idle_detector.should_fail(run.id, self._tmux_config.max_reprompt_attempts):
+            if queued_message_prompt_visible:
+                logger.info(
+                    "Agent %s has a queued-message prompt visible; suppressing idle failure",
+                    run.id,
+                )
+                return 0
             logger.info(
                 f"Agent {run.id} still idle after "
                 f"{self._tmux_config.max_reprompt_attempts} reprompts — failing"
