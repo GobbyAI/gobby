@@ -14,7 +14,7 @@ categories = ["command-line-utilities", "development-tools"]
 [features]
 default = ["rustls", "documents", "ai"]
 ai = ["gobby-core/ai"]
-documents = ["dep:calamine", "dep:quick-xml", "dep:zip"]
+documents = ["dep:calamine", "dep:pdf-extract", "dep:pdfium-render", "dep:png", "dep:quick-xml", "dep:zip"]
 rustls = ["dep:reqwest"]
 
 [lib]
@@ -47,5 +47,8 @@ log = "0.4"
 percent-encoding = "2"
 tempfile = "3"
 calamine = { version = "0.30", optional = true }
+pdf-extract = { version = "0.10", optional = true }
+pdfium-render = { version = "0.9.1", default-features = false, features = ["pdfium_latest", "static", "thread_safe"], optional = true }
+png = { version = "0.17", optional = true }
 quick-xml = { version = "0.38", optional = true }
 zip = { version = "4", default-features = false, features = ["deflate"], optional = true }
