@@ -427,6 +427,29 @@ def _infer_from_config_or_none(*, dim: Any, api_key: Any, model: Any, api_base: 
     return None
 
 
+def _is_embedding_config_storage_error(exc: Exception) -> bool:
+    exc_name = type(exc).__name__.lower()
+    if any(
+        name_part in exc_name
+        for name_part in ("database", "operationalerror", "programmingerror", "undefinedtable")
+    ):
+        return True
+    message = str(exc).lower()
+    return any(
+        marker in message
+        for marker in (
+            "runtime hub",
+            "hub database",
+            "database",
+            "config_store",
+            "no such table",
+            "does not exist",
+            "relation",
+            "schema",
+        )
+    )
+
+
 def get_configured_embedding_provider() -> str | None:
     """Get the configured embeddings provider from persisted config."""
     try:
@@ -457,7 +480,9 @@ def get_configured_embedding_provider() -> str | None:
                 return provider
 
             return inferred_from_config
-    except Exception:
+    except Exception as exc:
+        if not _is_embedding_config_storage_error(exc):
+            raise
         logger.debug(
             "Failed to resolve configured embeddings provider from persisted config", exc_info=True
         )

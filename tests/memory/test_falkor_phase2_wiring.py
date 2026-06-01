@@ -171,7 +171,7 @@ def test_runner_memory_stack_uses_canonical_falkordb_enablement_and_kwargs() -> 
 
 
 def test_runner_memory_stack_fails_fast_when_embedding_config_incomplete() -> None:
-    """A configured LLM service cannot install a deferred failing embed function."""
+    """Incomplete embedding config leaves vector and memory services uninitialized."""
     runner = SimpleNamespace(
         config=SimpleNamespace(
             memory=MemoryConfig(),

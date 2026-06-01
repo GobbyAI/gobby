@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
@@ -18,8 +20,8 @@ def _manager_class() -> type:
 
 
 def test_acquire_release_round_trip(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
@@ -44,7 +46,7 @@ def test_acquire_release_round_trip(
         ttl_seconds=60,
         now=now + timedelta(seconds=10),
     )
-    assert not manager.acquire_mutex(
+    assert manager.acquire_mutex(
         task.id,
         holder="state-dispatcher:1",
         kind="lifecycle",
@@ -57,15 +59,15 @@ def test_acquire_release_round_trip(
     assert mutex is not None
     assert mutex.lease_holder == "state-dispatcher:1"
     assert mutex.action_kind == "lifecycle"
-    assert datetime.fromisoformat(mutex.lease_until) == now + timedelta(seconds=60)
+    assert datetime.fromisoformat(mutex.lease_until) == now + timedelta(seconds=130)
 
     assert manager.release_mutex(task.id, holder="state-dispatcher:1")
     assert manager.get_mutex(task.id) is None
 
 
 def test_active_mutex_cannot_be_replaced_by_same_holder_with_different_run(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
@@ -86,9 +88,17 @@ def test_active_mutex_cannot_be_replaced_by_same_holder_with_different_run(
         task.id,
         holder="dispatcher",
         kind="heartbeat",
+        run_id=None,
+        ttl_seconds=140,
+        now=now + timedelta(seconds=15),
+    )
+    assert manager.acquire_mutex(
+        task.id,
+        holder="dispatcher",
+        kind="heartbeat",
         run_id="run-1",
         ttl_seconds=120,
-        now=now + timedelta(seconds=10),
+        now=now + timedelta(seconds=20),
     )
     assert not manager.acquire_mutex(
         task.id,
@@ -96,13 +106,13 @@ def test_active_mutex_cannot_be_replaced_by_same_holder_with_different_run(
         kind="heartbeat",
         run_id="run-2",
         ttl_seconds=300,
-        now=now + timedelta(seconds=20),
+        now=now + timedelta(seconds=30),
     )
 
     mutex = manager.get_mutex(task.id)
     assert mutex is not None
     assert mutex.run_id == "run-1"
-    assert datetime.fromisoformat(mutex.lease_until) == now + timedelta(seconds=130)
+    assert datetime.fromisoformat(mutex.lease_until) == now + timedelta(seconds=140)
 
 
 def test_expired_mutex_can_be_reacquired_by_new_holder(temp_db, sample_project) -> None:

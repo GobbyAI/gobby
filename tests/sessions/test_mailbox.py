@@ -8,6 +8,7 @@ from typing import Any, Protocol
 
 import pytest
 
+import gobby.sessions.mailbox as mailbox_module
 from gobby.sessions.mailbox import MailboxSendResult, MailboxService
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.build_history import BuildHistoryStorage
@@ -238,6 +239,24 @@ class TestMailboxDirectSend:
             "to_session": recipient.id,
             "content": "System notice",
         }
+
+    def test_empty_project_id_is_resolved_explicitly(
+        self,
+        temp_db: HubDatabase,
+        session_manager: SessionManager,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        mailbox = _mailbox(temp_db, session_manager)
+        seen_refs: list[str] = []
+
+        def resolve_project_ref(project_ref: str) -> str:
+            seen_refs.append(project_ref)
+            return "resolved-project"
+
+        monkeypatch.setattr(mailbox, "_resolve_project_ref", resolve_project_ref)
+
+        assert mailbox._resolve_project_id(SYSTEM_SESSION_ID, "") == "resolved-project"
+        assert seen_refs == [""]
 
     @pytest.mark.asyncio
     async def test_session_target_requires_target_id(
@@ -552,6 +571,104 @@ class TestMailboxBroadcast:
             "agent_run_status": "pending",
             "task_id": None,
         }
+
+    def test_agent_cross_project_auth_cache_uses_ttl_and_skips_missing_task(
+        self,
+        temp_db: HubDatabase,
+        session_manager: SessionManager,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        mailbox = _mailbox(temp_db, session_manager)
+        now = 100.0
+        calls: list[tuple[str, str, str]] = []
+        allowed_values = iter([True, False])
+
+        def monotonic() -> float:
+            return now
+
+        def allows_cross_project_build_coordinator(
+            *,
+            from_session_id: str,
+            build_project_id: str,
+            task_id: str,
+        ) -> bool:
+            calls.append((from_session_id, build_project_id, task_id))
+            return next(allowed_values)
+
+        monkeypatch.setattr(mailbox_module.time, "monotonic", monotonic)
+        monkeypatch.setattr(
+            mailbox,
+            "_allows_cross_project_build_coordinator",
+            allows_cross_project_build_coordinator,
+        )
+
+        assert (
+            mailbox._allows_cached_cross_project_build_coordinator(
+                from_session_id="sender",
+                build_project_id="project",
+                task_id=None,
+            )
+            is False
+        )
+        assert calls == []
+
+        assert mailbox._allows_cached_cross_project_build_coordinator(
+            from_session_id="sender",
+            build_project_id="project",
+            task_id="task",
+        )
+        assert mailbox._allows_cached_cross_project_build_coordinator(
+            from_session_id="sender",
+            build_project_id="project",
+            task_id="task",
+        )
+        assert calls == [("sender", "project", "task")]
+
+        now = 131.0
+        assert (
+            mailbox._allows_cached_cross_project_build_coordinator(
+                from_session_id="sender",
+                build_project_id="project",
+                task_id="task",
+            )
+            is False
+        )
+        assert calls == [("sender", "project", "task"), ("sender", "project", "task")]
+
+    def test_agent_cross_project_auth_cache_is_bounded(
+        self,
+        temp_db: HubDatabase,
+        session_manager: SessionManager,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        mailbox = _mailbox(temp_db, session_manager)
+
+        def allows_cross_project_build_coordinator(
+            *,
+            from_session_id: str,
+            build_project_id: str,
+            task_id: str,
+        ) -> bool:
+            return True
+
+        monkeypatch.setattr(mailbox_module, "AGENT_CROSS_PROJECT_AUTH_CACHE_MAX_SIZE", 2)
+        monkeypatch.setattr(
+            mailbox,
+            "_allows_cross_project_build_coordinator",
+            allows_cross_project_build_coordinator,
+        )
+
+        for task_id in ("task-1", "task-2", "task-3"):
+            assert mailbox._allows_cached_cross_project_build_coordinator(
+                from_session_id="sender",
+                build_project_id="project",
+                task_id=task_id,
+            )
+
+        assert list(mailbox._agent_cross_project_auth_cache) == [
+            ("sender", "task-2"),
+            ("sender", "task-3"),
+        ]
 
     @pytest.mark.asyncio
     async def test_build_target_only_includes_active_agents_in_task_subtree(

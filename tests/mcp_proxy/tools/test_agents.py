@@ -249,7 +249,7 @@ class TestWaitForAgent:
         assert result["turns_used"] == 2
 
     @pytest.mark.asyncio
-    async def test_running_run_times_out_with_latest_status(self):
+    async def test_running_run_times_out_with_latest_status(self) -> None:
         mock_run = MagicMock()
         mock_run.id = "run-123"
         mock_run.status = "running"
@@ -284,7 +284,10 @@ class TestWaitForAgent:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("requested_timeout", [120, 300])
-    async def test_long_running_wait_honors_requested_timeout(self, requested_timeout):
+    async def test_long_running_wait_honors_requested_timeout(
+        self,
+        requested_timeout: int,
+    ) -> None:
         mock_run = MagicMock()
         mock_run.id = "run-123"
         mock_run.status = "running"
@@ -323,7 +326,7 @@ class TestWaitForAgent:
         assert result["requested_timeout_seconds"] == float(requested_timeout)
 
     @pytest.mark.asyncio
-    async def test_shorter_wait_timeout_is_not_reduced(self):
+    async def test_shorter_wait_timeout_is_not_reduced(self) -> None:
         mock_run = MagicMock()
         mock_run.id = "run-123"
         mock_run.status = "running"
@@ -359,7 +362,7 @@ class TestWaitForAgent:
         assert result["requested_timeout_seconds"] == 5.0
 
     @pytest.mark.asyncio
-    async def test_wait_polls_until_run_completes(self):
+    async def test_wait_polls_until_run_completes(self) -> None:
         running_run = MagicMock()
         running_run.id = "run-123"
         running_run.status = "running"

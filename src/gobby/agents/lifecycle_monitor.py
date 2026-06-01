@@ -55,18 +55,21 @@ def _has_dispatch_stage_context(run: AgentRun) -> bool:
     Expected schema is a JSON object with string ``stage_name``/``stage_state``
     fields either at top level or under an ``initial_variables`` object.
     """
-    metadata = run.resume_metadata_json
-    if not isinstance(metadata, dict):
+    try:
+        metadata = run.resume_metadata_json
+        if not isinstance(metadata, dict):
+            return False
+        if isinstance(metadata.get("stage_name"), str) and isinstance(
+            metadata.get("stage_state"), str
+        ):
+            return True
+        initial_variables = metadata.get("initial_variables")
+        return isinstance(initial_variables, dict) and (
+            isinstance(initial_variables.get("stage_name"), str)
+            and isinstance(initial_variables.get("stage_state"), str)
+        )
+    except Exception:
         return False
-    if isinstance(metadata.get("stage_name"), str) and isinstance(
-        metadata.get("stage_state"), str
-    ):
-        return True
-    initial_variables = metadata.get("initial_variables")
-    return isinstance(initial_variables, dict) and (
-        isinstance(initial_variables.get("stage_name"), str)
-        and isinstance(initial_variables.get("stage_state"), str)
-    )
 
 
 class AgentLifecycleMonitor:
@@ -394,9 +397,7 @@ class AgentLifecycleMonitor:
                     continue
                 skipped += 1
             next_cursor = (
-                start_cursor + len(runs)
-                if len(runs) == DISPATCH_MUTEX_REFRESH_BATCH_SIZE
-                else 0
+                start_cursor + len(runs) if len(runs) == DISPATCH_MUTEX_REFRESH_BATCH_SIZE else 0
             )
             return refreshed, skipped, next_cursor
 

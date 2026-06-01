@@ -187,7 +187,12 @@ async def test_idle_reprompt_logs_codex_response_items(
     agent_run_manager: LocalAgentRunManager,
     tmp_path: Path,
 ) -> None:
-    config = TmuxConfig(idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2)
+    config = TmuxConfig(
+        idle_check_enabled=True,
+        idle_timeout_seconds=10,
+        max_reprompt_attempts=2,
+        reasoning_watchdog_settle_seconds=0,
+    )
     monitor = AgentLifecycleMonitor(
         agent_run_manager=agent_run_manager,
         db=temp_db,
@@ -222,7 +227,7 @@ async def test_idle_reprompt_logs_codex_response_items(
         tmux_session_name="gobby-codex-idle",
     )
     state = monitor._idle_detector.get_state(run.id)
-    state.first_idle_at = time.monotonic() - 120
+    state.first_idle_at = time.monotonic() - 360
 
     with (
         patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
@@ -296,14 +301,13 @@ async def test_idle_reasoning_watchdog_interrupts_codex_and_records_task_event(
         agent_name="qa-reviewer",
     )
     state = monitor._idle_detector.get_state(run.id)
-    state.first_idle_at = time.monotonic() - 120
+    state.first_idle_at = time.monotonic() - 360
 
     with (
         patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value=""),
         patch.object(
             monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
         ) as mock_send,
-        patch("gobby.agents.idle_check_handler.asyncio.sleep", new_callable=AsyncMock),
     ):
         handled = await monitor.check_idle_agents()
 
@@ -311,7 +315,8 @@ async def test_idle_reasoning_watchdog_interrupts_codex_and_records_task_event(
     mock_send.assert_has_awaits(
         [
             call("gobby-codex-reasoning", "C-c", literal=False),
-            call("gobby-codex-reasoning", REASONING_WATCHDOG_CONTINUATION + "\n"),
+            call("gobby-codex-reasoning", REASONING_WATCHDOG_CONTINUATION),
+            call("gobby-codex-reasoning", "Enter", literal=False),
         ]
     )
     assert monitor._idle_detector.get_state(run.id).reprompt_count == 1

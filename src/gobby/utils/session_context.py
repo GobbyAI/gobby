@@ -246,7 +246,7 @@ def resolve_and_seed_contexts(
         else:
             logger.debug(
                 "resolve_and_seed_contexts: ignoring current session alias without "
-                "active session context"
+                "active session context because get_session_context() returned None"
             )
         effective_session_ref = None
 

@@ -176,6 +176,14 @@ class IdleCheckHandler:
                 self._idle_detector.reset_idle(run.id)
                 return 0
 
+            if self._idle_detector.has_unsubmitted_input(pane_output):
+                logger.info(
+                    "Agent %s has unsubmitted prompt input visible; skipping idle reprompt",
+                    run.id,
+                )
+                self._idle_detector.reset_idle(run.id)
+                return 0
+
         if self._idle_detector.should_fail(run.id, self._tmux_config.max_reprompt_attempts):
             if queued_message_prompt_visible:
                 logger.info(
@@ -217,9 +225,15 @@ class IdleCheckHandler:
             if not cleared:
                 logger.warning("Failed to clear queued prompt before reprompting agent %s", run.id)
                 return 0
-            sent = await self._tmux.send_keys(tmux_name, reprompt_message + "\n")
-            if sent:
+            sent = await self._tmux.send_keys(tmux_name, reprompt_message)
+            if not sent:
+                logger.warning("Failed to send idle reprompt text to agent %s", run.id)
+                return 0
+            submitted = await self._tmux.send_keys(tmux_name, "Enter", literal=False)
+            if submitted:
                 self._idle_detector.record_reprompt(run.id)
+            else:
+                logger.warning("Failed to submit idle reprompt for agent %s", run.id)
             return 1
 
         return 0
@@ -332,8 +346,11 @@ class IdleCheckHandler:
         if settle_seconds:
             await asyncio.sleep(settle_seconds)
 
-        sent = await self._tmux.send_keys(tmux_name, REASONING_WATCHDOG_CONTINUATION + "\n")
+        sent = await self._tmux.send_keys(tmux_name, REASONING_WATCHDOG_CONTINUATION)
         if not sent:
+            return False
+        submitted = await self._tmux.send_keys(tmux_name, "Enter", literal=False)
+        if not submitted:
             return False
 
         self._idle_detector.record_reprompt(run.id)

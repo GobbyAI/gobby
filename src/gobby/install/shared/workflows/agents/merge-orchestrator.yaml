@@ -123,14 +123,14 @@ instructions: |
   - After every completed merge-worker wait, inspect merge state before any
     additional spawn_agent call. If inspect_merge_state exposes an
     active_resolution_id, call merge_status for that resolution before
-    spawning another worker. If the resolution's resolved_count/pending_count
-    signature is unchanged and pending_count is still non-zero, do not
+    spawning another worker. If the resolved_count/pending_count signature is unchanged
+    for the resolution and pending_count is still non-zero, do not
     redispatch another worker. If inspect_merge_state has no
     active_resolution_id, do not call merge_status with a blank id. Treat clean
     state as having no resumable worker-owned resolution; treat resumable git
     state without an active resolution as failed execution and record a failed
-    merge result or escalate. This no-progress cap is scoped to workers this
-    orchestrator run actually waited for; historical delivery campaign failures
+    merge result or escalate. This no-progress cap is scoped to workers this orchestrator run actually
+    waited for; historical delivery campaign failures
     and last_error text are evidence for the report, but are not by themselves
     a redispatch blocker.
   - If a worker returns success but inspect_merge_state or merge_status still
@@ -194,6 +194,9 @@ step_variables:
   post_worker_merge_status_checked: false
   last_merge_status_signature: ""
   no_progress_merge_status_count: 0
+  new_status_signature: ""
+  pending_count_int: 0
+  merge_status_made_no_progress: false
   last_worker_run_id: ""
 
 steps:
@@ -446,13 +449,35 @@ steps:
       - server: gobby-merge
         tool: merge_status
         action: set_variable
+        variable: new_status_signature
+        value: "str(tool_input.get('resolution_id', '')) + ':' + str((tool_output.get('result') or tool_output).get('resolved_count')) + '/' + str((tool_output.get('result') or tool_output).get('pending_count'))"
+      - server: gobby-merge
+        tool: merge_status
+        action: set_variable
+        variable: pending_count_int
+        value: "int((tool_output.get('result') or tool_output).get('pending_count', 0))"
+      - server: gobby-merge
+        tool: merge_status
+        action: set_variable
+        variable: merge_status_made_no_progress
+        value: "vars.get('merge_worker_completed') is True and vars.get('last_merge_status_signature') == vars.get('new_status_signature') and vars.get('pending_count_int', 0) > 0"
+      - server: gobby-merge
+        tool: merge_status
+        when: "vars.get('merge_status_made_no_progress') is True"
+        action: set_variable
         variable: no_progress_merge_status_count
-        value: "vars.get('no_progress_merge_status_count', 0) + 1 if vars.get('merge_worker_completed') is True and vars.get('last_merge_status_signature') == str(tool_input.get('resolution_id', '')) + ':' + str(tool_output.get('resolved_count')) + '/' + str(tool_output.get('pending_count')) and int(tool_output.get('pending_count', 0)) > 0 else 0"
+        value: "vars.get('no_progress_merge_status_count', 0) + 1"
+      - server: gobby-merge
+        tool: merge_status
+        when: "vars.get('merge_status_made_no_progress') is not True"
+        action: set_variable
+        variable: no_progress_merge_status_count
+        value: 0
       - server: gobby-merge
         tool: merge_status
         action: set_variable
         variable: last_merge_status_signature
-        value: "str(tool_input.get('resolution_id', '')) + ':' + str(tool_output.get('resolved_count')) + '/' + str(tool_output.get('pending_count'))"
+        value: "vars.get('new_status_signature', '')"
       - server: gobby-merge
         tool: merge_status
         action: set_variable

@@ -504,6 +504,18 @@ def test_get_configured_embedding_provider_returns_none_when_db_missing(
         assert deps.get_configured_embedding_provider() is None
 
 
+@pytest.mark.unit
+def test_get_configured_embedding_provider_reraises_unexpected_errors() -> None:
+    with (
+        patch(
+            "gobby.storage.hub.runtime.runtime_hub_database",
+            side_effect=AssertionError("non-db bug"),
+        ),
+        pytest.raises(AssertionError, match="non-db bug"),
+    ):
+        deps.get_configured_embedding_provider()
+
+
 def test_check_config_mismatches() -> None:
     config = MagicMock()
     config.llm_providers.claude = True

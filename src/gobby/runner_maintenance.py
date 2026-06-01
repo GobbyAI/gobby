@@ -307,7 +307,8 @@ async def tmux_window_name_repair_loop(
         if session_manager is None:
             return
         try:
-            sessions = session_manager.list(
+            sessions = await asyncio.to_thread(
+                session_manager.list,
                 statuses=["active", "paused"],
                 limit=normalized_session_list_limit,
             )

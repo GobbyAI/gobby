@@ -20,11 +20,6 @@ SELECT
     source_secret.created_at,
     NOW()
 FROM source_secret
-WHERE NOT EXISTS (
-    SELECT 1
-    FROM secrets
-    WHERE name = 'embeddings_api_key'
-)
 ON CONFLICT (name) DO NOTHING;
 
 INSERT INTO config_store (key, value, source, is_secret, updated_at)

@@ -203,6 +203,8 @@ export function useSessionDetail(sessionId: string | null) {
   const sessionRef = useRef<GobbySession | null>(null)
   const detailPollCleanupRef = useRef<(() => void) | null>(null)
   const tailRefreshTimeoutRef = useRef<number | null>(null)
+  const tailRefreshInFlightRef = useRef(false)
+  const tailWindowVersionRef = useRef(0)
   const detailLoadVersionRef = useRef(0)
   // Mirrors of paging state read synchronously by loadMore / live append.
   const loadedCountRef = useRef(0)
@@ -243,6 +245,8 @@ export function useSessionDetail(sessionId: string | null) {
     loadedCountRef.current = 0
     renderedTotalRef.current = 0
     loadingOlderRef.current = false
+    tailRefreshInFlightRef.current = false
+    tailWindowVersionRef.current += 1
     setIsLoadingOlder(false)
     setFirstItemIndex(START_INDEX)
     setTranscriptDegradedReason(null)
@@ -400,6 +404,8 @@ export function useSessionDetail(sessionId: string | null) {
   }, [applyClearedDetail, clearDetailPolling, clearTailRefresh, resetPaging])
 
   const applyRefreshedTailMessages = useCallback((result: MessageLoadResult) => {
+    if (loadingOlderRef.current) return
+
     const currentMessages = messagesRef.current
     const currentIds = new Set(currentMessages.map((message) => message.id))
     const refreshedById = new Map(result.mapped.map((message) => [message.id, message]))
@@ -423,6 +429,7 @@ export function useSessionDetail(sessionId: string | null) {
     }
 
     messagesRef.current = nextMessages
+    tailWindowVersionRef.current += 1
     setMessages(nextMessages)
     setTotalMessages((prev) => Math.max(result.totalCount, prev + appendedCount))
 
@@ -450,14 +457,19 @@ export function useSessionDetail(sessionId: string | null) {
     tailRefreshTimeoutRef.current = window.setTimeout(() => {
       tailRefreshTimeoutRef.current = null
       if (sessionIdRef.current !== activeSessionId || messageSourceRef.current !== 'session') return
+      if (loadingOlderRef.current || tailRefreshInFlightRef.current) return
 
       const refreshVersion = detailLoadVersionRef.current
+      const tailWindowVersion = tailWindowVersionRef.current
+      tailRefreshInFlightRef.current = true
       void (async () => {
         try {
           const result = await fetchRenderedSessionMessages(activeSessionId, 0, 'tail')
           if (
             sessionIdRef.current !== activeSessionId ||
             detailLoadVersionRef.current !== refreshVersion ||
+            tailWindowVersionRef.current !== tailWindowVersion ||
+            loadingOlderRef.current ||
             messageSourceRef.current !== 'session' ||
             !result.ok
           ) {
@@ -468,6 +480,8 @@ export function useSessionDetail(sessionId: string | null) {
           if (sessionIdRef.current === activeSessionId) {
             console.warn('Failed to refresh session tail messages:', error)
           }
+        } finally {
+          tailRefreshInFlightRef.current = false
         }
       })()
     }, TAIL_REFRESH_DEBOUNCE_MS)
@@ -530,13 +544,22 @@ export function useSessionDetail(sessionId: string | null) {
       }
       if (!result.ok || result.mapped.length === 0) return
 
-      setMessages((prev) => {
-        const next = [...result.mapped, ...prev]
-        messagesRef.current = next
-        return next
-      })
-      setFirstItemIndex((prev) => prev - result.returnedCount)
-      const nextLoaded = loadedCountRef.current + result.returnedCount
+      const currentMessages = messagesRef.current
+      const currentIds = new Set(currentMessages.map((message) => message.id))
+      const olderMessages = result.mapped.filter((message) => !currentIds.has(message.id))
+      if (olderMessages.length === 0) {
+        const nextTotal = Math.max(renderedTotalRef.current, result.renderedTotal)
+        renderedTotalRef.current = nextTotal
+        setRenderedTotal(nextTotal)
+        return
+      }
+
+      const next = [...olderMessages, ...currentMessages]
+      messagesRef.current = next
+      tailWindowVersionRef.current += 1
+      setMessages(next)
+      setFirstItemIndex((prev) => prev - olderMessages.length)
+      const nextLoaded = loadedCountRef.current + olderMessages.length
       const nextTotal = Math.max(renderedTotalRef.current, result.renderedTotal)
       loadedCountRef.current = nextLoaded
       renderedTotalRef.current = nextTotal
@@ -590,6 +613,7 @@ export function useSessionDetail(sessionId: string | null) {
         const updated = [...prev]
         updated[existingIdx] = newMessage
         messagesRef.current = updated
+        tailWindowVersionRef.current += 1
         return updated
       }
       // Genuinely new group: bump parsed total and the rendered-group counts.
@@ -606,6 +630,7 @@ export function useSessionDetail(sessionId: string | null) {
       })
       const next = [...prev, newMessage]
       messagesRef.current = next
+      tailWindowVersionRef.current += 1
       return next
     })
   }, []))

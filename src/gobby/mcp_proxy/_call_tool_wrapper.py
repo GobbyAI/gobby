@@ -121,7 +121,8 @@ def canonicalize_call_tool_wrapper(
     canonical_session_id = session_id if isinstance(session_id, str) and session_id else None
     canonical_project_id = _pick_wrapper_value(project_id, nested.get("project_id"))
 
-    # Legacy wrappers sometimes put the target tool payload inside nested arguments/args.
+    # Only unwrap nested payloads when routing came from the nested wrapper; top-level
+    # server/tool values preserve malformed target arguments for downstream validation.
     if (server_name_from_nested or tool_name_from_nested) and isinstance(canonical_arguments, dict):
         for field in CALL_TOOL_ARGUMENT_FIELDS:
             if field in canonical_arguments:

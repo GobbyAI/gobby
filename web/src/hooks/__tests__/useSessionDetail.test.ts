@@ -561,6 +561,135 @@ describe('useSessionDetail', () => {
     expect(result.current.hasMore).toBe(false)
   })
 
+  it('skips stale tail refreshes while an older page is loading', async () => {
+    await loadModule()
+
+    let tailFetchCount = 0
+    let resolveOlderPage: ((response: Response) => void) | null = null
+    mockFetch.fn.mockImplementation(async (input: RequestInfo | URL) => {
+      const url =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url
+
+      if (/\/api\/sessions\/sess-cli$/.test(url)) {
+        return new Response(
+          JSON.stringify({
+            session: {
+              id: 'sess-cli',
+              external_id: 'cli-ext-1',
+              session_type: 'terminal',
+              status: 'active',
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+
+      if (url.includes('/api/sessions/sess-cli/messages?limit=50&offset=0&order=tail')) {
+        tailFetchCount += 1
+        return new Response(
+          JSON.stringify({
+            messages: [
+              {
+                id: 'sess-msg-2',
+                role: 'assistant',
+                content: 'Tail output 2',
+                timestamp: '2026-04-09T00:00:02Z',
+              },
+              {
+                id: 'sess-msg-3',
+                role: 'assistant',
+                content: 'Tail output 3',
+                timestamp: '2026-04-09T00:00:03Z',
+              },
+            ],
+            total_count: 3,
+            rendered_count: 3,
+            returned_count: 2,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+
+      if (url.includes('/api/sessions/sess-cli/messages?limit=50&offset=2&order=tail')) {
+        return new Promise<Response>((resolve) => {
+          resolveOlderPage = resolve
+        })
+      }
+
+      return new Response(JSON.stringify({ error: 'no mock route matched' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+
+    const { result } = renderHook(() => useSessionDetail('sess-cli'))
+    const ws = mockWs.instances[0]
+    act(() => ws.simulateOpen())
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+
+    let loadMorePromise: Promise<void> | undefined
+    act(() => {
+      loadMorePromise = result.current.loadMore()
+    })
+    await waitFor(() => expect(resolveOlderPage).not.toBeNull())
+    vi.useFakeTimers()
+
+    act(() => {
+      ws.simulateMessage({
+        type: 'session_event',
+        event: 'session_updated',
+        session_id: 'sess-cli',
+      })
+    })
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(500)
+    })
+
+    expect(tailFetchCount).toBe(1)
+
+    await act(async () => {
+      resolveOlderPage?.(
+        new Response(
+          JSON.stringify({
+            messages: [
+              {
+                id: 'sess-msg-1',
+                role: 'assistant',
+                content: 'Older output 1',
+                timestamp: '2026-04-09T00:00:01Z',
+              },
+              {
+                id: 'sess-msg-2',
+                role: 'assistant',
+                content: 'Tail output 2 duplicate',
+                timestamp: '2026-04-09T00:00:02Z',
+              },
+            ],
+            total_count: 3,
+            rendered_count: 3,
+            returned_count: 2,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      )
+      await loadMorePromise
+    })
+
+    expect(result.current.messages.map((message) => message.content)).toEqual([
+      'Older output 1',
+      'Tail output 2',
+      'Tail output 3',
+    ])
+    expect(result.current.hasMore).toBe(false)
+  })
+
   it('ignores pending transcript tail refreshes after session change or unmount', async () => {
     await loadModule()
 

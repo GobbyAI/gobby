@@ -66,6 +66,7 @@ def monitor(
 
 
 def _metadata_run(run_id: str, metadata: object, task_id: str | None = None) -> AgentRun:
+    """Build an AgentRun with arbitrary resume metadata for dispatcher-context tests."""
     return AgentRun(
         id=run_id,
         parent_session_id="parent-session",
@@ -77,6 +78,17 @@ def _metadata_run(run_id: str, metadata: object, task_id: str | None = None) -> 
         task_id=task_id,
         resume_metadata_json=cast(Any, metadata),
     )
+
+
+class TerminalWakeRecorder:
+    """Async tmux send_keys stub that preserves exact wake key order."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, bool]] = []
+
+    async def __call__(self, session_name: str, keys: str, *, literal: bool = True) -> bool:
+        self.calls.append((session_name, keys, literal))
+        return True
 
 
 def test_idle_check_handler_receives_monitor_database(
@@ -112,6 +124,15 @@ def test_has_dispatch_stage_context_requires_string_stage_fields(
     expected: bool,
 ) -> None:
     assert _has_dispatch_stage_context(_metadata_run("run-stage-context", metadata)) is expected
+
+
+def test_has_dispatch_stage_context_handles_metadata_access_failure() -> None:
+    class BrokenMetadataRun:
+        @property
+        def resume_metadata_json(self) -> object:
+            raise RuntimeError("metadata unavailable")
+
+    assert _has_dispatch_stage_context(cast(AgentRun, BrokenMetadataRun())) is False
 
 
 @pytest.mark.asyncio
@@ -668,15 +689,55 @@ class TestCheckIdleAgents:
             patch.object(
                 idle_monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="\u276f\n"
             ),
+            patch.object(idle_monitor._tmux, "send_keys", new=TerminalWakeRecorder()) as wake,
+        ):
+            handled = await idle_monitor.check_idle_agents()
+
+        assert handled == 1
+        assert wake.calls == [
+            ("gobby-idle", "Escape", False),
+            ("gobby-idle", wake.calls[1][1], True),
+            ("gobby-idle", "Enter", False),
+        ]
+        assert "Continue working" in wake.calls[1][1]
+        assert all(keys != "Up" for _session, keys, _literal in wake.calls)
+
+    @pytest.mark.asyncio
+    async def test_idle_agent_with_unsubmitted_input_is_not_cleared(
+        self,
+        idle_monitor: AgentLifecycleMonitor,
+        agent_run_manager: LocalAgentRunManager,
+        sample_session: dict,
+    ) -> None:
+        """Unsubmitted prompt text must not be erased by the reprompt Escape key."""
+        import time
+
+        run = _make_terminal_run(
+            agent_run_manager,
+            sample_session,
+            run_id="run-unsubmitted-input",
+            tmux_session_name="gobby-unsubmitted-input",
+        )
+
+        state = idle_monitor._idle_detector.get_state(run.id)
+        state.first_idle_at = time.monotonic() - 360
+
+        with (
+            patch.object(
+                idle_monitor._tmux,
+                "capture_pane",
+                new_callable=AsyncMock,
+                return_value="❯ uv run pytest tests/foo.py\n",
+            ),
             patch.object(
                 idle_monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
             ) as mock_send,
         ):
             handled = await idle_monitor.check_idle_agents()
 
-        assert handled == 1
-        assert mock_send.call_args_list[0] == call("gobby-idle", "Escape", literal=False)
-        assert "Continue working" in mock_send.call_args_list[1].args[1]
+        assert handled == 0
+        mock_send.assert_not_awaited()
+        assert idle_monitor._idle_detector.get_state(run.id).first_idle_at is None
 
     @pytest.mark.asyncio
     async def test_idle_agent_waits_for_semantic_reprompt_delay(
@@ -826,7 +887,8 @@ class TestCheckIdleAgents:
         assert handled == 1
         assert mock_send.call_args_list == [
             call("gobby-queued-continuation-delayed", "Escape", literal=False),
-            call("gobby-queued-continuation-delayed", "Continue working on your task.\n"),
+            call("gobby-queued-continuation-delayed", "Continue working on your task."),
+            call("gobby-queued-continuation-delayed", "Enter", literal=False),
         ]
 
     @pytest.mark.asyncio

@@ -8,6 +8,7 @@ Tests cover:
 """
 
 import json
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -554,22 +555,22 @@ class TestRenameTmuxWindow:
 class _EnforceTmuxManager:
     """Records rename calls and returns a configurable automatic-rename flag."""
 
-    instances: list = []
+    instances: list["_EnforceTmuxManager"] = []
     auto_rename_return: bool | None = True
     window_name_return: str | None = None
 
-    def __init__(self, config):
+    def __init__(self, config: Any) -> None:
         self.config = config
-        self.rename_calls = []
+        self.rename_calls: list[tuple[str, str]] = []
         _EnforceTmuxManager.instances.append(self)
 
-    async def get_window_automatic_rename(self, target):
+    async def get_window_automatic_rename(self, target: str) -> bool | None:
         return type(self).auto_rename_return
 
-    async def get_window_name(self, target):
+    async def get_window_name(self, target: str) -> str | None:
         return type(self).window_name_return
 
-    async def rename_window(self, target, title):
+    async def rename_window(self, target: str, title: str) -> bool:
         self.rename_calls.append((target, title))
         return True
 

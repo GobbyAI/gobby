@@ -108,17 +108,18 @@ class TaskDispatchMutexManager:
                 "SELECT lease_until, lease_holder, run_id FROM task_dispatch_mutex WHERE task_id = %s",
                 (task_id,),
             ).fetchone()
+            next_run_id = run_id
             if row is not None:
                 existing_until = row["lease_until"]
                 existing_holder = row["lease_holder"]
                 existing_run_id = row["run_id"]
                 if existing_until is not None and existing_until >= now_iso:
-                    if (
-                        run_id is None
-                        or existing_holder != holder
-                        or existing_run_id != run_id
+                    if existing_holder != holder or (
+                        run_id is not None and existing_run_id != run_id
                     ):
                         return False
+                    if run_id is None:
+                        next_run_id = existing_run_id
 
             conn.execute(
                 """
@@ -133,7 +134,7 @@ class TaskDispatchMutexManager:
                     action_kind = excluded.action_kind,
                     updated_at = excluded.updated_at
                 """,
-                (task_id, lease_until, holder, run_id, kind, now_iso),
+                (task_id, lease_until, holder, next_run_id, kind, now_iso),
             )
             return True
 

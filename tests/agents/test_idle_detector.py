@@ -74,6 +74,18 @@ class TestDetect:
         )
         assert self.detector.detect(output) == "active"
 
+    def test_running_tests_with_queued_continuation_is_active(self) -> None:
+        output = (
+            "Running tests...\n"
+            "  ❯ Continue working on your task.\n"
+            "❯ Press up to edit queued messages\n"
+        )
+        assert self.detector.detect(output) == "active"
+
+    def test_bare_running_word_with_queued_continuation_is_idle(self) -> None:
+        output = "Running\n  ❯ Continue working on your task.\n❯ Press up to edit queued messages\n"
+        assert self.detector.detect(output) == "idle"
+
     def test_claude_bunning_typo_with_queued_continuation_is_idle(self) -> None:
         output = (
             "✽ Bunning… (7m 54s · ↓ 38.4k tokens)\n\n"
@@ -255,24 +267,34 @@ class TestStalledBuffer:
 
     def test_prompt_with_unsubmitted_text(self) -> None:
         """Prompt char followed by text that was never submitted."""
-        assert self.detector.detect("❯ some text\n") == "idle"
+        output = "❯ some text\n"
+        assert self.detector.detect(output) == "idle"
+        assert self.detector.has_unsubmitted_input(output) is True
 
     def test_shell_prompt_with_command(self) -> None:
         """Shell prompt with a command typed but not submitted."""
-        assert self.detector.detect("$ git status\n") == "idle"
+        output = "$ git status\n"
+        assert self.detector.detect(output) == "idle"
+        assert self.detector.has_unsubmitted_input(output) is True
 
     def test_greater_than_with_text(self) -> None:
         """Greater-than prompt with trailing text."""
-        assert self.detector.detect("> some input\n") == "idle"
+        output = "> some input\n"
+        assert self.detector.detect(output) == "idle"
+        assert self.detector.has_unsubmitted_input(output) is True
 
     def test_active_output_unchanged(self) -> None:
         """Normal processing output should still be active."""
-        assert self.detector.detect("Processing...\n") == "active"
+        output = "Processing...\n"
+        assert self.detector.detect(output) == "active"
+        assert self.detector.has_unsubmitted_input(output) is False
 
     def test_bare_prompt_still_idle(self) -> None:
         """Bare prompt without text should still match idle prompt patterns."""
         assert self.detector.detect("❯\n") == "idle"
         assert self.detector.detect("$\n") == "idle"
+        assert self.detector.has_unsubmitted_input("❯\n") is False
+        assert self.detector.has_unsubmitted_input("$\n") is False
 
 
 class TestStopHookBlocked:

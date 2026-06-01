@@ -300,6 +300,8 @@ describe("useChatPageProviderState", () => {
     expect(autonomousProxy.result.current.providerPickerDisabledReason).toBe(
       "Cannot change provider on a pipeline-managed session",
     );
+    expect(autonomousProxy.result.current.canAttachViewedSession).toBe(true);
+    expect(autonomousProxy.result.current.canControlViewedSession).toBe(false);
     expect(autonomousProxy.result.current.showChatInput).toBe(true);
     await waitFor(() => {
       expect(proxy.result.current.providerModelCatalog).toHaveLength(2);

@@ -1594,6 +1594,18 @@ class TestSecretAwareConfig:
         assert AI_EMBEDDING_MODEL_KEY in store.get_secret_keys()
         assert secret_store.get("model") == "new-secret-model"
 
+    def test_put_non_string_embedding_secret_reports_runtime_key(
+        self, client: TestClient, temp_db: Any
+    ) -> None:
+        response = client.put(
+            "/api/config/values",
+            json={"values": {"embeddings": {"api_key": ["bad"]}}},
+        )
+
+        assert response.status_code == 400
+        assert "Secret 'embeddings.api_key' must be a string" in response.json()["detail"]
+        assert ConfigStore(temp_db).get(AI_EMBEDDING_API_KEY_KEY) is None
+
     def test_put_masked_value_skipped(
         self, client: TestClient, temp_db: Any, mock_machine_id: Any
     ) -> None:

@@ -342,6 +342,23 @@ class TestListConfigKeys:
         assert result["success"] is False
         assert "ai.embeddings" in result["error"]
 
+    def test_list_config_keys_reports_store_failure(
+        self,
+        config_registry: InternalToolRegistry,
+        config_store: ConfigStore,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        def fail_list_keys(prefix: str | None = None) -> list[str]:
+            raise RuntimeError("config store unavailable")
+
+        monkeypatch.setattr(config_store, "list_keys", fail_list_keys)
+
+        tool = config_registry.get_tool("list_config_keys")
+        result = tool()
+
+        assert result["success"] is False
+        assert result["error"] == "config store unavailable"
+
 
 class TestEnsureDefaults:
     """Tests for ensure_defaults tool."""

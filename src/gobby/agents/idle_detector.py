@@ -54,7 +54,10 @@ class IdleDetector:
     )
 
     ACTIVE_WORK_PATTERNS: tuple[re.Pattern[str], ...] = (
-        re.compile(r"\bRunning\b", re.IGNORECASE),
+        re.compile(
+            r"\bRunning(?:[.…]+|\s+(?:command|task|process|job|tests?|checks?)\b)",
+            re.IGNORECASE,
+        ),
         re.compile(r"almost done thinking", re.IGNORECASE),
         re.compile(r"thinking with .*effort", re.IGNORECASE),
         re.compile(r"\bReading\s+\d+\s+files?\b", re.IGNORECASE),
@@ -90,6 +93,23 @@ class IdleDetector:
     def clear_state(self, run_id: str) -> None:
         """Remove tracking state for an agent (on cleanup)."""
         self._states.pop(run_id, None)
+
+    def has_unsubmitted_input(self, pane_output: str) -> bool:
+        """Return whether pane output shows text typed at a prompt but not submitted."""
+        for line in pane_output.strip().splitlines():
+            stripped = line.strip()
+            if any(
+                pattern.search(stripped) for pattern in PromptDetector.QUEUED_CONTINUATION_PATTERNS
+            ):
+                continue
+            if any(
+                pattern.search(stripped)
+                for pattern in PromptDetector.QUEUED_MESSAGE_PROMPT_PATTERNS
+            ):
+                continue
+            if any(pattern.match(stripped) for pattern in self.STALLED_BUFFER_PATTERNS):
+                return True
+        return False
 
     def detect(self, pane_output: str) -> str:
         """Classify pane output as 'idle', 'context_full', or 'active'.

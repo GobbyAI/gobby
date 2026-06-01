@@ -447,7 +447,7 @@ def create_config_registry(
                 storage_prefix = runtime_embedding_config_key_to_storage_key(runtime_prefix)
             keys = config_store.list_keys(prefix=storage_prefix)
             return {"success": True, "count": len(keys), "keys": keys}
-        except ValueError as e:
+        except Exception as e:
             return {"success": False, "error": str(e)}
 
     @registry.tool(

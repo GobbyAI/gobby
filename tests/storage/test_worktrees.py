@@ -5,6 +5,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager, Worktree, WorktreeStatus
 
 pytestmark = pytest.mark.unit
@@ -365,6 +367,37 @@ class TestLocalWorktreeManagerGetBy:
         worktree = manager.get_by_task("gt-nonexistent")
 
         assert worktree is None
+
+    @pytest.mark.integration
+    def test_get_by_task_prefers_active_worktree_with_real_db(
+        self,
+        temp_db: HubDatabase,
+        sample_project: dict[str, object],
+    ) -> None:
+        """Real storage honors the ORDER BY CASE status priority."""
+        task = LocalTaskManager(temp_db).create_task(
+            project_id=str(sample_project["id"]),
+            title="Worktree ordering",
+        )
+        manager = LocalWorktreeManager(temp_db)
+        active = manager.create(
+            project_id=str(sample_project["id"]),
+            branch_name="feature/active",
+            worktree_path="/tmp/gobby-active",
+            task_id=task.id,
+        )
+        stale = manager.create(
+            project_id=str(sample_project["id"]),
+            branch_name="feature/stale",
+            worktree_path="/tmp/gobby-stale",
+            task_id=task.id,
+        )
+        manager.mark_stale(stale.id)
+
+        worktree = manager.get_by_task(task.id)
+
+        assert worktree is not None
+        assert worktree.id == active.id
 
 
 class TestLocalWorktreeManagerList:

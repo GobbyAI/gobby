@@ -401,7 +401,10 @@ def create_app(server: "HTTPServer") -> FastAPI:
 
         from gobby.servers.routes.llm import stop_vision_temp_cleanup_task
 
-        await stop_vision_temp_cleanup_task(app)
+        try:
+            await stop_vision_temp_cleanup_task(app)
+        except Exception as e:
+            logger.warning(f"Failed to stop vision temp cleanup task: {e}")
 
         # Cleanup CodexAdapter and stop app-server client
         if getattr(app.state, "codex_sync_task", None):

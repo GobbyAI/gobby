@@ -87,3 +87,33 @@ class TestLifespan:
         mock_ws_server.cleanup_voice.assert_awaited_once()
         assert mock_ws_server.cleanup_voice.await_count == 1
         assert mock_ws_server.cleanup_voice.await_args is not None
+
+    def test_lifespan_logs_vision_cleanup_failure(
+        self,
+        session_storage: SessionManager,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Vision cleanup failures should not abort the rest of shutdown."""
+        services = ServiceContainer(
+            config=None,
+            database=session_storage.db,
+            session_manager=session_storage,
+            task_manager=MagicMock(),
+        )
+        server = HTTPServer(
+            services=services,
+            port=60887,
+            test_mode=True,
+        )
+
+        with (
+            patch(
+                "gobby.servers.routes.llm.stop_vision_temp_cleanup_task",
+                new=AsyncMock(side_effect=RuntimeError("cleanup failed")),
+            ),
+            caplog.at_level("WARNING", logger="gobby.servers.app_factory"),
+        ):
+            with TestClient(server.app):
+                pass
+
+        assert "Failed to stop vision temp cleanup task: cleanup failed" in caplog.text

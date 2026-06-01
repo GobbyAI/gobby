@@ -18,6 +18,7 @@ EMBEDDING_CONFIG_KEY_PATTERN = re.compile(
 )
 
 
+@pytest.mark.slow(reason="AST guard scans every source file for forbidden literal config keys.")
 def test_embedding_keys_centralized_and_guarded() -> None:
     offenders: list[str] = []
     for path in SRC_ROOT.rglob("*.py"):

@@ -34,6 +34,36 @@ from gobby.storage.config_store import (
 logger = logging.getLogger(__name__)
 
 
+def _runtime_key_by_storage_key(runtime_updates: dict[str, Any]) -> dict[str, str]:
+    runtime_key_by_storage_key = {
+        runtime_embedding_config_key_to_storage_key(runtime_key): runtime_key
+        for runtime_key in runtime_updates
+    }
+    if len(runtime_key_by_storage_key) != len(runtime_updates):
+        raise ValueError("Configuration key conversion collapsed duplicate runtime keys")
+    return runtime_key_by_storage_key
+
+
+def _validate_storage_key_coverage(
+    storage_updates: dict[str, Any],
+    runtime_key_by_storage_key: dict[str, str],
+) -> None:
+    missing_runtime_keys = set(storage_updates) - set(runtime_key_by_storage_key)
+    if missing_runtime_keys:
+        missing = ", ".join(sorted(missing_runtime_keys))
+        raise ValueError(f"Missing runtime config key mapping for storage keys: {missing}")
+
+
+def _convert_existing_secret_keys(existing_secret_keys: set[str]) -> set[str]:
+    converted_secret_keys: set[str] = set()
+    for storage_key in existing_secret_keys:
+        runtime_key = storage_embedding_config_key_to_runtime_key(storage_key)
+        if runtime_embedding_config_key_to_storage_key(runtime_key) != storage_key:
+            raise ValueError(f"Secret config key does not round-trip: {storage_key}")
+        converted_secret_keys.add(runtime_key)
+    return converted_secret_keys
+
+
 def register_value_routes(router: APIRouter, context: ConfigurationRouteContext) -> None:
     """Register schema and structured config value routes."""
 
@@ -69,9 +99,7 @@ def register_value_routes(router: APIRouter, context: ConfigurationRouteContext)
             config_store = context.get_config_store()
             existing_secret_keys = set(config_store.get_secret_keys())
             # Existing DB secret keys are storage-shaped; convert for runtime validation.
-            converted_existing_secret_keys = {
-                storage_embedding_config_key_to_runtime_key(key) for key in existing_secret_keys
-            }
+            converted_existing_secret_keys = _convert_existing_secret_keys(existing_secret_keys)
             # Incoming partial config is validated in runtime shape.
             runtime_updates = storage_embedding_config_entries_to_runtime(
                 flatten_config(request.values)
@@ -79,10 +107,8 @@ def register_value_routes(router: APIRouter, context: ConfigurationRouteContext)
             # ConfigStore persists canonical storage keys.
             storage_updates = runtime_embedding_config_entries_to_storage(runtime_updates)
             # Preserve the submitted runtime key for validation errors and runtime merge.
-            runtime_key_by_storage_key = {
-                runtime_embedding_config_key_to_storage_key(runtime_key): runtime_key
-                for runtime_key in runtime_updates
-            }
+            runtime_key_by_storage_key = _runtime_key_by_storage_key(runtime_updates)
+            _validate_storage_key_coverage(storage_updates, runtime_key_by_storage_key)
 
             secret_entries: dict[str, Any] = {}
             normal_entries: dict[str, Any] = {}
@@ -135,7 +161,7 @@ def register_value_routes(router: APIRouter, context: ConfigurationRouteContext)
                     if value is None or value == "":
                         config_store.clear_secret(storage_key, secret_store)
                     elif not isinstance(value, str):
-                        runtime_key = runtime_key_by_storage_key.get(storage_key, storage_key)
+                        runtime_key = runtime_key_by_storage_key[storage_key]
                         raise HTTPException(
                             400,
                             f"Secret '{runtime_key}' must be a string, got {type(value).__name__}",

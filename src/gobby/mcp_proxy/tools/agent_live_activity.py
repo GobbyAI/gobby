@@ -4,9 +4,25 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from collections.abc import Awaitable, Mapping
+from typing import Any, Protocol, overload
 
 logger = logging.getLogger(__name__)
+
+
+class LiveActivityRun(Protocol):
+    @property
+    def child_session_id(self) -> str | None: ...
+
+    @property
+    def parent_session_id(self) -> str | None: ...
+
+    tool_calls_count: int
+    turns_used: int
+
+
+class TranscriptReader(Protocol):
+    def get_activity_counts(self, session_id: str) -> Awaitable[Mapping[str, Any]]: ...
 
 
 def _count(value: Any) -> int | None:
@@ -19,12 +35,29 @@ def _count(value: Any) -> int | None:
         return None
 
 
-async def overlay_live_activity(run: Any, transcript_reader: Any | None) -> Any:
+@overload
+async def overlay_live_activity[RunT: LiveActivityRun](
+    run: RunT,
+    transcript_reader: TranscriptReader | None,
+) -> RunT: ...
+
+
+@overload
+async def overlay_live_activity(
+    run: None,
+    transcript_reader: TranscriptReader | None,
+) -> None: ...
+
+
+async def overlay_live_activity[RunT: LiveActivityRun](
+    run: RunT | None,
+    transcript_reader: TranscriptReader | None,
+) -> RunT | None:
     """Overlay transcript-derived counters on an agent run."""
     if transcript_reader is None or run is None:
         return run
 
-    session_id = getattr(run, "child_session_id", None) or getattr(run, "parent_session_id", None)
+    session_id = run.child_session_id or run.parent_session_id
     if not session_id:
         return run
 
@@ -47,8 +80,12 @@ async def overlay_live_activity(run: Any, transcript_reader: Any | None) -> Any:
     return run
 
 
-async def overlay_runs_live_activity(runs: list[Any], transcript_reader: Any | None) -> list[Any]:
-    return await asyncio.gather(
+async def overlay_runs_live_activity[RunT: LiveActivityRun](
+    runs: list[RunT],
+    transcript_reader: TranscriptReader | None,
+) -> list[RunT]:
+    results = await asyncio.gather(
         *(overlay_live_activity(run, transcript_reader) for run in runs),
         return_exceptions=False,
     )
+    return [run for run in results if run is not None]

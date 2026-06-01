@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 import uuid
+from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
@@ -29,6 +31,8 @@ if TYPE_CHECKING:
 ACTIVE_AGENT_RUN_STATUSES = ("pending", "running")
 DELIVERABLE_SESSION_STATUSES = ("active", "paused")
 MESSAGE_TARGETS = ("session", "agent", "project", "build", "all")
+AGENT_CROSS_PROJECT_AUTH_CACHE_TTL_SECONDS = 30.0
+AGENT_CROSS_PROJECT_AUTH_CACHE_MAX_SIZE = 256
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +102,9 @@ class MailboxService:
         self._message_manager = message_manager
         self._session_manager = session_manager
         self._wake_dispatcher = wake_dispatcher
+        self._agent_cross_project_auth_cache: OrderedDict[tuple[str, str], tuple[float, bool]] = (
+            OrderedDict()
+        )
 
     async def send(
         self,
@@ -311,7 +318,7 @@ class MailboxService:
         return {"session_id": session_id, "delivered": False, "method": None}
 
     def _resolve_project_id(self, from_session_id: str, project_id: str | None) -> str:
-        if project_id:
+        if project_id is not None:
             return self._resolve_project_ref(project_id)
         if from_session_id == SYSTEM_SESSION_ID:
             raise ValueError("project_id is required for system broadcast messages")
@@ -350,10 +357,7 @@ class MailboxService:
             raise ValueError("Recipient session is outside the target project")
         # System-originated messages are internal daemon notifications scoped by
         # explicit project_id, so they bypass sender/recipient project equality.
-        if (
-            from_session_id != SYSTEM_SESSION_ID
-            and not allow_cross_project
-        ):
+        if from_session_id != SYSTEM_SESSION_ID and not allow_cross_project:
             sender: Session | None = self._session_manager.get(from_session_id)
             if sender is None:
                 raise ValueError(f"Sender session not found: {from_session_id}")
@@ -414,6 +418,39 @@ class MailboxService:
             coordinator_project_id=sender.project_id,
             build_project_id=build_project_id,
         )
+
+    def _allows_cached_cross_project_build_coordinator(
+        self,
+        *,
+        from_session_id: str,
+        build_project_id: str,
+        task_id: str | None,
+    ) -> bool:
+        if task_id is None:
+            return False
+
+        now = time.monotonic()
+        cache_key = (from_session_id, task_id)
+        cached = self._agent_cross_project_auth_cache.get(cache_key)
+        if cached is not None:
+            expires_at, allowed = cached
+            if expires_at > now:
+                self._agent_cross_project_auth_cache.move_to_end(cache_key)
+                return allowed
+            self._agent_cross_project_auth_cache.pop(cache_key, None)
+
+        allowed = self._allows_cross_project_build_coordinator(
+            from_session_id=from_session_id,
+            build_project_id=build_project_id,
+            task_id=task_id,
+        )
+        self._agent_cross_project_auth_cache[cache_key] = (
+            now + AGENT_CROSS_PROJECT_AUTH_CACHE_TTL_SECONDS,
+            allowed,
+        )
+        while len(self._agent_cross_project_auth_cache) > AGENT_CROSS_PROJECT_AUTH_CACHE_MAX_SIZE:
+            self._agent_cross_project_auth_cache.popitem(last=False)
+        return allowed
 
     def _all_recipient_session_ids(self, from_session_id: str) -> list[str]:
         status_placeholders = ",".join("%s" for _ in DELIVERABLE_SESSION_STATUSES)
@@ -533,7 +570,7 @@ class MailboxService:
             sender: Session | None = self._session_manager.get(from_session_id)
             if sender is not None and sender.project_id != recipient.project_id:
                 task_project_id = self._task_project_id(task_id)
-                allow_cross_project = self._allows_cross_project_build_coordinator(
+                allow_cross_project = self._allows_cached_cross_project_build_coordinator(
                     from_session_id=from_session_id,
                     build_project_id=task_project_id,
                     task_id=task_id,

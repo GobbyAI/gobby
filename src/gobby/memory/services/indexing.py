@@ -178,7 +178,8 @@ class IndexingService:
 
         total = 0
         try:
-            memories = self._storage.list_memories(
+            memories = await self._run_storage(
+                self._storage.list_memories,
                 project_id=project_id,
                 limit=MAX_REINDEX_LIMIT,
             )
