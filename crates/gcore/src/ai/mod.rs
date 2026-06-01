@@ -8,6 +8,8 @@ use crate::ai_context::AiContext;
 use crate::ai_types::{AiError, TextResult, TranscriptionResult, VisionResult};
 use crate::config::{AiCapability, CapabilityBinding};
 
+pub mod transcription;
+
 const TEXT_VISION_TIMEOUT: Duration = Duration::from_secs(60);
 const STT_CHUNK_TIMEOUT: Duration = Duration::from_secs(120);
 const MAX_RETRIES: usize = 2;
