@@ -8,6 +8,7 @@ from typing import Any
 from gobby.mcp_proxy._coerce_arguments import coerce_string_arguments
 
 CALL_TOOL_WRAPPER_FIELDS = ("server_name", "tool_name", "project_id")
+CALL_TOOL_ARGUMENT_FIELDS = ("arguments", "args")
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +55,10 @@ def _pick_wrapper_value(top_level: str | None, nested: Any) -> str | None:
     return None
 
 
+def _has_top_level_wrapper_value(value: str | None) -> bool:
+    return isinstance(value, str) and bool(value)
+
+
 def canonicalize_call_tool_wrapper(
     *,
     server_name: str | None,
@@ -66,10 +71,12 @@ def canonicalize_call_tool_wrapper(
     """Canonicalize public ``call_tool`` wrapper inputs.
 
     Top-level wrapper fields win. Missing server/tool/project wrapper fields are
-    hoisted from the ``arguments``/``args`` payload when present, then stripped so
-    only inner tool arguments reach downstream dispatch. Top-level ``session_id``
-    is wrapper context for normal same-repo calls; downstream dispatch may inject
-    its resolved UUID when a target schema requires ``session_id``.
+    hoisted from the ``arguments``/``args`` payload when present. If the hoisted
+    payload also contains nested ``arguments``/``args``, that nested value becomes
+    the target tool arguments. Wrapper fields are then stripped so only inner tool
+    arguments reach downstream dispatch. Top-level ``session_id`` is wrapper
+    context for normal same-repo calls; downstream dispatch may inject its
+    resolved UUID when a target schema requires ``session_id``.
     ``arguments.session_id`` is a target-tool override for a different session:
     local ``#N`` refs resolve in the caller project, while cross-project targets
     should use UUIDs. If routing fields are already top-level, malformed string
@@ -94,17 +101,42 @@ def canonicalize_call_tool_wrapper(
             )
         raise
 
-    canonical_arguments = dict(effective_arguments) if effective_arguments is not None else None
-    nested = canonical_arguments or {}
+    canonical_arguments: str | dict[str, Any] | None = (
+        dict(effective_arguments) if effective_arguments is not None else None
+    )
+    nested = canonical_arguments if isinstance(canonical_arguments, dict) else {}
 
+    server_name_from_nested = (
+        not _has_top_level_wrapper_value(server_name)
+        and isinstance(nested.get("server_name"), str)
+        and bool(nested.get("server_name"))
+    )
+    tool_name_from_nested = (
+        not _has_top_level_wrapper_value(tool_name)
+        and isinstance(nested.get("tool_name"), str)
+        and bool(nested.get("tool_name"))
+    )
     canonical_server_name = _pick_wrapper_value(server_name, nested.get("server_name"))
     canonical_tool_name = _pick_wrapper_value(tool_name, nested.get("tool_name"))
     canonical_session_id = session_id if isinstance(session_id, str) and session_id else None
     canonical_project_id = _pick_wrapper_value(project_id, nested.get("project_id"))
 
+    if (server_name_from_nested or tool_name_from_nested) and isinstance(canonical_arguments, dict):
+        for field in CALL_TOOL_ARGUMENT_FIELDS:
+            if field in canonical_arguments:
+                raw_nested_arguments = canonical_arguments[field]
+                if raw_nested_arguments is None:
+                    canonical_arguments = {}
+                elif isinstance(raw_nested_arguments, dict):
+                    canonical_arguments = dict(raw_nested_arguments)
+                else:
+                    canonical_arguments = raw_nested_arguments
+                break
+
     if canonical_arguments is not None:
         for field in CALL_TOOL_WRAPPER_FIELDS:
-            canonical_arguments.pop(field, None)
+            if isinstance(canonical_arguments, dict):
+                canonical_arguments.pop(field, None)
 
     return CanonicalCallToolWrapper(
         server_name=canonical_server_name,
