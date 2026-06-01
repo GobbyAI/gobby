@@ -6,6 +6,7 @@ from gobby.mcp_proxy._call_tool_wrapper import (
     CallToolWrapperInputError,
     canonicalize_call_tool_wrapper,
 )
+from gobby.mcp_proxy.server import GobbyDaemonTools
 
 pytestmark = pytest.mark.unit
 
@@ -61,3 +62,56 @@ def test_invalid_wrapper_json_still_raises_without_top_level_route() -> None:
             tool_name=None,
             arguments="{not-json",
         )
+
+
+class _SchemaErrorProxy:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, object, object]] = []
+
+    async def call_tool(
+        self,
+        server_name: str,
+        tool_name: str,
+        arguments: object,
+        session_id: object,
+    ) -> dict[str, object]:
+        self.calls.append((server_name, tool_name, arguments, session_id))
+        return {
+            "error": "Unexpected argument 'arguments'",
+            "hint": "Call end_agent_run with the target parameters directly.",
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "enum": ["success", "failed", "cancelled", "timeout", "error"],
+                    }
+                },
+                "required": ["status"],
+            },
+        }
+
+
+@pytest.mark.asyncio
+async def test_bad_end_agent_run_wrapper_call_returns_schema_help() -> None:
+    proxy = _SchemaErrorProxy()
+    tools = object.__new__(GobbyDaemonTools)
+    tools.tool_proxy = proxy
+    tools._session_manager = None
+
+    result = await GobbyDaemonTools.call_tool(
+        tools,
+        server_name="gobby-agents",
+        tool_name="end_agent_run",
+        arguments={"arguments": {"status": "success"}},
+    )
+
+    assert result.isError is True
+    text = result.content[0].text
+    assert "Unexpected argument 'arguments'" in text
+    assert "Call end_agent_run with the target parameters directly." in text
+    assert "Correct schema" in text
+    assert '"status"' in text
+    assert proxy.calls == [
+        ("gobby-agents", "end_agent_run", {"arguments": {"status": "success"}}, None)
+    ]
