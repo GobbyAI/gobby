@@ -33,8 +33,8 @@ fn effective_route_with_probe(
 ) -> AiRouting {
     match context.binding(capability).routing {
         AiRouting::Off => AiRouting::Off,
-        AiRouting::Direct => direct_route_or_off(context, capability),
-        AiRouting::Daemon => daemon_route_or_fallback(context, capability, &mut daemon_available),
+        AiRouting::Direct => AiRouting::Direct,
+        AiRouting::Daemon => AiRouting::Daemon,
         AiRouting::Auto => daemon_route_or_fallback(context, capability, &mut daemon_available),
     }
 }
@@ -467,6 +467,44 @@ mod tests {
         assert_eq!(
             effective_route_with_probe(&context, AiCapability::Embed, |_| true),
             AiRouting::Off
+        );
+    }
+
+    #[test]
+    fn effective_route_explicit_routing_modes_are_forced() {
+        use crate::config::{AiRouting, AiTuning};
+
+        let context = AiContext {
+            bindings: crate::ai_context::AiBindings {
+                embed: binding(AiRouting::Daemon, Some("http://direct.test")),
+                audio_transcribe: binding(AiRouting::Daemon, Some("http://direct.test")),
+                audio_translate: binding(AiRouting::Auto, Some("http://direct.test")),
+                vision_extract: binding(AiRouting::Off, Some("http://direct.test")),
+                text_generate: binding(AiRouting::Direct, None),
+            },
+            tuning: AiTuning {
+                max_concurrency: 1,
+                keep_alive: None,
+            },
+            limiter: crate::ai_context::AiLimiter::new(1),
+            project_id: None,
+        };
+
+        assert_eq!(
+            effective_route_with_probe(&context, AiCapability::AudioTranscribe, |_| false),
+            AiRouting::Daemon
+        );
+        assert_eq!(
+            effective_route_with_probe(&context, AiCapability::TextGenerate, |_| false),
+            AiRouting::Direct
+        );
+        assert_eq!(
+            effective_route_with_probe(&context, AiCapability::VisionExtract, |_| true),
+            AiRouting::Off
+        );
+        assert_eq!(
+            effective_route_with_probe(&context, AiCapability::Embed, |_| true),
+            AiRouting::Daemon
         );
     }
 

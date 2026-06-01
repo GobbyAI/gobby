@@ -1,5 +1,12 @@
 use std::path::{Path, PathBuf};
 
+#[cfg(feature = "ai")]
+use gobby_core::ai::effective_route;
+use gobby_core::ai_context::AiContext;
+use gobby_core::config::{AiCapability, AiRouting};
+
+#[cfg(feature = "ai")]
+use crate::ai::clients::ProductionVisionClient;
 use crate::ingest::{
     IngestResult, index_after_ingest, markdown_metadata, markdown_title, path_to_string,
     write_asset, write_raw_markdown,
@@ -45,6 +52,50 @@ pub fn ingest_image(
         snapshot,
         VisionEndpoint::Unavailable(default_vision_degradation()),
     )
+}
+
+pub fn ingest_image_with_production_vision(
+    vault_root: &Path,
+    store: &mut impl WikiIndexStore,
+    scope: ScopeIdentity,
+    ai_context: &AiContext,
+    snapshot: ImageSnapshot,
+) -> Result<ImageIngestResult, WikiError> {
+    let capability = AiCapability::VisionExtract;
+
+    #[cfg(feature = "ai")]
+    {
+        match effective_route(ai_context, capability) {
+            AiRouting::Daemon | AiRouting::Direct => {
+                let client = ProductionVisionClient::new(ai_context.clone());
+                ingest_image_with_vision(
+                    vault_root,
+                    store,
+                    scope,
+                    snapshot,
+                    VisionEndpoint::Available(&client),
+                )
+            }
+            routing => ingest_image_with_vision(
+                vault_root,
+                store,
+                scope,
+                snapshot,
+                VisionEndpoint::Unavailable(vision_degradation(routing)),
+            ),
+        }
+    }
+
+    #[cfg(not(feature = "ai"))]
+    {
+        ingest_image_with_vision(
+            vault_root,
+            store,
+            scope,
+            snapshot,
+            VisionEndpoint::Unavailable(vision_degradation(ai_context.binding(capability).routing)),
+        )
+    }
 }
 
 pub fn ingest_image_with_vision(
@@ -152,6 +203,17 @@ fn default_vision_degradation() -> VisionDegradation {
     }
 }
 
+fn vision_degradation(routing: AiRouting) -> VisionDegradation {
+    let reason = match routing {
+        AiRouting::Off => "disabled",
+        AiRouting::Auto | AiRouting::Daemon | AiRouting::Direct => "missing_endpoint",
+    };
+    VisionDegradation {
+        reason: reason.to_string(),
+        fallback: "Keep raw image assets and surface filename/metadata only.".to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use gobby_core::indexing::content_hash;
@@ -229,5 +291,140 @@ mod tests {
         assert!(document.body.contains("image_width: 640"));
         assert!(document.body.contains("image_height: 480"));
         assert!(store.sources.contains_key(&result.derived_path));
+    }
+
+    #[cfg(feature = "ai")]
+    #[test]
+    fn production_vision_writes_description_and_ocr() {
+        let response = r#"{"model":"gpt-4.1-mini","choices":[{"message":{"content":"{\"description\":\"A labeled wiring diagram\",\"ocr_text\":\"VCC GND Sensor\"}"}}]}"#;
+        let (api_base, request) = spawn_vision_server(response);
+        let context = test_ai_context(&api_base);
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut store = MemoryWikiStore::default();
+
+        let result = ingest_image_with_production_vision(
+            temp.path(),
+            &mut store,
+            ScopeIdentity::topic("field-work"),
+            &context,
+            sample_snapshot(),
+        )
+        .expect("ingest image with production vision");
+        let request = request.join().expect("vision request");
+
+        assert!(request.starts_with("POST /v1/chat/completions HTTP/1.1"));
+        assert!(request.contains("data:image/png;base64,"));
+        assert!(result.vision_degradation.is_none());
+
+        let document = store
+            .documents
+            .get(&result.derived_path)
+            .expect("derived image document indexed");
+        assert!(document.body.contains("vision_status: extracted"));
+        assert!(document.body.contains("vision_model: gpt-4.1-mini"));
+        assert!(
+            document
+                .body
+                .contains("## Vision Description\n\nA labeled wiring diagram")
+        );
+        assert!(document.body.contains("## OCR Text\n\nVCC GND Sensor"));
+    }
+
+    #[cfg(feature = "ai")]
+    fn test_ai_context(api_base: &str) -> gobby_core::ai_context::AiContext {
+        use gobby_core::ai_context::{AiBindings, AiLimiter};
+        use gobby_core::config::{AiRouting, AiTuning, CapabilityBinding};
+
+        let binding = CapabilityBinding {
+            routing: AiRouting::Direct,
+            transport: None,
+            api_base: Some(api_base.to_string()),
+            api_key: None,
+            model: Some("gpt-4.1-mini".to_string()),
+            provider: None,
+            task: None,
+            language: None,
+            target_lang: None,
+        };
+
+        gobby_core::ai_context::AiContext {
+            bindings: AiBindings {
+                embed: binding.clone(),
+                audio_transcribe: binding.clone(),
+                audio_translate: binding.clone(),
+                vision_extract: binding.clone(),
+                text_generate: binding,
+            },
+            tuning: AiTuning {
+                max_concurrency: 1,
+                keep_alive: None,
+            },
+            limiter: AiLimiter::new(1),
+            project_id: None,
+        }
+    }
+
+    #[cfg(feature = "ai")]
+    fn spawn_vision_server(response: &'static str) -> (String, std::thread::JoinHandle<String>) {
+        use std::io::Write;
+        use std::net::TcpListener;
+        use std::time::Duration;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let api_base = format!("http://{}", listener.local_addr().expect("local addr"));
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .expect("set read timeout");
+            let request = read_http_request(&mut stream);
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                response.len(),
+                response
+            )
+            .expect("write response");
+            request
+        });
+        (api_base, handle)
+    }
+
+    #[cfg(feature = "ai")]
+    fn read_http_request(stream: &mut impl std::io::Read) -> String {
+        let mut request = Vec::new();
+        let mut chunk = [0_u8; 1024];
+        loop {
+            let read = stream.read(&mut chunk).expect("read request");
+            if read == 0 {
+                break;
+            }
+            request.extend_from_slice(&chunk[..read]);
+
+            if let Some(header_end) = find_header_end(&request) {
+                let header = String::from_utf8_lossy(&request[..header_end]);
+                if let Some(content_length) = content_length(&header) {
+                    let body_len = request.len().saturating_sub(header_end + 4);
+                    if body_len >= content_length {
+                        break;
+                    }
+                }
+            }
+        }
+        String::from_utf8(request).expect("utf8 request")
+    }
+
+    #[cfg(feature = "ai")]
+    fn find_header_end(request: &[u8]) -> Option<usize> {
+        request.windows(4).position(|window| window == b"\r\n\r\n")
+    }
+
+    #[cfg(feature = "ai")]
+    fn content_length(header: &str) -> Option<usize> {
+        header.lines().find_map(|line| {
+            line.strip_prefix("content-length: ")
+                .or_else(|| line.strip_prefix("Content-Length: "))
+                .and_then(|value| value.trim().parse().ok())
+        })
     }
 }

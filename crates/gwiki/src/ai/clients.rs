@@ -171,7 +171,8 @@ mod tests {
 
     #[test]
     fn clients_consume_effective_route() {
-        let audio_client = ProductionTranscriptionClient::new(test_context(direct_binding(None)));
+        let audio_client =
+            ProductionTranscriptionClient::new(test_context(binding(AiRouting::Auto, None)));
         let audio_path = PathBuf::from("raw/audio.wav");
         let audio_error = audio_client
             .transcribe(&TranscriptionRequest {
@@ -180,7 +181,7 @@ mod tests {
                 asset_path: &audio_path,
                 bytes: b"audio",
             })
-            .expect_err("direct routing without api_base resolves off");
+            .expect_err("auto routing without daemon or api_base resolves off");
 
         assert!(
             audio_error.to_string().contains(
@@ -188,7 +189,25 @@ mod tests {
             )
         );
 
-        let vision_client = ProductionVisionClient::new(test_context(direct_binding(None)));
+        let direct_audio_client =
+            ProductionTranscriptionClient::new(test_context(binding(AiRouting::Direct, None)));
+        let direct_audio_error = direct_audio_client
+            .transcribe(&TranscriptionRequest {
+                file_name: "audio.wav",
+                mime_type: Some("audio/wav"),
+                asset_path: &audio_path,
+                bytes: b"audio",
+            })
+            .expect_err("explicit direct routing is forced to the direct transport");
+
+        assert!(
+            direct_audio_error
+                .to_string()
+                .contains("ai.audio_transcribe.api_base is required for direct audio transcribe")
+        );
+
+        let vision_client =
+            ProductionVisionClient::new(test_context(binding(AiRouting::Auto, None)));
         let image_path = PathBuf::from("raw/image.png");
         let vision_error = vision_client
             .extract(&VisionRequest {
@@ -199,7 +218,7 @@ mod tests {
                 width: None,
                 height: None,
             })
-            .expect_err("direct routing without api_base resolves off");
+            .expect_err("auto routing without daemon or api_base resolves off");
 
         assert!(
             vision_error
@@ -226,9 +245,9 @@ mod tests {
         }
     }
 
-    fn direct_binding(api_base: Option<&str>) -> CapabilityBinding {
+    fn binding(routing: AiRouting, api_base: Option<&str>) -> CapabilityBinding {
         CapabilityBinding {
-            routing: AiRouting::Direct,
+            routing,
             transport: None,
             api_base: api_base.map(str::to_string),
             api_key: None,

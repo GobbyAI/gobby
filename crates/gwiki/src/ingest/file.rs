@@ -3,13 +3,17 @@ use std::path::{Path, PathBuf};
 use gobby_core::ai_context::AiContext;
 use gobby_core::config::{AiCapability, AiRouting};
 
+#[cfg(feature = "ai")]
+use crate::ai::clients::ProductionVisionClient;
 use crate::api::IngestFileOptions;
 use crate::ingest::audio::{
     AudioSnapshot, ingest_audio_with_transcription, production_transcription_endpoint,
 };
 #[cfg(feature = "documents")]
 use crate::ingest::document::{DocumentSnapshot, ingest_document};
-use crate::ingest::image::{ImageSnapshot, ingest_image_with_vision};
+use crate::ingest::image::{ImageSnapshot, ingest_image_with_production_vision};
+#[cfg(feature = "documents")]
+use crate::ingest::pdf::{PdfFileSnapshot, PdfIngestOptions, ingest_pdf_file};
 use crate::ingest::video::{VideoFileSnapshot, ingest_video_file};
 use crate::ingest::{
     IngestResult, index_after_ingest, markdown_metadata, markdown_title, path_to_string,
@@ -21,6 +25,8 @@ use crate::sources::{
 use crate::store::WikiIndexStore;
 use crate::vision::{VisionDegradation, VisionEndpoint};
 use crate::{ScopeIdentity, WikiError};
+#[cfg(feature = "ai")]
+use gobby_core::ai::effective_route;
 
 const TEXT_INLINE_LIMIT_BYTES: usize = 256 * 1024;
 
@@ -67,10 +73,11 @@ pub fn ingest_path(
         }
         SourceKind::Image => {
             let bytes = read_source_file(path)?;
-            return ingest_image_with_vision(
+            return ingest_image_with_production_vision(
                 vault_root,
                 store,
                 scope.clone(),
+                ai_context,
                 ImageSnapshot {
                     location,
                     file_name: file_name.to_string(),
@@ -80,7 +87,6 @@ pub fn ingest_path(
                     width: None,
                     height: None,
                 },
-                vision_endpoint(ai_context),
             )
             .map(Into::into);
         }
@@ -102,6 +108,51 @@ pub fn ingest_path(
                 },
             )
             .map(Into::into);
+        }
+        #[cfg(feature = "documents")]
+        SourceKind::Pdf => {
+            let bytes = read_source_file(path)?;
+            let snapshot = PdfFileSnapshot {
+                location,
+                file_name: file_name.to_string(),
+                fetched_at: fetched_at.to_string(),
+                bytes,
+            };
+            #[cfg(feature = "ai")]
+            {
+                let client = (effective_route(ai_context, AiCapability::VisionExtract)
+                    != AiRouting::Off)
+                    .then(|| ProductionVisionClient::new(ai_context.clone()));
+                let endpoint = client
+                    .as_ref()
+                    .map(|client| {
+                        VisionEndpoint::Available(client as &dyn crate::vision::VisionClient)
+                    })
+                    .unwrap_or_else(|| {
+                        VisionEndpoint::Unavailable(vision_degradation(
+                            ai_context.binding(AiCapability::VisionExtract).routing,
+                        ))
+                    });
+                return ingest_pdf_file(
+                    vault_root,
+                    store,
+                    scope,
+                    snapshot,
+                    endpoint,
+                    PdfIngestOptions::default(),
+                );
+            }
+            #[cfg(not(feature = "ai"))]
+            {
+                return ingest_pdf_file(
+                    vault_root,
+                    store,
+                    scope,
+                    snapshot,
+                    VisionEndpoint::Unavailable(vision_degradation(AiRouting::Off)),
+                    PdfIngestOptions::default(),
+                );
+            }
         }
         #[cfg(feature = "documents")]
         SourceKind::Office | SourceKind::Html => {
@@ -314,7 +365,7 @@ fn vision_degradation(routing: AiRouting) -> VisionDegradation {
     };
     VisionDegradation {
         reason: reason.to_string(),
-        fallback: "Keep raw image assets and surface filename/metadata only.".to_string(),
+        fallback: "Keep PDF text layer only; skip page raster vision.".to_string(),
     }
 }
 
@@ -642,6 +693,36 @@ mod tests {
         assert_eq!(manifest.entries.len(), 1);
     }
 
+    #[cfg(feature = "documents")]
+    #[test]
+    fn dispatches_pdf_to_combined_path() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let file_path = temp.path().join("scan.pdf");
+        std::fs::write(&file_path, b"%PDF-1.7\nsource bytes\n%%EOF\n").expect("write pdf");
+        let mut store = MemoryWikiStore::default();
+        let scope = ScopeIdentity::global();
+        let ai_context = no_ai_context();
+        let options = ingest_options();
+
+        let result = ingest_path(
+            temp.path(),
+            &mut store,
+            &scope,
+            &ai_context,
+            &options,
+            &file_path,
+            "2026-05-31T20:03:00Z",
+        )
+        .expect("ingest pdf");
+
+        assert_eq!(result.record.kind, SourceKind::Pdf);
+        assert!(result.asset_path.is_some());
+        let raw = std::fs::read_to_string(temp.path().join(result.raw_path)).expect("raw source");
+        assert!(raw.contains("source_kind: pdf"));
+        assert!(raw.contains("page_count: "));
+        assert!(raw.contains("vision_used: false"));
+    }
+
     #[cfg(not(feature = "documents"))]
     #[test]
     fn office_html_store_as_asset_without_documents_feature() {
@@ -665,6 +746,34 @@ mod tests {
         .expect("ingest html without documents");
 
         assert_eq!(result.record.kind, SourceKind::Html);
+        assert!(result.asset_path.is_some());
+        let raw = std::fs::read_to_string(temp.path().join(result.raw_path)).expect("raw source");
+        assert!(raw.contains("Original artifact stored under"));
+    }
+
+    #[cfg(not(feature = "documents"))]
+    #[test]
+    fn pdf_store_as_asset_without_documents_feature() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let file_path = temp.path().join("scan.pdf");
+        std::fs::write(&file_path, b"%PDF-1.7\nsource bytes\n%%EOF\n").expect("write pdf");
+        let mut store = MemoryWikiStore::default();
+        let scope = ScopeIdentity::global();
+        let ai_context = no_ai_context();
+        let options = ingest_options();
+
+        let result = ingest_path(
+            temp.path(),
+            &mut store,
+            &scope,
+            &ai_context,
+            &options,
+            &file_path,
+            "2026-05-31T20:04:00Z",
+        )
+        .expect("ingest pdf without documents");
+
+        assert_eq!(result.record.kind, SourceKind::Pdf);
         assert!(result.asset_path.is_some());
         let raw = std::fs::read_to_string(temp.path().join(result.raw_path)).expect("raw source");
         assert!(raw.contains("Original artifact stored under"));
