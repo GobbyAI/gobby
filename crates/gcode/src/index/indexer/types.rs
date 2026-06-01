@@ -47,6 +47,8 @@ pub struct IndexOutcome {
     pub scanned_files: usize,
     pub indexed_files: usize,
     pub skipped_files: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unsupported_file_types: Vec<UnsupportedFileType>,
     pub symbols_indexed: usize,
     pub imports_indexed: usize,
     pub calls_indexed: usize,
@@ -63,6 +65,14 @@ pub struct IndexOutcome {
     pub projection_sync: Option<ProjectionSyncStatus>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub overlay: Option<OverlayIndexMetadata>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnsupportedFileType {
+    pub extension: String,
+    pub files: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub examples: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -91,6 +101,10 @@ impl IndexOutcome {
         if counts.indexed_files > 0 {
             self.indexed_file_paths.push(counts.file_path);
         }
+    }
+
+    pub(super) fn set_unsupported_file_types(&mut self, unsupported: Vec<UnsupportedFileType>) {
+        self.unsupported_file_types = unsupported;
     }
 }
 

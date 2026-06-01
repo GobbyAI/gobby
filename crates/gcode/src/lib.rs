@@ -21,7 +21,9 @@ pub mod utils;
 pub mod vector;
 pub mod visibility;
 
-pub use index::api::{IndexDegradation, IndexDurations, IndexOutcome, IndexRequest, index_files};
+pub use index::api::{
+    IndexDegradation, IndexDurations, IndexOutcome, IndexRequest, UnsupportedFileType, index_files,
+};
 
 #[cfg(test)]
 mod tests {

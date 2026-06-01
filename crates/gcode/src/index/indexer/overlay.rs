@@ -19,7 +19,10 @@ use super::lifecycle::{
 };
 use super::sink::{CodeFactSink, PostgresCodeFactSink};
 use super::types::{IndexOutcome, IndexRequest, OverlayIndexMetadata};
-use super::util::{DEFAULT_EXCLUDES, epoch_secs_str, relative_path, requested_relative_path};
+use super::util::{
+    DEFAULT_EXCLUDES, epoch_secs_str, relative_path, requested_relative_path,
+    unsupported_file_types,
+};
 
 #[derive(Debug, Clone)]
 pub(super) struct IndexedFileState {
@@ -121,6 +124,11 @@ pub(super) fn index_overlay_files(
     if let Some(filter) = request.path_filter.as_deref() {
         rels.retain(|rel| rel_matches_filter(root_path, filter, rel));
     }
+    let unsupported_paths = rels
+        .iter()
+        .filter_map(|rel| content_by_rel.get(rel).cloned())
+        .collect::<Vec<_>>();
+    outcome.set_unsupported_file_types(unsupported_file_types(root_path, &unsupported_paths));
 
     outcome.scanned_files = rels.len();
     outcome.durations.discovery_ms = discovery_start.elapsed().as_millis() as u64;

@@ -1,6 +1,9 @@
 use std::borrow::Cow;
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+
+use super::types::UnsupportedFileType;
 
 /// Default exclude patterns (matching Python CodeIndexConfig defaults).
 pub(super) const DEFAULT_EXCLUDES: &[&str] = &[
@@ -56,6 +59,41 @@ pub(super) fn filter_discovered_paths(
             })
         })
         .collect()
+}
+
+const UNSUPPORTED_EXAMPLES_PER_TYPE: usize = 5;
+
+pub(super) fn unsupported_file_types(
+    root_path: &Path,
+    paths: &[PathBuf],
+) -> Vec<UnsupportedFileType> {
+    let mut grouped = BTreeMap::<String, UnsupportedFileType>::new();
+    for path in paths {
+        let extension = unsupported_file_type_label(path);
+        let entry = grouped
+            .entry(extension.clone())
+            .or_insert_with(|| UnsupportedFileType {
+                extension,
+                files: 0,
+                examples: Vec::new(),
+            });
+        entry.files += 1;
+        if entry.examples.len() < UNSUPPORTED_EXAMPLES_PER_TYPE
+            && let Ok(rel) = relative_path(path, root_path)
+        {
+            entry.examples.push(rel);
+        }
+    }
+
+    grouped.into_values().collect()
+}
+
+fn unsupported_file_type_label(path: &Path) -> String {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .filter(|ext| !ext.is_empty())
+        .map(|ext| format!(".{}", ext.to_lowercase()))
+        .unwrap_or_else(|| "extensionless".to_string())
 }
 
 pub(super) fn requested_relative_path(root_path: &Path, requested_path: &Path) -> String {

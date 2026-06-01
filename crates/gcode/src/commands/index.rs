@@ -1,6 +1,6 @@
 use crate::config;
 use crate::config::Context;
-use crate::index::api::{self, IndexDegradation, IndexOutcome, IndexRequest};
+use crate::index::api::{self, IndexDegradation, IndexOutcome, IndexRequest, UnsupportedFileType};
 use crate::output::{self, Format};
 use crate::projection::sync::{self, ProjectionSyncReports};
 use crate::utils::short_id;
@@ -46,14 +46,49 @@ pub fn run(
 
     match format {
         Format::Json => output::print_json(&outcome),
-        Format::Text => output::print_text(&format!(
-            "Indexed {} files ({} skipped), {} symbols, {} chunks in {}ms",
-            outcome.indexed_files,
-            outcome.skipped_files,
-            outcome.symbols_indexed,
-            outcome.chunks_indexed,
-            outcome.durations.total_ms
-        )),
+        Format::Text => output::print_text(&index_text(&outcome)),
+    }
+}
+
+fn index_text(outcome: &IndexOutcome) -> String {
+    let mut text = format!(
+        "Indexed {} files ({} skipped), {} symbols, {} chunks in {}ms",
+        outcome.indexed_files,
+        outcome.skipped_files,
+        outcome.symbols_indexed,
+        outcome.chunks_indexed,
+        outcome.durations.total_ms
+    );
+
+    if !outcome.unsupported_file_types.is_empty() {
+        text.push_str("\nUnsupported file types indexed as text only (no AST symbols):");
+        for file_type in &outcome.unsupported_file_types {
+            text.push_str(&format!(
+                "\n  {}: {} {}",
+                file_type.extension,
+                file_type.files,
+                pluralize(file_type.files, "file")
+            ));
+            if !file_type.examples.is_empty() {
+                text.push_str(&format!(
+                    " ({}: {})",
+                    pluralize(file_type.examples.len(), "example"),
+                    file_type.examples.join(", ")
+                ));
+            }
+        }
+    }
+
+    text
+}
+
+fn pluralize(count: usize, singular: &str) -> &str {
+    match (count, singular) {
+        (1, "file") => "file",
+        (_, "file") => "files",
+        (1, "example") => "example",
+        (_, "example") => "examples",
+        _ => singular,
     }
 }
 
@@ -61,6 +96,8 @@ pub fn run(
 pub(crate) struct IndexSyncProjectionsOutput {
     pub indexed_files: usize,
     pub skipped_files: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unsupported_file_types: Vec<UnsupportedFileType>,
     pub symbols_indexed: usize,
     pub chunks_indexed: usize,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -75,6 +112,7 @@ pub(crate) fn sync_projections_payload(
     IndexSyncProjectionsOutput {
         indexed_files: outcome.indexed_files,
         skipped_files: outcome.skipped_files,
+        unsupported_file_types: outcome.unsupported_file_types.clone(),
         symbols_indexed: outcome.symbols_indexed,
         chunks_indexed: outcome.chunks_indexed,
         degraded: outcome.degraded.clone(),
@@ -271,5 +309,28 @@ mod tests {
         assert_eq!(parsed["indexed_files"], 12);
         assert_eq!(parsed["projections"]["graph"]["status"], "ok");
         assert_eq!(parsed["projections"]["vector"]["status"], "degraded");
+    }
+
+    #[test]
+    fn index_text_reports_unsupported_file_types() {
+        let mut outcome = sample_outcome();
+        outcome.unsupported_file_types = vec![
+            UnsupportedFileType {
+                extension: ".txt".to_string(),
+                files: 2,
+                examples: vec!["notes.txt".to_string(), "docs/tasks.txt".to_string()],
+            },
+            UnsupportedFileType {
+                extension: "extensionless".to_string(),
+                files: 1,
+                examples: vec!["Dockerfile".to_string()],
+            },
+        ];
+
+        let text = index_text(&outcome);
+
+        assert!(text.contains("Unsupported file types indexed as text only"));
+        assert!(text.contains(".txt: 2 files (examples: notes.txt, docs/tasks.txt)"));
+        assert!(text.contains("extensionless: 1 file (example: Dockerfile)"));
     }
 }

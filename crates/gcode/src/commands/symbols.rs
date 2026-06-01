@@ -7,6 +7,7 @@ use gobby_core::config::{AiCapability, AiRouting};
 use crate::commands::scope;
 use crate::config::{self, Context};
 use crate::db;
+use crate::index::languages;
 use crate::models::Symbol;
 use crate::output::{self, Format};
 use crate::savings;
@@ -162,6 +163,9 @@ fn render_outline_text(symbols: &[Symbol]) -> String {
 fn outline_missing_diagnostic(conn: &mut postgres::Client, ctx: &Context, file: &str) -> String {
     if scope::path_exists_in_current_project(ctx, file) {
         if visibility::indexed_file_exists(conn, ctx, file) {
+            if let Some(message) = unsupported_file_type_diagnostic(file) {
+                return message;
+            }
             return format!("file has no indexed symbols in current project: {file}");
         }
         return format!("file not indexed in current project: {file}");
@@ -183,6 +187,16 @@ fn outline_missing_diagnostic(conn: &mut postgres::Client, ctx: &Context, file: 
     }
 
     format!("file not indexed in current project: {file}")
+}
+
+fn unsupported_file_type_diagnostic(file: &str) -> Option<String> {
+    if languages::detect_language(file).is_some() {
+        return None;
+    }
+
+    Some(format!(
+        "file type has no AST parser support; indexed as text chunks only: {file}"
+    ))
 }
 
 fn format_outline_text_line(symbol: &Symbol) -> String {
@@ -401,6 +415,18 @@ mod tests {
         assert!(line.contains("src/commands.rs:7-63 [function] outline"));
         assert!(line.contains("id=12345678-1234-5678-1234-567812345678"));
         assert!(line.contains("sig=pub fn outline() -> anyhow::Result<()> {"));
+    }
+
+    #[test]
+    fn unsupported_file_type_diagnostic_mentions_text_only_indexing() {
+        assert_eq!(
+            unsupported_file_type_diagnostic("Dockerfile"),
+            Some(
+                "file type has no AST parser support; indexed as text chunks only: Dockerfile"
+                    .to_string()
+            )
+        );
+        assert_eq!(unsupported_file_type_diagnostic("src/lib.rs"), None);
     }
 
     #[test]

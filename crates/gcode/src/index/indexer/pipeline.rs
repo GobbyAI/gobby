@@ -20,6 +20,7 @@ use super::overlay::index_overlay_files;
 use super::types::{IndexOutcome, IndexRequest};
 use super::util::{
     DEFAULT_EXCLUDES, filter_discovered_paths, relative_path, requested_relative_path,
+    unsupported_file_types,
 };
 
 pub fn index_files(request: IndexRequest, ctx: &Context) -> anyhow::Result<IndexOutcome> {
@@ -59,6 +60,7 @@ fn index_discovered_files(
         candidates = filter_discovered_paths(root_path, filter, candidates);
         content_only = filter_discovered_paths(root_path, filter, content_only);
     }
+    outcome.set_unsupported_file_types(unsupported_file_types(root_path, &content_only));
     let discovered_files = candidates.len() + content_only.len();
     let import_context = parser::build_import_resolution_context(root_path, &candidates);
     let mut semantic_resolver =
@@ -173,6 +175,7 @@ fn index_explicit_files_with_connection(
     let excludes: Vec<String> = DEFAULT_EXCLUDES.iter().map(|s| s.to_string()).collect();
     let mut routed_files = Vec::new();
     let mut ast_files = Vec::new();
+    let mut content_only_files = Vec::new();
 
     for fp in &request.explicit_files {
         let abs = if fp.is_absolute() {
@@ -194,6 +197,7 @@ fn index_explicit_files_with_connection(
                 routed_files.push((abs, ExplicitFileRoute::Ast));
             }
             ExplicitFileRoute::ContentOnly => {
+                content_only_files.push(abs.clone());
                 routed_files.push((abs, ExplicitFileRoute::ContentOnly));
             }
             ExplicitFileRoute::Skip => {
@@ -201,6 +205,7 @@ fn index_explicit_files_with_connection(
             }
         }
     }
+    outcome.set_unsupported_file_types(unsupported_file_types(root_path, &content_only_files));
 
     let mut seen_import_candidates = std::collections::HashSet::new();
     let mut import_candidates = db::list_indexed_file_paths(conn, project_id)?

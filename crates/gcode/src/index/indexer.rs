@@ -14,7 +14,9 @@ mod util;
 
 pub use lifecycle::invalidate;
 pub use pipeline::index_files;
-pub use types::{IndexDegradation, IndexDurations, IndexOutcome, IndexRequest};
+pub use types::{
+    IndexDegradation, IndexDurations, IndexOutcome, IndexRequest, UnsupportedFileType,
+};
 
 #[cfg(test)]
 mod tests;
