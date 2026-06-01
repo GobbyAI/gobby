@@ -113,11 +113,16 @@ pub(crate) fn requires_chunking(byte_len: usize) -> bool {
 }
 
 pub(crate) fn fixed_codec_bytes_for_duration(duration: Duration) -> u64 {
-    FIXED_PCM_WAV_HEADER_BYTES
-        + duration.as_secs()
-            * FIXED_PCM_SAMPLE_RATE_HZ
-            * FIXED_PCM_CHANNELS
-            * FIXED_PCM_BYTES_PER_SAMPLE
+    const NANOS_PER_SECOND: u128 = 1_000_000_000;
+    let bytes_per_second =
+        u128::from(FIXED_PCM_SAMPLE_RATE_HZ * FIXED_PCM_CHANNELS * FIXED_PCM_BYTES_PER_SAMPLE);
+    let pcm_bytes = duration
+        .as_nanos()
+        .saturating_mul(bytes_per_second)
+        .saturating_add(NANOS_PER_SECOND - 1)
+        / NANOS_PER_SECOND;
+    u64::try_from(u128::from(FIXED_PCM_WAV_HEADER_BYTES).saturating_add(pcm_bytes))
+        .unwrap_or(u64::MAX)
 }
 
 fn transcribe_chunks(
@@ -325,6 +330,14 @@ mod tests {
             fixed_codec_bytes_for_duration(DEFAULT_CHUNK_WINDOW) < MAX_AUDIO_UPLOAD_BYTES as u64
         );
         assert!(DEFAULT_CHUNK_WINDOW <= Duration::from_secs(12 * 60 + 30));
+    }
+
+    #[test]
+    fn fixed_codec_bytes_include_subsecond_durations() {
+        assert_eq!(
+            fixed_codec_bytes_for_duration(Duration::from_millis(500)),
+            FIXED_PCM_WAV_HEADER_BYTES + 16_000
+        );
     }
 
     #[test]
