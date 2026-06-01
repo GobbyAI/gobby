@@ -9,6 +9,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from gobby.ai.audio import AudioCapabilityOutput, AudioSegment
 from gobby.config.app import DaemonConfig
 from gobby.config.voice import OpenAICompatibleAudioBindingConfig, VoiceConfig
 from gobby.servers.routes.voice import create_voice_router
@@ -59,6 +60,8 @@ class TestVoiceRoutes:
         assert data["voice_loading"] is False
         assert data["stt_warmup_status"] == "idle"
         assert data["tts_warmup_status"] == "idle"
+        assert data["transcription_enabled"] is False
+        assert data["translation_enabled"] is False
         assert data["tts_backend_kind"] == "embedded"
         assert data["tts_capabilities"]["supports_reference_audio"] is False
 
@@ -72,6 +75,8 @@ class TestVoiceRoutes:
         assert data["reason"] == "Voice config not found"
         assert data["voice_ready"] is False
         assert data["voice_loading"] is False
+        assert data["transcription_enabled"] is False
+        assert data["translation_enabled"] is False
 
     def test_status_no_voice_attr(self, client: TestClient, server_with_voice: MagicMock) -> None:
         """When config exists but has no voice attribute."""
@@ -108,6 +113,8 @@ class TestVoiceRoutes:
         assert data["stt_available"] is True
         assert data["stt_reason"] == ""
         assert data["stt_warmup_status"] == "idle"
+        assert data["transcription_enabled"] is True
+        assert data["translation_enabled"] is True
         assert data["tts_backend_kind"] == "embedded"
 
     def test_status_prefers_websocket_voice_status(
@@ -147,6 +154,8 @@ class TestVoiceRoutes:
         data = response.json()
         assert data["stt_warmup_status"] == "ready"
         assert data["tts_warmup_status"] == "loading"
+        assert data["transcription_enabled"] is False
+        assert data["translation_enabled"] is False
         assert data["voice_loading"] is True
 
     def test_status_forwards_scoped_voice_targets(
@@ -209,6 +218,8 @@ class TestVoiceRoutes:
         data = response.json()
         assert data["stt_available"] is False
         assert data["stt_reason"] == "STT disabled in config"
+        assert data["transcription_enabled"] is False
+        assert data["translation_enabled"] is False
 
     def test_status_custom_whisper_model(
         self, client: TestClient, server_with_voice: MagicMock
@@ -218,6 +229,28 @@ class TestVoiceRoutes:
         response = client.get("/api/voice/status")
         data = response.json()
         assert data["whisper_model"] == "small"
+
+    def test_status_advertises_remote_audio_capability_flags(
+        self, client: TestClient, server_with_voice: MagicMock
+    ) -> None:
+        server_with_voice.config.voice = VoiceConfig(
+            enabled=False,
+            openai_compatible_audio=[
+                OpenAICompatibleAudioBindingConfig(
+                    provider="remote-stt",
+                    url="http://localhost:8080/v1",
+                    model="whisper-large-v3",
+                    transcription_enabled=True,
+                    translation_enabled=False,
+                )
+            ],
+        )
+
+        response = client.get("/api/voice/status")
+
+        data = response.json()
+        assert data["transcription_enabled"] is True
+        assert data["translation_enabled"] is False
 
     def test_status_reports_missing_chatterbox_reference_audio(
         self, client: TestClient, server_with_voice: MagicMock, tmp_path: Path
@@ -318,7 +351,14 @@ class TestVoiceRoutes:
         server_with_voice.config.voice = VoiceConfig(enabled=True)
         mock_stt_instance = MagicMock()
         mock_stt_instance.is_available = True
-        mock_stt_instance.transcribe = AsyncMock(return_value="Hello world")
+        mock_stt_instance.transcribe_verbose = AsyncMock(
+            return_value=AudioCapabilityOutput(
+                text="Hello world",
+                segments=(AudioSegment(start=0.0, end=1.25, text="Hello world"),),
+                language="en",
+                task="transcribe",
+            )
+        )
         mock_stt_cls = MagicMock(return_value=mock_stt_instance)
 
         with patch("gobby.voice.stt.WhisperSTT", mock_stt_cls):
@@ -329,6 +369,9 @@ class TestVoiceRoutes:
         assert response.status_code == 200
         data = response.json()
         assert data["text"] == "Hello world"
+        assert data["segments"] == [{"text": "Hello world", "start": 0.0, "end": 1.25}]
+        assert data["language"] == "en"
+        assert data["task"] == "transcribe"
         assert data["bytes"] == len(b"audio data here")
         assert data["content_type"] == "audio/webm"
         assert data["capability"] == "audio_transcribe"
@@ -352,7 +395,12 @@ class TestVoiceRoutes:
         with patch(
             "gobby.ai.audio.OpenAICompatibleAudioAdapter.transcribe",
             new_callable=AsyncMock,
-            return_value="Remote transcript",
+            return_value=AudioCapabilityOutput(
+                text="Remote transcript",
+                segments=(AudioSegment(start=0.0, end=0.75, text="Remote transcript"),),
+                language="en",
+                task="transcribe",
+            ),
         ) as transcribe:
             response = client.post(
                 "/api/voice/transcribe",
@@ -364,6 +412,9 @@ class TestVoiceRoutes:
         transcribe.assert_awaited_once()
         data = response.json()
         assert data["text"] == "Remote transcript"
+        assert data["segments"] == [{"text": "Remote transcript", "start": 0.0, "end": 0.75}]
+        assert data["language"] == "en"
+        assert data["task"] == "transcribe"
         assert data["capability"] == "audio_transcribe"
         assert data["provider"] == "remote-stt"
         assert data["model"] == "whisper-large-v3"
@@ -385,7 +436,7 @@ class TestVoiceRoutes:
         with patch(
             "gobby.ai.audio.OpenAICompatibleAudioAdapter.translate",
             new_callable=AsyncMock,
-            return_value="Remote translation",
+            return_value=AudioCapabilityOutput(text="Remote translation", task="translate"),
         ) as translate:
             response = client.post(
                 "/api/voice/transcribe",
@@ -397,9 +448,42 @@ class TestVoiceRoutes:
         translate.assert_awaited_once()
         data = response.json()
         assert data["text"] == "Remote translation"
+        assert data["segments"] == []
+        assert data["language"] is None
+        assert data["task"] == "translate"
         assert data["capability"] == "audio_translate"
         assert data["provider"] == "remote-stt"
         assert data["model"] == "whisper-large-v3"
+
+    def test_transcribe_provider_lacks_capability_returns_structured_error(
+        self, client: TestClient, server_with_voice: MagicMock
+    ) -> None:
+        server_with_voice.config.voice = VoiceConfig(
+            enabled=True,
+            openai_compatible_audio=[
+                OpenAICompatibleAudioBindingConfig(
+                    provider="remote-stt",
+                    url="http://localhost:8080/v1",
+                    model="whisper-large-v3",
+                    translation_enabled=False,
+                )
+            ],
+        )
+
+        response = client.post(
+            "/api/voice/transcribe",
+            data={"capability": "audio_translate", "provider": "remote-stt"},
+            files={"file": ("test.webm", b"audio data here", "audio/webm")},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["code"] == "capability_unavailable"
+        assert data["capability"] == "audio_translate"
+        assert data["provider"] == "remote-stt"
+        assert data["model"] is None
+        assert "audio_translate is disabled" in data["reason"]
+        assert data["text"] == ""
 
     def test_transcribe_default_content_type(
         self, client: TestClient, server_with_voice: MagicMock

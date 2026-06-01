@@ -11,11 +11,12 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
+from gobby.ai.text_generation import TextGenerationRequest
 from gobby.code_index.models import Symbol
 
 if TYPE_CHECKING:
+    from gobby.ai.text_generation import TextGenerationService
     from gobby.config.code_index import CodeIndexConfig
-    from gobby.llm.service import LLMService
 
 logger = logging.getLogger(__name__)
 
@@ -34,10 +35,10 @@ class SymbolSummarizer:
 
     def __init__(
         self,
-        llm_service: LLMService,
+        text_generation: TextGenerationService,
         config: CodeIndexConfig,
     ) -> None:
-        self._llm = llm_service
+        self._text_generation = text_generation
         self._provider_name = config.summary_provider
         self._model_name = config.summary_model
 
@@ -60,17 +61,14 @@ class SymbolSummarizer:
         )
 
         try:
-            provider = self._llm.get_provider(self._provider_name)
-        except (ValueError, KeyError):
-            logger.debug(f"LLM provider '{self._provider_name}' not available for summaries")
-            return None
-
-        try:
-            text = await provider.generate_text(
-                prompt=prompt,
-                model=self._model_name,
-                max_tokens=100,
-                caller="code_index.symbol_summary",
+            text = await self._text_generation.generate(
+                TextGenerationRequest(
+                    prompt=prompt,
+                    provider=self._provider_name,
+                    model=self._model_name,
+                    max_tokens=100,
+                    caller="code_index.symbol_summary",
+                )
             )
             text = text.strip()
             return text if text else None

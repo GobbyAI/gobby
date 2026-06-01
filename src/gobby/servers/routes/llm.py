@@ -13,6 +13,7 @@ from tempfile import NamedTemporaryFile
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from gobby.ai import (
@@ -58,7 +59,7 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
         return registry.status_snapshot()
 
     @router.post("/generate")
-    async def generate_text(payload: TextGeneratePayload) -> dict[str, Any]:
+    async def generate_text(payload: TextGeneratePayload) -> Any:
         """Run one-shot text_generate through the daemon capability registry."""
         config = server.config
         if config is None:
@@ -90,7 +91,7 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
             }
         except CapabilityUnavailableError as e:
             logger.info("Text generation capability unavailable: %s", e)
-            raise HTTPException(status_code=400, detail=str(e)) from e
+            return JSONResponse(status_code=400, content=_capability_error_detail(e))
         except ValueError as e:
             logger.info("Text generation rejected: %s", e)
             raise HTTPException(status_code=400, detail=str(e)) from e
@@ -110,7 +111,7 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
         provider: str | None = Form(default=None),
         model: str | None = Form(default=None),
         context: str | None = Form(default=None),
-    ) -> dict[str, Any]:
+    ) -> Any:
         """Extract a text description from an uploaded image."""
         config = server.config
         if config is None:
@@ -136,6 +137,8 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
             )
             return {
                 "text": result.text,
+                "description": result.text,
+                "ocr_text": result.ocr_text,
                 "bytes": len(image_bytes),
                 "content_type": file.content_type or "application/octet-stream",
                 "capability": result.capability.value,
@@ -144,7 +147,7 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
             }
         except CapabilityUnavailableError as e:
             logger.info("Vision capability unavailable: %s", e)
-            raise HTTPException(status_code=400, detail=str(e)) from e
+            return JSONResponse(status_code=400, content=_capability_error_detail(e))
         except ValueError as e:
             logger.info("Vision extraction rejected: %s", e)
             raise HTTPException(status_code=400, detail=str(e)) from e
@@ -159,6 +162,16 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
                     logger.warning("Failed to remove vision temp file %s", image_path)
 
     return router
+
+
+def _capability_error_detail(error: CapabilityUnavailableError) -> dict[str, Any]:
+    return {
+        "code": "capability_unavailable",
+        "capability": error.capability.value,
+        "provider": error.provider,
+        "model": error.model,
+        "reason": error.reason or str(error),
+    }
 
 
 def _write_temp_image(image_bytes: bytes, filename: str | None) -> Path:

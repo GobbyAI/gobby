@@ -202,6 +202,25 @@ def test_validate_command_runs_consumer_sweep(
     assert "tests/test_api.py" in result.output
 
 
+def test_validate_command_expansion_mode_includes_test_consumers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan = _write_consumer_plan(tmp_path)
+    storage = _FakeCodeIndexStorage()
+    monkeypatch.setattr(plans_module, "resolve_project_ref", lambda project_ref: "project-1")
+    monkeypatch.setattr(plans_module, "_open_db", lambda: _FakeDb())
+    monkeypatch.setattr(plans_module, "CodeIndexStorage", lambda db: storage)
+
+    result = CliRunner().invoke(
+        plans,
+        ["validate", str(plan), "--project", "gobby", "--mode", "expansion"],
+    )
+
+    assert result.exit_code != 0
+    assert "consumer-sweep" in result.output
+    assert "tests/test_api.py" in result.output
+
+
 def test_validate_command_excludes_test_consumers_by_default(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

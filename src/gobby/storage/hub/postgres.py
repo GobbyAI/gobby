@@ -72,6 +72,7 @@ _BaselineState = Literal[
     "fresh",
     "fresh_with_install_infra",
     "gcore_code_index",
+    "gwiki_standalone",
     "already_baselined",
     "corrupt_partial",
 ]
@@ -411,24 +412,49 @@ def _classify_baseline_state(conn: Any) -> _BaselineState:
     if (
         not has_bookkeeping
         and _GCORE_CODE_INDEX_TABLES.issubset(application_tables)
-        and application_tables.issubset(_GCORE_CODE_INDEX_TABLES)
+        and all(
+            table in _GCORE_CODE_INDEX_TABLES or _is_gwiki_table(table)
+            for table in application_tables
+        )
     ):
         return "gcore_code_index"
+    if (
+        not has_bookkeeping
+        and application_tables
+        and all(_is_gwiki_table(table) for table in application_tables)
+    ):
+        return "gwiki_standalone"
     return "corrupt_partial"
 
 
 def _baseline_statements_for_state(sql: str, state: _BaselineState) -> Iterator[str]:
     statements = _split_statements_respecting_dollar_quotes(sql)
-    if state != "gcore_code_index":
+    if state not in ("gcore_code_index", "gwiki_standalone"):
         yield from statements
         return
 
     for statement in statements:
-        if not _is_code_index_create_statement(statement):
-            yield statement
+        if state == "gcore_code_index" and _is_code_index_create_statement(statement):
+            continue
+        if _is_gwiki_create_statement(statement):
+            continue
+        yield statement
 
 
 def _is_code_index_create_statement(statement: str) -> bool:
+    return _is_create_statement_for_table(
+        statement, lambda table: table in _GCORE_CODE_INDEX_TABLES
+    )
+
+
+def _is_gwiki_create_statement(statement: str) -> bool:
+    return _is_create_statement_for_table(statement, _is_gwiki_table)
+
+
+def _is_create_statement_for_table(
+    statement: str,
+    table_matches: Callable[[str], bool],
+) -> bool:
     text = statement.strip()
     table_match = re.match(
         r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?\"?([A-Za-z_][A-Za-z0-9_]*)\"?",
@@ -436,18 +462,23 @@ def _is_code_index_create_statement(statement: str) -> bool:
         re.IGNORECASE,
     )
     if table_match:
-        return table_match.group(1) in _GCORE_CODE_INDEX_TABLES
+        return table_matches(table_match.group(1))
 
     index_match = re.match(
-        r"CREATE\s+INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?\"?[A-Za-z_][A-Za-z0-9_]*\"?"
+        r"CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?"
+        r"\"?[A-Za-z_][A-Za-z0-9_]*\"?"
         r"\s+ON\s+\"?([A-Za-z_][A-Za-z0-9_]*)\"?",
         text,
         re.IGNORECASE | re.DOTALL,
     )
     if index_match:
-        return index_match.group(1) in _GCORE_CODE_INDEX_TABLES
+        return table_matches(index_match.group(1))
 
     return False
+
+
+def _is_gwiki_table(table: str) -> bool:
+    return table.startswith("gwiki_")
 
 
 def _has_baseline_version(conn: Any, version: int) -> bool:

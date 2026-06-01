@@ -121,14 +121,30 @@ def register_plan_command(
 @click.argument("plan_file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
 @click.option("--project", "-p", "project_ref", help="Project context for code-index checks.")
 @click.option(
+    "--mode",
+    type=click.Choice(["standard", "expansion"]),
+    default="standard",
+    show_default=True,
+    help="Validation mode. expansion includes test consumers.",
+)
+@click.option(
     "--include-tests",
     is_flag=True,
     help="Include test files in consumer-sweep target coverage.",
 )
-def validate_plan_command(plan_file: Path, project_ref: str | None, include_tests: bool) -> None:
+def validate_plan_command(
+    plan_file: Path,
+    project_ref: str | None,
+    mode: str,
+    include_tests: bool,
+) -> None:
     """Validate a plan file, including semantic and consumer-sweep lint."""
 
-    result = _validate_plan_for_cli(plan_file, project_ref, include_tests=include_tests)
+    result = _validate_plan_for_cli(
+        plan_file,
+        project_ref,
+        include_tests=include_tests or mode == "expansion",
+    )
     if not result["valid"]:
         for error in result.get("errors", []):
             click.echo(f"Error: {error}", err=True)

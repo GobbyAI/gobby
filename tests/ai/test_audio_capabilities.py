@@ -6,9 +6,11 @@ import pytest
 
 import gobby.ai.audio as audio_module
 from gobby.ai.audio import (
+    AudioCapabilityOutput,
     AudioCapabilityRequest,
     AudioCapabilityService,
     AudioProviderUnavailableError,
+    AudioSegment,
     OpenAICompatibleAudioAdapter,
     WhisperAudioAdapter,
 )
@@ -30,6 +32,17 @@ class _FakeAudioAdapter:
     async def translate(self, request: AudioCapabilityRequest) -> str:
         self.translate_requests.append(request)
         return "translated"
+
+
+class _MetadataAudioAdapter(_FakeAudioAdapter):
+    async def transcribe(self, request: AudioCapabilityRequest) -> AudioCapabilityOutput:
+        self.transcribe_requests.append(request)
+        return AudioCapabilityOutput(
+            text="hola",
+            segments=(AudioSegment(start=0.0, end=0.5, text="hola"),),
+            language="es",
+            task="transcribe",
+        )
 
 
 class _FakeWhisper:
@@ -82,6 +95,7 @@ async def test_audio_service_selects_transcribe_provider() -> None:
     )
 
     assert result.text == "transcribed"
+    assert result.task == "transcribe"
     assert result.provider == "remote"
     assert result.capability == AICapability.AUDIO_TRANSCRIBE
     assert adapter.transcribe_requests[0].audio_bytes == b"audio"
@@ -118,9 +132,29 @@ async def test_audio_service_selects_translate_provider() -> None:
     )
 
     assert result.text == "translated"
+    assert result.task == "translate"
     assert result.provider == "remote"
     assert result.capability == AICapability.AUDIO_TRANSLATE
     assert adapter.translate_requests[0].audio_bytes == b"audio"
+
+
+@pytest.mark.asyncio
+async def test_audio_service_preserves_adapter_metadata() -> None:
+    adapter = _MetadataAudioAdapter()
+    service = AudioCapabilityService(_registry(), {"remote": adapter})
+
+    result = await service.execute(
+        AudioCapabilityRequest(
+            audio_bytes=b"audio",
+            capability=AICapability.AUDIO_TRANSCRIBE,
+            provider="remote",
+        )
+    )
+
+    assert result.text == "hola"
+    assert result.segments == (AudioSegment(start=0.0, end=0.5, text="hola"),)
+    assert result.language == "es"
+    assert result.task == "transcribe"
 
 
 @pytest.mark.asyncio
@@ -129,8 +163,15 @@ async def test_whisper_adapter_invokes_local_transcribe_and_translate() -> None:
     adapter = WhisperAudioAdapter(whisper, timeout_seconds=1.0)
     request = AudioCapabilityRequest(audio_bytes=b"audio", mime_type="audio/wav")
 
-    assert await adapter.transcribe(request) == "local transcript"
-    assert await adapter.translate(request) == "local translation"
+    transcribed = await adapter.transcribe(request)
+    translated = await adapter.translate(request)
+
+    assert isinstance(transcribed, AudioCapabilityOutput)
+    assert transcribed.text == "local transcript"
+    assert transcribed.task == "transcribe"
+    assert isinstance(translated, AudioCapabilityOutput)
+    assert translated.text == "local translation"
+    assert translated.task == "translate"
     assert whisper.transcribe_requests == [(b"audio", "audio/wav")]
     assert whisper.translate_requests == [(b"audio", "audio/wav")]
 
@@ -153,8 +194,12 @@ async def test_openai_compatible_adapter_posts_transcription_request(
         def raise_for_status(self) -> None:
             calls.append({"raised": True})
 
-        def json(self) -> dict[str, str]:
-            return {"text": "remote transcript"}
+        def json(self) -> dict[str, Any]:
+            return {
+                "text": "remote transcript",
+                "segments": [{"start": 0.0, "end": 1.5, "text": "remote transcript"}],
+                "language": "en",
+            }
 
     class FakeAsyncClient:
         def __init__(self, *, timeout: float) -> None:
@@ -192,13 +237,18 @@ async def test_openai_compatible_adapter_posts_transcription_request(
         )
     )
 
-    assert result == "remote transcript"
+    assert result == AudioCapabilityOutput(
+        text="remote transcript",
+        segments=(AudioSegment(start=0.0, end=1.5, text="remote transcript"),),
+        language="en",
+        task="transcribe",
+    )
     assert calls[0] == {"timeout": 9.0}
     post = calls[1]
     assert post["url"] == "http://localhost:8080/v1/audio/transcriptions"
     assert post["data"] == {
         "model": "whisper-large-v3",
-        "response_format": "json",
+        "response_format": "verbose_json",
         "prompt": "Gobby",
         "language": "en",
     }
@@ -252,11 +302,12 @@ async def test_openai_compatible_adapter_posts_translation_request(
         )
     )
 
-    assert result == "remote translation"
+    assert result.text == "remote translation"
+    assert result.task == "translate"
     post = calls[0]
     assert post["url"] == "http://localhost:8080/v1/audio/translations"
     assert post["data"] == {
         "model": "custom-whisper",
-        "response_format": "json",
+        "response_format": "verbose_json",
         "prompt": "Gobby",
     }

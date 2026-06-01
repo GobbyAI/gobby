@@ -2,10 +2,19 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
+from gobby.ai import (
+    AIAdapterStyle,
+    AICapability,
+    AICapabilityRegistry,
+    CapabilityBinding,
+    CapabilityUnavailableError,
+    TextGenerationRequest,
+    TextGenerationService,
+)
 from gobby.code_index.models import Symbol
 from gobby.code_index.summarizer import _MAX_SOURCE_CHARS, SymbolSummarizer
 
@@ -37,34 +46,80 @@ def _make_symbol(name: str = "greet", kind: str = "function") -> Symbol:
     )
 
 
-@pytest.fixture
-def mock_llm_service() -> MagicMock:
-    service = MagicMock()
-    provider = MagicMock()
-    provider.generate_text = AsyncMock(return_value="Returns a greeting string.")
-    service.get_provider.return_value = provider
-    return service
+class _FakeTextGenerateAdapter:
+    def __init__(
+        self,
+        *,
+        response: str = "Returns a greeting string.",
+        error: Exception | None = None,
+    ) -> None:
+        self.response = response
+        self.error = error
+        self.requests: list[TextGenerationRequest] = []
+
+    async def generate(self, request: TextGenerationRequest) -> str:
+        self.requests.append(request)
+        if self.error is not None:
+            raise self.error
+        return self.response
+
+
+def _text_generation_service(
+    adapter: _FakeTextGenerateAdapter | None = None,
+    *,
+    available: bool = True,
+) -> TextGenerationService:
+    binding = (
+        CapabilityBinding(
+            capability=AICapability.TEXT_GENERATE,
+            provider="claude",
+            adapter_style=AIAdapterStyle.LLM_PROVIDER,
+            available=True,
+            models=("haiku",),
+        )
+        if available
+        else CapabilityBinding.unavailable(
+            AICapability.TEXT_GENERATE,
+            provider="claude",
+            adapter_style=AIAdapterStyle.LLM_PROVIDER,
+            reason="claude text_generate is unavailable",
+            models=("haiku",),
+        )
+    )
+    adapters = {"claude": adapter} if adapter is not None else {}
+    return TextGenerationService(AICapabilityRegistry([binding]), adapters)
 
 
 @pytest.fixture
-def summarizer(mock_llm_service: MagicMock) -> SymbolSummarizer:
-    return SymbolSummarizer(mock_llm_service, _make_config())
+def fake_text_adapter() -> _FakeTextGenerateAdapter:
+    return _FakeTextGenerateAdapter()
+
+
+@pytest.fixture
+def summarizer(fake_text_adapter: _FakeTextGenerateAdapter) -> SymbolSummarizer:
+    return SymbolSummarizer(_text_generation_service(fake_text_adapter), _make_config())
 
 
 @pytest.mark.asyncio
-async def test_summarize_one(summarizer: SymbolSummarizer) -> None:
-    """summarize_one returns the LLM-generated summary."""
+async def test_summarize_one(
+    summarizer: SymbolSummarizer,
+    fake_text_adapter: _FakeTextGenerateAdapter,
+) -> None:
+    """summarize_one returns the text_generate summary."""
     sym = _make_symbol()
     result = await summarizer.summarize_one(sym, "def greet(): return 'hello'")
     assert result == "Returns a greeting string."
 
-    provider = summarizer._llm.get_provider.return_value
-    assert provider.generate_text.await_args.kwargs["caller"] == "code_index.symbol_summary"
+    request = fake_text_adapter.requests[0]
+    assert request.caller == "code_index.symbol_summary"
+    assert request.provider == "claude"
+    assert request.model == "haiku"
+    assert request.max_tokens == 100
 
 
 @pytest.mark.asyncio
 async def test_summarize_one_truncates_source(
-    mock_llm_service: MagicMock,
+    fake_text_adapter: _FakeTextGenerateAdapter,
     summarizer: SymbolSummarizer,
 ) -> None:
     """Source longer than _MAX_SOURCE_CHARS is truncated."""
@@ -72,19 +127,15 @@ async def test_summarize_one_truncates_source(
     long_source = "x" * (_MAX_SOURCE_CHARS + 500)
     await summarizer.summarize_one(sym, long_source)
 
-    # Check the prompt passed to generate_text
-    provider = mock_llm_service.get_provider.return_value
-    call_args = provider.generate_text.call_args
-    prompt = call_args.kwargs.get("prompt") or call_args[1].get("prompt") or call_args[0][0]
+    prompt = fake_text_adapter.requests[0].prompt
     assert len(prompt) < len(long_source)
 
 
 @pytest.mark.asyncio
-async def test_summarize_one_llm_error(mock_llm_service: MagicMock) -> None:
-    """LLM errors return None gracefully."""
-    provider = mock_llm_service.get_provider.return_value
-    provider.generate_text = AsyncMock(side_effect=RuntimeError("API error"))
-    summarizer = SymbolSummarizer(mock_llm_service, _make_config())
+async def test_summarize_one_generation_error() -> None:
+    """text_generate errors return None gracefully."""
+    service = _text_generation_service(_FakeTextGenerateAdapter(error=RuntimeError("API error")))
+    summarizer = SymbolSummarizer(service, _make_config())
 
     result = await summarizer.summarize_one(_make_symbol(), "source code")
     assert result is None
@@ -93,8 +144,7 @@ async def test_summarize_one_llm_error(mock_llm_service: MagicMock) -> None:
 @pytest.mark.asyncio
 async def test_summarize_one_provider_not_available() -> None:
     """Missing provider returns None."""
-    service = MagicMock()
-    service.get_provider.side_effect = ValueError("not configured")
+    service = _text_generation_service(available=False)
     summarizer = SymbolSummarizer(service, _make_config())
 
     result = await summarizer.summarize_one(_make_symbol(), "source")
@@ -102,11 +152,35 @@ async def test_summarize_one_provider_not_available() -> None:
 
 
 @pytest.mark.asyncio
-async def test_summarize_one_empty_response(mock_llm_service: MagicMock) -> None:
-    """Empty LLM response returns None."""
-    provider = mock_llm_service.get_provider.return_value
-    provider.generate_text = AsyncMock(return_value="   ")
-    summarizer = SymbolSummarizer(mock_llm_service, _make_config())
+async def test_summarize_one_missing_adapter_returns_none() -> None:
+    """A selected binding without an adapter returns None."""
+    service = _text_generation_service(adapter=None)
+    summarizer = SymbolSummarizer(service, _make_config())
+
+    result = await summarizer.summarize_one(_make_symbol(), "source")
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_summarize_one_capability_error_returns_none() -> None:
+    """CapabilityUnavailableError is handled like other generation failures."""
+    service = MagicMock()
+    service.generate.side_effect = CapabilityUnavailableError(
+        AICapability.TEXT_GENERATE,
+        provider="claude",
+        reason="No binding",
+    )
+    summarizer = SymbolSummarizer(service, _make_config())
+
+    result = await summarizer.summarize_one(_make_symbol(), "source")
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_summarize_one_empty_response() -> None:
+    """Empty text_generate response returns None."""
+    service = _text_generation_service(_FakeTextGenerateAdapter(response="   "))
+    summarizer = SymbolSummarizer(service, _make_config())
 
     result = await summarizer.summarize_one(_make_symbol(), "source")
     assert result is None

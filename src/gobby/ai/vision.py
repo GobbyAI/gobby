@@ -34,6 +34,7 @@ class VisionExtractResult:
     capability: AICapability
     provider: str
     model: str | None = None
+    ocr_text: str | None = None
 
 
 class VisionExtractAdapter(Protocol):

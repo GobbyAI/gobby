@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
+    from gobby.ai.audio import AudioCapabilityOutput
     from gobby.config.voice import VoiceConfig
 
 
@@ -124,10 +125,24 @@ class WhisperSTT:
         Raises:
             ValueError: If the audio data is too small to be valid.
         """
+        result = await self.transcribe_verbose(audio_bytes, mime_type)
+        return result.text
+
+    async def transcribe_verbose(
+        self, audio_bytes: bytes, mime_type: str = "audio/webm"
+    ) -> AudioCapabilityOutput:
+        """Transcribe audio bytes with segment and language metadata."""
         return await self._transcribe_with_task(audio_bytes, mime_type, task="transcribe")
 
     async def translate(self, audio_bytes: bytes, mime_type: str = "audio/webm") -> str:
         """Translate audio bytes to English text."""
+        result = await self.translate_verbose(audio_bytes, mime_type)
+        return result.text
+
+    async def translate_verbose(
+        self, audio_bytes: bytes, mime_type: str = "audio/webm"
+    ) -> AudioCapabilityOutput:
+        """Translate audio bytes with segment and language metadata."""
         return await self._transcribe_with_task(audio_bytes, mime_type, task="translate")
 
     async def _transcribe_with_task(
@@ -136,7 +151,7 @@ class WhisperSTT:
         mime_type: str,
         *,
         task: str,
-    ) -> str:
+    ) -> AudioCapabilityOutput:
         # Minimum size varies by format: WAV has a 44-byte header so even
         # short speech produces ~1KB+, while WebM needs ~200 bytes for EBML
         # header + cluster.  Tiny blobs cause EOF errors in ffmpeg.
@@ -161,7 +176,9 @@ class WhisperSTT:
         }
         ext = ext_map.get(mime_type.split(";")[0].strip(), ".webm")
 
-        def _transcribe() -> str:
+        def _transcribe() -> AudioCapabilityOutput:
+            from gobby.ai.audio import AudioCapabilityOutput, AudioSegment
+
             # Write to temp file for faster-whisper
             with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as f:
                 f.write(audio_bytes)
@@ -175,12 +192,29 @@ class WhisperSTT:
                     initial_prompt=self._build_initial_prompt(),
                     task=task,
                 )
-                text = " ".join(seg.text.strip() for seg in segments)
+                segment_items: list[AudioSegment] = []
+                for segment in segments:
+                    start = getattr(segment, "start", None)
+                    end = getattr(segment, "end", None)
+                    segment_items.append(
+                        AudioSegment(
+                            text=str(getattr(segment, "text", "")).strip(),
+                            start=float(start) if isinstance(start, (int, float)) else None,
+                            end=float(end) if isinstance(end, (int, float)) else None,
+                        )
+                    )
+                segment_data = tuple(segment_items)
+                text = " ".join(segment.text for segment in segment_data if segment.text)
+                duration = float(getattr(info, "duration", 0.0))
                 logger.debug(
-                    f"Transcribed {len(audio_bytes)} bytes "
-                    f"({info.duration:.1f}s) -> {len(text)} chars"
+                    f"Transcribed {len(audio_bytes)} bytes ({duration:.1f}s) -> {len(text)} chars"
                 )
-                return text
+                return AudioCapabilityOutput(
+                    text=text,
+                    segments=segment_data,
+                    language=getattr(info, "language", None),
+                    task=task,
+                )
             finally:
                 tmp_path.unlink(missing_ok=True)
 

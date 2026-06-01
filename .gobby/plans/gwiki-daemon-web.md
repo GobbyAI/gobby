@@ -10,6 +10,8 @@ Add Gobby daemon, MCP, and web-chat integration for the `gwiki` Rust CLI after t
 
 This plan lives in the Gobby repo because it changes daemon routes, MCP tools, scheduling, watchers, and web UI. It depends on `gobby-cli/.gobby/plans/gwiki.md` for the Rust CLI/library contract.
 
+Daemon AI/multimodal capability routes, structured capability errors, text-generation adoption, and `gwiki_*` hub adoption are covered by the companion plan `.gobby/plans/gwiki-daemon-ai-contract.md`.
+
 ## C1: Constraints
 
 `kind: framing`

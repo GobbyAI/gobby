@@ -2,10 +2,12 @@
 
 from gobby.ai.audio import (
     AudioCapabilityAdapter,
+    AudioCapabilityOutput,
     AudioCapabilityRequest,
     AudioCapabilityResult,
     AudioCapabilityService,
     AudioProviderUnavailableError,
+    AudioSegment,
     OpenAICompatibleAudioAdapter,
     WhisperAudioAdapter,
     build_daemon_audio_service,
@@ -42,10 +44,12 @@ from gobby.ai.vision import (
 __all__ = [
     "ACPTextGenerateAdapter",
     "AudioCapabilityAdapter",
+    "AudioCapabilityOutput",
     "AudioCapabilityRequest",
     "AudioCapabilityResult",
     "AudioCapabilityService",
     "AudioProviderUnavailableError",
+    "AudioSegment",
     "AIAdapterStyle",
     "AICapability",
     "AICapabilityRegistry",

@@ -13,7 +13,12 @@ from gobby.ai.audio import (
     AudioProviderUnavailableError,
     build_daemon_audio_service,
 )
-from gobby.ai.registry import AICapability, CapabilityUnavailableError, normalize_capability
+from gobby.ai.registry import (
+    AICapability,
+    CapabilityUnavailableError,
+    build_daemon_ai_capability_registry,
+    normalize_capability,
+)
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -41,10 +46,16 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
         ws_server = server.services.websocket_server or server.websocket_server
         if ws_server and hasattr(ws_server, "get_voice_status"):
             if want_stt is None and want_tts is None:
-                return ws_server.get_voice_status()
-            return ws_server.get_voice_status(
-                want_stt=want_stt,
-                want_tts=want_tts,
+                return _with_audio_capability_flags(
+                    ws_server.get_voice_status(),
+                    server.config,
+                )
+            return _with_audio_capability_flags(
+                ws_server.get_voice_status(
+                    want_stt=want_stt,
+                    want_tts=want_tts,
+                ),
+                server.config,
             )
 
         config = server.config
@@ -59,6 +70,8 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
                 "tts_warmup_status": "idle",
                 "stt_warmup_error": "",
                 "tts_warmup_error": "",
+                "transcription_enabled": False,
+                "translation_enabled": False,
             }
 
         voice_config = config.voice
@@ -97,7 +110,7 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
         }
         result.update(tts_status_fields)
 
-        return result
+        return _with_audio_capability_flags(result, config)
 
     @router.post("/transcribe")
     async def transcribe_audio(
@@ -141,6 +154,9 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
             )
             return {
                 "text": result.text,
+                "segments": [segment.to_dict() for segment in result.segments],
+                "language": result.language,
+                "task": result.task,
                 "bytes": len(audio_bytes),
                 "content_type": content_type,
                 "capability": result.capability.value,
@@ -148,10 +164,16 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
                 "model": result.model,
             }
         except AudioProviderUnavailableError as e:
-            return {"error": str(e), "text": ""}
+            return _audio_error_payload(
+                str(e),
+                code="provider_unavailable",
+                capability=selected_capability,
+                provider=provider,
+                model=model,
+            )
         except CapabilityUnavailableError as e:
             logger.info("Audio capability unavailable: %s", e)
-            return {"error": str(e), "text": ""}
+            return _capability_error_payload(e)
         except ValueError as e:
             logger.info("%s rejected: %s", failure_label, e)
             return {"error": str(e), "text": ""}
@@ -173,3 +195,50 @@ def _audio_failure_label(capability: str) -> str:
     if normalized == AICapability.AUDIO_TRANSLATE:
         return "Translation"
     return "Transcription"
+
+
+def _with_audio_capability_flags(
+    status: dict[str, Any],
+    config: Any,
+) -> dict[str, Any]:
+    result = dict(status)
+    if config is None:
+        result.setdefault("transcription_enabled", False)
+        result.setdefault("translation_enabled", False)
+        return result
+
+    registry = build_daemon_ai_capability_registry(config)
+    result["transcription_enabled"] = registry.status(AICapability.AUDIO_TRANSCRIBE).available
+    result["translation_enabled"] = registry.status(AICapability.AUDIO_TRANSLATE).available
+    return result
+
+
+def _capability_error_payload(error: CapabilityUnavailableError) -> dict[str, Any]:
+    return _audio_error_payload(
+        str(error),
+        code="capability_unavailable",
+        capability=error.capability.value,
+        provider=error.provider,
+        model=error.model,
+        reason=error.reason,
+    )
+
+
+def _audio_error_payload(
+    message: str,
+    *,
+    code: str,
+    capability: str | None,
+    provider: str | None,
+    model: str | None,
+    reason: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "error": message,
+        "text": "",
+        "code": code,
+        "capability": capability,
+        "provider": provider,
+        "model": model,
+        "reason": reason or message,
+    }

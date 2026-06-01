@@ -40,6 +40,7 @@ class _FakeVisionService:
             capability=AICapability.VISION_EXTRACT,
             provider=request.provider or "local",
             model=request.model or "llava",
+            ocr_text="Button label",
         )
 
 
@@ -169,7 +170,13 @@ def test_generate_returns_deterministic_unavailable_error(client: TestClient) ->
         )
 
     assert response.status_code == 400
-    assert response.json() == {"detail": "Gemini CLI is not installed. (provider=gemini)"}
+    assert response.json() == {
+        "code": "capability_unavailable",
+        "capability": "text_generate",
+        "provider": "gemini",
+        "model": None,
+        "reason": "Gemini CLI is not installed.",
+    }
 
 
 def test_vision_status_lists_only_proven_providers_as_available(
@@ -214,6 +221,8 @@ def test_vision_extract_upload_executes_service(
     data = response.json()
     assert data == {
         "text": "Screen text",
+        "description": "Screen text",
+        "ocr_text": "Button label",
         "bytes": len(b"image bytes"),
         "content_type": "image/png",
         "capability": "vision_extract",
@@ -255,10 +264,11 @@ def test_vision_extract_rejects_unproven_provider(client: TestClient) -> None:
 
     assert response.status_code == 400
     assert response.json() == {
-        "detail": (
-            "No daemon vision_extract adapter has proven image payload support for Droid. "
-            "(provider=droid)"
-        )
+        "code": "capability_unavailable",
+        "capability": "vision_extract",
+        "provider": "droid",
+        "model": None,
+        "reason": "No daemon vision_extract adapter has proven image payload support for Droid.",
     }
 
 
