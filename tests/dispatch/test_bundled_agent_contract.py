@@ -37,6 +37,12 @@ SELF_TERMINATION_KILL_AGENT_PHRASES = (
     "requires kill_agent",
     "self-terminate by calling kill_agent",
 )
+END_AGENT_RUN_PROXY_SYNTAX_MARKERS = (
+    "mcp__gobby__call_tool",
+    'server_name="gobby-agents"',
+    'tool_name="end_agent_run"',
+    "arguments={}",
+)
 
 
 def _tool_inventory(
@@ -155,14 +161,20 @@ def test_bundled_agents_use_end_agent_run_for_self_termination() -> None:
                 continue
 
             allowed_tools = set(_mcp_tool_refs(step.get("allowed_mcp_tools")))
+            wrapper_tools = step.get("allowed_tools")
             if "gobby-agents:kill_agent" in allowed_tools:
                 offenders.append(f"{path.name}:terminate:allows kill_agent")
             if "gobby-agents:end_agent_run" not in allowed_tools:
                 offenders.append(f"{path.name}:terminate:missing end_agent_run")
+            if isinstance(wrapper_tools, list) and "mcp__gobby__call_tool" not in wrapper_tools:
+                offenders.append(f"{path.name}:terminate:missing mcp__gobby__call_tool")
 
             terminate_text = "\n".join(
                 str(step.get(field_name) or "") for field_name in ("description", "status_message")
             )
+            for marker in END_AGENT_RUN_PROXY_SYNTAX_MARKERS:
+                if marker not in terminate_text:
+                    offenders.append(f"{path.name}:terminate:missing syntax marker {marker}")
             _collect_self_termination_phrase_offenders(
                 offenders,
                 path=path,

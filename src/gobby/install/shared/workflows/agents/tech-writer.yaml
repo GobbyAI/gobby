@@ -163,7 +163,9 @@ steps:
 
   - name: terminate
     description: "Self-terminate"
-    status_message: "Call end_agent_run to finish this agent run."
+    status_message: >-
+      Call mcp__gobby__call_tool with server_name="gobby-agents",
+      tool_name="end_agent_run", and arguments={} to finish this agent run.
     allowed_tools:
       - mcp__gobby__call_tool
       - mcp__gobby__list_mcp_servers
