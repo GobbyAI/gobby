@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 _GOBBY_MCP_COMMAND = "gobby"
 _GOBBY_MCP_ARGS = ["mcp-server"]
+_CODEX_GOBBY_MCP_TOOL_TIMEOUT_SEC = 360
 
 
 def _remove_toml_table_block(existing_text: str, *, table_prefix: str) -> str:
@@ -104,6 +105,14 @@ def _is_current_gobby_mcp_server_config(server_config: Any) -> bool:
     ]
 
 
+def _needs_codex_gobby_mcp_tool_timeout(server_config: Any) -> bool:
+    try:
+        configured_timeout = float(server_config.get("tool_timeout_sec"))
+    except (TypeError, ValueError):
+        return True
+    return configured_timeout < _CODEX_GOBBY_MCP_TOOL_TIMEOUT_SEC
+
+
 def _is_repairable_stale_gobby_mcp_server_config(server_config: Any) -> bool:
     if _command_basename(server_config.get("command")) != "uv":
         return False
@@ -123,7 +132,7 @@ def _repair_stale_gobby_mcp_server_toml(
     *,
     server_name: str,
 ) -> tuple[str | None, str | None]:
-    """Return updated TOML text for known stale Gobby MCP entries."""
+    """Return updated TOML text for Gobby MCP entries that need repair."""
     import tomlkit
 
     try:
@@ -139,13 +148,21 @@ def _repair_stale_gobby_mcp_server_toml(
     if not hasattr(server_config, "get"):
         return None, None
 
-    if _is_current_gobby_mcp_server_config(server_config):
-        return None, None
-    if not _is_repairable_stale_gobby_mcp_server_config(server_config):
+    updates: dict[str, Any] = {}
+    if not _is_current_gobby_mcp_server_config(
+        server_config
+    ) and _is_repairable_stale_gobby_mcp_server_config(server_config):
+        updates["command"] = _GOBBY_MCP_COMMAND
+        updates["args"] = [*_GOBBY_MCP_ARGS]
+
+    if _needs_codex_gobby_mcp_tool_timeout(server_config):
+        updates["tool_timeout_sec"] = _CODEX_GOBBY_MCP_TOOL_TIMEOUT_SEC
+
+    if not updates:
         return None, None
 
-    server_config["command"] = _GOBBY_MCP_COMMAND
-    server_config["args"] = [*_GOBBY_MCP_ARGS]
+    for key, value in updates.items():
+        server_config[key] = value
     return tomlkit.dumps(config), None
 
 
@@ -627,6 +644,7 @@ def configure_mcp_server_toml(config_path: Path, server_name: str = "gobby") -> 
 [mcp_servers.{server_name}]
 command = "{_GOBBY_MCP_COMMAND}"
 args = ["mcp-server"]
+tool_timeout_sec = {_CODEX_GOBBY_MCP_TOOL_TIMEOUT_SEC}
 """
     updated = (existing.rstrip() + "\n" if existing.strip() else "") + mcp_config
 

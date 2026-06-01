@@ -58,6 +58,7 @@ _CODEX_PREAPPROVED_GOBBY_TOOLS = [
     "get_variable",
     "set_variable",
 ]
+_CODEX_GOBBY_MCP_TOOL_TIMEOUT_SEC = 360
 
 # Gobby-managed Claude agents must use Gobby's spawn/session controls. Native Claude
 # delegation bypasses project context, depth limits, sandbox metadata, and task ownership.
@@ -817,6 +818,7 @@ def _codex_mcp_config_overrides(project_path: str | None) -> list[str]:
         'mcp_servers.gobby.command="uv"',
         f"mcp_servers.gobby.args={args_toml}",
         "mcp_servers.gobby.startup_timeout_sec=120",
+        f"mcp_servers.gobby.tool_timeout_sec={_CODEX_GOBBY_MCP_TOOL_TIMEOUT_SEC}",
     ]
     # Dotted -c overrides replace enough of the spawned server table that Codex
     # no longer sees user-level per-tool approvals. Re-seed only the Gobby proxy

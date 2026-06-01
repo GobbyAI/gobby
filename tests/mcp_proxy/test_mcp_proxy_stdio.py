@@ -1143,14 +1143,15 @@ class TestMCPToolsWrapper:
             task: asyncio.Task[Any] = asyncio.create_task(
                 run_tool(
                     "call_tool",
-                    server_name="gobby-tasks",
-                    tool_name="wait_for_task",
-                    arguments={"task_id": "#1", "timeout": 600},
+                    server_name="gobby-agents",
+                    tool_name="wait_for_agent",
+                    arguments={"run_id": "run-123", "timeout_seconds": 300},
                     ctx=ctx,
                 )
             )
             await asyncio.wait_for(heartbeat_seen.wait(), timeout=0.2)
             assert ctx.report_progress.await_count >= 1
+            assert ctx.report_progress.await_args.kwargs["total"] == 300.0
             release_call.set()
             result = await asyncio.wait_for(task, timeout=0.2)
 

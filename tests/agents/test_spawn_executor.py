@@ -537,6 +537,7 @@ class TestExecuteSpawn:
                 in command
             )
             assert "mcp_servers.gobby.startup_timeout_sec=120" in command
+            assert "mcp_servers.gobby.tool_timeout_sec=360" in command
             assert 'mcp_servers.gobby.tools.list_mcp_servers.approval_mode="approve"' in command
             assert 'mcp_servers.gobby.tools.list_tools.approval_mode="approve"' in command
             assert 'mcp_servers.gobby.tools.get_tool_schema.approval_mode="approve"' in command

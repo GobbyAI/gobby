@@ -299,6 +299,7 @@ class TestConfigureMCPServerTOML:
         assert parsed["mcp_servers"]["gobby"] == {
             "command": "gobby",
             "args": ["mcp-server"],
+            "tool_timeout_sec": 360,
         }
 
     def test_appends_to_existing(self, tmp_path: Path) -> None:
@@ -314,10 +315,20 @@ class TestConfigureMCPServerTOML:
 
     def test_already_configured(self, tmp_path: Path) -> None:
         config = tmp_path / "config.toml"
-        config.write_text('[mcp_servers.gobby]\ncommand = "uv"\n')
+        config.write_text('[mcp_servers.gobby]\ncommand = "uv"\ntool_timeout_sec = 360\n')
         result = configure_mcp_server_toml(config)
         assert result["success"] is True
         assert result["already_configured"] is True
+
+    def test_adds_missing_tool_timeout_to_existing_config(self, tmp_path: Path) -> None:
+        config = tmp_path / "config.toml"
+        config.write_text('[mcp_servers.gobby]\ncommand = "gobby"\nargs = ["mcp-server"]\n')
+        result = configure_mcp_server_toml(config)
+
+        assert result["success"] is True
+        assert result["updated"] is True
+        parsed = tomllib.loads(config.read_text())
+        assert parsed["mcp_servers"]["gobby"]["tool_timeout_sec"] == 360
 
     def test_repairs_uv_run_stale_config(self, tmp_path: Path) -> None:
         config = tmp_path / "config.toml"
@@ -333,6 +344,7 @@ class TestConfigureMCPServerTOML:
         assert parsed["mcp_servers"]["gobby"] == {
             "command": "gobby",
             "args": ["mcp-server"],
+            "tool_timeout_sec": 360,
         }
 
     def test_repairs_uv_run_directory_stale_config(self, tmp_path: Path) -> None:
@@ -349,6 +361,7 @@ class TestConfigureMCPServerTOML:
         assert parsed["mcp_servers"]["gobby"] == {
             "command": "gobby",
             "args": ["mcp-server"],
+            "tool_timeout_sec": 360,
         }
 
     def test_keeps_uv_run_project_config(self, tmp_path: Path) -> None:
@@ -356,6 +369,7 @@ class TestConfigureMCPServerTOML:
         config.write_text(
             '[mcp_servers.gobby]\ncommand = "uv"\n'
             'args = ["run", "--project", "/repo/gobby", "gobby", "mcp-server"]\n'
+            "tool_timeout_sec = 360\n"
         )
         result = configure_mcp_server_toml(config)
 
