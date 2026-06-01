@@ -43,6 +43,6 @@ async def append_audit_marker(db: HubDatabase, task_id: str, heading: str, body:
             return False
         await asyncio.to_thread(update_task, db, task_id, description=f"{description}{marker}")
         return True
-    except (ValueError, psycopg.Error):
+    except psycopg.Error:
         logger.warning("Failed to append dispatch audit marker for task %s", task_id, exc_info=True)
         return False

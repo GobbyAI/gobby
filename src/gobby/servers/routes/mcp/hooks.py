@@ -635,9 +635,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
 
             except TimeoutError:
                 inc_counter("hooks_failed_total")
-                timeout_seconds = _fail_safe_hook_timeout_seconds(hook_type, request_metadata)
-                if timeout_seconds is None:
-                    raise
+                timeout_seconds = _fail_safe_hook_timeout_seconds(hook_type, request_metadata) or 0
                 logger.error(
                     "Critical hook timed out: %s",
                     hook_type,

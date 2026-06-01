@@ -226,7 +226,7 @@ class TestTmuxTextInjection:
             ["tmux", "delete-buffer", "-b", buffer_name],
             ["tmux", "send-keys", "-t", "%12", "Enter"],
         ]
-        assert not any("\\n" in arg for command in commands for arg in command)
+        assert not any("\n" in arg for command in commands for arg in command)
 
     @pytest.mark.asyncio
     async def test_submit_literal_text_can_escape_before_paste(

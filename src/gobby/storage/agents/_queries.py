@@ -28,6 +28,7 @@ class _AgentRunQueryHost(Protocol):
         *,
         order_by: str = "",
         limit: int | None = None,
+        offset: int = 0,
     ) -> list[AgentRun]: ...
 
 
@@ -163,6 +164,7 @@ class _AgentRunQueryMixin:
     def list_active(
         self: _AgentRunQueryHost,
         limit: int = 100,
+        offset: int = 0,
         *,
         task_ids: Sequence[str] | None = None,
     ) -> list[AgentRun]:
@@ -180,6 +182,7 @@ class _AgentRunQueryMixin:
             params,
             order_by="ORDER BY ar.started_at ASC",
             limit=limit,
+            offset=offset,
         )
 
     def get_by_session(self: _AgentRunQueryHost, session_id: str) -> AgentRun | None:

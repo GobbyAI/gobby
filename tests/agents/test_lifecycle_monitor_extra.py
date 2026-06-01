@@ -777,7 +777,7 @@ class TestPeriodicAgentTerminalEnter:
 
         result = await monitor.check_queued_continuation_prompts()
 
-        assert result is None
+        assert result == 0
         mock_tmux.send_keys.assert_not_called()
 
     @pytest.mark.asyncio

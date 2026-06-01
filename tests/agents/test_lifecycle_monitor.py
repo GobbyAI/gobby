@@ -14,12 +14,12 @@ import os
 import threading
 import time
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
-from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
+from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor, _has_dispatch_stage_context
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.executor import DatabaseExecutor
 from gobby.storage.hub.protocol import HubDatabase
@@ -65,12 +65,77 @@ def monitor(
     )
 
 
+def _metadata_run(run_id: str, metadata: object, task_id: str | None = None) -> AgentRun:
+    return AgentRun(
+        id=run_id,
+        parent_session_id="parent-session",
+        provider="codex",
+        prompt="test",
+        status="running",
+        created_at="2026-01-01T00:00:00+00:00",
+        updated_at="2026-01-01T00:00:00+00:00",
+        task_id=task_id,
+        resume_metadata_json=cast(Any, metadata),
+    )
+
+
 def test_idle_check_handler_receives_monitor_database(
     monitor: AgentLifecycleMonitor,
     temp_db: HubDatabase,
 ) -> None:
     """IdleCheckHandler uses the monitor DB instead of inferring storage internals."""
     assert monitor._idle_check_handler.db is temp_db
+
+
+@pytest.mark.parametrize(
+    ("metadata", "expected"),
+    [
+        ({"stage_name": "development", "stage_state": "in_progress"}, True),
+        (
+            {
+                "initial_variables": {
+                    "stage_name": "development",
+                    "stage_state": "in_progress",
+                }
+            },
+            True,
+        ),
+        ({"stage_name": "development"}, False),
+        ({"stage_state": "in_progress"}, False),
+        ({"stage_name": "development", "stage_state": 1}, False),
+        (None, False),
+        (["stage_name", "development"], False),
+    ],
+)
+def test_has_dispatch_stage_context_requires_string_stage_fields(
+    metadata: object,
+    expected: bool,
+) -> None:
+    assert _has_dispatch_stage_context(_metadata_run("run-stage-context", metadata)) is expected
+
+
+@pytest.mark.asyncio
+async def test_refresh_active_run_dispatch_mutexes_advances_batch_cursor(
+    temp_db: HubDatabase,
+) -> None:
+    agent_run_manager = MagicMock()
+    first_batch = [_metadata_run(f"run-no-task-{idx}", None) for idx in range(100)]
+    second_batch = [_metadata_run("run-no-task-tail", None)]
+    agent_run_manager.list_active.side_effect = [first_batch, second_batch]
+    monitor = AgentLifecycleMonitor(
+        agent_run_manager=agent_run_manager,
+        db=temp_db,
+        check_interval_seconds=1.0,
+    )
+
+    assert await monitor.refresh_active_run_dispatch_mutexes() == 0
+    assert monitor._dispatch_refresh_cursor == 100
+    assert await monitor.refresh_active_run_dispatch_mutexes() == 0
+    assert monitor._dispatch_refresh_cursor == 0
+    assert agent_run_manager.list_active.call_args_list == [
+        call(limit=100, offset=0),
+        call(limit=100, offset=100),
+    ]
 
 
 @pytest.mark.asyncio

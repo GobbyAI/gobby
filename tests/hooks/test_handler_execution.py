@@ -48,9 +48,17 @@ class TestReturnValues:
     def test_context_is_string(
         self,
         event_handlers: EventHandlers,
-        mock_empty_session_variable_manager: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Test context is always a string."""
+        manager = MagicMock()
+        manager.get_variables.return_value = {}
+        manager.merge_variables.return_value = True
+        manager.claim_startup_context.return_value = "full"
+        monkeypatch.setattr(
+            "gobby.workflows.state_manager.SessionVariableManager",
+            MagicMock(return_value=manager),
+        )
         event = make_event(HookEventType.SESSION_START)
         response = event_handlers.handle_session_start(event)
         assert isinstance(response.context, str)

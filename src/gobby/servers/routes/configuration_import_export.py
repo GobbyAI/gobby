@@ -260,10 +260,13 @@ def persist_imported_config(
     restart_touched_keys: set[str],
 ) -> int:
     """Persist validated import values into config_store and secret storage."""
+    # Storage exports can contain persisted ai.embeddings keys; validate in runtime shape.
     flat_config = storage_embedding_config_entries_to_runtime(flat_config)
+    # Secret markers from import payloads are normalized to runtime keys for partitioning.
     runtime_config_secret_keys = {
         storage_embedding_config_key_to_runtime_key(key) for key in config_secret_keys
     }
+    # Split reference markers, plaintext secret values, and ordinary config values.
     secret_references, secret_values, plain_values = partition_config_entries(
         flat_config,
         runtime_config_secret_keys,
@@ -288,6 +291,7 @@ def persist_imported_config(
     restart_touched_keys.update(secret_references)
     restart_touched_keys.update(secret_values)
 
+    # Persist runtime-shaped values under canonical storage keys.
     storage_secret_references = runtime_embedding_config_entries_to_storage(secret_references)
     storage_secret_values = runtime_embedding_config_entries_to_storage(validated_secret_values)
     storage_plain_values = runtime_embedding_config_entries_to_storage(plain_values)

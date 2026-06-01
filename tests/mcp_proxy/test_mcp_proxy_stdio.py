@@ -641,6 +641,38 @@ class TestDaemonProxy:
         mock_client_cls.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_request_preflight_caches_successful_health_check(self) -> None:
+        from gobby.mcp_proxy.stdio import DaemonProxy
+
+        proxy = DaemonProxy(60887)
+        mock_response = MagicMock(status_code=200)
+        mock_response.json.return_value = {"success": True}
+        with (
+            patch("gobby.mcp_proxy.stdio.time.monotonic", side_effect=[100.0, 100.1, 102.0]),
+            patch(
+                "gobby.mcp_proxy.stdio.check_daemon_http_health",
+                new_callable=AsyncMock,
+                return_value=True,
+            ) as mock_health,
+            patch("gobby.mcp_proxy.stdio.httpx.AsyncClient") as mock_client_cls,
+        ):
+            mock_client = AsyncMock()
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.__aexit__.return_value = None
+            mock_client.request.return_value = mock_response
+            mock_client_cls.return_value = mock_client
+
+            assert await proxy._request("GET", "/some/path", preflight=True) == {
+                "success": True
+            }
+            assert await proxy._request("GET", "/some/path", preflight=True) == {
+                "success": True
+            }
+
+        mock_health.assert_awaited_once()
+        assert mock_client.request.await_count == 2
+
+    @pytest.mark.asyncio
     async def test_request_timeout_returns_daemon_unavailable(self) -> None:
         """Daemon read timeouts should become actionable proxy errors."""
         from gobby.mcp_proxy.stdio import DaemonProxy
@@ -796,6 +828,34 @@ class TestDaemonProxy:
                     timeout=30.0,
                     preflight=True,
                 )
+
+    @pytest.mark.asyncio
+    async def test_call_tool_can_disable_preflight(self) -> None:
+        from gobby.mcp_proxy.stdio import DaemonProxy
+
+        proxy = DaemonProxy(60887)
+        with patch("gobby.mcp_proxy.stdio.load_config") as mock_config:
+            mock_config.return_value = MagicMock(mcp_client_proxy=MagicMock(tool_timeouts={}))
+            with patch.object(proxy, "_request", new_callable=AsyncMock) as mock_request:
+                mock_request.return_value = {"success": True}
+
+                result = await proxy.call_tool(
+                    "gobby-tasks",
+                    "get_task",
+                    {"task_id": "#1"},
+                    preflight_enabled=False,
+                )
+
+        assert result == {"success": True}
+        mock_config.assert_called_once()
+        assert mock_request.await_count == 1
+        mock_request.assert_called_once_with(
+            "POST",
+            "/api/mcp/gobby-tasks/tools/get_task",
+            json={"task_id": "#1"},
+            timeout=30.0,
+            preflight=False,
+        )
 
 
 class TestDaemonProxyMethods:
@@ -1040,7 +1100,7 @@ class TestMCPToolsWrapper:
 
         # 4. call_tool
         await run_tool("call_tool", server_name="s", tool_name="t", arguments={})
-        mock_proxy.call_tool.assert_called_with("s", "t", {})
+        mock_proxy.call_tool.assert_called_with("s", "t", {}, preflight_enabled=True)
 
         # 5. recommend_tools
         with patch("os.getcwd", return_value="/cwd"):
@@ -1090,6 +1150,7 @@ class TestMCPToolsWrapper:
             "gobby-skills",
             "get_skill",
             {"session_id": "session-123", "name": "brevity"},
+            preflight_enabled=True,
         )
         assert mock_proxy._session_id is None
 
@@ -1120,6 +1181,7 @@ class TestMCPToolsWrapper:
             {"session_id": "inner-session", "value": "ok"},
             project_id="outer-project",
             session_id="outer-session",
+            preflight_enabled=True,
         )
         assert mock_proxy._session_id is None
 

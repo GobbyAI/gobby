@@ -622,6 +622,42 @@ class TestPersistEmbeddingConfig:
             assert row["encrypted_value"] != "sk-xxx"
             assert row["encrypted_value"].startswith("gAAAAA")
 
+    def test_missing_embedding_key_clears_stale_config_secret(
+        self,
+        temp_db: HubDatabase,
+        tmp_path: Path,
+    ) -> None:
+        from gobby.cli.installers.embedding import _persist_embedding_config
+        from gobby.storage.config_store import ConfigStore
+        from gobby.storage.secrets import SecretStore
+
+        with (
+            patch(
+                "gobby.storage.hub.runtime.runtime_hub_database",
+                return_value=nullcontext(temp_db),
+            ),
+            patch("gobby.storage.secrets.SALT_FILE", tmp_path / ".secret_salt"),
+            patch("gobby.storage.secrets.get_machine_id", return_value="test-machine"),
+        ):
+            store = ConfigStore(temp_db)
+            secret_store = SecretStore(temp_db)
+            store.set_secret(
+                AI_EMBEDDING_API_KEY_KEY,
+                "sk-stale",
+                secret_store,
+                source="test",
+            )
+
+            _persist_embedding_config(
+                model="text-embedding-nomic-embed-text-v1.5@f16",
+                api_base="http://localhost:1234/v1",
+                dim=768,
+                provider="lmstudio",
+            )
+
+            assert store.get(AI_EMBEDDING_API_KEY_KEY) is None
+            assert secret_store.get(EMBEDDING_API_KEY_SECRET_NAME) is None
+
     @patch("gobby.storage.secrets.SecretStore")
     @patch("gobby.storage.config_store.ConfigStore")
     @patch("gobby.storage.hub.runtime.open_runtime_hub_database")

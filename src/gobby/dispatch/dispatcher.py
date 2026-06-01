@@ -522,6 +522,7 @@ async def execute_action(
 
     try:
         if isinstance(action, StartStageAction):
+            mutex.release()
             manager = _stage_states_manager(db=db, services=services)
             return cast(
                 object,
@@ -532,6 +533,7 @@ async def execute_action(
                 ),
             )
         if isinstance(action, AdvanceStageAction):
+            mutex.release()
             manager = _stage_states_manager(db=db, services=services)
             if action.method == "complete_stage":
                 return cast(
@@ -854,6 +856,7 @@ async def _handle_spawn_failure(
                 f"dispatch_spawn_failed:{error}" if cited_subtask_ids else "dispatch_spawn_failed"
             )
             try:
+                mutex.release()
                 _stage_states_manager(
                     db=db,
                     services=getattr(context, "services", None),

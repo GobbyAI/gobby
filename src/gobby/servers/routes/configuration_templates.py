@@ -133,7 +133,7 @@ def register_template_routes(router: APIRouter, context: ConfigurationRouteConte
             defaults_flat = flatten_config(
                 DaemonConfig().model_dump(mode="json", exclude_none=True)
             )
-            parsed_flat = storage_embedding_config_entries_to_runtime(flatten_config(parsed))
+            parsed_flat = flatten_config(parsed)
             config_store = context.get_config_store()
             existing_secret_keys = set(config_store.get_secret_keys())
             masked_secret_keys = {

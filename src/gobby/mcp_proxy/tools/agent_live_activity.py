@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -47,7 +48,7 @@ async def overlay_live_activity(run: Any, transcript_reader: Any | None) -> Any:
 
 
 async def overlay_runs_live_activity(runs: list[Any], transcript_reader: Any | None) -> list[Any]:
-    results: list[Any] = []
-    for run in runs:
-        results.append(await overlay_live_activity(run, transcript_reader))
-    return results
+    return await asyncio.gather(
+        *(overlay_live_activity(run, transcript_reader) for run in runs),
+        return_exceptions=False,
+    )

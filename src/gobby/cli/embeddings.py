@@ -55,6 +55,7 @@ def _resolved_namespace() -> str | None:
         from gobby.storage.config_store import ConfigStore
         from gobby.storage.hub.runtime import runtime_hub_database
 
+        # Diagnostic-only read: avoid mutating schema while reporting config health.
         with runtime_hub_database(apply_migrations=False) as db:
             keys = set(ConfigStore(db).list_keys(prefix=AI_EMBEDDINGS_CONFIG_PREFIX))
     except (ImportError, OSError, RuntimeError, TypeError, ValueError, psycopg.Error) as exc:

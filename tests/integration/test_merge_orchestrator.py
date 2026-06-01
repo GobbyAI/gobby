@@ -272,7 +272,7 @@ async def test_orchestrator_yaml_loads(tmp_path: Path) -> None:
         for handler in handlers
         if handler.get("server") == "gobby-merge"
         and handler.get("tool") == "inspect_merge_state"
-        and "not tool_output.result.active_resolution_id" in handler.get("when", "")
+        and "not tool_output.get('active_resolution_id')" in handler.get("when", "")
     ]
     assert any(
         handler.get("variable") == "post_worker_merge_status_checked"
@@ -280,19 +280,17 @@ async def test_orchestrator_yaml_loads(tmp_path: Path) -> None:
     )
     assert any(
         handler.get("variable") == "no_progress_merge_status_count"
-        and "tool_output.result.can_resume" in handler.get("when", "")
+        and "tool_output.get('can_resume')" in handler.get("when", "")
         for handler in no_resolution_handlers
     )
 
     context = {
         "vars": {"merge_worker_completed": True},
         "tool_output": {
-            "result": {
-                "active_resolution_id": None,
-                "can_resume": True,
-                "conflicted_files": ["src/example.py"],
-                "state": "merging",
-            }
+            "active_resolution_id": None,
+            "can_resume": True,
+            "conflicted_files": ["src/example.py"],
+            "state": "merging",
         },
     }
     evaluator = SafeExpressionEvaluator(context, build_condition_helpers(context=context))

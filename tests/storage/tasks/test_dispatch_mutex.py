@@ -225,6 +225,7 @@ def test_refresh_mutex_for_run_extends_matching_lease_only(temp_db, sample_proje
         manager.refresh_mutex_for_run(
             task.id,
             "wrong-run",
+            lease_holder="dispatcher",
             ttl_seconds=600,
             now=refresh_at,
         )
@@ -234,6 +235,17 @@ def test_refresh_mutex_for_run_extends_matching_lease_only(temp_db, sample_proje
         manager.refresh_mutex_for_run(
             task.id,
             "run-123",
+            lease_holder="other-owner",
+            ttl_seconds=600,
+            now=refresh_at,
+        )
+        is False
+    )
+    assert (
+        manager.refresh_mutex_for_run(
+            task.id,
+            "run-123",
+            lease_holder="dispatcher",
             ttl_seconds=600,
             now=refresh_at,
         )

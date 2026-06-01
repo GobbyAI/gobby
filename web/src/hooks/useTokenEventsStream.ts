@@ -50,6 +50,7 @@ function tokenEventFromMessage(data: TokenEventMessage): TokenEvent {
             output_tokens: data.session_totals.output_tokens ?? 0,
             cache_creation_tokens: data.session_totals.cache_creation_tokens ?? 0,
             cache_read_tokens: data.session_totals.cache_read_tokens ?? 0,
+            context_window: data.session_totals.context_window ?? null,
           }
         : undefined,
   }

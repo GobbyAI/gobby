@@ -370,14 +370,16 @@ def _persist_embedding_config(
 
         store.set_many(entries, source="install")
 
+        secret_store = SecretStore(db)
         if embedding_api_key:
-            secret_store = SecretStore(db)
             store.set_secret(
                 AI_EMBEDDING_API_KEY_KEY,
                 embedding_api_key,
                 secret_store,
                 source="install",
             )
+        else:
+            store.clear_secret(AI_EMBEDDING_API_KEY_KEY, secret_store)
 
 
 def _probe_embedding_dim(

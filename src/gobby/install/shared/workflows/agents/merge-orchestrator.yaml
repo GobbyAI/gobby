@@ -427,19 +427,19 @@ steps:
         value: "str(tool_output.get('run_id') or tool_output.get('result', {}).get('run_id'))"
       - server: gobby-merge
         tool: inspect_merge_state
-        when: "vars.get('merge_worker_completed') is True and not tool_output.result.active_resolution_id"
+        when: "vars.get('merge_worker_completed') is True and not tool_output.get('active_resolution_id')"
         action: set_variable
         variable: post_worker_merge_status_checked
         value: true
       - server: gobby-merge
         tool: inspect_merge_state
-        when: "vars.get('merge_worker_completed') is True and not tool_output.result.active_resolution_id"
+        when: "vars.get('merge_worker_completed') is True and not tool_output.get('active_resolution_id')"
         action: set_variable
         variable: last_merge_status_signature
-        value: "'no-active-resolution:' + str(tool_output.result.state) + ':' + str(tool_output.result.conflicted_files)"
+        value: "'no-active-resolution:' + str(tool_output.get('state')) + ':' + str(tool_output.get('conflicted_files'))"
       - server: gobby-merge
         tool: inspect_merge_state
-        when: "vars.get('merge_worker_completed') is True and not tool_output.result.active_resolution_id and tool_output.result.can_resume"
+        when: "vars.get('merge_worker_completed') is True and not tool_output.get('active_resolution_id') and tool_output.get('can_resume')"
         action: set_variable
         variable: no_progress_merge_status_count
         value: 1
@@ -447,12 +447,12 @@ steps:
         tool: merge_status
         action: set_variable
         variable: no_progress_merge_status_count
-        value: "vars.get('no_progress_merge_status_count', 0) + 1 if vars.get('merge_worker_completed') is True and vars.get('last_merge_status_signature') == str(tool_input.get('resolution_id', '')) + ':' + str(tool_output.result.resolved_count) + '/' + str(tool_output.result.pending_count) and int(tool_output.result.pending_count) > 0 else 0"
+        value: "vars.get('no_progress_merge_status_count', 0) + 1 if vars.get('merge_worker_completed') is True and vars.get('last_merge_status_signature') == str(tool_input.get('resolution_id', '')) + ':' + str(tool_output.get('resolved_count')) + '/' + str(tool_output.get('pending_count')) and int(tool_output.get('pending_count', 0)) > 0 else 0"
       - server: gobby-merge
         tool: merge_status
         action: set_variable
         variable: last_merge_status_signature
-        value: "str(tool_input.get('resolution_id', '')) + ':' + str(tool_output.result.resolved_count) + '/' + str(tool_output.result.pending_count)"
+        value: "str(tool_input.get('resolution_id', '')) + ':' + str(tool_output.get('resolved_count')) + '/' + str(tool_output.get('pending_count'))"
       - server: gobby-merge
         tool: merge_status
         action: set_variable

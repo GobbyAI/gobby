@@ -714,7 +714,7 @@ def _stage_revision_review_budget_open(stage: object, context: object) -> bool:
         return False
     review_rounds = int(_field(stage, "review_round_count", 0) or 0)
     work_attempts = int(_field(stage, "work_attempt_count", 0) or 0)
-    if review_rounds <= 0 or work_attempts > review_rounds:
+    if review_rounds <= 0 or work_attempts >= review_rounds:
         return False
     return not _stage_review_exhausted(stage, context)
 

@@ -15,7 +15,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
-from gobby.storage.sessions import SessionManager
+from gobby.storage.sessions import SYSTEM_SESSION_ID, SessionManager
 from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
@@ -211,6 +211,33 @@ class TestMailboxDirectSend:
         assert row["priority"] == "high"
         assert row["message_type"] == "task_assignment"
         assert json.loads(row["metadata_json"]) == {"task_id": "#14760"}
+
+    @pytest.mark.asyncio
+    async def test_system_session_direct_send_uses_explicit_project_scope(
+        self,
+        temp_db: HubDatabase,
+        session_manager: SessionManager,
+        sample_project: dict[str, Any],
+    ) -> None:
+        recipient = _register_session(session_manager, sample_project["id"], "recipient")
+
+        result = await _mailbox(temp_db, session_manager).send(
+            from_session_id=SYSTEM_SESSION_ID,
+            target="session",
+            target_id=recipient.id,
+            project_id=sample_project["id"],
+            content="System notice",
+        )
+
+        assert result.recipient_session_ids == [recipient.id]
+        row = temp_db.fetchone(
+            "SELECT from_session, to_session, content FROM inter_session_messages"
+        )
+        assert row == {
+            "from_session": SYSTEM_SESSION_ID,
+            "to_session": recipient.id,
+            "content": "System notice",
+        }
 
     @pytest.mark.asyncio
     async def test_session_target_requires_target_id(

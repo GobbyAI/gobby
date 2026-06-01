@@ -164,7 +164,7 @@ class TerminalPromptMonitor:
 
         return handled
 
-    async def check_queued_continuation_prompts(self) -> None:
+    async def check_queued_continuation_prompts(self) -> int:
         """Observe queued Gobby continuation prompts without editing the CLI input queue.
 
         This does not mutate the input queue or report a handled count; periodic
@@ -173,7 +173,7 @@ class TerminalPromptMonitor:
         be separated by status/chrome lines.
         """
         if not self._get_tmux_config().auto_enter_agent_terminals:
-            return
+            return 0
 
         runs = await self._run_db(self._get_active_terminal_runs)
 
@@ -195,6 +195,7 @@ class TerminalPromptMonitor:
                 )
             except Exception as e:
                 logger.warning("Error checking queued continuation for agent %s: %s", run.id, e)
+        return 0
 
     async def check_periodic_enters(self) -> int:
         """Periodically send Enter to active spawned-agent terminal panes."""

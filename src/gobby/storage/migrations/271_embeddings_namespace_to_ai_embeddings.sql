@@ -50,26 +50,37 @@ WHERE key IN (
 )
 ON CONFLICT (key) DO NOTHING;
 
+WITH api_key_source AS (
+    SELECT
+        '"$secret:embeddings_api_key"' AS value,
+        source,
+        TRUE AS is_secret,
+        0 AS priority
+    FROM config_store
+    WHERE key = 'embeddings.api_key'
+    UNION ALL
+    SELECT
+        '"$secret:embeddings_api_key"',
+        'user',
+        TRUE,
+        1
+    FROM secrets
+    WHERE name = 'embeddings_api_key'
+),
+selected_api_key_source AS (
+    SELECT value, source, is_secret
+    FROM api_key_source
+    ORDER BY priority
+    LIMIT 1
+)
 INSERT INTO config_store (key, value, source, is_secret, updated_at)
 SELECT
     'ai.embeddings.api_key',
-    '"$secret:embeddings_api_key"',
+    value,
     source,
-    TRUE,
+    is_secret,
     NOW()
-FROM config_store
-WHERE key = 'embeddings.api_key'
-ON CONFLICT (key) DO NOTHING;
-
-INSERT INTO config_store (key, value, source, is_secret, updated_at)
-SELECT
-    'ai.embeddings.api_key',
-    '"$secret:embeddings_api_key"',
-    'user',
-    TRUE,
-    NOW()
-FROM secrets
-WHERE name = 'embeddings_api_key'
+FROM selected_api_key_source
 ON CONFLICT (key) DO NOTHING;
 
 DELETE FROM config_store

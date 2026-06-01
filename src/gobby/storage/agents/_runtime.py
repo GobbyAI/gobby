@@ -24,6 +24,7 @@ class _AgentRunRuntimeHost(Protocol):
         *,
         order_by: str = "",
         limit: int | None = None,
+        offset: int = 0,
     ) -> list[AgentRun]: ...
 
 

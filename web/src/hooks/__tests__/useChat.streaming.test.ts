@@ -545,7 +545,7 @@ describe("useChat streaming and event handling", () => {
     expect(result.current.contextUsage.contextUsageRatio).toBeCloseTo(0.2072);
   });
 
-  it("updates context usage from the token_event footprint, not session totals", async () => {
+  it("updates context usage from cumulative token_event session totals", async () => {
     await loadModule();
     const { result } = renderHook(() => useChat());
 
@@ -579,20 +579,21 @@ describe("useChat streaming and event handling", () => {
           output_tokens: 44,
           cache_read_tokens: 777,
           cache_creation_tokens: 666,
+          context_window: 2000,
         },
       });
     });
 
     expect(result.current.contextUsage).toMatchObject({
-      totalInputTokens: 128,
-      outputTokens: 11,
-      cacheReadTokens: 20,
-      cacheCreationTokens: 8,
-      uncachedInputTokens: 100,
-      contextWindow: 1000,
+      totalInputTokens: 9999,
+      outputTokens: 44,
+      cacheReadTokens: 777,
+      cacheCreationTokens: 666,
+      uncachedInputTokens: 8556,
+      contextWindow: 2000,
       contextUsageSource: "token_event",
       contextUsageConfidence: "reported",
     });
-    expect(result.current.contextUsage.contextUsageRatio).toBeCloseTo(0.128);
+    expect(result.current.contextUsage.contextUsageRatio).toBeCloseTo(1);
   });
 });

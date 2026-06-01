@@ -161,6 +161,43 @@ def test_embeddings_namespace_migration_creates_config_for_secret_only_state(
     assert row == {"key": "ai.embeddings.api_key", "is_secret": True}
 
 
+def test_embeddings_namespace_migration_prefers_legacy_config_row_over_secret_fallback(
+    temp_db: HubDatabase,
+) -> None:
+    temp_db.execute(
+        """
+        INSERT INTO secrets (id, name, encrypted_value, category, description, created_at, updated_at)
+        VALUES ('canonical-secret', 'embeddings_api_key', 'encrypted-value', 'general', 'canonical', NOW(), NOW())
+        """
+    )
+    temp_db.execute(
+        """
+        INSERT INTO config_store (key, value, source, is_secret, updated_at)
+        VALUES (%s, %s, 'legacy-config', TRUE, NOW())
+        """,
+        ("embeddings.api_key", json.dumps("$secret:embeddings_api_key")),
+    )
+
+    migration = (MIGRATIONS_DIR / "271_embeddings_namespace_to_ai_embeddings.sql").read_text(
+        encoding="utf-8"
+    )
+    with temp_db.transaction() as txn:
+        _execute_sql_script(txn, migration)
+
+    row = temp_db.fetchone(
+        """
+        SELECT key, source, value
+        FROM config_store
+        WHERE key = 'ai.embeddings.api_key'
+        """
+    )
+    assert row == {
+        "key": "ai.embeddings.api_key",
+        "source": "legacy-config",
+        "value": json.dumps("$secret:embeddings_api_key"),
+    }
+
+
 def test_embeddings_namespace_migration_skips_api_key_when_no_source_secret(
     temp_db: HubDatabase,
 ) -> None:

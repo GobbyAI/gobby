@@ -313,11 +313,11 @@ class MailboxService:
     def _resolve_project_id(self, from_session_id: str, project_id: str | None) -> str:
         if project_id:
             return self._resolve_project_ref(project_id)
+        if from_session_id == SYSTEM_SESSION_ID:
+            raise ValueError("project_id is required for system broadcast messages")
         sender: Session | None = self._session_manager.get(from_session_id)
         if sender is None:
             raise ValueError(f"Sender session not found: {from_session_id}")
-        if from_session_id == SYSTEM_SESSION_ID:
-            raise ValueError("project_id is required for system broadcast messages")
         return str(sender.project_id)
 
     def _resolve_project_ref(self, project_ref: str) -> str:
@@ -342,10 +342,6 @@ class MailboxService:
         project_id: str | None,
         allow_cross_project: bool = False,
     ) -> str:
-        sender: Session | None = self._session_manager.get(from_session_id)
-        if sender is None:
-            raise ValueError(f"Sender session not found: {from_session_id}")
-
         recipient: Session | None = self._session_manager.get(to_session_id)
         if recipient is None:
             raise ValueError(f"Recipient session not found: {to_session_id}")
@@ -356,9 +352,13 @@ class MailboxService:
         # explicit project_id, so they bypass sender/recipient project equality.
         if (
             from_session_id != SYSTEM_SESSION_ID
-            and sender.project_id != recipient.project_id
             and not allow_cross_project
         ):
+            sender: Session | None = self._session_manager.get(from_session_id)
+            if sender is None:
+                raise ValueError(f"Sender session not found: {from_session_id}")
+            if sender.project_id == recipient.project_id:
+                return to_session_id
             raise ValueError(
                 "Cross-project messaging not allowed. "
                 f"Sender project: {sender.project_id}, recipient project: {recipient.project_id}"
@@ -372,10 +372,12 @@ class MailboxService:
         root_task_id: str,
         build_project_id: str,
     ) -> None:
+        if from_session_id == SYSTEM_SESSION_ID:
+            return
         sender: Session | None = self._session_manager.get(from_session_id)
         if sender is None:
             raise ValueError(f"Sender session not found: {from_session_id}")
-        if from_session_id == SYSTEM_SESSION_ID or sender.project_id == build_project_id:
+        if sender.project_id == build_project_id:
             return
         if self._allows_cross_project_build_coordinator(
             from_session_id=from_session_id,
@@ -524,21 +526,18 @@ class MailboxService:
         if recipient_id is None:
             raise ValueError(f"Agent target has no deliverable session: {agent_run_id}")
 
-        sender: Session | None = self._session_manager.get(from_session_id)
         recipient: Session | None = self._session_manager.get(recipient_id)
-        task_id = str(row["task_id"])
+        task_id = str(row["task_id"]) if row["task_id"] is not None else None
         allow_cross_project = False
-        if (
-            sender is not None
-            and recipient is not None
-            and sender.project_id != recipient.project_id
-        ):
-            task_project_id = self._task_project_id(task_id)
-            allow_cross_project = self._allows_cross_project_build_coordinator(
-                from_session_id=from_session_id,
-                build_project_id=task_project_id,
-                task_id=task_id,
-            )
+        if from_session_id != SYSTEM_SESSION_ID and recipient is not None and task_id is not None:
+            sender: Session | None = self._session_manager.get(from_session_id)
+            if sender is not None and sender.project_id != recipient.project_id:
+                task_project_id = self._task_project_id(task_id)
+                allow_cross_project = self._allows_cross_project_build_coordinator(
+                    from_session_id=from_session_id,
+                    build_project_id=task_project_id,
+                    task_id=task_id,
+                )
         recipient_id = self._validate_direct_recipient(
             from_session_id=from_session_id,
             to_session_id=recipient_id,

@@ -9,6 +9,7 @@ import asyncio
 import logging
 import os
 import sys
+import time
 from collections.abc import Awaitable
 from pathlib import Path
 from typing import Any
@@ -73,6 +74,7 @@ DAEMON_HEALTH_ATTEMPTS = 30
 DAEMON_HEALTH_CHECK_TIMEOUT_SECONDS = 2.0
 DAEMON_HEALTH_RETRY_DELAY_SECONDS = 1.0
 DAEMON_PROXY_PREFLIGHT_TIMEOUT_SECONDS = 2.0
+DAEMON_PROXY_PREFLIGHT_CACHE_SECONDS = 5.0
 
 
 __all__ = [
@@ -164,6 +166,7 @@ class DaemonProxy:
         self.base_url = f"http://localhost:{port}"
         self._project_id: str | None = self._read_project_id()
         self._session_id: str | None = os.environ.get("GOBBY_SESSION_ID") or None
+        self._last_health_ok_at = 0.0
 
     @staticmethod
     def _read_project_id() -> str | None:
@@ -217,14 +220,19 @@ class DaemonProxy:
         if effective_session_id:
             headers["X-Gobby-Session-Id"] = effective_session_id
 
-        if preflight and not await check_daemon_http_health(
-            self.port,
-            timeout=DAEMON_PROXY_PREFLIGHT_TIMEOUT_SECONDS,
-        ):
-            return _daemon_unavailable_result(
-                self.port,
-                f"health check did not respond within {DAEMON_PROXY_PREFLIGHT_TIMEOUT_SECONDS:g}s",
-            )
+        if preflight:
+            now = time.monotonic()
+            if now - self._last_health_ok_at >= DAEMON_PROXY_PREFLIGHT_CACHE_SECONDS:
+                if not await check_daemon_http_health(
+                    self.port,
+                    timeout=DAEMON_PROXY_PREFLIGHT_TIMEOUT_SECONDS,
+                ):
+                    return _daemon_unavailable_result(
+                        self.port,
+                        "health check did not respond within "
+                        f"{DAEMON_PROXY_PREFLIGHT_TIMEOUT_SECONDS:g}s",
+                    )
+                self._last_health_ok_at = time.monotonic()
 
         try:
             async with httpx.AsyncClient() as client:
@@ -294,6 +302,7 @@ class DaemonProxy:
         arguments: str | dict[str, Any] | None = None,
         project_id: str | None = None,
         session_id: str | None = None,
+        preflight_enabled: bool = True,
     ) -> dict[str, Any]:
         if server_name == "gobby-workflows" and tool_name == REMOVED_WORKFLOW_WAIT_TOOL:
             return _removed_wait_for_completion_result()
@@ -337,7 +346,7 @@ class DaemonProxy:
             "POST",
             f"/api/mcp/{server_name}/tools/{tool_name}",
             **request_kwargs,
-            preflight=True,
+            preflight=preflight_enabled,
         )
 
     async def get_tool_schema(
@@ -604,6 +613,7 @@ def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
         args: str | dict[str, Any] | None = None,
         session_id: str | None = None,
         project_id: str | None = None,
+        preflight_enabled: bool = True,
         ctx: Context[Any, Any, Any] | None = None,
     ) -> dict[str, Any]:
         """
@@ -626,6 +636,7 @@ def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
                 target a different session. Local #N refs resolve in the caller
                 project; cross-project target sessions should use UUIDs.
             project_id: Optional project UUID or name for cross-project tool calls.
+            preflight_enabled: Whether to perform daemon health preflight before proxying.
 
         Returns:
             Dictionary with success status and tool execution result
@@ -673,7 +684,13 @@ def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
             call_kwargs["session_id"] = session_id
 
         return await _call_with_wait_heartbeat(
-            proxy.call_tool(server_name, tool_name, final_args, **call_kwargs),
+            proxy.call_tool(
+                server_name,
+                tool_name,
+                final_args,
+                **call_kwargs,
+                preflight_enabled=preflight_enabled,
+            ),
             ctx=ctx,
             tool_name=tool_name,
             timeout=requested_timeout,

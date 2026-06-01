@@ -103,6 +103,7 @@ function isRawTokenEventMessage(data: unknown): data is RawTokenEventMessage {
     data.session_totals.output_tokens,
     data.session_totals.cache_creation_tokens,
     data.session_totals.cache_read_tokens,
+    data.session_totals.context_window,
   ].every((value) => value === undefined || numericValue(value) !== null);
 }
 
@@ -157,6 +158,7 @@ function normalizeSessionTotals(
     cache_creation_tokens:
       normalizedOptionalNumber(totals.cache_creation_tokens) ?? undefined,
     cache_read_tokens: normalizedOptionalNumber(totals.cache_read_tokens) ?? undefined,
+    context_window: normalizedOptionalNumber(totals.context_window) ?? undefined,
   };
 }
 
@@ -182,6 +184,7 @@ export function normalizeTokenEventMessage(data: unknown): TokenEventMessage | n
 }
 
 function hasNormalizedContextPayload(data: SessionUsageUpdatedMessage): boolean {
+  if (data.last_completion_output_tokens !== undefined) return true;
   return [
     data.context_used_tokens,
     data.context_usage_ratio,
@@ -242,6 +245,9 @@ export function handleSessionUsageUpdated(
       computeContextUsageFromSessionData({
         ...previousUsagePayload(prev),
         ...omitNullish(update),
+        ...(update.last_completion_output_tokens !== undefined
+          ? { last_completion_output_tokens: update.last_completion_output_tokens }
+          : {}),
         ...(hasExistingNormalizedSnapshot(prev) && !hasNormalizedContextPayload(update)
           ? {
               context_used_tokens: prev.totalInputTokens,
@@ -289,15 +295,20 @@ export function handleTokenEvent(
   if (!eventData) return;
   const visibleSessionId = ctx.viewingSessionIdRef.current ?? ctx.dbSessionIdRef.current;
   if (eventData.session_id === visibleSessionId) {
+    const totals = eventData.session_totals;
     ctx.markSessionUsageFresh(eventData.session_id, eventData.event_at);
     ctx.setContextUsage((prev) =>
       buildContextUsageFromTotals({
-        totalInputTokens: eventData.input_tokens ?? prev.totalInputTokens,
-        outputTokens: eventData.output_tokens ?? prev.outputTokens,
-        cacheReadTokens: eventData.cache_read_tokens ?? prev.cacheReadTokens,
+        totalInputTokens:
+          totals?.input_tokens ?? eventData.input_tokens ?? prev.totalInputTokens,
+        outputTokens: totals?.output_tokens ?? eventData.output_tokens ?? prev.outputTokens,
+        cacheReadTokens:
+          totals?.cache_read_tokens ?? eventData.cache_read_tokens ?? prev.cacheReadTokens,
         cacheCreationTokens:
-          eventData.cache_creation_tokens ?? prev.cacheCreationTokens,
-        contextWindow: eventData.context_window ?? prev.contextWindow,
+          totals?.cache_creation_tokens ??
+          eventData.cache_creation_tokens ??
+          prev.cacheCreationTokens,
+        contextWindow: totals?.context_window ?? eventData.context_window ?? prev.contextWindow,
         contextUsageSource: "token_event",
         contextUsageConfidence: "reported",
       }),

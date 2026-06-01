@@ -24,6 +24,7 @@ export interface TokenEvent {
     output_tokens: number
     cache_creation_tokens: number
     cache_read_tokens: number
+    context_window?: number | null
   }
 }
 

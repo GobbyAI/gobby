@@ -58,6 +58,67 @@ class TestGobbyRunnerInit:
             mock_http_cls.assert_called_once()
             mock_ws_cls.assert_called_once()
 
+    def test_memory_stack_uses_embedding_secret_when_runtime_config_has_no_key(self) -> None:
+        from gobby.runner_init import services
+
+        runner = SimpleNamespace(
+            config=SimpleNamespace(
+                memory=SimpleNamespace(),
+                embeddings=SimpleNamespace(
+                    model="text-embedding-3-small",
+                    api_key="",
+                    api_base=None,
+                    dim=1536,
+                ),
+                databases=SimpleNamespace(
+                    qdrant=SimpleNamespace(
+                        url="http://qdrant:6333",
+                        api_key=None,
+                        collection_prefix="test",
+                    ),
+                    falkordb=SimpleNamespace(requirepass=None),
+                ),
+            ),
+            database=MagicMock(),
+            db_executor=SimpleNamespace(run=MagicMock()),
+            llm_service=object(),
+            secret_store=MagicMock(),
+        )
+        runner.secret_store.get.side_effect = (
+            lambda name: "sk-secret" if name == "embeddings_api_key" else None
+        )
+
+        with (
+            patch("gobby.runner_init.services.VectorStore") as mock_vector_store,
+            patch("gobby.runner_init.services.MemoryManager") as mock_memory_manager,
+        ):
+            services._init_memory_stack(runner)
+
+        mock_vector_store.assert_called_once_with(
+            url="http://qdrant:6333",
+            api_key=None,
+            embedding_dim=1536,
+        )
+        runner.secret_store.get.assert_called_once_with("embeddings_api_key")
+        assert runner.vector_store is mock_vector_store.return_value
+        assert runner.memory_manager is mock_memory_manager.return_value
+        mock_memory_manager.assert_called_once()
+        embed_fn = mock_memory_manager.call_args.kwargs["embed_fn"]
+        assert embed_fn.keywords["model"] == "text-embedding-3-small"
+        assert embed_fn.keywords["api_key"] == "sk-secret"
+        assert embed_fn.keywords["expected_dim"] == 1536
+
+    def test_embedding_api_key_resolver_checks_legacy_secret_names(self) -> None:
+        from gobby.runner_init.services import _resolve_embedding_api_key
+
+        runner = SimpleNamespace(secret_store=MagicMock())
+        runner.secret_store.get.side_effect = (
+            lambda name: "sk-legacy" if name == "api_key" else None
+        )
+        emb_cfg = SimpleNamespace(api_key="")
+
+        assert _resolve_embedding_api_key(runner, emb_cfg) == "sk-legacy"
+
 
 class TestWakeTmuxSenders:
     """Tests for runner-level tmux wake sender wiring."""

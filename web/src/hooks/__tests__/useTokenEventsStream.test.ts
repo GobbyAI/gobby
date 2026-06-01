@@ -164,7 +164,7 @@ describe("useTokenEventsStream", () => {
     ]);
   });
 
-  it("normalizes string numeric fields from websocket events", () => {
+  it("normalizes string numeric fields from websocket events", (): void => {
     let callback: ((data: Record<string, unknown>) => void) | undefined;
     mockUseWebSocketEvent.mockImplementation((_eventType, handler) => {
       callback = handler;
@@ -188,6 +188,7 @@ describe("useTokenEventsStream", () => {
           output_tokens: "22",
           cache_creation_tokens: "16",
           cache_read_tokens: "40",
+          context_window: "2000",
         },
       });
     });
@@ -203,6 +204,7 @@ describe("useTokenEventsStream", () => {
         output_tokens: 22,
         cache_creation_tokens: 16,
         cache_read_tokens: 40,
+        context_window: 2000,
       },
     });
   });

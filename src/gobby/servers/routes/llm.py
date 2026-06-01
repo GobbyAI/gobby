@@ -153,7 +153,10 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
             raise HTTPException(status_code=500, detail="Vision extraction failed") from e
         finally:
             if image_path is not None:
-                image_path.unlink(missing_ok=True)
+                try:
+                    image_path.unlink(missing_ok=True)
+                except OSError:
+                    logger.warning("Failed to remove vision temp file %s", image_path)
 
     return router
 

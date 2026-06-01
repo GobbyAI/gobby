@@ -7,6 +7,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from gobby.config.embedding_keys import EMBEDDING_API_KEY_SECRET_NAME
 from gobby.config.persistence import EmbeddingsConfig, is_falkordb_enabled
 from gobby.llm import create_llm_service
 from gobby.mcp_proxy.manager import MCPClientManager
@@ -48,10 +49,14 @@ def _init_llm_service(runner: GobbyRunner) -> None:
         logger.error(f"Failed to initialize LLM service: {e}")
 
 
-def _validate_memory_embedding_config(emb_cfg: EmbeddingsConfig) -> None:
+def _validate_memory_embedding_config(
+    emb_cfg: EmbeddingsConfig,
+    *,
+    api_key: str | None = None,
+) -> None:
     if is_embedding_configured(
         model=emb_cfg.model,
-        api_key=emb_cfg.api_key,
+        api_key=api_key if api_key is not None else emb_cfg.api_key,
         api_base=emb_cfg.api_base,
     ):
         return
@@ -62,6 +67,20 @@ def _validate_memory_embedding_config(emb_cfg: EmbeddingsConfig) -> None:
     )
 
 
+def _resolve_embedding_api_key(runner: GobbyRunner, emb_cfg: EmbeddingsConfig) -> str | None:
+    if emb_cfg.api_key:
+        return emb_cfg.api_key
+    for secret_name in (EMBEDDING_API_KEY_SECRET_NAME, "api_key", "openai_api_key"):
+        try:
+            value = runner.secret_store.get(secret_name)
+        except Exception:
+            logger.debug("Failed to resolve embedding secret %s", secret_name, exc_info=True)
+            continue
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
 def _init_memory_stack(runner: GobbyRunner) -> None:
     runner.vector_store = None
     runner.memory_manager = None
@@ -69,8 +88,9 @@ def _init_memory_stack(runner: GobbyRunner) -> None:
         try:
             db_cfg = runner.config.databases
             emb_cfg = runner.config.embeddings
+            embedding_api_key = _resolve_embedding_api_key(runner, emb_cfg)
             if runner.llm_service:
-                _validate_memory_embedding_config(emb_cfg)
+                _validate_memory_embedding_config(emb_cfg, api_key=embedding_api_key)
             runner.vector_store = VectorStore(
                 url=db_cfg.qdrant.url,
                 api_key=db_cfg.qdrant.api_key,
@@ -82,7 +102,7 @@ def _init_memory_stack(runner: GobbyRunner) -> None:
 
                 _mem_embed_kwargs: dict[str, Any] = {
                     "model": emb_cfg.model,
-                    "api_key": emb_cfg.api_key,
+                    "api_key": embedding_api_key,
                 }
                 if emb_cfg.api_base:
                     _mem_embed_kwargs["api_base"] = emb_cfg.api_base

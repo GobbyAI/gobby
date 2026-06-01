@@ -399,35 +399,38 @@ async def validate_leaf_task_with_llm(
     original_feedback = result.feedback
     matched_failure_pattern = matched_required_validation_failure_pattern(original_feedback)
     matched_success_pattern = _matched_successful_validation_pattern_unchecked(original_feedback)
+    feedback_length = len(original_feedback or "")
     if matched_failure_pattern is not None and matched_success_pattern is not None:
         logger.warning(
             "Validation feedback for task %s contains both failure and "
             "success evidence; failure takes precedence. Failure pattern: %s. Success "
-            "pattern: %s. Feedback: %s",
+            "pattern: %s. Status: %s. Feedback length: %d",
             resolved_id,
             matched_failure_pattern.pattern,
             matched_success_pattern.pattern,
-            original_feedback,
+            result.status,
+            feedback_length,
         )
         if result.status != "pending":
             validation_status = "invalid"
     elif result.status == "valid" and matched_failure_pattern is not None:
         logger.warning(
             "Overriding validation status for task %s: LLM returned 'valid' but feedback "
-            "admits failure. Pattern: %s. Feedback: %s",
+            "admits failure. Pattern: %s. Status: %s. Feedback length: %d",
             resolved_id,
             matched_failure_pattern.pattern,
-            original_feedback,
+            result.status,
+            feedback_length,
         )
         validation_status = "invalid"
     elif result.status == "invalid" and matched_success_pattern is not None:
         logger.warning(
             "Overriding validation status for task %s: LLM returned %r but feedback "
-            "says validation criteria are satisfied. Pattern: %s. Feedback: %s",
+            "says validation criteria are satisfied. Pattern: %s. Feedback length: %d",
             resolved_id,
             result.status,
             matched_success_pattern.pattern,
-            original_feedback,
+            feedback_length,
         )
         validation_status = "valid"
 

@@ -72,9 +72,10 @@ def is_ai_embedding_config_key(key: str) -> bool:
 
 def is_removed_embedding_config_store_key(key: str) -> bool:
     """Return true for persisted embedding keys that should be deleted at load/migration time."""
+    prefix_dot = f"{RUNTIME_EMBEDDINGS_CONFIG_PREFIX}."
     return (
         key == RUNTIME_EMBEDDINGS_CONFIG_PREFIX
-        or key.startswith(f"{RUNTIME_EMBEDDINGS_CONFIG_PREFIX}.")
+        or key.startswith(prefix_dot)
         or key == _AI_EMBEDDING_PROVIDER_KEY
     )
 
@@ -86,10 +87,9 @@ def _embedding_key_error(key: str) -> str:
             "Provider is inferred from ai.embeddings.api_base, ai.embeddings.model, "
             "and ai.embeddings.api_key."
         )
-    if key == RUNTIME_EMBEDDINGS_CONFIG_PREFIX or key.startswith(
-        f"{RUNTIME_EMBEDDINGS_CONFIG_PREFIX}."
-    ):
-        field = key.removeprefix(f"{RUNTIME_EMBEDDINGS_CONFIG_PREFIX}.")
+    prefix_dot = f"{RUNTIME_EMBEDDINGS_CONFIG_PREFIX}."
+    if key == RUNTIME_EMBEDDINGS_CONFIG_PREFIX or key.startswith(prefix_dot):
+        field = key.removeprefix(prefix_dot)
         replacement = (
             AI_EMBEDDINGS_CONFIG_PREFIX
             if key == RUNTIME_EMBEDDINGS_CONFIG_PREFIX

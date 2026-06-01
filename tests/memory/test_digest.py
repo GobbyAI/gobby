@@ -3,6 +3,7 @@
 Relocated from tests/workflows/test_memory_actions.py as part of dead-code cleanup.
 """
 
+import hashlib
 import logging
 from unittest.mock import AsyncMock, MagicMock
 
@@ -12,6 +13,7 @@ from gobby.llm.base import LLMProviderCancellation
 from gobby.memory.digest import (
     _build_heuristic_title,
     _get_next_turn_number,
+    _parse_turn_record_response,
     _read_last_turn_from_transcript,
     _read_undigested_turns,
     _should_update_digest_title,
@@ -57,6 +59,22 @@ class TestMemorySyncImportDirect:
 
         assert result == {"imported": {"memories": 5}}
         mock_manager.import_from_files.assert_awaited_once()
+
+
+def test_turn_record_contract_log_omits_full_response(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    response_text = "not json " + ("x" * 220) + " sensitive-tail"
+    response_sha = hashlib.sha256(response_text.encode("utf-8")).hexdigest()
+
+    with caplog.at_level(logging.DEBUG, logger="gobby.memory.digest"):
+        with pytest.raises(ValueError, match="invalid JSON contract"):
+            _parse_turn_record_response(response_text, exchange_count=1)
+
+    assert response_sha in caplog.text
+    assert f"response_chars={len(response_text)}" in caplog.text
+    assert response_text[:40] in caplog.text
+    assert "sensitive-tail" not in caplog.text
 
 
 class TestMemorySyncExportDirect:

@@ -68,13 +68,17 @@ def register_value_routes(router: APIRouter, context: ConfigurationRouteContext)
         try:
             config_store = context.get_config_store()
             existing_secret_keys = set(config_store.get_secret_keys())
+            # Existing DB secret keys are storage-shaped; convert for runtime validation.
             converted_existing_secret_keys = {
                 storage_embedding_config_key_to_runtime_key(key) for key in existing_secret_keys
             }
+            # Incoming partial config is validated in runtime shape.
             runtime_updates = storage_embedding_config_entries_to_runtime(
                 flatten_config(request.values)
             )
+            # ConfigStore persists canonical storage keys.
             storage_updates = runtime_embedding_config_entries_to_storage(runtime_updates)
+            # Preserve the submitted runtime key for validation errors and runtime merge.
             runtime_key_by_storage_key = {
                 runtime_embedding_config_key_to_storage_key(runtime_key): runtime_key
                 for runtime_key in runtime_updates
@@ -131,9 +135,10 @@ def register_value_routes(router: APIRouter, context: ConfigurationRouteContext)
                     if value is None or value == "":
                         config_store.clear_secret(storage_key, secret_store)
                     elif not isinstance(value, str):
+                        runtime_key = runtime_key_by_storage_key.get(storage_key, storage_key)
                         raise HTTPException(
                             400,
-                            f"Secret '{storage_key}' must be a string, got {type(value).__name__}",
+                            f"Secret '{runtime_key}' must be a string, got {type(value).__name__}",
                         )
                     else:
                         config_store.set_secret(storage_key, value, secret_store, source="user")

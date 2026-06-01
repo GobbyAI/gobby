@@ -343,6 +343,26 @@ def test_planning_work_rule_escalates_when_work_failures_outpace_reviews() -> No
     assert action.reason == "planning_max_work_attempts"
 
 
+def test_planning_work_rule_escalates_at_review_budget_boundary() -> None:
+    from gobby.dispatch.actions import EscalateAction
+
+    action = _evaluate(
+        _task_at(
+            "planning",
+            "in_progress",
+            stage_overrides={
+                "work_attempt_count": 4,
+                "max_work_attempts": 3,
+                "review_round_count": 4,
+                "max_review_rounds": 99,
+            },
+        )
+    )
+
+    assert isinstance(action, EscalateAction)
+    assert action.reason == "planning_max_work_attempts"
+
+
 def test_development_rule_falls_back_from_missing_assigned_agent() -> None:
     from gobby.dispatch.actions import SpawnAgentAction
 

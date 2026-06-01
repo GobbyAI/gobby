@@ -222,6 +222,18 @@ class TelemetryMetrics:
             "adapter_degradations_total",
             "Lossy adapter response translations by provider and hook",
         )
+        self._register_counter(
+            "agent_lifecycle_dispatch_mutex_refreshed_runs_total",
+            "Agent runs whose dispatch mutex leases were refreshed or restored",
+        )
+        self._register_counter(
+            "agent_lifecycle_dispatch_mutex_skipped_runs_total",
+            "Agent runs skipped during dispatch mutex lease refresh",
+        )
+        self._register_histogram(
+            "agent_lifecycle_dispatch_mutex_refresh_seconds",
+            "Duration of active agent dispatch mutex refresh batches",
+        )
 
     def _register_counter(self, name: str, description: str) -> None:
         self._counters[name] = self._meter.create_counter(name, unit="1", description=description)

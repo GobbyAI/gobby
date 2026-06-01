@@ -20,6 +20,7 @@ class _AgentRunSelectorHost(Protocol):
         order_by: str = "",
         *,
         limit: bool = False,
+        offset: bool = False,
     ) -> str: ...
 
 
@@ -30,6 +31,7 @@ class _AgentRunSelectorMixin:
         order_by: str = "",
         *,
         limit: bool = False,
+        offset: bool = False,
     ) -> str:
         """Build an agent-run SELECT that overlays live session stats.
 
@@ -110,6 +112,8 @@ class _AgentRunSelectorMixin:
             """
         if limit:
             sql += "\n            LIMIT %s"
+        if offset:
+            sql += "\n            OFFSET %s"
         return sql
 
     def _fetch_run_with_live_stats(
@@ -131,17 +135,22 @@ class _AgentRunSelectorMixin:
         *,
         order_by: str = "",
         limit: int | None = None,
+        offset: int = 0,
     ) -> list[AgentRun]:
         """Fetch agent runs through the live-stat selector."""
+        normalized_offset = max(0, offset)
         query_params = tuple(params)
         if limit is not None:
             query_params = (*query_params, limit)
+        if normalized_offset:
+            query_params = (*query_params, normalized_offset)
 
         rows = self.db.fetchall(
             self._select_runs_with_live_stats_sql(
                 where_clause,
                 order_by,
                 limit=limit is not None,
+                offset=normalized_offset > 0,
             ),
             query_params,
         )

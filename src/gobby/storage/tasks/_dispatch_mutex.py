@@ -179,6 +179,7 @@ class TaskDispatchMutexManager:
         self,
         task_id: str,
         run_id: str,
+        lease_holder: str,
         ttl_seconds: int,
         now: datetime | str | None = None,
     ) -> bool:
@@ -194,9 +195,10 @@ class TaskDispatchMutexManager:
                    SET lease_until = %s,
                        updated_at = %s
                  WHERE task_id = %s
+                   AND lease_holder = %s
                    AND run_id = %s
                 """,
-                (lease_until, now_iso, task_id, run_id),
+                (lease_until, now_iso, task_id, lease_holder, run_id),
             )
             return cursor.rowcount > 0
 
@@ -261,12 +263,14 @@ def refresh_mutex_for_run(
     db: HubDatabase,
     task_id: str,
     run_id: str,
+    lease_holder: str,
     ttl_seconds: int,
     now: datetime | str | None = None,
 ) -> bool:
     return TaskDispatchMutexManager(db).refresh_mutex_for_run(
         task_id,
         run_id=run_id,
+        lease_holder=lease_holder,
         ttl_seconds=ttl_seconds,
         now=now,
     )

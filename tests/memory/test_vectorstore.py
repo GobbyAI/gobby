@@ -517,6 +517,35 @@ async def test_rebuild_same_dimension_releases_lifecycle_lock_for_expensive_work
 
 
 @pytest.mark.asyncio
+async def test_rebuild_deletes_stale_point_ids_in_batches_under_lifecycle_lock() -> None:
+    store = VectorStore(collection_name="mock_memories", embedding_dim=4)
+    client = MagicMock()
+    client.collection_exists.return_value = True
+    client.get_collection.return_value = _collection_info(4)
+    stale_ids = [f"stale-{idx:04d}" for idx in range(1001)]
+    client.scroll.return_value = ([SimpleNamespace(id=point_id) for point_id in stale_ids], None)
+    store._client = client
+
+    delete_batch_sizes: list[int] = []
+    delete_lock_states: list[bool] = []
+
+    def delete(**kwargs: object) -> None:
+        selector = kwargs["points_selector"]
+        delete_batch_sizes.append(len(selector.points))
+        delete_lock_states.append(store._collection_lifecycle_lock.locked())
+
+    client.delete.side_effect = delete
+
+    async def embed_fn(_text: str) -> list[float]:
+        return _make_embedding()
+
+    await store.rebuild([], embed_fn)
+
+    assert delete_batch_sizes == [500, 500, 1]
+    assert delete_lock_states == [True, True, True]
+
+
+@pytest.mark.asyncio
 async def test_rebuild_dimension_mismatch_recreates_under_lifecycle_lock() -> None:
     store = VectorStore(collection_name="mock_memories", embedding_dim=4)
     client = MagicMock()

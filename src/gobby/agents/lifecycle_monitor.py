@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, cast
 
@@ -28,6 +29,7 @@ from gobby.agents.terminal_prompt_monitor import TerminalPromptMonitor
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
 from gobby.storage.tasks import TaskDispatchMutexManager
+from gobby.telemetry.instruments import inc_counter, observe_histogram
 
 if TYPE_CHECKING:
     from gobby.events.completion_registry import CompletionEventRegistry
@@ -44,17 +46,26 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 DISPATCH_MUTEX_REFRESH_TTL_SECONDS = 600
+DISPATCH_MUTEX_REFRESH_BATCH_SIZE = 100
 
 
 def _has_dispatch_stage_context(run: AgentRun) -> bool:
+    """Return whether ``resume_metadata_json`` carries dispatcher stage state.
+
+    Expected schema is a JSON object with string ``stage_name``/``stage_state``
+    fields either at top level or under an ``initial_variables`` object.
+    """
     metadata = run.resume_metadata_json
     if not isinstance(metadata, dict):
         return False
-    if metadata.get("stage_name") or metadata.get("stage_state"):
+    if isinstance(metadata.get("stage_name"), str) and isinstance(
+        metadata.get("stage_state"), str
+    ):
         return True
     initial_variables = metadata.get("initial_variables")
-    return isinstance(initial_variables, dict) and bool(
-        initial_variables.get("stage_name") or initial_variables.get("stage_state")
+    return isinstance(initial_variables, dict) and (
+        isinstance(initial_variables.get("stage_name"), str)
+        and isinstance(initial_variables.get("stage_state"), str)
     )
 
 
@@ -164,6 +175,7 @@ class AgentLifecycleMonitor:
         )
         self._worktree_storage = worktree_storage
         self._project_manager = project_manager
+        self._dispatch_refresh_cursor = 0
         self._running = False
         self._task: asyncio.Task[None] | None = None
 
@@ -312,9 +324,9 @@ class AgentLifecycleMonitor:
         """Check for approval prompts and send Enter when explicitly permitted."""
         return await self._terminal_prompt_monitor.check_approval_prompts()
 
-    async def check_queued_continuation_prompts(self) -> None:
+    async def check_queued_continuation_prompts(self) -> int:
         """Observe queued Gobby continuation prompts without submitting input."""
-        await self._terminal_prompt_monitor.check_queued_continuation_prompts()
+        return await self._terminal_prompt_monitor.check_queued_continuation_prompts()
 
     async def check_periodic_enters(self) -> int:
         """Periodically send Enter to active autonomous terminal agents."""
@@ -339,22 +351,37 @@ class AgentLifecycleMonitor:
     async def refresh_active_run_dispatch_mutexes(self) -> int:
         """Extend or restore dispatch mutex leases for active task-bound runs."""
 
-        def _refresh() -> int:
+        def _refresh(start_cursor: int) -> tuple[int, int, int]:
             storage = TaskDispatchMutexManager(self._db)
             refreshed = 0
-            for run in self._agent_run_manager.list_active(limit=1000):
+            skipped = 0
+            runs = self._agent_run_manager.list_active(
+                limit=DISPATCH_MUTEX_REFRESH_BATCH_SIZE,
+                offset=start_cursor,
+            )
+            if not runs and start_cursor:
+                start_cursor = 0
+                runs = self._agent_run_manager.list_active(
+                    limit=DISPATCH_MUTEX_REFRESH_BATCH_SIZE,
+                    offset=0,
+                )
+            for run in runs:
                 if not run.task_id:
+                    skipped += 1
                     continue
                 if storage.refresh_mutex_for_run(
                     run.task_id,
                     run.id,
+                    lease_holder="dispatcher",
                     ttl_seconds=DISPATCH_MUTEX_REFRESH_TTL_SECONDS,
                 ):
                     refreshed += 1
                     continue
                 if storage.get_mutex(run.task_id) is not None:
+                    skipped += 1
                     continue
                 if not _has_dispatch_stage_context(run):
+                    skipped += 1
                     continue
                 if storage.acquire_mutex(
                     run.task_id,
@@ -364,11 +391,31 @@ class AgentLifecycleMonitor:
                     run_id=run.id,
                 ):
                     refreshed += 1
-            return refreshed
+                    continue
+                skipped += 1
+            next_cursor = (
+                start_cursor + len(runs)
+                if len(runs) == DISPATCH_MUTEX_REFRESH_BATCH_SIZE
+                else 0
+            )
+            return refreshed, skipped, next_cursor
 
         try:
-            refreshed = await self._run_db(_refresh)
-            return cast(int, refreshed)
+            start = time.perf_counter()
+            refreshed, skipped, next_cursor = cast(
+                tuple[int, int, int],
+                await self._run_db(_refresh, self._dispatch_refresh_cursor),
+            )
+            self._dispatch_refresh_cursor = next_cursor
+            if refreshed:
+                inc_counter("agent_lifecycle_dispatch_mutex_refreshed_runs_total", refreshed)
+            if skipped:
+                inc_counter("agent_lifecycle_dispatch_mutex_skipped_runs_total", skipped)
+            observe_histogram(
+                "agent_lifecycle_dispatch_mutex_refresh_seconds",
+                time.perf_counter() - start,
+            )
+            return refreshed
         except Exception as e:
             logger.warning("Failed to refresh active run dispatch mutexes: %s", e)
             return 0

@@ -670,12 +670,16 @@ def _parse_turn_record_response(response_text: str, exchange_count: int) -> _Tur
 def _raise_turn_record_contract_error(
     reason: str, response_text: str, exchange_count: int
 ) -> NoReturn:
+    response_preview = response_text[:200]
+    response_sha256 = hashlib.sha256(response_text.encode("utf-8")).hexdigest()
     logger.debug(
-        "memory.turn_record malformed response (reason=%s, response_chars=%d, exchanges=%d): %s",
+        "memory.turn_record malformed response "
+        "(reason=%s, response_chars=%d, response_sha256=%s, exchanges=%d, preview=%r)",
         reason,
         len(response_text),
+        response_sha256,
         exchange_count,
-        response_text,
+        response_preview,
     )
     raise ValueError(f"memory.turn_record returned invalid JSON contract: {reason}")
 

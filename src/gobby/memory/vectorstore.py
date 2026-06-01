@@ -712,8 +712,10 @@ class VectorStore:
 
             stale_ids = sorted(existing_ids - incoming_ids)
             if stale_ids:
-                async with self._collection_lifecycle_lock:
-                    await self.delete_many(stale_ids)
+                for index in range(0, len(stale_ids), batch_size):
+                    stale_batch = stale_ids[index : index + batch_size]
+                    async with self._collection_lifecycle_lock:
+                        await self.delete_many(stale_batch)
 
             logger.info("Rebuilt %s vectors in '%s'", total, self._collection_name)
 

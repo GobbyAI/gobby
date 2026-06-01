@@ -65,7 +65,7 @@ async def test_repair_loop_uses_configured_session_list_limit() -> None:
 
 @pytest.mark.asyncio
 async def test_repair_loop_normalizes_nonpositive_session_list_limit() -> None:
-    """Nonpositive limits fall back to the default list bound."""
+    """Nonpositive limits clamp to the smallest safe list bound."""
     session_manager = _SessionManager([])
 
     await tmux_window_name_repair_loop(
@@ -74,12 +74,12 @@ async def test_repair_loop_normalizes_nonpositive_session_list_limit() -> None:
         session_list_limit=0,
     )
 
-    assert session_manager.calls == [(["active", "paused"], 200)]
+    assert session_manager.calls == [(["active", "paused"], 1)]
 
 
 @pytest.mark.asyncio
 async def test_repair_loop_normalizes_nonpositive_interval_seconds() -> None:
-    """Nonpositive intervals fall back so the repair loop cannot hot-loop."""
+    """Nonpositive intervals clamp so the repair loop cannot hot-loop."""
     session_manager = _SessionManager([])
     sleep_calls: list[float] = []
     shutdown_checks = 0
@@ -100,7 +100,7 @@ async def test_repair_loop_normalizes_nonpositive_interval_seconds() -> None:
             interval_seconds=0,
         )
 
-    assert sleep_calls == [120]
+    assert sleep_calls == [1]
 
 
 @pytest.mark.asyncio

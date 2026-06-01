@@ -536,10 +536,7 @@ export function useSessionDetail(sessionId: string | null) {
         return next
       })
       setFirstItemIndex((prev) => prev - result.returnedCount)
-      const nextLoaded = Math.max(
-        loadedCountRef.current,
-        requestedOffset + result.returnedCount,
-      )
+      const nextLoaded = loadedCountRef.current + result.returnedCount
       const nextTotal = Math.max(renderedTotalRef.current, result.renderedTotal)
       loadedCountRef.current = nextLoaded
       renderedTotalRef.current = nextTotal

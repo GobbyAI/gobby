@@ -128,6 +128,7 @@ export interface RawTokenEventMessage {
     output_tokens?: number | string;
     cache_creation_tokens?: number | string;
     cache_read_tokens?: number | string;
+    context_window?: number | string;
   };
 }
 
@@ -151,6 +152,7 @@ export interface TokenEventMessage {
     output_tokens?: number;
     cache_creation_tokens?: number;
     cache_read_tokens?: number;
+    context_window?: number;
   };
 }
 
