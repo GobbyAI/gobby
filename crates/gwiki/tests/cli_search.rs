@@ -59,11 +59,10 @@ fn search_uses_configured_postgres_bm25_backend() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(
-        String::from_utf8_lossy(&output.stderr)
-            .contains("failed to connect to PostgreSQL for gwiki search"),
-        "stderr:\n{}",
-        String::from_utf8_lossy(&output.stderr)
+    assert_json_error(
+        &output,
+        "config_error",
+        "failed to connect to PostgreSQL for gwiki search",
     );
 }
 
@@ -90,11 +89,10 @@ fn index_uses_configured_postgres_store() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(
-        String::from_utf8_lossy(&output.stderr)
-            .contains("failed to connect to PostgreSQL for gwiki index"),
-        "stderr:\n{}",
-        String::from_utf8_lossy(&output.stderr)
+    assert_json_error(
+        &output,
+        "config_error",
+        "failed to connect to PostgreSQL for gwiki index",
     );
 }
 
@@ -127,11 +125,10 @@ fn ingest_uses_configured_postgres_store() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(
-        String::from_utf8_lossy(&output.stderr)
-            .contains("failed to connect to PostgreSQL for gwiki ingest-file"),
-        "stderr:\n{}",
-        String::from_utf8_lossy(&output.stderr)
+    assert_json_error(
+        &output,
+        "config_error",
+        "failed to connect to PostgreSQL for gwiki ingest-file",
     );
 }
 
@@ -229,6 +226,19 @@ fn assert_command_success(command: &str, output: &std::process::Output) {
         output.status.success(),
         "{command} failed\nstdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn assert_json_error(output: &std::process::Output, code: &str, message_contains: &str) {
+    let payload: serde_json::Value =
+        serde_json::from_slice(&output.stderr).expect("stderr is JSON error");
+    assert_eq!(payload["code"].as_str(), Some(code));
+    assert!(
+        payload["message"]
+            .as_str()
+            .is_some_and(|message| message.contains(message_contains)),
+        "stderr:\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
 }

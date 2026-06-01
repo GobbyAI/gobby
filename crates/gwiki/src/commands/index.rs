@@ -4,7 +4,6 @@ use gobby_core::ai_context::{AiConfigSource, AiContext, LocalAiConfigSource};
 use gobby_core::config::ConfigSource;
 use serde_json::json;
 
-use crate::error::index_error_to_wiki_error;
 use crate::ingest::{self, IngestResult};
 use crate::support::counts::{IndexCounts, index_counts, postgres_index_counts};
 use crate::support::env::database_url_from_env;
@@ -34,13 +33,13 @@ pub(crate) fn execute(selection: ScopeSelection) -> Result<CommandOutcome, WikiE
         let search_scope = search_scope_for_resolved(&scope);
         let mut store =
             store::PostgresWikiStore::new(&mut conn, store_scope_for_search(&search_scope));
-        indexer::index_vault(scope.root(), &mut store).map_err(index_error_to_wiki_error)?;
+        indexer::index_vault(scope.root(), &mut store)?;
         let counts = postgres_index_counts(&mut conn, &search_scope)?;
         return Ok(render_index(output_scope, scope.root(), counts));
     }
 
     let mut store = store::MemoryWikiStore::default();
-    indexer::index_vault(scope.root(), &mut store).map_err(index_error_to_wiki_error)?;
+    indexer::index_vault(scope.root(), &mut store)?;
     let counts = index_counts(&store);
     Ok(render_index(output_scope, scope.root(), counts))
 }
@@ -51,6 +50,7 @@ pub(crate) fn execute_ingest_file(
     options: IngestFileOptions,
 ) -> Result<CommandOutcome, WikiError> {
     let scope = resolve_command_scope(&selection)?;
+    // Vault initialization is idempotent here; ingest only needs the paths to exist.
     let _ = vault::initialize(&scope)?;
     let output_scope = resolved_scope_identity(&scope);
     let project_id = ai_project_id(&output_scope);

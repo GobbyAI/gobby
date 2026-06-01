@@ -44,13 +44,13 @@ pub(crate) fn memory_graph_from_store(
         })
         .collect::<Vec<_>>();
 
-    let mut graph = graph::MemoryWikiGraph::default();
-    graph.replace_facts(graph::WikiGraphFacts {
+    let mut mem_graph = graph::MemoryWikiGraph::default();
+    mem_graph.replace_facts(graph::WikiGraphFacts {
         documents,
         links,
         sources,
     });
-    graph
+    mem_graph
 }
 
 fn resolve_graph_target(

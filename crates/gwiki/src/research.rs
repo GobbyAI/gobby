@@ -627,7 +627,7 @@ fn append_raw_index(vault_root: &Path, title: &str, note_path: &Path) -> Result<
         }
     };
     if contents.is_empty() {
-        contents.push_str("# Raw sources\n\n");
+        contents.push_str("# Raw Sources\n\n");
     }
     contents.push_str(&format!("- [{title}]({relative})\n"));
     // Keep the lock handle alive through the full read-modify-write sequence.

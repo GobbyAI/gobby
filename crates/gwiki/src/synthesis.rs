@@ -503,11 +503,11 @@ fn yaml_scalar(value: &str) -> String {
             '\n' => escaped.push_str("\\n"),
             '\r' => escaped.push_str("\\r"),
             '\t' => escaped.push_str("\\t"),
-            '\0' => escaped.push_str("\\0"),
+            '\0' => escaped.push_str("\\u0000"),
             '\u{0008}' => escaped.push_str("\\b"),
             '\u{000C}' => escaped.push_str("\\f"),
-            '\u{007F}' => escaped.push_str("\\u007F"),
-            ch if ch.is_control() => escaped.push_str(&format!("\\u{:04X}", ch as u32)),
+            '\u{007F}' => escaped.push_str("\\u007f"),
+            ch if ch.is_control() => escaped.push_str(&format!("\\u{:04x}", ch as u32)),
             ch => escaped.push(ch),
         }
     }
@@ -656,7 +656,7 @@ mod tests {
         );
         assert_eq!(
             yaml_scalar("nul\0del\u{7f}\u{80}"),
-            "\"nul\\0del\\u007F\\u0080\""
+            "\"nul\\u0000del\\u007f\\u0080\""
         );
     }
 }

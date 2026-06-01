@@ -492,7 +492,7 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
                 scope.topic_name(),
             );
 
-            tx.execute(
+            if let Err(error) = tx.execute(
                 "INSERT INTO gwiki_links (
                     id, scope_kind, scope_id, project_id, topic_name, path,
                     target_path, link_text, link_kind, provenance, created_at
@@ -516,7 +516,18 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
                     &link_kind,
                     &provenance,
                 ],
-            )?;
+            ) {
+                let error = StoreError::from(error);
+                eprintln!(
+                    "warning: failed to insert gwiki link for {path} -> {target_path}: {error}"
+                );
+                if let Err(rollback_error) = tx.rollback() {
+                    eprintln!(
+                        "warning: failed to rollback gwiki link replacement for {path_string}: {rollback_error}"
+                    );
+                }
+                return Err(error);
+            }
         }
 
         tx.commit()?;

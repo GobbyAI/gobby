@@ -72,7 +72,6 @@ struct EndpointContract {
     method: &'static str,
     path: &'static str,
     probe_method: &'static str,
-    probe_path: &'static str,
     request_shape: &'static str,
     response_shape: &'static str,
     fallback: &'static str,
@@ -107,7 +106,6 @@ const EMBEDDINGS: EndpointContract = EndpointContract {
     method: "POST",
     path: "/api/memories/embeddings/reindex",
     probe_method: "OPTIONS",
-    probe_path: "/api/memories/embeddings/reindex",
     request_shape: "query: project_id?; body: none",
     response_shape: "object with embedding reindex counts or error detail",
     fallback: "Disable daemon-backed arbitrary embedding generation; keep lexical/wiki indexing paths available.",
@@ -119,7 +117,6 @@ const SYNTHESIS: EndpointContract = EndpointContract {
     method: "GET",
     path: "/api/providers/models",
     probe_method: "GET",
-    probe_path: "/api/providers/models",
     request_shape: "none",
     response_shape: r#"{"providers":[{"provider","available","models","source","startup_error",...}]}"#,
     fallback: "Skip daemon-assisted synthesis and return source/manually-authored wiki content.",
@@ -131,7 +128,6 @@ const VISION: EndpointContract = EndpointContract {
     method: "GET",
     path: "/api/llm/vision/status",
     probe_method: "GET",
-    probe_path: "/api/llm/vision/status",
     request_shape: "none",
     response_shape: "vision status object advertising vision_extract support",
     fallback: "Keep raw image assets and surface filename/metadata only; skip visual extraction.",
@@ -143,7 +139,6 @@ const TRANSCRIPTION: EndpointContract = EndpointContract {
     method: "GET",
     path: "/api/voice/status",
     probe_method: "GET",
-    probe_path: "/api/voice/status",
     request_shape: "none",
     response_shape: "voice status object advertising transcription_enabled/translation_enabled",
     fallback: "Keep raw audio assets and require supplied transcripts; skip daemon transcription.",
@@ -155,7 +150,6 @@ const AGENT_DISPATCH: EndpointContract = EndpointContract {
     method: "POST",
     path: "/api/agents/spawn",
     probe_method: "OPTIONS",
-    probe_path: "/api/agents/spawn",
     request_shape: "JSON AgentSpawnRequest: task_id, agent_name?, prompt?, provider?, model?, isolation?, workflow?",
     response_shape: "AgentSpawnResponse with success plus run_id/child_session_id/conversation_id or error",
     fallback: "Return dispatch degradation metadata; do not spawn local subprocesses from gwiki.",
@@ -167,7 +161,6 @@ const SESSION_EVENTS: EndpointContract = EndpointContract {
     method: "GET",
     path: "/api/sessions",
     probe_method: "GET",
-    probe_path: "/api/sessions",
     request_shape: "query filters such as source?, project_id?, status?, limit?, offset?",
     response_shape: "session listing object with sessions and pagination/count fields",
     fallback: "Disable live session monitoring and rely on explicit command output.",
@@ -194,18 +187,36 @@ fn probe_daemon_capabilities_with(
         AGENT_DISPATCH,
         SESSION_EVENTS,
     ];
-    let [
-        embeddings,
-        synthesis,
-        vision,
-        transcription,
-        agent_dispatch,
-        session_events,
-    ] = std::thread::scope(|scope| {
+    let first_observation =
+        transport.status(base_url, contracts[0].probe_method, contracts[0].path);
+    let availabilities = if let ProbeObservation::TransportError(message) = first_observation {
         contracts
-            .map(|contract| scope.spawn(move || probe_contract(base_url, transport, contract)))
-            .map(|handle| handle.join().expect("daemon capability probe panicked"))
-    });
+            .into_iter()
+            .map(|contract| unreachable_availability(contract, &message))
+            .collect::<Vec<_>>()
+    } else {
+        let mut availabilities = vec![availability_for_observation(
+            contracts[0],
+            first_observation,
+        )];
+        let rest = std::thread::scope(|scope| {
+            contracts[1..]
+                .iter()
+                .copied()
+                .map(|contract| scope.spawn(move || probe_contract(base_url, transport, contract)))
+                .map(|handle| handle.join().expect("daemon capability probe panicked"))
+                .collect::<Vec<_>>()
+        });
+        availabilities.extend(rest);
+        availabilities
+    };
+    let mut availabilities = availabilities.into_iter();
+    let embeddings = availabilities.next().expect("embeddings probe");
+    let synthesis = availabilities.next().expect("synthesis probe");
+    let vision = availabilities.next().expect("vision probe");
+    let transcription = availabilities.next().expect("transcription probe");
+    let agent_dispatch = availabilities.next().expect("agent dispatch probe");
+    let session_events = availabilities.next().expect("session events probe");
 
     let degraded = [
         &embeddings,
@@ -236,7 +247,14 @@ fn probe_contract(
     transport: &impl DaemonProbeTransport,
     contract: EndpointContract,
 ) -> CapabilityAvailability {
-    let observation = transport.status(base_url, contract.probe_method, contract.probe_path);
+    let observation = transport.status(base_url, contract.probe_method, contract.path);
+    availability_for_observation(contract, observation)
+}
+
+fn availability_for_observation(
+    contract: EndpointContract,
+    observation: ProbeObservation,
+) -> CapabilityAvailability {
     let degradation = degradation_for_observation(contract, observation);
     CapabilityAvailability {
         capability: contract.capability,
@@ -249,6 +267,26 @@ fn probe_contract(
             response_shape: contract.response_shape,
         },
         degradation,
+    }
+}
+
+fn unreachable_availability(contract: EndpointContract, message: &str) -> CapabilityAvailability {
+    CapabilityAvailability {
+        capability: contract.capability,
+        available: false,
+        optional: contract.optional,
+        endpoint: EndpointShape {
+            method: contract.method,
+            path: contract.path,
+            request_shape: contract.request_shape,
+            response_shape: contract.response_shape,
+        },
+        degradation: Some(degradation(
+            contract,
+            DegradationReason::Unreachable,
+            format!("daemon transport failed: {message}"),
+            None,
+        )),
     }
 }
 
@@ -305,6 +343,7 @@ fn degradation(
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
 
@@ -385,5 +424,32 @@ mod tests {
 
         assert!(report.embeddings.available);
         assert!(report.embeddings.degradation.is_none());
+    }
+
+    #[test]
+    fn first_transport_failure_degrades_all_capabilities_without_more_probes() {
+        struct FailingTransport {
+            calls: AtomicUsize,
+        }
+
+        impl DaemonProbeTransport for FailingTransport {
+            fn status(&self, _base_url: &str, _method: &str, _path: &str) -> ProbeObservation {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                ProbeObservation::TransportError("connection refused".to_string())
+            }
+        }
+
+        let transport = FailingTransport {
+            calls: AtomicUsize::new(0),
+        };
+
+        let report = probe_daemon_capabilities_with("http://daemon.test", &transport);
+
+        assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(report.degraded.len(), 6);
+        assert!(report.degraded.iter().all(|degradation| {
+            degradation.reason == DegradationReason::Unreachable
+                && degradation.message.contains("connection refused")
+        }));
     }
 }

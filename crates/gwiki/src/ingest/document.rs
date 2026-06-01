@@ -24,6 +24,10 @@ const MAX_SHEETS: usize = 8;
 const MAX_ROWS_PER_SHEET: usize = 64;
 /// Maximum columns rendered per spreadsheet sheet before truncation is reported.
 const MAX_COLUMNS_PER_SHEET: usize = 16;
+/// Maximum PPTX slides parsed during bounded extraction.
+const MAX_SLIDES: usize = 200;
+/// Maximum uncompressed XML bytes read from a ZIP entry.
+const MAX_ENTRY_BYTES: u64 = 2 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DocumentSnapshot {
@@ -206,17 +210,18 @@ fn extract_pptx(bytes: &[u8]) -> Result<DocumentExtraction, WikiError> {
     if slide_names.is_empty() {
         return Err(document_error("pptx contained no slide XML"));
     }
+    if slide_names.len() > MAX_SLIDES {
+        return Err(document_error(format!(
+            "pptx contained {} slides; maximum supported is {MAX_SLIDES}",
+            slide_names.len()
+        )));
+    }
 
     let mut markdown = String::new();
     let mut title = None;
     let mut slide_count = 0;
     for (index, name) in slide_names.iter().enumerate() {
-        let mut xml = String::new();
-        archive
-            .by_name(name)
-            .map_err(|error| document_error(format!("read {name}: {error}")))?
-            .read_to_string(&mut xml)
-            .map_err(|error| document_error(format!("read {name}: {error}")))?;
+        let xml = read_zip_entry_from_archive(&mut archive, name)?;
         let paragraphs = extract_xml_paragraphs(&xml)?;
         if paragraphs.is_empty() {
             continue;
@@ -507,12 +512,33 @@ fn document_unit_count_for_failure(file_name: &str, kind: &SourceKind) -> Docume
 
 fn read_zip_entry(bytes: &[u8], name: &str) -> Result<String, WikiError> {
     let mut archive = zip_archive(bytes)?;
+    read_zip_entry_from_archive(&mut archive, name)
+}
+
+fn read_zip_entry_from_archive(
+    archive: &mut ZipArchive<Cursor<&[u8]>>,
+    name: &str,
+) -> Result<String, WikiError> {
     let mut xml = String::new();
-    archive
+    let mut entry = archive
         .by_name(name)
-        .map_err(|error| document_error(format!("read {name}: {error}")))?
+        .map_err(|error| document_error(format!("read {name}: {error}")))?;
+    if entry.size() > MAX_ENTRY_BYTES {
+        return Err(document_error(format!(
+            "{name} is {} bytes; maximum supported XML entry is {MAX_ENTRY_BYTES} bytes",
+            entry.size()
+        )));
+    }
+    entry
+        .by_ref()
+        .take(MAX_ENTRY_BYTES + 1)
         .read_to_string(&mut xml)
         .map_err(|error| document_error(format!("read {name}: {error}")))?;
+    if xml.len() as u64 > MAX_ENTRY_BYTES {
+        return Err(document_error(format!(
+            "{name} exceeds maximum supported XML entry size of {MAX_ENTRY_BYTES} bytes"
+        )));
+    }
     Ok(xml)
 }
 
@@ -808,6 +834,21 @@ mod tests {
         ])
     }
 
+    fn oversized_pptx(slide_count: usize) -> Vec<u8> {
+        let cursor = std::io::Cursor::new(Vec::new());
+        let mut zip = zip::ZipWriter::new(cursor);
+        let options = zip::write::SimpleFileOptions::default();
+        for index in 1..=slide_count {
+            zip.start_file(format!("ppt/slides/slide{index}.xml"), options)
+                .expect("start slide");
+            zip.write_all(
+                br#"<p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld><p:spTree><p:sp><p:txBody><a:p><a:r><a:t>Slide</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>"#,
+            )
+            .expect("write slide");
+        }
+        zip.finish().expect("finish zip").into_inner()
+    }
+
     fn sample_xlsx() -> Vec<u8> {
         zip_bytes(&[
             (
@@ -1002,6 +1043,25 @@ mod tests {
     #[test]
     fn markdown_table_handles_empty_rows() {
         assert_eq!(markdown_table(&[]), "");
+    }
+
+    #[test]
+    fn office_zip_reads_are_bounded() {
+        let oversized_xml = "x".repeat(MAX_ENTRY_BYTES as usize + 1);
+        let error = extract_docx(&zip_bytes(&[("word/document.xml", &oversized_xml)]))
+            .expect_err("oversized docx XML rejected");
+
+        assert!(matches!(error, WikiError::InvalidInput { .. }));
+        assert!(error.to_string().contains("maximum supported XML entry"));
+    }
+
+    #[test]
+    fn pptx_slide_count_is_bounded() {
+        let error = extract_pptx(&oversized_pptx(MAX_SLIDES + 1))
+            .expect_err("oversized slide deck rejected");
+
+        assert!(matches!(error, WikiError::InvalidInput { .. }));
+        assert!(error.to_string().contains("maximum supported"));
     }
 
     #[test]

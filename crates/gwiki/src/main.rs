@@ -4,6 +4,7 @@ use std::process::ExitCode;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use gobby_core::config::AiRouting;
 use gobby_wiki::{Command, IngestFileOptions, ScopeSelection, WikiError, output};
+use serde_json::json;
 
 #[derive(Debug, Parser)]
 #[command(name = "gwiki", version, about = "Gobby wiki CLI")]
@@ -239,7 +240,7 @@ fn main() -> ExitCode {
     let command = match command_from_cli(command, scope.into()) {
         Ok(command) => command,
         Err(error) => {
-            eprintln!("gwiki: {error}");
+            print_error(format, &error);
             return exit_code_for_error(&error);
         }
     };
@@ -260,9 +261,25 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(error) => {
-            eprintln!("gwiki: {error}");
+            print_error(format, &error);
             exit_code_for_error(&error)
         }
+    }
+}
+
+fn print_error(format: output::Format, error: &WikiError) {
+    match format {
+        output::Format::Json => {
+            let payload = json!({
+                "code": error.code(),
+                "message": error.to_string(),
+            });
+            let mut stderr = std::io::stderr().lock();
+            if output::print_json(&mut stderr, &payload).is_err() {
+                eprintln!("gwiki: {error}");
+            }
+        }
+        output::Format::Text => eprintln!("gwiki: {error}"),
     }
 }
 
@@ -428,8 +445,12 @@ mod tests {
 
         let mut source = EnvOnlySource;
         let mut context = AiContext::resolve(None, &mut source);
+        let original_transcribe_route = context.bindings.audio_transcribe.routing;
         options.apply_to_ai_context(&mut context);
-        assert_eq!(context.bindings.audio_transcribe.routing, AiRouting::Direct);
+        assert_eq!(
+            context.bindings.audio_transcribe.routing,
+            original_transcribe_route
+        );
         assert_eq!(context.bindings.audio_translate.routing, AiRouting::Direct);
         assert_eq!(context.bindings.vision_extract.routing, AiRouting::Off);
         assert_eq!(context.bindings.text_generate.routing, AiRouting::Daemon);

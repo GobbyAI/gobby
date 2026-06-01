@@ -145,12 +145,16 @@ pub(crate) fn setup_error_to_wiki_error(error: SetupError) -> WikiError {
     WikiError::Setup { source: error }
 }
 
-pub(crate) fn index_error_to_wiki_error(error: indexer::IndexError) -> WikiError {
-    WikiError::Index { source: error }
+impl From<indexer::IndexError> for WikiError {
+    fn from(error: indexer::IndexError) -> Self {
+        Self::Index { source: error }
+    }
 }
 
-pub(crate) fn search_error_to_wiki_error(error: search::SearchError) -> WikiError {
-    WikiError::Search { source: error }
+impl From<search::SearchError> for WikiError {
+    fn from(error: search::SearchError) -> Self {
+        Self::Search { source: error }
+    }
 }
 
 #[cfg(test)]

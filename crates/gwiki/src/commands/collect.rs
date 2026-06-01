@@ -10,6 +10,7 @@ use crate::{CommandOutcome, ScopeIdentity, ScopeSelection, WikiError, store, vau
 pub(crate) fn execute(selection: ScopeSelection) -> Result<CommandOutcome, WikiError> {
     let scope = resolve_command_scope(&selection)?;
 
+    // Vault initialization is idempotent here; collect only needs the paths to exist.
     let _ = vault::initialize(&scope)?;
     let output_scope = resolved_scope_identity(&scope);
     let mut store = store::MemoryWikiStore::default();

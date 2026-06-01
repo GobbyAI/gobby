@@ -1,4 +1,3 @@
-use crate::error::index_error_to_wiki_error;
 use crate::{
     ScopeIdentity, ScopeSelection, WikiError, indexer, scope as wiki_scope, search, session, store,
 };
@@ -19,8 +18,7 @@ pub(crate) fn indexed_store_for_selection(
     let resolved = resolve_selection_context(selection)?;
     let mut store = store::MemoryWikiStore::default();
     if resolved.scope.root().is_dir() {
-        indexer::index_vault(resolved.scope.root(), &mut store)
-            .map_err(index_error_to_wiki_error)?;
+        indexer::index_vault(resolved.scope.root(), &mut store)?;
     }
 
     Ok((

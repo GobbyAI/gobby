@@ -1,10 +1,14 @@
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
 use crate::WikiError;
+
+const EVENT_LOG_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionEvent {
@@ -51,11 +55,7 @@ impl EventMonitor {
                 path: Some(self.path.clone()),
                 source: error,
             })?;
-        fs4::FileExt::lock(&file).map_err(|error| WikiError::Io {
-            action: "lock session event log",
-            path: Some(self.path.clone()),
-            source: error,
-        })?;
+        lock_event_log(&file, &self.path)?;
         file.write_all(&line).map_err(|error| WikiError::Io {
             action: "append session event",
             path: Some(self.path.clone()),
@@ -71,6 +71,36 @@ impl EventMonitor {
             path: Some(self.path.clone()),
             source: error,
         })
+    }
+}
+
+fn lock_event_log(file: &fs::File, path: &Path) -> Result<(), WikiError> {
+    let started = Instant::now();
+    loop {
+        match fs4::FileExt::try_lock(file) {
+            Ok(()) => return Ok(()),
+            Err(fs4::TryLockError::WouldBlock) => {
+                let elapsed = started.elapsed();
+                if elapsed >= EVENT_LOG_LOCK_TIMEOUT {
+                    return Err(WikiError::Io {
+                        action: "lock session event log",
+                        path: Some(path.to_path_buf()),
+                        source: std::io::Error::new(
+                            ErrorKind::TimedOut,
+                            format!("timed out after {}ms", EVENT_LOG_LOCK_TIMEOUT.as_millis()),
+                        ),
+                    });
+                }
+                thread::sleep(Duration::from_millis(25).min(EVENT_LOG_LOCK_TIMEOUT - elapsed));
+            }
+            Err(error) => {
+                return Err(WikiError::Io {
+                    action: "lock session event log",
+                    path: Some(path.to_path_buf()),
+                    source: error.into(),
+                });
+            }
+        }
     }
 }
 

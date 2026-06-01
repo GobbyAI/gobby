@@ -54,7 +54,7 @@ pub fn graph_boost(ctx: &Context, query: &str) -> Vec<String> {
 /// first since they represent implementation details more useful for conceptual
 /// queries. Returns deduplicated symbol IDs for use as an RRF source.
 pub fn graph_expand(ctx: &Context, seed_ids: &[String]) -> Vec<String> {
-    if seed_ids.is_empty() {
+    if seed_ids.is_empty() || ctx.falkordb.is_none() {
         return vec![];
     }
 
@@ -73,7 +73,7 @@ pub fn graph_expand(ctx: &Context, seed_ids: &[String]) -> Vec<String> {
         }
     }
     if by_project.is_empty() {
-        by_project.insert(ctx.project_id.clone(), seed_ids.to_vec());
+        return vec![];
     }
 
     for (project_id, ids_for_project) in by_project {

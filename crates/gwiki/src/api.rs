@@ -101,8 +101,11 @@ impl IngestFileOptions {
     pub fn apply_to_ai_context(&self, context: &mut AiContext) {
         if !self.no_ai {
             if let Some(routing) = self.transcription_routing {
-                context.bindings.audio_transcribe.routing = routing;
-                context.bindings.audio_translate.routing = routing;
+                if self.translate {
+                    context.bindings.audio_translate.routing = routing;
+                } else {
+                    context.bindings.audio_transcribe.routing = routing;
+                }
             }
             if let Some(routing) = self.vision_routing {
                 context.bindings.vision_extract.routing = routing;
@@ -251,7 +254,7 @@ pub struct CommandResult {
 mod tests {
     use super::{IngestFileOptions, ScopeSelection};
     use gobby_core::ai_context::AiContext;
-    use gobby_core::config::EnvOnlySource;
+    use gobby_core::config::{AiRouting, EnvOnlySource};
 
     #[test]
     fn scope_selection_constructors_express_allowed_states() {
@@ -293,6 +296,39 @@ mod tests {
             context.bindings.audio_translate.target_lang.as_deref(),
             Some("fr")
         );
+    }
+
+    #[test]
+    fn transcription_routing_applies_to_active_audio_capability() {
+        let mut source = EnvOnlySource;
+        let mut context = AiContext::resolve(None, &mut source);
+        let original_translate_route = context.bindings.audio_translate.routing;
+
+        IngestFileOptions {
+            transcription_routing: Some(AiRouting::Direct),
+            ..IngestFileOptions::default()
+        }
+        .apply_to_ai_context(&mut context);
+        assert_eq!(context.bindings.audio_transcribe.routing, AiRouting::Direct);
+        assert_eq!(
+            context.bindings.audio_translate.routing,
+            original_translate_route
+        );
+
+        let mut source = EnvOnlySource;
+        let mut context = AiContext::resolve(None, &mut source);
+        let original_transcribe_route = context.bindings.audio_transcribe.routing;
+        IngestFileOptions {
+            translate: true,
+            transcription_routing: Some(AiRouting::Direct),
+            ..IngestFileOptions::default()
+        }
+        .apply_to_ai_context(&mut context);
+        assert_eq!(
+            context.bindings.audio_transcribe.routing,
+            original_transcribe_route
+        );
+        assert_eq!(context.bindings.audio_translate.routing, AiRouting::Direct);
     }
 
     #[test]

@@ -295,6 +295,8 @@ fn ai_error_to_wiki_error(error: AiError) -> WikiError {
 
 fn transcription_output_from_core(result: CoreTranscriptionResult) -> TranscriptionOutput {
     let source_language = result.source_language;
+    // `language` is the output transcript language for translated results;
+    // `source_language` is only the detection fallback for plain transcription.
     let language = result.language.or_else(|| source_language.clone());
     TranscriptionOutput {
         segments: result

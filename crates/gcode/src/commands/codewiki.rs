@@ -1357,7 +1357,7 @@ fn render_module_doc(module: &ModuleDoc) -> String {
     if !module.component_ids.is_empty() {
         doc.push_str("## Components\n\n");
         for component_id in &module.component_ids {
-            let _ = writeln!(doc, "- `{}`", inline_code(component_id));
+            let _ = writeln!(doc, "- {}", inline_code(component_id));
         }
         doc.push('\n');
     }
@@ -1381,7 +1381,7 @@ fn render_file_doc(file: &FileDoc) -> String {
     for symbol in &file.symbols {
         let _ = writeln!(
             doc,
-            "- `{}` ({}) component `{}` lines {}-{} {}",
+            "- {} ({}) component {} lines {}-{} {}",
             inline_code(&symbol.symbol.qualified_name),
             symbol.symbol.kind,
             inline_code(&symbol.component_id),
@@ -1395,7 +1395,7 @@ fn render_file_doc(file: &FileDoc) -> String {
             .as_deref()
             .filter(|value| !value.is_empty())
         {
-            let _ = writeln!(doc, "  - Signature: `{}`", inline_code(signature));
+            let _ = writeln!(doc, "  - Signature: {}", inline_code(signature));
         }
         let _ = writeln!(doc, "  - Purpose: {}", symbol.purpose);
     }
@@ -1662,7 +1662,27 @@ fn yaml_quote(value: &str) -> String {
 }
 
 fn inline_code(value: &str) -> String {
-    value.replace('`', "\\`").replace('\n', " ")
+    let value = value.replace('\n', " ");
+    let delimiter = "`".repeat(max_backtick_run(&value).saturating_add(1).max(1));
+    if value.starts_with('`') || value.ends_with('`') {
+        format!("{delimiter} {value} {delimiter}")
+    } else {
+        format!("{delimiter}{value}{delimiter}")
+    }
+}
+
+fn max_backtick_run(value: &str) -> usize {
+    let mut max_run = 0usize;
+    let mut current_run = 0usize;
+    for ch in value.chars() {
+        if ch == '`' {
+            current_run += 1;
+            max_run = max_run.max(current_run);
+        } else {
+            current_run = 0;
+        }
+    }
+    max_run
 }
 
 fn plural(count: usize) -> &'static str {
@@ -1823,6 +1843,15 @@ mod tests {
         assert!(file.contains("API Symbols"));
         assert!(file.contains("pub struct Client {"));
         assert!(file.contains("[[modules/src|src]]"));
+    }
+
+    #[test]
+    fn inline_code_uses_commonmark_backtick_delimiters() {
+        assert_eq!(inline_code("plain"), "`plain`");
+        assert_eq!(inline_code("a`b"), "``a`b``");
+        assert_eq!(inline_code("a``b"), "```a``b```");
+        assert_eq!(inline_code("`edge`"), "`` `edge` ``");
+        assert_eq!(inline_code("two\nlines"), "`two lines`");
     }
 
     #[test]

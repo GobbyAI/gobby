@@ -434,7 +434,7 @@ fn split_sorted_query(location: &str) -> (String, Option<String>) {
 
 fn existing_index_without_manifest(index_path: &Path) -> Result<String, WikiError> {
     if !index_path.exists() {
-        return Ok(String::from("# Raw sources\n\n"));
+        return Ok(String::from("# Raw Sources\n\n"));
     }
 
     let existing = fs::read_to_string(index_path).map_err(|error| WikiError::Io {
@@ -460,7 +460,7 @@ fn existing_index_without_manifest(index_path: &Path) -> Result<String, WikiErro
 
     let mut index = preserved.join("\n");
     if index.trim().is_empty() {
-        index.push_str("# Raw sources");
+        index.push_str("# Raw Sources");
     }
     while index.ends_with('\n') {
         index.pop();

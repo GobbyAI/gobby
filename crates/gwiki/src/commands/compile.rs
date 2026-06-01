@@ -35,7 +35,7 @@ pub(crate) fn execute(
         &mut session,
         wiki_compile::CompileRequest {
             topic,
-            outline,
+            outline: outline.clone(),
             target_page,
             write_intent,
         },
@@ -49,6 +49,8 @@ pub(crate) fn execute(
         "command": "compile",
         "scope": output_scope,
         "status": "compiled",
+        "target_kind": target_kind,
+        "outline": outline,
         "daemon_synthesis_available": daemon_report.synthesis.available,
         "article_path": outcome.article_path,
         "source_paths": outcome.source_paths,

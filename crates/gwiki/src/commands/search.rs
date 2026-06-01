@@ -1,6 +1,5 @@
 use gobby_core::config::{resolve_embedding_config, resolve_qdrant_config};
 
-use crate::error::search_error_to_wiki_error;
 use crate::output::{SearchOutput, SearchResultOutput};
 use crate::search as wiki_search;
 use crate::support::env::database_url_from_env;
@@ -122,8 +121,7 @@ where
             limit: input.limit,
             include_semantic: input.include_semantic,
         },
-    )
-    .map_err(search_error_to_wiki_error)?;
+    )?;
     let results = response
         .results
         .into_iter()

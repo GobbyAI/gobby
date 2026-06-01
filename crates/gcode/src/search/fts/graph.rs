@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use postgres::Client;
+use postgres::{Client, Row};
 
 use crate::db;
 use crate::models::Symbol;
@@ -46,10 +46,25 @@ fn exact_symbol_matches_result(
         _ => return Ok(Vec::new()),
     };
     let rows = conn.query(&sql, &[&project_id, &input, &(limit as i64)])?;
-    Ok(rows
-        .iter()
-        .filter_map(|row| Symbol::from_row(row).ok())
-        .collect())
+    let mut symbols = Vec::new();
+    for row in &rows {
+        match Symbol::from_row(row) {
+            Ok(symbol) => symbols.push(symbol),
+            Err(error) => log::warn!(
+                "discarding malformed graph symbol row during exact {column} lookup \
+                 for project_id={project_id} input={input:?}: id={} name={} file_path={}: {error}",
+                row_string(row, "id"),
+                row_string(row, "name"),
+                row_string(row, "file_path"),
+            ),
+        }
+    }
+    Ok(symbols)
+}
+
+fn row_string(row: &Row, column: &str) -> String {
+    row.try_get::<_, String>(column)
+        .unwrap_or_else(|_| "<unavailable>".to_string())
 }
 
 fn suggestion_label(symbol: &Symbol) -> String {

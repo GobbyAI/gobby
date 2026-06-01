@@ -285,11 +285,22 @@ fn render_pdf_markdown(
         if page.markdown.is_empty() {
             markdown.push_str("No extractable page text.");
         } else {
-            markdown.push_str(&page.markdown);
+            markdown.push_str(&sanitize_pdf_page_markdown(&page.markdown));
         }
         markdown.push_str("\n\n");
     }
     markdown
+}
+
+fn sanitize_pdf_page_markdown(markdown: &str) -> String {
+    markdown
+        .lines()
+        .map(|line| {
+            let line = if line.trim() == "---" { "\\---" } else { line };
+            line.replace("<!-- gwiki-page:", "<!-- gwiki-page :")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn merge_pdf_pages(
@@ -729,6 +740,30 @@ mod tests {
         assert_eq!(manifest.entries.len(), 1);
         assert_eq!(manifest.entries[0].kind, SourceKind::Pdf);
         assert_eq!(manifest.entries[0].content_hash, expected_hash);
+    }
+
+    #[test]
+    fn pdf_page_body_sanitizes_internal_markers_and_fences() {
+        let markdown = render_pdf_markdown(
+            "report.pdf",
+            &[PdfPageMarkdown {
+                number: 1,
+                markdown: "before\n<!-- gwiki-page: 99 -->\n---\nafter".to_string(),
+            }],
+            &PdfMarkdownSummary {
+                source_hash: "hash".to_string(),
+                file_size_bytes: 10,
+                page_count: 1,
+                model: None,
+                degradations: Vec::new(),
+            },
+            &ScopeIdentity::global(),
+        );
+
+        assert!(markdown.contains("<!-- gwiki-page: 1 -->"));
+        assert!(!markdown.contains("<!-- gwiki-page: 99 -->"));
+        assert!(markdown.contains("<!-- gwiki-page : 99 -->"));
+        assert!(markdown.contains("\n\\---\n"));
     }
 
     #[test]
