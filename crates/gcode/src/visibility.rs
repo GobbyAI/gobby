@@ -211,7 +211,7 @@ pub fn visible_symbol_by_id(
 ) -> anyhow::Result<Option<Symbol>> {
     let columns = db::symbol_select_columns("cs");
     let Some(row) = conn.query_opt(
-        &format!("SELECT {columns} FROM code_symbols WHERE id = $1"),
+        &format!("SELECT {columns} FROM code_symbols cs WHERE cs.id = $1"),
         &[&id],
     )?
     else {
@@ -378,21 +378,25 @@ fn query_symbols_for_file(
     project_id: &str,
     file_path: &str,
 ) -> anyhow::Result<Vec<Symbol>> {
-    let columns = db::symbol_select_columns("");
     let rows = conn.query(
-        &format!(
-            "SELECT {columns}
-             FROM code_symbols cs
-             JOIN code_indexed_files cf
-               ON cf.project_id = cs.project_id AND cf.file_path = cs.file_path
-             WHERE cs.project_id = $1
-               AND cs.file_path = $2
-               AND cf.language != $3
-             ORDER BY cs.line_start, cs.byte_start"
-        ),
+        &symbols_for_file_sql(),
         &[&project_id, &file_path, &TOMBSTONE_LANGUAGE],
     )?;
     rows.iter().map(Symbol::from_row).collect()
+}
+
+fn symbols_for_file_sql() -> String {
+    let columns = db::symbol_select_columns("cs");
+    format!(
+        "SELECT {columns}
+         FROM code_symbols cs
+         JOIN code_indexed_files cf
+           ON cf.project_id = cs.project_id AND cf.file_path = cs.file_path
+         WHERE cs.project_id = $1
+           AND cs.file_path = $2
+           AND cf.language != $3
+         ORDER BY cs.line_start, cs.byte_start"
+    )
 }
 
 pub fn visible_kinds(conn: &mut Client, ctx: &Context) -> anyhow::Result<Vec<String>> {
@@ -528,5 +532,15 @@ mod tests {
         };
 
         assert_eq!(visible_project_ids(&ctx), vec!["overlay", "parent"]);
+    }
+
+    #[test]
+    fn symbols_for_file_sql_qualifies_joined_symbol_columns() {
+        let sql = symbols_for_file_sql();
+
+        assert!(sql.contains("SELECT cs.id, cs.project_id, cs.file_path"));
+        assert!(sql.contains("FROM code_symbols cs"));
+        assert!(sql.contains("JOIN code_indexed_files cf"));
+        assert!(!sql.contains("SELECT id, project_id, file_path"));
     }
 }

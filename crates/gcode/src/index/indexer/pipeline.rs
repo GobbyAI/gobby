@@ -201,7 +201,18 @@ fn index_explicit_files_with_connection(
                 routed_files.push((abs, ExplicitFileRoute::ContentOnly));
             }
             ExplicitFileRoute::Skip => {
-                outcome.skipped_files += 1;
+                let Ok(rel) = relative_path(&abs, root_path) else {
+                    outcome.skipped_files += 1;
+                    continue;
+                };
+                let file_facts_exist = api::file_facts_exist(conn, project_id, &rel)?;
+                cleanup_skipped_explicit_file_if_indexed(
+                    ctx,
+                    &rel,
+                    &mut outcome,
+                    file_facts_exist,
+                    || api::delete_file_facts(conn, project_id, &rel),
+                )?;
             }
         }
     }
@@ -267,4 +278,19 @@ fn index_explicit_files_with_connection(
 
     attach_projection_sync(&mut outcome, request);
     Ok(outcome)
+}
+
+pub(super) fn cleanup_skipped_explicit_file_if_indexed(
+    ctx: &Context,
+    rel: &str,
+    outcome: &mut IndexOutcome,
+    file_facts_exist: bool,
+    delete_file_facts: impl FnOnce() -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    outcome.skipped_files += 1;
+    if file_facts_exist {
+        cleanup_deleted_file_projections(ctx, rel, outcome);
+        delete_file_facts()?;
+    }
+    Ok(())
 }
