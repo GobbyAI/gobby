@@ -309,6 +309,18 @@ impl SourceManifest {
         write_atomic(&index_path, index.as_bytes(), "write raw source index")
     }
 
+    pub fn remove(vault_root: &Path, id: &str) -> Result<Option<SourceRecord>, WikiError> {
+        with_manifest_lock(vault_root, || {
+            let mut manifest = Self::read(vault_root)?;
+            let Some(index) = manifest.entries.iter().position(|entry| entry.id == id) else {
+                return Ok(None);
+            };
+            let removed = manifest.entries.remove(index);
+            manifest.write(vault_root)?;
+            Ok(Some(removed))
+        })
+    }
+
     pub fn index_path(vault_root: &Path) -> PathBuf {
         vault_root.join("raw").join("INDEX.md")
     }

@@ -27,6 +27,15 @@ pub enum Command {
         scope: ScopeSelection,
         options: IngestFileOptions,
     },
+    Sources {
+        scope: ScopeSelection,
+    },
+    RemoveSource {
+        id: String,
+        scope: ScopeSelection,
+        dry_run: bool,
+        keep_asset: bool,
+    },
     Search {
         query: String,
         scope: ScopeSelection,

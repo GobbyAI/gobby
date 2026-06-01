@@ -43,6 +43,10 @@ pub enum WikiError {
         field: &'static str,
         message: String,
     },
+    NotFound {
+        resource: &'static str,
+        id: String,
+    },
     Index {
         source: indexer::IndexError,
     },
@@ -66,6 +70,7 @@ impl WikiError {
             Self::Registry { .. } => "registry_error",
             Self::Daemon { .. } => "daemon_error",
             Self::InvalidInput { .. } => "invalid_input",
+            Self::NotFound { .. } => "not_found",
             Self::Index { .. } => "index_error",
             Self::Search { .. } => "search_error",
             Self::Setup { .. } => "setup_error",
@@ -102,6 +107,9 @@ impl fmt::Display for WikiError {
             }
             Self::InvalidInput { field, message } => {
                 write!(f, "{field}: {message} ({})", self.code())
+            }
+            Self::NotFound { resource, id } => {
+                write!(f, "{resource} `{id}` was not found ({})", self.code())
             }
             Self::Index { source } => write!(f, "index: {source} ({})", self.code()),
             Self::Search { source } => write!(f, "query: {source} ({})", self.code()),

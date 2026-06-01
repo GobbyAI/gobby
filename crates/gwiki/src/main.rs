@@ -60,6 +60,10 @@ enum CliCommand {
         #[arg(long, value_name = "auto|daemon|direct|off")]
         text_routing: Option<AiRouting>,
     },
+    /// List raw source manifest entries in the selected scope.
+    Sources,
+    /// Remove a raw source, its manifest entry, and its raw asset.
+    RemoveSource(RemoveSourceArgs),
     /// Search wiki documents in the selected scope.
     Search(SearchArgs),
     /// Read a wiki page or document in the selected scope.
@@ -151,6 +155,24 @@ struct SearchArgs {
     /// Disable semantic vector search for this query.
     #[arg(long = "no-semantic")]
     no_semantic: bool,
+}
+
+#[derive(Debug, Args)]
+struct RemoveSourceArgs {
+    #[arg(long, value_name = "SOURCE_ID")]
+    id: String,
+
+    /// Preview file and manifest changes without mutating the vault.
+    #[arg(long)]
+    dry_run: bool,
+
+    /// Confirm destructive removal.
+    #[arg(long)]
+    yes: bool,
+
+    /// Preserve the raw source asset referenced by source_asset frontmatter.
+    #[arg(long)]
+    keep_asset: bool,
 }
 
 #[derive(Debug, Args)]
@@ -332,6 +354,28 @@ fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Comman
                 text_routing,
             },
         }),
+        CliCommand::Sources => Ok(Command::Sources { scope }),
+        CliCommand::RemoveSource(args) => {
+            if args.dry_run && args.yes {
+                return Err(WikiError::InvalidInput {
+                    field: "remove-source",
+                    message: "pass only one of --dry-run or --yes".to_string(),
+                });
+            }
+            if !args.dry_run && !args.yes {
+                return Err(WikiError::InvalidInput {
+                    field: "remove-source",
+                    message: "destructive source removal requires --yes; use --dry-run to preview"
+                        .to_string(),
+                });
+            }
+            Ok(Command::RemoveSource {
+                id: args.id,
+                scope,
+                dry_run: args.dry_run,
+                keep_asset: args.keep_asset,
+            })
+        }
         CliCommand::Search(args) => Ok(Command::Search {
             query: args.query,
             scope,
@@ -442,7 +486,8 @@ fn exit_code_for_error(error: &WikiError) -> ExitCode {
         | WikiError::InvalidInput { .. }
         | WikiError::Index { .. }
         | WikiError::Search { .. }
-        | WikiError::InvalidScope { .. } => ExitCode::from(2),
+        | WikiError::InvalidScope { .. }
+        | WikiError::NotFound { .. } => ExitCode::from(2),
         WikiError::Config { .. }
         | WikiError::Io { .. }
         | WikiError::Json { .. }

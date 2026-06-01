@@ -11,6 +11,7 @@ pub(crate) mod read;
 pub(crate) mod research;
 pub(crate) mod search;
 pub(crate) mod setup;
+pub(crate) mod sources;
 pub(crate) mod status;
 
 use crate::{Command, CommandOutcome, CommandResult, ScopeIdentity, WikiError};
@@ -26,6 +27,13 @@ pub(crate) fn run(command: Command) -> Result<CommandOutcome, WikiError> {
             scope,
             options,
         } => index::execute_ingest_file(path, scope, options),
+        Command::Sources { scope } => sources::execute(scope),
+        Command::RemoveSource {
+            id,
+            scope,
+            dry_run,
+            keep_asset,
+        } => sources::execute_remove(id, scope, dry_run, keep_asset),
         Command::Search {
             query,
             scope,

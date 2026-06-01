@@ -24,24 +24,29 @@ pub(crate) fn execute(selection: ScopeSelection) -> Result<CommandOutcome, WikiE
     let scope = resolve_command_scope(&selection)?;
     ensure_scope_root(&scope)?;
     let output_scope = resolved_scope_identity(&scope);
+    let counts = index_resolved_scope(&scope)?;
+    Ok(render_index(output_scope, scope.root(), counts))
+}
+
+pub(crate) fn index_resolved_scope(
+    scope: &crate::scope::ResolvedScope,
+) -> Result<IndexCounts, WikiError> {
     if let Some(database_url) = database_url_from_env() {
         let mut conn = gobby_core::postgres::connect_readwrite(&database_url).map_err(|error| {
             WikiError::Config {
                 detail: format!("failed to connect to PostgreSQL for gwiki index: {error}"),
             }
         })?;
-        let search_scope = search_scope_for_resolved(&scope);
+        let search_scope = search_scope_for_resolved(scope);
         let mut store =
             store::PostgresWikiStore::new(&mut conn, store_scope_for_search(&search_scope));
         indexer::index_vault(scope.root(), &mut store)?;
-        let counts = postgres_index_counts(&mut conn, &search_scope)?;
-        return Ok(render_index(output_scope, scope.root(), counts));
+        return postgres_index_counts(&mut conn, &search_scope);
     }
 
     let mut store = store::MemoryWikiStore::default();
     indexer::index_vault(scope.root(), &mut store)?;
-    let counts = index_counts(&store);
-    Ok(render_index(output_scope, scope.root(), counts))
+    Ok(index_counts(&store))
 }
 
 pub(crate) fn execute_ingest_file(
