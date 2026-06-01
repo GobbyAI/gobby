@@ -18,6 +18,7 @@ fn repo_file(path: &str) -> String {
 #[test]
 fn cargo_features_define_public_boundary() {
     let manifest = crate_file("Cargo.toml");
+    let gloc_manifest = repo_file("crates/gloc/Cargo.toml");
 
     for expected in [
         "default = []",
@@ -48,6 +49,12 @@ fn cargo_features_define_public_boundary() {
             "Cargo.toml is missing expected public-boundary snippet: {expected}"
         );
     }
+
+    let gloc_gcore_dependency = r#"gobby-core = { path = "../gcore", default-features = false, features = ["local_backend"] }"#;
+    assert!(
+        gloc_manifest.contains(gloc_gcore_dependency),
+        "gloc must enable only gobby-core/local_backend, not the heavier ai feature"
+    );
 }
 
 #[test]
@@ -63,6 +70,7 @@ fn lib_rs_exposes_lightweight_and_feature_gated_modules() {
         "pub mod config;",
         "pub mod context;",
         "pub mod degradation;",
+        "pub mod local_backend;",
         "pub mod setup;",
         r#"#[cfg(feature = "ai")]"#,
         "pub mod ai;",

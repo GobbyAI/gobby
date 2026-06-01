@@ -1,4 +1,5 @@
-use crate::config::{Backend, Settings};
+use crate::config::Settings;
+use gobby_core::local_backend::Backend;
 use std::fmt;
 use std::time::Duration;
 
@@ -19,33 +20,6 @@ impl fmt::Display for ModelError {
             Self::NetworkError(msg) => write!(f, "network error: {}", msg),
         }
     }
-}
-
-/// Probe backends in order, return the first that responds with 2xx.
-pub fn detect_backend(backends: &[Backend], timeout_ms: u64) -> Option<Backend> {
-    let timeout = Duration::from_millis(timeout_ms);
-    for backend in backends {
-        let url = format!("{}{}", backend.url, backend.probe);
-        let agent = ureq::AgentBuilder::new()
-            .timeout_connect(timeout)
-            .timeout_read(timeout)
-            .build();
-        if agent.get(&url).call().is_ok() {
-            return Some(backend.clone());
-        }
-    }
-    None
-}
-
-/// Validate that a specific backend is reachable.
-pub fn validate_backend(backend: &Backend, timeout_ms: u64) -> bool {
-    let timeout = Duration::from_millis(timeout_ms);
-    let url = format!("{}{}", backend.url, backend.probe);
-    let agent = ureq::AgentBuilder::new()
-        .timeout_connect(timeout)
-        .timeout_read(timeout)
-        .build();
-    agent.get(&url).call().is_ok()
 }
 
 /// Ensure a model is ready on the detected backend.
@@ -203,12 +177,15 @@ mod tests {
     #[test]
     fn test_detect_backend_none_running() {
         let backends = vec![unreachable_backend()];
-        assert!(detect_backend(&backends, 100).is_none());
+        assert!(gobby_core::local_backend::detect_backend(&backends, 100).is_none());
     }
 
     #[test]
     fn test_validate_backend_unreachable() {
-        assert!(!validate_backend(&unreachable_backend(), 100));
+        assert!(!gobby_core::local_backend::validate_backend(
+            &unreachable_backend(),
+            100
+        ));
     }
 
     #[test]
