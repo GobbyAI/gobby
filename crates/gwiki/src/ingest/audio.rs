@@ -133,6 +133,18 @@ pub fn ingest_audio_with_transcription(
     snapshot: AudioSnapshot,
     endpoint: TranscriptionEndpoint<'_>,
 ) -> Result<AudioIngestResult, WikiError> {
+    let result =
+        ingest_audio_with_transcription_without_index(vault_root, scope, snapshot, endpoint)?;
+    index_after_ingest(vault_root, store)?;
+    Ok(result)
+}
+
+pub(crate) fn ingest_audio_with_transcription_without_index(
+    vault_root: &Path,
+    scope: ScopeIdentity,
+    snapshot: AudioSnapshot,
+    endpoint: TranscriptionEndpoint<'_>,
+) -> Result<AudioIngestResult, WikiError> {
     let title = markdown_title(&snapshot.file_name);
     let content_hash = gobby_core::indexing::content_hash(&snapshot.bytes);
     let draft = SourceDraft {
@@ -163,7 +175,6 @@ pub fn ingest_audio_with_transcription(
         request,
         transcribe_for_markdown(&request, endpoint),
     )?;
-    index_after_ingest(vault_root, store)?;
 
     Ok(AudioIngestResult {
         record,

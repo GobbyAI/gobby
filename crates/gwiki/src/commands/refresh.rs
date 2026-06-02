@@ -9,7 +9,7 @@ use crate::commands::index;
 use crate::ingest;
 use crate::ingest::url::{UrlIngestFailure, UrlSnapshot};
 use crate::scope::ResolvedScope;
-use crate::sources::{SourceManifest, SourceRecord};
+use crate::sources::{SourceKind, SourceManifest, SourceRecord, SourceReplay, SourceReplayOptions};
 use crate::support::counts::IndexCounts;
 use crate::support::scope::{resolve_command_scope, resolved_scope_identity};
 use crate::support::time::collect_timestamp;
@@ -78,48 +78,30 @@ fn execute_resolved_with_fetcher(
     let mut degradations = Vec::new();
 
     for record in &candidates {
-        match fetch(record, &fetched_at) {
-            Ok(snapshot) => {
-                let source_hash = gobby_core::indexing::content_hash(&snapshot.body);
-                let raw_path = raw_source_path(&record.id)?;
-                if source_hash == record.content_hash {
-                    unchanged.push(UnchangedRefresh {
-                        id: record.id.clone(),
-                        location: record.location.clone(),
-                        raw_path,
-                        content_hash: record.content_hash.clone(),
-                        changed: false,
-                    });
-                    continue;
-                }
-
-                let final_url = snapshot.final_url.clone();
-                match refresh_changed_source(scope.root(), record, snapshot) {
-                    Ok(change) => refreshed.push(RefreshedSource {
-                        old_id: record.id.clone(),
-                        new_id: change.result.record.id.clone(),
-                        location: record.location.clone(),
-                        final_url,
-                        raw_path: change.result.raw_path,
-                        previous_raw_path: change.previous_raw_path,
-                        removed_paths: change.removed_paths,
-                        changed: true,
-                        source: change.result.record,
-                    }),
-                    Err(error) => failed.push(RefreshFailure {
-                        id: record.id.clone(),
-                        location: Some(record.location.clone()),
-                        code: error.code().to_string(),
-                        message: error.to_string(),
-                    }),
-                }
+        match replay_kind(record) {
+            Ok(ReplayKind::Url) => {
+                refresh_url_candidate(
+                    scope.root(),
+                    record,
+                    &mut fetch,
+                    &fetched_at,
+                    &mut refreshed,
+                    &mut unchanged,
+                    &mut failed,
+                )?;
             }
-            Err(error) => failed.push(RefreshFailure {
-                id: record.id.clone(),
-                location: Some(record.location.clone()),
-                code: error.code,
-                message: error.message,
-            }),
+            Ok(ReplayKind::LocalFile) => {
+                let mut sinks = RefreshSinks {
+                    refreshed: &mut refreshed,
+                    unchanged: &mut unchanged,
+                    failed: &mut failed,
+                    degradations: &mut degradations,
+                };
+                refresh_local_candidate(&scope, &output_scope, record, &fetched_at, &mut sinks)?;
+            }
+            Err(error) => {
+                failed.push(selection_failure(record, error));
+            }
         }
     }
 
@@ -153,7 +135,218 @@ fn execute_resolved_with_fetcher(
     }))
 }
 
-fn refresh_changed_source(
+fn refresh_url_candidate(
+    vault_root: &Path,
+    record: &SourceRecord,
+    fetch: &mut impl FnMut(&SourceRecord, &str) -> Result<UrlSnapshot, UrlIngestFailure>,
+    fetched_at: &str,
+    refreshed: &mut Vec<RefreshedSource>,
+    unchanged: &mut Vec<UnchangedRefresh>,
+    failed: &mut Vec<RefreshFailure>,
+) -> Result<(), WikiError> {
+    match fetch(record, fetched_at) {
+        Ok(snapshot) => {
+            let source_hash = gobby_core::indexing::content_hash(&snapshot.body);
+            let raw_path = raw_source_path(&record.id)?;
+            if source_hash == record.content_hash {
+                unchanged.push(UnchangedRefresh {
+                    id: record.id.clone(),
+                    location: record.location.clone(),
+                    source_kind: record.kind.clone(),
+                    replay_kind: "url",
+                    raw_path,
+                    content_hash: record.content_hash.clone(),
+                    changed: false,
+                });
+                return Ok(());
+            }
+
+            let final_url = snapshot.final_url.clone();
+            match refresh_changed_url_source(vault_root, record, snapshot) {
+                Ok(change) => refreshed.push(RefreshedSource {
+                    old_id: record.id.clone(),
+                    new_id: change.result.record.id.clone(),
+                    location: record.location.clone(),
+                    source_kind: record.kind.clone(),
+                    replay_kind: "url",
+                    final_url: Some(final_url),
+                    raw_path: change.result.raw_path,
+                    previous_raw_path: change.previous_raw_path,
+                    removed_paths: change.removed_paths,
+                    changed: true,
+                    source: change.result.record,
+                }),
+                Err(error) => failed.push(RefreshFailure {
+                    id: record.id.clone(),
+                    location: Some(record.location.clone()),
+                    source_kind: Some(record.kind.clone()),
+                    code: error.code().to_string(),
+                    message: error.to_string(),
+                }),
+            }
+        }
+        Err(error) => failed.push(RefreshFailure {
+            id: record.id.clone(),
+            location: Some(record.location.clone()),
+            source_kind: Some(record.kind.clone()),
+            code: error.code,
+            message: error.message,
+        }),
+    }
+    Ok(())
+}
+
+fn refresh_local_candidate(
+    scope: &ResolvedScope,
+    output_scope: &ScopeIdentity,
+    record: &SourceRecord,
+    fetched_at: &str,
+    sinks: &mut RefreshSinks<'_>,
+) -> Result<(), WikiError> {
+    let Some((path, replay_options)) = local_file_replay(record) else {
+        sinks.failed.push(selection_failure(
+            record,
+            SelectionFailure::MissingReplayMetadata,
+        ));
+        return Ok(());
+    };
+    let source_hash = match local_file_hash(record, path) {
+        Ok(hash) => hash,
+        Err(failure) => {
+            sinks.failed.push(failure);
+            return Ok(());
+        }
+    };
+    let raw_path = raw_source_path(&record.id)?;
+    if source_hash == record.content_hash {
+        sinks.unchanged.push(UnchangedRefresh {
+            id: record.id.clone(),
+            location: record.location.clone(),
+            source_kind: record.kind.clone(),
+            replay_kind: "local_file",
+            raw_path,
+            content_hash: record.content_hash.clone(),
+            changed: false,
+        });
+        return Ok(());
+    }
+
+    let options = match replay_options.to_ingest_file_options() {
+        Ok(options) => options,
+        Err(error) => {
+            sinks.failed.push(RefreshFailure {
+                id: record.id.clone(),
+                location: Some(record.location.clone()),
+                source_kind: Some(record.kind.clone()),
+                code: error.code().to_string(),
+                message: error.to_string(),
+            });
+            return Ok(());
+        }
+    };
+    let (ai_context, options) =
+        match index::resolve_ingest_file_ai_context(output_scope, &options, "gwiki refresh") {
+            Ok(resolved) => resolved,
+            Err(error) => {
+                sinks.failed.push(RefreshFailure {
+                    id: record.id.clone(),
+                    location: Some(record.location.clone()),
+                    source_kind: Some(record.kind.clone()),
+                    code: error.code().to_string(),
+                    message: error.to_string(),
+                });
+                return Ok(());
+            }
+        };
+
+    match refresh_changed_local_source(
+        scope.root(),
+        output_scope,
+        record,
+        path,
+        &ai_context,
+        &options,
+        fetched_at,
+    ) {
+        Ok(change) => {
+            sinks.degradations.extend(change.degradations);
+            sinks.refreshed.push(RefreshedSource {
+                old_id: record.id.clone(),
+                new_id: change.result.record.id.clone(),
+                location: record.location.clone(),
+                source_kind: record.kind.clone(),
+                replay_kind: "local_file",
+                final_url: None,
+                raw_path: change.result.raw_path,
+                previous_raw_path: change.previous_raw_path,
+                removed_paths: change.removed_paths,
+                changed: true,
+                source: change.result.record,
+            });
+        }
+        Err(error) => sinks.failed.push(RefreshFailure {
+            id: record.id.clone(),
+            location: Some(record.location.clone()),
+            source_kind: Some(record.kind.clone()),
+            code: error.code().to_string(),
+            message: error.to_string(),
+        }),
+    }
+    Ok(())
+}
+
+fn local_file_hash(record: &SourceRecord, path: &Path) -> Result<String, RefreshFailure> {
+    match fs::metadata(path) {
+        Ok(metadata) if metadata.is_file() => {}
+        Ok(_) => {
+            return Err(local_file_failure(
+                record,
+                "invalid_local_file",
+                format!("local replay path `{}` is not a file", path.display()),
+            ));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(local_file_failure(
+                record,
+                "missing_local_file",
+                format!("local replay path `{}` was not found", path.display()),
+            ));
+        }
+        Err(error) => {
+            return Err(local_file_failure(
+                record,
+                "unreadable_local_file",
+                format!(
+                    "failed to stat local replay path `{}`: {error}",
+                    path.display()
+                ),
+            ));
+        }
+    }
+
+    gobby_core::indexing::file_content_hash(path).map_err(|error| {
+        local_file_failure(
+            record,
+            "unreadable_local_file",
+            format!(
+                "failed to hash local replay path `{}`: {error}",
+                path.display()
+            ),
+        )
+    })
+}
+
+fn local_file_failure(record: &SourceRecord, code: &str, message: String) -> RefreshFailure {
+    RefreshFailure {
+        id: record.id.clone(),
+        location: Some(record.location.clone()),
+        source_kind: Some(record.kind.clone()),
+        code: code.to_string(),
+        message,
+    }
+}
+
+fn refresh_changed_url_source(
     vault_root: &Path,
     previous: &SourceRecord,
     snapshot: UrlSnapshot,
@@ -188,6 +381,55 @@ fn refresh_changed_source(
         result,
         previous_raw_path,
         removed_paths,
+        degradations: Vec::new(),
+    })
+}
+
+fn refresh_changed_local_source(
+    vault_root: &Path,
+    scope: &ScopeIdentity,
+    previous: &SourceRecord,
+    path: &Path,
+    ai_context: &gobby_core::ai_context::AiContext,
+    options: &crate::IngestFileOptions,
+    fetched_at: &str,
+) -> Result<ChangedRefresh, WikiError> {
+    let previous_raw_path = raw_source_path(&previous.id)?;
+    let mut previous_paths = vec![previous_raw_path.clone()];
+    previous_paths.extend(source_asset_paths_for_id(vault_root, &previous.id)?);
+
+    let local_result = ingest::file::ingest_path_without_index(
+        vault_root, scope, ai_context, options, path, fetched_at,
+    )?;
+    let result = local_result.result;
+    if previous.id != result.record.id {
+        SourceManifest::update(vault_root, |manifest| {
+            let before = manifest.entries.len();
+            manifest.entries.retain(|entry| entry.id != previous.id);
+            Ok(manifest.entries.len() != before)
+        })?;
+    }
+
+    let mut removed_paths = Vec::new();
+    for path in previous_paths {
+        if path == result.raw_path
+            || result
+                .asset_path
+                .as_ref()
+                .is_some_and(|asset| *asset == path)
+        {
+            continue;
+        }
+        if remove_relative_file(vault_root, &path)? {
+            removed_paths.push(path);
+        }
+    }
+
+    Ok(ChangedRefresh {
+        result,
+        previous_raw_path,
+        removed_paths,
+        degradations: local_result.degradations,
     })
 }
 
@@ -195,26 +437,37 @@ fn select_sources(entries: &[SourceRecord], source_ids: &[String]) -> Selection 
     if source_ids.is_empty() {
         let mut planned = Vec::new();
         let mut skipped = Vec::new();
+        let mut failed = Vec::new();
         for record in entries {
-            if is_url_source(record) {
-                planned.push(RefreshPlan::from_record(record));
-            } else {
-                skipped.push(SkippedRefresh {
-                    id: record.id.clone(),
-                    location: record.location.clone(),
-                    code: "unsupported_source_kind".to_string(),
-                    message: format!(
-                        "source `{}` is not URL-backed and cannot be refreshed by v1 refresh",
-                        record.id
-                    ),
-                });
+            match replay_kind(record) {
+                Ok(_) => {
+                    planned.push(RefreshPlan::from_record(record));
+                }
+                Err(SelectionFailure::MissingReplayMetadata) => {
+                    failed.push(selection_failure(
+                        record,
+                        SelectionFailure::MissingReplayMetadata,
+                    ));
+                }
+                Err(SelectionFailure::UnsupportedSourceKind) => {
+                    skipped.push(SkippedRefresh {
+                        id: record.id.clone(),
+                        location: record.location.clone(),
+                        source_kind: record.kind.clone(),
+                        code: "unsupported_source_kind".to_string(),
+                        message: format!(
+                            "source `{}` has kind `{}` and does not have a refresh replay contract",
+                            record.id, record.kind
+                        ),
+                    });
+                }
             }
         }
         return Selection {
             candidates: planned.iter().map(|plan| plan.record.clone()).collect(),
             planned,
             skipped,
-            failed: Vec::new(),
+            failed,
         };
     }
 
@@ -229,23 +482,17 @@ fn select_sources(entries: &[SourceRecord], source_ids: &[String]) -> Selection 
             failed.push(RefreshFailure {
                 id: id.clone(),
                 location: None,
+                source_kind: None,
                 code: "not_found".to_string(),
                 message: format!("source `{id}` was not found"),
             });
             continue;
         };
-        if is_url_source(record) {
-            planned.push(RefreshPlan::from_record(record));
-        } else {
-            failed.push(RefreshFailure {
-                id: record.id.clone(),
-                location: Some(record.location.clone()),
-                code: "unsupported_source_kind".to_string(),
-                message: format!(
-                    "source `{}` is not URL-backed and cannot be refreshed by v1 refresh",
-                    record.id
-                ),
-            });
+        match replay_kind(record) {
+            Ok(_) => planned.push(RefreshPlan::from_record(record)),
+            Err(error) => {
+                failed.push(selection_failure(record, error));
+            }
         }
     }
 
@@ -254,6 +501,86 @@ fn select_sources(entries: &[SourceRecord], source_ids: &[String]) -> Selection 
         planned,
         skipped: Vec::new(),
         failed,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReplayKind {
+    Url,
+    LocalFile,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SelectionFailure {
+    MissingReplayMetadata,
+    UnsupportedSourceKind,
+}
+
+fn replay_kind(record: &SourceRecord) -> Result<ReplayKind, SelectionFailure> {
+    if is_url_source(record) {
+        return Ok(ReplayKind::Url);
+    }
+    if local_file_replay(record).is_some() {
+        return Ok(ReplayKind::LocalFile);
+    }
+    if is_local_file_source_kind(&record.kind) {
+        Err(SelectionFailure::MissingReplayMetadata)
+    } else {
+        Err(SelectionFailure::UnsupportedSourceKind)
+    }
+}
+
+fn replay_kind_name(record: &SourceRecord) -> &'static str {
+    match replay_kind(record) {
+        Ok(ReplayKind::Url) => "url",
+        Ok(ReplayKind::LocalFile) => "local_file",
+        Err(_) => "unsupported",
+    }
+}
+
+fn local_file_replay(record: &SourceRecord) -> Option<(&Path, &SourceReplayOptions)> {
+    match record.replay.as_ref()? {
+        SourceReplay::LocalFile { path, options } => Some((path.as_path(), options)),
+    }
+}
+
+fn is_local_file_source_kind(kind: &SourceKind) -> bool {
+    matches!(
+        kind,
+        SourceKind::Audio
+            | SourceKind::Image
+            | SourceKind::Video
+            | SourceKind::Pdf
+            | SourceKind::Office
+            | SourceKind::Html
+            | SourceKind::Markdown
+            | SourceKind::Text
+            | SourceKind::File
+    )
+}
+
+fn selection_failure(record: &SourceRecord, error: SelectionFailure) -> RefreshFailure {
+    match error {
+        SelectionFailure::MissingReplayMetadata => RefreshFailure {
+            id: record.id.clone(),
+            location: Some(record.location.clone()),
+            source_kind: Some(record.kind.clone()),
+            code: "missing_replay_metadata".to_string(),
+            message: format!(
+                "source `{}` has kind `{}` but no local replay metadata",
+                record.id, record.kind
+            ),
+        },
+        SelectionFailure::UnsupportedSourceKind => RefreshFailure {
+            id: record.id.clone(),
+            location: Some(record.location.clone()),
+            source_kind: Some(record.kind.clone()),
+            code: "unsupported_source_kind".to_string(),
+            message: format!(
+                "source `{}` has kind `{}` and does not have a refresh replay contract",
+                record.id, record.kind
+            ),
+        },
     }
 }
 
@@ -419,6 +746,14 @@ struct ChangedRefresh {
     result: ingest::IngestResult,
     previous_raw_path: PathBuf,
     removed_paths: Vec<PathBuf>,
+    degradations: Vec<String>,
+}
+
+struct RefreshSinks<'a> {
+    refreshed: &'a mut Vec<RefreshedSource>,
+    unchanged: &'a mut Vec<UnchangedRefresh>,
+    failed: &'a mut Vec<RefreshFailure>,
+    degradations: &'a mut Vec<String>,
 }
 
 #[derive(Debug)]
@@ -442,6 +777,8 @@ struct RefreshPlan {
     record: SourceRecord,
     id: String,
     location: String,
+    source_kind: SourceKind,
+    replay_kind: &'static str,
     raw_path: PathBuf,
     content_hash: String,
 }
@@ -452,6 +789,8 @@ impl RefreshPlan {
             record: record.clone(),
             id: record.id.clone(),
             location: record.location.clone(),
+            source_kind: record.kind.clone(),
+            replay_kind: replay_kind_name(record),
             raw_path: raw_source_path(&record.id).unwrap_or_else(|_| PathBuf::from("raw")),
             content_hash: record.content_hash.clone(),
         }
@@ -463,7 +802,10 @@ struct RefreshedSource {
     old_id: String,
     new_id: String,
     location: String,
-    final_url: String,
+    source_kind: SourceKind,
+    replay_kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    final_url: Option<String>,
     raw_path: PathBuf,
     previous_raw_path: PathBuf,
     removed_paths: Vec<PathBuf>,
@@ -475,6 +817,8 @@ struct RefreshedSource {
 struct UnchangedRefresh {
     id: String,
     location: String,
+    source_kind: SourceKind,
+    replay_kind: &'static str,
     raw_path: PathBuf,
     content_hash: String,
     changed: bool,
@@ -484,6 +828,7 @@ struct UnchangedRefresh {
 struct RefreshFailure {
     id: String,
     location: Option<String>,
+    source_kind: Option<SourceKind>,
     code: String,
     message: String,
 }
@@ -492,6 +837,7 @@ struct RefreshFailure {
 struct SkippedRefresh {
     id: String,
     location: String,
+    source_kind: SourceKind,
     code: String,
     message: String,
 }
@@ -553,7 +899,8 @@ impl IndexStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sources::{CompileStatus, IngestionMethod, SourceDraft, SourceKind};
+    use crate::IngestFileOptions;
+    use crate::sources::{CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceReplay};
 
     fn test_scope(root: &Path) -> ResolvedScope {
         ResolvedScope::topic(
@@ -581,7 +928,7 @@ mod tests {
         .expect("register source")
     }
 
-    fn seed_file(root: &Path) -> SourceRecord {
+    fn seed_legacy_file(root: &Path) -> SourceRecord {
         SourceManifest::register(
             root,
             SourceDraft {
@@ -597,6 +944,78 @@ mod tests {
             },
         )
         .expect("register source")
+    }
+
+    fn seed_local_file(root: &Path, relative_path: &str, body: &[u8]) -> SourceRecord {
+        let path = root.join(relative_path);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("create source parent");
+        }
+        fs::write(&path, body).expect("write replay source");
+        let kind = if relative_path.ends_with(".md") {
+            SourceKind::Markdown
+        } else if relative_path.ends_with(".txt") {
+            SourceKind::Text
+        } else {
+            SourceKind::File
+        };
+        let record = SourceManifest::register(
+            root,
+            SourceDraft {
+                location: relative_path.to_string(),
+                kind,
+                fetched_at: "2026-06-02T00:00:00Z".to_string(),
+                content: body.to_vec(),
+                title: Some("Local file".to_string()),
+                citation: Some(relative_path.to_string()),
+                license: None,
+                ingestion_method: IngestionMethod::Manual,
+                compile_status: CompileStatus::Pending,
+            },
+        )
+        .expect("register local source");
+        let replay = SourceReplay::local_file(
+            path,
+            &IngestFileOptions {
+                no_ai: true,
+                video_frame_interval_seconds: Some(0),
+                ..IngestFileOptions::default()
+            },
+        );
+        SourceManifest::update(root, |manifest| {
+            manifest
+                .entries
+                .iter_mut()
+                .find(|entry| entry.id == record.id)
+                .expect("seeded local source")
+                .replay = Some(replay);
+            Ok(true)
+        })
+        .expect("write local replay metadata");
+        SourceManifest::read(root)
+            .expect("read manifest")
+            .entries
+            .into_iter()
+            .find(|entry| entry.id == record.id)
+            .expect("updated local source")
+    }
+
+    fn seed_unsupported_connector(root: &Path) -> SourceRecord {
+        SourceManifest::register(
+            root,
+            SourceDraft {
+                location: "stdin:source".to_string(),
+                kind: SourceKind::Stdin,
+                fetched_at: "2026-06-02T00:00:00Z".to_string(),
+                content: b"stdin".to_vec(),
+                title: Some("Stdin".to_string()),
+                citation: None,
+                license: None,
+                ingestion_method: IngestionMethod::Manual,
+                compile_status: CompileStatus::Pending,
+            },
+        )
+        .expect("register unsupported connector")
     }
 
     fn snapshot(url: &str, body: &str) -> UrlSnapshot {
@@ -664,6 +1083,35 @@ mod tests {
     }
 
     #[test]
+    fn unchanged_local_file_does_not_replay_or_index() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let record = seed_local_file(temp.path(), "notes.md", b"# Same\n");
+
+        let outcome = execute_resolved_with_fetcher(
+            test_scope(temp.path()),
+            vec![record.id.clone()],
+            false,
+            |_record, _fetched_at| unreachable!("local refresh does not fetch URLs"),
+        )
+        .expect("refresh local unchanged");
+
+        assert_eq!(outcome.result.payload["status"], "unchanged");
+        assert_eq!(outcome.result.payload["unchanged"][0]["id"], record.id);
+        assert_eq!(
+            outcome.result.payload["unchanged"][0]["replay_kind"],
+            "local_file"
+        );
+        assert_eq!(outcome.result.payload["index_status"]["status"], "not_run");
+        assert_eq!(
+            SourceManifest::read(temp.path())
+                .expect("read manifest")
+                .entries
+                .len(),
+            1
+        );
+    }
+
+    #[test]
     fn changed_content_replaces_manifest_and_removes_old_raw() {
         let temp = tempfile::tempdir().expect("tempdir");
         let record = seed_url(temp.path(), "https://example.test/a", "then", b"old");
@@ -700,9 +1148,56 @@ mod tests {
     }
 
     #[test]
+    fn changed_local_file_replays_and_removes_old_raw_assets() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let record = seed_local_file(temp.path(), "artifact.bin", b"old");
+        let old_raw = temp
+            .path()
+            .join(raw_source_path(&record.id).expect("raw path"));
+        let old_asset = temp
+            .path()
+            .join("raw")
+            .join("assets")
+            .join(format!("{}.bin", record.id));
+        fs::create_dir_all(old_asset.parent().expect("asset parent")).expect("asset dir");
+        fs::write(&old_raw, "old raw").expect("write old raw");
+        fs::write(&old_asset, "old asset").expect("write old asset");
+        fs::write(temp.path().join("artifact.bin"), b"new").expect("change source");
+
+        let outcome = execute_resolved_with_fetcher(
+            test_scope(temp.path()),
+            vec![record.id.clone()],
+            false,
+            |_record, _fetched_at| unreachable!("local refresh does not fetch URLs"),
+        )
+        .expect("refresh local changed");
+
+        assert_eq!(outcome.result.payload["status"], "refreshed");
+        let refreshed = &outcome.result.payload["refreshed"][0];
+        assert_eq!(refreshed["old_id"], record.id);
+        assert_eq!(refreshed["replay_kind"], "local_file");
+        let new_id = refreshed["new_id"].as_str().expect("new source id");
+        assert_ne!(new_id, record.id);
+        assert!(!old_raw.exists());
+        assert!(!old_asset.exists());
+        assert!(temp.path().join(format!("raw/{new_id}.md")).is_file());
+        assert!(
+            temp.path()
+                .join(format!("raw/assets/{new_id}.bin"))
+                .is_file()
+        );
+        assert_eq!(outcome.result.payload["index_status"]["status"], "indexed");
+
+        let manifest = SourceManifest::read(temp.path()).expect("read manifest");
+        assert_eq!(manifest.entries.len(), 1);
+        assert_eq!(manifest.entries[0].id, new_id);
+        assert!(manifest.entries[0].replay.is_some());
+    }
+
+    #[test]
     fn explicit_unsupported_and_missing_sources_fail_structurally() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let file = seed_file(temp.path());
+        let file = seed_legacy_file(temp.path());
 
         let outcome = execute_resolved_with_fetcher(
             test_scope(temp.path()),
@@ -720,7 +1215,7 @@ mod tests {
         );
         assert_eq!(
             outcome.result.payload["failed"][0]["code"],
-            "unsupported_source_kind"
+            "missing_replay_metadata"
         );
         assert_eq!(outcome.result.payload["failed"][1]["code"], "not_found");
     }
@@ -729,7 +1224,7 @@ mod tests {
     fn all_source_refresh_skips_unsupported_records() {
         let temp = tempfile::tempdir().expect("tempdir");
         let url = seed_url(temp.path(), "https://example.test/a", "then", b"same");
-        let file = seed_file(temp.path());
+        let file = seed_unsupported_connector(temp.path());
 
         let outcome = execute_resolved_with_fetcher(
             test_scope(temp.path()),

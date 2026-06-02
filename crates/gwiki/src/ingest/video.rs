@@ -72,6 +72,8 @@ pub struct VideoIngestResult {
     pub derived_path: PathBuf,
     pub frame_samples: Vec<VideoFrameSample>,
     pub aligned_segments: Vec<AlignedVideoSegment>,
+    pub media_degradations: Vec<VideoMediaDegradation>,
+    pub transcription_degradation: Option<TranscriptionDegradation>,
 }
 
 pub fn ingest_video(
@@ -82,15 +84,16 @@ pub fn ingest_video(
 ) -> Result<VideoIngestResult, WikiError> {
     let content_hash = gobby_core::indexing::content_hash(&snapshot.bytes);
     let metadata = VideoSnapshotRef::from_snapshot(&snapshot);
-    ingest_video_with_asset(
+    let result = ingest_video_with_asset_without_index(
         vault_root,
-        store,
         scope,
         metadata,
         content_hash,
         VideoDegradationContext::default(),
         |record| write_asset(vault_root, record, &snapshot.file_name, &snapshot.bytes),
-    )
+    )?;
+    index_after_ingest(vault_root, store)?;
+    Ok(result)
 }
 
 pub fn ingest_video_file(
@@ -111,6 +114,26 @@ fn ingest_video_file_with_degradations(
     transcription_degradation: Option<&TranscriptionDegradation>,
     suppress_frame_sampling: bool,
 ) -> Result<VideoIngestResult, WikiError> {
+    let result = ingest_video_file_with_degradations_without_index(
+        vault_root,
+        scope,
+        snapshot,
+        media_degradations,
+        transcription_degradation,
+        suppress_frame_sampling,
+    )?;
+    index_after_ingest(vault_root, store)?;
+    Ok(result)
+}
+
+fn ingest_video_file_with_degradations_without_index(
+    vault_root: &Path,
+    scope: ScopeIdentity,
+    snapshot: VideoFileSnapshot,
+    media_degradations: &[VideoMediaDegradation],
+    transcription_degradation: Option<&TranscriptionDegradation>,
+    suppress_frame_sampling: bool,
+) -> Result<VideoIngestResult, WikiError> {
     let content_hash =
         gobby_core::indexing::file_content_hash(&snapshot.path).map_err(|error| WikiError::Io {
             action: "hash video source",
@@ -118,9 +141,8 @@ fn ingest_video_file_with_degradations(
             source: error,
         })?;
     let metadata = VideoSnapshotRef::from_file_snapshot(&snapshot);
-    ingest_video_with_asset(
+    ingest_video_with_asset_without_index(
         vault_root,
-        store,
         scope,
         metadata,
         content_hash,
@@ -146,6 +168,20 @@ pub fn ingest_video_file_with_production_processing(
     store: &mut impl WikiIndexStore,
     scope: ScopeIdentity,
     ai_context: &AiContext,
+    snapshot: VideoFileSnapshot,
+    translate: bool,
+) -> Result<VideoIngestResult, WikiError> {
+    let result = ingest_video_file_with_production_processing_without_index(
+        vault_root, scope, ai_context, snapshot, translate,
+    )?;
+    index_after_ingest(vault_root, store)?;
+    Ok(result)
+}
+
+pub(crate) fn ingest_video_file_with_production_processing_without_index(
+    vault_root: &Path,
+    scope: ScopeIdentity,
+    ai_context: &AiContext,
     mut snapshot: VideoFileSnapshot,
     translate: bool,
 ) -> Result<VideoIngestResult, WikiError> {
@@ -160,9 +196,8 @@ pub fn ingest_video_file_with_production_processing(
         let route = effective_route(ai_context, AiCapability::VisionExtract);
         if matches!(route, AiRouting::Daemon | AiRouting::Direct) {
             let vision_client = ProductionVisionClient::new(ai_context.clone());
-            return ingest_video_file_with_processing(
+            return ingest_video_file_with_processing_without_index(
                 vault_root,
-                store,
                 scope,
                 snapshot,
                 transcription_endpoint,
@@ -170,9 +205,8 @@ pub fn ingest_video_file_with_production_processing(
                 &media,
             );
         }
-        ingest_video_file_with_processing(
+        ingest_video_file_with_processing_without_index(
             vault_root,
-            store,
             scope,
             snapshot,
             transcription_endpoint,
@@ -183,9 +217,8 @@ pub fn ingest_video_file_with_production_processing(
 
     #[cfg(not(feature = "ai"))]
     {
-        ingest_video_file_with_processing(
+        ingest_video_file_with_processing_without_index(
             vault_root,
-            store,
             scope,
             snapshot,
             transcription_endpoint,
@@ -226,6 +259,26 @@ impl VideoMediaExtractor for ProductionVideoMediaExtractor {
 fn ingest_video_file_with_processing(
     vault_root: &Path,
     store: &mut impl WikiIndexStore,
+    scope: ScopeIdentity,
+    snapshot: VideoFileSnapshot,
+    transcription_endpoint: TranscriptionEndpoint<'_>,
+    vision_endpoint: VisionEndpoint<'_>,
+    media: &dyn VideoMediaExtractor,
+) -> Result<VideoIngestResult, WikiError> {
+    let result = ingest_video_file_with_processing_without_index(
+        vault_root,
+        scope,
+        snapshot,
+        transcription_endpoint,
+        vision_endpoint,
+        media,
+    )?;
+    index_after_ingest(vault_root, store)?;
+    Ok(result)
+}
+
+fn ingest_video_file_with_processing_without_index(
+    vault_root: &Path,
     scope: ScopeIdentity,
     mut snapshot: VideoFileSnapshot,
     transcription_endpoint: TranscriptionEndpoint<'_>,
@@ -326,9 +379,8 @@ fn ingest_video_file_with_processing(
         }
     }
 
-    ingest_video_file_with_degradations(
+    ingest_video_file_with_degradations_without_index(
         vault_root,
-        store,
         scope,
         snapshot,
         &media_degradations,
@@ -484,6 +536,26 @@ fn ingest_video_with_asset(
     degradations: VideoDegradationContext<'_>,
     write_asset_fn: impl FnOnce(&SourceRecord) -> Result<PathBuf, WikiError>,
 ) -> Result<VideoIngestResult, WikiError> {
+    let result = ingest_video_with_asset_without_index(
+        vault_root,
+        scope,
+        snapshot,
+        content_hash,
+        degradations,
+        write_asset_fn,
+    )?;
+    index_after_ingest(vault_root, store)?;
+    Ok(result)
+}
+
+fn ingest_video_with_asset_without_index(
+    vault_root: &Path,
+    scope: ScopeIdentity,
+    snapshot: VideoSnapshotRef<'_>,
+    content_hash: String,
+    degradations: VideoDegradationContext<'_>,
+    write_asset_fn: impl FnOnce(&SourceRecord) -> Result<PathBuf, WikiError>,
+) -> Result<VideoIngestResult, WikiError> {
     let title = markdown_title(snapshot.file_name);
     let draft = SourceDraft {
         location: snapshot.location.to_string(),
@@ -558,7 +630,6 @@ fn ingest_video_with_asset(
             transcription: snapshot.transcription,
         },
     )?;
-    index_after_ingest(vault_root, store)?;
 
     Ok(VideoIngestResult {
         record,
@@ -567,6 +638,8 @@ fn ingest_video_with_asset(
         derived_path,
         frame_samples,
         aligned_segments,
+        media_degradations: degradations.media.to_vec(),
+        transcription_degradation: degradations.transcription.cloned(),
     })
 }
 

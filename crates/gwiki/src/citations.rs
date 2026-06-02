@@ -137,6 +137,7 @@ mod tests {
             license: None,
             ingestion_method: crate::sources::IngestionMethod::Manual,
             compile_status: crate::sources::CompileStatus::Pending,
+            replay: None,
         };
 
         let rendered = render_source_citation(&entry);
@@ -160,6 +161,7 @@ mod tests {
             license: None,
             ingestion_method: crate::sources::IngestionMethod::Manual,
             compile_status: crate::sources::CompileStatus::Pending,
+            replay: None,
         };
 
         let rendered = render_source_citation(&entry);

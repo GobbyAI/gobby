@@ -90,10 +90,19 @@ pub fn ingest_document(
     scope: ScopeIdentity,
     snapshot: DocumentSnapshot,
 ) -> Result<DocumentIngestResult, WikiError> {
+    let result = ingest_document_without_index(vault_root, scope, snapshot)?;
+    index_after_ingest(vault_root, store)?;
+    Ok(result)
+}
+
+pub(crate) fn ingest_document_without_index(
+    vault_root: &Path,
+    scope: ScopeIdentity,
+    snapshot: DocumentSnapshot,
+) -> Result<DocumentIngestResult, WikiError> {
     static EXTRACTOR: LocalDocumentExtractor = LocalDocumentExtractor;
-    ingest_document_with_endpoint(
+    ingest_document_with_endpoint_without_index(
         vault_root,
-        store,
         scope,
         snapshot,
         DocumentEndpoint::Available(&EXTRACTOR),
@@ -103,6 +112,18 @@ pub fn ingest_document(
 pub fn ingest_document_with_endpoint(
     vault_root: &Path,
     store: &mut impl WikiIndexStore,
+    scope: ScopeIdentity,
+    snapshot: DocumentSnapshot,
+    endpoint: DocumentEndpoint<'_>,
+) -> Result<DocumentIngestResult, WikiError> {
+    let result =
+        ingest_document_with_endpoint_without_index(vault_root, scope, snapshot, endpoint)?;
+    index_after_ingest(vault_root, store)?;
+    Ok(result)
+}
+
+pub(crate) fn ingest_document_with_endpoint_without_index(
+    vault_root: &Path,
     scope: ScopeIdentity,
     snapshot: DocumentSnapshot,
     endpoint: DocumentEndpoint<'_>,
@@ -153,7 +174,6 @@ pub fn ingest_document_with_endpoint(
         extraction.as_ref(),
         degradation.as_ref(),
     )?;
-    index_after_ingest(vault_root, store)?;
 
     Ok(DocumentIngestResult {
         record,

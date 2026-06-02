@@ -112,6 +112,19 @@ pub fn ingest_pdf_file(
     endpoint: VisionEndpoint<'_>,
     options: PdfIngestOptions,
 ) -> Result<IngestResult, WikiError> {
+    let result = ingest_pdf_file_without_index(vault_root, scope, snapshot, endpoint, options)?;
+    index_after_ingest(vault_root, store)?;
+    Ok(result)
+}
+
+#[cfg(feature = "documents")]
+pub(crate) fn ingest_pdf_file_without_index(
+    vault_root: &Path,
+    scope: &ScopeIdentity,
+    snapshot: PdfFileSnapshot,
+    endpoint: VisionEndpoint<'_>,
+    options: PdfIngestOptions,
+) -> Result<IngestResult, WikiError> {
     let mut degradations = Vec::new();
     let pages = match extract_text_layer_pages(&snapshot.bytes) {
         Ok(pages) => pages,
@@ -146,7 +159,6 @@ pub fn ingest_pdf_file(
 
     ingest_pages_with_vision_inner(
         vault_root,
-        store,
         scope,
         PdfSnapshot {
             location: snapshot.location,
@@ -169,9 +181,26 @@ pub fn ingest_pages_with_vision(
     rendered_pages: Vec<PdfRenderedPage>,
     endpoint: VisionEndpoint<'_>,
 ) -> Result<IngestResult, WikiError> {
+    let result = ingest_pages_with_vision_without_index(
+        vault_root,
+        scope,
+        snapshot,
+        rendered_pages,
+        endpoint,
+    )?;
+    index_after_ingest(vault_root, store)?;
+    Ok(result)
+}
+
+pub(crate) fn ingest_pages_with_vision_without_index(
+    vault_root: &Path,
+    scope: &ScopeIdentity,
+    snapshot: PdfSnapshot,
+    rendered_pages: Vec<PdfRenderedPage>,
+    endpoint: VisionEndpoint<'_>,
+) -> Result<IngestResult, WikiError> {
     ingest_pages_with_vision_inner(
         vault_root,
-        store,
         scope,
         snapshot,
         rendered_pages,
@@ -182,7 +211,6 @@ pub fn ingest_pages_with_vision(
 
 fn ingest_pages_with_vision_inner(
     vault_root: &Path,
-    store: &mut impl WikiIndexStore,
     scope: &ScopeIdentity,
     snapshot: PdfSnapshot,
     rendered_pages: Vec<PdfRenderedPage>,
@@ -232,7 +260,6 @@ fn ingest_pages_with_vision_inner(
         &summary,
     );
     let raw_path = write_raw_markdown(vault_root, &record, &markdown)?;
-    index_after_ingest(vault_root, store)?;
 
     Ok(IngestResult {
         record,

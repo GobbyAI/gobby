@@ -61,6 +61,18 @@ pub fn ingest_image_with_production_vision(
     ai_context: &AiContext,
     snapshot: ImageSnapshot,
 ) -> Result<ImageIngestResult, WikiError> {
+    let result =
+        ingest_image_with_production_vision_without_index(vault_root, scope, ai_context, snapshot)?;
+    index_after_ingest(vault_root, store)?;
+    Ok(result)
+}
+
+pub(crate) fn ingest_image_with_production_vision_without_index(
+    vault_root: &Path,
+    scope: ScopeIdentity,
+    ai_context: &AiContext,
+    snapshot: ImageSnapshot,
+) -> Result<ImageIngestResult, WikiError> {
     let capability = AiCapability::VisionExtract;
 
     #[cfg(feature = "ai")]
@@ -72,20 +84,31 @@ pub fn ingest_image_with_production_vision(
             Some(client) => VisionEndpoint::Available(client),
             None => VisionEndpoint::Unavailable(vision_degradation(routing)),
         };
-        ingest_image_with_vision(vault_root, store, scope, snapshot, endpoint)
+        ingest_image_with_vision_without_index(vault_root, scope, snapshot, endpoint)
     }
 
     #[cfg(not(feature = "ai"))]
     {
         let endpoint =
             VisionEndpoint::Unavailable(vision_degradation(ai_context.binding(capability).routing));
-        ingest_image_with_vision(vault_root, store, scope, snapshot, endpoint)
+        ingest_image_with_vision_without_index(vault_root, scope, snapshot, endpoint)
     }
 }
 
 pub fn ingest_image_with_vision(
     vault_root: &Path,
     store: &mut impl WikiIndexStore,
+    scope: ScopeIdentity,
+    snapshot: ImageSnapshot,
+    endpoint: VisionEndpoint<'_>,
+) -> Result<ImageIngestResult, WikiError> {
+    let result = ingest_image_with_vision_without_index(vault_root, scope, snapshot, endpoint)?;
+    index_after_ingest(vault_root, store)?;
+    Ok(result)
+}
+
+pub(crate) fn ingest_image_with_vision_without_index(
+    vault_root: &Path,
     scope: ScopeIdentity,
     snapshot: ImageSnapshot,
     endpoint: VisionEndpoint<'_>,
@@ -125,7 +148,6 @@ pub fn ingest_image_with_vision(
         },
         endpoint,
     )?;
-    index_after_ingest(vault_root, store)?;
 
     Ok(ImageIngestResult {
         record,

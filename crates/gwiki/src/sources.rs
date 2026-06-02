@@ -4,12 +4,14 @@ use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use gobby_core::config::AiRouting;
 use serde::{Deserialize, Serialize};
 
-use crate::WikiError;
+use crate::{IngestFileOptions, WikiError};
 
 const SOURCE_ID_HASH_PREFIX_LEN: usize = 16;
 const SOURCE_MANIFEST_LOCK_TIMEOUT_ENV: &str = "GWIKI_SOURCE_MANIFEST_LOCK_TIMEOUT_MS";
@@ -166,6 +168,103 @@ pub struct SourceRecord {
     pub license: Option<String>,
     pub ingestion_method: IngestionMethod,
     pub compile_status: CompileStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replay: Option<SourceReplay>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SourceReplay {
+    LocalFile {
+        path: PathBuf,
+        #[serde(default)]
+        options: SourceReplayOptions,
+    },
+}
+
+impl SourceReplay {
+    pub(crate) fn local_file(path: PathBuf, options: &IngestFileOptions) -> Self {
+        Self::LocalFile {
+            path,
+            options: SourceReplayOptions::from_ingest_file_options(options),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceReplayOptions {
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub no_ai: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub translate: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_lang: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub video_frame_interval_seconds: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transcription_routing: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vision_routing: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_routing: Option<String>,
+}
+
+impl SourceReplayOptions {
+    pub(crate) fn from_ingest_file_options(options: &IngestFileOptions) -> Self {
+        Self {
+            no_ai: options.no_ai,
+            translate: options.translate,
+            target_lang: options.target_lang.clone(),
+            video_frame_interval_seconds: options.video_frame_interval_seconds,
+            transcription_routing: options.transcription_routing.map(routing_name),
+            vision_routing: options.vision_routing.map(routing_name),
+            text_routing: options.text_routing.map(routing_name),
+        }
+    }
+
+    pub(crate) fn to_ingest_file_options(&self) -> Result<IngestFileOptions, WikiError> {
+        Ok(IngestFileOptions {
+            no_ai: self.no_ai,
+            translate: self.translate,
+            target_lang: self.target_lang.clone(),
+            video_frame_interval_seconds: self.video_frame_interval_seconds,
+            transcription_routing: parse_routing(
+                "transcription_routing",
+                &self.transcription_routing,
+            )?,
+            vision_routing: parse_routing("vision_routing", &self.vision_routing)?,
+            text_routing: parse_routing("text_routing", &self.text_routing)?,
+        })
+    }
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+fn routing_name(routing: AiRouting) -> String {
+    match routing {
+        AiRouting::Auto => "auto",
+        AiRouting::Daemon => "daemon",
+        AiRouting::Direct => "direct",
+        AiRouting::Off => "off",
+    }
+    .to_string()
+}
+
+fn parse_routing(
+    field: &'static str,
+    value: &Option<String>,
+) -> Result<Option<AiRouting>, WikiError> {
+    value
+        .as_deref()
+        .map(|value| {
+            AiRouting::from_str(value).map_err(|error| WikiError::InvalidInput {
+                field,
+                message: error.to_string(),
+            })
+        })
+        .transpose()
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -287,6 +386,7 @@ impl SourceManifest {
                 license: draft.license,
                 ingestion_method: draft.ingestion_method,
                 compile_status: draft.compile_status,
+                replay: None,
             };
             manifest.entries.push(record.clone());
             manifest.write_unlocked(vault_root)?;
@@ -695,6 +795,7 @@ fn inline_text(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gobby_core::config::AiRouting;
 
     #[test]
     fn dedupes_by_canonical_identity_and_hash() {
@@ -739,6 +840,69 @@ mod tests {
         assert!(index.contains("license: Apache-2.0"));
         assert!(index.contains("ingestion_method: `manual`"));
         assert!(index.contains("compile_status: `pending`"));
+    }
+
+    #[test]
+    fn local_file_replay_metadata_round_trips_through_manifest() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let record = SourceManifest::register(
+            temp.path(),
+            SourceDraft {
+                location: "notes/source.md".to_string(),
+                kind: SourceKind::Markdown,
+                fetched_at: "2026-06-02T00:00:00Z".to_string(),
+                content: b"# Source\n".to_vec(),
+                title: Some("Source".to_string()),
+                citation: Some("notes/source.md".to_string()),
+                license: None,
+                ingestion_method: IngestionMethod::Manual,
+                compile_status: CompileStatus::Pending,
+            },
+        )
+        .expect("register source");
+        let options = IngestFileOptions {
+            no_ai: true,
+            translate: true,
+            target_lang: Some("es".to_string()),
+            video_frame_interval_seconds: Some(11),
+            transcription_routing: Some(AiRouting::Direct),
+            vision_routing: Some(AiRouting::Off),
+            text_routing: Some(AiRouting::Daemon),
+        };
+        let replay = SourceReplay::local_file(PathBuf::from("notes/source.md"), &options);
+
+        SourceManifest::update(temp.path(), |manifest| {
+            manifest.entries[0].replay = Some(replay);
+            Ok(true)
+        })
+        .expect("write replay metadata");
+
+        let manifest = SourceManifest::read(temp.path()).expect("read source manifest");
+        assert_eq!(manifest.entries.len(), 1);
+        assert_eq!(manifest.entries[0].id, record.id);
+        let Some(SourceReplay::LocalFile {
+            path,
+            options: replay_options,
+        }) = &manifest.entries[0].replay
+        else {
+            panic!("expected local file replay");
+        };
+        assert_eq!(path, &PathBuf::from("notes/source.md"));
+        assert_eq!(
+            replay_options.transcription_routing.as_deref(),
+            Some("direct")
+        );
+        assert_eq!(replay_options.vision_routing.as_deref(), Some("off"));
+        assert_eq!(replay_options.text_routing.as_deref(), Some("daemon"));
+
+        let restored = replay_options
+            .to_ingest_file_options()
+            .expect("replay options parse");
+        assert_eq!(restored, options);
+        let index = std::fs::read_to_string(SourceManifest::index_path(temp.path()))
+            .expect("raw index written");
+        assert!(index.contains("\"replay\""));
+        assert!(index.contains("\"kind\":\"local_file\""));
     }
 
     #[test]

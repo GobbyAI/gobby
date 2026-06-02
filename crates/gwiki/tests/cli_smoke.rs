@@ -735,6 +735,71 @@ fn refresh_url_json_reports_unchanged_without_indexing() {
 }
 
 #[test]
+fn refresh_ingest_file_json_replays_local_dry_run_and_unchanged() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let hub = tmp.path().join("hub");
+    let topic = unique_topic("refresh-local");
+    let init = gwiki(&hub, tmp.path(), &["init", "--topic", &topic]);
+    assert_success(&init, "init topic");
+
+    let source = tmp.path().join("local-source.md");
+    fs::write(&source, "# Local\n\nsame body\n").expect("write local source");
+    let source_arg = source.to_str().expect("source path utf8");
+    let ingest = gwiki(
+        &hub,
+        tmp.path(),
+        &[
+            "--format",
+            "json",
+            "ingest-file",
+            "--topic",
+            &topic,
+            "--no-ai",
+            source_arg,
+        ],
+    );
+    assert_success(&ingest, "ingest-file initial");
+    let source_id = json_output(&ingest)["source"]["id"]
+        .as_str()
+        .expect("source id")
+        .to_string();
+
+    let dry_run = gwiki(
+        &hub,
+        tmp.path(),
+        &[
+            "--format",
+            "json",
+            "refresh",
+            "--topic",
+            &topic,
+            "--id",
+            &source_id,
+            "--dry-run",
+        ],
+    );
+    assert_success(&dry_run, "refresh local dry-run");
+    let dry_payload = json_output(&dry_run);
+    assert_eq!(dry_payload["status"], "dry_run");
+    assert_eq!(dry_payload["planned"][0]["id"], source_id);
+    assert_eq!(dry_payload["planned"][0]["replay_kind"], "local_file");
+
+    let refresh = gwiki(
+        &hub,
+        tmp.path(),
+        &[
+            "--format", "json", "refresh", "--topic", &topic, "--id", &source_id,
+        ],
+    );
+    assert_success(&refresh, "refresh local unchanged");
+    let payload = json_output(&refresh);
+    assert_eq!(payload["status"], "unchanged");
+    assert_eq!(payload["unchanged"][0]["id"], source_id);
+    assert_eq!(payload["unchanged"][0]["replay_kind"], "local_file");
+    assert_eq!(payload["index_status"]["status"], "not_run");
+}
+
+#[test]
 fn refresh_explicit_all_failed_preserves_json_stdout() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let hub = tmp.path().join("hub");

@@ -9,20 +9,24 @@ use gobby_core::config::AiRouting;
 use crate::ai::clients::ProductionVisionClient;
 use crate::api::IngestFileOptions;
 use crate::ingest::audio::{
-    AudioSnapshot, ingest_audio_with_transcription, production_transcription_endpoint,
+    AudioSnapshot, ingest_audio_with_transcription_without_index, production_transcription_endpoint,
 };
 #[cfg(feature = "documents")]
-use crate::ingest::document::{DocumentSnapshot, ingest_document};
-use crate::ingest::image::{ImageSnapshot, ingest_image_with_production_vision};
+use crate::ingest::document::{DocumentSnapshot, ingest_document_without_index};
+use crate::ingest::image::{ImageSnapshot, ingest_image_with_production_vision_without_index};
 #[cfg(feature = "documents")]
-use crate::ingest::pdf::{PdfFileSnapshot, PdfIngestOptions, ingest_pdf_file};
-use crate::ingest::video::{VideoFileSnapshot, ingest_video_file_with_production_processing};
+use crate::ingest::pdf::{PdfFileSnapshot, PdfIngestOptions, ingest_pdf_file_without_index};
+use crate::ingest::video::{
+    VideoFileSnapshot, VideoIngestResult,
+    ingest_video_file_with_production_processing_without_index,
+};
 use crate::ingest::{
     IngestResult, index_after_ingest, markdown_metadata, markdown_title, path_to_string,
     text_from_utf8_lossy, write_asset, write_raw_markdown,
 };
 use crate::sources::{
     CompileStatus, IngestionMethod, SourceDraft, SourceDraftRef, SourceKind, SourceManifest,
+    SourceReplay,
 };
 use crate::store::WikiIndexStore;
 use crate::vision::VisionDegradation;
@@ -41,6 +45,12 @@ pub struct StdinSnapshot {
     pub bytes: Vec<u8>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LocalFileIngestResult {
+    pub result: IngestResult,
+    pub degradations: Vec<String>,
+}
+
 pub fn ingest_path(
     vault_root: &Path,
     store: &mut impl WikiIndexStore,
@@ -50,18 +60,31 @@ pub fn ingest_path(
     path: &Path,
     fetched_at: &str,
 ) -> Result<IngestResult, WikiError> {
+    let result =
+        ingest_path_without_index(vault_root, scope, ai_context, options, path, fetched_at)?;
+    index_after_ingest(vault_root, store)?;
+    Ok(result.result)
+}
+
+pub(crate) fn ingest_path_without_index(
+    vault_root: &Path,
+    scope: &ScopeIdentity,
+    ai_context: &AiContext,
+    options: &IngestFileOptions,
+    path: &Path,
+    fetched_at: &str,
+) -> Result<LocalFileIngestResult, WikiError> {
     let kind = detect_source_kind(path);
     let file_name = path
         .file_name()
         .and_then(|value| value.to_str())
         .unwrap_or("source");
     let location = source_location(vault_root, path);
-    match kind {
+    let mut local_result = match kind {
         SourceKind::Audio => {
             let bytes = read_source_file(path)?;
-            return ingest_audio_with_transcription(
+            let result = ingest_audio_with_transcription_without_index(
                 vault_root,
-                store,
                 scope.clone(),
                 AudioSnapshot {
                     location,
@@ -72,14 +95,22 @@ pub fn ingest_path(
                     duration_seconds: None,
                 },
                 production_transcription_endpoint(ai_context, options.translate),
-            )
-            .map(Into::into);
+            )?;
+            let degradations = result
+                .transcription_degradation
+                .as_ref()
+                .map(transcription_degradation_summary)
+                .into_iter()
+                .collect();
+            LocalFileIngestResult {
+                result: result.into(),
+                degradations,
+            }
         }
         SourceKind::Image => {
             let bytes = read_source_file(path)?;
-            return ingest_image_with_production_vision(
+            let result = ingest_image_with_production_vision_without_index(
                 vault_root,
-                store,
                 scope.clone(),
                 ai_context,
                 ImageSnapshot {
@@ -91,13 +122,21 @@ pub fn ingest_path(
                     width: None,
                     height: None,
                 },
-            )
-            .map(Into::into);
+            )?;
+            let degradations = result
+                .vision_degradation
+                .as_ref()
+                .map(vision_degradation_summary)
+                .into_iter()
+                .collect();
+            LocalFileIngestResult {
+                result: result.into(),
+                degradations,
+            }
         }
         SourceKind::Video => {
-            return ingest_video_file_with_production_processing(
+            let result = ingest_video_file_with_production_processing_without_index(
                 vault_root,
-                store,
                 scope.clone(),
                 ai_context,
                 VideoFileSnapshot {
@@ -115,8 +154,12 @@ pub fn ingest_path(
                     transcription: None,
                 },
                 options.translate,
-            )
-            .map(Into::into);
+            )?;
+            let degradations = video_degradation_summaries(&result);
+            LocalFileIngestResult {
+                result: result.into(),
+                degradations,
+            }
         }
         #[cfg(feature = "documents")]
         SourceKind::Pdf => {
@@ -142,33 +185,38 @@ pub fn ingest_path(
                             ai_context.binding(AiCapability::VisionExtract).routing,
                         ))
                     });
-                return ingest_pdf_file(
+                let result = ingest_pdf_file_without_index(
                     vault_root,
-                    store,
                     scope,
                     snapshot,
                     endpoint,
                     PdfIngestOptions::default(),
-                );
+                )?;
+                LocalFileIngestResult {
+                    result,
+                    degradations: Vec::new(),
+                }
             }
             #[cfg(not(feature = "ai"))]
             {
-                return ingest_pdf_file(
+                let result = ingest_pdf_file_without_index(
                     vault_root,
-                    store,
                     scope,
                     snapshot,
                     VisionEndpoint::Unavailable(vision_degradation(AiRouting::Off)),
                     PdfIngestOptions::default(),
-                );
+                )?;
+                LocalFileIngestResult {
+                    result,
+                    degradations: Vec::new(),
+                }
             }
         }
         #[cfg(feature = "documents")]
         SourceKind::Office | SourceKind::Html => {
             let bytes = read_source_file(path)?;
-            return ingest_document(
+            let result = ingest_document_without_index(
                 vault_root,
-                store,
                 scope.clone(),
                 DocumentSnapshot {
                     location,
@@ -177,48 +225,134 @@ pub fn ingest_path(
                     bytes,
                     kind,
                 },
-            )
-            .map(Into::into);
+            )?;
+            let degradations = result
+                .document_degradation
+                .as_ref()
+                .map(document_degradation_summary)
+                .into_iter()
+                .collect();
+            LocalFileIngestResult {
+                result: result.into(),
+                degradations,
+            }
         }
-        _ => {}
-    }
+        _ => ingest_generic_file_without_index(
+            vault_root, &kind, file_name, &location, path, fetched_at,
+        )?,
+    };
 
+    attach_replay_metadata(vault_root, &mut local_result.result, path, options)?;
+    Ok(local_result)
+}
+
+fn ingest_generic_file_without_index(
+    vault_root: &Path,
+    kind: &SourceKind,
+    file_name: &str,
+    location: &str,
+    path: &Path,
+    fetched_at: &str,
+) -> Result<LocalFileIngestResult, WikiError> {
     let bytes = read_source_file(path)?;
     let title = markdown_title(file_name);
     let record = SourceManifest::register_borrowed(
         vault_root,
         SourceDraftRef {
-            location: location.clone(),
+            location: location.to_string(),
             kind: kind.clone(),
             fetched_at: fetched_at.to_string(),
             content: &bytes,
             title: Some(title.clone()),
-            citation: Some(location.clone()),
+            citation: Some(location.to_string()),
             license: None,
             ingestion_method: IngestionMethod::Manual,
             compile_status: CompileStatus::Pending,
         },
     )?;
-    let asset_path = should_store_asset(&kind, bytes.len())
+    let asset_path = should_store_asset(kind, bytes.len())
         .then(|| write_asset(vault_root, &record, file_name, &bytes))
         .transpose()?;
     let markdown = render_file_markdown(
         &title,
-        &location,
+        location,
         fetched_at,
         &record.content_hash,
-        &kind,
+        kind,
         &bytes,
         asset_path.as_deref(),
     );
     let raw_path = write_raw_markdown(vault_root, &record, &markdown)?;
-    index_after_ingest(vault_root, store)?;
 
-    Ok(IngestResult {
-        record,
-        raw_path,
-        asset_path,
+    Ok(LocalFileIngestResult {
+        result: IngestResult {
+            record,
+            raw_path,
+            asset_path,
+        },
+        degradations: Vec::new(),
     })
+}
+
+fn attach_replay_metadata(
+    vault_root: &Path,
+    result: &mut IngestResult,
+    path: &Path,
+    options: &IngestFileOptions,
+) -> Result<(), WikiError> {
+    let replay = SourceReplay::local_file(path.to_path_buf(), options);
+    SourceManifest::update(vault_root, |manifest| {
+        let Some(entry) = manifest
+            .entries
+            .iter_mut()
+            .find(|entry| entry.id == result.record.id)
+        else {
+            result.record.replay = Some(replay.clone());
+            return Ok(false);
+        };
+        if entry.replay.as_ref() == Some(&replay) {
+            result.record.replay = Some(replay);
+            return Ok(false);
+        }
+        entry.replay = Some(replay.clone());
+        result.record.replay = Some(replay);
+        Ok(true)
+    })
+}
+
+fn transcription_degradation_summary(
+    degradation: &crate::transcribe::TranscriptionDegradation,
+) -> String {
+    format!(
+        "audio_transcription:{}:{}",
+        degradation.reason, degradation.fallback
+    )
+}
+
+fn vision_degradation_summary(degradation: &VisionDegradation) -> String {
+    format!("vision:{}:{}", degradation.reason, degradation.fallback)
+}
+
+#[cfg(feature = "documents")]
+fn document_degradation_summary(degradation: &crate::document::DocumentDegradation) -> String {
+    format!("document:{}:{}", degradation.reason(), degradation.fallback)
+}
+
+fn video_degradation_summaries(result: &VideoIngestResult) -> Vec<String> {
+    let mut degradations = result
+        .media_degradations
+        .iter()
+        .map(|degradation| {
+            format!(
+                "video_{}:{}:{}",
+                degradation.kind, degradation.reason, degradation.message
+            )
+        })
+        .collect::<Vec<_>>();
+    if let Some(degradation) = &result.transcription_degradation {
+        degradations.push(transcription_degradation_summary(degradation));
+    }
+    degradations
 }
 
 fn read_source_file(path: &Path) -> Result<Vec<u8>, WikiError> {

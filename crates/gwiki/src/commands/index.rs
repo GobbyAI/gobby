@@ -165,6 +165,30 @@ fn resolve_ingest_ai_context(
     Ok((context, options))
 }
 
+pub(crate) fn resolve_ingest_file_ai_context(
+    scope: &ScopeIdentity,
+    options: &IngestFileOptions,
+    command: &str,
+) -> Result<(AiContext, IngestFileOptions), WikiError> {
+    let project_id = ai_project_id(scope);
+    let gobby_home = gobby_home()?;
+    if let Some(database_url) = database_url_from_env() {
+        let mut conn = connect_postgres_index(&database_url, command)?;
+        let primary = PostgresConfigSource { conn: &mut conn };
+        let mut source = AiConfigSource::with_primary_from_gobby_home(primary, &gobby_home)
+            .map_err(|error| WikiError::Config {
+                detail: format!("failed to resolve AI config for {command}: {error}"),
+            })?;
+        return resolve_ingest_ai_context(project_id, options, &mut source);
+    }
+
+    let mut source =
+        LocalAiConfigSource::from_gobby_home(&gobby_home).map_err(|error| WikiError::Config {
+            detail: format!("failed to resolve AI config for {command}: {error}"),
+        })?;
+    resolve_ingest_ai_context(project_id, options, &mut source)
+}
+
 fn resolve_video_frame_interval_seconds(source: &mut impl ConfigSource) -> Result<u32, WikiError> {
     let Some(raw_value) = source.config_value(VIDEO_FRAME_INTERVAL_KEY) else {
         return Ok(ingest::video::DEFAULT_FRAME_INTERVAL_SECONDS);

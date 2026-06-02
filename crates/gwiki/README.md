@@ -26,10 +26,16 @@ batch changed.
 gwiki refresh [--id SOURCE_ID ...] [--dry-run] [--format json] [--project | --topic NAME]
 ```
 
-Refresh v1 handles URL-backed source records only. With no `--id`, it refreshes
-all URL-backed records in the selected scope and skips file/media/stdin sources.
-With explicit `--id`, missing or non-URL records are reported in `failed`.
-`--dry-run` reports candidates without fetching, writing, deleting, or indexing.
+Refresh is manifest-driven from `raw/INDEX.md`. It refreshes URL records and
+local files originally captured by `gwiki ingest-file`, including audio, image,
+video, PDF, Office, HTML, Markdown, text, and generic file sources. It never
+scans directories or follows globs. Unchanged local file bytes are reported
+without rerunning AI/media extraction. Connector records without replay
+contracts, such as stdin, research notes, MediaWiki, Wayback, and Git
+repositories, are skipped unless explicitly selected. Local file/media records
+without replay metadata are reported in `failed`.
+`--dry-run` reports candidates without fetching, reading source bytes, writing,
+deleting, or indexing.
 
 JSON output includes `command: "refresh"`, `scope`, `status`, `dry_run`,
 `planned`, `refreshed`, `unchanged`, `failed`, `skipped`, `indexed`,
