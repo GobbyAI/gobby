@@ -218,7 +218,11 @@ fn parse_duration_seconds(raw: &str) -> Option<u32> {
         .lines()
         .map(str::trim)
         .find_map(|line| line.parse::<f64>().ok())?;
-    if !seconds.is_finite() || seconds < 0.0 || seconds > u32::MAX as f64 {
+    if !seconds.is_finite() || seconds < 0.0 {
+        return None;
+    }
+    let secs_int = seconds.trunc() as u64;
+    if secs_int > u64::from(u32::MAX) {
         return None;
     }
     Some(seconds.ceil() as u32)

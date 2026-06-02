@@ -201,8 +201,12 @@ pub fn run_lifecycle_action(
 ) -> anyhow::Result<GraphLifecycleOutput> {
     let daemon_url = require_daemon_url(request.daemon_url.as_deref(), action)?;
     let url = build_lifecycle_url(daemon_url, action, &request.project_id)?;
+    let timeout = match action {
+        GraphLifecycleAction::Clear => std::time::Duration::from_secs(15),
+        GraphLifecycleAction::Rebuild => std::time::Duration::from_secs(120),
+    };
     let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
+        .timeout(timeout)
         .build()
         .context("failed to build HTTP client")?;
 

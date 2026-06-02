@@ -17,7 +17,7 @@ pub(super) fn cleanup_deleted_file_projections(
     ctx: &Context,
     file_path: &str,
     outcome: &mut IndexOutcome,
-    file_vectors_synced: bool,
+    file_vectors_synced: Option<bool>,
 ) {
     if let Err(error) = code_graph::delete_file_projection(ctx, file_path) {
         push_projection_cleanup_degradation(
@@ -41,7 +41,7 @@ pub(super) fn cleanup_deleted_file_projections(
                 );
             }
         }
-        None if file_vectors_synced => {
+        None if file_vectors_synced == Some(true) => {
             push_projection_cleanup_degradation(
                 outcome,
                 file_path,

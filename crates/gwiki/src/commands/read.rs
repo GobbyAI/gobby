@@ -7,6 +7,8 @@ use crate::markdown::parse_atx_heading;
 use crate::support::scope::{resolve_command_scope, resolved_scope_identity};
 use crate::{CommandOutcome, ReadTarget, ScopeIdentity, ScopeSelection, WikiError};
 
+const MAX_TITLE_CANDIDATES: usize = 50;
+
 pub(crate) fn execute(
     target: ReadTarget,
     selection: ScopeSelection,
@@ -59,7 +61,7 @@ fn read_title(root: &Path, scope: ScopeIdentity, title: String) -> Result<ReadOu
         ));
     }
 
-    let mut candidates = title_candidates(root, &title)?;
+    let mut candidates = title_candidates(root, &title, MAX_TITLE_CANDIDATES)?;
     candidates.sort_by(|left, right| left.wiki_path.cmp(&right.wiki_path));
     match candidates.len().cmp(&1) {
         Ordering::Less => Ok(ReadOutput::not_found(
@@ -158,9 +160,13 @@ fn is_readable_wiki_path(path: &Path) -> bool {
     )
 }
 
-fn title_candidates(root: &Path, title: &str) -> Result<Vec<ReadCandidate>, WikiError> {
+fn title_candidates(
+    root: &Path,
+    title: &str,
+    max_results: usize,
+) -> Result<Vec<ReadCandidate>, WikiError> {
     let mut candidates = Vec::new();
-    collect_title_candidates(root, root, title, &mut candidates)?;
+    collect_title_candidates(root, root, title, max_results, &mut candidates)?;
     Ok(candidates)
 }
 
@@ -168,8 +174,13 @@ fn collect_title_candidates(
     root: &Path,
     dir: &Path,
     title: &str,
+    max_results: usize,
     candidates: &mut Vec<ReadCandidate>,
 ) -> Result<(), WikiError> {
+    if candidates.len() >= max_results {
+        return Ok(());
+    }
+
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -183,6 +194,9 @@ fn collect_title_candidates(
     };
 
     for entry in entries {
+        if candidates.len() >= max_results {
+            return Ok(());
+        }
         let entry = entry.map_err(|error| WikiError::Io {
             action: "read wiki directory entry",
             path: Some(dir.to_path_buf()),
@@ -190,7 +204,7 @@ fn collect_title_candidates(
         })?;
         let path = entry.path();
         if path.is_dir() {
-            collect_title_candidates(root, &path, title, candidates)?;
+            collect_title_candidates(root, &path, title, max_results, candidates)?;
             continue;
         }
 
@@ -211,6 +225,9 @@ fn collect_title_candidates(
                 wiki_path: relative.to_path_buf(),
                 title: Some(title.to_string()),
             });
+            if candidates.len() >= max_results {
+                return Ok(());
+            }
         }
     }
 

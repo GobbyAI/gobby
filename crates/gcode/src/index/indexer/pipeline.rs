@@ -289,7 +289,7 @@ pub(super) fn cleanup_skipped_explicit_file_if_indexed(
     rel: &str,
     outcome: &mut IndexOutcome,
     file_facts_exist: bool,
-    file_vectors_synced: bool,
+    file_vectors_synced: Option<bool>,
     delete_file_facts: impl FnOnce() -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     outcome.skipped_files += 1;

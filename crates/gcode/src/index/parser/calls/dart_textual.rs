@@ -181,8 +181,8 @@ fn matching_angle_start(bytes: &[u8], close_idx: usize) -> Option<usize> {
     let mut depth = 0usize;
     for idx in (0..=close_idx).rev() {
         match bytes[idx] {
-            b'>' => depth += 1,
-            b'<' if depth > 0 => {
+            b'>' if angle_looks_like_generic_delimiter(bytes, idx) => depth += 1,
+            b'<' if depth > 0 && angle_looks_like_generic_delimiter(bytes, idx) => {
                 depth -= 1;
                 if depth == 0 {
                     return Some(idx);
@@ -192,6 +192,40 @@ fn matching_angle_start(bytes: &[u8], close_idx: usize) -> Option<usize> {
         }
     }
     None
+}
+
+fn angle_looks_like_generic_delimiter(bytes: &[u8], idx: usize) -> bool {
+    let byte = bytes[idx];
+    let previous = idx.checked_sub(1).and_then(|previous| bytes.get(previous));
+    let next = bytes.get(idx + 1);
+
+    match byte {
+        b'<' => {
+            if next.is_some_and(|next| matches!(*next, b'<' | b'=')) {
+                return false;
+            }
+            !previous.is_some_and(|previous| is_angle_operator_neighbor(*previous))
+                && !next
+                    .is_some_and(|next| is_angle_operator_neighbor(*next) && !matches!(*next, b'>'))
+        }
+        b'>' => {
+            if next.is_some_and(|next| matches!(*next, b'=')) {
+                return false;
+            }
+            !previous.is_some_and(|previous| {
+                is_angle_operator_neighbor(*previous) && !matches!(*previous, b'>')
+            }) && !next
+                .is_some_and(|next| is_angle_operator_neighbor(*next) && !matches!(*next, b'>'))
+        }
+        _ => false,
+    }
+}
+
+fn is_angle_operator_neighbor(byte: u8) -> bool {
+    matches!(
+        byte,
+        b'=' | b'<' | b'>' | b'!' | b'&' | b'|' | b'+' | b'-' | b'*' | b'/' | b'^' | b'%'
+    )
 }
 
 #[derive(Debug, Clone, Default)]

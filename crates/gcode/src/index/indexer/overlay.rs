@@ -177,7 +177,7 @@ pub(super) fn index_overlay_files(
         ) {
             db::file_vectors_synced(conn, overlay_project_id, &rel)?
         } else {
-            false
+            None
         };
 
         match action {

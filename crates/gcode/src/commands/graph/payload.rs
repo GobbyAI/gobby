@@ -43,8 +43,8 @@ fn print_graph_payload(payload: &GraphPayload, format: Format) -> anyhow::Result
     }
 }
 
-pub(super) fn format_report_text(report: &ProjectGraphReport) -> String {
-    report.markdown.clone()
+pub(super) fn format_report_text(report: &ProjectGraphReport) -> &str {
+    &report.markdown
 }
 
 pub fn report(ctx: &Context, top_n: usize, format: Format) -> anyhow::Result<()> {
@@ -54,7 +54,7 @@ pub fn report(ctx: &Context, top_n: usize, format: Format) -> anyhow::Result<()>
     )?;
     match format {
         Format::Json => output::print_json(&generated_report),
-        Format::Text => output::print_text(&format_report_text(&generated_report)),
+        Format::Text => output::print_text(format_report_text(&generated_report)),
     }
 }
 

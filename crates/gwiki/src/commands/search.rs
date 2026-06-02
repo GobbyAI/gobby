@@ -126,7 +126,19 @@ fn resolve_semantic_embedding(
         AiRouting::Direct => {
             resolve_embedding_config(source).map(wiki_search::semantic::SemanticEmbedding::Direct)
         }
-        AiRouting::Auto => None,
+        AiRouting::Auto => {
+            #[cfg(feature = "ai")]
+            {
+                Some(wiki_search::semantic::SemanticEmbedding::Daemon(Box::new(
+                    context.clone(),
+                )))
+            }
+            #[cfg(not(feature = "ai"))]
+            {
+                resolve_embedding_config(source)
+                    .map(wiki_search::semantic::SemanticEmbedding::Direct)
+            }
+        }
     }
 }
 

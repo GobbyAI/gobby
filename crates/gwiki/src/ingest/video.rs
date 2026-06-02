@@ -542,6 +542,10 @@ fn persist_video_frame_assets(
     let mut persisted_paths = Vec::with_capacity(frame_image_paths.len());
     let mut descriptions = frame_descriptions.to_vec();
     for (index, path) in frame_image_paths.iter().enumerate() {
+        let cleanup_source_temp = samples
+            .get(index)
+            .is_some_and(|sample| sample.source_asset.as_path() == path.as_path())
+            && path.starts_with(std::env::temp_dir());
         let bytes = std::fs::read(path).map_err(|source| WikiError::Io {
             action: "read sampled video frame asset",
             path: Some(path.clone()),
@@ -563,6 +567,9 @@ fn persist_video_frame_assets(
         if let Some(description) = descriptions.get_mut(index) {
             description.source_reference = reference;
         }
+        if cleanup_source_temp {
+            remove_sampled_temp_frame(path)?;
+        }
         persisted_paths.push(persisted_path);
     }
 
@@ -571,6 +578,18 @@ fn persist_video_frame_assets(
         image_paths: persisted_paths,
         descriptions,
     })
+}
+
+fn remove_sampled_temp_frame(path: &Path) -> Result<(), WikiError> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(WikiError::Io {
+            action: "remove sampled video frame temp file",
+            path: Some(path.to_path_buf()),
+            source,
+        }),
+    }
 }
 
 #[derive(Clone, Copy, Default)]

@@ -119,14 +119,14 @@ jobs:
 
       - name: Upload Unix artifact
         if: "!startsWith(matrix.os, 'windows')"
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@97422693d3a0493fc2d725fe8c0ac1c1097e9128
         with:
           name: gcode-${{ matrix.target }}
           path: gcode-${{ matrix.target }}.tar.gz
 
       - name: Upload Windows artifact
         if: startsWith(matrix.os, 'windows')
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@97422693d3a0493fc2d725fe8c0ac1c1097e9128
         with:
           name: gcode-${{ matrix.target }}
           path: gcode-${{ matrix.target }}.zip

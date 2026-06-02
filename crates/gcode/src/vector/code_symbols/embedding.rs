@@ -282,22 +282,18 @@ fn parse_embedding(value: &Value) -> Result<Vec<f32>, VectorLifecycleError> {
         })?
         .iter()
         .map(|value| {
-            value
-                .as_f64()
-                .map(|f| {
-                    let converted = f as f32;
-                    if f.is_finite() && converted.is_infinite() {
-                        log::warn!(
-                            "embedding value {f} overflowed f32 range and was stored as {converted}"
-                        );
-                    }
-                    converted
-                })
-                .ok_or_else(|| {
-                    VectorLifecycleError::EmbeddingResponse(
-                        "embedding array contains a non-number".to_string(),
-                    )
-                })
+            let f = value.as_f64().ok_or_else(|| {
+                VectorLifecycleError::EmbeddingResponse(
+                    "embedding array contains a non-number".to_string(),
+                )
+            })?;
+            let converted = f as f32;
+            if !f.is_finite() || converted.is_infinite() {
+                return Err(VectorLifecycleError::EmbeddingResponse(
+                    "embedding contains value outside f32 range".to_string(),
+                ));
+            }
+            Ok(converted)
         })
         .collect::<Result<Vec<_>, _>>()?;
 

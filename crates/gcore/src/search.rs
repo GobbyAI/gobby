@@ -162,6 +162,10 @@ mod tests {
             sanitize_pg_search_query(r"\-draft -stable"),
             r"\-draft \-stable"
         );
+        assert_eq!(
+            sanitize_pg_search_query("alpha\tbeta\u{0}gamma"),
+            "alpha betagamma"
+        );
         assert_eq!(sanitize_pg_search_query(":: + ()"), ":: + ()");
     }
 

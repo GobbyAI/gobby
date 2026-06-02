@@ -16,16 +16,58 @@ struct PostgresConfigSource<'a> {
     conn: &'a mut Client,
 }
 
-impl ConfigSource for PostgresConfigSource<'_> {
-    fn config_value(&mut self, key: &str) -> Option<String> {
-        gobby_core::postgres::read_config_value(self.conn, key)
-            .ok()
-            .flatten()
-            .and_then(|raw| gobby_core::config::decode_config_value(&raw))
+trait ServiceConfigSource {
+    fn config_value(&mut self, key: &str) -> anyhow::Result<Option<String>>;
+    fn resolve_value(&mut self, value: &str) -> anyhow::Result<String>;
+}
+
+fn service_env_value(key: &str) -> Option<String> {
+    let env_key = match key {
+        "databases.falkordb.host" => "GOBBY_FALKORDB_HOST",
+        "databases.falkordb.port" => "GOBBY_FALKORDB_PORT",
+        "databases.falkordb.requirepass" | "databases.falkordb.password" => {
+            "GOBBY_FALKORDB_PASSWORD"
+        }
+        "databases.qdrant.url" => "GOBBY_QDRANT_URL",
+        "databases.qdrant.api_key" => "GOBBY_QDRANT_API_KEY",
+        _ => return None,
+    };
+    std::env::var(env_key).ok()
+}
+
+fn config_store_missing(error: &anyhow::Error) -> bool {
+    error.chain().any(|source| {
+        source
+            .downcast_ref::<postgres::Error>()
+            .and_then(postgres::Error::as_db_error)
+            .is_some_and(|db_error| *db_error.code() == postgres::error::SqlState::UNDEFINED_TABLE)
+    })
+}
+
+impl ServiceConfigSource for PostgresConfigSource<'_> {
+    fn config_value(&mut self, key: &str) -> anyhow::Result<Option<String>> {
+        match gobby_core::postgres::read_config_value(self.conn, key) {
+            Ok(raw) => Ok(raw.and_then(|raw| gobby_core::config::decode_config_value(&raw))),
+            Err(error) if config_store_missing(&error) => Ok(None),
+            Err(error) => Err(error),
+        }
     }
 
     fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
         secrets::resolve_config_value(value, self.conn)
+    }
+}
+
+impl ConfigSource for PostgresConfigSource<'_> {
+    fn config_value(&mut self, key: &str) -> Option<String> {
+        <Self as ServiceConfigSource>::config_value(self, key)
+            .inspect_err(|error| log::warn!("failed to read config key {key:?}: {error}"))
+            .ok()
+            .flatten()
+    }
+
+    fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
+        <Self as ServiceConfigSource>::resolve_value(self, value)
     }
 }
 
@@ -36,15 +78,36 @@ struct FallbackConfigSource<'a> {
 
 impl ConfigSource for FallbackConfigSource<'_> {
     fn config_value(&mut self, key: &str) -> Option<String> {
-        self.postgres.config_value(key).or_else(|| {
-            self.standalone
-                .as_mut()
-                .and_then(|standalone| standalone.config_value(key))
-        })
+        service_env_value(key)
+            .or_else(|| ConfigSource::config_value(&mut self.postgres, key))
+            .or_else(|| {
+                self.standalone
+                    .as_mut()
+                    .and_then(|standalone| standalone.config_value(key))
+            })
     }
 
     fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
-        self.postgres.resolve_value(value)
+        ConfigSource::resolve_value(&mut self.postgres, value)
+    }
+}
+
+impl ServiceConfigSource for FallbackConfigSource<'_> {
+    fn config_value(&mut self, key: &str) -> anyhow::Result<Option<String>> {
+        if let Some(value) = service_env_value(key) {
+            return Ok(Some(value));
+        }
+        if let Some(value) = ServiceConfigSource::config_value(&mut self.postgres, key)? {
+            return Ok(Some(value));
+        }
+        Ok(self
+            .standalone
+            .as_mut()
+            .and_then(|standalone| standalone.config_value(key)))
+    }
+
+    fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
+        ServiceConfigSource::resolve_value(&mut self.postgres, value)
     }
 }
 
@@ -69,7 +132,11 @@ impl TracingFallbackConfigSource<'_> {
 
 impl ConfigSource for TracingFallbackConfigSource<'_> {
     fn config_value(&mut self, key: &str) -> Option<String> {
-        if let Some(value) = self.postgres.config_value(key) {
+        if let Some(value) = service_env_value(key) {
+            self.hits.insert(key.to_string(), "env");
+            return Some(value);
+        }
+        if let Some(value) = ConfigSource::config_value(&mut self.postgres, key) {
             self.hits.insert(key.to_string(), "config_store");
             return Some(value);
         }
@@ -84,7 +151,7 @@ impl ConfigSource for TracingFallbackConfigSource<'_> {
     }
 
     fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
-        self.postgres.resolve_value(value)
+        ConfigSource::resolve_value(&mut self.postgres, value)
     }
 }
 
@@ -184,6 +251,22 @@ where
 }
 
 #[cfg(test)]
+impl<R, S> ServiceConfigSource for ClosureConfigSource<R, S>
+where
+    R: FnMut(&str) -> Option<String>,
+    S: FnMut(&str) -> anyhow::Result<String>,
+{
+    fn config_value(&mut self, key: &str) -> anyhow::Result<Option<String>> {
+        Ok((self.read_config_value)(key)
+            .and_then(|raw| gobby_core::config::decode_config_value(&raw)))
+    }
+
+    fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
+        (self.resolve_value)(value)
+    }
+}
+
+#[cfg(test)]
 pub(super) fn resolve_falkordb_config_from_values<R, S>(
     read_config_value: R,
     resolve_value: S,
@@ -196,7 +279,7 @@ where
         read_config_value,
         resolve_value,
     };
-    resolve_falkordb_config_from_source(&mut source)
+    resolve_falkordb_config_from_source(&mut source).expect("test config should resolve")
 }
 
 #[cfg(test)]
@@ -212,7 +295,7 @@ where
         read_config_value,
         resolve_value,
     };
-    gobby_core::config::resolve_qdrant_config(&mut source)
+    resolve_qdrant_config_from_source(&mut source).expect("test config should resolve")
 }
 
 #[cfg(test)]
@@ -252,7 +335,7 @@ pub(super) fn resolve_falkordb_config(
     conn: &mut Client,
     standalone: Option<StandaloneConfig>,
     _quiet: bool,
-) -> Option<FalkorConfig> {
+) -> anyhow::Result<Option<FalkorConfig>> {
     let mut source = FallbackConfigSource {
         postgres: PostgresConfigSource { conn },
         standalone,
@@ -260,15 +343,21 @@ pub(super) fn resolve_falkordb_config(
     resolve_falkordb_config_from_source(&mut source)
 }
 
-fn resolve_falkordb_config_from_source(source: &mut impl ConfigSource) -> Option<FalkorConfig> {
-    let connection = gobby_core::config::resolve_falkordb_config(source)?;
+fn resolve_falkordb_config_from_source(
+    source: &mut impl ServiceConfigSource,
+) -> anyhow::Result<Option<FalkorConfig>> {
+    let Some(host) = resolve_service_setting(source, "databases.falkordb.host")? else {
+        return Ok(None);
+    };
+    let port = resolve_service_port(source, "databases.falkordb.port", 16379)?;
+    let password = resolve_service_setting(source, "databases.falkordb.requirepass")?;
 
-    Some(FalkorConfig {
-        host: connection.host,
-        port: connection.port,
-        password: connection.password,
+    Ok(Some(FalkorConfig {
+        host,
+        port,
+        password,
         graph_name: FALKORDB_GRAPH_NAME.to_string(),
-    })
+    }))
 }
 
 /// Resolve Qdrant configuration from config_store + env vars.
@@ -278,12 +367,65 @@ pub(super) fn resolve_qdrant_config(
     conn: &mut Client,
     standalone: Option<StandaloneConfig>,
     _quiet: bool,
-) -> Option<QdrantConfig> {
+) -> anyhow::Result<Option<QdrantConfig>> {
     let mut source = FallbackConfigSource {
         postgres: PostgresConfigSource { conn },
         standalone,
     };
-    gobby_core::config::resolve_qdrant_config(&mut source)
+    resolve_qdrant_config_from_source(&mut source)
+}
+
+fn resolve_qdrant_config_from_source(
+    source: &mut impl ServiceConfigSource,
+) -> anyhow::Result<Option<QdrantConfig>> {
+    let url = resolve_service_setting(source, "databases.qdrant.url")?;
+    if url.is_none() {
+        return Ok(None);
+    }
+    let api_key = resolve_service_setting(source, "databases.qdrant.api_key")?;
+    Ok(Some(QdrantConfig { url, api_key }))
+}
+
+fn resolve_service_setting(
+    source: &mut impl ServiceConfigSource,
+    key: &'static str,
+) -> anyhow::Result<Option<String>> {
+    let Some(value) = source.config_value(key)? else {
+        return Ok(None);
+    };
+    resolve_service_non_empty(source, &value)
+}
+
+fn resolve_service_non_empty(
+    source: &mut impl ServiceConfigSource,
+    value: &str,
+) -> anyhow::Result<Option<String>> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    let resolved = source.resolve_value(trimmed)?;
+    let resolved = resolved.trim();
+    if resolved.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(resolved.to_string()))
+    }
+}
+
+fn resolve_service_port(
+    source: &mut impl ServiceConfigSource,
+    key: &'static str,
+    default: u16,
+) -> anyhow::Result<u16> {
+    let Some(raw_port) = resolve_service_setting(source, key)? else {
+        return Ok(default);
+    };
+    Ok(raw_port
+        .parse::<u16>()
+        .ok()
+        .filter(|port| *port > 0)
+        .unwrap_or(default))
 }
 
 /// Resolve embedding API configuration from config_store + gcore.yaml.
@@ -377,8 +519,8 @@ pub(super) fn resolve_code_vector_settings(
     resolve_code_vector_settings_from_source(&mut source)
 }
 
-pub(super) fn resolve_code_vector_settings_from_source(
-    source: &mut impl ConfigSource,
+fn resolve_code_vector_settings_from_source(
+    source: &mut impl ServiceConfigSource,
 ) -> Result<CodeVectorSettings, CodeVectorConfigError> {
     let vector_dim = resolve_vector_dim(source, embedding_keys::AI_DIM)?;
 
@@ -386,11 +528,14 @@ pub(super) fn resolve_code_vector_settings_from_source(
 }
 
 fn resolve_vector_dim(
-    source: &mut impl ConfigSource,
+    source: &mut impl ServiceConfigSource,
     key: &'static str,
 ) -> Result<Option<usize>, CodeVectorConfigError> {
     source
         .config_value(key)
+        .map_err(|source| CodeVectorConfigError::Read {
+            source: source.to_string(),
+        })?
         .map(|value| parse_vector_dim(key, value.trim()))
         .transpose()
 }

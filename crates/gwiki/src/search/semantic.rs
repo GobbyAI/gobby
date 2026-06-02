@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-#[cfg(feature = "rustls")]
+#[cfg(feature = "embeddings-http")]
 use std::time::Duration;
 
 #[cfg(feature = "ai")]
@@ -211,13 +211,13 @@ where
     }
 }
 
-#[cfg(feature = "rustls")]
+#[cfg(feature = "embeddings-http")]
 #[derive(Debug, Clone)]
 pub struct OpenAiEmbeddingBackend {
     client: reqwest::blocking::Client,
 }
 
-#[cfg(feature = "rustls")]
+#[cfg(feature = "embeddings-http")]
 impl Default for OpenAiEmbeddingBackend {
     fn default() -> Self {
         Self {
@@ -226,14 +226,14 @@ impl Default for OpenAiEmbeddingBackend {
     }
 }
 
-#[cfg(feature = "rustls")]
+#[cfg(feature = "embeddings-http")]
 impl OpenAiEmbeddingBackend {
     pub fn new() -> Self {
         Self::default()
     }
 }
 
-#[cfg(feature = "rustls")]
+#[cfg(feature = "embeddings-http")]
 impl QueryEmbedder for OpenAiEmbeddingBackend {
     fn embed_query(
         &mut self,
@@ -258,7 +258,7 @@ impl QueryEmbedder for OpenAiEmbeddingBackend {
     }
 }
 
-#[cfg(feature = "rustls")]
+#[cfg(feature = "embeddings-http")]
 fn embed_direct_query(
     client: &reqwest::blocking::Client,
     config: &EmbeddingConfig,
@@ -307,18 +307,18 @@ fn embed_direct_query(
         .collect()
 }
 
-#[cfg(not(feature = "rustls"))]
+#[cfg(not(feature = "embeddings-http"))]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct OpenAiEmbeddingBackend;
 
-#[cfg(not(feature = "rustls"))]
+#[cfg(not(feature = "embeddings-http"))]
 impl OpenAiEmbeddingBackend {
     pub fn new() -> Self {
         Self
     }
 }
 
-#[cfg(not(feature = "rustls"))]
+#[cfg(not(feature = "embeddings-http"))]
 impl QueryEmbedder for OpenAiEmbeddingBackend {
     fn embed_query(
         &mut self,
@@ -326,7 +326,8 @@ impl QueryEmbedder for OpenAiEmbeddingBackend {
         _query: &str,
     ) -> Result<Vec<f32>, SearchError> {
         Err(SearchError::Backend(
-            "semantic HTTP backend unavailable; build with the `rustls` feature".to_string(),
+            "semantic HTTP backend unavailable; build with the `embeddings-http` feature"
+                .to_string(),
         ))
     }
 }

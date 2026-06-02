@@ -226,11 +226,14 @@ fn warn_translation_batch_mismatch(
     expected_len: usize,
     result: &Result<Vec<String>, WikiError>,
 ) {
-    if let Ok(texts) = result {
-        eprintln!(
+    match result {
+        Ok(texts) => log::warn!(
             "Warning: {attempt} translation batch returned {} text(s) for {expected_len} segment(s); retrying with smaller batches",
             texts.len()
-        );
+        ),
+        Err(error) => log::warn!(
+            "Warning: {attempt} translation batch failed for {expected_len} segment(s): {error}; retrying with smaller batches",
+        ),
     }
 }
 

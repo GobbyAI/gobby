@@ -85,7 +85,7 @@ pub fn validate_backend(backend: &Backend, timeout_ms: u64) -> bool {
     match request.call() {
         Ok(_) => true,
         Err(ureq::Error::Status(status, response)) => {
-            eprintln!(
+            log::debug!(
                 "Warning: local backend probe `{}` at {} returned HTTP {} {}",
                 backend.name,
                 url,
@@ -95,9 +95,11 @@ pub fn validate_backend(backend: &Backend, timeout_ms: u64) -> bool {
             false
         }
         Err(error) => {
-            eprintln!(
+            log::debug!(
                 "Warning: local backend probe `{}` at {} failed: {}",
-                backend.name, url, error
+                backend.name,
+                url,
+                error
             );
             false
         }

@@ -192,5 +192,26 @@ mod tests {
             CoreError::RequiredServiceUnavailable { service, message }
                 if service == "postgres" && message == "connection refused"
         ));
+
+        let hub_conflict = CoreError::HubConflict {
+            existing_database_url: "postgres://existing".to_string(),
+            existing_identity: "existing-cluster/existing-db".to_string(),
+            daemon_database_url: "postgres://daemon".to_string(),
+            daemon_identity: "daemon-cluster/daemon-db".to_string(),
+        };
+        let encoded = serde_json::to_string(&hub_conflict).expect("serialize hub conflict");
+        let decoded: CoreError = serde_json::from_str(&encoded).expect("deserialize hub conflict");
+        assert!(matches!(
+            decoded,
+            CoreError::HubConflict {
+                existing_database_url,
+                existing_identity,
+                daemon_database_url,
+                daemon_identity,
+            } if existing_database_url == "postgres://existing"
+                && existing_identity == "existing-cluster/existing-db"
+                && daemon_database_url == "postgres://daemon"
+                && daemon_identity == "daemon-cluster/daemon-db"
+        ));
     }
 }

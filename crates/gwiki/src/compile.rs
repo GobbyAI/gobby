@@ -115,6 +115,12 @@ pub fn compile_to_wiki_with_options(
     handoff.bundle.write_intent = write_intent;
     handoff.state.write_intent = write_intent;
     session.record_compile_state(handoff.state.clone())?;
+    if handoff.bundle.write_intent
+        && let Some(target_page) = handoff.bundle.target_page.as_ref()
+    {
+        let rendered = render_bundle(&handoff.bundle);
+        write_target_page(target_page, &rendered)?;
+    }
 
     let vault_root = session.scope.root();
     let source_paths: Vec<PathBuf> = handoff
@@ -228,12 +234,6 @@ pub fn prepare_handoff(
         source: error,
     })?;
 
-    if bundle.write_intent
-        && let Some(target_page) = &bundle.target_page
-    {
-        write_target_page(target_page, &rendered)?;
-    }
-
     let state = CompileState {
         handoff_id,
         topic: bundle.topic.clone(),
@@ -299,12 +299,7 @@ fn update_wiki_index(vault_root: &Path, article: &SynthesizedPage) -> Result<(),
         index.push_str("\n## Compiled pages\n\n");
     }
     if !index.contains(&link) {
-        if !index.ends_with('\n') {
-            index.push('\n');
-        }
-        index.push_str("- ");
-        index.push_str(&link);
-        index.push('\n');
+        insert_compiled_page_link(&mut index, &link);
     }
 
     if let Some(parent) = index_path.parent() {
@@ -323,6 +318,29 @@ fn update_wiki_index(vault_root: &Path, article: &SynthesizedPage) -> Result<(),
     Ok(())
 }
 
+fn insert_compiled_page_link(index: &mut String, link: &str) {
+    let heading = "## Compiled pages";
+    let heading_pos = index
+        .find(heading)
+        .expect("compiled pages heading should exist before insertion");
+    let section_body_start = heading_pos + heading.len();
+    let mut insertion_point = index[section_body_start..]
+        .find("\n## ")
+        .map(|offset| section_body_start + offset + 1)
+        .unwrap_or(index.len());
+
+    if insertion_point > 0 && !index[..insertion_point].ends_with('\n') {
+        index.insert(insertion_point, '\n');
+        insertion_point += 1;
+    }
+
+    let mut entry = format!("- {link}\n");
+    if insertion_point < index.len() && !index[insertion_point..].starts_with('\n') {
+        entry.push('\n');
+    }
+    index.insert_str(insertion_point, &entry);
+}
+
 fn write_provenance(
     vault_root: &Path,
     article: &SynthesizedPage,
@@ -334,10 +352,17 @@ fn write_provenance(
     } else {
         ProvenanceGraph::default()
     };
+    let heading =
+        first_rendered_article_section(&article.markdown).unwrap_or_else(|| "Overview".to_string());
+    let section_id = if heading == "Overview" {
+        page_slugify(&article.title)
+    } else {
+        page_slugify(&heading)
+    };
     let section = WikiSectionRef {
         page_path: PathBuf::from(relative_path(vault_root, &article.path)),
-        heading: "Overview".to_string(),
-        section_id: page_slugify(&article.title),
+        heading,
+        section_id,
     };
     let manifest_records = source_records_for_paths(
         vault_root,
@@ -378,6 +403,15 @@ fn write_provenance(
     }
 
     graph.save_to_vault(vault_root)
+}
+
+fn first_rendered_article_section(markdown: &str) -> Option<String> {
+    markdown.lines().find_map(|line| {
+        line.strip_prefix("## ")
+            .map(str::trim)
+            .filter(|heading| !heading.is_empty())
+            .map(ToString::to_string)
+    })
 }
 
 fn mark_sources_compiled(vault_root: &Path, source_paths: &[PathBuf]) -> Result<(), WikiError> {
@@ -875,6 +909,35 @@ mod tests {
         );
         assert_ne!(outcome.bundle.path, page_path);
         assert!(!outcome.state.write_intent);
+    }
+
+    #[test]
+    fn prepare_handoff_does_not_write_target_page() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let scope = ResearchScope::project(temp.path());
+        let page_path = scope.root().join("compile-behavior.md");
+        std::fs::write(&page_path, "human-authored wiki page").expect("page written");
+        let note_path = scope.root().join("raw/research/compile.md");
+        std::fs::create_dir_all(note_path.parent().expect("note parent")).expect("raw dir");
+        std::fs::write(&note_path, "Citation: Example Docs").expect("note written");
+        let mut session = session_with_note(&scope, "Compile behavior", "raw/research/compile.md");
+
+        let outcome = prepare_handoff(
+            &mut session,
+            CompileRequest {
+                topic: "Compile behavior".to_string(),
+                outline: vec!["Durable handoff".to_string()],
+                target_page: Some(page_path.clone()),
+                write_intent: true,
+            },
+        )
+        .expect("compile handoff prepared");
+
+        assert_eq!(
+            std::fs::read_to_string(&page_path).expect("page retained"),
+            "human-authored wiki page"
+        );
+        assert!(outcome.state.write_intent);
     }
 
     #[test]

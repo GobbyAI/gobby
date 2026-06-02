@@ -30,6 +30,8 @@ pub struct StandaloneSetupRequest {
     pub qdrant_url: Option<String>,
 }
 
+// Keep this Debug impl in sync when StandaloneSetupRequest fields change; setup
+// secrets must stay redacted.
 impl fmt::Debug for StandaloneSetupRequest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("StandaloneSetupRequest")
@@ -80,6 +82,29 @@ impl StandaloneSetupRequest {
             falkordb_password: None,
             qdrant_url: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn standalone_setup_request_debug_redacts_secrets() {
+        let mut request = StandaloneSetupRequest::new(
+            true,
+            Some("postgres://user:secret-db@localhost/gobby".to_string()),
+            None,
+        );
+        request.embedding_api_key = Some("secret-embedding-key".to_string());
+        request.falkordb_password = Some("secret-falkor-password".to_string());
+
+        let debug = format!("{request:?}");
+
+        assert!(debug.contains("<redacted>"));
+        assert!(!debug.contains("secret-db"));
+        assert!(!debug.contains("secret-embedding-key"));
+        assert!(!debug.contains("secret-falkor-password"));
     }
 }
 

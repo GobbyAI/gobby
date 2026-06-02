@@ -218,7 +218,7 @@ pub(super) fn delete_vectors_for_filter_excluding_ids(
         client,
         qdrant,
         reqwest::Method::POST,
-        &format!("{}/points/delete", collection_path(collection)),
+        &format!("{}/points/delete?wait=true", collection_path(collection)),
     )?
     .json(&body)
     .send()

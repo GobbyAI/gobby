@@ -224,6 +224,7 @@ jobs:
 
   release:
     needs: [build, publish]
+    name: Release
     runs-on: ubuntu-latest
     # Release creation is the only job that needs repository write access.
     permissions:

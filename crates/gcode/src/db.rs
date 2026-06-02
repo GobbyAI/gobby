@@ -457,11 +457,15 @@ pub fn mark_project_vectors_synced(
     )?)
 }
 
+/// Return the vector sync state for an indexed file.
+///
+/// `None` means the file is not present in `code_indexed_files`; `Some(value)`
+/// means the file exists and reports that `vectors_synced` state.
 pub fn file_vectors_synced(
     conn: &mut impl GenericClient,
     project_id: &str,
     file_path: &str,
-) -> anyhow::Result<bool> {
+) -> anyhow::Result<Option<bool>> {
     let synced = conn
         .query_opt(
             "SELECT vectors_synced
@@ -470,8 +474,7 @@ pub fn file_vectors_synced(
             &[&project_id, &file_path],
         )?
         .map(|row| row.try_get::<_, bool>("vectors_synced"))
-        .transpose()?
-        .unwrap_or(false);
+        .transpose()?;
     Ok(synced)
 }
 

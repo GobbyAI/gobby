@@ -55,6 +55,7 @@ pub struct CodeVectorSettings {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CodeVectorConfigError {
     InvalidVectorDim { source: &'static str, value: String },
+    Read { source: String },
 }
 
 impl fmt::Display for CodeVectorConfigError {
@@ -64,6 +65,7 @@ impl fmt::Display for CodeVectorConfigError {
                 f,
                 "invalid code vector dimension from {source}: `{value}` must be a positive integer"
             ),
+            Self::Read { source } => write!(f, "failed to read code vector config: {source}"),
         }
     }
 }
@@ -169,8 +171,8 @@ impl Context {
         let standalone_config = read_standalone_config_optional();
         let mut conn = db::connect_readonly(&database_url)?;
         validate_parent_code_index(&mut conn, &index_scope)?;
-        let falkordb = resolve_falkordb_config(&mut conn, standalone_config.clone(), quiet);
-        let qdrant = resolve_qdrant_config(&mut conn, standalone_config.clone(), quiet);
+        let falkordb = resolve_falkordb_config(&mut conn, standalone_config.clone(), quiet)?;
+        let qdrant = resolve_qdrant_config(&mut conn, standalone_config.clone(), quiet)?;
         let embedding = resolve_embedding_config(&mut conn, standalone_config.clone(), quiet);
         let code_vectors = resolve_code_vector_settings(&mut conn, standalone_config)?;
 
@@ -202,7 +204,7 @@ impl Context {
 
         let standalone_config = read_standalone_config_optional();
         let mut conn = db::connect_readonly(&database_url)?;
-        let falkordb = resolve_falkordb_config(&mut conn, standalone_config, quiet);
+        let falkordb = resolve_falkordb_config(&mut conn, standalone_config, quiet)?;
 
         let daemon_url = resolve_daemon_url();
 

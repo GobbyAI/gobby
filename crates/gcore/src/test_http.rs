@@ -13,7 +13,33 @@ pub(crate) fn spawn_json_response_with_status(
     status: u16,
     body: impl Into<String>,
 ) -> io::Result<(String, RequestHandle)> {
-    spawn_response(status, "OK", "application/json", body.into())
+    spawn_response(
+        status,
+        reason_phrase(status),
+        "application/json",
+        body.into(),
+    )
+}
+
+fn reason_phrase(status: u16) -> &'static str {
+    match status {
+        200 => "OK",
+        201 => "Created",
+        202 => "Accepted",
+        204 => "No Content",
+        400 => "Bad Request",
+        401 => "Unauthorized",
+        403 => "Forbidden",
+        404 => "Not Found",
+        409 => "Conflict",
+        422 => "Unprocessable Entity",
+        429 => "Too Many Requests",
+        500 => "Internal Server Error",
+        502 => "Bad Gateway",
+        503 => "Service Unavailable",
+        504 => "Gateway Timeout",
+        _ => "",
+    }
 }
 
 pub(crate) fn spawn_response(
