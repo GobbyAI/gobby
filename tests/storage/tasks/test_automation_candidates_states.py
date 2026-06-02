@@ -126,3 +126,48 @@ def test_list_automation_candidates_sorts_holistic_descendant_gates_first(
     ]
 
     assert ordered_candidate_ids == [with_gate.id, without_gate.id]
+
+
+def test_list_automation_candidates_allows_reopened_child_under_holistic_gate(
+    temp_db,
+    sample_project,
+) -> None:
+    root = create_task(
+        temp_db,
+        sample_project,
+        title="Root awaiting holistic follow-up",
+        task_type="epic",
+    )
+    temp_db.execute(
+        "UPDATE tasks SET allow_automation = TRUE, isolation = %s WHERE id = %s",
+        (Isolation.none.value, root.id),
+    )
+    initialize_manifest(
+        temp_db,
+        root.id,
+        [spec("development", 0), spec("holistic_qa", 1), spec("merge", 2)],
+    )
+    set_stage_state(temp_db, root.id, "development", "done")
+    set_stage_state(temp_db, root.id, "holistic_qa", "ready")
+
+    child = create_task(
+        temp_db,
+        sample_project,
+        parent_task_id=root.id,
+        title="Reopened child review",
+        category="code",
+    )
+    temp_db.execute(
+        "UPDATE tasks SET allow_automation = TRUE, isolation = %s WHERE id = %s",
+        (Isolation.none.value, child.id),
+    )
+    initialize_manifest(temp_db, child.id, [spec("development", 0), spec("merge", 1)])
+    set_stage_state(temp_db, child.id, "development", "needs_review")
+
+    ordered_candidate_ids = [
+        task.id
+        for task in list_automation_candidates(temp_db, project_id=sample_project["id"])
+        if task.id in {root.id, child.id}
+    ]
+
+    assert ordered_candidate_ids == [root.id, child.id]

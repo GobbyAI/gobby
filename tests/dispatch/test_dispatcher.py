@@ -483,6 +483,74 @@ async def test_heartbeat_records_gated_holistic_root_before_reopened_descendant(
     assert "### Holistic QA deferred" in root_description
 
 
+@pytest.mark.asyncio
+async def test_heartbeat_dispatches_reopened_review_under_gated_holistic_root(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.dispatch import dispatcher
+
+    sync_bundled_agents(temp_db)
+    manager = LocalTaskManager(temp_db)
+    root = manager.create_task(
+        project_id=sample_project["id"],
+        title="Holistic root",
+        task_type="epic",
+    )
+    update_task(temp_db, root.id, allow_automation=True, isolation="none", task_type="epic")
+    initialize_manifest(
+        temp_db,
+        root.id,
+        [spec("development", 0), spec("holistic_qa", 1), spec("merge", 2)],
+    )
+    set_stage_state(temp_db, root.id, "development", "done")
+    set_stage_state(temp_db, root.id, "holistic_qa", "ready")
+    child = _task(
+        temp_db,
+        sample_project,
+        title="Reopened child review",
+        parent_task_id=root.id,
+        category="code",
+        stage_name="development",
+        stage_state="needs_review",
+    )
+    temp_db.execute(
+        """
+        UPDATE task_stage_states
+        SET reviewer_agent = %s, review_policy = %s
+        WHERE task_id = %s AND stage_name = %s
+        """,
+        ("qa-reviewer", "required", child.id, "development"),
+    )
+
+    spawned: list[SpawnAgentAction] = []
+
+    async def fake_spawn_agent(action: SpawnAgentAction, **_kwargs: object) -> str:
+        spawned.append(action)
+        return "run-reopened-review"
+
+    monkeypatch.setattr(dispatcher, "spawn_agent", fake_spawn_agent)
+
+    first = await dispatcher.run_heartbeat(
+        db=temp_db,
+        project_id=sample_project["id"],
+        max_actions=1,
+    )
+    second = await dispatcher.run_heartbeat(
+        db=temp_db,
+        project_id=sample_project["id"],
+        max_actions=1,
+    )
+
+    assert first.executed == 1
+    assert second.executed == 1
+    assert len(spawned) == 1
+    assert spawned[0].task_id == child.id
+    assert spawned[0].agent_slug == "qa-reviewer"
+
+
 def test_count_active_agents_scopes_by_parent_session_project(temp_db, sample_project) -> None:
     """Count active agents scopes by parent session project."""
     from gobby.dispatch.dispatcher import count_active_agents
