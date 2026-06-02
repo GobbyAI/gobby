@@ -31,6 +31,8 @@ from gobby.servers.websocket.tmux import TmuxMixin
 from gobby.servers.websocket.voice import VoiceMixin
 
 logger = logging.getLogger(__name__)
+websockets_logger = logging.getLogger("websockets.server")
+websockets_logger.setLevel(logging.WARNING)
 
 
 if TYPE_CHECKING:
@@ -340,6 +342,7 @@ class WebSocketServer(
             ping_timeout=self.config.ping_timeout,
             max_size=self.config.max_message_size,
             compression="deflate",
+            logger=websockets_logger,
         )
 
         # Start idle session cleanup background task

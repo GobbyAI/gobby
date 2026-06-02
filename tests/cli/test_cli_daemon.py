@@ -1227,6 +1227,7 @@ class TestRestartCommand:
             assert "Starting Gobby daemon" in result.output
             mock_stop_daemon.assert_called_once()
             mock_setup_logging.assert_called_once_with(False)
+            mock_fetch_status.assert_not_called()
 
     @patch("gobby.cli.daemon.stop_daemon_util")
     @patch("gobby.cli.daemon.setup_logging")
@@ -1307,6 +1308,7 @@ class TestRestartCommand:
             mock_setup_logging.assert_called_once_with(True)
             assert mock_setup_logging.call_count == 1
             assert mock_setup_logging.call_args is not None
+            mock_fetch_status.assert_not_called()
 
 
 class TestStatusCommand:

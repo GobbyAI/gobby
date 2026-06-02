@@ -656,7 +656,6 @@ def restart(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -
         sys.exit(1)
 
     ctx.invoke(start, verbose=verbose, no_ui=no_ui, docker_flag=docker_flag)
-    ctx.invoke(status)
 
 
 @click.command()

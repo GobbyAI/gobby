@@ -160,6 +160,16 @@ def test_setup_otel_logging_sub_loggers(telemetry_config):
         assert any(isinstance(h, logging.handlers.RotatingFileHandler) for h in logger.handlers)
 
 
+def test_setup_otel_logging_suppresses_websockets_info(telemetry_config):
+    logging.getLogger("websockets").setLevel(logging.INFO)
+    logging.getLogger("websockets.server").setLevel(logging.INFO)
+
+    setup_otel_logging(telemetry_config)
+
+    assert logging.getLogger("websockets").level == logging.WARNING
+    assert logging.getLogger("websockets.server").level == logging.WARNING
+
+
 def test_setup_otel_logging_attaches_otel_handler(telemetry_config):
     from opentelemetry.sdk._logs import LoggingHandler
 

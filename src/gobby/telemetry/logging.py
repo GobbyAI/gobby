@@ -197,6 +197,9 @@ def setup_otel_logging(config: TelemetrySettings, verbose: bool = False) -> None
         return h
 
     # 4. Configure loggers
+    for logger_name in ("websockets", "websockets.server"):
+        logging.getLogger(logger_name).setLevel(logging.WARNING)
+
     root_logger = logging.getLogger("gobby")
     root_logger.setLevel(level)
     root_logger.propagate = False
