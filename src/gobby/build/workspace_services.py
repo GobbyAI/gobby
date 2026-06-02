@@ -145,7 +145,9 @@ class _WorkspaceServices:
 
         existing = self.worktree_storage.get_by_branch(self.project_id, branch_name)
         if existing is not None:
-            if _is_stale_integration_record(existing, task.id):
+            if _is_invalid_integration_record(existing) or _is_stale_integration_record(
+                existing, task.id
+            ):
                 recovered = recover_stale_integration_artifact(
                     db=self.db,
                     task_manager=self.task_manager,
@@ -240,7 +242,9 @@ class _WorkspaceServices:
 
         existing = self.clone_storage.get_by_branch(self.project_id, branch_name)
         if existing is not None:
-            if _is_stale_integration_record(existing, task.id):
+            if _is_invalid_integration_record(existing) or _is_stale_integration_record(
+                existing, task.id
+            ):
                 recovered = recover_stale_integration_artifact(
                     db=self.db,
                     task_manager=self.task_manager,
@@ -337,7 +341,13 @@ def _service_git_manager(services: object | None, project_id: str) -> WorktreeGi
 
 
 def _is_stale_integration_record(record: Worktree | Clone, task_id: str) -> bool:
-    if record.task_id != task_id or getattr(record, "workspace_role", "task") != "integration":
+    if record.task_id != task_id:
+        return False
+    return _is_invalid_integration_record(record)
+
+
+def _is_invalid_integration_record(record: Worktree | Clone) -> bool:
+    if getattr(record, "workspace_role", "task") != "integration":
         return False
     raw_path = getattr(record, "worktree_path", None) or getattr(record, "clone_path", None)
     return (
