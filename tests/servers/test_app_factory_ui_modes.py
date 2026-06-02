@@ -5,8 +5,9 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocketDisconnect
 from fastapi.testclient import TestClient
+from starlette.datastructures import Headers
 from starlette.routing import WebSocketRoute
 
 from gobby.config.app import DaemonConfig
@@ -92,3 +93,66 @@ def test_hmr_proxy_uses_dedicated_route_and_ws_remains_gobby_owned() -> None:
     assert "/ws/{path:path}" in websocket_paths
     assert "/__vite_hmr" in websocket_paths
     assert "/__vite_hmr/{path:path}" in websocket_paths
+
+
+@pytest.mark.asyncio
+async def test_hmr_proxy_preserves_requested_websocket_subprotocol(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import websockets
+
+    connections: list[tuple[str, list[str] | None]] = []
+
+    class FakeBackend:
+        subprotocol = "vite-hmr"
+
+        async def __aenter__(self) -> "FakeBackend":
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            pass
+
+        async def send(self, _data: str) -> None:
+            pass
+
+        async def close(self) -> None:
+            pass
+
+        def __aiter__(self) -> "FakeBackend":
+            return self
+
+        async def __anext__(self) -> str:
+            raise StopAsyncIteration
+
+    class FakeWebSocket:
+        headers = Headers({"sec-websocket-protocol": "vite-hmr, extra"})
+        accepted_subprotocol: str | None = None
+
+        async def accept(self, subprotocol: str | None = None) -> None:
+            self.accepted_subprotocol = subprotocol
+
+        async def receive_text(self) -> str:
+            raise WebSocketDisconnect
+
+        async def send_text(self, _message: str) -> None:
+            pass
+
+        async def send_bytes(self, _message: bytes) -> None:
+            pass
+
+        async def close(self, code: int = 1000) -> None:
+            pass
+
+    def fake_connect(target: str, *, subprotocols: list[str] | None = None) -> FakeBackend:
+        connections.append((target, subprotocols))
+        return FakeBackend()
+
+    monkeypatch.setattr(websockets, "connect", fake_connect)
+
+    websocket = FakeWebSocket()
+    await app_factory._proxy_websocket(websocket, "ws://localhost:5173/__vite_hmr?token=hmr-token")
+
+    assert connections == [
+        ("ws://localhost:5173/__vite_hmr?token=hmr-token", ["vite-hmr", "extra"])
+    ]
+    assert websocket.accepted_subprotocol == "vite-hmr"

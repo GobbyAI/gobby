@@ -682,12 +682,15 @@ def _mount_ws_proxy(app: FastAPI, server: "HTTPServer") -> None:
 
 
 async def _proxy_websocket(websocket: WebSocket, target: str) -> None:
-    await websocket.accept()
-
     import websockets
 
     try:
-        async with websockets.connect(target) as backend:
+        requested_subprotocols = _requested_websocket_subprotocols(websocket.headers)
+        async with websockets.connect(
+            target,
+            subprotocols=requested_subprotocols or None,
+        ) as backend:
+            await websocket.accept(subprotocol=getattr(backend, "subprotocol", None))
 
             async def client_to_backend() -> None:
                 try:
@@ -738,6 +741,15 @@ def _mount_vite_hmr_proxy(app: FastAPI, server: "HTTPServer") -> None:
         await _proxy_websocket(websocket, target)
 
     logger.debug(f"Vite HMR proxy mounted at /__vite_hmr -> localhost:{ui_port}")
+
+
+def _requested_websocket_subprotocols(headers: Headers) -> list[str]:
+    protocols: list[str] = []
+    for header_value in headers.getlist("sec-websocket-protocol"):
+        protocols.extend(
+            protocol.strip() for protocol in header_value.split(",") if protocol.strip()
+        )
+    return protocols
 
 
 def _is_daemon_owned_ui_path(path: str) -> bool:
