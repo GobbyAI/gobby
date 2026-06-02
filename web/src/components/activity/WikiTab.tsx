@@ -61,6 +61,28 @@ function displayValue(value: unknown): string {
   }
 }
 
+function booleanValue(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
+}
+
+function timestampValue(value: unknown): string {
+  if (typeof value === "number") {
+    return new Date(value * 1000).toISOString();
+  }
+  return stringValue(value) || "never";
+}
+
+function uniqueStrings(items: string[]): string[] {
+  return Array.from(new Set(items));
+}
+
+function watcherStateText(active: boolean | null, running: boolean | null): string {
+  if (active === false) return "inactive";
+  if (running === true) return "running";
+  if (running === false) return "stopped";
+  return "unknown";
+}
+
 function sourceLabel(source: WikiSourceRecord): string {
   return source.title || source.path || source.raw_path || source.source_url || source.id;
 }
@@ -186,6 +208,9 @@ export function WikiTab({ projectId }: WikiTabProps) {
 
   const statusPayload = asRecord(status?.payload);
   const healthPayload = asRecord(health?.payload);
+  const maintenancePayload = asRecord(statusPayload.maintenance);
+  const watcherPayload = asRecord(maintenancePayload.watcher);
+  const gatewayPayload = asRecord(maintenancePayload.gateway);
   const statusText = fieldText(statusPayload, ["status", "state", "mode"]) || "unknown";
   const healthText = fieldText(healthPayload, ["status", "state", "health"]) || "unknown";
   const scopeText = (() => {
@@ -195,10 +220,28 @@ export function WikiTab({ projectId }: WikiTabProps) {
     return fieldText(scopeRecord, ["project", "topic", "name"]) || projectId || "default";
   })();
   const indexedPaths = stringList(statusPayload, ["indexed_paths", "paths", "changed_paths"]);
-  const degradedServices = stringList(healthPayload, ["degraded_services", "degraded", "services"]);
+  const degradedServices = uniqueStrings([
+    ...stringList(healthPayload, ["degraded_services", "degraded", "services"]),
+    ...stringList(gatewayPayload, ["degraded_services", "degraded", "services"]),
+  ]);
   const findings = healthFindings(healthPayload);
   const links = pageLinks(statusPayload);
   const searches = recentSearches(statusPayload);
+  const watcherActive = booleanValue(watcherPayload.active);
+  const watcherRunning = booleanValue(watcherPayload.running);
+  const watcherText = watcherStateText(watcherActive, watcherRunning);
+  const pendingDebounce = booleanValue(watcherPayload.pending_debounce);
+  const pendingDebounceText =
+    pendingDebounce === null ? "unknown" : pendingDebounce ? "pending" : "clear";
+  const pendingChangesText =
+    watcherPayload.pending_changes === undefined
+      ? "unknown"
+      : displayValue(watcherPayload.pending_changes);
+  const lastIndexText = timestampValue(watcherPayload.last_index_time);
+  const gatewayAvailable = booleanValue(gatewayPayload.available);
+  const gatewayAvailableText =
+    gatewayAvailable === null ? "unknown" : gatewayAvailable ? "available" : "unavailable";
+  const gatewayStatusText = fieldText(gatewayPayload, ["status", "state"]) || "unknown";
 
   const openRemoval = async (source: WikiSourceRecord) => {
     setRemovingSource(source);
@@ -257,6 +300,15 @@ export function WikiTab({ projectId }: WikiTabProps) {
         <StatBlock label="Scope" value={scopeText} />
         <StatBlock label="Status" value={isLoading ? "loading" : statusText} />
         <StatBlock label="Health" value={isLoading ? "loading" : healthText} />
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <StatBlock label="Watcher" value={isLoading ? "loading" : watcherText} />
+        <StatBlock label="Pending Debounce" value={isLoading ? "loading" : pendingDebounceText} />
+        <StatBlock label="Pending Changes" value={isLoading ? "loading" : pendingChangesText} />
+        <StatBlock label="Last Index" value={isLoading ? "loading" : lastIndexText} />
+        <StatBlock label="Gateway" value={isLoading ? "loading" : gatewayAvailableText} />
+        <StatBlock label="Gateway Status" value={isLoading ? "loading" : gatewayStatusText} />
       </div>
 
       <Section title="Degraded Services">

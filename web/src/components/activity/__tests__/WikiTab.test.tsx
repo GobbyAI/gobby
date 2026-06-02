@@ -9,6 +9,24 @@ const statusPayload = {
   payload: {
     scope: { project: "demo" },
     status: "ready",
+    maintenance: {
+      watcher: {
+        active: true,
+        running: true,
+        scope_count: 2,
+        last_index_time: 1767225600,
+        pending_debounce: true,
+        pending_changes: 3,
+      },
+      gateway: {
+        available: true,
+        status: "degraded",
+        degraded: true,
+        degraded_services: ["embeddings"],
+        error: null,
+      },
+      degraded: true,
+    },
     recent_searches: [{ query: "hooks", result_count: 3 }],
     indexed_paths: ["docs/wiki/hooks.md"],
     page_links: [{ title: "Hooks", url: "/wiki/hooks" }],
@@ -90,7 +108,12 @@ describe("WikiTab", () => {
     render(<WikiTab projectId="demo" />);
 
     expect(await screen.findByText("ready")).toBeInTheDocument();
-    expect(screen.getByText("degraded")).toBeInTheDocument();
+    expect(screen.getAllByText("degraded").length).toBeGreaterThan(0);
+    expect(screen.getByText("running")).toBeInTheDocument();
+    expect(screen.getByText("pending")).toBeInTheDocument();
+    expect(screen.getByText("3")).toBeInTheDocument();
+    expect(screen.getByText("2026-01-01T00:00:00.000Z")).toBeInTheDocument();
+    expect(screen.getByText("available")).toBeInTheDocument();
     expect(screen.getByText("embeddings")).toBeInTheDocument();
     expect(screen.getByText("hooks (3)")).toBeInTheDocument();
     expect(screen.getAllByText("docs/wiki/hooks.md").length).toBeGreaterThan(0);

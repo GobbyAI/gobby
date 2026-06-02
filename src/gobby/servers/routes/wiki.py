@@ -9,6 +9,7 @@ from fastapi import APIRouter, Body, File, HTTPException, Query, UploadFile
 
 from gobby.gwiki_gateway import GwikiCommandError, GwikiGateway, GwikiGatewayError
 from gobby.wiki import WikiUpdateCoordinator
+from gobby.wiki.status import collect_wiki_status
 
 if TYPE_CHECKING:
     from gobby.servers.http_server import HTTPServer
@@ -25,7 +26,8 @@ def create_wiki_router(server: HTTPServer) -> APIRouter:
         project: str | None = Query(None),
         topic: str | None = Query(None),
     ) -> dict[str, Any]:
-        return await _read(server, project, topic, lambda gateway: gateway.status())
+        gateway = _gateway(server, project, topic)
+        return await collect_wiki_status(gateway=gateway, runner=_runner(server))
 
     @router.post("/index")
     async def index(
@@ -226,6 +228,14 @@ def _gateway(server: HTTPServer, project: str | None, topic: str | None) -> Gwik
         topic=topic,
         timeout_seconds=float(getattr(wiki_config, "timeout_seconds", 30.0)),
     )
+
+
+def _runner(server: HTTPServer) -> object | None:
+    get_runner = getattr(server, "get_runner", None)
+    if not callable(get_runner):
+        return None
+    runner: object | None = get_runner()
+    return runner
 
 
 async def _map_gateway_errors(call: Callable[[], Awaitable[dict[str, Any]]]) -> dict[str, Any]:
