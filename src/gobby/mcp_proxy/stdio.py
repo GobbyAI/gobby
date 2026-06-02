@@ -72,6 +72,7 @@ WAIT_TOOL_NAMES = (
 )
 HEARTBEAT_TOOL_NAMES = (*WAIT_TOOL_NAMES, "compact_self")
 WAIT_TOOL_HEARTBEAT_INTERVAL_SECONDS = 15.0
+MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS = 90.0
 REMOVED_WORKFLOW_WAIT_TOOL = "wait_for_completion"
 DAEMON_HEALTH_ATTEMPTS = 30
 DAEMON_HEALTH_CHECK_TIMEOUT_SECONDS = 2.0
@@ -661,14 +662,33 @@ def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
             }
 
         requested_timeout = None
+        original_wait_timeout = None
+        wait_timeout_capped = False
         if tool_name in WAIT_TOOL_NAMES:
             raw_timeout = None
+            timeout_key = "timeout_seconds"
             if isinstance(final_args, dict):
-                raw_timeout = final_args.get("timeout")
-                if raw_timeout is None:
-                    raw_timeout = final_args.get("timeout_seconds")
-            if isinstance(raw_timeout, int | float):
+                if "timeout" in final_args:
+                    timeout_key = "timeout"
+                    raw_timeout = final_args["timeout"]
+                elif "timeout_seconds" in final_args:
+                    raw_timeout = final_args["timeout_seconds"]
+            if raw_timeout is None:
+                raw_timeout = 300.0
+            try:
                 requested_timeout = float(raw_timeout)
+            except (TypeError, ValueError):
+                requested_timeout = None
+
+            if (
+                requested_timeout is not None
+                and requested_timeout > MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS
+            ):
+                original_wait_timeout = requested_timeout
+                requested_timeout = MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS
+                final_args = dict(final_args) if isinstance(final_args, dict) else {}
+                final_args[timeout_key] = requested_timeout
+                wait_timeout_capped = True
         elif tool_name in EXTENDED_TIMEOUT_TOOL_NAMES:
             requested_timeout = 300.0
 
@@ -678,7 +698,7 @@ def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
         if session_id:
             call_kwargs["session_id"] = session_id
 
-        return await _call_with_wait_heartbeat(
+        result = await _call_with_wait_heartbeat(
             proxy.call_tool(
                 server_name,
                 tool_name,
@@ -690,6 +710,11 @@ def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
             tool_name=tool_name,
             timeout=requested_timeout,
         )
+        if wait_timeout_capped:
+            result["requested_timeout_seconds"] = original_wait_timeout
+            result["effective_timeout_seconds"] = requested_timeout
+            result["wait_timeout_capped_by_mcp_wrapper"] = True
+        return result
 
     @mcp.tool()
     async def recommend_tools(
