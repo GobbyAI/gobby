@@ -493,11 +493,18 @@ class TestTranslateFromHookResponse:
         permissionDecisionReason channel — never as top-level stopReason +
         continue:false. Two channels both render in Claude (PreToolUse: ...
         blocking error AND Error: ...), so the adapter must pick exactly one.
+
+        The compacted reason must also preserve the concrete gcode replacement
+        command so the agent sees the actionable directive intact.
         """
         adapter = ClaudeCodeAdapter()
         response = HookResponse(
             decision="block",
-            reason="Rule enforced by Gobby: [require-code-index-skill]\nUse gcode.",
+            reason=(
+                "Rule enforced by Gobby: [prefer-gcode-for-code-search]\n"
+                'Use `gcode grep "pattern" [PATH...] -m 50` for exact text search, '
+                'or `gcode search-content "query" [PATH...]` for ranked content search.'
+            ),
         )
         result = adapter.translate_from_hook_response(response, hook_type="pre-tool-use")
 
@@ -509,7 +516,9 @@ class TestTranslateFromHookResponse:
         assert hso["hookEventName"] == "PreToolUse"
         assert hso["permissionDecision"] == "deny"
         assert hso["permissionDecisionReason"] == (
-            "Gobby blocked [require-code-index-skill]: Use gcode."
+            "Gobby blocked [prefer-gcode-for-code-search]: "
+            'Use `gcode grep "pattern" [PATH...] -m 50` for exact text search, '
+            'or `gcode search-content "query" [PATH...]` for ranked content search.'
         )
 
     def test_pre_tool_use_block_compacts_rule_reason_and_preserves_action(self) -> None:

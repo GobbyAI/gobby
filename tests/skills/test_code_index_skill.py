@@ -36,7 +36,9 @@ def test_code_index_skill_documents_positional_path_filters() -> None:
     assert "--format json" in body
     assert "--path <glob>" not in body
     assert "positional path filters" in body
-    assert "code-index graph projection via the Gobby daemon" in body
+    assert "Use `gcode` directly for the code-index graph projection." in body
+    assert "graph sync/read/lifecycle behavior lives in `gcode`" in body
+    assert "via the Gobby daemon" not in body
 
 
 def test_code_index_skill_documents_gcode_first_retrieval_workflow() -> None:

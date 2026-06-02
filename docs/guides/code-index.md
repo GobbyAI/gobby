@@ -21,9 +21,10 @@ gcode invalidate --force
 Use indexed navigation before opening large files:
 
 ```bash
+gcode grep "spawn_ui_server(" src -m 50
 gcode search "task validation"
 gcode search-symbol "TaskValidator" --kind class
-gcode search-content "code_index_available" --path "src/**/*.py"
+gcode search-content "code_index_available" "src/**/*.py"
 gcode outline src/gobby/tasks/validation.py
 gcode symbol <symbol-id>
 ```
@@ -112,6 +113,7 @@ All commands accept these global options unless noted:
 
 | Command | Purpose |
 | :--- | :--- |
+| `gcode grep <PATTERN> [PATH...]` | Exact indexed content grep over file content chunks |
 | `gcode search <QUERY>` | Hybrid search: full-text plus optional semantic and graph boost |
 | `gcode search-symbol <QUERY>` | Exact-first symbol/name lookup |
 | `gcode search-text <QUERY>` | Full-text search over symbol names, signatures, and docstrings |
@@ -123,8 +125,10 @@ All commands accept these global options unless noted:
 | `gcode tree` | File tree with symbol counts |
 | `gcode repo-outline` | Directory-grouped project stats |
 
-Search commands support `--limit`, `--offset`, `--language`, and `--path`.
-Symbol searches also support `--kind`.
+Ranked search commands support `--limit`, `--offset`, `--language`, and
+positional path filters after the query. `gcode search` and
+`gcode search-symbol` also support `--kind`. `gcode grep` supports positional
+paths, `-g/--glob`, `-i`, `-F`, `-C/-A/-B`, and `-m/--max-count`.
 
 ### Graph Queries
 
@@ -306,9 +310,13 @@ until the agent loads the `code-index` skill. The loaded guidance points agents
 to:
 
 ```bash
+gcode grep "pattern" [PATH...] -m 50
+gcode search-content "query" [PATH...]
+gcode search-symbol "name" [PATH...]
 gcode outline path/to/file
-gcode search "query"
 gcode symbol <id>
+gcode callers <symbol_name>
+gcode usages <symbol_name>
 ```
 
 Rules are runtime state, not just template files. Check installed rule state in
@@ -317,13 +325,14 @@ the rules engine before claiming a rule is disabled.
 ## Typical Workflow
 
 1. Run `gcode status` to confirm an index exists.
-2. Use `gcode search`, `gcode search-symbol`, or `gcode search-content` to find
-   the relevant code.
+2. Use `gcode grep` for exact strings and call sites, `gcode search-content`
+   for ranked text, `gcode search-symbol` for known names, or `gcode search`
+   for fuzzy concepts.
 3. Use `gcode outline <FILE>` before opening a large file.
 4. Use `gcode symbol <ID>` for the exact implementation when the outline points
    to a specific function, class, or method.
-5. Use `gcode callers`, `gcode imports`, or `gcode blast-radius` when the change
-   could affect other files.
+5. Use `gcode callers`, `gcode usages`, `gcode imports`, or
+   `gcode blast-radius` when the change could affect other files.
 
 ## See Also
 
@@ -332,4 +341,4 @@ the rules engine before claiming a rule is disabled.
 - [configuration.md](configuration.md) - Full configuration reference
 - [http-endpoints.md](http-endpoints.md) - HTTP API reference
 
-_Last verified: 2026-05-23_
+_Last verified: 2026-06-02_
