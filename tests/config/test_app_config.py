@@ -54,6 +54,7 @@ from gobby.config.tasks import (
     TaskValidationConfig,
     WorkflowConfig,
 )
+from gobby.config.ui import UIConfig
 from gobby.telemetry.config import TelemetrySettings
 
 pytestmark = pytest.mark.unit
@@ -391,6 +392,23 @@ class TestLLMProvidersConfig:
         """Unknown provider keys still fail validation."""
         with pytest.raises(ValidationError):
             LLMProvidersConfig(openai=LLMProviderConfig(models="removed"))
+
+
+class TestUIConfig:
+    """Tests for UIConfig."""
+
+    def test_default_mode_is_auto(self) -> None:
+        config = UIConfig()
+        assert config.mode == "auto"
+
+    @pytest.mark.parametrize("mode", ["auto", "dev", "production"])
+    def test_mode_validation_accepts_supported_modes(self, mode: str) -> None:
+        config = UIConfig(mode=mode)
+        assert config.mode == mode
+
+    def test_mode_validation_rejects_invalid_mode(self) -> None:
+        with pytest.raises(ValidationError):
+            UIConfig(mode="invalid")
 
 
 class TestDaemonConfig:
@@ -767,6 +785,61 @@ class TestLoadConfig:
             "Ignoring stale Neo4j config_store keys after FalkorDB migration" in record.getMessage()
             for record in caplog.records
         )
+
+    def test_load_config_migrates_defaults_seeded_ui_mode_to_auto(self, temp_dir: Path) -> None:
+        """Only defaults-sourced legacy ui.mode=production rows migrate to auto."""
+
+        class DummyCursor:
+            rowcount = 1
+
+        class DummyDB:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, tuple[object, ...]]] = []
+
+            def execute(self, query: str, params: tuple[object, ...]) -> DummyCursor:
+                self.calls.append((query, params))
+                return DummyCursor()
+
+        class DummyConfigStore:
+            def __init__(self) -> None:
+                self.db = DummyDB()
+
+            def get_all(self) -> dict[str, object]:
+                return {"ui.mode": "production"}
+
+        store = DummyConfigStore()
+
+        config = load_config(
+            config_file=str(temp_dir / "bootstrap.yaml"),
+            config_store=store,
+        )
+
+        assert config.ui.mode == "auto"
+        assert store.db.calls
+        assert store.db.calls[0][1][2:] == ("ui.mode", "defaults", '"production"')
+
+    def test_load_config_leaves_explicit_ui_mode_production_untouched(self, temp_dir: Path) -> None:
+        """Non-defaults ui.mode=production rows remain explicit production."""
+
+        class DummyCursor:
+            rowcount = 0
+
+        class DummyDB:
+            def execute(self, _query: str, _params: tuple[object, ...]) -> DummyCursor:
+                return DummyCursor()
+
+        class DummyConfigStore:
+            db = DummyDB()
+
+            def get_all(self) -> dict[str, object]:
+                return {"ui.mode": "production"}
+
+        config = load_config(
+            config_file=str(temp_dir / "bootstrap.yaml"),
+            config_store=DummyConfigStore(),
+        )
+
+        assert config.ui.mode == "production"
 
     def test_load_config_drops_removed_dead_sections(self, temp_dir: Path) -> None:
         """Removed review/task_description/enrichment sections are ignored from DB config."""

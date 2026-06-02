@@ -13,8 +13,11 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, Protocol
 
+import httpx
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
+from starlette.datastructures import Headers
 
 from gobby.adapters.codex_impl.app_server_adapter import CodexAdapter
 from gobby.hooks.hook_manager import HookManager
@@ -35,6 +38,21 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 _CODEX_SYNC_TIMEOUT_SECONDS = 10.0
+_DAEMON_OWNED_UI_PREFIXES = frozenset(
+    ("__gobby__", "admin", "api", "health", "mcp", "memories", "sessions", "skills", "tasks", "ws")
+)
+_HOP_BY_HOP_HEADERS = frozenset(
+    (
+        "connection",
+        "keep-alive",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "te",
+        "trailers",
+        "transfer-encoding",
+        "upgrade",
+    )
+)
 
 
 def create_app(server: "HTTPServer") -> FastAPI:
@@ -536,13 +554,16 @@ def create_app(server: "HTTPServer") -> FastAPI:
     # Mount WebSocket proxy (before production UI catch-all)
     _mount_ws_proxy(app, server)
 
-    # Mount static files for production UI mode
-    if (
-        server.services.config
-        and server.services.config.ui.enabled
-        and server.services.config.ui.mode == "production"
-    ):
-        _mount_production_ui(app, server)
+    # Mount UI according to the effective startup-time mode.
+    if server.services.config and server.services.config.ui.enabled:
+        from gobby.cli.ui_mode import resolve_ui_mode
+
+        ui_resolution = resolve_ui_mode(server.services.config)
+        if ui_resolution.effective == "production":
+            _mount_production_ui(app, server)
+        else:
+            _mount_vite_hmr_proxy(app, server)
+            _mount_vite_dev_ui(app, server)
 
     return app
 
@@ -645,44 +666,12 @@ def _mount_ws_proxy(app: FastAPI, server: "HTTPServer") -> None:
 
     @app.websocket("/ws/{path:path}")
     async def ws_proxy(websocket: WebSocket, path: str) -> None:
-        await websocket.accept()
-
         # Build target URL preserving sub-path and query string
         query = str(websocket.query_params) if websocket.query_params else ""
         target = f"ws://localhost:{ws_port}/{path}"
         if query:
             target += f"?{query}"
-
-        import websockets
-
-        try:
-            async with websockets.connect(target) as backend:
-
-                async def client_to_backend() -> None:
-                    try:
-                        while True:
-                            data = await websocket.receive_text()
-                            await backend.send(data)
-                    except WebSocketDisconnect:
-                        await backend.close()
-
-                async def backend_to_client() -> None:
-                    try:
-                        async for message in backend:
-                            if isinstance(message, str):
-                                await websocket.send_text(message)
-                            else:
-                                await websocket.send_bytes(message)
-                    except websockets.exceptions.ConnectionClosed:
-                        await websocket.close()
-
-                await asyncio.gather(client_to_backend(), backend_to_client())
-        except Exception as e:
-            logger.debug(f"WebSocket proxy error: {e}")
-            try:
-                await websocket.close(code=1011)
-            except Exception:
-                pass
+        await _proxy_websocket(websocket, target)
 
     # Also handle bare /ws (no trailing path)
     @app.websocket("/ws")
@@ -690,6 +679,124 @@ def _mount_ws_proxy(app: FastAPI, server: "HTTPServer") -> None:
         await ws_proxy(websocket, "")
 
     logger.debug(f"WebSocket proxy mounted at /ws -> localhost:{ws_port}")
+
+
+async def _proxy_websocket(websocket: WebSocket, target: str) -> None:
+    await websocket.accept()
+
+    import websockets
+
+    try:
+        async with websockets.connect(target) as backend:
+
+            async def client_to_backend() -> None:
+                try:
+                    while True:
+                        data = await websocket.receive_text()
+                        await backend.send(data)
+                except WebSocketDisconnect:
+                    await backend.close()
+
+            async def backend_to_client() -> None:
+                try:
+                    async for message in backend:
+                        if isinstance(message, str):
+                            await websocket.send_text(message)
+                        else:
+                            await websocket.send_bytes(message)
+                except websockets.exceptions.ConnectionClosed:
+                    await websocket.close()
+
+            await asyncio.gather(client_to_backend(), backend_to_client())
+    except Exception as e:
+        logger.debug(f"WebSocket proxy error: {e}")
+        try:
+            await websocket.close(code=1011)
+        except Exception:
+            pass
+
+
+def _mount_vite_hmr_proxy(app: FastAPI, server: "HTTPServer") -> None:
+    config = server.services.config
+    if config is None:
+        logger.debug("Vite HMR proxy not mounted: config is unavailable")
+        return
+    ui_port = config.ui.port
+
+    @app.websocket("/__vite_hmr")
+    async def vite_hmr_proxy_root(websocket: WebSocket) -> None:
+        await vite_hmr_proxy(websocket, "")
+
+    @app.websocket("/__vite_hmr/{path:path}")
+    async def vite_hmr_proxy(websocket: WebSocket, path: str) -> None:
+        query = str(websocket.query_params) if websocket.query_params else ""
+        target = f"ws://localhost:{ui_port}/__vite_hmr"
+        if path:
+            target += f"/{path}"
+        if query:
+            target += f"?{query}"
+        await _proxy_websocket(websocket, target)
+
+    logger.debug(f"Vite HMR proxy mounted at /__vite_hmr -> localhost:{ui_port}")
+
+
+def _is_daemon_owned_ui_path(path: str) -> bool:
+    first_segment = path.split("/", 1)[0]
+    return first_segment in _DAEMON_OWNED_UI_PREFIXES
+
+
+def _proxied_response_headers(headers: httpx.Headers) -> dict[str, str]:
+    return {key: value for key, value in headers.items() if key.lower() not in _HOP_BY_HOP_HEADERS}
+
+
+def _proxied_request_headers(headers: Headers) -> dict[str, str]:
+    return {
+        key: value
+        for key, value in headers.items()
+        if key.lower() not in _HOP_BY_HOP_HEADERS and key.lower() != "host"
+    }
+
+
+def _mount_vite_dev_ui(app: FastAPI, server: "HTTPServer") -> None:
+    config = server.services.config
+    if config is None:
+        logger.debug("Dev UI proxy not mounted: config is unavailable")
+        return
+    ui_port = config.ui.port
+
+    async def vite_proxy(request: Request, path: str = "") -> Response:
+        if _is_daemon_owned_ui_path(path):
+            raise HTTPException(status_code=404)
+
+        target = f"http://localhost:{ui_port}/{path}"
+        if request.url.query:
+            target += f"?{request.url.query}"
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
+                backend_response = await client.request(
+                    request.method,
+                    target,
+                    headers=_proxied_request_headers(request.headers),
+                    content=await request.body(),
+                )
+        except httpx.RequestError as exc:
+            logger.debug("Vite UI proxy error: %s", exc)
+            raise HTTPException(status_code=502, detail="Vite dev server unavailable") from exc
+
+        return Response(
+            content=backend_response.content,
+            status_code=backend_response.status_code,
+            headers=_proxied_response_headers(backend_response.headers),
+        )
+
+    app.add_api_route("/", vite_proxy, methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"])
+    app.add_api_route(
+        "/{path:path}",
+        vite_proxy,
+        methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"],
+    )
+    logger.info(f"Dev UI proxy mounted at / -> localhost:{ui_port}")
 
 
 def _mount_production_ui(app: FastAPI, server: "_ProductionUIServer") -> None:

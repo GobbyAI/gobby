@@ -236,7 +236,7 @@ def format_status_message(
             ui_detail = ui_url
             if ui_mode:
                 ui_detail += f" ({ui_mode}"
-                if ui_mode == "dev" and ui_pid:
+                if ui_pid:
                     ui_detail += f", PID: {ui_pid}"
                 ui_detail += ")"
             lines.append(f"  {'Web UI:':<{_LW}}{ui_detail}")

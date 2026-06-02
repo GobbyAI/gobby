@@ -63,7 +63,7 @@ class UIConfig(BaseModel):
     """Configuration for the web UI."""
 
     enabled: bool = Field(default=False, description="Enable web UI serving")
-    mode: str = Field(default="production", description="'production' or 'dev'")
+    mode: str = Field(default="auto", description="'auto', 'production', or 'dev'")
     port: int = Field(default=60889, description="Dev server port (dev mode only)")
     host: str = Field(default="localhost", description="Dev server host (dev mode only)")
     web_dir: str | None = Field(
@@ -93,6 +93,6 @@ class UIConfig(BaseModel):
     @field_validator("mode")
     @classmethod
     def validate_mode(cls, v: str) -> str:
-        if v not in ("production", "dev"):
-            raise ValueError("UI mode must be 'production' or 'dev'")
+        if v not in ("auto", "production", "dev"):
+            raise ValueError("UI mode must be 'auto', 'production', or 'dev'")
         return v

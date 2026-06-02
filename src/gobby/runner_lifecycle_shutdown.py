@@ -392,7 +392,12 @@ def _log_shutdown_timeout(service_name: str, *, shutdown_intent: ShutdownIntent)
 
 
 def _stop_ui_dev_server_if_needed(runner: GobbyRunner) -> None:
-    if runner.config.ui.enabled and runner.config.ui.mode == "dev":
+    if not runner.config.ui.enabled:
+        return
+
+    from gobby.cli.ui_mode import resolve_ui_mode
+
+    if resolve_ui_mode(runner.config).effective == "dev":
         from gobby.cli.utils import stop_ui_server
 
         stop_ui_server(quiet=True)

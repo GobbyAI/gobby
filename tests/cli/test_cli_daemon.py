@@ -297,7 +297,7 @@ class TestStartCommand:
         mock_load_config.return_value = mock_daemon_config
         mock_kill_daemons.return_value = 0
         mock_is_port_available.return_value = True
-        mock_fetch_status.return_value = {}
+        mock_fetch_status.return_value = {"process": {}}
 
         # Mock process
         mock_process = MagicMock()
@@ -354,7 +354,7 @@ class TestStartCommand:
         mock_load_config.return_value = mock_daemon_config
         mock_kill_daemons.return_value = 0
         mock_is_port_available.return_value = True
-        mock_fetch_status.return_value = {}
+        mock_fetch_status.return_value = {"process": {}}
 
         mock_process = MagicMock()
         mock_process.pid = 12345
@@ -409,7 +409,7 @@ class TestStartCommand:
         mock_load_config.return_value = mock_daemon_config
         mock_kill_daemons.return_value = 0
         mock_is_port_available.return_value = True
-        mock_fetch_status.return_value = {}
+        mock_fetch_status.return_value = {"process": {}}
 
         mock_process = MagicMock()
         mock_process.pid = 12345
@@ -1201,7 +1201,7 @@ class TestRestartCommand:
         mock_stop_daemon.return_value = True
         mock_kill_daemons.return_value = 0
         mock_is_port_available.return_value = True
-        mock_fetch_status.return_value = {}
+        mock_fetch_status.return_value = {"process": {}}
 
         mock_process = MagicMock()
         mock_process.pid = 12345
@@ -1432,7 +1432,7 @@ class TestStatusCommand:
     ) -> None:
         """Test status when daemon is running."""
         mock_load_config.return_value = mock_daemon_config
-        mock_fetch_status.return_value = {}
+        mock_fetch_status.return_value = {"process": {}}
 
         # Mock psutil.Process
         mock_proc = MagicMock()
@@ -1476,7 +1476,7 @@ class TestStatusCommand:
     ) -> None:
         """Test status handles psutil errors gracefully."""
         mock_load_config.return_value = mock_daemon_config
-        mock_fetch_status.return_value = {}
+        mock_fetch_status.return_value = {"process": {}}
         mock_psutil_process.side_effect = psutil.NoSuchProcess(pid=12345)
 
         with runner.isolated_filesystem(temp_dir=str(temp_dir)):

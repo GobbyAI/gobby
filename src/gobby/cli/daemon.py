@@ -25,9 +25,9 @@ from .installers.service import (
     service_start,
     service_stop,
 )
+from .ui_mode import resolve_ui_mode
 from .utils import (
     _is_process_alive,
-    find_web_dir,
     format_uptime,
     get_gobby_home,
     init_local_storage,
@@ -521,19 +521,27 @@ def start(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -> 
 
             # Spawn UI server if enabled
             ui_url = None
+            ui_mode_display = None
             if not no_ui and config.ui.enabled:
-                if config.ui.mode == "dev":
-                    web_dir = find_web_dir(config)
+                ui_resolution = resolve_ui_mode(config)
+                ui_mode_display = ui_resolution.display
+                ui_url = f"http://localhost:{http_port}/"
+                if ui_resolution.effective == "dev":
+                    web_dir = ui_resolution.source_web_dir
                     if web_dir:
                         ui_log = Path(config.telemetry.log_file).expanduser().parent / "ui.log"
-                        ui_pid = spawn_ui_server(config.ui.host, config.ui.port, web_dir, ui_log)
+                        ui_pid = spawn_ui_server(
+                            config.ui.host,
+                            config.ui.port,
+                            web_dir,
+                            ui_log,
+                            daemon_port=http_port,
+                            ws_port=ws_port,
+                        )
                         if ui_pid:
-                            ui_url = f"http://{config.ui.host}:{config.ui.port}"
                             ui_pid_file = gobby_dir / "ui.pid"
                             with open(ui_pid_file, "w") as f:
                                 f.write(str(ui_pid))
-                elif config.ui.mode == "production":
-                    ui_url = f"http://localhost:{http_port}/"
 
             # Compact startup summary
             click.echo("")
@@ -543,7 +551,7 @@ def start(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -> 
                     http_port=http_port,
                     websocket_port=ws_port,
                     ui_url=ui_url,
-                    ui_mode=config.ui.mode if config.ui.enabled and not no_ui else None,
+                    ui_mode=ui_mode_display,
                     log_files=str(log_file.parent),
                 )
             )
@@ -704,12 +712,15 @@ def status(ctx: click.Context) -> None:
 
     # Check UI server status
     ui_enabled = config.ui.enabled
-    ui_mode = config.ui.mode if ui_enabled else None
+    ui_mode = None
     ui_url = None
     ui_pid = None
 
     if ui_enabled:
-        if ui_mode == "dev":
+        ui_resolution = resolve_ui_mode(config)
+        ui_mode = ui_resolution.display
+        ui_url = f"http://localhost:{http_port}/"
+        if ui_resolution.effective == "dev":
             ui_pid_file = get_gobby_home() / "ui.pid"
             if ui_pid_file.exists():
                 try:
@@ -717,11 +728,8 @@ def status(ctx: click.Context) -> None:
                         _ui_pid = int(f.read().strip())
                     os.kill(_ui_pid, 0)
                     ui_pid = _ui_pid
-                    ui_url = f"http://{config.ui.host}:{config.ui.port}"
                 except (ProcessLookupError, ValueError, OSError):
                     pass
-        elif ui_mode == "production":
-            ui_url = f"http://localhost:{http_port}/"
 
     # Fetch API status data
     api_data = asyncio.run(fetch_rich_status(http_port, timeout=3.0))

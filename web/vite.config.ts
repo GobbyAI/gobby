@@ -16,6 +16,9 @@ export default defineConfig({
   server: {
     host: GOBBY_UI_HOST,
     port: 60889,
+    hmr: {
+      path: '/__vite_hmr',
+    },
     allowedHosts: GOBBY_UI_HOST === '0.0.0.0' ? true : ['localhost', '.ts.net', ...(process.env.VITE_ALLOWED_HOST ? [process.env.VITE_ALLOWED_HOST] : [])],
     proxy: {
       // Proxy API requests to Gobby daemon

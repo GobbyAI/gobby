@@ -74,6 +74,18 @@ class TestStatusUtils:
         assert "100.0 MB" in msg
         assert "localhost:8080" in msg
 
+    def test_format_status_message_shows_resolved_ui_mode_and_pid(self) -> None:
+        msg = format_status_message(
+            running=True,
+            http_port=60887,
+            ui_enabled=True,
+            ui_mode="auto -> dev",
+            ui_url="http://localhost:60887/",
+            ui_pid=1234,
+        )
+
+        assert "http://localhost:60887/ (auto -> dev, PID: 1234)" in msg
+
     def test_format_status_message_degraded_when_control_plane_unavailable(self) -> None:
         msg = format_status_message(
             running=True,
@@ -252,13 +264,13 @@ class TestStatusUtils:
             http_port=60887,
             websocket_port=60888,
             ui_url="http://localhost:5173",
-            ui_mode="dev",
+            ui_mode="auto -> dev",
             log_files="/tmp/logs",
         )
         assert "Gobby daemon ready (PID: 12345)" in msg
         assert "localhost:60887" in msg
         assert "localhost:60888" in msg
-        assert "http://localhost:5173 (dev)" in msg
+        assert "http://localhost:5173 (auto -> dev)" in msg
         assert "/tmp/logs" in msg
 
     def test_format_startup_summary_minimal(self) -> None:

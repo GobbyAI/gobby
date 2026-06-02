@@ -2,20 +2,44 @@
 CLI commands for Gobby web UI management and development.
 """
 
+from __future__ import annotations
+
 import os
 import subprocess  # nosec B404 # subprocess needed for npm commands
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import click
 
+from .ui_mode import UIModeResolution
 from .utils import find_web_dir, get_gobby_home, spawn_ui_server, stop_ui_server
+
+if TYPE_CHECKING:
+    from gobby.config.app import DaemonConfig
 
 
 def _resolve_source_web_dir(ctx: click.Context | None) -> Path | None:
     """Locate the web/ source tree (with package.json) for npm dev/build."""
     config = ctx.obj.get("config") if ctx is not None and ctx.obj else None
     return find_web_dir(config, require_source=True)
+
+
+def _resolve_ui_mode_for_command(config: DaemonConfig) -> UIModeResolution:
+    mode = getattr(getattr(config, "ui", None), "mode", "auto")
+    if mode == "production":
+        return UIModeResolution(configured="production", effective="production")
+
+    source_web_dir = find_web_dir(config, require_source=True)
+    if mode == "dev":
+        return UIModeResolution(configured="dev", effective="dev", source_web_dir=source_web_dir)
+    if source_web_dir is not None:
+        return UIModeResolution(
+            configured="auto",
+            effective="dev",
+            source_web_dir=source_web_dir,
+        )
+    return UIModeResolution(configured="auto", effective="production")
 
 
 def _get_ui_pid() -> int | None:
@@ -71,14 +95,16 @@ def ui_start(ctx: click.Context) -> None:
         click.echo("Web UI is not enabled. Set ui.enabled: true in config.", err=True)
         sys.exit(1)
 
+    ui_resolution = _resolve_ui_mode_for_command(config)
+
     # Check if already running (dev mode)
-    if config.ui.mode == "dev":
+    if ui_resolution.effective == "dev":
         existing_pid = _get_ui_pid()
         if existing_pid:
             click.echo(f"UI server is already running (PID: {existing_pid})", err=True)
             sys.exit(1)
 
-        web_dir = find_web_dir(config)
+        web_dir = ui_resolution.source_web_dir
         if not web_dir:
             click.echo("Error: Web UI directory not found", err=True)
             sys.exit(1)
@@ -131,16 +157,17 @@ def ui_status(ctx: click.Context) -> None:
         click.echo("Web UI: Disabled")
         return
 
-    click.echo(f"Web UI: Enabled (mode: {config.ui.mode})")
+    ui_resolution = _resolve_ui_mode_for_command(config)
+    click.echo(f"Web UI: Enabled (mode: {ui_resolution.display})")
 
-    if config.ui.mode == "dev":
+    if ui_resolution.effective == "dev":
         pid = _get_ui_pid()
         if pid:
             click.echo(f"  Status: Running (PID: {pid})")
             click.echo(f"  URL: http://{config.ui.host}:{config.ui.port}")
         else:
             click.echo("  Status: Stopped")
-    elif config.ui.mode == "production":
+    elif ui_resolution.effective == "production":
         click.echo(f"  URL: http://localhost:{config.daemon_port}/")
         click.echo("  Status: Served by daemon (check 'gobby status')")
 

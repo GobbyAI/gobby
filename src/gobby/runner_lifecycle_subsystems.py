@@ -424,12 +424,17 @@ def _start_websocket_server(runner: GobbyRunner, tracker: StartupTracker | None)
 
 
 def _maybe_start_ui_dev_server(runner: GobbyRunner) -> None:
-    if not (runner.config.ui.enabled and runner.config.ui.mode == "dev"):
+    if not runner.config.ui.enabled:
         return
 
-    from gobby.cli.utils import find_web_dir, spawn_ui_server
+    from gobby.cli.ui_mode import resolve_ui_mode
+    from gobby.cli.utils import spawn_ui_server
 
-    web_dir = find_web_dir(runner.config)
+    ui_resolution = resolve_ui_mode(runner.config)
+    if ui_resolution.effective != "dev":
+        return
+
+    web_dir = ui_resolution.source_web_dir
     if web_dir:
         ui_log = Path(runner.config.telemetry.log_file).expanduser().parent / "ui.log"
         ui_host = runner.config.ui.host
@@ -445,12 +450,16 @@ def _maybe_start_ui_dev_server(runner: GobbyRunner) -> None:
         )
         if ui_pid:
             logger.info(
-                f"UI dev server started (PID: {ui_pid}) at http://{ui_host}:{runner.config.ui.port}"
+                "UI dev server started (PID: %s) at http://%s:%s for daemon UI mode %s",
+                ui_pid,
+                ui_host,
+                runner.config.ui.port,
+                ui_resolution.display,
             )
         else:
             logger.warning("Failed to start UI dev server")
     else:
-        logger.warning("UI dev mode enabled but web/ directory not found")
+        logger.warning("UI dev mode effective but source web/ directory not found")
 
 
 async def init_subsystems(

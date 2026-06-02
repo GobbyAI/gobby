@@ -12,6 +12,7 @@ import logging
 import os
 import re
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -659,6 +660,7 @@ _LEGACY_KEYS_TO_DROP = frozenset(
     {"_meta", "review", "task_description", "title_synthesis", "rules", "ui_settings"}
 )
 _LEGACY_NEO4J_CONFIG_PREFIX = "databases.neo4j."
+_UI_MODE_CONFIG_KEY = "ui.mode"
 
 # Mapping from old logging.* field names to new telemetry.* field names
 _LOGGING_TO_TELEMETRY_FIELDS: dict[str, str] = {
@@ -765,6 +767,44 @@ def _drop_legacy_embedding_config_store_keys(
     return migrated
 
 
+def _migrate_default_ui_mode_config_store_row(
+    flat_config: dict[str, Any], config_store: Any | None
+) -> dict[str, Any]:
+    """Upgrade defaults-seeded ui.mode rows from production to auto."""
+    if flat_config.get(_UI_MODE_CONFIG_KEY) != "production":
+        return flat_config
+
+    db = getattr(config_store, "db", None)
+    execute = getattr(db, "execute", None)
+    if not callable(execute):
+        return flat_config
+
+    try:
+        cursor = execute(
+            """UPDATE config_store
+               SET value = %s, updated_at = %s
+               WHERE key = %s AND source = %s AND value = %s""",
+            (
+                '"auto"',
+                datetime.now(UTC).isoformat(),
+                _UI_MODE_CONFIG_KEY,
+                "defaults",
+                '"production"',
+            ),
+        )
+    except Exception as exc:
+        logger.debug("Failed to migrate defaults-seeded ui.mode config row: %s", exc)
+        return flat_config
+
+    if not getattr(cursor, "rowcount", 0):
+        return flat_config
+
+    migrated = dict(flat_config)
+    migrated[_UI_MODE_CONFIG_KEY] = "auto"
+    logger.info("Migrated defaults-seeded ui.mode config row from production to auto")
+    return migrated
+
+
 _BOOTSTRAP_BACKEND_KEYS = ("hub_backend", "database_url", "postgres_install_mode")
 
 
@@ -827,6 +867,7 @@ def load_config(
         flat_db = config_store.get_all()
         flat_db = _drop_legacy_neo4j_config_store_keys(flat_db, config_store)
         flat_db = _drop_legacy_embedding_config_store_keys(flat_db, config_store)
+        flat_db = _migrate_default_ui_mode_config_store_row(flat_db, config_store)
         if flat_db:
             db_dict = unflatten_config(storage_embedding_config_entries_to_runtime(flat_db))
             # Resolve $secret:NAME and ${VAR} patterns in DB values
