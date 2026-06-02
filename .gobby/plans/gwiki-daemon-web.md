@@ -35,10 +35,12 @@ consumes existing upstream `gwiki --format json` commands through `GwikiGateway`
 - `gwiki health --format json`
 - `gwiki sources --format json`
 - `gwiki remove-source --id <SOURCE_ID> --format json [--dry-run|--yes] [--keep-asset]`
+- `gwiki refresh --format json [--scope project|topic] [--id <SOURCE_ID>...] [--dry-run]`
 
 The upstream CLI additions required by this daemon/web plan are `gwiki read --format json`,
-`gwiki ingest-url --format json URL...`, `gwiki sources --format json`, and
-`gwiki remove-source --id <SOURCE_ID> --format json [--dry-run|--yes] [--keep-asset]`.
+`gwiki ingest-url --format json URL...`, `gwiki sources --format json`,
+`gwiki remove-source --id <SOURCE_ID> --format json [--dry-run|--yes] [--keep-asset]`, and
+`gwiki refresh --format json [--scope project|topic] [--id <SOURCE_ID>...] [--dry-run]`.
 Daemon/web `attach` is local integration terminology: the daemon handles upload and staging,
 then maps attach requests to existing `gwiki ingest-file --format json` via
 `GwikiGateway.ingest_file`. No upstream `gwiki attach` command is required.
@@ -49,6 +51,16 @@ per-URL failure classification, and once-per-batch indexing after accepted sourc
 written. Daemon/web code passes URL arrays to `GwikiGateway.ingest_url`; it must not fetch
 URLs, write URL raw sources, classify URL failures, or trigger duplicate indexing for the
 accepted batch already indexed by the CLI result.
+
+Source refresh is upstream-owned. `gwiki refresh --format json` owns re-fetching existing
+accepted sources, comparing content hashes, re-writing changed raw sources, classifying
+per-source refresh failures, and once-per-batch indexing of changed sources after the batch
+is written. Daemon/web code passes scope and optional source IDs to `GwikiGateway.refresh`;
+it must not re-fetch sources, compute source hashes, write raw sources, classify refresh
+failures, or trigger duplicate indexing for the changed batch already indexed by the CLI
+result. Source refresh is conservative like source removal: it touches raw source provenance
+and raw assets only; compiled wiki articles, concepts, health snapshots, and `outputs/`
+exports stay out of scope.
 
 Wiki parsing, vault semantics, source lifecycle ownership, command ownership, and AI
 capability routing remain outside this web/gateway scope. The AI capability source contract
@@ -89,6 +101,7 @@ The daemon/web work requires these `gwiki` JSON command contracts from the CLI p
 - `gwiki health --format json`
 - `gwiki sources --format json`
 - `gwiki remove-source --id <SOURCE_ID> --format json [--dry-run|--yes] [--keep-asset]`
+- `gwiki refresh --format json [--scope project|topic] [--id <SOURCE_ID>...] [--dry-run]`
 
 Successful command JSON must include `scope`, `command`, and command-specific payloads.
 Structured degradation, actionable paths, changed paths, setup guidance, health findings, or
@@ -123,6 +136,20 @@ and `outputs/` exports remain out of scope. The daemon uses `index_status.index_
 only to coordinate follow-up indexing and does not infer removal effects by inspecting vault
 files.
 
+`gwiki refresh --format json [--scope project|topic] [--id <SOURCE_ID>...] [--dry-run]`
+must return a scoped batch result with `command: "refresh"`, `scope`,
+`status: "refreshed" | "partial" | "unchanged" | "failed"`, `refreshed` entries containing
+`id`, `kind`, `previous_content_hash`, `content_hash`, `changed`, `raw_path`, and
+`final_url`, `unchanged` entries containing refreshed-but-identical source `id`s, `failed`
+entries containing `id`, `code`, and `message`, `indexed { documents, chunks, links,
+sources, ingestions }` for the changed batch the CLI re-indexed, and
+`index_status.index_required`. `--dry-run` returns the planned refresh set without fetching
+or writing. Partial success is a successful subprocess result. All-failed batches return
+nonzero while preserving the same structured result on stdout when available. The daemon
+consumes the CLI failure classification and the CLI-owned `indexed` counts; it must not
+re-fetch, re-hash, persist, or schedule a second index pass for the changed batch already
+indexed by the CLI result.
+
 `gwiki ingest-url --format json URL...` must return a scoped batch result with
 `command: "ingest-url"`, `scope`, `status: "ingested" | "partial" | "failed"`, `accepted`
 entries containing `requested_url`, `final_url`, `raw_path`, and `source { id, kind,
@@ -142,6 +169,9 @@ remove-source failures.
 For `gwiki ingest-url`, the gateway must preserve accepted/failed arrays, stderr, stdout
 JSON on nonzero all-failed exits, and the CLI-owned `indexed` counts without scheduling a
 second index pass.
+For `gwiki refresh`, the gateway must preserve refreshed/unchanged/failed arrays, dry-run
+plans, stderr, stdout JSON on nonzero all-failed exits, and the CLI-owned `indexed` counts
+and `index_status` without scheduling a second index pass.
 
 ## P1: Gateway And Contract Probe
 
@@ -164,6 +194,7 @@ Document each consumed `gwiki --format json` command, required arguments, reques
 - 1.1.3 - Guide states daemon/web code must use `GwikiGateway`, not direct subprocess calls. file: `docs/guides/gwiki-daemon-web.md`.
 - 1.1.4 - Guide documents CLI-owned source listing/removal, `--dry-run`/`--yes`, `--keep-asset`, and `index_status.index_required`. file: `docs/guides/gwiki-daemon-web.md`.
 - 1.1.5 - Guide documents CLI-owned URL batch ingest, including URL arrays, accepted/failed result shape, partial success, all-failed nonzero behavior, and once-per-batch CLI indexing. file: `docs/guides/gwiki-daemon-web.md`.
+- 1.1.6 - Guide documents CLI-owned source refresh (`gwiki refresh --format json [--scope] [--id ...] [--dry-run]`), including refreshed/unchanged/failed result shape, changed-source `raw_path`s, once-per-batch CLI indexing, and `index_status.index_required`. file: `docs/guides/gwiki-daemon-web.md`.
 
 ### 1.2 Add GwikiGateway wrapper [category: code] (depends: 1.1)
 
@@ -173,8 +204,9 @@ Targets: `src/gobby/gwiki_gateway.py`, `tests/test_gwiki_gateway.py`
 
 Add a single async wrapper around `gwiki --format json` with methods for `status`, `index`,
 `search`, `read`, `backlinks`, `ingest_file`, `ingest_url(urls)`, `collect`, `research`,
-`compile`, `audit`, `health`, `sources`, and
-`remove_source(source_id, *, dry_run, yes, keep_asset)`.
+`compile`, `audit`, `health`, `sources`,
+`remove_source(source_id, *, dry_run, yes, keep_asset)`, and
+`refresh(*, scope=None, source_ids=None, dry_run=False)`.
 The gateway resolves the binary path, passes project/topic scope, enforces
 timeouts, parses JSON stdout, captures stderr, normalizes command-specific CLI JSON into
 daemon envelopes, and raises typed errors on non-zero exits. `read` must pass exactly one of
@@ -185,11 +217,15 @@ source records. `remove_source` must pass `--id`, `--dry-run` or `--yes`, and op
 `index_status`, stderr, and structured errors. `ingest_url(urls)` must pass URL arguments
 without daemon-side fetching, preserve CLI `accepted`, `failed`, `status`, and `indexed`
 fields, treat partial success as a command result, and preserve structured stdout plus
-stderr on all-failed nonzero exits.
+stderr on all-failed nonzero exits. `refresh(*, scope=None, source_ids=None, dry_run=False)`
+must pass `--scope`, optional repeated `--id`, and `--dry-run` flags without daemon-side
+fetching or hashing, preserve CLI `refreshed`, `unchanged`, `failed`, `status`, `indexed`,
+and `index_status` fields, treat partial success and dry-run plans as command results, and
+preserve structured stdout plus stderr on all-failed nonzero exits.
 
 **Acceptance:**
 
-- 1.2.1 - `GwikiGateway` exposes `status`, `index`, `search`, `read`, `backlinks`, `ingest_file`, `ingest_url`, `collect`, `research`, `compile`, `audit`, `health`, `sources`, and `remove_source`. file: `src/gobby/gwiki_gateway.py`.
+- 1.2.1 - `GwikiGateway` exposes `status`, `index`, `search`, `read`, `backlinks`, `ingest_file`, `ingest_url`, `collect`, `research`, `compile`, `audit`, `health`, `sources`, `remove_source`, and `refresh`. file: `src/gobby/gwiki_gateway.py`.
 - 1.2.2 - Gateway parses JSON stdout and preserves stderr on failure. test: `tests/test_gwiki_gateway.py::test_error_preserves_stderr`.
 - 1.2.3 - Gateway enforces per-command timeout and reports structured degradation. test: `tests/test_gwiki_gateway.py::test_timeout_degrades`.
 - 1.2.4 - No route, MCP tool, watcher, or cron path invokes `gwiki` outside `GwikiGateway`. behavior: "grep for create_subprocess_exec gwiki has only gateway hits" in `src/gobby/`.
@@ -198,6 +234,7 @@ stderr on all-failed nonzero exits.
 - 1.2.7 - `GwikiGateway.remove_source` passes source id, dry-run/confirmation flags, `keep_asset`, stderr, dry-run preview payloads, and `index_status` through the gateway contract. test: `tests/test_gwiki_gateway.py::test_remove_source_preserves_cli_payloads`.
 - 1.2.8 - `GwikiGateway.ingest_url` passes all URL arguments to `gwiki ingest-url --format json` and preserves `accepted`, `failed`, `status`, `scope`, and `indexed` fields. test: `tests/test_gwiki_gateway.py::test_ingest_url_passes_batch_and_preserves_payload`.
 - 1.2.9 - `GwikiGateway.ingest_url` treats partial failures as successful command JSON and preserves stdout JSON plus stderr on all-failed nonzero exits. test: `tests/test_gwiki_gateway.py::test_ingest_url_preserves_partial_and_all_failed_errors`.
+- 1.2.10 - `GwikiGateway.refresh` passes `--scope`, repeated `--id`, and `--dry-run` to `gwiki refresh --format json` without daemon-side fetching, preserves `refreshed`, `unchanged`, `failed`, `status`, `scope`, `indexed`, and `index_status`, and treats partial/dry-run results as command JSON while preserving stdout plus stderr on all-failed nonzero exits. test: `tests/test_gwiki_gateway.py::test_refresh_passes_scope_and_preserves_payload`.
 
 ## P2: API And MCP Surfaces
 
@@ -209,7 +246,7 @@ stderr on all-failed nonzero exits.
 
 `kind: deliverable`
 
-Targets: `src/gobby/servers/routes/wiki.py`, `tests/servers/routes/test_wiki_routes.py`
+Targets: `src/gobby/servers/routes/wiki.py`, `src/gobby/servers/routes/__init__.py`, `src/gobby/servers/app_factory.py`, `tests/servers/routes/test_wiki_routes.py`
 
 Add HTTP routes backed by `GwikiGateway`:
 
@@ -249,21 +286,29 @@ daemon indexing only when the CLI result includes `index_status.index_required: 
 `ingest-url` is an explicit write whose CLI result already indexed the accepted batch, so the
 route must not schedule duplicate daemon indexing for the same result.
 
+The route module exposes a `create_wiki_router(server)` factory matching the existing route
+modules. The router is wired into the daemon like every other router: it is imported and
+listed in `src/gobby/servers/routes/__init__.py` (both the `from gobby.servers.routes.<...>`
+imports and `__all__`), and `src/gobby/servers/app_factory.py::_register_routes` adds
+`app.include_router(create_wiki_router(server))`. Without both edits the `/api/wiki/*` routes
+are unreachable even though the module exists.
+
 **Acceptance:**
 
-- 2.1.1 - Wiki route module exposes the listed routes and calls `GwikiGateway`. file: `src/gobby/servers/routes/wiki.py`.
+- 2.1.1 - Wiki route module exposes a `create_wiki_router(server)` factory for the listed routes and calls `GwikiGateway`. file: `src/gobby/servers/routes/wiki.py`.
 - 2.1.2 - Route tests cover scope validation, JSON response pass-through, and gateway error mapping. test: `tests/servers/routes/test_wiki_routes.py`.
 - 2.1.3 - Explicit write routes invoke immediate index handoff when changed paths are reported. test: `tests/servers/routes/test_wiki_routes.py::test_write_routes_trigger_index`.
 - 2.1.4 - Source routes expose `GET /api/wiki/sources` and `POST /api/wiki/remove-source`, require `id` for removal, and reject simultaneous `dry_run` and `yes`. test: `tests/servers/routes/test_wiki_routes.py::test_source_routes_contract`.
 - 2.1.5 - Source route tests prove gateway error mapping preserves CLI stderr and structured remove-source guidance. test: `tests/servers/routes/test_wiki_routes.py::test_remove_source_error_mapping`.
 - 2.1.6 - `/api/wiki/ingest` routes URL arrays to `GwikiGateway.ingest_url` without daemon URL fetching and rejects mixed file/URL requests. test: `tests/servers/routes/test_wiki_routes.py::test_ingest_url_batch_routes_to_gateway`.
 - 2.1.7 - URL ingest route tests preserve CLI partial success, all-failed nonzero payloads, stderr, and `indexed` counts without duplicate index handoff. test: `tests/servers/routes/test_wiki_routes.py::test_ingest_url_batch_passthrough_and_indexing`.
+- 2.1.8 - `create_wiki_router` is exported from `src/gobby/servers/routes/__init__.py` and included by `_register_routes`, and the wiki routes are reachable through the FastAPI app route table. test: `tests/servers/routes/test_wiki_routes.py::test_wiki_router_registered_in_app`.
 
 ### 2.2 Add gobby-wiki MCP tools [category: code] (depends: 2.1)
 
 `kind: deliverable`
 
-Targets: `src/gobby/mcp_proxy/tools/wiki.py`, `tests/mcp_proxy/tools/test_wiki.py`
+Targets: `src/gobby/mcp_proxy/tools/wiki.py`, `src/gobby/mcp_proxy/registries.py`, `tests/mcp_proxy/tools/test_wiki.py`
 
 Expose MCP tools for `wiki_search`, `wiki_read`, `wiki_attach`, `wiki_ingest`,
 `wiki_compile`, `wiki_audit`, `wiki_health`, `wiki_list_sources`, and
@@ -279,13 +324,22 @@ input; URL arrays pass through to `GwikiGateway.ingest_url` without daemon URL f
 and `yes` are mutually exclusive, `keep_asset` is optional, and dry-run preview payloads are
 passed through from the CLI.
 
+Internal MCP tools are only discoverable when their registry is wired into
+`src/gobby/mcp_proxy/registries.py::setup_internal_registries`. The module exposes a
+`create_wiki_registry(...)` factory matching the existing `create_<name>_registry` factories,
+and `setup_internal_registries` constructs it and calls `manager.add_registry(wiki_registry)`
+alongside the other registries. Without this wiring the tool module exists but
+`wiki_search`, `wiki_read`, `wiki_list_sources`, `wiki_remove_source`, and the rest never
+appear in tool discovery.
+
 **Acceptance:**
 
-- 2.2.1 - MCP wiki tools are registered and use `GwikiGateway`. file: `src/gobby/mcp_proxy/tools/wiki.py`.
+- 2.2.1 - MCP wiki tools are exposed by a `create_wiki_registry(...)` factory in `src/gobby/mcp_proxy/tools/wiki.py` and use `GwikiGateway`. file: `src/gobby/mcp_proxy/tools/wiki.py`.
 - 2.2.2 - Tool schemas include scope, project/topic, command-specific arguments, `wiki_list_sources`, and `wiki_remove_source` with the HTTP removal contract. test: `tests/mcp_proxy/tools/test_wiki.py::test_tool_schemas`.
 - 2.2.3 - Tools preserve gateway degradation and path metadata. test: `tests/mcp_proxy/tools/test_wiki.py::test_degradation_passthrough`.
 - 2.2.4 - Source lifecycle MCP tools preserve CLI source-list, dry-run preview, confirmed removal, and `index_status` payloads. test: `tests/mcp_proxy/tools/test_wiki.py::test_source_lifecycle_passthrough`.
 - 2.2.5 - `wiki_ingest` schema accepts URL batch input and passes URL arrays through to `GwikiGateway.ingest_url` while preserving accepted/failed CLI payloads. test: `tests/mcp_proxy/tools/test_wiki.py::test_wiki_ingest_url_batch_passthrough`.
+- 2.2.6 - `create_wiki_registry` is wired into `setup_internal_registries` via `manager.add_registry`, and listing internal MCP tools shows `wiki_search`, `wiki_read`, `wiki_list_sources`, and `wiki_remove_source` as discoverable. test: `tests/mcp_proxy/tools/test_wiki.py::test_wiki_registry_registered_and_discoverable`.
 
 ## P3: Web Chat Wiki Experience
 
@@ -375,29 +429,71 @@ result must not produce duplicate index handoffs when both changed-path metadata
 
 `kind: deliverable`
 
-Targets: `src/gobby/wiki/watcher.py`, `tests/wiki/test_watcher.py`
+Targets: `src/gobby/wiki/watcher.py`, `src/gobby/config/wiki.py`, `src/gobby/config/app.py`, `src/gobby/runner_lifecycle_periodic.py`, `src/gobby/runner_lifecycle_shutdown.py`, `tests/wiki/test_watcher.py`, `tests/wiki/test_watcher_lifecycle.py`
 
-Watch configured project and topic wiki roots for local edits. Debounce bursts, group changed paths by scope, and call the update coordinator to index changed files. Ignore generated health/output churn unless it affects indexable wiki state.
+Watch configured project and topic wiki roots for local edits. Debounce bursts, group changed
+paths by scope, and call the update coordinator to index changed files. Ignore generated
+health/output churn unless it affects indexable wiki state.
+
+The watcher is a long-lived daemon service, not just a module. Add a `WikiConfig`
+(`src/gobby/config/wiki.py`) with the project/topic wiki root scopes to watch, debounce
+interval, ignore globs, and an `enabled` flag, and register it on `DaemonConfig`
+(`src/gobby/config/app.py`) so startup can resolve the configured scopes. Wire the watcher
+into the daemon lifecycle exactly like the other periodic services: in
+`src/gobby/runner_lifecycle_periodic.py::start_periodic_tasks`, instantiate the watcher for
+the configured wiki roots, store the live instance on `runner._wiki_watcher`, and store its
+task on `runner._wiki_watcher_task = asyncio.create_task(...)`. In
+`src/gobby/runner_lifecycle_shutdown.py::_cancel_periodic_tasks`, add `_wiki_watcher_task` to
+the cancelled-task attr list and stop/clear `runner._wiki_watcher` during shutdown. The live
+`runner._wiki_watcher` handle is what § 4.4 status reads; expose a small accessor (for
+example `WikiWatcher.health()` returning watcher health, last index time, and pending
+debounce state) so the status surface does not reach into watcher internals. When
+`WikiConfig.enabled` is false or no wiki roots are configured, startup must skip the watcher
+without error.
 
 **Acceptance:**
 
 - 4.2.1 - Watcher debounces file changes and groups them by scope. test: `tests/wiki/test_watcher.py::test_debounce_groups_scope_changes`.
 - 4.2.2 - Watcher triggers index for local edits outside explicit API writes. test: `tests/wiki/test_watcher.py::test_local_edit_triggers_index`.
 - 4.2.3 - Watcher ignores `outputs/` and routine `meta/health/` churn unless configured otherwise. test: `tests/wiki/test_watcher.py::test_ignores_noncanonical_churn`.
+- 4.2.4 - `WikiConfig` defines watched project/topic wiki roots, debounce interval, ignore globs, and `enabled`, and is registered on `DaemonConfig`. file: `src/gobby/config/wiki.py`.
+- 4.2.5 - Daemon startup registers the watcher for configured wiki scopes on `runner._wiki_watcher` / `runner._wiki_watcher_task`, and skips cleanly when disabled or unconfigured. test: `tests/wiki/test_watcher_lifecycle.py::test_startup_registers_watcher_for_configured_scopes`.
+- 4.2.6 - Daemon shutdown cancels `_wiki_watcher_task` and stops/clears `runner._wiki_watcher`. test: `tests/wiki/test_watcher_lifecycle.py::test_shutdown_stops_watcher`.
+- 4.2.7 - The live watcher exposes a `health()` accessor returning watcher health, last index time, and pending debounce state for the status surface. test: `tests/wiki/test_watcher_lifecycle.py::test_watcher_health_accessor`.
 
 ### 4.3 Add user-visible scheduled wiki jobs [category: code] (depends: 4.1)
 
 `kind: deliverable`
 
-Targets: `src/gobby/wiki/scheduled_jobs.py`, `tests/wiki/test_scheduled_jobs.py`
+Targets: `src/gobby/wiki/scheduled_jobs.py`, `src/gobby/runner_init/orchestration.py`, `tests/wiki/test_scheduled_jobs.py`
 
-Add cron-backed scheduled jobs only for user-visible wiki operations: scheduled research, source refresh, health checks, and audits. Jobs must record purpose, scope, user-visible result, and linked `gwiki` command output.
+Add cron-backed scheduled jobs only for user-visible wiki operations: scheduled research,
+source refresh, health checks, and audits. Jobs must record purpose, scope, user-visible
+result, and linked `gwiki` command output.
+
+Each job is an async `CronHandler` (see `src/gobby/scheduler/executor.py`) returned by a
+factory in `src/gobby/wiki/scheduled_jobs.py`, and the handlers are registered into the live
+`CronExecutor` via `cron_executor.register_handler(name, handler)` in
+`src/gobby/runner_init/orchestration.py` (the same place the Linear sync handler is wired),
+with `action_type="handler"` cron jobs created idempotently per configured scope.
+
+The source-refresh job calls `GwikiGateway.refresh(scope=..., source_ids=None)` against
+`gwiki refresh --format json` (the upstream dependency defined in S1/D1) — there is no
+daemon-side fetch, hash, or persist. It records the refresh result in cron history: `scope`,
+`command: "refresh"`, `status`, the changed source `raw_path`s from `refreshed[].raw_path`
+where `changed` is true, and the CLI `indexed` summary. Because `gwiki refresh` already
+re-indexes the changed batch once, the job routes its result through the update coordinator
+(§ 4.1) using only `index_status.index_required` and must not trigger duplicate daemon
+indexing for the CLI-indexed batch. Research, health, and audit jobs likewise call their
+`GwikiGateway` methods and record user-visible results.
 
 **Acceptance:**
 
 - 4.3.1 - Scheduled jobs exist for research, refresh, health checks, and audits. file: `src/gobby/wiki/scheduled_jobs.py`.
 - 4.3.2 - Cron history entries include purpose, scope, command, result, and changed paths. test: `tests/wiki/test_scheduled_jobs.py::test_cron_history_is_user_visible`.
 - 4.3.3 - Scheduled jobs use `GwikiGateway` and update coordinator, not direct subprocess calls. test: `tests/wiki/test_scheduled_jobs.py::test_scheduled_jobs_use_gateway`.
+- 4.3.4 - Wiki cron handlers are registered into the `CronExecutor` via `register_handler` in `src/gobby/runner_init/orchestration.py` with idempotent per-scope handler jobs. test: `tests/wiki/test_scheduled_jobs.py::test_wiki_cron_handlers_registered`.
+- 4.3.5 - The source-refresh job calls `GwikiGateway.refresh`, records `scope`, `command`, `status`, changed `raw_path`s, and the CLI `indexed` summary, and indexes through the coordinator only when CLI `index_status.index_required` is true without duplicating the CLI-indexed batch. test: `tests/wiki/test_scheduled_jobs.py::test_refresh_job_uses_gateway_and_avoids_duplicate_index`.
 
 ### 4.4 Keep lightweight maintenance out of cron history [category: code] (depends: 4.2)
 
@@ -405,13 +501,24 @@ Add cron-backed scheduled jobs only for user-visible wiki operations: scheduled 
 
 Targets: `src/gobby/wiki/status.py`, `tests/wiki/test_status.py`, `web/src/components/activity/WikiTab.tsx`
 
-Expose lightweight wiki maintenance/status signals through daemon status or activity state: watcher health, last index time, pending debounce, gateway availability, and service degradation. Do not create cron runs for these routine checks.
+Expose lightweight wiki maintenance/status signals through daemon status or activity state:
+watcher health, last index time, pending debounce, gateway availability, and service
+degradation. Do not create cron runs for these routine checks.
+
+Watcher health, last index time, and pending debounce are read from the live watcher instance
+registered by § 4.2 (`runner._wiki_watcher`) through its `health()` accessor; the status
+module must not start its own watcher or inspect filesystem state to synthesize these signals.
+When no watcher is registered (disabled or unconfigured), the status surface reports the
+watcher as inactive rather than erroring. Gateway availability is derived from `GwikiGateway`
+(for example a `health`/`status` probe), and degradation is surfaced from the same gateway
+contract.
 
 **Acceptance:**
 
 - 4.4.1 - Status reports watcher health, last index time, pending debounce, gateway availability, and degradation. test: `tests/wiki/test_status.py::test_status_reports_maintenance_state`.
 - 4.4.2 - Routine maintenance/status checks do not create cron history rows. test: `tests/wiki/test_status.py::test_status_not_recorded_as_cron_history`.
 - 4.4.3 - Wiki Activity panel consumes the status surface. file: `web/src/components/activity/WikiTab.tsx`.
+- 4.4.4 - Status reads watcher health/last index/pending debounce from the live `runner._wiki_watcher.health()` accessor and reports inactive when no watcher is registered. test: `tests/wiki/test_status.py::test_status_reads_live_watcher_and_handles_absent_watcher`.
 
 ## VS1: Verification
 
@@ -426,7 +533,7 @@ Implementation validation after expansion:
 
 - `GOBBY_TEST_PROTECT=1 uv run pytest tests/test_gwiki_gateway.py tests/servers/routes/test_wiki_routes.py tests/mcp_proxy/tools/test_wiki.py tests/wiki/`
 - `npm --prefix web test -- Wiki`
-- Manual web smoke: search/read/source listing/source removal dry-run and confirmation/attach/file ingest/URL batch ingest/compile/audit actions update the Wiki Activity panel without duplicate cron-history entries or duplicate indexing.
+- Manual web smoke: search/read/source listing/source removal dry-run and confirmation/source refresh/attach/file ingest/URL batch ingest/compile/audit actions update the Wiki Activity panel without duplicate cron-history entries or duplicate indexing.
 
 ## AC1: Acceptance Criteria
 
@@ -435,10 +542,11 @@ Implementation validation after expansion:
 - Daemon/wiki integration goes through `GwikiGateway` and stable `gwiki --format json` contracts.
 - `/api/wiki/*` and MCP tools expose search, read, source listing, source removal, attach, file ingest, URL batch ingest, compile, audit, and health.
 - Web chat has a Wiki Activity panel, CLI source listing, dry-run-first source removal confirmation, URL batch ingest, and chat actions for common wiki workflows.
-- Explicit `gwiki` writes index immediately when required; local file changes index via a debounced watcher.
+- Explicit `gwiki` writes index immediately when required; local file changes index via a debounced watcher registered into the daemon lifecycle.
 - URL batch ingest never fetches or persists URLs in daemon/web code and never duplicates the once-per-batch indexing already reported by `gwiki ingest-url`.
+- Source refresh never re-fetches, re-hashes, or persists sources in daemon/web code and never duplicates the once-per-batch indexing already reported by `gwiki refresh`.
 - Source removal never deletes files in daemon/web code and daemon indexing runs once only when CLI `index_status.index_required` is true.
-- Cron is reserved for user-visible scheduled research, refresh, health checks, and audits.
+- Cron is reserved for user-visible scheduled research, source refresh, health checks, and audits, registered as `CronExecutor` handlers.
 - Routine maintenance/status stays out of cron-history spam.
 
 ## V1 Plan Changelog
@@ -449,6 +557,7 @@ Implementation validation after expansion:
 - **R2 (2026-06-01)**: Revised daemon/web scope for CLI-owned source lifecycle contracts. Added source listing, dry-run-first source removal, gateway/API/MCP/UI coverage, and `index_status.index_required` coordination to avoid duplicate indexing.
 - **R3 (2026-06-02)**: Expanded daemon/web scope for upstream `gwiki ingest-url --format json URL...`. Added URL batch gateway/API/MCP/web coverage, CLI-owned fetch/source/failure/indexing contract, partial/all-failed passthrough expectations, and update-coordinator duplicate-index prevention.
 - **R4 (2026-06-02)**: Verified plan against the current codebase for stage-native review. Confirmed target inventory paths resolve (`web/src/components/activity/useActivityPanel.ts`, `ActivityPanelTabs.tsx`, `ActivityPanel.tsx` are the live tab-registration surfaces; `src/gobby/servers/routes/` and `src/gobby/mcp_proxy/tools/` package roots exist; `src/gobby/wiki/` and `web/src/hooks/useWiki.ts` are net-new). Confirmed draft and expansion validation pass, consumer sweep is clean, and the M1 manifest's 10 entries map 1:1 to the 10 deliverable sections. No structural changes required.
+- **R5 (2026-06-02)**: Resolved Round 1 adversary findings F1–F4 with surgical wiring + contract fixes, swept each finding class plan-wide. F1: § 2.1 now targets `routes/__init__.py` and `app_factory.py`, specifies `create_wiki_router(server)`, and adds 2.1.8 proving the router is exported, included in `_register_routes`, and reachable in the FastAPI route table. F2: § 2.2 now targets `mcp_proxy/registries.py`, specifies `create_wiki_registry(...)` wired into `setup_internal_registries` via `manager.add_registry`, and adds 2.2.6 proving the wiki tools are discoverable. F3: § 4.2 now targets `config/wiki.py`, `config/app.py`, `runner_lifecycle_periodic.py`, and `runner_lifecycle_shutdown.py`, adds `WikiConfig`, daemon startup/shutdown watcher wiring on `runner._wiki_watcher`/`_wiki_watcher_task`, and a `health()` accessor (4.2.4–4.2.7); § 4.4 adds 4.4.4 reading the live watcher and handling the absent-watcher case. F4: added upstream dependency `gwiki refresh --format json [--scope] [--id ...] [--dry-run]` to S1/D1 with JSON contract, `GwikiGateway.refresh` (1.2.10), and § 4.3 now targets `runner_init/orchestration.py`, registers wiki cron handlers via `register_handler`, and defines the refresh job's command shape, cron-history fields, and duplicate-index prevention (4.3.4–4.3.5). Swept docs (1.1.6), AC1, and VS1 for the new refresh command.
 
 ## M1 Task Manifest
 
@@ -466,6 +575,7 @@ Implementation validation after expansion:
     - covers:gwiki-daemon-web:1.1:1.1.3
     - covers:gwiki-daemon-web:1.1:1.1.4
     - covers:gwiki-daemon-web:1.1:1.1.5
+    - covers:gwiki-daemon-web:1.1:1.1.6
   implementation_domain: backend
   tdd: false
   source_section: "1.1"
@@ -485,6 +595,7 @@ Implementation validation after expansion:
     - covers:gwiki-daemon-web:1.2:1.2.7
     - covers:gwiki-daemon-web:1.2:1.2.8
     - covers:gwiki-daemon-web:1.2:1.2.9
+    - covers:gwiki-daemon-web:1.2:1.2.10
   implementation_domain: backend
   tdd: true
   source_section: "1.2"
@@ -502,6 +613,7 @@ Implementation validation after expansion:
     - covers:gwiki-daemon-web:2.1:2.1.5
     - covers:gwiki-daemon-web:2.1:2.1.6
     - covers:gwiki-daemon-web:2.1:2.1.7
+    - covers:gwiki-daemon-web:2.1:2.1.8
   implementation_domain: backend
   tdd: true
   source_section: "2.1"
@@ -517,6 +629,7 @@ Implementation validation after expansion:
     - covers:gwiki-daemon-web:2.2:2.2.3
     - covers:gwiki-daemon-web:2.2:2.2.4
     - covers:gwiki-daemon-web:2.2:2.2.5
+    - covers:gwiki-daemon-web:2.2:2.2.6
   implementation_domain: backend
   tdd: true
   source_section: "2.2"
@@ -570,11 +683,15 @@ Implementation validation after expansion:
   task_type: feature
   depends_on:
     - "4.1"
-  validation_criteria: "GOBBY_TEST_PROTECT=1 uv run pytest tests/wiki/test_watcher.py"
+  validation_criteria: "GOBBY_TEST_PROTECT=1 uv run pytest tests/wiki/test_watcher.py tests/wiki/test_watcher_lifecycle.py"
   labels:
     - covers:gwiki-daemon-web:4.2:4.2.1
     - covers:gwiki-daemon-web:4.2:4.2.2
     - covers:gwiki-daemon-web:4.2:4.2.3
+    - covers:gwiki-daemon-web:4.2:4.2.4
+    - covers:gwiki-daemon-web:4.2:4.2.5
+    - covers:gwiki-daemon-web:4.2:4.2.6
+    - covers:gwiki-daemon-web:4.2:4.2.7
   implementation_domain: backend
   tdd: true
   source_section: "4.2"
@@ -588,6 +705,8 @@ Implementation validation after expansion:
     - covers:gwiki-daemon-web:4.3:4.3.1
     - covers:gwiki-daemon-web:4.3:4.3.2
     - covers:gwiki-daemon-web:4.3:4.3.3
+    - covers:gwiki-daemon-web:4.3:4.3.4
+    - covers:gwiki-daemon-web:4.3:4.3.5
   implementation_domain: backend
   tdd: true
   source_section: "4.3"
@@ -602,6 +721,7 @@ Implementation validation after expansion:
     - covers:gwiki-daemon-web:4.4:4.4.1
     - covers:gwiki-daemon-web:4.4:4.4.2
     - covers:gwiki-daemon-web:4.4:4.4.3
+    - covers:gwiki-daemon-web:4.4:4.4.4
   implementation_domain: fullstack
   tdd: true
   source_section: "4.4"
