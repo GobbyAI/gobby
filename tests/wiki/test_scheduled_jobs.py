@@ -66,6 +66,17 @@ class RecordingGateway:
         return _result("index", {"status": "indexed"})
 
 
+class RecordingCoordinator:
+    def __init__(self) -> None:
+        self.results: list[dict[str, Any]] = []
+
+    async def handle_write_result(self, result: dict[str, Any]) -> dict[str, Any]:
+        self.results.append(result)
+        coordinated = dict(result)
+        coordinated["index_handoff"] = {"status": "completed"}
+        return coordinated
+
+
 @dataclass
 class RecordingExecutor:
     handlers: dict[str, Any]
@@ -127,7 +138,14 @@ async def test_scheduled_jobs_use_gateway() -> None:
     coordinator = WikiUpdateCoordinator(gateway)
 
     handlers = [
-        ("research", create_wiki_research_handler(gateway=gateway, scope="project:alpha")),
+        (
+            "research",
+            create_wiki_research_handler(
+                gateway=gateway,
+                coordinator=coordinator,
+                scope="project:alpha",
+            ),
+        ),
         (
             "refresh",
             create_wiki_refresh_handler(
@@ -204,3 +222,20 @@ async def test_refresh_job_uses_gateway_and_avoids_duplicate_index() -> None:
         "status": "skipped",
         "reason": "cli_indexed_batch",
     }
+
+
+async def test_research_job_routes_write_result_through_coordinator() -> None:
+    gateway = RecordingGateway()
+    coordinator = RecordingCoordinator()
+    handler = create_wiki_research_handler(
+        gateway=gateway,
+        coordinator=coordinator,
+        scope="project:alpha",
+    )
+
+    output = json.loads(await handler(_job("research")))
+
+    assert gateway.calls == [("research", {"query": None})]
+    assert len(coordinator.results) == 1
+    assert coordinator.results[0]["payload"] == {"status": "completed", "items": 2}
+    assert output["result"]["index_handoff"] == {"status": "completed"}

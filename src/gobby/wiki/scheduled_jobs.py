@@ -44,16 +44,18 @@ GatewayFactory = Callable[[str], WikiGatewayProtocol]
 def create_wiki_research_handler(
     *,
     gateway: WikiGatewayProtocol,
+    coordinator: WikiUpdateCoordinator,
     scope: str,
 ) -> CronHandler:
     async def research_handler(job: CronJob) -> str:
         query = _string_or_none(job.action_config.get("query"))
         result = await gateway.research(query)
+        coordinated = await coordinator.handle_write_result(result)
         return _history_output(
             purpose="Run scheduled wiki research",
             scope=scope,
             command="research",
-            gwiki_result=result,
+            gwiki_result=coordinated,
         )
 
     return research_handler
@@ -132,7 +134,11 @@ def register_wiki_cron_jobs(
                 "research",
                 "Scheduled wiki research",
                 WIKI_RESEARCH_INTERVAL_SECONDS,
-                create_wiki_research_handler(gateway=gateway, scope=scope),
+                create_wiki_research_handler(
+                    gateway=gateway,
+                    coordinator=coordinator,
+                    scope=scope,
+                ),
             ),
             (
                 "refresh",
