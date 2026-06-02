@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -31,6 +32,16 @@ class RecordingGateway:
         if self.index_error is not None:
             raise self.index_error
         return self.index_result
+
+
+class ScopedRecordingGateway:
+    def __init__(self, scope: str, index_scopes: list[str]) -> None:
+        self._scope = scope
+        self._index_scopes = index_scopes
+
+    async def index(self) -> dict[str, Any]:
+        self._index_scopes.append(self._scope)
+        return {"ok": True, "scope": self._scope}
 
 
 def _result(command: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -133,6 +144,34 @@ async def test_remove_source_indexes_only_when_required() -> None:
     assert gateway.index_calls == 1
     assert skipped["index_handoff"] == {"status": "skipped", "reason": "index_not_required"}
     assert indexed["index_handoff"]["status"] == "indexed"
+
+
+async def test_local_changes_index_each_scope_with_scoped_gateway() -> None:
+    index_scopes: list[str] = []
+    coordinator = WikiUpdateCoordinator(
+        RecordingGateway(),
+        local_gateway_factory=lambda scope: ScopedRecordingGateway(scope, index_scopes),
+    )
+
+    result = await coordinator.handle_local_changes(
+        {
+            "project": [Path("/repo/wiki/a.md")],
+            "topic:research": [Path("/topics/research/b.md")],
+        }
+    )
+
+    assert index_scopes == ["project", "topic:research"]
+    assert result["index_handoff"] == {
+        "status": "indexed",
+        "changed_paths_by_scope": {
+            "project": ["/repo/wiki/a.md"],
+            "topic:research": ["/topics/research/b.md"],
+        },
+        "results_by_scope": {
+            "project": {"ok": True, "scope": "project"},
+            "topic:research": {"ok": True, "scope": "topic:research"},
+        },
+    }
 
 
 async def test_index_status_does_not_duplicate_handoff() -> None:
