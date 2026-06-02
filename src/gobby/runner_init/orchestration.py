@@ -288,6 +288,23 @@ def init_orchestration(runner: GobbyRunner) -> None:
         except Exception as e:
             logger.error(f"Failed to register GitHub issue triage cron handlers: {e}")
 
+        try:
+            from gobby.wiki.scheduled_jobs import (
+                configured_wiki_cron_scopes,
+                register_wiki_cron_jobs,
+            )
+
+            if runner.project_id:
+                registered = register_wiki_cron_jobs(
+                    cron_storage=runner.cron_storage,
+                    cron_executor=cron_executor,
+                    project_id=runner.project_id,
+                    scopes=configured_wiki_cron_scopes(runner.config, runner.project_id),
+                )
+                logger.debug("Wiki cron handlers registered: %s", registered)
+        except Exception as e:
+            logger.error(f"Failed to register wiki cron handlers: {e}")
+
         runner.cron_scheduler = CronScheduler(
             storage=runner.cron_storage,
             executor=cron_executor,
