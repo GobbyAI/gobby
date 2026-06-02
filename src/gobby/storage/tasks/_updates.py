@@ -38,8 +38,8 @@ def update_task(
     validation_criteria: MaybeUnset[str | None] = UNSET,
     validation_fail_count: MaybeUnset[int | None] = UNSET,
     dispatch_failure_count: MaybeUnset[int | None] = UNSET,
-    merge_in_progress: MaybeUnset[bool | None] = UNSET,
-    blocked_by_merge: MaybeUnset[bool | None] = UNSET,
+    merge_in_progress: MaybeUnset[bool] = UNSET,
+    blocked_by_merge: MaybeUnset[bool] = UNSET,
     escalated_at: MaybeUnset[str | None] = UNSET,
     escalation_reason: MaybeUnset[str | None] = UNSET,
     github_issue_number: MaybeUnset[int | None] = UNSET,
@@ -122,11 +122,15 @@ def update_task(
         updates.append("dispatch_failure_count = %s")
         params.append(dispatch_failure_count)
     if merge_in_progress is not UNSET:
+        if merge_in_progress is None:
+            raise ValueError("merge_in_progress cannot be None")
         updates.append("merge_in_progress = %s")
-        params.append(None if merge_in_progress is None else bool(merge_in_progress))
+        params.append(bool(merge_in_progress))
     if blocked_by_merge is not UNSET:
+        if blocked_by_merge is None:
+            raise ValueError("blocked_by_merge cannot be None")
         updates.append("blocked_by_merge = %s")
-        params.append(None if blocked_by_merge is None else bool(blocked_by_merge))
+        params.append(bool(blocked_by_merge))
     if github_issue_number is not UNSET:
         updates.append("github_issue_number = %s")
         params.append(github_issue_number)
@@ -256,8 +260,8 @@ def update_task_metadata(
     validation_criteria: MaybeUnset[str | None] = UNSET,
     validation_fail_count: MaybeUnset[int | None] = UNSET,
     dispatch_failure_count: MaybeUnset[int | None] = UNSET,
-    merge_in_progress: MaybeUnset[bool | None] = UNSET,
-    blocked_by_merge: MaybeUnset[bool | None] = UNSET,
+    merge_in_progress: MaybeUnset[bool] = UNSET,
+    blocked_by_merge: MaybeUnset[bool] = UNSET,
     escalated_at: MaybeUnset[str | None] = UNSET,
     escalation_reason: MaybeUnset[str | None] = UNSET,
     github_issue_number: MaybeUnset[int | None] = UNSET,

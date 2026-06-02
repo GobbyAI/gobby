@@ -96,7 +96,6 @@ def test_only_current_postgres_sql_migrations_exist_after_flattening() -> None:
         "271_embeddings_namespace_to_ai_embeddings.sql",
         "272_drop_embedding_provider_config.sql",
         "273_task_merge_status.sql",
-        "274_nullable_task_merge_status.sql",
     ]
 
 

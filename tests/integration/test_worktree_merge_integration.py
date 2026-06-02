@@ -157,27 +157,24 @@ class TestTaskStatusDuringMerge:
         assert reloaded.merge_in_progress is True
         assert reloaded.blocked_by_merge is True
 
-    def test_task_manager_update_task_can_clear_merge_status_to_null(
+    def test_task_manager_update_task_merge_status_preserves_omitted_and_clears_false(
         self,
         hub_db: HubDatabase,
     ) -> None:
-        """TaskManager preserves nullable merge status clears."""
+        """TaskManager keeps merge status binary while preserving omitted fields."""
         from gobby.storage.projects import LocalProjectManager
         from gobby.storage.tasks import LocalTaskManager
 
         project = LocalProjectManager(hub_db).create(
-            name="merge-status-clear",
+            name="merge-status-update",
             repo_path="/tmp/repo",
         )
         manager = LocalTaskManager(hub_db)
         task = manager.create_task(project_id=project.id, title="Merge status", category="code")
 
         manager.set_merge_status(task.id, merge_in_progress=True, blocked_by_merge=True)
-        updated = manager.update_task(
-            task.id,
-            merge_in_progress=None,
-            blocked_by_merge=None,
-        )
+        renamed = manager.update_task(task.id, title="Merge status renamed")
+        cleared = manager.update_task(task.id, merge_in_progress=False, blocked_by_merge=False)
         row = hub_db.fetchone(
             """
             SELECT merge_in_progress, blocked_by_merge
@@ -187,9 +184,29 @@ class TestTaskStatusDuringMerge:
             (task.id,),
         )
 
-        assert updated.merge_in_progress is None
-        assert updated.blocked_by_merge is None
-        assert row == {"merge_in_progress": None, "blocked_by_merge": None}
+        assert renamed.merge_in_progress is True
+        assert renamed.blocked_by_merge is True
+        assert cleared.merge_in_progress is False
+        assert cleared.blocked_by_merge is False
+        assert row == {"merge_in_progress": False, "blocked_by_merge": False}
+
+    def test_task_manager_update_task_rejects_none_merge_status(
+        self,
+        hub_db: HubDatabase,
+    ) -> None:
+        """TaskManager rejects SQL NULL clears for binary merge status."""
+        from gobby.storage.projects import LocalProjectManager
+        from gobby.storage.tasks import LocalTaskManager
+
+        project = LocalProjectManager(hub_db).create(
+            name="merge-status-none",
+            repo_path="/tmp/repo",
+        )
+        manager = LocalTaskManager(hub_db)
+        task = manager.create_task(project_id=project.id, title="Merge status", category="code")
+
+        with pytest.raises(ValueError, match="merge_in_progress cannot be None"):
+            manager.update_task(task.id, merge_in_progress=None)
 
 
 # ==============================================================================
