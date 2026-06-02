@@ -27,6 +27,7 @@ consumes existing upstream `gwiki --format json` commands through `GwikiGateway`
 - `gwiki search --format json`
 - `gwiki backlinks --format json`
 - `gwiki ingest-file --format json`
+- `gwiki ingest-url --format json URL...`
 - `gwiki collect --format json`
 - `gwiki research --format json`
 - `gwiki compile --format json`
@@ -36,11 +37,18 @@ consumes existing upstream `gwiki --format json` commands through `GwikiGateway`
 - `gwiki remove-source --id <SOURCE_ID> --format json [--dry-run|--yes] [--keep-asset]`
 
 The upstream CLI additions required by this daemon/web plan are `gwiki read --format json`,
-`gwiki sources --format json`, and
+`gwiki ingest-url --format json URL...`, `gwiki sources --format json`, and
 `gwiki remove-source --id <SOURCE_ID> --format json [--dry-run|--yes] [--keep-asset]`.
 Daemon/web `attach` is local integration terminology: the daemon handles upload and staging,
 then maps attach requests to existing `gwiki ingest-file --format json` via
 `GwikiGateway.ingest_file`. No upstream `gwiki attach` command is required.
+
+URL batch ingest is upstream-owned. `gwiki ingest-url --format json URL...` owns HTTP
+fetching, final URL resolution, accepted source persistence, raw Markdown writes,
+per-URL failure classification, and once-per-batch indexing after accepted sources are
+written. Daemon/web code passes URL arrays to `GwikiGateway.ingest_url`; it must not fetch
+URLs, write URL raw sources, classify URL failures, or trigger duplicate indexing for the
+accepted batch already indexed by the CLI result.
 
 Wiki parsing, vault semantics, source lifecycle ownership, command ownership, and AI
 capability routing remain outside this web/gateway scope. The AI capability source contract
@@ -73,6 +81,7 @@ The daemon/web work requires these `gwiki` JSON command contracts from the CLI p
 - `gwiki read --format json`
 - `gwiki backlinks --format json`
 - `gwiki ingest-file --format json`
+- `gwiki ingest-url --format json URL...`
 - `gwiki collect --format json`
 - `gwiki research --format json`
 - `gwiki compile --format json`
@@ -114,6 +123,15 @@ and `outputs/` exports remain out of scope. The daemon uses `index_status.index_
 only to coordinate follow-up indexing and does not infer removal effects by inspecting vault
 files.
 
+`gwiki ingest-url --format json URL...` must return a scoped batch result with
+`command: "ingest-url"`, `scope`, `status: "ingested" | "partial" | "failed"`, `accepted`
+entries containing `requested_url`, `final_url`, `raw_path`, and `source { id, kind,
+content_hash, location }`, `failed` entries containing `url`, `code`, and `message`, and
+`indexed { documents, chunks, links, sources, ingestions }`. Partial success is a successful
+subprocess result. All-failed batches return nonzero while preserving the same structured
+result on stdout when available. The daemon consumes the CLI failure classification and must
+not retry, refetch, or persist URL sources itself.
+
 `GwikiGateway` normalizes command-specific CLI JSON into daemon HTTP/MCP response envelopes.
 For `gwiki read`, payload statuses such as `not_found`, `invalid_request`, and `ambiguous`
 are successful subprocess JSON payloads and must flow through the gateway as command results,
@@ -121,6 +139,9 @@ not typed subprocess failures. On nonzero exits, gateway errors must preserve st
 include parsed structured guidance from stdout or stderr when available. The same error
 contract applies to source listing and removal, including dry-run previews and structured
 remove-source failures.
+For `gwiki ingest-url`, the gateway must preserve accepted/failed arrays, stderr, stdout
+JSON on nonzero all-failed exits, and the CLI-owned `indexed` counts without scheduling a
+second index pass.
 
 ## P1: Gateway And Contract Probe
 
@@ -142,6 +163,7 @@ Document each consumed `gwiki --format json` command, required arguments, reques
 - 1.1.2 - Guide classifies each operation as read-only, explicit write, or scheduled write. file: `docs/guides/gwiki-daemon-web.md`.
 - 1.1.3 - Guide states daemon/web code must use `GwikiGateway`, not direct subprocess calls. file: `docs/guides/gwiki-daemon-web.md`.
 - 1.1.4 - Guide documents CLI-owned source listing/removal, `--dry-run`/`--yes`, `--keep-asset`, and `index_status.index_required`. file: `docs/guides/gwiki-daemon-web.md`.
+- 1.1.5 - Guide documents CLI-owned URL batch ingest, including URL arrays, accepted/failed result shape, partial success, all-failed nonzero behavior, and once-per-batch CLI indexing. file: `docs/guides/gwiki-daemon-web.md`.
 
 ### 1.2 Add GwikiGateway wrapper [category: code] (depends: 1.1)
 
@@ -150,8 +172,9 @@ Document each consumed `gwiki --format json` command, required arguments, reques
 Targets: `src/gobby/gwiki_gateway.py`, `tests/test_gwiki_gateway.py`
 
 Add a single async wrapper around `gwiki --format json` with methods for `status`, `index`,
-`search`, `read`, `backlinks`, `ingest_file`, `collect`, `research`, `compile`, `audit`,
-`health`, `sources`, and `remove_source(source_id, *, dry_run, yes, keep_asset)`.
+`search`, `read`, `backlinks`, `ingest_file`, `ingest_url(urls)`, `collect`, `research`,
+`compile`, `audit`, `health`, `sources`, and
+`remove_source(source_id, *, dry_run, yes, keep_asset)`.
 The gateway resolves the binary path, passes project/topic scope, enforces
 timeouts, parses JSON stdout, captures stderr, normalizes command-specific CLI JSON into
 daemon envelopes, and raises typed errors on non-zero exits. `read` must pass exactly one of
@@ -159,17 +182,22 @@ daemon envelopes, and raises typed errors on non-zero exits. `read` must pass ex
 are parsed JSON command results, not subprocess failures. `sources` must preserve CLI-owned
 source records. `remove_source` must pass `--id`, `--dry-run` or `--yes`, and optional
 `--keep-asset`, while preserving CLI dry-run previews, confirmed-removal payloads,
-`index_status`, stderr, and structured errors.
+`index_status`, stderr, and structured errors. `ingest_url(urls)` must pass URL arguments
+without daemon-side fetching, preserve CLI `accepted`, `failed`, `status`, and `indexed`
+fields, treat partial success as a command result, and preserve structured stdout plus
+stderr on all-failed nonzero exits.
 
 **Acceptance:**
 
-- 1.2.1 - `GwikiGateway` exposes `status`, `index`, `search`, `read`, `backlinks`, `ingest_file`, `collect`, `research`, `compile`, `audit`, `health`, `sources`, and `remove_source`. file: `src/gobby/gwiki_gateway.py`.
+- 1.2.1 - `GwikiGateway` exposes `status`, `index`, `search`, `read`, `backlinks`, `ingest_file`, `ingest_url`, `collect`, `research`, `compile`, `audit`, `health`, `sources`, and `remove_source`. file: `src/gobby/gwiki_gateway.py`.
 - 1.2.2 - Gateway parses JSON stdout and preserves stderr on failure. test: `tests/test_gwiki_gateway.py::test_error_preserves_stderr`.
 - 1.2.3 - Gateway enforces per-command timeout and reports structured degradation. test: `tests/test_gwiki_gateway.py::test_timeout_degrades`.
 - 1.2.4 - No route, MCP tool, watcher, or cron path invokes `gwiki` outside `GwikiGateway`. behavior: "grep for create_subprocess_exec gwiki has only gateway hits" in `src/gobby/`.
 - 1.2.5 - `GwikiGateway.read` passes exactly one selector (`--path` or `--title`) and treats `not_found`, `invalid_request`, and `ambiguous` statuses as successful JSON command payloads. test: `tests/test_gwiki_gateway.py::test_read_status_payloads_are_not_subprocess_failures`.
 - 1.2.6 - `GwikiGateway.sources` preserves CLI source-list JSON and scope identity. test: `tests/test_gwiki_gateway.py::test_sources_preserves_cli_payload`.
 - 1.2.7 - `GwikiGateway.remove_source` passes source id, dry-run/confirmation flags, `keep_asset`, stderr, dry-run preview payloads, and `index_status` through the gateway contract. test: `tests/test_gwiki_gateway.py::test_remove_source_preserves_cli_payloads`.
+- 1.2.8 - `GwikiGateway.ingest_url` passes all URL arguments to `gwiki ingest-url --format json` and preserves `accepted`, `failed`, `status`, `scope`, and `indexed` fields. test: `tests/test_gwiki_gateway.py::test_ingest_url_passes_batch_and_preserves_payload`.
+- 1.2.9 - `GwikiGateway.ingest_url` treats partial failures as successful command JSON and preserves stdout JSON plus stderr on all-failed nonzero exits. test: `tests/test_gwiki_gateway.py::test_ingest_url_preserves_partial_and_all_failed_errors`.
 
 ## P2: API And MCP Surfaces
 
@@ -207,13 +235,19 @@ plus read status payloads directly through the daemon envelope. `POST /api/wiki/
 accepts and stages uploads in daemon code, then calls
 `GwikiGateway.ingest_file` / `gwiki ingest-file --format json`; it must not require an
 upstream `gwiki attach` command. `POST /api/wiki/ingest` also calls
-`GwikiGateway.ingest_file`. `GET /api/wiki/sources` calls `GwikiGateway.sources`.
+`GwikiGateway.ingest_file` for file/path ingest requests. When the ingest request body
+contains a URL array, `POST /api/wiki/ingest` calls `GwikiGateway.ingest_url(urls)` and
+passes the CLI result through; daemon code must not fetch URLs or write URL raw sources.
+Mixed file and URL ingest requests are rejected before gateway dispatch.
+`GET /api/wiki/sources` calls `GwikiGateway.sources`.
 `POST /api/wiki/remove-source` requires request body field `id`, accepts `dry_run`, `yes`,
 and `keep_asset`, rejects `dry_run: true` with `yes: true`, and maps gateway/CLI errors
 through the existing wiki route error contract. Removal without `yes: true` must be a
 dry-run preview. Explicit write routes trigger immediate indexing when the `gwiki` result
 reports changed vault files. `remove-source` is also an explicit write, but it triggers
 daemon indexing only when the CLI result includes `index_status.index_required: true`.
+`ingest-url` is an explicit write whose CLI result already indexed the accepted batch, so the
+route must not schedule duplicate daemon indexing for the same result.
 
 **Acceptance:**
 
@@ -222,6 +256,8 @@ daemon indexing only when the CLI result includes `index_status.index_required: 
 - 2.1.3 - Explicit write routes invoke immediate index handoff when changed paths are reported. test: `tests/servers/routes/test_wiki_routes.py::test_write_routes_trigger_index`.
 - 2.1.4 - Source routes expose `GET /api/wiki/sources` and `POST /api/wiki/remove-source`, require `id` for removal, and reject simultaneous `dry_run` and `yes`. test: `tests/servers/routes/test_wiki_routes.py::test_source_routes_contract`.
 - 2.1.5 - Source route tests prove gateway error mapping preserves CLI stderr and structured remove-source guidance. test: `tests/servers/routes/test_wiki_routes.py::test_remove_source_error_mapping`.
+- 2.1.6 - `/api/wiki/ingest` routes URL arrays to `GwikiGateway.ingest_url` without daemon URL fetching and rejects mixed file/URL requests. test: `tests/servers/routes/test_wiki_routes.py::test_ingest_url_batch_routes_to_gateway`.
+- 2.1.7 - URL ingest route tests preserve CLI partial success, all-failed nonzero payloads, stderr, and `indexed` counts without duplicate index handoff. test: `tests/servers/routes/test_wiki_routes.py::test_ingest_url_batch_passthrough_and_indexing`.
 
 ### 2.2 Add gobby-wiki MCP tools [category: code] (depends: 2.1)
 
@@ -236,7 +272,9 @@ command payloads, citations, and path/degradation metadata when present. `wiki_r
 depends on `GwikiGateway.read` / `gwiki read --format json`.
 `wiki_read` accepts exactly one of `path` or `title` and returns Markdown `content` plus
 upstream read status payloads. `wiki_attach` stages daemon uploads and maps to
-`GwikiGateway.ingest_file`. `wiki_list_sources` matches `GET /api/wiki/sources`.
+`GwikiGateway.ingest_file`. `wiki_ingest` accepts either file/path ingest input or URL batch
+input; URL arrays pass through to `GwikiGateway.ingest_url` without daemon URL fetching.
+`wiki_list_sources` matches `GET /api/wiki/sources`.
 `wiki_remove_source` matches `POST /api/wiki/remove-source`: `id` is required, `dry_run`
 and `yes` are mutually exclusive, `keep_asset` is optional, and dry-run preview payloads are
 passed through from the CLI.
@@ -247,6 +285,7 @@ passed through from the CLI.
 - 2.2.2 - Tool schemas include scope, project/topic, command-specific arguments, `wiki_list_sources`, and `wiki_remove_source` with the HTTP removal contract. test: `tests/mcp_proxy/tools/test_wiki.py::test_tool_schemas`.
 - 2.2.3 - Tools preserve gateway degradation and path metadata. test: `tests/mcp_proxy/tools/test_wiki.py::test_degradation_passthrough`.
 - 2.2.4 - Source lifecycle MCP tools preserve CLI source-list, dry-run preview, confirmed removal, and `index_status` payloads. test: `tests/mcp_proxy/tools/test_wiki.py::test_source_lifecycle_passthrough`.
+- 2.2.5 - `wiki_ingest` schema accepts URL batch input and passes URL arrays through to `GwikiGateway.ingest_url` while preserving accepted/failed CLI payloads. test: `tests/mcp_proxy/tools/test_wiki.py::test_wiki_ingest_url_batch_passthrough`.
 
 ## P3: Web Chat Wiki Experience
 
@@ -287,13 +326,17 @@ state. Read actions call `/api/wiki/read`, which depends on upstream
 `gwiki read --format json`; chat renders or previews Markdown `content` supplied by upstream,
 and `rendered_text` is not required for the first daemon/web implementation. Attach actions
 call `/api/wiki/attach`, which stages uploads in the daemon and maps to `gwiki ingest-file`
-through `GwikiGateway.ingest_file`.
+through `GwikiGateway.ingest_file`. Ingest actions also support explicit URL batch ingest:
+when the user provides one or more URLs, chat sends a URL array to `/api/wiki/ingest`, renders
+CLI `accepted` and `failed` entries, and treats partial failures as a completed explicit
+write with per-URL follow-up information.
 
 **Acceptance:**
 
 - 3.2.1 - Chat can trigger search, read, attach, ingest, compile, audit, and health actions. file: `web/src/components/chat/`.
 - 3.2.2 - Action results show citations, wiki paths, source paths, and degradation messages. file: `web/src/components/chat/`.
 - 3.2.3 - Attach/ingest/compile actions require explicit user intent before writes. test: `web/src/components/chat/__tests__/wiki-actions.test.tsx`.
+- 3.2.4 - Chat ingest action supports URL batch input and renders CLI accepted/failed results without daemon-side URL fetching. test: `web/src/components/chat/__tests__/wiki-actions.test.tsx::test_url_batch_ingest_action`.
 
 ## P4: Hybrid Self-Updating Model
 
@@ -307,10 +350,13 @@ through `GwikiGateway.ingest_file`.
 
 Targets: `src/gobby/wiki/update_coordinator.py`, `tests/wiki/test_update_coordinator.py`
 
-After explicit writes through attach, ingest, collect, compile, remove-source, or accepted
-research output, enqueue or run `gwiki index` for the affected scope and changed paths when
-the CLI result requires indexing. Keep the write response visible to the caller and report
-index degradation separately. For `remove-source`, use only
+After explicit writes through attach, ingest-file, collect, compile, remove-source, or
+accepted research output, enqueue or run `gwiki index` for the affected scope and changed
+paths when the CLI result requires indexing. `ingest-url` is also an explicit write, but its
+CLI result already includes once-per-batch indexing for accepted sources; the coordinator
+must preserve the `indexed` result and skip duplicate index handoff for that CLI-indexed
+batch. Keep the write response visible to the caller and report index degradation
+separately. For `remove-source`, use only
 `index_status.index_required` from the CLI result to decide whether to index; do not infer
 indexing from deleted paths, dry-run previews, or local file inspection. A single write
 result must not produce duplicate index handoffs when both changed-path metadata and
@@ -323,6 +369,7 @@ result must not produce duplicate index handoffs when both changed-path metadata
 - 4.1.3 - Read-only operations never trigger indexing. test: `tests/wiki/test_update_coordinator.py::test_read_only_operations_do_not_index`.
 - 4.1.4 - `remove-source` is an explicit write that indexes only when CLI `index_status.index_required` is true. test: `tests/wiki/test_update_coordinator.py::test_remove_source_indexes_only_when_required`.
 - 4.1.5 - Coordinator avoids duplicate index handoffs when a write result includes both changed paths and `index_status`. test: `tests/wiki/test_update_coordinator.py::test_index_status_does_not_duplicate_handoff`.
+- 4.1.6 - `ingest-url` is an explicit write whose CLI-indexed accepted batch does not trigger duplicate daemon indexing. test: `tests/wiki/test_update_coordinator.py::test_ingest_url_does_not_duplicate_cli_indexing`.
 
 ### 4.2 Add debounced daemon watcher for local wiki file changes [category: code] (depends: 4.1)
 
@@ -379,16 +426,17 @@ Implementation validation after expansion:
 
 - `GOBBY_TEST_PROTECT=1 uv run pytest tests/test_gwiki_gateway.py tests/servers/routes/test_wiki_routes.py tests/mcp_proxy/tools/test_wiki.py tests/wiki/`
 - `npm --prefix web test -- Wiki`
-- Manual web smoke: search/read/source listing/source removal dry-run and confirmation/attach/ingest/compile/audit actions update the Wiki Activity panel without duplicate cron-history entries or duplicate indexing.
+- Manual web smoke: search/read/source listing/source removal dry-run and confirmation/attach/file ingest/URL batch ingest/compile/audit actions update the Wiki Activity panel without duplicate cron-history entries or duplicate indexing.
 
 ## AC1: Acceptance Criteria
 
 `kind: verification`
 
 - Daemon/wiki integration goes through `GwikiGateway` and stable `gwiki --format json` contracts.
-- `/api/wiki/*` and MCP tools expose search, read, source listing, source removal, attach, ingest, compile, audit, and health.
-- Web chat has a Wiki Activity panel, CLI source listing, dry-run-first source removal confirmation, and chat actions for common wiki workflows.
+- `/api/wiki/*` and MCP tools expose search, read, source listing, source removal, attach, file ingest, URL batch ingest, compile, audit, and health.
+- Web chat has a Wiki Activity panel, CLI source listing, dry-run-first source removal confirmation, URL batch ingest, and chat actions for common wiki workflows.
 - Explicit `gwiki` writes index immediately when required; local file changes index via a debounced watcher.
+- URL batch ingest never fetches or persists URLs in daemon/web code and never duplicates the once-per-batch indexing already reported by `gwiki ingest-url`.
 - Source removal never deletes files in daemon/web code and daemon indexing runs once only when CLI `index_status.index_required` is true.
 - Cron is reserved for user-visible scheduled research, refresh, health checks, and audits.
 - Routine maintenance/status stays out of cron-history spam.
@@ -399,6 +447,7 @@ Implementation validation after expansion:
 
 - **R1 (2026-05-28)**: Initial sibling Gobby repo plan for daemon/web `gwiki` integration. Scoped implementation to daemon gateway, API routes, MCP tools, Wiki Activity panel, chat actions, and hybrid self-updating behavior dependent on the `gobby-cli` `gwiki` JSON/CLI contracts.
 - **R2 (2026-06-01)**: Revised daemon/web scope for CLI-owned source lifecycle contracts. Added source listing, dry-run-first source removal, gateway/API/MCP/UI coverage, and `index_status.index_required` coordination to avoid duplicate indexing.
+- **R3 (2026-06-02)**: Expanded daemon/web scope for upstream `gwiki ingest-url --format json URL...`. Added URL batch gateway/API/MCP/web coverage, CLI-owned fetch/source/failure/indexing contract, partial/all-failed passthrough expectations, and update-coordinator duplicate-index prevention.
 
 ## M1 Task Manifest
 
@@ -415,6 +464,7 @@ Implementation validation after expansion:
     - covers:gwiki-daemon-web:1.1:1.1.2
     - covers:gwiki-daemon-web:1.1:1.1.3
     - covers:gwiki-daemon-web:1.1:1.1.4
+    - covers:gwiki-daemon-web:1.1:1.1.5
   implementation_domain: backend
   tdd: false
   source_section: "1.1"
@@ -432,6 +482,8 @@ Implementation validation after expansion:
     - covers:gwiki-daemon-web:1.2:1.2.5
     - covers:gwiki-daemon-web:1.2:1.2.6
     - covers:gwiki-daemon-web:1.2:1.2.7
+    - covers:gwiki-daemon-web:1.2:1.2.8
+    - covers:gwiki-daemon-web:1.2:1.2.9
   implementation_domain: backend
   tdd: true
   source_section: "1.2"
@@ -447,6 +499,8 @@ Implementation validation after expansion:
     - covers:gwiki-daemon-web:2.1:2.1.3
     - covers:gwiki-daemon-web:2.1:2.1.4
     - covers:gwiki-daemon-web:2.1:2.1.5
+    - covers:gwiki-daemon-web:2.1:2.1.6
+    - covers:gwiki-daemon-web:2.1:2.1.7
   implementation_domain: backend
   tdd: true
   source_section: "2.1"
@@ -461,6 +515,7 @@ Implementation validation after expansion:
     - covers:gwiki-daemon-web:2.2:2.2.2
     - covers:gwiki-daemon-web:2.2:2.2.3
     - covers:gwiki-daemon-web:2.2:2.2.4
+    - covers:gwiki-daemon-web:2.2:2.2.5
   implementation_domain: backend
   tdd: true
   source_section: "2.2"
@@ -489,6 +544,7 @@ Implementation validation after expansion:
     - covers:gwiki-daemon-web:3.2:3.2.1
     - covers:gwiki-daemon-web:3.2:3.2.2
     - covers:gwiki-daemon-web:3.2:3.2.3
+    - covers:gwiki-daemon-web:3.2:3.2.4
   implementation_domain: frontend
   tdd: true
   source_section: "3.2"
@@ -504,6 +560,7 @@ Implementation validation after expansion:
     - covers:gwiki-daemon-web:4.1:4.1.3
     - covers:gwiki-daemon-web:4.1:4.1.4
     - covers:gwiki-daemon-web:4.1:4.1.5
+    - covers:gwiki-daemon-web:4.1:4.1.6
   implementation_domain: backend
   tdd: true
   source_section: "4.1"
