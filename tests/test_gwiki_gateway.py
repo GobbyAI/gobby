@@ -84,6 +84,25 @@ async def test_gateway_exposes_expected_methods() -> None:
         assert callable(getattr(gateway, method_name))
 
 
+async def test_health_omits_gateway_scope_args(monkeypatch: pytest.MonkeyPatch) -> None:
+    payload = {"status": "healthy"}
+    calls = _patch_subprocess(
+        monkeypatch,
+        [FakeProcess(stdout=_json_bytes(payload))],
+    )
+    gateway = _gateway()
+
+    result = await gateway.health()
+
+    assert calls[0] == ("/bin/gwiki", "health", "--format", "json")
+    assert result == {
+        "ok": True,
+        "command": "health",
+        "payload": payload,
+        "stderr": "",
+    }
+
+
 async def test_error_preserves_stderr(monkeypatch: pytest.MonkeyPatch) -> None:
     payload = {"status": "failed", "error": {"code": "bad_scope"}}
     calls = _patch_subprocess(
