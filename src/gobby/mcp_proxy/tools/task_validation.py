@@ -451,6 +451,7 @@ def create_validation_registry(
         reason: str,
         reset_validation: bool = False,
         reset_stage_attempts: bool = False,
+        restore_stage_from_history: bool = False,
     ) -> dict[str, Any]:
         """
         De-escalate a task to its preserved current stage.
@@ -460,6 +461,8 @@ def create_validation_registry(
             reason: Reason for de-escalation (required)
             reset_validation: Also reset validation fail count (default: False)
             reset_stage_attempts: Also reset current stage work attempts (default: False)
+            restore_stage_from_history: Restore a stopped approved stage from lifecycle history
+                (default: False)
 
         Returns:
             Updated task details
@@ -487,6 +490,7 @@ def create_validation_registry(
                 reason=reason,
                 reset_validation=reset_validation,
                 reset_stage_attempts=reset_stage_attempts,
+                restore_stage_from_history=restore_stage_from_history,
             )
         except ValueError as e:
             return {"success": False, "error": str(e)}
@@ -500,6 +504,7 @@ def create_validation_registry(
             "de_escalation_reason": reason,
             "validation_reset": reset_validation,
             "stage_attempts_reset": reset_stage_attempts,
+            "stage_restored_from_history": restore_stage_from_history,
         }
 
     return registry

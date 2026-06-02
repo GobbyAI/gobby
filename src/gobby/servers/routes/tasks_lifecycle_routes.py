@@ -67,6 +67,10 @@ class TaskDeEscalateRequest(BaseModel):
         default=False,
         description="Also reset the current stage work attempt count",
     )
+    restore_stage_from_history: bool = Field(
+        default=False,
+        description="Restore a stopped approved stage from lifecycle history",
+    )
 
 
 ResolveTask = Callable[[str], "Task"]
@@ -255,6 +259,7 @@ def register_task_lifecycle_routes(
                 reason=request_data.decision_context,
                 reset_validation=request_data.reset_validation,
                 reset_stage_attempts=request_data.reset_stage_attempts,
+                restore_stage_from_history=request_data.restore_stage_from_history,
             )
             result = updated.to_dict()
             warnings = await broadcast_with_warning("task_de_escalated", result)

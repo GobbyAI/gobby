@@ -235,17 +235,21 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
         reason: str,
         reset_validation: bool = False,
         reset_stage_attempts: bool = False,
+        restore_stage_from_history: bool = False,
     ) -> dict[str, Any]:
         """De-escalate a task while preserving its current stage.
 
         Clears escalation metadata after human intervention resolves the issue.
         Optionally resets the validation failure count and current stage work attempts.
+        Can restore a stopped approved stage from lifecycle history.
 
         Args:
             task_id: Task reference (#N, path, or UUID)
             reason: Reason for de-escalation (required)
             reset_validation: Also reset validation fail count (default: False)
             reset_stage_attempts: Also reset current stage work attempts (default: False)
+            restore_stage_from_history: Restore a current ready stage from prior build_stop
+                review_approved history (default: False)
 
         Returns:
             Empty dict on success, or error dict with details.
@@ -286,6 +290,7 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
                 reason=reason,
                 reset_validation=reset_validation,
                 reset_stage_attempts=reset_stage_attempts,
+                restore_stage_from_history=restore_stage_from_history,
             )
         except ValueError as e:
             return _lifecycle_value_error(str(e))
@@ -317,7 +322,7 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
 
     registry.register(
         name="de_escalate_task",
-        description="Return an escalated task to its preserved current stage after human intervention resolves the issue. Optionally resets validation failure count and current stage work attempts.",
+        description="Return an escalated task to its preserved current stage after human intervention resolves the issue. Optionally resets validation failure count, current stage work attempts, and a stopped approved stage from lifecycle history.",
         input_schema={
             "type": "object",
             "properties": {
@@ -337,6 +342,15 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
                 "reset_stage_attempts": {
                     "type": "boolean",
                     "description": "Also reset the current stage work attempt count (default: false)",
+                    "default": False,
+                },
+                "restore_stage_from_history": {
+                    "type": "boolean",
+                    "description": (
+                        "Restore the current ready stage to review_approved when lifecycle "
+                        "history shows build_stop reset that same stage from review_approved "
+                        "to ready (default: false)"
+                    ),
                     "default": False,
                 },
             },

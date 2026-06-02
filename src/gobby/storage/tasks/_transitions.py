@@ -281,11 +281,20 @@ def de_escalate_task(
     reason: str,
     reset_validation: bool = False,
     reset_stage_attempts: bool = False,
+    restore_stage_from_history: bool = False,
 ) -> Task:
     """Clear escalation state and keep the current stage unchanged."""
     task = get_task(db, task_id)
     if not task.is_escalated:
         raise ValueError(f"Task {task_id} is not escalated")
+
+    if restore_stage_from_history:
+        _restore_stage_from_history_for_de_escalation(
+            db,
+            task_id,
+            reason=reason,
+            escalation_reason=task.escalation_reason,
+        )
 
     description = (
         f"{task.description}\n\nDe-escalated: {reason}"
@@ -309,6 +318,76 @@ def de_escalate_task(
             escalation_reason=task.escalation_reason,
         )
     return get_task(db, task_id)
+
+
+def _restore_stage_from_history_for_de_escalation(
+    db: HubDatabase,
+    task_id: str,
+    *,
+    reason: str,
+    escalation_reason: str | None,
+) -> None:
+    current = _current_stage_row(db, task_id)
+    if current is None:
+        raise ValueError(f"Cannot restore task {task_id} stage from history: no current stage")
+
+    current_stage_name = str(current["stage_name"])
+    stage_name = _stage_name_from_work_attempt_escalation(db, task_id, escalation_reason)
+    if stage_name is not None and stage_name != current_stage_name:
+        raise ValueError(
+            "Cannot restore task "
+            f"{task_id} stage from history: escalated stage {stage_name!r} is not "
+            f"the current stage {current_stage_name!r}"
+        )
+    stage_name = stage_name or current_stage_name
+
+    current_state = str(current["state"])
+    if current_state != "ready":
+        raise ValueError(
+            "Cannot restore task "
+            f"{task_id} stage {stage_name!r} from history: current state is "
+            f"{current_state!r}, expected 'ready'"
+        )
+
+    restored_state = "review_approved"
+    history = db.fetchone(
+        """
+        SELECT 1
+          FROM task_lifecycle_events
+         WHERE task_id = %s
+           AND from_state = %s
+           AND to_state = %s
+           AND reason = 'build_stop'
+         ORDER BY id DESC
+         LIMIT 1
+        """,
+        (task_id, f"{stage_name}:{restored_state}", f"{stage_name}:ready"),
+    )
+    if history is None:
+        raise ValueError(
+            "Cannot restore task "
+            f"{task_id} stage {stage_name!r} from history: no build_stop "
+            f"{restored_state!r} to 'ready' lifecycle event was found"
+        )
+
+    now = datetime.now(UTC).isoformat()
+    with db.transaction() as conn:
+        conn.execute(
+            """
+            UPDATE task_stage_states
+               SET state = %s,
+                   updated_at = %s
+             WHERE task_id = %s AND stage_name = %s
+            """,
+            (restored_state, now, task_id, stage_name),
+        )
+    TaskLifecycleEventManager(db).record_lifecycle_event(
+        task_id,
+        f"{stage_name}:{current_state}",
+        f"{stage_name}:{restored_state}",
+        f"restore_stage_from_history:{reason}",
+        by_actor="system",
+    )
 
 
 def _reset_stage_work_attempts_for_de_escalation(

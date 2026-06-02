@@ -572,6 +572,7 @@ class TestDeEscalateTaskTool:
             reason="Fixed manually",
             reset_validation=False,
             reset_stage_attempts=False,
+            restore_stage_from_history=False,
         )
 
     @pytest.mark.integration
@@ -647,6 +648,7 @@ class TestDeEscalateTaskTool:
             reason="Resolved manually",
             reset_validation=False,
             reset_stage_attempts=False,
+            restore_stage_from_history=False,
         )
         assert mock_task_manager.de_escalate_task.call_count == 1
         assert mock_task_manager.de_escalate_task.call_args is not None
@@ -681,6 +683,7 @@ class TestDeEscalateTaskTool:
             reason="Human fixed the issue",
             reset_validation=False,
             reset_stage_attempts=False,
+            restore_stage_from_history=False,
         )
 
     @pytest.mark.integration
@@ -708,6 +711,7 @@ class TestDeEscalateTaskTool:
             reason="Fixed",
             reset_validation=True,
             reset_stage_attempts=False,
+            restore_stage_from_history=False,
         )
         assert mock_task_manager.de_escalate_task.call_count == 1
         assert mock_task_manager.de_escalate_task.call_args is not None
@@ -737,6 +741,39 @@ class TestDeEscalateTaskTool:
             reason="Fixed",
             reset_validation=False,
             reset_stage_attempts=True,
+            restore_stage_from_history=False,
+        )
+
+    @pytest.mark.integration
+    @pytest.mark.asyncio
+    async def test_de_escalate_task_restores_stage_from_history(
+        self, mock_task_manager, task_registry_with_patches
+    ):
+        """Test that de_escalate_task can request stage restoration from history."""
+        escalated_task = _task_like(
+            title="Escalated task",
+            is_escalated=True,
+            escalated_at="2024-01-01T00:00:00",
+            escalation_reason="expansion_work_failed:max",
+        )
+        mock_task_manager.get_task.return_value = escalated_task
+
+        result = await task_registry_with_patches.call(
+            "de_escalate_task",
+            {
+                "task_id": "t1",
+                "reason": "Fixed",
+                "restore_stage_from_history": True,
+            },
+        )
+
+        assert "error" not in result
+        mock_task_manager.de_escalate_task.assert_called_once_with(
+            "t1",
+            reason="Fixed",
+            reset_validation=False,
+            reset_stage_attempts=False,
+            restore_stage_from_history=True,
         )
 
     @pytest.mark.integration
@@ -750,6 +787,7 @@ class TestDeEscalateTaskTool:
 
         properties = schema["inputSchema"]["properties"]
         assert "target_state" not in properties
+        assert "restore_stage_from_history" in properties
 
 
 # ============================================================================

@@ -96,6 +96,93 @@ def test_de_escalate_can_reset_current_stage_work_attempts(temp_db, sample_proje
     assert row["entered_at"] == "2026-05-02T00:00:00+00:00"
 
 
+def test_de_escalate_can_restore_stopped_approved_stage_from_history(
+    temp_db, sample_project
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    task = manager.create_task(project_id=sample_project["id"], title="Restore approved stage")
+
+    temp_db.execute(
+        "DELETE FROM task_stage_states WHERE task_id = %s",
+        (task.id,),
+    )
+    temp_db.execute(
+        """
+        INSERT INTO task_stage_states (
+            task_id, stage_name, position, state, review_policy,
+            work_attempt_count, review_round_count
+        )
+        VALUES (%s, 'expansion', 1, 'ready', 'required', 3, 0)
+        """,
+        (task.id,),
+    )
+    manager.lifecycle_events.record_lifecycle_event(
+        task.id,
+        "expansion:review_approved",
+        "expansion:ready",
+        "build_stop",
+        by_actor="build",
+    )
+
+    manager.escalate_task(task.id, reason="expansion_work_failed:max")
+    restored = manager.de_escalate_task(
+        task.id,
+        reason="coordinator repaired stopped approved stage",
+        reset_stage_attempts=True,
+        restore_stage_from_history=True,
+    )
+
+    row = temp_db.fetchone(
+        """
+        SELECT state, work_attempt_count, review_round_count
+          FROM task_stage_states
+         WHERE task_id = %s AND stage_name = 'expansion'
+        """,
+        (task.id,),
+    )
+    assert restored.is_escalated is False
+    assert row["state"] == "review_approved"
+    assert row["work_attempt_count"] == 0
+    assert row["review_round_count"] == 0
+
+    event = manager.lifecycle_events.list_events(task.id, newest_first=True, limit=1)[0]
+    assert event.from_state == "expansion:review_approved"
+    assert event.to_state == "expansion:review_approved"
+    assert event.reason.startswith("reset_stage_work_attempts:")
+
+
+def test_de_escalate_restore_stage_from_history_requires_build_stop_history(
+    temp_db, sample_project
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    task = manager.create_task(project_id=sample_project["id"], title="No restore history")
+
+    temp_db.execute(
+        "DELETE FROM task_stage_states WHERE task_id = %s",
+        (task.id,),
+    )
+    temp_db.execute(
+        """
+        INSERT INTO task_stage_states (
+            task_id, stage_name, position, state, review_policy,
+            work_attempt_count, review_round_count
+        )
+        VALUES (%s, 'expansion', 1, 'ready', 'required', 3, 0)
+        """,
+        (task.id,),
+    )
+
+    manager.escalate_task(task.id, reason="expansion_work_failed:max")
+    with pytest.raises(ValueError, match="no build_stop"):
+        manager.de_escalate_task(
+            task.id,
+            reason="coordinator repaired stopped approved stage",
+            restore_stage_from_history=True,
+        )
+
+    assert manager.get_task(task.id).is_escalated is True
+
+
 @pytest.mark.parametrize(
     "escalation_reason",
     ["holistic_qa_work_failed:max", "holistic_qa_max_work_attempts"],

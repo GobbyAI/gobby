@@ -616,6 +616,7 @@ class LocalTaskManager(TaskDecompositionMixin):
         reason: str,
         reset_validation: bool = False,
         reset_stage_attempts: bool = False,
+        restore_stage_from_history: bool = False,
     ) -> Task:
         """Clear escalation state without mutating the task's current stage."""
         task = _de_escalate_task(
@@ -624,6 +625,7 @@ class LocalTaskManager(TaskDecompositionMixin):
             reason=reason,
             reset_validation=reset_validation,
             reset_stage_attempts=reset_stage_attempts,
+            restore_stage_from_history=restore_stage_from_history,
         )
         self._notify_listeners()
         return task
