@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -152,6 +153,44 @@ def test_get_build_status_counts_closed_and_escalated_nodes(temp_db) -> None:
     by_id = {task["task_id"]: task for task in status["tasks"]}
     assert by_id[closed.id]["closed"] is True
     assert by_id[escalated.id]["escalated"] is True
+
+
+def test_build_stop_target_disables_status_and_dispatch_for_tree(temp_db) -> None:
+    from gobby.build.controls import build_stop_target
+    from gobby.build.observability import explain_dispatch, get_build_status
+    from gobby.storage.tasks import LocalTaskManager
+    from gobby.storage.tasks._lifecycle_events import BUILD_EVENT_REASON
+
+    project_id = _project(temp_db, "observability-stop-target")
+    manager = LocalTaskManager(temp_db)
+    root = manager.create_task(project_id=project_id, title="Root", task_type="epic")
+    manager.initialize_task_manifest(root.id, stage_names=["planning", "development"])
+    root = manager.update_task(root.id, allow_automation=True, isolation="none")
+    child = manager.create_task(project_id=project_id, title="Child", parent_task_id=root.id)
+    manager.initialize_task_manifest(child.id, stage_names=["development"])
+    child = manager.update_task(child.id, allow_automation=True, isolation="none")
+    manager.lifecycle_events.record_lifecycle_event(
+        root.id,
+        from_state=None,
+        to_state="planning",
+        reason=BUILD_EVENT_REASON,
+        by_actor="build",
+    )
+
+    result = asyncio.run(build_stop_target(f"#{root.seq_num}", db=temp_db, project_id=project_id))
+
+    assert result.automation_updated == 2
+    status = get_build_status(f"#{root.seq_num}", db=temp_db, project_id=project_id)
+    assert status["summary"]["state"] == "paused"
+    assert status["summary"]["automation_enabled_tasks"] == 0
+    assert status["resume_summary"]["can_resume"] is True
+    by_id = {task["task_id"]: task for task in status["tasks"]}
+    assert by_id[root.id]["allow_automation"] is False
+    assert by_id[child.id]["allow_automation"] is False
+
+    explanation = explain_dispatch(root.id, db=temp_db, project_id=project_id)
+    assert explanation["eligible"] is False
+    assert explanation["reason"] == "automation_disabled"
 
 
 def test_get_build_status_reports_closed_root_as_completed(temp_db) -> None:

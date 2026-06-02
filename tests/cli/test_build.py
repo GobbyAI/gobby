@@ -674,6 +674,8 @@ def test_build_resume_cli_kicks_dispatcher() -> None:
         result = CliRunner().invoke(cli, ["build", "resume"])
 
     assert result.exit_code == 0
+    assert "Build resume: project-scoped" in result.output
+    assert "Task tree: none" in result.output
     assert "Build automation: enabled" in result.output
     assert "Project: project-1" in result.output
     assert "Event: gobby build resume" in result.output
@@ -877,6 +879,8 @@ def test_build_project_control_honors_explicit_project(
         result = CliRunner().invoke(cli, ["build", action, "--project", "gobby-cli"])
 
     assert result.exit_code == 0
+    assert f"Build {action}: project-scoped" in result.output
+    assert "Task tree: none" in result.output
     assert f"Build automation: {'enabled' if action == 'resume' else 'disabled'}" in result.output
     assert "Project: target-project" in result.output
     assert f"Event: gobby build {action}" in result.output

@@ -476,6 +476,8 @@ def _is_profile_error(detail: Any, headers: Mapping[str, str] | None = None) -> 
 
 def _echo_build_control_result(result: BuildControlResult) -> None:
     state = "enabled" if result.enabled else "disabled"
+    click.echo(f"Build {result.lifecycle_event.event.removeprefix('build_')}: project-scoped")
+    click.echo("Task tree: none")
     click.echo(f"Build automation: {state}")
     click.echo(f"Project: {result.project_id}")
     click.echo(f"Event: {result.lifecycle_event.reason}")
