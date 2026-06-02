@@ -24,6 +24,8 @@ from gobby.build.dispatch_tick import (
     kick_dispatcher_tick as _kick_dispatcher_tick,
 )
 from gobby.build.options import BuildOptions
+from gobby.build.project_controls import build_resume as _resume_project_automation
+from gobby.build.project_state import is_project_automation_enabled
 from gobby.build.stage_manifest import (
     InputKind,
     _validate_skip_stages,
@@ -154,6 +156,8 @@ async def build_resume_target(
 
     mutexes_cleared = _clear_stale_dispatch_mutexes(db, task_ids)
     claims_released = _release_stale_agent_claims(task_manager, db, tasks)
+    if not is_project_automation_enabled(db, project_id):
+        _resume_project_automation(db=db, project_id=project_id)
     tick = await _kick_dispatcher_tick(db, project_id, services=services)
 
     result = BuildTargetControlResult(

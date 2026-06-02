@@ -193,6 +193,46 @@ def test_build_stop_target_disables_status_and_dispatch_for_tree(temp_db) -> Non
     assert explanation["reason"] == "automation_disabled"
 
 
+def test_build_resume_target_reopens_project_gate_before_dispatch(temp_db, monkeypatch) -> None:
+    from gobby.build import controls
+    from gobby.build.dispatch_tick import DispatcherTickSummary
+    from gobby.build.project_state import is_project_automation_enabled
+    from gobby.build.service import build_stop
+    from gobby.storage.tasks import LocalTaskManager
+    from gobby.storage.tasks._lifecycle_events import BUILD_EVENT_REASON
+
+    project_id = _project(temp_db, "observability-resume-target")
+    manager = LocalTaskManager(temp_db)
+    root = manager.create_task(project_id=project_id, title="Root", task_type="epic")
+    manager.initialize_task_manifest(root.id, stage_names=["planning", "development"])
+    root = manager.update_task(root.id, allow_automation=False, isolation="none")
+    manager.lifecycle_events.record_lifecycle_event(
+        root.id,
+        from_state=None,
+        to_state="planning",
+        reason=BUILD_EVENT_REASON,
+        by_actor="build",
+    )
+    build_stop(db=temp_db, project_id=project_id)
+
+    async def fake_kick_dispatcher_tick(db, project_id, **kwargs):
+        assert is_project_automation_enabled(db, project_id) is True
+        return DispatcherTickSummary(ticks=1, scanned=1, executed=1)
+
+    monkeypatch.setattr(controls, "_kick_dispatcher_tick", fake_kick_dispatcher_tick)
+
+    result = asyncio.run(
+        controls.build_resume_target(f"#{root.seq_num}", db=temp_db, project_id=project_id)
+    )
+
+    assert result.automation_updated == 1
+    assert result.dispatcher_tick is not None
+    assert result.dispatcher_tick.reason is None
+    assert result.dispatcher_tick.executed == 1
+    assert is_project_automation_enabled(temp_db, project_id) is True
+    assert manager.get_task(root.id).allow_automation is True
+
+
 def test_get_build_status_reports_closed_root_as_completed(temp_db) -> None:
     from gobby.build.observability import get_build_status
     from gobby.storage.tasks import LocalTaskManager
