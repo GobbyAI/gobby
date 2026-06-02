@@ -6,7 +6,11 @@ import asyncio
 from typing import TYPE_CHECKING, Any
 
 from gobby.config.bin_freshness import BinFreshnessConfig
+from gobby.config.wiki import WikiConfig
+from gobby.gwiki_gateway import GwikiGateway
 from gobby.runner_lifecycle_startup import StartupTracker
+from gobby.wiki.update_coordinator import WikiUpdateCoordinator
+from gobby.wiki.watcher import WikiWatcher, WikiWatchScope
 
 if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
@@ -164,6 +168,28 @@ def start_periodic_tasks(
         name="tmux-window-repair",
     )
 
+    runner._wiki_watcher = None
+    runner._wiki_watcher_task = None
+    wiki_config = getattr(runner.config, "wiki", None)
+    if isinstance(wiki_config, WikiConfig) and wiki_config.enabled and wiki_config.roots:
+        scopes = [
+            WikiWatchScope(name=root.scope, root=root.path)
+            for root in wiki_config.roots
+            if root.path.exists()
+        ]
+        if scopes:
+            runner._wiki_watcher = WikiWatcher(
+                scopes=scopes,
+                coordinator=WikiUpdateCoordinator(GwikiGateway()),
+                debounce_interval=wiki_config.debounce_interval,
+                poll_interval=wiki_config.poll_interval,
+                ignore_globs=wiki_config.ignore_globs,
+            )
+            runner._wiki_watcher_task = asyncio.create_task(
+                runner._wiki_watcher.run(),
+                name="wiki-watcher",
+            )
+
     task_count = sum(
         1
         for task in (
@@ -180,6 +206,7 @@ def start_periodic_tasks(
             runner._bin_freshness_task,
             runner._approval_timeout_task,
             runner._tmux_window_repair_task,
+            runner._wiki_watcher_task,
         )
         if task is not None
     )

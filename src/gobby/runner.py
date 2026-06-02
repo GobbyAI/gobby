@@ -57,6 +57,7 @@ if TYPE_CHECKING:
     from gobby.sync.memories import MemorySyncManager
     from gobby.sync.tasks import TaskSyncManager
     from gobby.tasks.validation import TaskValidator
+    from gobby.wiki.watcher import WikiWatcher
     from gobby.workflows.loader import WorkflowLoader
     from gobby.workflows.pipeline_executor import PipelineExecutor
     from gobby.worktrees.git import WorktreeGitManager
@@ -112,6 +113,8 @@ class GobbyRunner:
     _approval_timeout_task: asyncio.Task[None] | None
     _expired_isolation_task: asyncio.Task[None] | None
     _tmux_window_repair_task: asyncio.Task[None] | None
+    _wiki_watcher_task: asyncio.Task[None] | None
+    _wiki_watcher: WikiWatcher | None
     database: HubDatabase
     db_executor: DatabaseExecutor
     secret_store: SecretStore

@@ -293,6 +293,10 @@ async def _cancel_runner_task(runner: GobbyRunner, attr: str, timeout: float = 2
 
 
 async def _cancel_periodic_tasks(runner: GobbyRunner) -> None:
+    wiki_watcher = getattr(runner, "_wiki_watcher", None)
+    if wiki_watcher is not None:
+        await wiki_watcher.stop()
+
     for attr in (
         "_metrics_cleanup_task",
         "_metrics_archive_task",
@@ -307,8 +311,14 @@ async def _cancel_periodic_tasks(runner: GobbyRunner) -> None:
         "_vector_rebuild_task",
         "_memory_reconcile_task",
         "_tmux_window_repair_task",
+        "_wiki_watcher_task",
     ):
         await _cancel_runner_task(runner, attr)
+
+    if hasattr(runner, "_wiki_watcher_task"):
+        runner._wiki_watcher_task = None
+    if hasattr(runner, "_wiki_watcher"):
+        runner._wiki_watcher = None
 
     code_index_shutdown = getattr(runner, "_code_index_shutdown", None)
     if code_index_shutdown is not None:
