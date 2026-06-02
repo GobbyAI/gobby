@@ -132,7 +132,7 @@ class GwikiGateway:
         return await self._run_json("audit", ["audit"])
 
     async def health(self) -> dict[str, Any]:
-        return await self._run_json("health", ["health"])
+        return await self._run_json("health", ["health"], include_scope=False)
 
     async def sources(self) -> dict[str, Any]:
         return await self._run_json("sources", ["sources"])
@@ -169,9 +169,16 @@ class GwikiGateway:
             args.append("--dry-run")
         return await self._run_json("refresh", args)
 
-    async def _run_json(self, command_name: str, args: Sequence[str]) -> dict[str, Any]:
+    async def _run_json(
+        self,
+        command_name: str,
+        args: Sequence[str],
+        *,
+        include_scope: bool = True,
+    ) -> dict[str, Any]:
         binary = await self._resolve_binary()
-        argv = [binary, *args, *self._scope_args(), "--format", "json"]
+        scope_args = self._scope_args() if include_scope else []
+        argv = [binary, *args, *scope_args, "--format", "json"]
         outcome = await self._run_command(command_name, argv)
         if isinstance(outcome, dict):
             return outcome
