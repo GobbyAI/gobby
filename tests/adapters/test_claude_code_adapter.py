@@ -521,6 +521,50 @@ class TestTranslateFromHookResponse:
             'or `gcode search-content "query" [PATH...]` for ranked content search.'
         )
 
+    def test_pre_tool_use_code_index_skill_block_preserves_get_skill_directive(self) -> None:
+        adapter = ClaudeCodeAdapter()
+        directive = (
+            'Call get_skill(name="code-index") on gobby-skills through '
+            "mcp__gobby__ progressive discovery: list_mcp_servers -> "
+            'list_tools("gobby-skills") -> get_tool_schema("gobby-skills", "get_skill") -> '
+            'call_tool("gobby-skills", "get_skill", {"name": "code-index"}). Then continue.'
+        )
+        compacted_directive = directive.removesuffix(" Then continue.")
+        response = HookResponse(
+            decision="block",
+            reason=(
+                "Rule enforced by Gobby: [require-code-index-skill]\n"
+                f"{directive} "
+                'After loading, retry with `gcode grep "pattern" [PATH...] -m 50`, '
+                '`gcode search-content "query" [PATH...]`, `gcode outline path/to/file`, '
+                "or `gcode symbol <id>`."
+            ),
+        )
+        result = adapter.translate_from_hook_response(response, hook_type="pre-tool-use")
+
+        assert result["hookSpecificOutput"]["permissionDecisionReason"] == (
+            f"Gobby blocked [require-code-index-skill]: {compacted_directive}"
+        )
+
+    def test_pre_tool_use_source_read_block_preserves_gcode_replacements(self) -> None:
+        adapter = ClaudeCodeAdapter()
+        guidance = (
+            "Use `gcode outline path/to/file` to inspect file structure or "
+            "`gcode symbol <id>` to retrieve a target symbol before broad source reads."
+        )
+        response = HookResponse(
+            decision="block",
+            reason=(
+                "Rule enforced by Gobby: [prefer-gcode-for-source-read]\n"
+                f"{guidance} Keep follow-up line reads to 40 lines or fewer."
+            ),
+        )
+        result = adapter.translate_from_hook_response(response, hook_type="pre-tool-use")
+
+        assert result["hookSpecificOutput"]["permissionDecisionReason"] == (
+            f"Gobby blocked [prefer-gcode-for-source-read]: {guidance}"
+        )
+
     def test_pre_tool_use_block_compacts_rule_reason_and_preserves_action(self) -> None:
         adapter = ClaudeCodeAdapter()
         response = HookResponse(

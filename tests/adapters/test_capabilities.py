@@ -125,6 +125,8 @@ def test_claude_reason_compaction_records_degradation(
 
     permission_reason = result["hookSpecificOutput"]["permissionDecisionReason"]
     assert permission_reason.startswith("Gobby blocked [require-code-index-skill]:")
+    assert 'get_skill(name="code-index")' in permission_reason
+    assert "mcp__gobby__ progressive discovery" in permission_reason
     assert permission_reason != reason
     assert any(call["kind"] == "reason_compacted" for call in calls)
 

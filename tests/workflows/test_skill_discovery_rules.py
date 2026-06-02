@@ -633,7 +633,8 @@ class TestRequireCodeIndexSkillStructure:
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
         assert skill_fetch_directive("code-index") in body.effects[0].reason
-        assert 'gcode grep "pattern" [PATH...] -m 50' in body.effects[0].reason
+        assert 'get_skill(name="code-index")' in body.effects[0].reason
+        assert 'list_tools("gobby-skills")' in body.effects[0].reason
 
     def test_code_index_navigation_rules_sync(self, db, manager) -> None:
         _sync_bundled(db)
@@ -690,7 +691,7 @@ class TestCodeIndexNavigationRules:
         assert response.decision == "block"
         assert response.reason is not None
         assert skill_fetch_directive("code-index") in response.reason
-        assert 'gcode grep "pattern" [PATH...] -m 50' in response.reason
+        assert 'get_skill(name="code-index")' in response.reason
 
     @pytest.mark.asyncio
     async def test_loaded_code_index_blocks_rg_with_gcode_grep_guidance(self, db) -> None:
@@ -714,7 +715,10 @@ class TestCodeIndexNavigationRules:
 
         assert response.decision == "block"
         assert response.reason is not None
-        assert 'gcode grep "pattern" [PATH...] -m 50' in response.reason
+        assert (
+            'Use `gcode grep "pattern" [PATH...] -m 50` for exact text search, '
+            'or `gcode search-content "query" [PATH...]` for ranked content search.'
+        ) in response.reason
 
     @pytest.mark.asyncio
     async def test_gcode_navigation_is_allowed_and_sets_turn_flag(self, db) -> None:
@@ -794,7 +798,10 @@ class TestCodeIndexNavigationRules:
 
         assert broad_response.decision == "block"
         assert broad_response.reason is not None
-        assert "gcode outline path/to/file" in broad_response.reason
+        assert (
+            "Use `gcode outline path/to/file` to inspect file structure or "
+            "`gcode symbol <id>` to retrieve a target symbol before broad source reads."
+        ) in broad_response.reason
         assert narrow_response.decision == "allow"
 
     @pytest.mark.asyncio

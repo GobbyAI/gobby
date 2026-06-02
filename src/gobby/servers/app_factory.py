@@ -18,6 +18,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from starlette.datastructures import Headers
+from websockets.typing import Subprotocol
 
 from gobby.adapters.codex_impl.app_server_adapter import CodexAdapter
 from gobby.hooks.hook_manager import HookManager
@@ -743,12 +744,13 @@ def _mount_vite_hmr_proxy(app: FastAPI, server: "HTTPServer") -> None:
     logger.debug(f"Vite HMR proxy mounted at /__vite_hmr -> localhost:{ui_port}")
 
 
-def _requested_websocket_subprotocols(headers: Headers) -> list[str]:
-    protocols: list[str] = []
+def _requested_websocket_subprotocols(headers: Headers) -> list[Subprotocol]:
+    protocols: list[Subprotocol] = []
     for header_value in headers.getlist("sec-websocket-protocol"):
-        protocols.extend(
-            protocol.strip() for protocol in header_value.split(",") if protocol.strip()
-        )
+        for protocol in header_value.split(","):
+            stripped = protocol.strip()
+            if stripped:
+                protocols.append(Subprotocol(stripped))
     return protocols
 
 
