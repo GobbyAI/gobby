@@ -16,6 +16,8 @@ metadata:
 > Internal methodology skill; loaded with `get_skill(name="holistic-review")`
 > by the `holistic-reviewer` agent before it reviews an implemented epic.
 
+REQUIRED SKILL: review-learning.
+
 Use this skill to decide whether an epic's implementation matches the approved
 plan or equivalent review scope, the observed diff, and the linked subtasks'
 validation criteria.
@@ -114,6 +116,13 @@ findings:
 
 Use `OK` only when the check passes. Use `Gap` for missing required behavior or
 evidence. Use `Drift` for extra or divergent implementation.
+
+Before returning `request_changes`, call
+`gobby-review-learning.recall_review_context` for the blocking findings and
+include relevant local memory/lesson context in the verdict. For reusable
+rejection patterns, call `gobby-review-learning.record_review_lesson` before the
+verdict with `source_kind=qa_rejection`; do not record one-off, stale, or invalid
+findings.
 
 ## Decision Mapping
 

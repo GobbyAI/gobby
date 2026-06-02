@@ -90,6 +90,22 @@ def test_coderabbit_skill_requires_validation_commit_and_task_close() -> None:
     body = _body()
 
     assert "REQUIRED SKILL: task-transitions" in body
+    assert "REQUIRED SKILL: review-learning" in body
     assert "Run focused validation" in body
     assert "Commit with the task ref" in body
     assert "close the task with `commit_sha`" in body
+
+
+def test_coderabbit_skill_requires_review_learning_hooks() -> None:
+    """Verify CodeRabbit triage recalls and records reusable review lessons."""
+    body = _body()
+
+    assert "gobby-review-learning.recall_review_context" in body
+    assert "Relevant memory/lesson" in body
+    assert "Local memory wins" in body
+    assert "gcode search" in body
+    assert "gcode grep" in body
+    assert "gobby-review-learning.record_review_lesson" in body
+    assert "confirmed reusable" in body
+    assert "no-fix-policy" in body
+    assert "Do not record\n    stale, invalid, or raw CLI-failure findings" in body

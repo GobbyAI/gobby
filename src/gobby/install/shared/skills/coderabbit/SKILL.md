@@ -20,6 +20,7 @@ Use this skill for `$gobby coderabbit [findings]`, pasted CodeRabbit comments,
 and files matching `./reports/coderabbit-*.md`.
 
 REQUIRED SKILL: task-transitions.
+REQUIRED SKILL: review-learning.
 
 ## Plan Mode Gate
 
@@ -53,6 +54,7 @@ finding gets its own row with:
 
 - Decision: `fix` or `no-fix`.
 - Checked file, symbol, or behavior.
+- Relevant memory/lesson from `gobby-review-learning.recall_review_context`.
 - Reason for the decision.
 
 No finding may be grouped away, summarized into another row, or silently
@@ -82,14 +84,23 @@ behavior. Do not silently drop stale comments.
 3. Ingest all supplied findings and every `./reports/coderabbit-*.md` file.
 4. For each report, identify whether it contains actionable findings or only a
    CodeRabbit CLI failure such as `Too many files`.
-5. Inspect current code for each finding before deciding.
-6. Apply valid findings, including small nits, using normal repo patterns.
-7. Document stale or invalid findings as `no-fix` decisions.
-8. Delete processed `./reports/coderabbit-*.md` files after their contents are
+5. Call `gobby-review-learning.recall_review_context` before deciding; include
+   the `Relevant memory/lesson` result in the finding table. Local memory wins
+   over generic CodeRabbit recommendations unless current code disproves it.
+6. Inspect current code for each finding before deciding.
+7. When `query_hints` or recalled lessons imply sibling risk, sweep with
+   `gcode search` or `gcode grep` before fixing.
+8. Apply valid findings, including small nits, using normal repo patterns.
+9. Document stale or invalid findings as `no-fix` decisions.
+10. After triage/fix verification, call
+    `gobby-review-learning.record_review_lesson` for each confirmed reusable
+    `fixed` finding and each concrete `no-fix-policy` pattern. Do not record
+    stale, invalid, or raw CLI-failure findings.
+11. Delete processed `./reports/coderabbit-*.md` files after their contents are
    fixed or documented. Leave unrelated report artifacts alone.
-9. Run focused validation for the touched areas, plus scoped lint/type checks
+12. Run focused validation for the touched areas, plus scoped lint/type checks
    when available.
-10. Commit with the task ref as `[<project_name>-#<task_number>] <type>: <summary>`
+13. Commit with the task ref as `[<project_name>-#<task_number>] <type>: <summary>`
     and close the task with `commit_sha`. Use the real project name in the task
     reference, such as `[gobby-#123]`; `project_name` is a placeholder, never a
     literal prefix.

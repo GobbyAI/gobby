@@ -14,6 +14,8 @@ metadata:
 
 Run code reviews against local git state. Supports standard review and adversarial review modes.
 
+REQUIRED SKILL: review-learning.
+
 ## Standard Review
 
 Review uncommitted changes or branch diffs:
@@ -143,6 +145,14 @@ Before running a review, estimate the size:
 ## After Review
 
 - Present findings verbatim, ordered by severity
+- Before finalizing material findings, call
+  `gobby-review-learning.recall_review_context` and include any relevant local
+  memory/lesson in the finding table.
+- If local memory contradicts a generic recommendation, prefer the local memory
+  unless current code disproves it.
 - Preserve file paths and line numbers exactly as reported
+- After a material reusable finding is confirmed by a verified fix or concrete
+  no-fix-policy decision, call `gobby-review-learning.record_review_lesson`
+  with `source_kind=agent_review`.
 - **Do NOT auto-fix issues** — ask the user which findings to address
 - Don't generate substitute findings if the review tool or process fails

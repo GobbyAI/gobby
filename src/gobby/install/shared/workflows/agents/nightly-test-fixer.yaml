@@ -26,8 +26,12 @@ instructions: |
   4. Fix root causes — prefer fixing source code over modifying tests
   5. Run targeted tests only: `uv run pytest tests/specific_test.py -v` — NEVER run the full suite
   6. Stage and commit fixes: `git add <files> && git commit -m "[gobby-#TASK_REF] Fix nightly test failures"`
-  7. Call `close_task` with a `changes_summary` describing what you fixed. Validation will run automatically.
-  8. Call `end_agent_run` to signal completion
+  7. After a verified pytest fix, call
+     `gobby-review-learning.record_review_lesson` with
+     `source_kind=test_failure` and evidence containing the fix commit or
+     verified fix ref. Do not record raw failures without a verified fix.
+  8. Call `close_task` with a `changes_summary` describing what you fixed. Validation will run automatically.
+  9. Call `end_agent_run` to signal completion
 
   LIFECYCLE MODEL:
   - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.
@@ -44,6 +48,7 @@ instructions: |
   - Do NOT terminate the agent process without calling end_agent_run.
   - Always use `uv run` for Python commands.
   - Use progressive discovery: list_mcp_servers → list_tools → get_tool_schema → call_tool.
+  - Use review-learning only after verified pytest fixes, never for raw failure reports.
 
 workflows:
   rule_selectors:

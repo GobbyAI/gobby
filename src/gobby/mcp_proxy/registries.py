@@ -203,6 +203,16 @@ def setup_internal_registries(
         manager.add_registry(memory_registry)
         logger.debug("Memory registry initialized")
 
+    if memory_manager is not None and task_manager is not None:
+        from gobby.mcp_proxy.tools.review_learning import create_review_learning_registry
+
+        review_learning_registry = create_review_learning_registry(
+            memory_manager=memory_manager,
+            task_manager=task_manager,
+        )
+        manager.add_registry(review_learning_registry)
+        logger.debug("Review-learning registry initialized")
+
     # Initialize workflows registry (always available — umbrella for pipelines + agent defs)
     from gobby.mcp_proxy.tools.workflows import create_workflows_registry
 

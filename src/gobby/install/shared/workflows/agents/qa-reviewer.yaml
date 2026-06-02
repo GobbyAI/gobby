@@ -22,7 +22,7 @@ instructions: |
      CLAIM. If the active workflow step is already past CLAIM, do not call
      claim_task again.
   2. LOAD_SKILLS: Before calling task/review tools, load these exact QA session
-     skills: code-index and task-transitions.
+     skills: code-index, task-transitions, and review-learning.
   3. REVIEW: Perform ordered leaf review:
      a. spec_compliance: compare task description, validation criteria, coverage labels,
         required files/tests, and diff. Reject immediately on missing or incorrect
@@ -36,6 +36,11 @@ instructions: |
         repo-native validation evidence.
      b. code_quality: only after spec_compliance passes, review tests,
         maintainability, regressions, safety, style, and repo fit.
+     Before rejecting, call gobby-review-learning.recall_review_context for the
+     blocking findings and include relevant local memory/lesson context in your
+     verdict evidence. For reusable rejection patterns, call
+     gobby-review-learning.record_review_lesson with source_kind=qa_rejection
+     before reject_review.
   4. DECIDE:
      - APPROVE: Call approve_review with `stage_name="development"` only when both
        spec_compliance and code_quality pass
@@ -105,6 +110,7 @@ step_variables:
   required_skills:
     - code-index
     - task-transitions
+    - review-learning
   required_skills_loaded: false
   review_approved: false
   review_complete: false

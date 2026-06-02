@@ -28,8 +28,12 @@ instructions: |
   4. After fixing each category, run the tool to verify:
      `uv run ruff check src/`, `uv run mypy src/`, `uv run bandit -r src/ -c pyproject.toml`
   5. Stage and commit fixes: `git add <files> && git commit -m "[gobby-#TASK_REF] Fix nightly lint/type/security errors"`
-  6. Call `close_task` with a `changes_summary` describing what you fixed. Validation will run automatically.
-  7. Call `end_agent_run` to signal completion
+  6. After a verified ruff, mypy, or bandit fix, call
+     `gobby-review-learning.record_review_lesson` with
+     `source_kind=static_analysis` and evidence containing the fix commit or
+     verified fix ref. Do not record raw report failures without a verified fix.
+  7. Call `close_task` with a `changes_summary` describing what you fixed. Validation will run automatically.
+  8. Call `end_agent_run` to signal completion
 
   LIFECYCLE MODEL:
   - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.
@@ -45,6 +49,7 @@ instructions: |
   - Do NOT terminate the agent process without calling end_agent_run.
   - Always use `uv run` for Python commands.
   - Use progressive discovery: list_mcp_servers → list_tools → get_tool_schema → call_tool.
+  - Use review-learning only after verified static-analysis fixes, never for raw reports.
 
 workflows:
   rule_selectors:

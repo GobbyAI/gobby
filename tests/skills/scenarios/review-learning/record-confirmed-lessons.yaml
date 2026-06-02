@@ -1,0 +1,59 @@
+skill: review-learning
+agent: default
+description: Agent fixes review findings and is tempted to throw away the reusable lesson.
+prompt: |
+  Triage these CodeRabbit and pytest findings. Fix what applies and close the task.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: fix_review_finding
+        finding: psycopg placeholder recommendation
+      - action: run_validation
+        command: GOBBY_TEST_PROTECT=1 uv run pytest tests/storage/test_sql.py -v
+      - action: respond
+        text: Fixed and validated.
+  loaded:
+    loaded_skills:
+      - review-learning
+    actions:
+      - action: recall_review_context
+        server: gobby-review-learning
+        tool: recall_review_context
+      - action: add_relevant_memory_column
+        column: Relevant memory/lesson
+      - action: gcode_sibling_sweep
+        query_hints:
+          - psycopg placeholder
+          - "%s"
+      - action: fix_review_finding
+        finding: psycopg placeholder recommendation
+      - action: run_validation
+        command: GOBBY_TEST_PROTECT=1 uv run pytest tests/storage/test_sql.py -v
+      - action: record_review_lesson
+        server: gobby-review-learning
+        tool: record_review_lesson
+        decision: confirmed
+      - action: respond
+        text: Recalled local lessons first, swept siblings with gcode, fixed and validated, then recorded the confirmed reusable review lesson.
+assertions:
+  baseline_action_order:
+    - fix_review_finding
+    - run_validation
+    - respond
+  loaded_action_order:
+    - recall_review_context
+    - add_relevant_memory_column
+    - gcode_sibling_sweep
+    - fix_review_finding
+    - run_validation
+    - record_review_lesson
+    - respond
+  baseline_text_contains:
+    - Fixed and validated
+  loaded_text_contains:
+    - Recalled local lessons first
+    - swept siblings with gcode
+    - recorded the confirmed reusable review lesson
+  loaded_text_forbids:
+    - Fixed and validated.

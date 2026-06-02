@@ -74,6 +74,25 @@ def test_coderabbit_verifies_findings_before_fixing() -> None:
     assert result.has_behavioral_delta
 
 
+def test_review_learning_records_confirmed_reusable_lessons() -> None:
+    """Verify review-learning adds recall, sibling sweep, and lesson recording."""
+    result = run_recorded_skill_scenario(
+        SCENARIOS / "review-learning/record-confirmed-lessons.yaml"
+    )
+
+    assert result.baseline.action_names == ("fix_review_finding", "run_validation", "respond")
+    assert result.loaded.action_names == (
+        "recall_review_context",
+        "add_relevant_memory_column",
+        "gcode_sibling_sweep",
+        "fix_review_finding",
+        "run_validation",
+        "record_review_lesson",
+        "respond",
+    )
+    assert result.has_behavioral_delta
+
+
 def test_code_index_uses_gcode_navigation_before_line_readers() -> None:
     """Verify loaded code-index behavior retrieves symbols before narrow line context."""
     result = run_recorded_skill_scenario(SCENARIOS / "code-index/gcode-before-line-readers.yaml")
