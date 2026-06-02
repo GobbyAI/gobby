@@ -91,6 +91,48 @@ def test_get_build_status_reports_agents_mutex_artifacts_events_and_comments(
     assert status["recent_events"][0]["reason"] == BUILD_EVENT_REASON
 
 
+def test_get_build_status_reports_invalid_integration_worktree_artifact(
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    from gobby.build.observability import get_build_status
+    from gobby.storage.tasks import TaskArtifactManager
+    from gobby.storage.worktrees import LocalWorktreeManager
+
+    project_id = _project(temp_db, "observability-integration-health")
+    task = _automated_task(temp_db, project_id)
+    invalid_path = tmp_path / "integration-worktree"
+    invalid_path.mkdir()
+    (invalid_path / "not-git.txt").write_text("stale integration workspace\n")
+    worktree = LocalWorktreeManager(temp_db).create(
+        project_id=project_id,
+        branch_name="gobby/integration/observability",
+        worktree_path=str(invalid_path),
+        base_branch="main",
+        task_id=task.id,
+        workspace_role="integration",
+    )
+    TaskArtifactManager(temp_db).set_artifacts_atomic(
+        task.id,
+        integration_workspace_id=worktree.id,
+        integration_branch=worktree.branch_name,
+        target_branch="main",
+    )
+
+    status = get_build_status(f"#{task.seq_num}", db=temp_db, project_id=project_id)
+
+    health = status["artifact_health"]
+    artifact = health["items"][0]["artifacts"][0]
+    assert health["ok"] is False
+    assert health["issue_count"] == 1
+    assert artifact["field"] == "integration_workspace_id"
+    assert artifact["id"] == worktree.id
+    assert artifact["path"] == str(invalid_path)
+    assert artifact["record_exists"] is True
+    assert artifact["exists"] is True
+    assert artifact["git_metadata_present"] is False
+
+
 def test_get_build_status_reports_active_run_expired_mutex_lease(temp_db) -> None:
     from gobby.build.observability import explain_dispatch, get_build_status
     from gobby.storage.agents import LocalAgentRunManager

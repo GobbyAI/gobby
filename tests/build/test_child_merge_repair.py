@@ -411,6 +411,61 @@ def test_epic_integration_workspace_recreates_invalid_git_path(
     assert parent_artifacts.integration_workspace_id == recreated.id
 
 
+def test_epic_integration_workspace_recreates_invalid_branch_record_from_other_task(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+
+    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    task_manager = LocalTaskManager(temp_db)
+    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    stale_owner = task_manager.create_task(
+        project_id=project.id,
+        title="Stale owner",
+        task_type="epic",
+    )
+    integration_branch = _integration_branch(parent)
+    invalid_path = _workspace_path("worktrees", repo.name, integration_branch)
+    invalid_path.mkdir(parents=True)
+    (invalid_path / "not-git.txt").write_text("stale branch record\n")
+
+    worktrees = LocalWorktreeManager(temp_db)
+    stale = worktrees.create(
+        project_id=project.id,
+        branch_name=integration_branch,
+        worktree_path=str(invalid_path),
+        base_branch="main",
+        task_id=stale_owner.id,
+        workspace_role="integration",
+    )
+
+    ensure_epic_integration_workspaces(
+        task_manager=task_manager,
+        root_task=parent,
+        backend="worktree",
+        target_branch="main",
+        project_id=project.id,
+        services=None,
+    )
+
+    recreated = worktrees.get_by_branch(project.id, integration_branch)
+    parent_artifacts = task_manager.artifacts.get_artifacts(parent.id)
+
+    assert worktrees.get(stale.id) is None
+    assert recreated is not None
+    assert recreated.id != stale.id
+    assert recreated.task_id == parent.id
+    assert recreated.worktree_path == str(invalid_path)
+    assert _git(invalid_path, "rev-parse", "--is-inside-work-tree") == "true"
+    assert not (invalid_path / "not-git.txt").exists()
+    assert parent_artifacts.integration_workspace_id == recreated.id
+
+
 def test_epic_integration_workspace_blocks_active_run_for_pruned_metadata(
     temp_db,
     tmp_path: Path,

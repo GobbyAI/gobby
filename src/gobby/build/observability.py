@@ -22,6 +22,7 @@ from gobby.dispatch.actions import (
 from gobby.dispatch.context import build_context, reload_candidate
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.build_history import BuildHistoryStorage
+from gobby.storage.clones import LocalCloneManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.tasks._ancestor_gate import (
@@ -33,6 +34,7 @@ from gobby.storage.tasks._holistic_gate import (
     HolisticDescendantGate,
     find_holistic_descendant_gate,
 )
+from gobby.storage.worktrees import LocalWorktreeManager
 
 MAX_ACTIVE_AGENTS = 10
 
@@ -385,20 +387,69 @@ def _mutex_diagnosis(db: HubDatabase, task_id: str) -> dict[str, Any]:
 def _artifact_health(task_manager: LocalTaskManager, tasks: Sequence[Task]) -> dict[str, Any]:
     items: list[dict[str, Any]] = []
     issue_count = 0
+    worktrees = LocalWorktreeManager(task_manager.db)
+    clones = LocalCloneManager(task_manager.db)
     for task in tasks:
         artifacts = task_manager.artifacts.get_artifacts(task.id)
-        paths = {
-            "worktree_path": artifacts.worktree_path,
-            "clone_path": artifacts.clone_path,
-        }
+        paths: list[dict[str, Any]] = [
+            {"field": "worktree_path", "path": artifacts.worktree_path, "requires_git": True},
+            {"field": "clone_path", "path": artifacts.clone_path, "requires_git": True},
+        ]
+        if artifacts.integration_workspace_id:
+            worktree = worktrees.get(artifacts.integration_workspace_id)
+            paths.append(
+                {
+                    "field": "integration_workspace_id",
+                    "id": artifacts.integration_workspace_id,
+                    "path": worktree.worktree_path if worktree else None,
+                    "record_exists": worktree is not None,
+                    "requires_git": True,
+                }
+            )
+        if artifacts.integration_clone_id:
+            clone = clones.get(artifacts.integration_clone_id)
+            paths.append(
+                {
+                    "field": "integration_clone_id",
+                    "id": artifacts.integration_clone_id,
+                    "path": clone.clone_path if clone else None,
+                    "record_exists": clone is not None,
+                    "requires_git": True,
+                }
+            )
         task_items = []
-        for name, raw_path in paths.items():
+        for artifact in paths:
+            name = artifact["field"]
+            raw_path = artifact["path"]
             if not raw_path:
+                if "id" in artifact:
+                    issue_count += 1
+                    task_items.append(
+                        {
+                            "field": name,
+                            "id": artifact["id"],
+                            "path": None,
+                            "exists": False,
+                            "record_exists": False,
+                            "git_metadata_present": False,
+                        }
+                    )
                 continue
-            exists = Path(raw_path).expanduser().exists()
-            if not exists:
+            path = Path(raw_path).expanduser()
+            exists = path.exists()
+            git_metadata_present = not artifact["requires_git"] or (path / ".git").exists()
+            if not exists or not git_metadata_present:
                 issue_count += 1
-            task_items.append({"field": name, "path": raw_path, "exists": exists})
+            task_item = {
+                "field": name,
+                "path": raw_path,
+                "exists": exists,
+                "git_metadata_present": git_metadata_present,
+            }
+            if "id" in artifact:
+                task_item["id"] = artifact["id"]
+                task_item["record_exists"] = artifact["record_exists"]
+            task_items.append(task_item)
         if task_items:
             items.append({"task_id": task.id, "artifacts": task_items})
     return {"ok": issue_count == 0, "issue_count": issue_count, "items": items}
