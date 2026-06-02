@@ -236,6 +236,13 @@ def setup_internal_registries(
     manager.add_registry(canvas_registry)
     logger.debug("Canvas registry initialized")
 
+    # Initialize wiki registry (always available; gateway availability is checked per call)
+    from gobby.mcp_proxy.tools.wiki import create_wiki_registry
+
+    wiki_registry = create_wiki_registry(config=_config)
+    manager.add_registry(wiki_registry)
+    logger.debug("Wiki registry initialized")
+
     # Initialize metrics registry if metrics_manager is available
     if metrics_manager is not None:
         from gobby.mcp_proxy.tools.metrics import create_metrics_registry
