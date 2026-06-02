@@ -21,8 +21,13 @@ from gobby.build.task_lifecycle import (
     set_automation_for_task_tree,
 )
 from gobby.build.validation import _validate_task_ref_isolation_artifacts
+from gobby.build.workspace_common import WorkspaceBackend
+from gobby.build.workspace_git import _is_git_workspace_dir
+from gobby.build.workspaces import _subtree_tasks
+from gobby.storage.clones import LocalCloneManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, StageState, Task
+from gobby.storage.worktrees import LocalWorktreeManager
 
 _EXPANDED_EPIC_LEGACY_ROOT_STAGES = frozenset(
     {"ideation", "research", "architecture", "prd", "planning", "expansion", "pr"}
@@ -119,7 +124,10 @@ async def resume_existing_lifecycle(
             if integration_target is None:
                 raise ValueError("target_branch is required for epic integration workspaces")
             if not resume_opts.dry_run and _resume_epic_workspace_refresh_required(
-                initial_lifecycle
+                initial_lifecycle,
+                task_manager=task_manager,
+                root_task_id=task.id,
+                backend=resume_opts.workspace_backend,
             ):
                 await asyncio.to_thread(
                     runtime.ensure_epic_integration_workspaces,
@@ -170,9 +178,68 @@ async def resume_existing_lifecycle(
     )
 
 
-def _resume_epic_workspace_refresh_required(stage_name: str | None) -> bool:
-    """Existing development-stage epics only need a dispatcher tick."""
-    return stage_name in _EPIC_WORKSPACE_REFRESH_STAGES
+def _resume_epic_workspace_refresh_required(
+    stage_name: str | None,
+    *,
+    task_manager: LocalTaskManager | None = None,
+    root_task_id: str | None = None,
+    backend: WorkspaceBackend | None = None,
+) -> bool:
+    if stage_name in _EPIC_WORKSPACE_REFRESH_STAGES:
+        return True
+    if stage_name != "development":
+        return False
+    if task_manager is None or root_task_id is None or backend is None:
+        return False
+    return _subtree_has_invalid_integration_artifacts(task_manager, root_task_id, backend)
+
+
+def _subtree_has_invalid_integration_artifacts(
+    task_manager: LocalTaskManager,
+    root_task_id: str,
+    backend: WorkspaceBackend,
+) -> bool:
+    tasks = _subtree_tasks(task_manager.db, root_task_id)
+    if backend == "worktree":
+        worktrees = LocalWorktreeManager(task_manager.db)
+        return any(
+            _worktree_integration_artifact_invalid(
+                worktrees,
+                task_manager.artifacts.get_artifacts(task.id).integration_workspace_id,
+            )
+            for task in tasks
+            if task.task_type == "epic" and task.closed_at is None
+        )
+
+    clones = LocalCloneManager(task_manager.db)
+    return any(
+        _clone_integration_artifact_invalid(
+            clones,
+            task_manager.artifacts.get_artifacts(task.id).integration_clone_id,
+        )
+        for task in tasks
+        if task.task_type == "epic" and task.closed_at is None
+    )
+
+
+def _worktree_integration_artifact_invalid(
+    worktrees: LocalWorktreeManager,
+    worktree_id: str | None,
+) -> bool:
+    if not worktree_id:
+        return False
+    record = worktrees.get(worktree_id)
+    return record is None or not _is_git_workspace_dir(record.worktree_path)
+
+
+def _clone_integration_artifact_invalid(
+    clones: LocalCloneManager,
+    clone_id: str | None,
+) -> bool:
+    if not clone_id:
+        return False
+    record = clones.get(clone_id)
+    return record is None or not _is_git_workspace_dir(record.clone_path)
 
 
 def skip_stages_can_shape_expanded_epic_resume(
