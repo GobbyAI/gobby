@@ -69,7 +69,7 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
 
     // Source 3: Graph boost (FalkorDB callers + usages of the resolved query symbol)
     let graph_ids = if options.with_graph {
-        graph_boost::graph_boost(ctx, query)
+        graph_boost::graph_boost(ctx, Some(&mut conn), query)
     } else {
         Vec::new()
     };
@@ -77,7 +77,7 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
     // Source 4: Graph expand — seed from top BM25+semantic results, expand neighborhood
     let seed_ids = extract_seed_ids(&fts_results, &semantic_ids, 5);
     let expand_ids = if options.with_graph {
-        graph_boost::graph_expand(ctx, &seed_ids)
+        graph_boost::graph_expand(ctx, Some(&mut conn), &seed_ids)
     } else {
         Vec::new()
     };
@@ -281,8 +281,8 @@ fn search_symbol_with_graph(
 ) -> anyhow::Result<()> {
     let exact_ids: Vec<String> = exact_results.iter().map(|s| s.id.clone()).collect();
     let seed_ids: Vec<String> = exact_ids.iter().take(5).cloned().collect();
-    let graph_ids = graph_boost::graph_boost(ctx, query);
-    let expand_ids = graph_boost::graph_expand(ctx, &seed_ids);
+    let graph_ids = graph_boost::graph_boost(ctx, Some(&mut *conn), query);
+    let expand_ids = graph_boost::graph_expand(ctx, Some(&mut *conn), &seed_ids);
 
     let mut sources: Vec<(&str, Vec<String>)> = Vec::new();
     if !exact_ids.is_empty() {

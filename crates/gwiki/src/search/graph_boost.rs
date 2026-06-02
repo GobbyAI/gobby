@@ -73,13 +73,27 @@ impl GraphBoostBackend for MemoryGraphBoostBackend {
 }
 
 pub struct PostgresGraphBoostBackend {
-    database_url: String,
+    scope: SearchScope,
+    documents: Vec<GraphBoostDocument>,
+    links: Vec<GraphBoostLink>,
+    degradation: Option<DegradationKind>,
 }
 
 impl PostgresGraphBoostBackend {
-    pub fn new(database_url: impl Into<String>) -> Self {
-        Self {
-            database_url: database_url.into(),
+    pub fn new(conn: &mut postgres::Client, scope: SearchScope) -> Self {
+        match load_graph_boost_data(conn, &scope) {
+            Ok((documents, links)) => Self {
+                scope,
+                documents,
+                links,
+                degradation: None,
+            },
+            Err(error) => Self {
+                scope,
+                documents: Vec::new(),
+                links: Vec::new(),
+                degradation: Some(graph_degradation(error.to_string())),
+            },
         }
     }
 }
@@ -95,57 +109,75 @@ impl GraphBoostBackend for PostgresGraphBoostBackend {
                 degradation: None,
             });
         }
+        if let Some(degradation) = self.degradation.clone() {
+            return Ok(GraphBoostOutcome {
+                hits: Vec::new(),
+                degradation: Some(degradation),
+            });
+        }
+        if request.scope != self.scope {
+            return Ok(degraded(format!(
+                "graph boost backend loaded for {}:{}, requested {}:{}",
+                self.scope.scope_kind(),
+                self.scope.scope_value(),
+                request.scope.scope_kind(),
+                request.scope.scope_value()
+            )));
+        }
 
-        let mut conn = match gobby_core::postgres::connect_readonly(&self.database_url) {
-            Ok(conn) => conn,
-            Err(error) => return Ok(degraded(error.to_string())),
-        };
-        let scope_kind = request.scope.scope_kind().to_string();
-        let scope_id = request.scope.scope_value().to_string();
+        let ranked_paths = rank_link_neighborhood(
+            &self.documents,
+            &self.links,
+            &request.seed_paths,
+            request.limit,
+        );
+        Ok(GraphBoostOutcome {
+            hits: graph_boost_hits(request.scope, ranked_paths, request.limit),
+            degradation: None,
+        })
+    }
+}
 
-        let documents = match conn.query(
+fn load_graph_boost_data(
+    conn: &mut postgres::Client,
+    scope: &SearchScope,
+) -> Result<(Vec<GraphBoostDocument>, Vec<GraphBoostLink>), postgres::Error> {
+    let scope_kind = scope.scope_kind().to_string();
+    let scope_id = scope.scope_value().to_string();
+
+    let documents = conn
+        .query(
             "SELECT path, title
              FROM gwiki_documents
              WHERE scope_kind = $1 AND scope_id = $2
              ORDER BY path
              LIMIT $3",
             &[&scope_kind, &scope_id, &GRAPH_BOOST_DOCUMENT_QUERY_LIMIT],
-        ) {
-            Ok(rows) => rows
-                .into_iter()
-                .map(|row| GraphBoostDocument {
-                    path: PathBuf::from(row.get::<_, String>("path")),
-                    title: row.get::<_, Option<String>>("title"),
-                })
-                .collect::<Vec<_>>(),
-            Err(error) => return Ok(degraded(error.to_string())),
-        };
+        )?
+        .into_iter()
+        .map(|row| GraphBoostDocument {
+            path: PathBuf::from(row.get::<_, String>("path")),
+            title: row.get::<_, Option<String>>("title"),
+        })
+        .collect::<Vec<_>>();
 
-        let links = match conn.query(
+    let links = conn
+        .query(
             "SELECT path, target_path
              FROM gwiki_links
              WHERE scope_kind = $1 AND scope_id = $2
              ORDER BY path, target_path
              LIMIT $3",
             &[&scope_kind, &scope_id, &GRAPH_BOOST_LINK_QUERY_LIMIT],
-        ) {
-            Ok(rows) => rows
-                .into_iter()
-                .map(|row| GraphBoostLink {
-                    source_path: PathBuf::from(row.get::<_, String>("path")),
-                    target_path: row.get::<_, String>("target_path"),
-                })
-                .collect::<Vec<_>>(),
-            Err(error) => return Ok(degraded(error.to_string())),
-        };
-
-        let ranked_paths =
-            rank_link_neighborhood(&documents, &links, &request.seed_paths, request.limit);
-        Ok(GraphBoostOutcome {
-            hits: graph_boost_hits(request.scope, ranked_paths, request.limit),
-            degradation: None,
+        )?
+        .into_iter()
+        .map(|row| GraphBoostLink {
+            source_path: PathBuf::from(row.get::<_, String>("path")),
+            target_path: row.get::<_, String>("target_path"),
         })
-    }
+        .collect::<Vec<_>>();
+
+    Ok((documents, links))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -263,10 +295,14 @@ fn graph_result(scope: &SearchScope, path: PathBuf, score: f64) -> WikiSearchRes
 fn degraded(message: String) -> GraphBoostOutcome {
     GraphBoostOutcome {
         hits: Vec::new(),
-        degradation: Some(DegradationKind::ServiceUnavailable {
-            service: GRAPH_SERVICE.to_string(),
-            state: ServiceState::Unreachable { message },
-        }),
+        degradation: Some(graph_degradation(message)),
+    }
+}
+
+fn graph_degradation(message: String) -> DegradationKind {
+    DegradationKind::ServiceUnavailable {
+        service: GRAPH_SERVICE.to_string(),
+        state: ServiceState::Unreachable { message },
     }
 }
 

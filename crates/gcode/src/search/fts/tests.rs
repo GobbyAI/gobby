@@ -1,7 +1,7 @@
 use super::*;
 use crate::config::{CodeVectorSettings, Context, ProjectIndexScope};
+use postgres::Client;
 use postgres::types::ToSql;
-use postgres::{Client, NoTls};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -193,7 +193,7 @@ fn overlay_visibility_counts_and_kinds_use_database_predicates() {
 
 fn connect_overlay_visibility_test_db() -> Option<(Client, String)> {
     let database_url = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL").ok()?;
-    match Client::connect(&database_url, NoTls) {
+    match gobby_core::postgres::connect_readwrite(&database_url) {
         Ok(mut conn) => {
             if let Err(err) = crate::schema::validate_runtime_schema(&mut conn) {
                 eprintln!(
@@ -243,8 +243,8 @@ struct OverlayFixtureCleanup {
 }
 
 impl OverlayFixtureCleanup {
-    fn cleanup(&self) -> Result<(), postgres::Error> {
-        let mut conn = Client::connect(&self.database_url, NoTls)?;
+    fn cleanup(&self) -> anyhow::Result<()> {
+        let mut conn = gobby_core::postgres::connect_readwrite(&self.database_url)?;
         cleanup_overlay_visibility_projects(
             &mut conn,
             &self.parent_project_id,
@@ -262,13 +262,15 @@ fn cleanup_overlay_visibility_projects(
     conn: &mut Client,
     parent_project_id: &str,
     overlay_project_id: &str,
-) -> Result<(), postgres::Error> {
+) -> anyhow::Result<()> {
+    let mut tx = conn.transaction()?;
     for table in OVERLAY_VISIBILITY_CHILD_TABLES {
         let sql = format!("DELETE FROM {table} WHERE project_id = $1 OR project_id = $2");
-        conn.execute(&sql, &[&parent_project_id, &overlay_project_id])?;
+        tx.execute(&sql, &[&parent_project_id, &overlay_project_id])?;
     }
     let sql = format!("DELETE FROM {OVERLAY_VISIBILITY_PROJECT_TABLE} WHERE id = $1 OR id = $2");
-    conn.execute(&sql, &[&parent_project_id, &overlay_project_id])?;
+    tx.execute(&sql, &[&parent_project_id, &overlay_project_id])?;
+    tx.commit()?;
     Ok(())
 }
 

@@ -8,7 +8,6 @@
 use std::collections::{BTreeMap, HashSet};
 
 use crate::config::Context;
-use crate::db;
 use crate::graph::code_graph;
 use crate::search::fts;
 use crate::visibility;
@@ -17,18 +16,17 @@ use crate::visibility;
 ///
 /// Returns a ranked list of symbol IDs for use as an RRF source.
 /// Returns empty vec when FalkorDB is unavailable (graceful degradation).
-pub fn graph_boost(ctx: &Context, query: &str) -> Vec<String> {
+pub fn graph_boost(ctx: &Context, conn: Option<&mut postgres::Client>, query: &str) -> Vec<String> {
     if ctx.falkordb.is_none() {
         return vec![];
     }
 
-    let mut conn = match db::connect_readonly(&ctx.database_url) {
-        Ok(conn) => conn,
-        Err(_) => return vec![],
+    let Some(conn) = conn else {
+        return vec![];
     };
     let empty_paths = Vec::new();
     let mut resolved =
-        fts::search_symbols_exact_first_visible(&mut conn, query, ctx, None, None, &empty_paths, 1);
+        fts::search_symbols_exact_first_visible(conn, query, ctx, None, None, &empty_paths, 1);
     let Some(symbol) = resolved.pop() else {
         return vec![];
     };
@@ -53,18 +51,22 @@ pub fn graph_boost(ctx: &Context, query: &str) -> Vec<String> {
 /// callees (what they call) and callers (who calls them). Callees are ranked
 /// first since they represent implementation details more useful for conceptual
 /// queries. Returns deduplicated symbol IDs for use as an RRF source.
-pub fn graph_expand(ctx: &Context, seed_ids: &[String]) -> Vec<String> {
+pub fn graph_expand(
+    ctx: &Context,
+    conn: Option<&mut postgres::Client>,
+    seed_ids: &[String],
+) -> Vec<String> {
     if seed_ids.is_empty() || ctx.falkordb.is_none() {
         return vec![];
     }
 
     let mut ids = Vec::new();
     let mut seen = HashSet::new();
-    let mut conn = db::connect_readonly(&ctx.database_url).ok();
     let mut by_project: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    if let Some(conn) = conn.as_mut()
-        && let Ok(symbols) = visibility::visible_symbols_by_ids(conn, ctx, seed_ids)
-    {
+    let Some(conn) = conn else {
+        return vec![];
+    };
+    if let Ok(symbols) = visibility::visible_symbols_by_ids(conn, ctx, seed_ids) {
         for symbol in symbols {
             by_project
                 .entry(symbol.project_id)
@@ -117,14 +119,14 @@ mod tests {
     #[test]
     fn test_graph_boost_no_falkordb() {
         let ctx = make_ctx_no_falkordb();
-        let result = graph_boost(&ctx, "some_function");
+        let result = graph_boost(&ctx, None, "some_function");
         assert!(result.is_empty());
     }
 
     #[test]
     fn test_graph_expand_no_falkordb() {
         let ctx = make_ctx_no_falkordb();
-        let result = graph_expand(&ctx, &["some_function".to_string()]);
+        let result = graph_expand(&ctx, None, &["some_function".to_string()]);
         assert!(result.is_empty());
     }
 

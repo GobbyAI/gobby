@@ -3,6 +3,7 @@ use std::path::{Component, Path, PathBuf};
 
 use serde::Serialize;
 
+use crate::markdown::parse_atx_heading;
 use crate::support::scope::{resolve_command_scope, resolved_scope_identity};
 use crate::{CommandOutcome, ReadTarget, ScopeIdentity, ScopeSelection, WikiError};
 
@@ -218,13 +219,9 @@ fn collect_title_candidates(
 
 fn first_heading(content: &str) -> Option<String> {
     content.lines().find_map(|line| {
-        let trimmed = line.trim_end();
-        let hashes = trimmed.bytes().take_while(|byte| *byte == b'#').count();
-        if !(1..=6).contains(&hashes) {
-            return None;
-        }
-        let heading = trimmed[hashes..].trim();
-        (!heading.is_empty()).then(|| heading.to_string())
+        parse_atx_heading(line)
+            .map(|(_, heading)| heading)
+            .filter(|heading| !heading.is_empty())
     })
 }
 
@@ -259,7 +256,7 @@ fn render_text(output: &ReadOutput) -> String {
     );
     for degradation in &output.degradations {
         text.push_str("- ");
-        text.push_str(degradation.reason);
+        text.push_str(degradation.display_label());
         text.push_str(": ");
         text.push_str(&degradation.message);
         text.push_str(" Guidance: ");
@@ -426,6 +423,15 @@ struct ReadDegradation {
 }
 
 impl ReadDegradation {
+    fn display_label(&self) -> &'static str {
+        match self.reason {
+            "invalid_request" => "Invalid request",
+            "not_found" => "Not found",
+            "ambiguous" => "Ambiguous title",
+            _ => "Degraded",
+        }
+    }
+
     fn invalid_request(message: impl Into<String>) -> Self {
         Self {
             reason: "invalid_request",

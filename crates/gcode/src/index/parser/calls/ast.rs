@@ -1,6 +1,8 @@
 use streaming_iterator::StreamingIterator;
 use tree_sitter::{Query, QueryCursor};
 
+use anyhow::Context as _;
+
 use crate::index::languages;
 use crate::index::semantic::SemanticCallResolver;
 use crate::models::CallRelation;
@@ -24,16 +26,12 @@ pub(super) fn extract_ast_calls(
         return Ok(Vec::new());
     }
 
-    let query = match Query::new(ctx.ts_lang, spec.call_query) {
-        Ok(q) => q,
-        Err(error) => {
-            log::error!(
-                "failed to compile call query for language `{language}` while parsing {}: {error}",
-                ctx.file_path.display()
-            );
-            return Ok(Vec::new());
-        }
-    };
+    let query = Query::new(ctx.ts_lang, spec.call_query).with_context(|| {
+        format!(
+            "failed to compile call query for language `{language}` while parsing {}",
+            ctx.file_path.display()
+        )
+    })?;
 
     let mut cursor = QueryCursor::new();
     let mut matches = cursor.matches(&query, tree.root_node(), source);

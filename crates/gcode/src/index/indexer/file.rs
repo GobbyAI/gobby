@@ -49,10 +49,25 @@ pub(super) fn index_file(
             return Ok(None);
         }
     };
-    let size = file_path
-        .metadata()
-        .map(|m| usize::try_from(m.len()).unwrap_or(usize::MAX))
-        .unwrap_or(0);
+    let size = match file_path.metadata() {
+        Ok(metadata) => match usize::try_from(metadata.len()) {
+            Ok(size) => size,
+            Err(error) => {
+                log::warn!(
+                    "skipping AST index for file with unsupported size {}: {error}",
+                    file_path.display()
+                );
+                return Ok(None);
+            }
+        },
+        Err(error) => {
+            log::warn!(
+                "skipping AST index for file with unreadable metadata {}: {error}",
+                file_path.display()
+            );
+            return Ok(None);
+        }
+    };
 
     // PostgreSQL hub writes (transactional).
     let mut tx = conn

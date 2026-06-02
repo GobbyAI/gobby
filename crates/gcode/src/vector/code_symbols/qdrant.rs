@@ -25,7 +25,7 @@ pub(super) fn collection_path(collection: &str) -> String {
 pub fn delete_project_collection(
     qdrant: &QdrantConfig,
     project_id: &str,
-) -> Result<bool, VectorLifecycleError> {
+) -> Result<usize, VectorLifecycleError> {
     let client = qdrant_http_client()?;
     let collection = collection_name(CODE_SYMBOL_COLLECTION_PREFIX, project_id);
     delete_qdrant_collection(&client, qdrant, &collection)
@@ -35,7 +35,7 @@ pub fn delete_file_vectors(
     qdrant: &QdrantConfig,
     project_id: &str,
     file_path: &str,
-) -> Result<bool, VectorLifecycleError> {
+) -> Result<usize, VectorLifecycleError> {
     let client = qdrant_http_client()?;
     let collection = collection_name(CODE_SYMBOL_COLLECTION_PREFIX, project_id);
     delete_vectors_for_filter(&client, qdrant, &collection, project_id, Some(file_path))
@@ -63,7 +63,7 @@ pub fn delete_code_symbol_collections_with_prefix(
 
     let mut deleted = Vec::new();
     for collection in collections {
-        if delete_qdrant_collection(&client, qdrant, &collection)? {
+        if delete_qdrant_collection(&client, qdrant, &collection)? > 0 {
             deleted.push(collection);
         }
     }
@@ -157,7 +157,7 @@ fn delete_qdrant_collection(
     client: &reqwest::blocking::Client,
     qdrant: &QdrantConfig,
     collection: &str,
-) -> Result<bool, VectorLifecycleError> {
+) -> Result<usize, VectorLifecycleError> {
     let resp = qdrant_request_for_config(
         client,
         qdrant,
@@ -168,12 +168,12 @@ fn delete_qdrant_collection(
     .map_err(|err| VectorLifecycleError::QdrantOperation(err.to_string()))?;
     let status = resp.status();
     if status == StatusCode::NOT_FOUND {
-        return Ok(false);
+        return Ok(0);
     }
     if !status.is_success() {
         return Err(qdrant_http_error("delete collection", status, resp));
     }
-    Ok(true)
+    Ok(1)
 }
 
 pub(super) fn delete_vectors_for_filter(
@@ -182,7 +182,7 @@ pub(super) fn delete_vectors_for_filter(
     collection: &str,
     project_id: &str,
     file_path: Option<&str>,
-) -> Result<bool, VectorLifecycleError> {
+) -> Result<usize, VectorLifecycleError> {
     delete_vectors_for_filter_excluding_ids(client, qdrant, collection, project_id, file_path, &[])
 }
 
@@ -193,7 +193,7 @@ pub(super) fn delete_vectors_for_filter_excluding_ids(
     project_id: &str,
     file_path: Option<&str>,
     keep_point_ids: &[String],
-) -> Result<bool, VectorLifecycleError> {
+) -> Result<usize, VectorLifecycleError> {
     let mut must = vec![json!({
         "key": "project_id",
         "match": {"value": project_id},
@@ -225,12 +225,12 @@ pub(super) fn delete_vectors_for_filter_excluding_ids(
     .map_err(|err| VectorLifecycleError::QdrantOperation(err.to_string()))?;
     let status = resp.status();
     if status == StatusCode::NOT_FOUND {
-        return Ok(false);
+        return Ok(0);
     }
     if !status.is_success() {
         return Err(qdrant_http_error("delete points", status, resp));
     }
-    Ok(true)
+    Ok(1)
 }
 
 pub(super) fn qdrant_http_error(

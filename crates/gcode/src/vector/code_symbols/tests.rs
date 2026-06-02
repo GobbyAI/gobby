@@ -95,7 +95,7 @@ fn delete_project_collection_targets_only_project_collection() {
     .expect("delete collection");
     let requests = handle.join().expect("qdrant requests");
 
-    assert!(deleted);
+    assert_eq!(deleted, 1);
     assert_eq!(requests.len(), 1);
     assert!(requests[0].contains("DELETE /collections/code_symbols_project-1 HTTP/1.1"));
     assert!(requests[0].contains("api-key: qdrant-key"));
@@ -131,7 +131,7 @@ fn delete_file_vectors_filters_by_project_and_file_without_embedding() {
     .expect("delete vectors");
     let requests = handle.join().expect("qdrant requests");
 
-    assert!(deleted);
+    assert_eq!(deleted, 1);
     assert_eq!(requests.len(), 1);
     assert!(
         requests[0].contains("POST /collections/code_symbols_project-1/points/delete HTTP/1.1")

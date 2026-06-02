@@ -14,12 +14,10 @@ pub(crate) fn query_tokens(query: &str) -> Vec<String> {
 
 pub(crate) fn keyword_score(text: &str, tokens: &[String]) -> usize {
     let haystack = text.to_lowercase();
+    // Contract: `tokens` come from `query_tokens` and are already normalized.
     tokens
         .iter()
-        .map(|token| {
-            let token = token.to_lowercase();
-            haystack.matches(&token).count()
-        })
+        .map(|token| haystack.matches(token).count())
         .sum()
 }
 

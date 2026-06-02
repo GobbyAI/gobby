@@ -602,7 +602,7 @@ fn append_raw_index(vault_root: &Path, title: &str, note_path: &Path) -> Result<
         .strip_prefix(vault_root)
         .unwrap_or(note_path)
         .to_string_lossy();
-    let lock_path = raw_index_lock_path(&index_path);
+    let lock_path = raw_index_lock_path(vault_root);
     let lock = OpenOptions::new()
         .create(true)
         .read(true)
@@ -666,8 +666,8 @@ fn lock_raw_index(lock: &fs::File, lock_path: &Path) -> Result<(), WikiError> {
     }
 }
 
-fn raw_index_lock_path(index_path: &Path) -> PathBuf {
-    index_path.with_file_name("INDEX.md.lock")
+fn raw_index_lock_path(vault_root: &Path) -> PathBuf {
+    vault_root.join("raw").join("INDEX.md.lock")
 }
 
 fn write_file_atomically(

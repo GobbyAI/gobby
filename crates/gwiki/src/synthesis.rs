@@ -151,7 +151,7 @@ pub fn synthesize_article(
     markdown.push_str(&input.topic);
     markdown.push_str("\n\n");
 
-    let source_paths = source_page_paths(vault_root, &input.accepted_sources);
+    let source_paths = source_page_paths(vault_root, &path, &input.accepted_sources);
     let source_links = source_links(vault_root, &input.accepted_sources, &source_paths);
     if !source_links.is_empty() {
         markdown.push_str("Sources: ");
@@ -196,7 +196,7 @@ pub fn synthesize_source_pages(
     article_path: &Path,
 ) -> Vec<SynthesizedPage> {
     let article_link = wiki_link(vault_root, article_path, &input.topic);
-    let source_paths = source_page_paths(vault_root, &input.accepted_sources);
+    let source_paths = source_page_paths(vault_root, article_path, &input.accepted_sources);
     input
         .accepted_sources
         .iter()
@@ -379,9 +379,18 @@ pub fn relative_path(root: &Path, path: &Path) -> String {
         .replace('\\', "/")
 }
 
-fn source_page_paths(vault_root: &Path, sources: &[SynthesisSource]) -> Vec<PathBuf> {
+fn source_page_paths(
+    vault_root: &Path,
+    article_path: &Path,
+    sources: &[SynthesisSource],
+) -> Vec<PathBuf> {
     let directory = vault_root.join(ArticleKind::Source.directory());
     let mut reserved = HashSet::new();
+    if article_path.parent() == Some(directory.as_path())
+        && let Some(slug) = article_path.file_stem().and_then(|value| value.to_str())
+    {
+        reserved.insert(slug.to_string());
+    }
     sources
         .iter()
         .map(|source| {
@@ -651,6 +660,22 @@ mod tests {
 
         assert!(slug.starts_with("collision-"));
         assert!(slug.len() > "collision-".len());
+    }
+
+    #[test]
+    fn source_page_paths_reserve_article_path() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let article_path = temp.path().join("wiki/sources/collision.md");
+        let sources = vec![SynthesisSource {
+            title: "Collision".to_string(),
+            path: PathBuf::from("raw/collision.md"),
+            chunks: Vec::new(),
+        }];
+
+        let paths = source_page_paths(temp.path(), &article_path, &sources);
+
+        assert_ne!(paths[0], article_path);
+        assert!(paths[0].starts_with(temp.path().join("wiki/sources")));
     }
 
     #[test]

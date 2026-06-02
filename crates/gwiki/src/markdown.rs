@@ -183,7 +183,7 @@ fn extract_headings(markdown: &str, body_start: usize) -> Vec<MarkdownHeading> {
     headings
 }
 
-fn parse_atx_heading(line: &str) -> Option<(u8, String)> {
+pub(crate) fn parse_atx_heading(line: &str) -> Option<(u8, String)> {
     let leading_spaces = line.len() - line.trim_start_matches(' ').len();
     if leading_spaces > 3 {
         return None;

@@ -563,8 +563,9 @@ mod tests {
     }
 
     fn long_request<'a>() -> TranscriptionRequest<'a> {
-        // Intentionally leak one oversized test fixture so the request can
-        // borrow it for any helper lifetime without cloning >MAX bytes.
+        // Test-only leak of one bounded oversized fixture. The request model
+        // borrows audio bytes, and this avoids repeated >MAX-byte allocations
+        // while keeping production allocation paths untouched.
         TranscriptionRequest {
             file_name: "long.wav",
             mime_type: Some("audio/wav"),

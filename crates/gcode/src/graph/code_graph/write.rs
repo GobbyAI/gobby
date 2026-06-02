@@ -78,7 +78,7 @@ const ADD_SYMBOL_CALLS_CYPHER: &str = "UNWIND $symbol_calls AS call
 const ADD_EXTERNAL_CALLS_CYPHER: &str = "UNWIND $external_calls AS call
          MERGE (caller:CodeSymbol {id: call.caller_id, project: $project})
          MERGE (callee:ExternalSymbol {id: call.target_id, project: $project})
-         SET callee.name = call.callee_name,
+         ON CREATE SET callee.name = call.callee_name,
              callee.external_module = call.callee_module,
              callee.module = call.callee_module,
              callee.updated_at = timestamp(),
@@ -94,7 +94,7 @@ const ADD_EXTERNAL_CALLS_CYPHER: &str = "UNWIND $external_calls AS call
 const ADD_UNRESOLVED_CALLS_CYPHER: &str = "UNWIND $unresolved_calls AS call
          MERGE (caller:CodeSymbol {id: call.caller_id, project: $project})
          MERGE (callee:UnresolvedCallee {id: call.target_id, project: $project})
-         SET callee.name = call.callee_name,
+         ON CREATE SET callee.name = call.callee_name,
              callee.updated_at = timestamp(),
              callee.sync_token = $sync_token
          MERGE (caller)-[r:CALLS {file: call.file_path, line: call.line}]->(callee)

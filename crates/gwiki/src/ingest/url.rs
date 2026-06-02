@@ -22,16 +22,17 @@ pub struct UrlSnapshot {
 pub fn ingest_snapshot(
     vault_root: &Path,
     store: &mut impl WikiIndexStore,
-    snapshot: UrlSnapshot,
+    mut snapshot: UrlSnapshot,
 ) -> Result<IngestResult, WikiError> {
     let html = text_from_utf8_lossy(&snapshot.body);
+    let source_hash = gobby_core::indexing::content_hash(&snapshot.body);
     let document = Html::parse_document(&html);
     let title = extract_title(&document).unwrap_or_else(|| snapshot.final_url.clone());
     let draft = SourceDraft {
         location: snapshot.final_url.clone(),
         kind: SourceKind::Url,
         fetched_at: snapshot.fetched_at.clone(),
-        content: snapshot.body.clone(),
+        content: std::mem::take(&mut snapshot.body),
         title: Some(markdown_title(&title)),
         citation: Some(snapshot.final_url.clone()),
         license: None,
@@ -39,7 +40,13 @@ pub fn ingest_snapshot(
         compile_status: CompileStatus::Pending,
     };
     let record = SourceManifest::register(vault_root, draft)?;
-    let markdown = render_url_markdown(&snapshot, &record.canonical_location, &title, &document);
+    let markdown = render_url_markdown(
+        &snapshot,
+        &record.canonical_location,
+        &title,
+        &document,
+        &source_hash,
+    );
     let raw_path = write_raw_markdown(vault_root, &record, &markdown)?;
     index_after_ingest(vault_root, store)?;
 
@@ -55,6 +62,7 @@ fn render_url_markdown(
     canonical_url: &str,
     title: &str,
     document: &Html,
+    source_hash: &str,
 ) -> String {
     let mut fields = vec![
         ("source_kind", "url".to_string()),
@@ -62,10 +70,7 @@ fn render_url_markdown(
         ("requested_url", snapshot.requested_url.clone()),
         ("canonical_url", canonical_url.to_string()),
         ("fetched_at", snapshot.fetched_at.clone()),
-        (
-            "source_hash",
-            gobby_core::indexing::content_hash(&snapshot.body),
-        ),
+        ("source_hash", source_hash.to_string()),
     ];
     if let Some(content_type) = &snapshot.content_type {
         fields.push(("content_type", content_type.clone()));
@@ -103,7 +108,7 @@ fn html_to_markdownish_text(document: &Html) -> String {
 }
 
 fn collect_visible_text(element: ElementRef<'_>, parts: &mut Vec<String>) {
-    if matches!(element.value().name(), "head" | "script" | "style") {
+    if is_hidden_element(element.value().name()) {
         return;
     }
     if is_text_block(element.value().name()) {

@@ -48,6 +48,27 @@ pub(crate) fn write_asset(
     Ok(asset_path)
 }
 
+pub(crate) fn write_asset_with_suffix(
+    vault_root: &Path,
+    record: &SourceRecord,
+    suffix: &str,
+    file_name: &str,
+    bytes: &[u8],
+) -> Result<PathBuf, WikiError> {
+    let extension = Path::new(file_name)
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(sanitize_extension)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "bin".to_string());
+    let suffix = sanitize_asset_suffix(suffix);
+    let asset_path = PathBuf::from("raw")
+        .join("assets")
+        .join(format!("{}.{}.{}", record.id, suffix, extension));
+    write_immutable(vault_root, &asset_path, bytes)?;
+    Ok(asset_path)
+}
+
 pub(crate) fn write_asset_from_path(
     vault_root: &Path,
     record: &SourceRecord,
@@ -58,6 +79,28 @@ pub(crate) fn write_asset_from_path(
     let asset_path = asset_path(record, file_name);
     write_immutable_file(vault_root, &asset_path, source_path, content_hash)?;
     Ok(asset_path)
+}
+
+fn sanitize_asset_suffix(value: &str) -> String {
+    let mut suffix = String::new();
+    let mut last_dash = false;
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '_' {
+            suffix.push(ch);
+            last_dash = false;
+        } else if !last_dash && !suffix.is_empty() {
+            suffix.push('-');
+            last_dash = true;
+        }
+    }
+    while suffix.ends_with('-') {
+        suffix.pop();
+    }
+    if suffix.is_empty() {
+        "asset".to_string()
+    } else {
+        suffix
+    }
 }
 
 pub(crate) fn index_after_ingest(

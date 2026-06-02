@@ -1,5 +1,6 @@
 //! Provenance links from raw source chunks to synthesized wiki sections.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -35,24 +36,41 @@ pub struct ProvenanceLink {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProvenanceGraph {
     links: Vec<ProvenanceLink>,
+    #[serde(default, skip)]
+    section_index: BTreeMap<String, Vec<usize>>,
+    #[serde(default, skip)]
+    source_index: BTreeMap<String, Vec<usize>>,
 }
 
 impl ProvenanceGraph {
     pub fn add_link(&mut self, link: ProvenanceLink) {
+        let index = self.links.len();
+        self.section_index
+            .entry(link.section.section_id.clone())
+            .or_default()
+            .push(index);
+        self.source_index
+            .entry(link.source.source_id.clone())
+            .or_default()
+            .push(index);
         self.links.push(link);
     }
 
     pub fn links_for_section(&self, section_id: &str) -> Vec<&ProvenanceLink> {
-        self.links
-            .iter()
-            .filter(|link| link.section.section_id == section_id)
+        self.section_index
+            .get(section_id)
+            .into_iter()
+            .flatten()
+            .filter_map(|index| self.links.get(*index))
             .collect()
     }
 
     pub fn links_for_source(&self, source_id: &str) -> Vec<&ProvenanceLink> {
-        self.links
-            .iter()
-            .filter(|link| link.source.source_id == source_id)
+        self.source_index
+            .get(source_id)
+            .into_iter()
+            .flatten()
+            .filter_map(|index| self.links.get(*index))
             .collect()
     }
 
@@ -87,11 +105,28 @@ impl ProvenanceGraph {
             path: Some(path.clone()),
             source: error,
         })?;
-        serde_json::from_str(&json).map_err(|error| WikiError::Json {
+        let mut graph: Self = serde_json::from_str(&json).map_err(|error| WikiError::Json {
             action: "parse provenance graph",
-            path: Some(path),
+            path: Some(path.clone()),
             source: error,
-        })
+        })?;
+        graph.rebuild_indexes();
+        Ok(graph)
+    }
+
+    fn rebuild_indexes(&mut self) {
+        self.section_index.clear();
+        self.source_index.clear();
+        for (index, link) in self.links.iter().enumerate() {
+            self.section_index
+                .entry(link.section.section_id.clone())
+                .or_default()
+                .push(index);
+            self.source_index
+                .entry(link.source.source_id.clone())
+                .or_default()
+                .push(index);
+        }
     }
 }
 

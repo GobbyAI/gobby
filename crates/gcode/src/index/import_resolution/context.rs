@@ -313,6 +313,10 @@ fn rust_manifest_paths(root_path: &Path) -> Vec<PathBuf> {
         if member.contains('*') {
             // Cargo workspace globs can include generated or excluded crates;
             // skip them instead of doing ad hoc filesystem expansion here.
+            log::debug!(
+                "skipping Cargo workspace glob member `{member}` under {}",
+                root_path.display()
+            );
             continue;
         }
         manifests.push(root_path.join(member).join("Cargo.toml"));

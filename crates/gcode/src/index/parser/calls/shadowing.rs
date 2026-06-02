@@ -116,8 +116,7 @@ fn local_binding_line_defines(line: &str, name: &str) -> bool {
     {
         return false;
     }
-    if let Some(left) = line.split(":=").next()
-        && line.contains(":=")
+    if let Some((left, _)) = line.split_once(":=")
         && binding_left_side_contains(left, name)
     {
         return true;

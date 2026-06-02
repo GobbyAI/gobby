@@ -65,16 +65,16 @@ pub fn initialize(scope: &ResolvedScope) -> Result<CreatedVaultPaths, WikiError>
     }
     let identity = scope.identity();
     let root_path = root.display().to_string();
+    let scope_file = root.join(".gwiki/scope.json");
     let scope_json = serde_json::to_string_pretty(&ScopeFile {
         identity: &identity,
         root: &root_path,
     })
     .map_err(|error| WikiError::Json {
         action: "serialize scope file",
-        path: Some(root.join(".gwiki/scope.json")),
+        path: Some(scope_file.clone()),
         source: error,
     })?;
-    let scope_file = root.join(".gwiki/scope.json");
     let scope_file_created = !scope_file.exists();
     write_file(scope_file.as_path(), format!("{scope_json}\n").as_str())?;
     if scope_file_created {

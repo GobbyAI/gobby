@@ -1,4 +1,6 @@
 use std::path::PathBuf;
+#[cfg(test)]
+use std::sync::Arc;
 
 use gobby_core::search::sanitize_pg_search_query;
 
@@ -278,13 +280,13 @@ fn read_optional_i64(row: &postgres::Row, column: &str) -> Option<i64> {
 #[cfg(test)]
 #[derive(Debug)]
 pub struct MemoryBm25Backend {
-    hits: Vec<WikiSearchResult>,
+    hits: Arc<[WikiSearchResult]>,
 }
 
 #[cfg(test)]
 impl MemoryBm25Backend {
     pub fn new(hits: Vec<WikiSearchResult>) -> Self {
-        Self { hits }
+        Self { hits: hits.into() }
     }
 }
 
@@ -292,9 +294,9 @@ impl MemoryBm25Backend {
 impl Bm25SearchBackend for MemoryBm25Backend {
     fn search_bm25(
         &mut self,
-        _request: &Bm25SearchRequest,
+        request: &Bm25SearchRequest,
     ) -> Result<Vec<WikiSearchResult>, SearchError> {
-        Ok(self.hits.clone())
+        Ok(self.hits.iter().take(request.limit).cloned().collect())
     }
 }
 

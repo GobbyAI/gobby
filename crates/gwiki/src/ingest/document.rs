@@ -659,7 +659,7 @@ fn markdown_table(rows: &[Vec<String>]) -> String {
     if rows.is_empty() {
         return String::new();
     }
-    let column_count = rows.iter().map(Vec::len).max().unwrap_or(1).max(1);
+    let column_count = rows.iter().map(Vec::len).max().unwrap_or(1);
     let mut markdown = String::new();
     let header = &rows[0];
     push_table_row(&mut markdown, header, column_count);

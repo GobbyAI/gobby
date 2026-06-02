@@ -393,7 +393,7 @@ fn rel_matches_filter(root_path: &Path, path_filter: &Path, rel: &str) -> bool {
     let filter_abs = filter_abs.canonicalize().unwrap_or(filter_abs);
     let abs = root_path.join(rel);
     let abs = abs.canonicalize().unwrap_or(abs);
-    abs == filter_abs || abs.starts_with(filter_abs)
+    abs.starts_with(filter_abs)
 }
 
 fn write_tombstone(conn: &mut Client, project_id: &str, rel: &str) -> anyhow::Result<()> {

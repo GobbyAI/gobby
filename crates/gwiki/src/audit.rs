@@ -5,7 +5,9 @@ use std::sync::Arc;
 use serde::Serialize;
 
 use crate::lint::{WikiPage, collect_pages, line_number};
-use crate::markdown::{MarkdownFence, markdown_fence_closes, markdown_fence_start};
+use crate::markdown::{
+    MarkdownFence, markdown_fence_closes, markdown_fence_start, parse_atx_heading,
+};
 use crate::provenance::ProvenanceGraph;
 use crate::sources::SourceManifest;
 use crate::synthesis::slugify;
@@ -338,12 +340,9 @@ fn claim_lines(page: &WikiPage, options: &AuditOptions) -> Vec<ClaimLine> {
 }
 
 fn heading_title(line: &str) -> Option<String> {
-    let level = line.bytes().take_while(|byte| *byte == b'#').count();
-    if !(1..=6).contains(&level) {
-        return None;
-    }
-    let rest = line[level..].trim();
-    (!rest.is_empty()).then(|| rest.trim_end_matches('#').trim().to_string())
+    parse_atx_heading(line)
+        .map(|(_, heading)| heading)
+        .filter(|heading| !heading.is_empty())
 }
 
 fn ignored_claim_section(heading: Option<&str>, options: &AuditOptions) -> bool {

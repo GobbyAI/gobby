@@ -422,9 +422,11 @@ mod tests {
     #[cfg(feature = "ai")]
     fn content_length(header: &str) -> Option<usize> {
         header.lines().find_map(|line| {
-            line.strip_prefix("content-length: ")
-                .or_else(|| line.strip_prefix("Content-Length: "))
-                .and_then(|value| value.trim().parse().ok())
+            let (name, value) = line.split_once(':')?;
+            name.trim()
+                .eq_ignore_ascii_case("content-length")
+                .then(|| value.trim().parse().ok())
+                .flatten()
         })
     }
 }

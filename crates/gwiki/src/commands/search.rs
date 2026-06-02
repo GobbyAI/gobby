@@ -36,7 +36,7 @@ pub(crate) fn execute(
 
     let (_, output_scope, search_scope, store) = indexed_store_for_selection(&selection)?;
     let mut bm25_backend = search_support::StoreBm25Backend {
-        hits: search_support::store_search_hits(&store, &search_scope, &query),
+        hits: search_support::store_search_hits(&store, &search_scope, &query).into(),
     };
     let mut semantic_backend = search_support::UnavailableSemanticBackend;
     let graph = crate::support::graph::memory_graph_from_store(&store, &search_scope);
@@ -82,6 +82,8 @@ fn run_search_attached(
         let mut source = search_support::PostgresConfigSource { conn: &mut conn };
         resolve_qdrant_config(&mut source)
     };
+    let mut graph_backend =
+        wiki_search::graph_boost::PostgresGraphBoostBackend::new(&mut conn, search_scope.clone());
     let mut bm25_backend = wiki_search::bm25::PostgresBm25Backend::new(&mut conn);
     let mut semantic_backend = wiki_search::semantic::GobbySemanticBackend::new(
         embedding,
@@ -89,7 +91,6 @@ fn run_search_attached(
         wiki_search::semantic::OpenAiEmbeddingBackend::new(),
         wiki_search::semantic::GobbyQdrantBackend,
     );
-    let mut graph_backend = wiki_search::graph_boost::PostgresGraphBoostBackend::new(database_url);
     run_search_with_backends(
         &mut bm25_backend,
         &mut semantic_backend,

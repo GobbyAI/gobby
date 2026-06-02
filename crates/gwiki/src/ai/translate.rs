@@ -56,11 +56,11 @@ fn translate_segment_texts(
     source_lang: &str,
     target_lang: &str,
 ) -> Result<Vec<String>, WikiError> {
-    let first = client.translate_segments(segments, source_lang, target_lang)?;
-    if first.len() == segments.len() {
-        return Ok(first);
+    match client.translate_segments(segments, source_lang, target_lang) {
+        Ok(first) if first.len() == segments.len() => return Ok(first),
+        Ok(first) => warn_translation_batch_mismatch("first", first.len(), segments.len()),
+        Err(error) => warn_translation_batch_error("first", &error),
     }
-    warn_translation_batch_mismatch("first", first.len(), segments.len());
 
     let second = client.translate_segments(segments, source_lang, target_lang)?;
     if second.len() == segments.len() {
@@ -84,8 +84,12 @@ fn translate_segment_texts(
 
 fn warn_translation_batch_mismatch(attempt: &str, actual_len: usize, expected_len: usize) {
     eprintln!(
-        "Warning: {attempt} translation batch returned {actual_len} text(s) for {expected_len} segment(s); retrying with smaller batches"
+        "Warning: {attempt} translation batch returned {actual_len} text(s) for {expected_len} segment(s); retrying or falling back to smaller batches"
     );
+}
+
+fn warn_translation_batch_error(attempt: &str, error: &WikiError) {
+    eprintln!("Warning: {attempt} translation batch failed; retrying whole batch: {error}");
 }
 
 fn mark_english_translation(
@@ -140,6 +144,7 @@ mod tests {
         transcript: RefCell<Option<TranscriptionOutput>>,
         english: RefCell<Option<Result<TranscriptionOutput, WikiError>>>,
         segment_batches: RefCell<Vec<(Vec<TranscriptSegment>, String, String)>>,
+        segment_errors: RefCell<Vec<WikiError>>,
         translated_texts: RefCell<Vec<Vec<String>>>,
         calls: RefCell<Vec<&'static str>>,
     }
@@ -190,6 +195,9 @@ mod tests {
                 source_lang.to_string(),
                 target_lang.to_string(),
             ));
+            if !self.segment_errors.borrow().is_empty() {
+                return Err(self.segment_errors.borrow_mut().remove(0));
+            }
             Ok(self.translated_texts.borrow_mut().remove(0))
         }
     }
@@ -273,6 +281,32 @@ mod tests {
                 .calls
                 .borrow()
                 .contains(&"translate_to_english")
+        );
+    }
+
+    #[test]
+    fn batch_translation_errors_retry_batch_before_success() {
+        let request = request();
+        let client = FakeTranslationClient::with_transcript(output("fr", &["bonjour", "monde"]));
+        client.segment_errors.borrow_mut().push(WikiError::Config {
+            detail: "batch unavailable".to_string(),
+        });
+        client
+            .translated_texts
+            .borrow_mut()
+            .push(vec!["hello".to_string(), "world".to_string()]);
+
+        let translated = translate_audio(&request, &client, Some("de"), None).unwrap();
+
+        assert_eq!(translated.segments[0].text, "hello");
+        assert_eq!(translated.segments[1].text, "world");
+        assert_eq!(client.segment_batches.borrow().len(), 2);
+        assert!(
+            client
+                .segment_batches
+                .borrow()
+                .iter()
+                .all(|(segments, _, _)| { segments.len() == 2 })
         );
     }
 

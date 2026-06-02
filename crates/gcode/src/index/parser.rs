@@ -4,6 +4,7 @@
 use std::collections::HashSet;
 use std::path::Path;
 
+use anyhow::Context as _;
 use streaming_iterator::StreamingIterator;
 use tree_sitter::{Parser, Query, QueryCursor};
 
@@ -97,7 +98,7 @@ pub(crate) fn parse_file_with_semantic(
 
     let mut symbols = extract_symbols(
         &tree, &source, spec, language, &ts_lang, project_id, &rel_path,
-    );
+    )?;
     link_parents(&mut symbols);
     let extracted_imports = extract_imports(
         &tree,
@@ -107,7 +108,7 @@ pub(crate) fn parse_file_with_semantic(
         &ts_lang,
         &rel_path,
         import_context,
-    );
+    )?;
     let calls = extract_calls(
         &tree,
         &source,
@@ -141,15 +142,14 @@ fn extract_symbols(
     ts_lang: &tree_sitter::Language,
     project_id: &str,
     rel_path: &str,
-) -> Vec<Symbol> {
+) -> anyhow::Result<Vec<Symbol>> {
     if spec.symbol_query.trim().is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
-    let query = match Query::new(ts_lang, spec.symbol_query) {
-        Ok(q) => q,
-        Err(_) => return Vec::new(),
-    };
+    let query = Query::new(ts_lang, spec.symbol_query).with_context(|| {
+        format!("failed to compile symbol query for language `{language}` while parsing {rel_path}")
+    })?;
 
     let mut cursor = QueryCursor::new();
     let mut matches = cursor.matches(&query, tree.root_node(), source);
@@ -232,7 +232,7 @@ fn extract_symbols(
         });
     }
 
-    symbols
+    Ok(symbols)
 }
 
 fn link_parents(symbols: &mut [Symbol]) {
@@ -342,15 +342,14 @@ fn extract_imports(
     ts_lang: &tree_sitter::Language,
     rel_path: &str,
     import_context: &ImportResolutionContext,
-) -> ExtractedImports {
+) -> anyhow::Result<ExtractedImports> {
     if spec.import_query.trim().is_empty() {
-        return ExtractedImports::default();
+        return Ok(ExtractedImports::default());
     }
 
-    let query = match Query::new(ts_lang, spec.import_query) {
-        Ok(q) => q,
-        Err(_) => return ExtractedImports::default(),
-    };
+    let query = Query::new(ts_lang, spec.import_query).with_context(|| {
+        format!("failed to compile import query for language `{language}` while parsing {rel_path}")
+    })?;
 
     let mut cursor = QueryCursor::new();
     let mut matches = cursor.matches(&query, tree.root_node(), source);
@@ -377,7 +376,7 @@ fn extract_imports(
     }
 
     import_resolution::seed_import_bindings(language, import_context, &mut extracted.bindings);
-    extracted
+    Ok(extracted)
 }
 
 #[cfg(test)]

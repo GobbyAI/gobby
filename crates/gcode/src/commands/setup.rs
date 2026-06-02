@@ -5,7 +5,7 @@ use gobby_core::provisioning::{
     DEFAULT_OLLAMA_MODEL, DockerProvisioningReport, DockerServiceOptions, EmbeddingBootstrap,
     EnsureHubOptions, StandaloneConfig, compose_file_path, ensure_hub, gcore_config_path,
 };
-use postgres::{Client, NoTls};
+use postgres::Client;
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
@@ -27,7 +27,8 @@ pub fn run(request: StandaloneSetupRequest, format: Format, quiet: bool) -> anyh
     apply_service_overrides(&request, &mut service_options);
 
     let embedding = resolve_embedding_bootstrap(&request)?;
-    let (database_url, service_report) = resolve_or_provision_database(&request, &service_options)?;
+    let (database_url, service_report) =
+        resolve_or_provision_database(&home, &request, &service_options)?;
     let mut client = connect_postgres_with_retry(&database_url, service_report.is_some())?;
     if request.overwrite_code_index {
         clear_overwrite_projections(&home, &request, &service_options, service_report.as_ref())?;
@@ -164,6 +165,7 @@ fn overwrite_projection_configs(
 }
 
 fn resolve_or_provision_database(
+    home: &std::path::Path,
     request: &StandaloneSetupRequest,
     service_options: &DockerServiceOptions,
 ) -> anyhow::Result<(String, Option<DockerProvisioningReport>)> {
@@ -175,8 +177,7 @@ fn resolve_or_provision_database(
         return db::resolve_database_url().map(|url| (url, None));
     }
 
-    let home = db::gobby_home()?;
-    let mut options = EnsureHubOptions::new(home);
+    let mut options = EnsureHubOptions::new(home.to_path_buf());
     options.service_options = service_options.clone();
     if let Ok(database_url) = db::resolve_database_url() {
         options.candidate_database_urls.push(database_url);
@@ -203,7 +204,7 @@ fn connect_postgres_with_retry(database_url: &str, retry: bool) -> anyhow::Resul
     let attempts = if retry { 30 } else { 1 };
     let mut last_error = None;
     for attempt in 0..attempts {
-        match Client::connect(database_url, NoTls) {
+        match gobby_core::postgres::connect_readwrite(database_url) {
             Ok(client) => return Ok(client),
             Err(err) => last_error = Some(err),
         }
@@ -212,8 +213,7 @@ fn connect_postgres_with_retry(database_url: &str, retry: bool) -> anyhow::Resul
         }
     }
     match last_error {
-        Some(err) => Err(anyhow::Error::new(err)
-            .context("failed to connect to the standalone PostgreSQL database")),
+        Some(err) => Err(err.context("failed to connect to the standalone PostgreSQL database")),
         None => anyhow::bail!("failed to connect to the standalone PostgreSQL database"),
     }
 }
@@ -478,7 +478,7 @@ mod tests {
         run(request, Format::Json, true).expect("standalone setup runs");
 
         let mut client =
-            postgres::Client::connect(&database_url, postgres::NoTls).expect("connect test db");
+            gobby_core::postgres::connect_readwrite(&database_url).expect("connect test db");
         let exists: bool = client
             .query_one("SELECT to_regclass('public.code_symbols') IS NOT NULL", &[])
             .expect("check code_symbols")

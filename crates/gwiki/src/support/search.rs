@@ -1,5 +1,6 @@
 use gobby_core::config::ConfigSource;
 use gobby_core::degradation::{DegradationKind, ServiceState};
+use std::sync::Arc;
 
 use crate::{search, store};
 
@@ -8,15 +9,15 @@ use super::text::{
 };
 
 pub(crate) struct StoreBm25Backend {
-    pub(crate) hits: Vec<search::WikiSearchResult>,
+    pub(crate) hits: Arc<[search::WikiSearchResult]>,
 }
 
 impl search::bm25::Bm25SearchBackend for StoreBm25Backend {
     fn search_bm25(
         &mut self,
-        _request: &search::bm25::Bm25SearchRequest,
+        request: &search::bm25::Bm25SearchRequest,
     ) -> Result<Vec<search::WikiSearchResult>, search::SearchError> {
-        Ok(self.hits.clone())
+        Ok(self.hits.iter().take(request.limit).cloned().collect())
     }
 }
 

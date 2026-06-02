@@ -14,17 +14,17 @@ fn format_graph_payload_text(payload: &GraphPayload) -> String {
         lines.push(format!("center: {center}"));
     }
     for node in &payload.nodes {
-        let file = node.file_path.as_deref().unwrap_or("");
-        if file.is_empty() {
-            lines.push(format!(
-                "node {} [{}] {}",
-                node.id, node.node_type, node.name
-            ));
-        } else {
-            lines.push(format!(
+        match node.file_path.as_deref() {
+            Some(file) if !file.is_empty() => lines.push(format!(
                 "node {} [{}] {} {}",
                 node.id, node.node_type, node.name, file
-            ));
+            )),
+            _ => {
+                lines.push(format!(
+                    "node {} [{}] {}",
+                    node.id, node.node_type, node.name
+                ));
+            }
         }
     }
     for link in &payload.links {

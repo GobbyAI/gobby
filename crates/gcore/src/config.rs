@@ -1164,7 +1164,9 @@ mod tests {
     }
 
     fn leak_for_test(value: String) -> &'static str {
-        // Test fixtures need stable borrowed keys; leaking these tiny strings is intentional.
+        // Test-only helper for fixed-size config fixture keys. The source trait
+        // stores borrowed keys for the duration of the process, so leaking these
+        // tiny strings avoids global mutable state without affecting production.
         Box::leak(value.into_boxed_str())
     }
 

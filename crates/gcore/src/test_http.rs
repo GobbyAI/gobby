@@ -73,8 +73,22 @@ fn find_header_end(request: &[u8]) -> Option<usize> {
 
 fn content_length(header: &str) -> Option<usize> {
     header.lines().find_map(|line| {
-        line.strip_prefix("content-length: ")
-            .or_else(|| line.strip_prefix("Content-Length: "))
-            .and_then(|value| value.trim().parse().ok())
+        let (name, value) = line.split_once(':')?;
+        name.trim()
+            .eq_ignore_ascii_case("content-length")
+            .then(|| value.trim().parse().ok())
+            .flatten()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::content_length;
+
+    #[test]
+    fn content_length_parses_case_and_whitespace_variants() {
+        assert_eq!(content_length("CONTENT-LENGTH: 12\r\n"), Some(12));
+        assert_eq!(content_length("content-length :\t7\r\n"), Some(7));
+        assert_eq!(content_length("content-type: text/plain\r\n"), None);
+    }
 }

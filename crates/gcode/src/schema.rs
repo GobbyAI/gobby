@@ -80,8 +80,6 @@ fn required_relation_regclass_name(relation: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use postgres::NoTls;
-
     #[test]
     fn required_schema_contract_names_code_index_tables_and_bm25_indexes() {
         assert!(REQUIRED_TABLES.contains(&"code_symbols"));
@@ -96,8 +94,8 @@ mod tests {
             return;
         };
 
-        let mut client =
-            Client::connect(&database_url, NoTls).expect("connect test PostgreSQL hub");
+        let mut client = gobby_core::postgres::connect_readwrite(&database_url)
+            .expect("connect test PostgreSQL hub");
         assert!(validate_runtime_schema(&mut client).is_ok());
     }
 

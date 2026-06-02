@@ -293,8 +293,8 @@ impl Drop for PostgresTopicCleanup {
     }
 }
 
-fn cleanup_postgres_topic(database_url: &str, topic: &str) -> Result<(), postgres::Error> {
-    let mut client = postgres::Client::connect(database_url, postgres::NoTls)?;
+fn cleanup_postgres_topic(database_url: &str, topic: &str) -> anyhow::Result<()> {
+    let mut client = gobby_core::postgres::connect_readwrite(database_url)?;
     let mut tx = client.transaction()?;
     tx.execute(
         "DELETE FROM gwiki_ingestions WHERE scope_kind = 'topic' AND scope_id = $1",

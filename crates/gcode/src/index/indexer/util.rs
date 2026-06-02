@@ -45,18 +45,16 @@ pub(super) fn filter_discovered_paths(
             } else {
                 Cow::Owned(root_path.join(path))
             };
-            if path_abs.as_ref() == filter_abs.as_ref()
-                || path_abs.as_ref().starts_with(filter_abs.as_ref())
-            {
+            if path_abs.as_ref().starts_with(filter_abs.as_ref()) {
                 return true;
             }
 
             let Some(filter_canonical) = &filter_canonical else {
                 return false;
             };
-            path_abs.canonicalize().is_ok_and(|path_canonical| {
-                path_canonical == *filter_canonical || path_canonical.starts_with(filter_canonical)
-            })
+            path_abs
+                .canonicalize()
+                .is_ok_and(|path_canonical| path_canonical.starts_with(filter_canonical))
         })
         .collect()
 }

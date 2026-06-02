@@ -12,7 +12,7 @@ use tempfile::NamedTempFile;
 use crate::ingest::audio::{production_transcription_endpoint, transcribe_for_markdown};
 use crate::ingest::{
     IngestResult, index_after_ingest, markdown_metadata, markdown_title, path_to_string,
-    write_asset, write_asset_from_path, write_raw_markdown,
+    write_asset, write_asset_from_path, write_asset_with_suffix, write_raw_markdown,
 };
 use crate::sources::{
     CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest, SourceRecord,
@@ -469,6 +469,18 @@ fn ingest_video_with_asset(
             },
         )
     };
+    let PersistedVideoFrameAssets {
+        samples: frame_samples,
+        image_paths: frame_image_paths,
+        descriptions: frame_descriptions,
+    } = persist_video_frame_assets(
+        vault_root,
+        &record,
+        snapshot.file_name,
+        frame_samples,
+        snapshot.frame_image_paths,
+        snapshot.frame_descriptions,
+    )?;
     let VideoMarkdownResult {
         path: derived_path,
         aligned_segments,
@@ -487,8 +499,8 @@ fn ingest_video_with_asset(
             transcription_degradation: degradations.transcription,
             frame_interval_seconds,
             frame_samples: &frame_samples,
-            frame_image_paths: snapshot.frame_image_paths,
-            frame_descriptions: snapshot.frame_descriptions,
+            frame_image_paths: &frame_image_paths,
+            frame_descriptions: &frame_descriptions,
             transcript_segments: snapshot.transcript_segments,
             transcription: snapshot.transcription,
         },
@@ -502,6 +514,62 @@ fn ingest_video_with_asset(
         derived_path,
         frame_samples,
         aligned_segments,
+    })
+}
+
+struct PersistedVideoFrameAssets {
+    samples: Vec<VideoFrameSample>,
+    image_paths: Vec<PathBuf>,
+    descriptions: Vec<VideoFrameDescription>,
+}
+
+fn persist_video_frame_assets(
+    vault_root: &Path,
+    record: &SourceRecord,
+    video_file_name: &str,
+    mut samples: Vec<VideoFrameSample>,
+    frame_image_paths: &[PathBuf],
+    frame_descriptions: &[VideoFrameDescription],
+) -> Result<PersistedVideoFrameAssets, WikiError> {
+    if frame_image_paths.is_empty() {
+        return Ok(PersistedVideoFrameAssets {
+            samples,
+            image_paths: Vec::new(),
+            descriptions: frame_descriptions.to_vec(),
+        });
+    }
+
+    let mut persisted_paths = Vec::with_capacity(frame_image_paths.len());
+    let mut descriptions = frame_descriptions.to_vec();
+    for (index, path) in frame_image_paths.iter().enumerate() {
+        let bytes = std::fs::read(path).map_err(|source| WikiError::Io {
+            action: "read sampled video frame asset",
+            path: Some(path.clone()),
+            source,
+        })?;
+        let file_name = format!("{video_file_name}.frame-{index:04}.jpg");
+        let persisted_path = write_asset_with_suffix(
+            vault_root,
+            record,
+            &format!("frame-{index:04}"),
+            &file_name,
+            &bytes,
+        )?;
+        let reference = path_to_string(&persisted_path);
+        if let Some(sample) = samples.get_mut(index) {
+            sample.source_asset = persisted_path.clone();
+            sample.source_reference = reference.clone();
+        }
+        if let Some(description) = descriptions.get_mut(index) {
+            description.source_reference = reference;
+        }
+        persisted_paths.push(persisted_path);
+    }
+
+    Ok(PersistedVideoFrameAssets {
+        samples,
+        image_paths: persisted_paths,
+        descriptions,
     })
 }
 
@@ -868,6 +936,22 @@ mod tests {
 
         assert_eq!(result.frame_samples.len(), 2);
         assert_eq!(result.aligned_segments.len(), 2);
+        assert!(
+            result
+                .frame_samples
+                .iter()
+                .all(|sample| sample.source_reference.starts_with("raw/assets/"))
+        );
+        assert!(
+            result
+                .aligned_segments
+                .iter()
+                .flat_map(|segment| &segment.frame_descriptions)
+                .all(|description| description.source_reference.starts_with("raw/assets/"))
+        );
+        for sample in &result.frame_samples {
+            assert!(temp.path().join(&sample.source_asset).exists());
+        }
         let document = store
             .documents
             .get(&result.derived_path)

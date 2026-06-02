@@ -5,7 +5,7 @@ use super::contracts::{
 use super::identifiers::quote_identifier;
 use super::postgres::postgres_overwrite_reset_sql;
 use super::*;
-use ::postgres::{Client, NoTls};
+use ::postgres::Client;
 use gobby_core::setup::{SetupContext, StandaloneSetup, StoreKind};
 
 #[test]
@@ -338,7 +338,8 @@ fn overwrite_recreates_incompatible_code_index_and_preserves_sentinel_table() {
         return;
     }
     let database_url = database_url_with_connect_timeout(&database_url);
-    let mut client = Client::connect(&database_url, NoTls).expect("connect test PostgreSQL hub");
+    let mut client = gobby_core::postgres::connect_readwrite(&database_url)
+        .expect("connect test PostgreSQL hub");
     cleanup_code_index_relations(&mut client);
     client
         .batch_execute(

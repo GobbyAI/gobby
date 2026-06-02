@@ -12,12 +12,12 @@ pub(super) enum CallSyntaxKind {
 /// Return the deepest symbol enclosing `byte_offset`.
 ///
 /// Parser output is ordered by byte range, with nested symbols following their
-/// parents, so `rfind` picks the innermost match. Bounds are inclusive because
-/// call sites at either symbol boundary still belong to that symbol.
+/// parents, so `rfind` picks the innermost match. Tree-sitter byte ranges are
+/// end-exclusive.
 pub(super) fn enclosing_symbol(symbols: &[Symbol], byte_offset: usize) -> Option<&Symbol> {
     symbols
         .iter()
-        .rfind(|s| s.byte_start <= byte_offset && byte_offset <= s.byte_end)
+        .rfind(|s| s.byte_start <= byte_offset && byte_offset < s.byte_end)
 }
 
 pub(super) fn call_syntax_kind(

@@ -77,7 +77,7 @@ impl GwikiStandaloneSetup {
                 "DO $$
                  BEGIN
                      IF NOT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_search') THEN
-                         RAISE EXCEPTION 'pg_search extension is required before creating gwiki BM25 indexes';
+                         RAISE EXCEPTION 'ParadeDB pg_search extension is required before creating gwiki BM25 indexes';
                      END IF;
                  END
                  $$;"

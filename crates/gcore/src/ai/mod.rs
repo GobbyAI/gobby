@@ -46,6 +46,8 @@ fn daemon_route_or_fallback(
     capability: AiCapability,
     daemon_available: &mut impl FnMut(AiCapability) -> bool,
 ) -> AiRouting {
+    // Auto is fail-safe: use daemon only when its status route advertises the
+    // capability, then fall back to a configured direct route or Off.
     if probe::capability_status_route(capability).is_some() && daemon_available(capability) {
         AiRouting::Daemon
     } else {

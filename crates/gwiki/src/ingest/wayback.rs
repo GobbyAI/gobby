@@ -25,7 +25,7 @@ pub struct WaybackCaptureSnapshot {
 pub fn ingest_capture(
     vault_root: &Path,
     store: &mut impl WikiIndexStore,
-    snapshot: WaybackCaptureSnapshot,
+    mut snapshot: WaybackCaptureSnapshot,
 ) -> Result<IngestResult, WikiError> {
     let html = text_from_utf8_lossy(&snapshot.body);
     let document = Html::parse_document(&html);
@@ -34,7 +34,7 @@ pub fn ingest_capture(
         location: snapshot.capture_url.clone(),
         kind: SourceKind::Wayback,
         fetched_at: snapshot.fetched_at.clone(),
-        content: snapshot.body.clone(),
+        content: std::mem::take(&mut snapshot.body),
         title: Some(title.clone()),
         citation: Some(snapshot.capture_url.clone()),
         license: None,

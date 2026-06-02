@@ -75,7 +75,14 @@ pub fn validate_backend(backend: &Backend, timeout_ms: u64) -> bool {
         .timeout_connect(timeout)
         .timeout_read(timeout)
         .build();
-    match agent.get(&url).call() {
+    let mut request = agent.get(&url);
+    let auth_header;
+    let token = backend.auth_token.trim();
+    if !token.is_empty() {
+        auth_header = format!("Bearer {token}");
+        request = request.set("Authorization", &auth_header);
+    }
+    match request.call() {
         Ok(_) => true,
         Err(ureq::Error::Status(status, response)) => {
             eprintln!(
@@ -104,25 +111,30 @@ mod tests {
     use std::net::TcpListener;
     use std::thread;
 
-    fn reachable_backend() -> Backend {
+    fn reachable_backend() -> (Backend, thread::JoinHandle<String>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
-        thread::spawn(move || {
+        let handle = thread::spawn(move || {
             if let Ok((mut stream, _)) = listener.accept() {
                 let mut buffer = [0_u8; 1024];
-                let _ = stream.read(&mut buffer);
+                let read = stream.read(&mut buffer).unwrap_or(0);
                 let _ = stream.write_all(
                     b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
                 );
+                return String::from_utf8_lossy(&buffer[..read]).to_string();
             }
+            String::new()
         });
 
-        Backend {
-            name: "reachable".into(),
-            url: format!("http://{}", addr),
-            probe: "/v1/models".into(),
-            auth_token: "token".into(),
-        }
+        (
+            Backend {
+                name: "reachable".into(),
+                url: format!("http://{}", addr),
+                probe: "/v1/models".into(),
+                auth_token: "token".into(),
+            },
+            handle,
+        )
     }
 
     fn unreachable_backend() -> Backend {
@@ -136,9 +148,19 @@ mod tests {
 
     #[test]
     fn detects_first_reachable() {
-        let reachable = reachable_backend();
+        let (reachable, handle) = reachable_backend();
         let backends = vec![unreachable_backend(), reachable.clone()];
 
         assert_eq!(detect_backend(&backends, 500), Some(reachable));
+        let request = handle.join().expect("probe request thread");
+        assert!(has_header(&request, "authorization", "Bearer token"));
+    }
+
+    fn has_header(request: &str, name: &str, value: &str) -> bool {
+        request.lines().any(|line| {
+            line.split_once(':').is_some_and(|(header, actual)| {
+                header.trim().eq_ignore_ascii_case(name) && actual.trim() == value
+            })
+        })
     }
 }

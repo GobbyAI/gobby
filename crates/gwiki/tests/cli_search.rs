@@ -244,15 +244,25 @@ fn assert_json_error(output: &std::process::Output, code: &str, message_contains
 }
 
 fn cleanup_gwiki_scope(database_url: &str, scope_kind: &str, scope_id: &str) {
-    let Ok(mut client) = postgres::Client::connect(database_url, postgres::NoTls) else {
+    let Ok(mut client) = gobby_core::postgres::connect_readwrite(database_url) else {
         return;
     };
     for table in GWIKI_SCOPE_TABLES {
         // Safe interpolation: `table` comes only from `GWIKI_SCOPE_TABLES`,
         // a closed whitelist of gwiki-owned table names above.
+        assert_gwiki_scope_table(table);
         let sql = format!("DELETE FROM {table} WHERE scope_kind = $1 AND scope_id = $2");
         let _ = client.execute(&sql, &[&scope_kind, &scope_id]);
     }
+}
+
+fn assert_gwiki_scope_table(table: &str) {
+    assert!(
+        GWIKI_SCOPE_TABLES.contains(&table)
+            && table.starts_with("gwiki_")
+            && table.chars().all(|ch| ch.is_ascii_lowercase() || ch == '_'),
+        "cleanup table must be a whitelisted gwiki table: {table}"
+    );
 }
 
 struct GwikiScopeCleanup {

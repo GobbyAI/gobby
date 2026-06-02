@@ -351,23 +351,9 @@ fn first_heading(body: &str) -> Option<String> {
 }
 
 fn parse_heading(line: &str) -> Option<String> {
-    let trimmed = line.trim_end();
-    let hashes = trimmed.bytes().take_while(|byte| *byte == b'#').count();
-    if !(1..=6).contains(&hashes) {
-        return None;
-    }
-    let after_hashes = &trimmed[hashes..];
-    if after_hashes
-        .bytes()
-        .next()
-        .is_some_and(|byte| byte.is_ascii_whitespace())
-    {
-        let heading = after_hashes.trim_start_matches(|ch: char| ch.is_ascii_whitespace());
-        if !heading.is_empty() {
-            return Some(heading.to_string());
-        }
-    }
-    None
+    crate::markdown::parse_atx_heading(line)
+        .map(|(_, heading)| heading)
+        .filter(|heading| !heading.is_empty())
 }
 
 fn extract_links(path: &Path, body: &str) -> Vec<WikiLink> {

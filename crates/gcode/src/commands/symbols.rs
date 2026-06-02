@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use gobby_core::ai::{daemon::generate_via_daemon, effective_route, text::generate_text};
 use gobby_core::ai_context::{AiConfigSource, AiContext, PostgresAiConfigSource};
@@ -146,18 +146,36 @@ fn outline_summary_prompt(file: &str, code: &str, symbols: &[Symbol]) -> String 
 }
 
 fn render_outline_text(symbols: &[Symbol]) -> String {
+    let parent_by_id = symbols
+        .iter()
+        .map(|symbol| (symbol.id.as_str(), symbol.parent_symbol_id.as_deref()))
+        .collect::<BTreeMap<_, _>>();
+
     symbols
         .iter()
         .map(|s| {
-            let indent = if s.parent_symbol_id.is_some() {
-                "  "
-            } else {
-                ""
-            };
+            let indent = "  ".repeat(outline_depth(s, &parent_by_id));
             format!("{indent}{}", format_outline_text_line(s))
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn outline_depth(symbol: &Symbol, parent_by_id: &BTreeMap<&str, Option<&str>>) -> usize {
+    let mut depth = 0;
+    let mut seen = HashSet::new();
+    let mut current = symbol.parent_symbol_id.as_deref();
+    while let Some(parent_id) = current {
+        if !seen.insert(parent_id) {
+            break;
+        }
+        let Some(parent_parent) = parent_by_id.get(parent_id) else {
+            break;
+        };
+        depth += 1;
+        current = *parent_parent;
+    }
+    depth
 }
 
 fn outline_missing_diagnostic(conn: &mut postgres::Client, ctx: &Context, file: &str) -> String {
@@ -415,6 +433,31 @@ mod tests {
         assert!(line.contains("src/commands.rs:7-63 [function] outline"));
         assert!(line.contains("id=12345678-1234-5678-1234-567812345678"));
         assert!(line.contains("sig=pub fn outline() -> anyhow::Result<()> {"));
+    }
+
+    #[test]
+    fn outline_text_indents_by_parent_chain_depth() {
+        let mut parent = symbol();
+        parent.id = "parent".to_string();
+        parent.kind = "class".to_string();
+        parent.qualified_name = "Parent".to_string();
+
+        let mut child = symbol();
+        child.id = "child".to_string();
+        child.parent_symbol_id = Some(parent.id.clone());
+        child.qualified_name = "Parent.child".to_string();
+
+        let mut grandchild = symbol();
+        grandchild.id = "grandchild".to_string();
+        grandchild.parent_symbol_id = Some(child.id.clone());
+        grandchild.qualified_name = "Parent.child.grandchild".to_string();
+
+        let outline = render_outline_text(&[parent, child, grandchild]);
+        let lines = outline.lines().collect::<Vec<_>>();
+
+        assert!(lines[0].starts_with("src/commands.rs:"));
+        assert!(lines[1].starts_with("  src/commands.rs:"));
+        assert!(lines[2].starts_with("    src/commands.rs:"));
     }
 
     #[test]

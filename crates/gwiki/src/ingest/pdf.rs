@@ -356,12 +356,13 @@ fn merge_pdf_pages(
         .pages
         .iter()
         .any(|page| !normalize_page_text(&page.text).is_empty());
-    let page_count = text_pages.len().max(rendered_page_map.len());
+    let rendered_page_count = rendered_page_map.len();
+    let page_count = text_pages.len().max(rendered_page_count);
     let mut degradations = degradations;
-    if matches!(endpoint, VisionEndpoint::Unavailable(_)) && page_count > 0 {
+    if matches!(endpoint, VisionEndpoint::Unavailable(_)) && rendered_page_count > 0 {
         degradations.push(DocumentDegradation::new(
             DocumentFailureMode::PdfVisionUnavailable,
-            DocumentUnitCount::pages(page_count),
+            DocumentUnitCount::pages(rendered_page_count),
             "PDF vision extraction is unavailable; original asset is preserved.",
         ));
     }
@@ -838,6 +839,32 @@ mod tests {
             std::fs::read(temp.path().join(asset_path)).expect("pdf asset"),
             bytes
         );
+
+        let text_only_pdf = PdfSnapshot {
+            location: "/tmp/text-only.pdf".to_string(),
+            file_name: "text-only.pdf".to_string(),
+            fetched_at: "2026-05-29T16:30:00Z".to_string(),
+            bytes: b"%PDF text".to_vec(),
+            pages: vec![PdfPage {
+                number: 1,
+                text: "Text layer only.".to_string(),
+            }],
+        };
+        let result = ingest_pages_with_vision(
+            temp.path(),
+            &mut store,
+            &ScopeIdentity::global(),
+            text_only_pdf,
+            Vec::new(),
+            VisionEndpoint::Unavailable(crate::vision::VisionDegradation {
+                reason: "disabled".to_string(),
+                fallback: "vision disabled".to_string(),
+            }),
+        )
+        .expect("ingest text-only pdf");
+        let raw = std::fs::read_to_string(temp.path().join(&result.raw_path))
+            .expect("raw markdown written");
+        assert!(!raw.contains("media_degradation: pdf_vision_unavailable"));
 
         let empty_pdf = PdfSnapshot {
             location: "/tmp/empty.pdf".to_string(),

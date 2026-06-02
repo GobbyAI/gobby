@@ -157,6 +157,41 @@ fn resolve_symbol_or_empty_response(
     }
 }
 
+fn read_paged_symbol_graph_results(
+    ctx: &Context,
+    symbol_name: &str,
+    limit: usize,
+    offset: usize,
+    format: Format,
+    count: impl FnOnce(&Context, &str) -> anyhow::Result<usize>,
+    find: impl FnOnce(&Context, &str, usize, usize) -> anyhow::Result<Vec<GraphResult>>,
+) -> anyhow::Result<Option<(ResolvedGraphSymbol, usize, Vec<GraphResult>)>> {
+    let Some(()) = graph_read_or_empty::<()>(ctx, offset, limit, format, || {
+        code_graph::require_graph_reads(ctx)
+    })?
+    else {
+        return Ok(None);
+    };
+    let Some(symbol) = resolve_symbol_or_empty_response(ctx, symbol_name, offset, limit, format)?
+    else {
+        return Ok(None);
+    };
+    let Some(total) =
+        graph_read_or_empty::<usize>(ctx, offset, limit, format, || count(ctx, &symbol.id))?
+    else {
+        return Ok(None);
+    };
+    let Some(results) =
+        graph_read_or_empty::<Vec<GraphResult>>(ctx, offset, limit, format, || {
+            find(ctx, &symbol.id, offset, limit)
+        })?
+    else {
+        return Ok(None);
+    };
+
+    Ok(Some((symbol, total, results)))
+}
+
 pub fn callers(
     ctx: &Context,
     symbol_name: &str,
@@ -164,26 +199,15 @@ pub fn callers(
     offset: usize,
     format: Format,
 ) -> anyhow::Result<()> {
-    let Some(()) = graph_read_or_empty::<()>(ctx, offset, limit, format, || {
-        code_graph::require_graph_reads(ctx)
-    })?
-    else {
-        return Ok(());
-    };
-    let Some(symbol) = resolve_symbol_or_empty_response(ctx, symbol_name, offset, limit, format)?
-    else {
-        return Ok(());
-    };
-    let Some(total) = graph_read_or_empty::<usize>(ctx, offset, limit, format, || {
-        code_graph::count_callers(ctx, &symbol.id)
-    })?
-    else {
-        return Ok(());
-    };
-    let Some(results) =
-        graph_read_or_empty::<Vec<crate::models::GraphResult>>(ctx, offset, limit, format, || {
-            code_graph::find_callers(ctx, &symbol.id, offset, limit)
-        })?
+    let Some((symbol, total, results)) = read_paged_symbol_graph_results(
+        ctx,
+        symbol_name,
+        limit,
+        offset,
+        format,
+        code_graph::count_callers,
+        code_graph::find_callers,
+    )?
     else {
         return Ok(());
     };
@@ -228,26 +252,15 @@ pub fn usages(
     offset: usize,
     format: Format,
 ) -> anyhow::Result<()> {
-    let Some(()) = graph_read_or_empty::<()>(ctx, offset, limit, format, || {
-        code_graph::require_graph_reads(ctx)
-    })?
-    else {
-        return Ok(());
-    };
-    let Some(symbol) = resolve_symbol_or_empty_response(ctx, symbol_name, offset, limit, format)?
-    else {
-        return Ok(());
-    };
-    let Some(total) = graph_read_or_empty::<usize>(ctx, offset, limit, format, || {
-        code_graph::count_usages(ctx, &symbol.id)
-    })?
-    else {
-        return Ok(());
-    };
-    let Some(results) =
-        graph_read_or_empty::<Vec<crate::models::GraphResult>>(ctx, offset, limit, format, || {
-            code_graph::find_usages(ctx, &symbol.id, offset, limit)
-        })?
+    let Some((symbol, total, results)) = read_paged_symbol_graph_results(
+        ctx,
+        symbol_name,
+        limit,
+        offset,
+        format,
+        code_graph::count_usages,
+        code_graph::find_usages,
+    )?
     else {
         return Ok(());
     };

@@ -284,7 +284,6 @@ impl CodeSymbolVectorLifecycle {
             &self.project_id,
             file_path,
         )
-        .map(usize::from)
     }
 
     fn delete_stale_vectors(
@@ -300,7 +299,6 @@ impl CodeSymbolVectorLifecycle {
             file_path,
             keep_point_ids,
         )
-        .map(usize::from)
     }
 
     fn upsert_points(&self, points: Vec<UpsertRequest>) -> Result<usize, VectorLifecycleError> {
