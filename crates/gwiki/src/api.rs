@@ -31,6 +31,11 @@ pub enum Command {
         urls: Vec<String>,
         scope: ScopeSelection,
     },
+    Refresh {
+        scope: ScopeSelection,
+        source_ids: Vec<String>,
+        dry_run: bool,
+    },
     Sources {
         scope: ScopeSelection,
     },

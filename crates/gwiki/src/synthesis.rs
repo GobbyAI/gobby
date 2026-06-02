@@ -340,6 +340,7 @@ pub fn ensure_synthesized_path_inside_vault(
     } else {
         root.join(path)
     };
+    let candidate = canonicalize_existing_prefix(&candidate, "resolve synthesized path")?;
     let Ok(relative) = candidate.strip_prefix(&root) else {
         return Err(synthesized_path_outside_vault(field));
     };
@@ -352,6 +353,31 @@ pub fn ensure_synthesized_path_inside_vault(
         return Err(synthesized_path_outside_vault(field));
     }
     Ok(())
+}
+
+fn canonicalize_existing_prefix(path: &Path, action: &'static str) -> Result<PathBuf, WikiError> {
+    let mut current = path;
+    let mut missing_suffix = Vec::new();
+    while !current.exists() {
+        let Some(name) = current.file_name() else {
+            break;
+        };
+        missing_suffix.push(name.to_os_string());
+        let Some(parent) = current.parent() else {
+            break;
+        };
+        current = parent;
+    }
+
+    let mut resolved = current.canonicalize().map_err(|error| WikiError::Io {
+        action,
+        path: Some(current.to_path_buf()),
+        source: error,
+    })?;
+    for component in missing_suffix.iter().rev() {
+        resolved.push(component);
+    }
+    Ok(resolved)
 }
 
 fn ensure_existing_parent_inside_vault(

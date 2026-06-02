@@ -8,6 +8,7 @@ pub(crate) mod index;
 pub(crate) mod init;
 pub(crate) mod lint;
 pub(crate) mod read;
+pub(crate) mod refresh;
 pub(crate) mod research;
 pub(crate) mod search;
 pub(crate) mod setup;
@@ -28,6 +29,11 @@ pub(crate) fn run(command: Command) -> Result<CommandOutcome, WikiError> {
             options,
         } => index::execute_ingest_file(path, scope, options),
         Command::IngestUrl { urls, scope } => index::execute_ingest_url(urls, scope),
+        Command::Refresh {
+            scope,
+            source_ids,
+            dry_run,
+        } => refresh::execute(scope, source_ids, dry_run),
         Command::Sources { scope } => sources::execute(scope),
         Command::RemoveSource {
             id,

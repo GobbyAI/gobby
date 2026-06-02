@@ -65,6 +65,8 @@ enum CliCommand {
         #[arg(value_name = "URL", num_args = 1..)]
         urls: Vec<String>,
     },
+    /// Refresh URL-backed raw source records.
+    Refresh(RefreshArgs),
     /// List raw source manifest entries in the selected scope.
     Sources,
     /// Remove a raw source, its manifest entry, and its raw asset.
@@ -178,6 +180,17 @@ struct RemoveSourceArgs {
     /// Preserve the raw source asset referenced by source_asset frontmatter.
     #[arg(long)]
     keep_asset: bool,
+}
+
+#[derive(Debug, Args)]
+struct RefreshArgs {
+    /// Source ID to refresh. Repeat to refresh multiple explicit sources.
+    #[arg(long = "id", value_name = "SOURCE_ID")]
+    id: Vec<String>,
+
+    /// Preview refresh candidates without fetching, writing, deleting, or indexing.
+    #[arg(long)]
+    dry_run: bool,
 }
 
 #[derive(Debug, Args)]
@@ -360,6 +373,11 @@ fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Comman
             },
         }),
         CliCommand::IngestUrl { urls } => Ok(Command::IngestUrl { urls, scope }),
+        CliCommand::Refresh(args) => Ok(Command::Refresh {
+            scope,
+            source_ids: args.id,
+            dry_run: args.dry_run,
+        }),
         CliCommand::Sources => Ok(Command::Sources { scope }),
         CliCommand::RemoveSource(args) => {
             if args.dry_run && args.yes {
@@ -617,6 +635,56 @@ mod tests {
             ]
         );
         assert_eq!(scope.topic_name(), Some("rust"));
+    }
+
+    #[test]
+    fn refresh_cli_flags_map_to_command_options() {
+        let cli = Cli::try_parse_from([
+            "gwiki",
+            "--format",
+            "json",
+            "refresh",
+            "--id",
+            "src1",
+            "--id",
+            "src2",
+            "--dry-run",
+            "--topic",
+            "docs",
+        ])
+        .expect("parse refresh command");
+        assert_eq!(cli.scope.topic.as_deref(), Some("docs"));
+        let CliCommand::Refresh(args) = cli.command else {
+            panic!("expected parsed refresh command");
+        };
+        assert_eq!(args.id, vec!["src1".to_string(), "src2".to_string()]);
+        assert!(args.dry_run);
+
+        let command = command_from_cli(
+            CliCommand::Refresh(RefreshArgs {
+                id: vec!["src1".to_string(), "src2".to_string()],
+                dry_run: true,
+            }),
+            ScopeSelection::topic("docs"),
+        )
+        .expect("map refresh command");
+
+        let Command::Refresh {
+            scope,
+            source_ids,
+            dry_run,
+        } = command
+        else {
+            panic!("expected refresh command");
+        };
+        assert_eq!(scope.topic_name(), Some("docs"));
+        assert_eq!(source_ids, vec!["src1".to_string(), "src2".to_string()]);
+        assert!(dry_run);
+
+        assert!(
+            Cli::try_parse_from(["gwiki", "refresh", "--scope", "project"]).is_err(),
+            "refresh must use existing --project/--topic globals, not --scope"
+        );
     }
 
     #[test]

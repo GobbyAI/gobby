@@ -622,6 +622,197 @@ fn ingest_url_json_reports_all_failed_with_nonzero_exit() {
 }
 
 #[test]
+fn refresh_url_json_reports_changed_and_reindexes_once() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let hub = tmp.path().join("hub");
+    let topic = unique_topic("refresh-changed");
+    let init = gwiki(&hub, tmp.path(), &["init", "--topic", &topic]);
+    assert_success(&init, "init topic");
+
+    let (base_url, server) = serve_http_responses(vec![
+        (
+            "200 OK",
+            "<!doctype html><html><head><title>Old</title></head><body><p>old body.</p></body></html>",
+        ),
+        (
+            "200 OK",
+            "<!doctype html><html><head><title>New</title></head><body><p>new body.</p></body></html>",
+        ),
+    ]);
+    let url = format!("{base_url}/source");
+    let ingest = gwiki(
+        &hub,
+        tmp.path(),
+        &["--format", "json", "ingest-url", "--topic", &topic, &url],
+    );
+    assert_success(&ingest, "ingest-url initial");
+    let ingest_payload = json_output(&ingest);
+    let old_id = ingest_payload["accepted"][0]["source"]["id"]
+        .as_str()
+        .expect("old source id")
+        .to_string();
+    let old_raw_path = ingest_payload["accepted"][0]["raw_path"]
+        .as_str()
+        .expect("old raw path")
+        .to_string();
+
+    let refresh = gwiki(
+        &hub,
+        tmp.path(),
+        &[
+            "--format", "json", "refresh", "--topic", &topic, "--id", &old_id,
+        ],
+    );
+    server.join().expect("HTTP fixture completed");
+    assert_success(&refresh, "refresh changed");
+    let payload = json_output(&refresh);
+    assert_eq!(payload["command"], "refresh");
+    assert_eq!(payload["status"], "refreshed");
+    assert_eq!(payload["refreshed"].as_array().expect("refreshed").len(), 1);
+    assert_eq!(payload["refreshed"][0]["old_id"], old_id);
+    let new_id = payload["refreshed"][0]["new_id"]
+        .as_str()
+        .expect("new source id");
+    assert_ne!(new_id, old_id);
+    assert_eq!(payload["refreshed"][0]["previous_raw_path"], old_raw_path);
+    assert!(
+        payload["indexed"]["documents"]
+            .as_u64()
+            .is_some_and(|count| count >= 1),
+        "{payload:#}"
+    );
+    assert_eq!(payload["index_status"]["index_required"], false);
+
+    let vault = hub.join("topics").join(&topic);
+    let manifest = SourceManifest::read(&vault).expect("read source manifest");
+    let matching = manifest
+        .entries
+        .iter()
+        .filter(|entry| entry.canonical_location == url)
+        .collect::<Vec<_>>();
+    assert_eq!(matching.len(), 1);
+    assert_eq!(matching[0].id, new_id);
+    assert!(!vault.join(old_raw_path).exists());
+    assert!(vault.join(format!("raw/{new_id}.md")).exists());
+}
+
+#[test]
+fn refresh_url_json_reports_unchanged_without_indexing() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let hub = tmp.path().join("hub");
+    let topic = unique_topic("refresh-unchanged");
+    let init = gwiki(&hub, tmp.path(), &["init", "--topic", &topic]);
+    assert_success(&init, "init topic");
+
+    let body = "<!doctype html><html><head><title>Same</title></head><body><p>same body.</p></body></html>";
+    let (base_url, server) = serve_http_responses(vec![("200 OK", body), ("200 OK", body)]);
+    let url = format!("{base_url}/source");
+    let ingest = gwiki(
+        &hub,
+        tmp.path(),
+        &["--format", "json", "ingest-url", "--topic", &topic, &url],
+    );
+    assert_success(&ingest, "ingest-url initial");
+    let source_id = json_output(&ingest)["accepted"][0]["source"]["id"]
+        .as_str()
+        .expect("source id")
+        .to_string();
+
+    let refresh = gwiki(
+        &hub,
+        tmp.path(),
+        &[
+            "--format", "json", "refresh", "--topic", &topic, "--id", &source_id,
+        ],
+    );
+    server.join().expect("HTTP fixture completed");
+    assert_success(&refresh, "refresh unchanged");
+    let payload = json_output(&refresh);
+    assert_eq!(payload["status"], "unchanged");
+    assert_eq!(payload["unchanged"][0]["id"], source_id);
+    assert_eq!(payload["index_status"]["status"], "not_run");
+    assert_eq!(payload["index_status"]["index_required"], false);
+}
+
+#[test]
+fn refresh_explicit_all_failed_preserves_json_stdout() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let hub = tmp.path().join("hub");
+    let topic = unique_topic("refresh-failed");
+    let init = gwiki(&hub, tmp.path(), &["init", "--topic", &topic]);
+    assert_success(&init, "init topic");
+
+    let (base_url, server) = serve_http_responses(vec![
+        (
+            "200 OK",
+            "<!doctype html><html><head><title>Seed</title></head><body><p>seed body.</p></body></html>",
+        ),
+        ("500 Internal Server Error", "fixture failure"),
+    ]);
+    let url = format!("{base_url}/source");
+    let ingest = gwiki(
+        &hub,
+        tmp.path(),
+        &["--format", "json", "ingest-url", "--topic", &topic, &url],
+    );
+    assert_success(&ingest, "ingest-url initial");
+    let source_id = json_output(&ingest)["accepted"][0]["source"]["id"]
+        .as_str()
+        .expect("source id")
+        .to_string();
+
+    let refresh = gwiki(
+        &hub,
+        tmp.path(),
+        &[
+            "--format", "json", "refresh", "--topic", &topic, "--id", &source_id,
+        ],
+    );
+    server.join().expect("HTTP fixture completed");
+    assert!(
+        !refresh.status.success(),
+        "refresh all-failed succeeded unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&refresh.stdout),
+        String::from_utf8_lossy(&refresh.stderr)
+    );
+    let payload = json_output(&refresh);
+    assert_eq!(payload["command"], "refresh");
+    assert_eq!(payload["status"], "failed");
+    assert_eq!(payload["failed"][0]["id"], source_id);
+    assert_eq!(payload["failed"][0]["code"], "http_status");
+}
+
+#[test]
+fn refresh_help_and_project_scope_use_existing_scope_flags() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let hub = tmp.path().join("hub");
+    let project_marker = common::write_gcode_json(tmp.path());
+
+    let help = gwiki(&hub, tmp.path(), &["refresh", "--help"]);
+    assert_success(&help, "refresh help");
+    let help_text = String::from_utf8_lossy(&help.stdout);
+    assert!(help_text.contains("--id"));
+    assert!(help_text.contains("--dry-run"));
+    assert!(help_text.contains("--project"));
+    assert!(help_text.contains("--topic"));
+    assert!(!help_text.contains("--scope"));
+
+    let init = gwiki(&hub, tmp.path(), &["--format", "json", "init", "--project"]);
+    assert_success(&init, "init project");
+    let refresh = gwiki(
+        &hub,
+        tmp.path(),
+        &["--format", "json", "refresh", "--project", "--dry-run"],
+    );
+    assert_success(&refresh, "refresh project dry-run");
+    let payload = json_output(&refresh);
+    assert_eq!(payload["command"], "refresh");
+    assert_eq!(payload["status"], "dry_run");
+    assert_eq!(payload["scope"]["kind"], "project");
+    common::assert_gcode_json_unchanged(&project_marker);
+}
+
+#[test]
 fn public_cli_smoke_uses_gwiki_modules() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let hub = tmp.path().join("hub");

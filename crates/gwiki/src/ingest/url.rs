@@ -159,6 +159,13 @@ pub(crate) fn ingest_urls(
     })
 }
 
+pub(crate) fn fetch_url_snapshot(
+    url: &str,
+    fetched_at: &str,
+) -> Result<UrlSnapshot, UrlIngestFailure> {
+    BlockingUrlFetcher::default().fetch(url, fetched_at)
+}
+
 pub(crate) fn ingest_urls_with_fetcher(
     vault_root: &Path,
     store: &mut impl WikiIndexStore,

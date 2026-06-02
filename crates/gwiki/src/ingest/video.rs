@@ -355,6 +355,7 @@ fn video_media_degradation(
     }
 }
 
+#[derive(Debug)]
 struct DescribedFrameImages {
     samples: Vec<VideoFrameSample>,
     paths: Vec<PathBuf>,
@@ -569,6 +570,7 @@ fn ingest_video_with_asset(
     })
 }
 
+#[derive(Debug)]
 struct PersistedVideoFrameAssets {
     samples: Vec<VideoFrameSample>,
     image_paths: Vec<PathBuf>,

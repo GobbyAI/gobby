@@ -23,13 +23,6 @@ pub(crate) fn execute(
             .map(|state| state.topic.clone())
             .unwrap_or_else(|| session.question.clone())
     });
-    let target_page = target_page.map(|path| {
-        if path.is_absolute() {
-            path
-        } else {
-            research_scope.root().join(path)
-        }
-    });
     let daemon_report = daemon::probe_daemon_capabilities();
     let outcome = wiki_compile::compile_to_wiki_with_options(
         &mut session,
