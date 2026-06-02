@@ -170,7 +170,7 @@ pub(crate) enum Command {
         /// Filter by source language (e.g. rust, python, css)
         #[arg(long)]
         language: Option<String>,
-        /// Include FalkorDB graph neighbors in the exact-first ranking [requires Gobby]
+        /// Include FalkorDB graph neighbors in the exact-first ranking [requires graph backend]
         #[arg(long)]
         with_graph: bool,
     },
@@ -310,8 +310,8 @@ pub(crate) enum Command {
         scope: Vec<String>,
     },
 
-    // ── Dependency Graph (requires Gobby) ──────────────────────────────
-    /// Find callers of a symbol query, resolved to a canonical symbol ID [requires Gobby]
+    // ── Dependency Graph (requires graph backend) ──────────────────────
+    /// Find callers of a symbol query, resolved to a canonical symbol ID [requires graph backend]
     Callers {
         symbol_name: String,
         #[arg(long, default_value = "10")]
@@ -320,7 +320,7 @@ pub(crate) enum Command {
         #[arg(long, default_value = "0")]
         offset: usize,
     },
-    /// Find incoming call usages of a symbol query, resolved to a canonical symbol ID [requires Gobby]
+    /// Find incoming call usages of a symbol query, resolved to a canonical symbol ID [requires graph backend]
     Usages {
         symbol_name: String,
         #[arg(long, default_value = "10")]
@@ -329,9 +329,9 @@ pub(crate) enum Command {
         #[arg(long, default_value = "0")]
         offset: usize,
     },
-    /// Show import graph for a file [requires Gobby]
+    /// Show import graph for a file [requires graph backend]
     Imports { file: String },
-    /// Transitive impact analysis for a symbol query, resolved to a canonical symbol ID [requires Gobby]
+    /// Transitive impact analysis for a symbol query, resolved to a canonical symbol ID [requires graph backend]
     BlastRadius {
         /// Symbol query
         target: String,

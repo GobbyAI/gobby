@@ -8,12 +8,12 @@ use crate::output::{self, Format};
 use crate::search::fts::{self, ResolvedGraphSymbol};
 use serde::Serialize;
 
-const GOBBY_HINT: &str =
-    "Graph commands require FalkorDB, available with Gobby. See: https://github.com/GobbyAI/gobby";
+const GRAPH_BACKEND_HINT: &str =
+    "Graph commands require a configured FalkorDB graph backend and synced graph projection.";
 
 fn hint_for(ctx: &Context) -> Option<String> {
     if ctx.falkordb.is_none() {
-        Some(GOBBY_HINT.to_string())
+        Some(GRAPH_BACKEND_HINT.to_string())
     } else {
         None
     }
