@@ -159,34 +159,33 @@ def show_workflow(ctx: click.Context, name: str, json_format: bool) -> None:
 @click.pass_context
 def workflow_status(ctx: click.Context, session_id: str | None, json_format: bool) -> None:
     """Show current workflow state for a session."""
-    session_var_manager = common.get_session_var_manager()
+    with common.session_var_manager_context() as session_var_manager:
+        session_id = common.resolve_session_id(session_id)
 
-    session_id = common.resolve_session_id(session_id)
+        variables = session_var_manager.get_variables(session_id)
 
-    variables = session_var_manager.get_variables(session_id)
+        if not variables:
+            if json_format:
+                click.echo(json.dumps({"session_id": session_id, "has_variables": False}))
+            else:
+                click.echo(f"No variables set for session: {common.truncate_id(session_id)}")
+            return
 
-    if not variables:
         if json_format:
-            click.echo(json.dumps({"session_id": session_id, "has_variables": False}))
-        else:
-            click.echo(f"No variables set for session: {common.truncate_id(session_id)}")
-        return
-
-    if json_format:
-        click.echo(
-            json.dumps(
-                {
-                    "session_id": session_id,
-                    "has_variables": True,
-                    "variables": variables,
-                },
-                indent=2,
+            click.echo(
+                json.dumps(
+                    {
+                        "session_id": session_id,
+                        "has_variables": True,
+                        "variables": variables,
+                    },
+                    indent=2,
+                )
             )
-        )
-        return
+            return
 
-    click.echo(f"Session: {common.truncate_id(session_id)}")
-    click.echo(f"Variables ({len(variables)}):")
-    for var_name, var_value in sorted(variables.items()):
-        value_display = repr(var_value) if isinstance(var_value, str) else str(var_value)
-        click.echo(f"  {var_name} = {value_display}")
+        click.echo(f"Session: {common.truncate_id(session_id)}")
+        click.echo(f"Variables ({len(variables)}):")
+        for var_name, var_value in sorted(variables.items()):
+            value_display = repr(var_value) if isinstance(var_value, str) else str(var_value)
+            click.echo(f"  {var_name} = {value_display}")
